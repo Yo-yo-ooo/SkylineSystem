@@ -45,7 +45,7 @@ barebones.iso: limine kernel
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o barebones.iso
 	limine/limine-deploy barebones.iso
-	rm -rf iso_root
+	# rm -rf iso_root
 
 barebones.hdd: limine kernel
 	rm -f barebones.hdd
