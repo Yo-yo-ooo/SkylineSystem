@@ -1,0 +1,71 @@
+Disk Size (Bytes):
+52428800
+Total Partition Header Size (Bytes):
+336
+Partition Count:
+4
+List:
+Partition ID:
+0
+Name:
+Boot Partition
+Description:
+This is the Bootsector.
+Drive Name:
+boot_sector
+Partition Size (Bytes):
+512
+Partition Location:
+0
+Partition Type:
+4
+Filesystem Type:
+0
+Partition ID:
+1
+Name:
+Partition Table Partition
+Description:
+This is the Partition Table which stores all the partition data.
+Drive Name:
+partition_manager
+Partition Size (Bytes):
+9728
+Partition Location:
+512
+Partition Type:
+5
+Filesystem Type:
+0
+Partition ID:
+2
+Name:
+Test Partition
+Description:
+This is the default generated Partition made my MRAPS.
+Drive Name:
+test
+Partition Size (Bytes):
+20000000
+Partition Location:
+10240
+Partition Type:
+2
+Filesystem Type:
+0
+Partition ID:
+3
+Name:
+
+Description:
+
+Drive Name:
+
+Partition Size (Bytes):
+32418560
+Partition Location:
+20010240
+Partition Type:
+0
+Filesystem Type:
+0

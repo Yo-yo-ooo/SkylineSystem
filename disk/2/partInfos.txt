@@ -1,0 +1,8 @@
+Partition Size (Bytes):
+1757
+FS Partition Count:
+31
+File Count:
+29
+Folder Count:
+5
