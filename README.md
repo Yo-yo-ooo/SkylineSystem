@@ -1,4 +1,4 @@
-# MaslOS
+# SkyklineSystem
 an OS written in C++ and a bit of C.
 The base was made following [Ponchos OS Dev Youtube Playlist](https://www.youtube.com/playlist?list=PLxN4E629pPnJxCQCLy7E0SQY_zuumOVyZ)
 The OS is now using [limine](https://github.com/limine-bootloader/limine) as the bootloader.
