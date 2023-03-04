@@ -606,7 +606,7 @@ void RenderLoop()
                 msgWindow->renderer->Clear(Colors.black);
                 //GlobalRenderer->Println("BRUH 5.2", Colors.yellow);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
-                msgWindow->renderer->Println("WARNING: MaslOS just had a fatal but somewhat recoverable crash", Colors.bred);
+                msgWindow->renderer->Println("WARNING: SkylineSystem just had a fatal but somewhat recoverable crash", Colors.bred);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
                 msgWindow->renderer->Println();
                 //GlobalRenderer->Println("BRUH 5.3", Colors.yellow);
