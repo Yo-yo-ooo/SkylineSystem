@@ -157,3 +157,14 @@ char* StrReplaceStartingStuffWith(const char* og, const char* toReplace, const c
     _Free(subStr);
     return combined;
 }
+
+char* StrCat(char *dst, const char *src)
+{
+    //assert(dst != NULL && src != NULL);
+    char *temp = dst;
+    while (*temp != '\0')
+        temp++;
+    while ((*temp++ = *src++) != '\0');
+
+    return dst;
+}

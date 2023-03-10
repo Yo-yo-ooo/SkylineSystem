@@ -23,6 +23,8 @@
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
+#include "../sysApps/explorer/explorer.h"
+#include "../sysApps/tetris/tetris.h"
 
 void Println(Window* window)
 {
@@ -259,6 +261,13 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         return;
     }
 
+    if (StrEquals(input, "tetris"))
+    {
+        new SysApps::Tetris();
+        RemoveFromStack();
+        return;
+    }
+
     if (StrEquals(input, "heap check"))
     {
         HeapCheck(true);
@@ -417,6 +426,44 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     {
         if (data->len == 2)
             Println(window, data->data[1]);
+        else
+            LogInvalidArgumentCount(1, data->len-1, window);
+        
+        _Free(data);
+        RemoveFromStack();
+        return;
+    }
+
+    if(StrEquals(data->data[0], "fsm")){
+        if (data->len == 3)
+        {
+            FilesystemInterface::GenericFilesystemInterface* fsInterface = FS_STUFF::GetFsInterfaceFromFullPath(data->data[2]);
+            if (fsInterface != NULL)
+            {
+                char* fileName = StrSubstr(data->data[2],(int)
+                    (StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[2]))+1));
+                const char* fb = NULL;
+                if(StrEquals(data->data[1], "mkfile")){
+                    fb = fsInterface->CreateFile(fileName);
+                }
+                if(StrEquals(data->data[1],"mkdir")){
+                    fb = fsInterface->CreateFolder(fileName);
+                }
+                if(StrEquals(data->data[1],"delfile")){
+                    fb = fsInterface->DeleteFile(fileName);
+                }
+                if(StrEquals(data->data[1],"deldir")){
+                    fb = fsInterface->DeleteFolder(fileName);
+                }
+                if (fb == FilesystemInterface::FSCommandResult.SUCCESS)
+                    Println(window, "File with a size of {} bytes got created successfully!", data->data[8], (*user)->colData.defaultTextColor);
+                else
+                    LogError("File Creation failed! Error: \"{}\"", fb, window);
+            }
+            else
+                LogError("Path is invalid!", window);
+
+        }
         else
             LogInvalidArgumentCount(1, data->len-1, window);
         
