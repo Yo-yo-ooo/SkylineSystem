@@ -11,7 +11,10 @@ Window::Window(DefaultInstance* instance, Size size, Position position, const ch
     OnClose = NULL;
     OnResize = NULL;
     OnCloseHelp = NULL;
+    OnPartRender = NULL;
     OnResizeHelp = NULL;
+    OnPartRenderHelp = NULL;
+    RenderWhenHidden = false;
     this->instance = instance;
     this->position = position;
     this->size = size;
@@ -162,6 +165,17 @@ void Window::BlitBackbuffer()
         fb++;
         bb++;
     }
+}
+
+void Window::RenderStuff()
+{
+    AddToStack();
+    if (OnPartRender != NULL && (RenderWhenHidden || !hidden))
+    {
+        OnPartRender(OnPartRenderHelp, this);
+    }
+
+    RemoveFromStack();
 }
 
 void Window::Render(Framebuffer* from, Framebuffer* to, Position pos, Size size, Window* window)

@@ -14,6 +14,8 @@ namespace GuiComponentStuff
         mouseClickedCallBack = NULL;
         keyHitCallBack = NULL;
         componentType = ComponentType::BUTTON;
+        OnMouseClickedCallBack = NULL;
+        OnMouseClickHelp = NULL;
 
         this->textColDef = textColDef;
         this->textColHover = textColHover;
@@ -46,6 +48,8 @@ namespace GuiComponentStuff
     {
         if (mouseClickedCallBack != NULL)
             mouseClickedCallBack(this, info);
+        if (OnMouseClickedCallBack != NULL)
+            OnMouseClickedCallBack(OnMouseClickHelp, this, info);
     }
 
     void ButtonComponent::KeyHit(KeyHitEventInfo info)

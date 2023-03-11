@@ -117,6 +117,10 @@ class Window
 
     void* OnResizeHelp;
     void (*OnResize)(void* bruh, Window* window);
+    bool RenderWhenHidden = false;
+    void* OnPartRenderHelp;
+    void (*OnPartRender)(void* bruh, Window* window);
+    void RenderStuff();
 
     Position GetMousePosRelativeToWindow();
 
