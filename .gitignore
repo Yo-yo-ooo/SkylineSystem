@@ -1,3 +1,5 @@
 *.iso
 *.o
 *.out
+*.elf
+*.iso
