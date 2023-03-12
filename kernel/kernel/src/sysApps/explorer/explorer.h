@@ -15,8 +15,9 @@ namespace SysApps
         GuiComponentStuff::BaseComponent* lastClickedComp;
         GuiComponentStuff::BoxComponent* fileListComp;
         GuiComponentStuff::TextFieldComponent* pathComp;
-        List<void*> compsYes;
-        List<const char*> pathsYes;
+        GuiComponentStuff::ButtonComponent* goUpBtn;
+        List<void*> compsYes = List<void*>(4);
+        List<const char*> pathsYes = List<const char*>(4);
         
         const char* path;
         int ScrollY;
@@ -37,8 +38,11 @@ namespace SysApps
 
         void OnFolderClick(GuiComponentStuff::ButtonComponent* btn, GuiComponentStuff::MouseClickEventInfo info);
         void OnFileClick(GuiComponentStuff::ButtonComponent* btn, GuiComponentStuff::MouseClickEventInfo info);
+        void OnDriveClick(GuiComponentStuff::ButtonComponent* btn, GuiComponentStuff::MouseClickEventInfo info);
+        void OnGoUpClick(GuiComponentStuff::ButtonComponent* btn, GuiComponentStuff::MouseClickEventInfo info);
 
         void Free();
+        void ClearLists();
     };
 
 

@@ -18,5 +18,3 @@ char* StrReplaceStartingStuffWith(const char* og, const char* toReplace, const c
 uint64_t StrCountChr(const char* og, char chr);
 
 int32_t StrLen(const char* og);
-
-char* StrCat(char *dst, const char *src);

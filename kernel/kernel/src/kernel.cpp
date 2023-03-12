@@ -108,7 +108,7 @@ void TestKeyHandler(GuiComponentStuff::BaseComponent* btn, GuiComponentStuff::Ke
 
 void RenderLoop()
 {
-    osData.windowPointerThing->Clear();
+    osData.windowPointerThing->Clear(true);
     osData.windowPointerThing->RenderWindows();
     bool updateBorder = true;
     bool bgm = osData.drawBackground;
@@ -405,6 +405,7 @@ void RenderLoop()
         }
         RemoveFromStack();
 
+
         {
             uint64_t tS = PIT::TimeSinceBootMicroS();
             AddToStack();
@@ -614,7 +615,7 @@ void RenderLoop()
                 msgWindow->renderer->Clear(Colors.black);
                 //GlobalRenderer->Println("BRUH 5.2", Colors.yellow);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
-                msgWindow->renderer->Println("WARNING: SkylineSystem just had a fatal but somewhat recoverable crash", Colors.bred);
+                msgWindow->renderer->Println("WARNING: MaslOS just had a fatal but somewhat recoverable crash", Colors.bred);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
                 msgWindow->renderer->Println();
                 //GlobalRenderer->Println("BRUH 5.3", Colors.yellow);
@@ -753,6 +754,8 @@ void boot(BootInfo* bootInfo)
     //
     //while(true);
     osData.booting = true;
+
+    PrintAll = true;
     KernelInfo kernelInfo = InitializeKernel(bootInfo);
     PageTableManager* pageTableManager = kernelInfo.pageTableManager;
     //AddToStack();
@@ -769,7 +772,8 @@ void boot(BootInfo* bootInfo)
     osData.drawBackground = true;
     keyboardWeird = false;
     
-    
+
+    //while(true);
     GlobalRenderer->Clear(Colors.black);
 
     {

@@ -11,11 +11,11 @@ namespace GuiComponentStuff
 {
     ButtonComponent::ButtonComponent(const char* text, uint32_t textColDef, uint32_t textColHover, uint32_t textColClick, uint32_t bgColDef, uint32_t bgColHover, uint32_t bgColClick, ComponentSize size, Position position, BaseComponent* parent)
     {
+        OnMouseClickedCallBack = NULL;
+        OnMouseClickHelp = NULL;
         mouseClickedCallBack = NULL;
         keyHitCallBack = NULL;
         componentType = ComponentType::BUTTON;
-        OnMouseClickedCallBack = NULL;
-        OnMouseClickHelp = NULL;
 
         this->textColDef = textColDef;
         this->textColHover = textColHover;

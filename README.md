@@ -1,16 +1,18 @@
-# SkyklineSystem
+# MaslOS
 an OS written in C++ and a bit of C.
-and based onMaslOS.
 The base was made following [Ponchos OS Dev Youtube Playlist](https://www.youtube.com/playlist?list=PLxN4E629pPnJxCQCLy7E0SQY_zuumOVyZ)
 The OS is now using [limine](https://github.com/limine-bootloader/limine) as the bootloader.
 
 Here's the [Hackaday Page](https://hackaday.io/project/189063-maslos) for MaslOS.
+Here's the [MaslOS Subreddit](https://www.reddit.com/r/maslos/).
 
+Here is the [Wiki](https://github.com/marceldobehere/MaslOS/wiki).
 Here are the [Terminal Commands](https://github.com/marceldobehere/MaslOS/wiki/Terminal).
+
 
 ## Features
 * Display
-  - VGA Output with GOP
+  - VGA Output
 * Desktop
   - Background Image
   - Taskbar
@@ -98,13 +100,13 @@ install NASM if you haven't.
 (make sure mtools is on version 4.0.27 or lower. newer versions aren't working just yet)
 
 
-Go into the SkylineSystem Folder and run the `RUN.sh` file
+Go into the MaslOS Folder and run the `RUN.sh` file
 
 
 
 ## Screenshots
 
-![The SkylineSystem Splashscreen](/images/boot.PNG "The MaslOS Splashscreen")
+![The MaslOS Splashscreen](/images/boot.PNG "The MaslOS Splashscreen")
 ![The Desktop with some windows open](/images/desktop.PNG "The Desktop with some windows open")
 ![Experimental Raytracer Demo](/images/raycaster%20demo.png "An experimental Raytracer Demo")
 ![Test Explorer Gif](/images/explorer%20test%201.gif "Test Explorer Gif")

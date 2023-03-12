@@ -12,10 +12,3 @@ void* operator new(size_t size) {
     _X__line__ = 0;
     return ptr;
 }
-
-void operator delete(void *ptr) {
-    _Yfree(ptr, _X__func__,_X__file__,_X__line__);
-    _X__file__ = "unknown";
-    _X__func__ = "unknown";
-    _X__line__ = 0;
-}
