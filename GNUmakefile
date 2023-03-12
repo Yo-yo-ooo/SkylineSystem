@@ -75,3 +75,6 @@ clean:
 distclean: clean
 	rm -rf limine ovmf-x64
 	$(MAKE) -C kernel distclean
+
+ca:
+	make clean && make run -j$(nproc)
