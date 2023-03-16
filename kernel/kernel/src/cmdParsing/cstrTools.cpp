@@ -132,6 +132,51 @@ char* StrCombine(const char* a, const char* b)
     return tempStr;
 }
 
+char* StrCombine(const char* a, const char* b, const char* c)
+{
+    int lenA = StrLen(a);
+    int lenB = StrLen(b);
+    int lenC = StrLen(c);
+    
+    int totalLen = lenA + lenB + lenC;
+    char* tempStr = (char*) _Malloc(totalLen + 1, "Malloc for Combined String");
+    tempStr[totalLen] = 0;
+
+    for (int i = 0; i < lenA; i++)
+        tempStr[i] = a[i];
+    for (int i = 0; i < lenB; i++)
+        tempStr[i + lenA] = b[i];
+    for (int i = 0; i < lenC; i++)
+        tempStr[i + lenA + lenB] = c[i];
+
+    return tempStr;
+}
+
+char* StrCombine(const char* a, const char* b, const char* c, const char* d)
+{
+    int lenA = StrLen(a);
+    int lenB = StrLen(b);
+    int lenC = StrLen(c);
+    int lenD = StrLen(d);
+    
+    int totalLen = lenA + lenB + lenC + lenD;
+    char* tempStr = (char*) _Malloc(totalLen + 1, "Malloc for Combined String");
+    tempStr[totalLen] = 0;
+
+    for (int i = 0; i < lenA; i++)
+        tempStr[i] = a[i];
+    for (int i = 0; i < lenB; i++)
+        tempStr[i + lenA] = b[i];
+    for (int i = 0; i < lenC; i++)
+        tempStr[i + lenA + lenB] = c[i];
+    for (int i = 0; i < lenD; i++)
+        tempStr[i + lenA + lenB + lenC] = d[i];
+
+    return tempStr;
+}
+
+
+
 uint64_t StrCountChr(const char* og, char chr)
 {
     uint64_t count = 0;
@@ -156,4 +201,42 @@ char* StrReplaceStartingStuffWith(const char* og, const char* toReplace, const c
     char* combined = StrCombine(toReplaceWith, subStr);
     _Free(subStr);
     return combined;
+}
+
+int32_t StrIndexOf(const char* str, char chr)
+{
+    for (int i = 0; str[i] != 0; i++)
+        if (str[i] == chr)
+            return i;
+    return -1;
+}
+
+int32_t StrLastIndexOf(const char* str, char chr)
+{
+    int lastI = -1;
+        for (int i = 0; str[i] != 0; i++)
+        if (str[i] == chr)
+            lastI = i;
+    return lastI;
+}
+
+
+int32_t StrIndexOf(const char* str, char chr, int ignoreCount)
+{
+    for (int i = 0; str[i] != 0; i++)
+        if (str[i] == chr)
+            if (--ignoreCount < 0)
+                return i;
+    return -1;
+}
+
+int32_t StrLastIndexOf(const char* str, char chr, int ignoreCount)
+{
+    int len = StrLen(str);
+
+    for (int i = len-1; i >= 0; i--)
+        if (str[i] == chr)
+            if (--ignoreCount < 0)
+                return i;
+    return -1;
 }
