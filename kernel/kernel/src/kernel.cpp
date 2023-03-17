@@ -894,7 +894,7 @@ void boot(BootInfo* bootInfo)
         Window* window = (Window*)_Malloc(sizeof(Window), "GUI Window");
         GuiInstance* gui = (GuiInstance*)_Malloc(sizeof(GuiInstance), "GUI Instance");
         *gui = GuiInstance(window);
-        *(window) = Window((DefaultInstance*)gui, Size(50, 50), Position(500, 100), "Testing GUI Window", true, true, true);
+        *(window) = Window((DefaultInstance*)gui, Size(50, 50), Position(500, 100), "GUI Window", true, true, true);
         osData.windows.add(window);
         window->hidden = true;
         gui->Init();

@@ -46,7 +46,7 @@ void PrepareACPI(BootInfo* bootInfo)
         else
         {
             //GlobalRenderer->Clear(Colors.black);
-            PrintMsg("> Testing ACPI Loader...");
+            PrintMsg("> ACPI Loader...");
 
             InitAcpiShutdownThing(rootThing);
             //while (true);
