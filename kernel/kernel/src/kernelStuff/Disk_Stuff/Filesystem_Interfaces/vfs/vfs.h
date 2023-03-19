@@ -24,7 +24,7 @@ struct vfs_info{
     struct vfs_node* fsnode[100];
 };
 
-struct vfs_info* info;
+static struct vfs_info* info;
 
 void vfs_init(struct vfs_info* infoo);
 void vfs_signfilesystem(struct vfs_node* node,const char* fsname);
