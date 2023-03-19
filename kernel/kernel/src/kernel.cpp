@@ -195,7 +195,7 @@ void RenderLoop()
         
 
 
-        ProcessMousePackets();
+        //ProcessMousePackets();
         HandleKeyboardList(20);
 
       
@@ -410,11 +410,29 @@ void RenderLoop()
             uint64_t tS = PIT::TimeSinceBootMicroS();
             AddToStack();
             Taskbar::RenderTaskbar();
-            MPoint mPos = MousePosition;
-            DrawMousePointer2(osData.windowPointerThing->virtualScreenBuffer, mPos);
+
+            // Handle mouse
+            AddToStack();
+            ProcessMousePackets();
+            RemoveFromStack();
+
+            // Draw Mouse
+            AddToStack();
+            MPoint mPosOld = MousePosition;
+            DrawMousePointer2(osData.windowPointerThing->virtualScreenBuffer, mPosOld);
+            RemoveFromStack();
+
+            // Render Screen
+            AddToStack();
             osData.windowPointerThing->fps = fps;
             osData.windowPointerThing->Render();
-            osData.windowPointerThing->UpdatePointerRect(mPos.x - 32, mPos.y - 32, mPos.x + 32, mPos.y + 32);
+            RemoveFromStack();
+
+            // Remove Mouse
+            AddToStack();
+            osData.windowPointerThing->UpdatePointerRect(mPosOld.x - 10, mPosOld.y - 10, mPosOld.x + 40, mPosOld.y + 40);
+            RemoveFromStack();
+
             osStats.totalRenderTime = PIT::TimeSinceBootMicroS() - tS;
             RemoveFromStack();
         }
@@ -894,7 +912,7 @@ void boot(BootInfo* bootInfo)
         Window* window = (Window*)_Malloc(sizeof(Window), "GUI Window");
         GuiInstance* gui = (GuiInstance*)_Malloc(sizeof(GuiInstance), "GUI Instance");
         *gui = GuiInstance(window);
-        *(window) = Window((DefaultInstance*)gui, Size(50, 50), Position(500, 100), "GUI Window", true, true, true);
+        *(window) = Window((DefaultInstance*)gui, Size(50, 50), Position(500, 100), "Testing GUI Window", true, true, true);
         osData.windows.add(window);
         window->hidden = true;
         gui->Init();

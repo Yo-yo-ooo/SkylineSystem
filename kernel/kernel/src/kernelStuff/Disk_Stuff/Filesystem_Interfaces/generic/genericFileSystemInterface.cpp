@@ -3,6 +3,7 @@
 #include "../../../../memory/heap.h"
 #include "../../../../cmdParsing/cstrTools.h"
 #include "../../../../OSDATA/osdata.h"
+#include "../vfs/vfs.h"
 
 namespace FilesystemInterface
 {
