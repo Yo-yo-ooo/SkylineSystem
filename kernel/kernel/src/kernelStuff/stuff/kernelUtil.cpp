@@ -46,7 +46,7 @@ void PrepareACPI(BootInfo* bootInfo)
         else
         {
             //GlobalRenderer->Clear(Colors.black);
-            PrintMsg("> ACPI Loader...");
+            PrintMsg("> Testing ACPI Loader...");
 
             InitAcpiShutdownThing(rootThing);
             //while (true);
@@ -231,21 +231,17 @@ void PrepareMemory(BootInfo* bootInfo)
 
 
 /*
-
     for (uint64_t i = (uint64_t)bootInfo->kernelStart; i < (uint64_t)bootInfo->kernelStart + bootInfo->kernelSize; i+=0x1000)
        GlobalPageTableManager.MapMemory((void*)i, (void*)i);
-
     for (uint64_t i = (uint64_t)bootInfo->m2MapStart; i < (uint64_t)bootInfo->mMapStart + bootInfo->mMapSize + 0x1000; i+=0x1000)
        GlobalPageTableManager.MapMemory((void*)i, (void*)i);
     
-
     uint64_t fbBase = (uint64_t)bootInfo->framebuffer->BaseAddress;
     uint64_t fbSize = (uint64_t)bootInfo->framebuffer->BufferSize;
     //GlobalAllocator->LockPages((void*)rFB, fbSize / 0x1000);
     
     for (uint64_t i = fbBase; i < fbBase + fbSize  + 0x1000; i+=4096)
         GlobalPageTableManager.MapMemory((void*)i, (void*)i);
-
 */
 
     // for (int i = 0; i < 20; i++)
@@ -286,36 +282,26 @@ void PrepareMemory(BootInfo* bootInfo)
     //         GlobalPageTableManager.MapMemory((void*)i, (void*)i);
     //         //GlobalPageTableManager.MapMemory((void*)i, (void*)earlyVirtualToPhysicalAddr((void*)i));
     // }
-
     
     //while(true);
-
-
     for (uint64_t i = (uint64_t)bootInfo->mMapStart - ((uint64_t)bootInfo->mMapStart) % 0x1000; i < (uint64_t)bootInfo->mMapStart + bootInfo->mMapSize; i+=0x1000)
         GlobalPageTableManager.MapMemory((void*)i, (void*)i);
-
     //while(true);
     
     
     uint64_t fbBase = (uint64_t)bootInfo->framebuffer->BaseAddress;
     uint64_t fbSize = (uint64_t)bootInfo->framebuffer->BufferSize + 0x1000;
     //GlobalAllocator->LockPages((void*)earlyVirtualToPhysicalAddr((void*)fbBase), fbSize / 0x1000);
-
-
     for (uint64_t i = fbBase; i < fbBase + fbSize; i+=4096)
         GlobalPageTableManager.MapMemory((void*)i, (void*)i);
-
     //while(true);
-
     //asm("mov %0, %%cr3" : : "r" (PML4) );
-
     kernelInfo.pageTableManager = &GlobalPageTableManager;
-
     while(true);
     */
 }
 
-uint8_t testIdtrArr[0x2000];
+uint8_t testIdtrArr[0x1000];
 IDTR idtr;
 
 void SetIDTGate(void* handler, uint8_t entryOffset, uint8_t type_attr, uint8_t selector)
@@ -328,13 +314,16 @@ void SetIDTGate(void* handler, uint8_t entryOffset, uint8_t type_attr, uint8_t s
 
 void PrepareInterrupts()
 {  
-    idtr.Limit = 0x2000 - 1;
+    idtr.Limit = 0x1000 - 1;
 
-    for (int i = 0; i < 0x2000; i++)
+    for (int i = 0; i < 0x1000; i++)
         testIdtrArr[i] = 0;
 
     idtr.Offset = (uint64_t)testIdtrArr;//(uint64_t)GlobalAllocator->RequestPage();
 
+    // GenericInt_handler
+    for (int i = 0; i < (0x1000 / sizeof(IDTDescEntry)); i++)
+        SetIDTGate((void*)GenericInt_handler, i, IDT_TA_InterruptGate, 0x08);
 
     SetIDTGate((void*)PageFault_handler, 0xE, IDT_TA_InterruptGate, 0x08);
     SetIDTGate((void*)DoubleFault_handler, 0x8, IDT_TA_InterruptGate, 0x08);
@@ -438,7 +427,7 @@ void PrepareWindows(Framebuffer* img)
 
         debugTerminalWindow->renderer->Clear(Colors.black);
         //KeyboardPrintStart(debugTerminalWindow);
-        debugTerminalWindow->renderer->Println("SkylineSystem - Debug Terminal (OUTPUT ONLY)", Colors.green);
+        debugTerminalWindow->renderer->Println("MaslOS - Debug Terminal (OUTPUT ONLY)", Colors.green);
         debugTerminalWindow->renderer->Println("-------------------------------------\n", Colors.green);
         debugTerminalWindow->renderer->color = Colors.yellow;
     }
@@ -472,7 +461,7 @@ void enable_fpu()
 
 void StartMenuButtonClick(GuiComponentStuff::BaseComponent* comp, GuiComponentStuff::MouseClickEventInfo info)
 {
-    if (comp->id >= 1001 && comp->id <= 1006)
+    if (comp->id >= 1001 && comp->id <= 1005)
     {
         // PONG
         const char* BLEHUS_TITLE = "App Terminal Window";
@@ -511,10 +500,7 @@ void StartMenuButtonClick(GuiComponentStuff::BaseComponent* comp, GuiComponentSt
             BLEHUS_CMD   = "taskmgr";
         }
 
-        if(comp->id == 1006){
-            BLEHUS_TITLE = "Explorer Window";
-            BLEHUS_CMD = "explorer";
-        }
+
 
         Window* oldActive = activeWindow;
         Window* mainWindow = (Window*)_Malloc(sizeof(Window), "App Window");
@@ -651,19 +637,6 @@ void InitStartMenuWindow(BootInfo* bootInfo)
             );
             btn->mouseClickedCallBack = StartMenuButtonClick;
             btn->id = 1005;
-            
-            testGui->screen->children->add(btn);
-        }
-
-        {
-            GuiComponentStuff::ButtonComponent* btn = new GuiComponentStuff::ButtonComponent("Explorer", 
-            Colors.bgray, Colors.yellow, Colors.black, 
-            Colors.black, Colors.black, Colors.white,
-            GuiComponentStuff::ComponentSize(104, 20),
-            GuiComponentStuff::Position(0, 140), testGui->screen
-            );
-            btn->mouseClickedCallBack = StartMenuButtonClick;
-            btn->id = 1006;
             
             testGui->screen->children->add(btn);
         }
@@ -946,4 +919,3 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     RemoveFromStack();
     return kernelInfo;
 }
-

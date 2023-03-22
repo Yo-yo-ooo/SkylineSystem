@@ -31,6 +31,7 @@ bool oldKeyboardWeird = false;
 
 void IO_CHECK()
 {
+    keyboardWeird = true;
     uint8_t t = inb(0x64);
     if (t == 0x1C)
         return;
@@ -42,7 +43,7 @@ void IO_CHECK()
     if (port64Val == 0x1D || port64Val == 0x15)
     {
         port64Val = inb(0x60);
-        keyboardWeird = true;
+        //keyboardWeird = true;
         
         uint8_t real = port64Val;//TranslateScancode2(port64Val);
         //HandleKeyboard(real);
@@ -430,7 +431,7 @@ void RenderLoop()
 
             // Remove Mouse
             AddToStack();
-            osData.windowPointerThing->UpdatePointerRect(mPosOld.x - 10, mPosOld.y - 10, mPosOld.x + 40, mPosOld.y + 40);
+            osData.windowPointerThing->UpdatePointerRect(mPosOld.x - 32, mPosOld.y - 32, mPosOld.x + 64, mPosOld.y + 64);
             RemoveFromStack();
 
             osStats.totalRenderTime = PIT::TimeSinceBootMicroS() - tS;
@@ -767,6 +768,7 @@ void boot(BootInfo* bootInfo)
         MStackData::stackArr[i] = MStack();
 
     osData.enableStackTrace = RECORD_STACK_TRACE;
+    MStackData::BenchmarkEnabled = true;
     AddToStack();
     osData.crashCount = 0;
     //
@@ -1089,6 +1091,9 @@ void boot(BootInfo* bootInfo)
 
     osData.wantedFps = 150;
     osData.bgTaskRun = true;
+    MStackData::BenchmarkStackPointer1 = 0;
+    MStackData::BenchmarkStackPointer2 = 0;
+    MStackData::BenchmarkStackPointerSave = 0;
     RenderLoop();
 
 

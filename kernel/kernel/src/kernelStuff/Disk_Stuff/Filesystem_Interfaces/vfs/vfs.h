@@ -13,18 +13,15 @@ struct VitualFileSystemOPS{
     int (*unmount)(char* mount_point);
 };
 
-struct vfs_node {
-    struct VitualFileSystemOPS* ops;
-    void* private_data;
-};
+#define VFS_MAX 100
 
 struct vfs_info{
     int fslistc;
-    char* fsnl[100];
-    struct vfs_node* fsnode[100];
+    const char* fsnl[VFS_MAX];
+    struct VitualFileSystemOPS* ops[VFS_MAX];
 };
 
 static struct vfs_info* info;
 
 void vfs_init(struct vfs_info* infoo);
-void vfs_signfilesystem(struct vfs_node* node,const char* fsname);
+void vfs_signfilesystem(struct VitualFileSystemOPS* opss,const char* fsname);

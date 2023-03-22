@@ -73,7 +73,6 @@ void Println(Window* window)
 {
     window->renderer->Println();
 }
-
 void Print(Window* window, const char* msg)
 {
     window->renderer->Print(msg);
@@ -102,9 +101,7 @@ void Print(Window* window, const char *chrs, dispVar vars[], uint32_t col)
 {
     uint64_t tempcol = window->renderer->color;
     window->renderer->color = col;
-
     Print(window, chrs, vars);
-
     window->renderer->color = tempcol;
 }
 */
@@ -242,6 +239,12 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     if (StrEquals(input, "cls"))
     {
         ((TerminalInstance*)window->instance)->Cls();
+        RemoveFromStack();
+        return;
+    }
+    if (StrEquals(input, "benchmark reset") || StrEquals(input, "bench res"))
+    {
+        MStackData::BenchmarkStackPointerSave = 0;
         RemoveFromStack();
         return;
     }
@@ -501,38 +504,6 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         else
             LogInvalidArgumentCount(1, data->len-1, window);
         
-        _Free(data);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0], "mkdir")){
-        FilesystemInterface::GenericFilesystemInterface *fs = 
-                            FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
-        if(fs != NULL){
-            const char* res = fs->CreateFolder(
-                StrSubstr(data->data[1],StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[1]))+1));
-            if (res == FilesystemInterface::FSCommandResult.SUCCESS)
-                Println(window, "Folder Creation Success!");
-            else
-                LogError("Folder Creation failed! Error: \"{}\"", res, window);
-        }
-        _Free(data);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0], "mkfile")){
-        FilesystemInterface::GenericFilesystemInterface *fs = 
-                            FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
-        if(fs != NULL){
-            const char* res = fs->CreateFile(
-                StrSubstr(data->data[1],StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[1]))+1));
-            if (res == FilesystemInterface::FSCommandResult.SUCCESS)
-                Println(window, "File Creation Success!");
-            else
-                LogError("File Creation failed! Error: \"{}\"", res, window);
-        }
         _Free(data);
         RemoveFromStack();
         return;
@@ -1975,18 +1946,31 @@ void GetCmd(const char* name, OSUser* user, Window* window)
             for (int x = 0; x < MStackData::BenchmarkStackArrSave[i].layer; x++)
                 Print(window, "--", Colors.yellow);
 
-            if (MStackData::BenchmarkStackArrSave[i].close)
-                Print(window, "< {}: ", to_string(i), Colors.yellow);
+            bool skipNext = false;
+            if (i  + 1 < bMax && !MStackData::BenchmarkStackArrSave[i].close && MStackData::BenchmarkStackArrSave[i + 1].close && 
+                StrEquals(MStackData::BenchmarkStackArrSave[i].name, MStackData::BenchmarkStackArrSave[i + 1].name))
+            {
+                Print(window, "o {}: ", to_string(i), Colors.yellow);
+                skipNext = true;
+            }
             else
-                Print(window, "> {}: ", to_string(i), Colors.yellow);
+            {
+                if (MStackData::BenchmarkStackArrSave[i].close)
+                    Print(window, "< {}: ", to_string(i), Colors.yellow);
+                else
+                    Print(window, "> {}: ", to_string(i), Colors.yellow);
+            }
             
-            Print(window, "L: {}, ", to_string(MStackData::BenchmarkStackArrSave[i].layer), Colors.bgreen);
-            Print(window, ", Name: {}, ", MStackData::BenchmarkStackArrSave[i].name, Colors.yellow);
+            Print(window, "L: {}", to_string(MStackData::BenchmarkStackArrSave[i].layer), Colors.bgreen);
+            Print(window, ", Name: {}", MStackData::BenchmarkStackArrSave[i].name, Colors.yellow);
             Print(window, ", File {}", MStackData::BenchmarkStackArrSave[i].filename, Colors.orange);
             Print(window, ", Line {}", to_string(MStackData::BenchmarkStackArrSave[i].line), Colors.orange);
             Print(window, ", Time {}", to_string(MStackData::BenchmarkStackArrSave[i].time), Colors.orange);
 
             Println(window);
+
+            if (skipNext)
+                i++;
         }
 
 
@@ -2328,13 +2312,9 @@ ParsedColData ParseColor(const char* col)
     //Println("Free: {} Bytes.", to_string(GlobalAllocator->GetFreeRAM()), Colors.pink);
     StringArrData* data = SplitLine(input);
     //Println("Free: {} Bytes.", to_string(GlobalAllocator->GetFreeRAM()), Colors.pink);
-
-
     Println("Parts:");
     for (int i = 0; i < data->len; i++)
         Println(" - \"{}\"", data->data[i], Colors.bgreen);
-
-
     //free(splitLine);
     GlobalAllocator->FreePage(data);
     //Println("Free: {} Bytes.", to_string(GlobalAllocator->GetFreeRAM()), Colors.pink);

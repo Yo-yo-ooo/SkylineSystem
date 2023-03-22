@@ -63,6 +63,12 @@ void** search(void** addr, void* value)
 //asm volatile("mov %0, 8(%%rbp)" : "r"((void*)BruhusSafus) : : );
 
 
+__attribute__((interrupt)) void GenericInt_handler(interrupt_frame* frame)
+{
+    
+}
+
+
 __attribute__((interrupt)) void PageFault_handler(interrupt_frame* frame)//, uint64_t error)
 {
     AddToStack();
@@ -190,16 +196,44 @@ __attribute__((interrupt)) void KeyboardInt_handler(interrupt_frame* frame)
     RemoveFromStack();
 }
 
+#define MOUSE_PORT   0x60
+#define MOUSE_STATUS 0x64
+#define MOUSE_ABIT   0x02
+#define MOUSE_BBIT   0x01
+#define MOUSE_WRITE  0xD4
+#define MOUSE_F_BIT  0x20
+#define MOUSE_V_BIT  0x08
+// https://github.com/stevej/osdev/blob/master/kernel/devices/mouse.c
+
+
 __attribute__((interrupt)) void MouseInt_handler(interrupt_frame* frame)
 { 
     AddToStack();
-    osStats.lastMouseCall = PIT::TimeSinceBootMS();
-    uint8_t mousedata = inb(0x60);
-    
+    //osStats.lastMouseCall = PIT::TimeSinceBootMS();
+    //io_wait();
+    //Mousewait();
 
-    HandlePS2Mouse(mousedata);
+	uint8_t status = inb(MOUSE_STATUS);
+	while (status & MOUSE_BBIT) 
+    {
+        int8_t mouse_in = inb(MOUSE_PORT);
+		if (status & MOUSE_F_BIT)
+        {
+            HandlePS2Mouse(mouse_in);
+        }
+        status = inb(MOUSE_STATUS);
+    }
+
+
+    //uint8_t mousedata = inb(0x60);
+    //PIC_EndSlave();
+    Mousewait();
+    //io_wait();
+    
+    //HandlePS2Mouse(mousedata);
 
     PIC_EndSlave();
+    //PIC_EndMaster();
     RemoveFromStack();
 }
 
@@ -360,6 +394,7 @@ void RemapPIC(uint8_t _a1, uint8_t _a2)
 void PIC_EndMaster()
 {
     AddToStack();
+    io_wait();
     outb(PIC1_COMMAND, PIC_EOI);
     io_wait();
     RemoveFromStack();
@@ -369,12 +404,12 @@ void PIC_EndMaster()
 void PIC_EndSlave()
 {
     AddToStack();
-    outb(PIC2_COMMAND, PIC_EOI);
     io_wait();
     outb(PIC1_COMMAND, PIC_EOI);
     io_wait();
+    outb(PIC2_COMMAND, PIC_EOI);
+    io_wait();
     RemoveFromStack();
 }
-
 
 
