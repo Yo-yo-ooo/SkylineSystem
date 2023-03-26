@@ -5,24 +5,30 @@
 #include "../../../memory/memory.h"
 
 #define align8(x) (((((x)-1)>>3)<<3)+8)
-
-char *fgets(char *s, int n,  FILE *stream)
+#define strcmp(a,b) StrEquals(a,b)
+char* strcpy(char *strDest, const char* strSrc)
 {
-   register int c;
-   register char *cs;
-   cs = s;
-
-   while(--n > 0 && (c = getc(stream)) != EOF)
-   {
-      if((*cs++ =   c) == '\n')
-      {
-         break;
-      }
-   }
-
-   *cs = '\0';
-   return (c == EOF && cs == s) ? NULL : s ;
+    char *p=NULL;
+    if(strDest == NULL || strSrc == NULL)
+    {
+        return NULL;
+    }
+    p = strDest;
+    while((*strDest++ = *strSrc ++) != '\0');
+    return p;
 }
+
+char* strcat(char *dst, const char *src)
+{
+    //assert(dst != NULL && src != NULL);
+    char *temp = dst;
+    while (*temp != '\0')
+        temp++;
+    while ((*temp++ = *src++) != '\0');
+
+    return dst;
+}
+
 
 void *calloc(size_t number, size_t size) {
     size_t *news;
@@ -186,7 +192,7 @@ int AllocSector(uint32_t sz)
         }
     }
     int ret = secRecord[0];
-    free(secRecord);
+    _Free(secRecord);
     return ret;
 }
 
@@ -299,7 +305,7 @@ int ReadFp(char *path, FileDescriptor *fp)
         i++;
     }
     memcpy(fp, &tmpFp, sizeof(FileDescriptor));
-    free(tmpBuf);
+    _Free(tmpBuf);
     return 0;
 }
 
@@ -362,7 +368,7 @@ int WriteFp(char *path, FileDescriptor *fp)
     }
     memcpy(tmpBuf + ret, fp, sizeof(FileDescriptor));
     WriteData(tmpBuf, tmpBufSz, &tmpFp);
-    free(tmpBuf);
+    _Free(tmpBuf);
     return 0;
 }
 
@@ -419,7 +425,7 @@ void WriteNewEntry(FileDescriptor *faFp, FileDescriptor *fp, int *newClus)
         disk.FAT1[lastClus / 2].secondEntry = (*newClus & 0xFFF);
         disk.FAT2[lastClus / 2].secondEntry = (*newClus & 0xFFF);
     }
-    free(buf);
+    _Free(buf);
     return;
 }
 
@@ -471,7 +477,7 @@ int CreateFile(char *fatherPath, char fileName[8], char fileType[3], uint8_t fil
     // step4:设置faFp的修改时间，并将其写回
     SetTime(&fatherFp);
     WriteFp(fatherPath, &fatherFp);
-    free(buf);
+    _Free(buf);
     return 0;
 }
 
@@ -613,7 +619,7 @@ void WriteData(char *buf, int bufSz, FileDescriptor *fp)
         tmpClus = (tmpClus % 2 == 0) ? disk.FAT1[tmpClus / 2].firstEntry : disk.FAT1[tmpClus / 2].secondEntry;
         i += SECTOR_SIZE;
     } while ((tmpClus & 0xFFF) != 0xFFF);
-    free(clusRecord);
+    _Free(clusRecord);
 }
 
 //根据名字读取对应的根目录，成功返回0，失败返回-1
@@ -670,7 +676,7 @@ int MatchDict(char *fileName, char *buf, int bufSz, FileDescriptor *fp)
             return i;
         }
         i += sizeof(FileDescriptor);
-        free(fullName);
+        _Free(fullName);
     }
     return -1;
 }
@@ -732,7 +738,7 @@ void RemoveFp(FileDescriptor *fp)
             idx += sizeof(FileDescriptor);
         }
         ClearClus(fp->DIR_FstClus);
-        free(buf);
+        _Free(buf);
     }
 }
 
@@ -761,7 +767,7 @@ int RemoveFile(char *fatherPath, char *fileName)
     int ret = MatchDict(fileName, buf, bufSz, &rmFp);
     if (ret == -1)
     {
-        printf("No such file or directory.\n");
+        //printf("No such file or directory.\n");
         return -1;
     }
 
@@ -772,7 +778,7 @@ int RemoveFile(char *fatherPath, char *fileName)
     memset(buf + ret, 0, sizeof(FileDescriptor));
 
     WriteData(buf, bufSz, &fatherFp);
-    free(buf);
+    _Free(buf);
     return 0;
 }
 //进一步的封装，读取文件内容
@@ -804,7 +810,7 @@ int WriteFile(char *path, char *buf, int bufSz)
 }
 
 int fat12_mkdir(char* pathname){
-    int lenpath = Strlen(pathname);
+    int lenpath = StrLen(pathname);
 
     if (lenpath <= 0)
     {
@@ -824,9 +830,3 @@ int fat12_mkdir(char* pathname){
     return CreateFile("/",pathname, "",DIRECTORY_TYPE,512);
 }
 
-VitualFileSystemOPS *ops = {
-    VFS_REG(mkdir,fat12_mkdir),
-    VFS_REG(open,NULL),
-    VFS_REG(close,NULL),
-    
-}
