@@ -34,7 +34,7 @@ void PrepBootScreen()
     GlobalRenderer->CursorPosition.y = menuBarPosY - 30;
     GlobalRenderer->CursorPosition.x = GlobalRenderer->framebuffer->Width / 2 - 
     12 * 8 / 2;
-    GlobalRenderer->Println("MASL OS BOOT", Colors.yellow);
+    GlobalRenderer->Println("SKYLINE BOOT", Colors.yellow);
 
     GlobalRenderer->Clear(
         menuBarPosX - menuborderSize, menuBarPosY - menuborderSize, 
