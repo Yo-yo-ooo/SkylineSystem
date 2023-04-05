@@ -442,6 +442,38 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
+
+    if(StrEquals(data->data[0], "mkdir")){
+        FilesystemInterface::GenericFilesystemInterface *fs = 
+                            FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
+        if(fs != NULL){
+            const char* res = fs->CreateFolder(
+                StrSubstr(data->data[1],StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[1]))+1));
+            if (res == FilesystemInterface::FSCommandResult.SUCCESS)
+                Println(window, "Folder Creation Success!");
+            else
+                LogError("Folder Creation failed! Error: \"{}\"", res, window);
+        }
+        _Free(data);
+        RemoveFromStack();
+        return;
+    }
+
+    if(StrEquals(data->data[0], "mkfile")){
+        FilesystemInterface::GenericFilesystemInterface *fs = 
+                            FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
+        if(fs != NULL){
+            const char* res = fs->CreateFile(
+                StrSubstr(data->data[1],StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[1]))+1));
+            if (res == FilesystemInterface::FSCommandResult.SUCCESS)
+                Println(window, "File Creation Success!");
+            else
+                LogError("File Creation failed! Error: \"{}\"", res, window);
+        }
+        _Free(data);
+        RemoveFromStack();
+        return;
+    }
     
 
     if (StrEquals(data->data[0], "sleep"))
