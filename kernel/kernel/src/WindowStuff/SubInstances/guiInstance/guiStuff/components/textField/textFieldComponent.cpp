@@ -16,6 +16,7 @@ namespace GuiComponentStuff
         keyHitCallBack = NULL;
         mouseClickedCallBack = NULL;
         componentType = ComponentType::TEXTFIELD;
+        updateFields = new List<Field>(5);
 
         this->textCol = textCol;
         this->bgCol= bgCol;
@@ -39,6 +40,9 @@ namespace GuiComponentStuff
 
         mouseClickedCallBack = NULL;
         keyHitCallBack = NULL;
+
+        CheckUpdates();
+        Render(Field(Position(), GetActualComponentSize()));
     }
 
     void TextFieldComponent::MouseClicked(MouseClickEventInfo info)
@@ -59,7 +63,7 @@ namespace GuiComponentStuff
             keyHitCallBack(this, info);
     }
 
-    void TextFieldComponent::Render(Field field)
+    void TextFieldComponent::CheckUpdates()
     {
         AddToStack();
 
@@ -91,6 +95,14 @@ namespace GuiComponentStuff
         textComp->fgColor = textCol;
         rectComp->fillColor = bgCol;
 
+        actualTextFieldStuff->CheckUpdates();
+
+        RemoveFromStack();
+    }
+
+    void TextFieldComponent::Render(Field field)
+    {
+        AddToStack();
         actualTextFieldStuff->Render(field);
         
         RemoveFromStack();
@@ -103,6 +115,8 @@ namespace GuiComponentStuff
             callBackFunc(this);
         actualTextFieldStuff->Destroy(destroyChildren, callBackFunc);
         _Free(actualTextFieldStuff);
+        updateFields->free();
+        _Free(updateFields);
         RemoveFromStack();
     }
 

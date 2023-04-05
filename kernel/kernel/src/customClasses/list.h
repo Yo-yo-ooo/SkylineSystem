@@ -44,6 +44,7 @@ template <typename T> class List
     void removeLast();
     void removeFirst();
     T elementAt(uint64_t index);
+    void set(uint64_t index, T item);
     T& operator[](uint64_t index);
     void clear();
     bool operator==(List<T> other);
@@ -51,6 +52,9 @@ template <typename T> class List
 
 template class Array<int>;
 template class List<int>;
+
+template class Array<bool>;
+template class List<bool>;
 
 template class Array<uint8_t>;
 template class List<uint8_t>;
@@ -110,10 +114,13 @@ template class Array<DiskInterface::GenericDiskInterface*>;
 template class List<DiskInterface::GenericDiskInterface*>;
 
 
-#include "../WindowStuff/SubInstances/guiInstance/guiStuff/components/base/baseComponent.h"
 
-template class Array<GuiComponentStuff::BaseComponent*>;
-template class List<GuiComponentStuff::BaseComponent*>;
+#include "../WindowStuff/SubInstances/guiInstance/guiStuff/generalStuff.h"
+
+template class Array<GuiComponentStuff::Field>;
+template class List<GuiComponentStuff::Field>;
+
+
 
 
 

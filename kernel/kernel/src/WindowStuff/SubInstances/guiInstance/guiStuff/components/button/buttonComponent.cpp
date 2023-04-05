@@ -29,6 +29,8 @@ namespace GuiComponentStuff
         this->parent = parent;
         this->size = size;
 
+        updateFields = new List<Field>(5);
+
         actualButtonStuff = new BoxComponent(parent, size, Colors.tblack);
 
         this->rectComp = new RectangleComponent(bgColDef, size, actualButtonStuff);
@@ -42,6 +44,9 @@ namespace GuiComponentStuff
 
         mouseClickedCallBack = NULL;
         keyHitCallBack = NULL;
+
+        CheckUpdates();
+        Render(Field(Position(), GetActualComponentSize()));
     }
 
     void ButtonComponent::MouseClicked(MouseClickEventInfo info)
@@ -58,7 +63,7 @@ namespace GuiComponentStuff
             keyHitCallBack(this, info);
     }
 
-    void ButtonComponent::Render(Field field)
+    void ButtonComponent::CheckUpdates()
     {
         AddToStack();
         Window* wind = (Window*)GetWindow();
@@ -118,6 +123,15 @@ namespace GuiComponentStuff
             rectComp->fillColor = bgColDef;
         }
 
+        actualButtonStuff->CheckUpdates();
+
+        RemoveFromStack();
+    }
+
+    void ButtonComponent::Render(Field field)
+    {
+        AddToStack();
+
         actualButtonStuff->Render(field);
         RemoveFromStack();
     }
@@ -129,6 +143,8 @@ namespace GuiComponentStuff
             callBackFunc(this);
         actualButtonStuff->Destroy(destroyChildren, callBackFunc);
         _Free(actualButtonStuff);
+        updateFields->free();
+        _Free(updateFields);
         RemoveFromStack();
     }
 

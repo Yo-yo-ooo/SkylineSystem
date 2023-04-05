@@ -17,10 +17,19 @@ namespace WindowManager
     Window* getWindowAtMousePosition(int dis)
     {
         AddToStack();
+
+        if (MousePosition.y >= osData.windowPointerThing->virtualScreenBuffer->Height - osData.windowPointerThing->taskbar->Height)
+        {
+            RemoveFromStack();
+            return NULL;
+        }
+
         //GlobalRenderer->Println("Mouse POS Check");
         for (int64_t i = osData.windows.getCount() - 1; i >= 0; i--)
         {
             if (osData.windows[i]->hidden)
+                continue;
+            if (osData.windows[i] == osData.debugTerminalWindow && !osData.showDebugterminal)
                 continue;
             //GlobalRenderer->Println("Check: {}", to_string(i), Colors.yellow);
             Position tl = osData.windows[i]->position;

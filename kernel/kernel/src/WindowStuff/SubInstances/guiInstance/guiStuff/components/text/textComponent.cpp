@@ -11,6 +11,7 @@ namespace GuiComponentStuff
         this->fgColor = fgColor;
         this->text = StrCopy(text);
         oldText = StrCopy(text);
+        updateFields = new List<Field>(5);
 
         this->size = ComponentSize(10, 10);
         componentType = ComponentType::TEXT;
@@ -28,6 +29,10 @@ namespace GuiComponentStuff
         fgColorOld = fgColor;
         center = false;
         oldCenter = false;
+
+
+        CheckUpdates();
+        Render(Field(Position(), GetActualComponentSize()));
     }
 
     void TextComponent::MouseClicked(MouseClickEventInfo info)
@@ -49,9 +54,10 @@ namespace GuiComponentStuff
         return true;
     }
 
-    void TextComponent::Render(Field field)
+    void TextComponent::CheckUpdates()
     {
         AddToStack();
+        bool update = false;
         if (!useFixedSize)
         {
 
@@ -72,6 +78,7 @@ namespace GuiComponentStuff
                 fgColorOld = fgColor;
                 bgColorOld = bgColor;
                 oldCenter = center;
+                update = true;
             }
         }
         else
@@ -89,12 +96,21 @@ namespace GuiComponentStuff
                 fgColorOld = fgColor;
                 bgColorOld = bgColor;
                 oldCenter = center;
+                update = true;
             }
-
         }
 
+        if (update)
+            parent->updateFields->add(Field(position, GetActualComponentSize()));
 
-        renderer->Render(position, field, parent->renderer->componentFrameBuffer);
+        RemoveFromStack();
+    }
+
+    void TextComponent::Render(Field field)
+    {
+        AddToStack();
+        if (!hidden)
+            renderer->Render(position, field, parent->renderer->componentFrameBuffer);
         RemoveFromStack();
     }
 
@@ -106,6 +122,8 @@ namespace GuiComponentStuff
         renderer->Free();
         _Free(oldText);
         _Free(text);
+        updateFields->free();
+        _Free(updateFields);
         RemoveFromStack();
     }
 

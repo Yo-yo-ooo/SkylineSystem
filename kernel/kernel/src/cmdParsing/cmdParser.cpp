@@ -73,6 +73,7 @@ void Println(Window* window)
 {
     window->renderer->Println();
 }
+
 void Print(Window* window, const char* msg)
 {
     window->renderer->Print(msg);
@@ -101,7 +102,9 @@ void Print(Window* window, const char *chrs, dispVar vars[], uint32_t col)
 {
     uint64_t tempcol = window->renderer->color;
     window->renderer->color = col;
+
     Print(window, chrs, vars);
+
     window->renderer->color = tempcol;
 }
 */
@@ -297,7 +300,6 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     if (StrEquals(input, "connect 4") || StrEquals(input, "connect four"))
     {
         {
-            Window* oldActive = activeWindow;
             Window* con4Window = (Window*)_Malloc(sizeof(Window), "Connect 4 Window");
             Connect4Instance* connect4 = (Connect4Instance*)_Malloc(sizeof(Connect4Instance), "Connect 4 Instance");
             *connect4 = Connect4Instance(con4Window);
@@ -307,14 +309,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             connect4->Init();
             
             
-            activeWindow = con4Window;          
-            con4Window->moveToFront = true;
-            osData.mainTerminalWindow = con4Window;
-
-            if (oldActive != NULL)
-            {
-                osData.windowPointerThing->UpdateWindowBorder(oldActive);
-            }
+            osData.windowsToGetActive.add(con4Window);
 
             RemoveFromStack();
             return;
@@ -443,38 +438,6 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         else
             LogInvalidArgumentCount(1, data->len-1, window);
         
-        _Free(data);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0], "mkdir")){
-        FilesystemInterface::GenericFilesystemInterface *fs = 
-                            FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
-        if(fs != NULL){
-            const char* res = fs->CreateFolder(
-                StrSubstr(data->data[1],StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[1]))+1));
-            if (res == FilesystemInterface::FSCommandResult.SUCCESS)
-                Println(window, "Folder Creation Success!");
-            else
-                LogError("Folder Creation failed! Error: \"{}\"", res, window);
-        }
-        _Free(data);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0], "mkfile")){
-        FilesystemInterface::GenericFilesystemInterface *fs = 
-                            FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
-        if(fs != NULL){
-            const char* res = fs->CreateFile(
-                StrSubstr(data->data[1],StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[1]))+1));
-            if (res == FilesystemInterface::FSCommandResult.SUCCESS)
-                Println(window, "File Creation Success!");
-            else
-                LogError("File Creation failed! Error: \"{}\"", res, window);
-        }
         _Free(data);
         RemoveFromStack();
         return;
@@ -2344,9 +2307,13 @@ ParsedColData ParseColor(const char* col)
     //Println("Free: {} Bytes.", to_string(GlobalAllocator->GetFreeRAM()), Colors.pink);
     StringArrData* data = SplitLine(input);
     //Println("Free: {} Bytes.", to_string(GlobalAllocator->GetFreeRAM()), Colors.pink);
+
+
     Println("Parts:");
     for (int i = 0; i < data->len; i++)
         Println(" - \"{}\"", data->data[i], Colors.bgreen);
+
+
     //free(splitLine);
     GlobalAllocator->FreePage(data);
     //Println("Free: {} Bytes.", to_string(GlobalAllocator->GetFreeRAM()), Colors.pink);

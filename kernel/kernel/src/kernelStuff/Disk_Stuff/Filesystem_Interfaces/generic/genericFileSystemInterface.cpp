@@ -3,13 +3,10 @@
 #include "../../../../memory/heap.h"
 #include "../../../../cmdParsing/cstrTools.h"
 #include "../../../../OSDATA/osdata.h"
-#include "../vfs/vfs.h"
 
 namespace FilesystemInterface
 {
-    static char* STATIC_BLL = NULL;
-    FilesystemInterfaceType GetFilesystemInterfaceTypeFromPartition
-    (PartitionInterface::GenericPartitionInterface* partitionInterface, int index)
+    FilesystemInterfaceType GetFilesystemInterfaceTypeFromPartition(PartitionInterface::GenericPartitionInterface* partitionInterface, int index)
     {
         //osData.debugTerminalWindow->Log("<BRUH 1>");
         if (partitionInterface == NULL)
@@ -27,7 +24,6 @@ namespace FilesystemInterface
             char* t = (char*)_Malloc(8);
             t[7] = '\0';
             bool res = partitionInterface->diskInterface->ReadBytes(part->locationInBytes, 7, t); //partitionInterface. ->ReadPartition(, 0, 7, t);
-            STATIC_BLL = t;
             if (res)
                 res = StrEquals(t, "MRAFS01"); // v01 is the only currently supported version
             _Free(t);
@@ -43,9 +39,6 @@ namespace FilesystemInterface
         this->InterfaceType = FilesystemInterfaceType::Generic;
     }
 
-    char* GenericFilesystemInterface::pfsn(){
-        return STATIC_BLL;
-    }
 
     const char* GenericFilesystemInterface::CreateFile(const char* path)
     {

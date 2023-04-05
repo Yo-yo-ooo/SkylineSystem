@@ -1,6 +1,7 @@
 #include "componentRenderer.h"
 #include "../../../../memory/heap.h"
 #include "../../../../OSDATA/MStack/MStackM.h"
+#include "../../../../rnd/rnd.h"
 
 
 namespace GuiComponentStuff
@@ -8,6 +9,13 @@ namespace GuiComponentStuff
     ComponentFramebuffer::ComponentFramebuffer(int x, int y)
     {
         this->pixels = (uint32_t*)_Malloc(x * y * sizeof(uint32_t));
+        Width = x;
+        Height = y;
+    }
+
+    ComponentFramebuffer::ComponentFramebuffer(int x, int y, uint32_t* pxls)
+    {
+        this->pixels = pxls;
         Width = x;
         Height = y;
     }
@@ -85,8 +93,9 @@ namespace GuiComponentStuff
             {
                 uint32_t col = pxls[x + y * w];
                 if (col >> 24 != 0)
-                    pxlsTo[(x + componentPosition.x) + (y + componentPosition.y) * w2] = col;
+                    pxlsTo[(x + componentPosition.x) + (y + componentPosition.y) * w2] = col;// & (0xFFFF0000 | ((uint16_t)RND::lehmer64()));
             }
+
         RemoveFromStack();
         RemoveFromStack();
     }
@@ -110,8 +119,17 @@ namespace GuiComponentStuff
         int h = componentFrameBuffer->Height;
         int w = componentFrameBuffer->Width;
 
-        for (int y = field.TL.y; y <= field.BR.y && y < h; y++)
-            for (int x = field.TL.x; x <= field.BR.x && x < w; x++)
+        if (field.TL.x < 0)
+            field.TL.x = 0;
+        if (field.TL.y < 0)
+            field.TL.y = 0;
+        if (field.BR.x >= w)
+            field.BR.x = w - 1;
+        if (field.BR.y >= h)
+            field.BR.y = h - 1;
+
+        for (int y = field.TL.y; y <= field.BR.y; y++)
+            for (int x = field.TL.x; x <= field.BR.x; x++)
                 pxls[x + y * w] = col;
         RemoveFromStack();
     }

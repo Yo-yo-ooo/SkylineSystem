@@ -1,4 +1,5 @@
 #include "list.h"
+#include "list_BaseComponent.h"
 #include "../OSDATA/MStack/MStackM.h"
 #include "../memory/heap.h"
 
@@ -97,6 +98,17 @@ template <typename T> void List<T>::add(T item)
 
     arr[count] = item;
     count++;
+    RemoveFromStack();
+}
+
+template <typename T> void List<T>::set(uint64_t index, T item)
+{
+    AddToStack();
+    int64_t indx = index;
+    if (index > count || indx < 0)
+        return;
+    arr[index] = item;
+    
     RemoveFromStack();
 }
 

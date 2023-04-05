@@ -18,8 +18,6 @@ namespace FilesystemInterface
         PartitionInterface::PartitionInfo* partitionInfo = NULL;
         FilesystemInterfaceType InterfaceType = FilesystemInterface::Generic;
         GenericFilesystemInterface();
-
-        char* pfsn();
         
         const char* CreateFile(const char* path);
         const char* CreateFile(const char* path, uint64_t sizeInBytes);

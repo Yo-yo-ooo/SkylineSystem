@@ -23,14 +23,16 @@ struct OSData
 {
     bool exit;
     bool booting;
+    bool verboseBoot;
     KernelInfo* kernelInfo;
     List<Window*> windows;
+    List<Window*> windowsToGetActive;
     List<Task*> osTasks;
     kernelFiles::ZIPFile* windowButtonZIP;
     kernelFiles::ZIPFile* windowIconZIP;
     //Window* realMainWindow;
     //Window* realMainWindow2;
-    Window* mainTerminalWindow;
+    //Window* mainTerminalWindow;
     Window* debugTerminalWindow;
     Window* startMenuWindow;
     Window* activeCrashWindow;

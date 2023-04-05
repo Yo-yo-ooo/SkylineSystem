@@ -8,8 +8,7 @@ namespace FilesystemInterface
     {
         None = 0,
         Generic = 1,
-        Mrafs = 2,
-        VirtualFileSystem = 3
+        Mrafs = 2
     };
 
     extern const char* FilesystemInterfaceTypeStr[];

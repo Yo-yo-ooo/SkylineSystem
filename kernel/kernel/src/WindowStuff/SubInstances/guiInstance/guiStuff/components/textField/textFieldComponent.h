@@ -1,7 +1,7 @@
 #pragma once
 #include "../base/baseComponent.h"
 #include "../../../../../Window/window.h"
-#include "../../../../../../customClasses/list.h"
+#include "../../../../../../customClasses/list_BaseComponent.h"
 #include "../box/boxComponent.h"
 #include "../text/textComponent.h"
 #include "../rectangle/rectangleComponent.h"
@@ -44,6 +44,7 @@ namespace GuiComponentStuff
         void MouseClicked(MouseClickEventInfo info);
         void KeyHit(KeyHitEventInfo info);
         void Render(Field field);
+        void CheckUpdates();
         void Destroy(bool destroyChildren, void (*callBackFunc)(BaseComponent* comp));
         ComponentSize GetActualComponentSize();
 

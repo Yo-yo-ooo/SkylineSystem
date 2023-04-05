@@ -231,17 +231,21 @@ void PrepareMemory(BootInfo* bootInfo)
 
 
 /*
+
     for (uint64_t i = (uint64_t)bootInfo->kernelStart; i < (uint64_t)bootInfo->kernelStart + bootInfo->kernelSize; i+=0x1000)
        GlobalPageTableManager.MapMemory((void*)i, (void*)i);
+
     for (uint64_t i = (uint64_t)bootInfo->m2MapStart; i < (uint64_t)bootInfo->mMapStart + bootInfo->mMapSize + 0x1000; i+=0x1000)
        GlobalPageTableManager.MapMemory((void*)i, (void*)i);
     
+
     uint64_t fbBase = (uint64_t)bootInfo->framebuffer->BaseAddress;
     uint64_t fbSize = (uint64_t)bootInfo->framebuffer->BufferSize;
     //GlobalAllocator->LockPages((void*)rFB, fbSize / 0x1000);
     
     for (uint64_t i = fbBase; i < fbBase + fbSize  + 0x1000; i+=4096)
         GlobalPageTableManager.MapMemory((void*)i, (void*)i);
+
 */
 
     // for (int i = 0; i < 20; i++)
@@ -282,21 +286,31 @@ void PrepareMemory(BootInfo* bootInfo)
     //         GlobalPageTableManager.MapMemory((void*)i, (void*)i);
     //         //GlobalPageTableManager.MapMemory((void*)i, (void*)earlyVirtualToPhysicalAddr((void*)i));
     // }
+
     
     //while(true);
+
+
     for (uint64_t i = (uint64_t)bootInfo->mMapStart - ((uint64_t)bootInfo->mMapStart) % 0x1000; i < (uint64_t)bootInfo->mMapStart + bootInfo->mMapSize; i+=0x1000)
         GlobalPageTableManager.MapMemory((void*)i, (void*)i);
+
     //while(true);
     
     
     uint64_t fbBase = (uint64_t)bootInfo->framebuffer->BaseAddress;
     uint64_t fbSize = (uint64_t)bootInfo->framebuffer->BufferSize + 0x1000;
     //GlobalAllocator->LockPages((void*)earlyVirtualToPhysicalAddr((void*)fbBase), fbSize / 0x1000);
+
+
     for (uint64_t i = fbBase; i < fbBase + fbSize; i+=4096)
         GlobalPageTableManager.MapMemory((void*)i, (void*)i);
+
     //while(true);
+
     //asm("mov %0, %%cr3" : : "r" (PML4) );
+
     kernelInfo.pageTableManager = &GlobalPageTableManager;
+
     while(true);
     */
 }
@@ -377,6 +391,7 @@ void PrepareWindowsTemp(Framebuffer* img)
 
     
     osData.windows = List<Window*>();
+    osData.windowsToGetActive = List<Window*>();
     
     osData.windowPointerThing = (WindowManager::WindowPointerBufferThing*)_Malloc(sizeof(WindowManager::WindowPointerBufferThing), "Alloc WindowPointerBufferThing");
     *osData.windowPointerThing = WindowManager::WindowPointerBufferThing(GlobalRenderer->framebuffer, img, Colors.blue);
@@ -427,7 +442,7 @@ void PrepareWindows(Framebuffer* img)
 
         debugTerminalWindow->renderer->Clear(Colors.black);
         //KeyboardPrintStart(debugTerminalWindow);
-        debugTerminalWindow->renderer->Println("SkylineSystem - Debug Terminal (OUTPUT ONLY)", Colors.green);
+        debugTerminalWindow->renderer->Println("MaslOS - Debug Terminal (OUTPUT ONLY)", Colors.green);
         debugTerminalWindow->renderer->Println("-------------------------------------\n", Colors.green);
         debugTerminalWindow->renderer->color = Colors.yellow;
     }
@@ -461,7 +476,7 @@ void enable_fpu()
 
 void StartMenuButtonClick(GuiComponentStuff::BaseComponent* comp, GuiComponentStuff::MouseClickEventInfo info)
 {
-    if (comp->id >= 1001 && comp->id <= 1005)
+    if (comp->id >= 1001 && comp->id <= 1006)
     {
         // PONG
         const char* BLEHUS_TITLE = "App Terminal Window";
@@ -500,9 +515,15 @@ void StartMenuButtonClick(GuiComponentStuff::BaseComponent* comp, GuiComponentSt
             BLEHUS_CMD   = "taskmgr";
         }
 
+        if (comp->id == 1006)
+        {
+            BLEHUS_TITLE = "Explorer";
+            BLEHUS_CMD   = "explorer";
+        }
 
 
-        Window* oldActive = activeWindow;
+
+        //Window* oldActive = activeWindow;
         Window* mainWindow = (Window*)_Malloc(sizeof(Window), "App Window");
         TerminalInstance* terminal = (TerminalInstance*)_Malloc(sizeof(TerminalInstance), "App Terminal");
         *terminal = TerminalInstance(&guestUser);
@@ -514,14 +535,7 @@ void StartMenuButtonClick(GuiComponentStuff::BaseComponent* comp, GuiComponentSt
         //KeyboardPrintStart(mainWindow);
         //((TerminalInstance*)mainWindow->instance)->KeyboardPrintStart();
 
-        activeWindow = mainWindow;          
-        mainWindow->moveToFront = true;
-        osData.mainTerminalWindow = mainWindow;
-
-        if (oldActive != NULL)
-        {
-            osData.windowPointerThing->UpdateWindowBorder(oldActive);
-        }
+        osData.windowsToGetActive.add(mainWindow);
 
         //((NewTerminalInstance*)terminal->newTermInstance)->Println(BLEHUS_CMD);
         {
@@ -641,6 +655,19 @@ void InitStartMenuWindow(BootInfo* bootInfo)
             testGui->screen->children->add(btn);
         }
 
+        {
+            GuiComponentStuff::ButtonComponent* btn = new GuiComponentStuff::ButtonComponent("Explorer", 
+            Colors.bgray, Colors.yellow, Colors.black, 
+            Colors.black, Colors.black, Colors.white,
+            GuiComponentStuff::ComponentSize(72, 20),
+            GuiComponentStuff::Position(0, 160), testGui->screen
+            );
+            btn->mouseClickedCallBack = StartMenuButtonClick;
+            btn->id = 1006;
+            
+            testGui->screen->children->add(btn);
+        }
+
     }
     RemoveFromStack();
 }
@@ -672,10 +699,11 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     r = BasicRenderer(bootInfo->framebuffer, bootInfo->psf1_font);
     GlobalRenderer = &r;
 
-
+    PrepBootScreen();
     PrintMsg("> Initializing Kernel");
     Println();
     PrintMsgStartLayer("BOOT");
+    StepDone(0);
     // PrintMsg("Test 1");
     // PrintMsgStartLayer("TEST");
     // PrintMsg("Test 2");
@@ -706,7 +734,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     gdtDescriptor.Size = sizeof(GDT) - 1;
     gdtDescriptor.Offset = (uint64_t)&DefaultGDT;
     LoadGDT(&gdtDescriptor);
-
+    StepDone(1);
 
     RemoveFromStack();
 
@@ -719,11 +747,13 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     PrepareMemory(bootInfo);
     PrintMsgEndLayer("Prepare Memory");
     RemoveFromStack();
+    StepDone(2);
     
     //while(true);
     
     PrintMsg("> Initializing Heap");
     InitializeHeap((void*)0x0000100000000000, 0x10);
+    StepDone(3);
 
     //GlobalRenderer->Println("BG IMG: {}", to_string((uint64_t)bootInfo->bgImage), Colors.orange);
 
@@ -738,21 +768,25 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     PrintMsg("> Getting Background Image");
     Framebuffer* bgImg = kernelFiles::ConvertImageToFramebuffer(bootInfo->bgImage);
-
+    StepDone(4);
     
     
     PrintMsg("> Preparing Windows (1/2)");
     PrepareWindowsTemp(bgImg);
+    StepDone(5);
 
     
 
     PrintMsg("> Initing RTC");
     RTC::InitRTC();
+    StepDone(6);
     PrintMsg("> Reading RTC");
     RTC::read_rtc();
+    StepDone(7);
 
     PrintMsg("> Updating RTC Time");
     RTC::UpdateTimeIfNeeded();
+    StepDone(8);
 
     PrintMsgStartLayer("RTC Info");
     PrintMsgColSL("TIME: ", Colors.yellow);
@@ -768,6 +802,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     PrintMsg("> Initing PIT");
     PIT::InitPIT();
+    StepDone(9);
     
 
     #define STAT 0x64
@@ -782,19 +817,25 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
             inb(CMD);
         }
     }
+    StepDone(10);
     
     PrintMsg("> Initing PS/2 Mouse");
     InitPS2Mouse(bootInfo->mouseZIP, "default.mbif");
     //mouseImage = kernelFiles::ConvertFileToImage(kernelFiles::ZIP::GetFileFromFileName(bootInfo->mouseZIP, "default.mbif"));
+    StepDone(11);
 
     PrintMsg("> Initing Keyboard State List");
     InitKeyboardListRam();
+    StepDone(12);
 
     PrintMsg("> Initing PS/2 Keyboard");
     InitKeyboard();
+    StepDone(13);
     
     PrintMsg("> Preparing Interrupts");
     PrepareInterrupts();
+    PIT::Inited = true;
+    StepDone(14);
 
 
     PrintMsg("> Clearing Input Buffer (2/2)");
@@ -806,9 +847,11 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
             inb(CMD);
         }
     }
+    StepDone(15);
     
     PrintMsg("> Initing Users");
     initUsers();
+    StepDone(16);
 
 
     PrintMsg("> Creating List for Disk Interfaces");
@@ -816,6 +859,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     osData.windowIconZIP = bootInfo->windowIconsZIP;
     osData.windowButtonZIP = bootInfo->windowButtonZIP;
+    StepDone(17);
 
     //GlobalRenderer->Clear(Colors.black);
     //GlobalRenderer->Println("                                     COUNT OF WINDOW ICONS: {}", to_string(WindowManager::countOfWindowIcons), Colors.yellow);
@@ -824,7 +868,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     PrintMsg("> Loading Window Icons");
     for (int i = 0; i < WindowManager::countOfWindowIcons; i++)
         WindowManager::internalWindowIcons[i] = kernelFiles::ConvertFileToImage(kernelFiles::ZIP::GetFileFromFileName(osData.windowIconZIP, WindowManager::windowIconNames[i]));
-    
+    StepDone(18);
 
     PrintMsg("> Loading Window Button Icons");
     for (int i = 0; i < WindowManager::countOfButtonIcons; i++)
@@ -836,19 +880,23 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
         //osData.debugTerminalWindow->Log("- Width:  {}px", to_string(WindowManager::windowIcons[i]->width), Colors.yellow);
         //osData.debugTerminalWindow->Log("- Height: {}px", to_string(WindowManager::windowIcons[i]->height), Colors.yellow);
     }
+    StepDone(19);
     
 
     PrintMsg("> Preparing Windows (2/2)");
     PrepareWindows(bgImg);
     PrintDebugTerminal();
+    StepDone(20);
     
     PrintMsg("> Initing Taskbar");
     Taskbar::InitTaskbar(bootInfo->MButton, bootInfo->MButtonS);
+    StepDone(23);
 
     //bootInfo->rsdp = (ACPI::RSDP2*)((uint64_t)bootInfo->rsdp + 20); //idk why but this is very important unless ya want the whole os to crash on boot
 
     PrintMsg("> Initing Start Menu");
     InitStartMenuWindow(bootInfo);
+    StepDone(24);
 
     //while (true);
     PrintMsg("> Prepare ACPI");
@@ -856,6 +904,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     PrepareACPI(bootInfo);
     PrintMsgEndLayer("ACPI");
     PrintDebugTerminal();
+    StepDone(25);
 
     
 
@@ -864,6 +913,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     PrintMsg("> Enabling FPU");
     enable_fpu();
+    StepDone(26);
     
     PrintMsg("> Creating OS Ram Disk");
     PrintMsgStartLayer("OS RAM DISK");
@@ -912,10 +962,14 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     }
     RemoveFromStack();
     PrintMsgEndLayer("OS RAM DISK");
+    StepDone(27);
 
     PrintMsgEndLayer("BOOT");
 
+    StepDone(28);
+    PIT::Sleep(200);
     PrintMsgCol("> Inited Kernel!", Colors.bgreen);
     RemoveFromStack();
     return kernelInfo;
 }
+
