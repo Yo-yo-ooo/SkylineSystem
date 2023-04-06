@@ -519,9 +519,9 @@ void HandleClick(bool L, bool R, bool M)
             else if (action == WindowActionEnum::MIN_MAX)
             {
                 AddToStack();
-
+                
                 osData.windowsToGetActive.add(WindowManager::currentActionWindow);
-                if (activeWindow->resizeable)
+                if (WindowManager::currentActionWindow->resizeable)
                     WindowManager::currentActionWindow->maximize = !WindowManager::currentActionWindow->maximize;
                 RemoveFromStack();
             }
@@ -605,7 +605,8 @@ void HandleClick(bool L, bool R, bool M)
                         {
                             Position p = window->GetMousePosRelativeToWindow();
                             
-                            gui->screen->MouseClicked(GuiComponentStuff::MouseClickEventInfo(GuiComponentStuff::Position(p.x, p.y), L, R, M));
+                            if (oldActive == window)
+                                gui->screen->MouseClicked(GuiComponentStuff::MouseClickEventInfo(GuiComponentStuff::Position(p.x, p.y), L, R, M));
                         }
                     }
                 }

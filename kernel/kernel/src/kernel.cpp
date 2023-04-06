@@ -306,8 +306,28 @@ void RenderLoop()
                     {
                         if (window->position.x != 0 || window->position.y != 23 || 
                         window->size.width != GlobalRenderer->framebuffer->Width ||
-                        window->size.height != GlobalRenderer->framebuffer->Height)
+                        window->size.height != GlobalRenderer->framebuffer->Height - 23)
+                        {
                             window->maximize = false;
+                            
+                            MPoint tMouse = MousePosition;
+                            tMouse.x -= window->position.x;
+                            tMouse.y -= window->position.y;
+
+                            tMouse.x = (tMouse.x * window->oldPreMaxSize.width) / window->size.width;
+                            tMouse.y = (tMouse.y * window->oldPreMaxSize.height) / window->size.height;
+
+                            window->newPosition.x = MousePosition.x - tMouse.x;
+                            window->newPosition.y = MousePosition.y - tMouse.y;
+
+                            //window->newPosition = window->oldPreMaxPosition;
+                            window->newSize = window->oldPreMaxSize;
+
+                            window->showBorder = window->oldPreMaxBorder;
+                            window->showTitleBar = window->oldPreMaxTitle;
+
+                            window->oldMaximize = false;
+                        }
                     }
 
                     if (window->maximize != window->oldMaximize)
@@ -321,7 +341,7 @@ void RenderLoop()
                             window->oldPreMaxTitle = window->showTitleBar;
 
                             window->newPosition = Position(0, 23);
-                            window->newSize = Size(GlobalRenderer->framebuffer->Width, GlobalRenderer->framebuffer->Height);
+                            window->newSize = Size(GlobalRenderer->framebuffer->Width, GlobalRenderer->framebuffer->Height - 23);
 
                             window->showBorder = false;
                             //window->showTitleBar = false;
@@ -392,7 +412,7 @@ void RenderLoop()
                         }
                     }
                 }
-                if (window->instance != NULL && !window->hidden && (activeWindow == window || frame % 5 == (i%8)))
+                if (window->instance != NULL && !window->hidden && (activeWindow == window || frame % 5 == (i%3)))
                 {
                     if (window->instance->instanceType == InstanceType::Terminal)
                     {
@@ -654,7 +674,7 @@ void RenderLoop()
                 msgWindow->renderer->Clear(Colors.black);
                 //GlobalRenderer->Println("BRUH 5.2", Colors.yellow);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
-                msgWindow->renderer->Println("WARNING: MaslOS just had a fatal but somewhat recoverable crash", Colors.bred);
+                msgWindow->renderer->Println("WARNING: SkylineSystem just had a fatal but somewhat recoverable crash", Colors.bred);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
                 msgWindow->renderer->Println();
                 //GlobalRenderer->Println("BRUH 5.3", Colors.yellow);
@@ -1173,6 +1193,7 @@ void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, MaslOsAss
     tempBootInfo.MButtonS = assets->MButtonS;
     tempBootInfo.bgImage = assets->bgImage;
     tempBootInfo.maabZIP = assets->maabZIP;
+    tempBootInfo.otherZIP = assets->otherZIP;
 
     tempBootInfo.mouseZIP = assets->mouseZIP;
     tempBootInfo.windowButtonZIP = assets->windowButtonZIP;
