@@ -674,7 +674,7 @@ void RenderLoop()
                 msgWindow->renderer->Clear(Colors.black);
                 //GlobalRenderer->Println("BRUH 5.2", Colors.yellow);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
-                msgWindow->renderer->Println("WARNING: MaslOS just had a fatal but somewhat recoverable crash", Colors.bred);
+                msgWindow->renderer->Println("WARNING: SkylineSystem just had a fatal but somewhat recoverable crash", Colors.bred);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
                 msgWindow->renderer->Println();
                 //GlobalRenderer->Println("BRUH 5.3", Colors.yellow);
@@ -1178,7 +1178,7 @@ void boot(BootInfo* bootInfo)
 #include "kernel.h"
 
  
-void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, MaslOsAssetStruct* assets, void* freeMemStart, void* extraMemStart, uint64_t freeMemSize, void* kernelStart, uint64_t kernelSize, void* kernelStartV)
+void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, OsAssetStruct* assets, void* freeMemStart, void* extraMemStart, uint64_t freeMemSize, void* kernelStart, uint64_t kernelSize, void* kernelStartV)
 {
     MStackData::BenchmarkEnabled = false;
     BootInfo tempBootInfo;

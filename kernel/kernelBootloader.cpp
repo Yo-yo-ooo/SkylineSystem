@@ -405,7 +405,7 @@ extern "C" void _start(void) {
         font.glyphBuffer = (void*)((uint64_t)file->address + sizeof(PSF1_HEADER));
     }
 
-    MaslOsAssetStruct assets;
+    OsAssetStruct assets;
 
     kernelFiles::ImageFile img_1 = getImage("background.mbif");
     assets.bgImage = &img_1;
