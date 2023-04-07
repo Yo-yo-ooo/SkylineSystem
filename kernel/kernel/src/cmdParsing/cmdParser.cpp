@@ -225,6 +225,7 @@ void EditPartitionSetting(PartitionInterface::PartitionInfo* part, const char* p
 
 #include "../sysApps/explorer/explorer.h"
 #include "../sysApps/tetris/tetris.h"
+#include "../sysApps/notepad/notepad.h"
 #include "../sysApps/imgTest/imgTest.h"
 
 void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
@@ -263,6 +264,13 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     if (StrEquals(input, "explorer"))
     {
         new SysApps::Explorer();
+        RemoveFromStack();
+        return;
+    }
+
+    if (StrEquals(input, "notepad"))
+    {
+        new SysApps::Notepad();
         RemoveFromStack();
         return;
     }
@@ -468,6 +476,26 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         return;
     }
 
+    if (StrEquals(data->data[0], "dbg") || StrEquals(data->data[0], "debug") || StrEquals(data->data[0], "hex"))
+    {
+        if (data->len == 2)
+        {
+            //  FS_STUFF::OpenFile(data->data[1]);
+            char* buf = NULL;
+            int len = 0;
+            if (FS_STUFF::LoadFileFromFullPath(data->data[1], &buf, &len))
+                terminal->tasks.add(NewDebugViewerTask(window, buf, len));
+            else
+                LogError("File not found!", window);
+        }
+        else
+            LogInvalidArgumentCount(1, data->len-1, window);
+        
+        _Free(data);
+        RemoveFromStack();
+        return;
+    }
+
     if(StrEquals(data->data[0], "mkdir")){
         FilesystemInterface::GenericFilesystemInterface *fs = 
                             FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
@@ -499,6 +527,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
+    
 
     if (StrEquals(data->data[0], "sleep"))
     {

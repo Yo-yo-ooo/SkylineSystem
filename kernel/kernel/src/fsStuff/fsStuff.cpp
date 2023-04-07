@@ -6,8 +6,10 @@
 #include "../kernelStuff/stuff/cstr.h"
 #include "../cmdParsing/cstrTools.h"
 #include "../OSDATA/osdata.h"
+#include "../tasks/enterHandler/taskEnterHandler.h"
 
 #include "../sysApps/imgTest/imgTest.h"
+#include "../sysApps/notepad/notepad.h"
 
 namespace FS_STUFF
 {
@@ -212,7 +214,7 @@ namespace FS_STUFF
     
 
 
-    bool GetDataFromFullPath(const char* path, char** resBuffer, int* resBufferLen)
+    bool LoadFileFromFullPath(const char* path, char** resBuffer, int* resBufferLen)
     {
         FilesystemInterface::GenericFilesystemInterface* fsInterface = FS_STUFF::GetFsInterfaceFromFullPath(path);
         if (fsInterface == NULL)
@@ -246,6 +248,53 @@ namespace FS_STUFF
         return true;        
     }
 
+    bool WriteFileToFullPath(const char* path, char* buffer, int bufferLen, bool createIfNotExists)
+    {
+        FilesystemInterface::GenericFilesystemInterface* fsInterface = FS_STUFF::GetFsInterfaceFromFullPath(path);
+        if (fsInterface == NULL || buffer == NULL || path == NULL)
+            return false;
+        
+        char* relPath = FS_STUFF::GetFilePathFromFullPath(path);
+        if (relPath == NULL)
+            return false;
+
+        if (buffer == NULL)
+        {
+            _Free(relPath);
+            return false;
+        }
+
+        if (!fsInterface->FileExists(relPath))
+        {
+            if (createIfNotExists)
+            {
+                fsInterface->CreateFile(relPath);
+            }
+            else
+            {
+                _Free(relPath);
+                return false;
+            }
+        }
+
+        // GlobalRenderer->Clear(Colors.black);
+        // GlobalRenderer->Println("PATH: \"{}\"", path, Colors.bgreen);
+        // GlobalRenderer->Println("RELPATH: \"{}\"", relPath, Colors.bgreen);
+        // GlobalRenderer->Println("LEN: {}", to_string(bufferLen), Colors.bgreen);
+        // GlobalRenderer->Println("BUF: \"{}\"", buffer, Colors.bgreen);
+
+        // while (true);
+
+        const char* res = fsInterface->WriteFile(relPath, bufferLen, (void*) buffer);
+
+        //GlobalRenderer->Println(res);
+
+        //while (true);
+        //fsInterface->SaveFSTable();
+
+        _Free(relPath);
+        return true;    
+    }
 
     
 
@@ -259,9 +308,54 @@ namespace FS_STUFF
             new SysApps::ImageTest(path);
             return true;
         }
+        if (StrEndsWith(path, ".txt"))
+        {
+            SysApps::Notepad* notepad = new SysApps::Notepad();
+            notepad->LoadFrom(path);
+            return true;
+        }
+        if (StrEndsWith(path, ".maab"))
+        {
+            const char* t = StrCombine("maab \"", path);
+            const char* t2= StrCombine(t, "\"");
+            _Free(t);
+            RunTerminalCommand(t2, "MAAB TEST", false, false);
+            _Free(t2);
+            return true;
+        }
 
         return false;
     }
 
+
+
+    void RunTerminalCommand(const char* terminalCommand, const char* terminalWindowTitle, bool hideTerminalWindow, bool autoCloseTerminalWindow)
+    {
+        Window* mainWindow = (Window*)_Malloc(sizeof(Window), "App Window");
+        TerminalInstance* terminal = (TerminalInstance*)_Malloc(sizeof(TerminalInstance), "App Terminal");
+        *terminal = TerminalInstance(&guestUser);
+        *(mainWindow) = Window((DefaultInstance*)terminal, Size(500, 500), Position(50, 50), terminalWindowTitle, true, true, true);
+        mainWindow->hidden = hideTerminalWindow;
+        mainWindow->oldHidden = !hideTerminalWindow;
+        
+        osData.windows.add(mainWindow);
+        terminal->SetWindow(mainWindow);
+        terminal->closeWindowAfterTask = autoCloseTerminalWindow;
+        ((TerminalInstance*)mainWindow->instance)->Cls();
+        //KeyboardPrintStart(mainWindow);
+        //((TerminalInstance*)mainWindow->instance)->KeyboardPrintStart();
+        if (!hideTerminalWindow)
+            osData.windowsToGetActive.add(mainWindow);
+
+        //((NewTerminalInstance*)terminal->newTermInstance)->Println(BLEHUS_CMD);
+        {
+            int i = 0;
+            for (; terminalCommand[i] != 0; i++)
+                terminal->terminalInput[i] = terminalCommand[i];
+            terminal->terminalInput[i] = 0;
+            terminal->userlen = i;
+        }
+        terminal->tasks.add(NewEnterTask(terminal));
+    }
 }
 

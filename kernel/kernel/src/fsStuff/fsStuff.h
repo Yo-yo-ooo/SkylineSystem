@@ -11,12 +11,16 @@ namespace FS_STUFF
     char* GetDriveNameFromFullPath(const char* path);
     char* GetFilePathFromFullPath(const char* path);
     char* GetFolderPathFromFullPath(const char* path);
-    bool GetDataFromFullPath(const char* path, char** resBuffer, int* resBufferLen);
-    
+
+    bool LoadFileFromFullPath(const char* path, char** resBuffer, int* resBufferLen);
+    bool WriteFileToFullPath(const char* path, char* buffer, int bufferLen, bool createIfNotExists);
+
     FilesystemInterface::GenericFilesystemInterface* GetFsInterfaceFromFullPath(const char* path);
     FilesystemInterface::FileInfo* GetFileInfoFromFullPath(const char* path);
 
     bool OpenFile(const char* path);
+    void RunTerminalCommand(const char* terminalCommand, const char* terminalWindowTitle, bool hideTerminalWindow, bool autoCloseTerminalWindow);
+
 
 /*
 Println(window, "Avaiable Drives:", Colors.bgreen);
