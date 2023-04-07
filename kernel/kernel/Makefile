@@ -1,5 +1,5 @@
 
-OSNAME = MaslOS
+OSNAME = SkylineSystem
 
 GNUEFI = ../gnu-efi
 OVMFDIR = ../ovmfbin
