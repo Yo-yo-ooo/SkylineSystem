@@ -1153,6 +1153,8 @@ void boot(BootInfo* bootInfo)
 
     GlobalRenderer->Clear(Colors.black);
     GlobalRenderer->Println("The ACPI shutdown failed!", Colors.yellow);
+
+    GlobalRenderer->Println();
     GlobalRenderer->Println("Please shut down the computer manually.", Colors.white);
 
     while (true)
@@ -1178,7 +1180,7 @@ void boot(BootInfo* bootInfo)
 #include "kernel.h"
 
  
-void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, OsAssetStruct* assets, void* freeMemStart, void* extraMemStart, uint64_t freeMemSize, void* kernelStart, uint64_t kernelSize, void* kernelStartV)
+void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, MaslOsAssetStruct* assets, void* freeMemStart, void* extraMemStart, uint64_t freeMemSize, void* kernelStart, uint64_t kernelSize, void* kernelStartV)
 {
     MStackData::BenchmarkEnabled = false;
     BootInfo tempBootInfo;

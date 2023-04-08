@@ -113,6 +113,12 @@ namespace GuiComponentStuff
         }
         image = NULL;
 
+        if (path == NULL || !StrEndsWith(path, ".mbif"))
+        {
+            RemoveFromStack();
+            return;
+        }
+
         char* buf;
         int size = 0;
         if (!FS_STUFF::LoadFileFromFullPath(path, &buf, &size))
@@ -124,7 +130,7 @@ namespace GuiComponentStuff
         kernelFiles::DefaultFile tempFile;
         tempFile.fileData = buf;
         tempFile.size = size;
-        tempFile.filename = "A";
+        tempFile.filename = (char*)"A";
         tempFile.filenameSize = 1;
         kernelFiles::ImageFile* img = kernelFiles::ConvertFileToImage(&tempFile);
         if (img == NULL)
