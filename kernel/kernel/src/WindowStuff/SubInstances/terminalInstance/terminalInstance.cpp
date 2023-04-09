@@ -122,7 +122,7 @@ void TerminalInstance::Cls()
 {
     NewTerminalInstance* tempInst = (NewTerminalInstance*)newTermInstance;
     tempInst->Clear();
-    tempInst->Println("SkylineSystem v0.55", Colors.green);
+    tempInst->Println("SkylineSystem v0.75 MASLOS_KERNEL_VERSION(v0.55)", Colors.green);
     tempInst->Println("-------------", Colors.green);
     tempInst->Println();
     tempInst->Render();
