@@ -563,6 +563,13 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         return;
     }
 
+    if(StrEquals(data->data[0],"time")){
+        uint64_t _time = PIT::TimeSinceBootMicroS();
+        Print(window, "Time {}, ", to_string(_time), Colors.yellow);
+        _Free(data);
+        RemoveFromStack();
+    }
+
     if(StrEquals(data->data[0], "mkfile")){
         FilesystemInterface::GenericFilesystemInterface *fs = 
                             FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
