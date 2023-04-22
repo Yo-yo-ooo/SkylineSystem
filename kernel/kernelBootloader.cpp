@@ -387,7 +387,7 @@ extern "C" void _start(void) {
 
     PSF1_FONT font;
     {
-        const char* fName = "zap-light16.psf";
+        const char* fName = "Unifont-APL8x16.psf";
         limine_file* file = getFile(fName);
         if (file == NULL)
         {

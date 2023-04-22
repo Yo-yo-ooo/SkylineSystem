@@ -565,7 +565,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     }
 
     if(StrEquals(data->data[0],"time")){
-        Println(window,"RTC Info");
+        Println(window,"RTC 信息");
         Println(window,"TIME: ", Colors.yellow);
         Print(window,"{}.", to_string((int)RTC::Year), Colors.yellow);
         Print(window,"{}.", to_string((int)RTC::Month), Colors.yellow);

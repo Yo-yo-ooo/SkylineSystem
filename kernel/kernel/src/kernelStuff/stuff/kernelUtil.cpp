@@ -837,7 +837,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     RTC::UpdateTimeIfNeeded();
     StepDone(8);
 
-    PrintMsgStartLayer("RTC Info");
+    PrintMsgStartLayer("RTC Info:");
     PrintMsgColSL("TIME: ", Colors.yellow);
     PrintMsgColSL("{}:", to_string((int)RTC::Hour), Colors.yellow);
     PrintMsgColSL("{}:", to_string((int)RTC::Minute), Colors.yellow);
