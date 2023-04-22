@@ -23,6 +23,7 @@
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
+#include "../kernelStuff/other_IO/rtc/rtc.h"
 
 void Println(Window* window)
 {
@@ -564,10 +565,16 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     }
 
     if(StrEquals(data->data[0],"time")){
-        uint64_t _time = PIT::TimeSinceBootMicroS();
-        Print(window, "Time {}, ", to_string(_time), Colors.yellow);
-        _Free(data);
+        Println(window,"RTC Info");
+        Println(window,"TIME: ", Colors.yellow);
+        Print(window,"{}.", to_string((int)RTC::Year), Colors.yellow);
+        Print(window,"{}.", to_string((int)RTC::Month), Colors.yellow);
+        Print(window,"{}|", to_string((int)RTC::Day), Colors.yellow);
+        Print(window,"{}.", to_string((int)RTC::Hour), Colors.yellow);
+        Print(window,"{}.", to_string((int)RTC::Minute), Colors.yellow);
+        Print(window,"{}", to_string((int)RTC::Second), Colors.yellow);
         RemoveFromStack();
+        return;
     }
 
     if(StrEquals(data->data[0], "mkfile")){
