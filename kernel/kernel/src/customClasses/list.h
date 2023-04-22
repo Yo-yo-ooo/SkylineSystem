@@ -43,6 +43,7 @@ template <typename T> class List
     void removeAt(uint64_t index);
     void removeLast();
     void removeFirst();
+    void removeFirst(int count);
     T elementAt(uint64_t index);
     void set(uint64_t index, T item);
     T& operator[](uint64_t index);
@@ -120,8 +121,13 @@ template class List<DiskInterface::GenericDiskInterface*>;
 template class Array<GuiComponentStuff::Field>;
 template class List<GuiComponentStuff::Field>;
 
+#include "../musicTest/musicStruct.h"
 
+template class Array<Music::Note>;
+template class List<Music::Note>;
 
+template class Array<Music::NoteCommand>;
+template class List<Music::NoteCommand>;
 
 
 

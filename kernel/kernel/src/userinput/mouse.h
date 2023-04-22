@@ -42,6 +42,8 @@ void DrawMousePointer();
 void DrawMousePointer1(PointerFramebuffer* framebuffer);
 void DrawMousePointer2(PointerFramebuffer* framebuffer, MPoint mousePos);
 
+void SetMousePosition(MPoint point);
+
 // void LoadFromBuffer(MPoint point, PointerFramebuffer* framebuffer);
 // void SaveIntoBuffer(MPoint point, PointerFramebuffer* framebuffer);
 // void DrawMouseBuffer(MPoint point, PointerFramebuffer* framebuffer);
@@ -51,3 +53,4 @@ extern uint32_t mouseColFront, mouseColBack;
 extern MPoint MousePosition;
 
 extern bool MouseClickState[3];
+extern bool ShowMouseCursor;

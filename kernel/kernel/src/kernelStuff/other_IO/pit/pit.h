@@ -8,6 +8,9 @@ namespace PIT
     extern uint16_t Divisor;
     static const uint64_t BaseFrequency = 1193182;
     extern bool Inited;
+    extern int FreqAdder;
+    extern uint16_t MusicDiv;
+    extern uint16_t NonMusicDiv;
 
 
     void Sleepd(double seconds);

@@ -6,7 +6,7 @@ TerminalInstance::TerminalInstance(OSUser* user)
 {
     this->currentUser = user;
     //this->window = window;
-    mode = commandMode::none;
+    mode = commandMode::mode_none;
     instanceType = InstanceType::Terminal;
     userlen = 0;
     takeInput = false;
@@ -69,7 +69,7 @@ void TerminalInstance::HandleEnter()
     }
     else
     {
-        mode = commandMode::none;
+        mode = commandMode::mode_none;
     }
     printUser = true;
     RemoveFromStack();
@@ -122,7 +122,7 @@ void TerminalInstance::Cls()
 {
     NewTerminalInstance* tempInst = (NewTerminalInstance*)newTermInstance;
     tempInst->Clear();
-    tempInst->Println("SkylineSystem v0.75 MASLOS_KERNEL_VERSION(v0.55)", Colors.green);
+    tempInst->Println("SkylineSystemv0.55", Colors.green);
     tempInst->Println("-------------", Colors.green);
     tempInst->Println();
     tempInst->Render();

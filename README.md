@@ -31,7 +31,7 @@ install NASM if you haven't.
 (make sure mtools is on version 4.0.27 or lower. newer versions aren't working just yet)
 
 
-Go into the SkylineSystem Folder and run the `RUN.sh` file
+Go into the MaslOS Folder and run the `RUN.sh` file
 
 # Real machine operation
 

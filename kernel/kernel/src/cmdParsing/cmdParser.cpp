@@ -227,6 +227,9 @@ void EditPartitionSetting(PartitionInterface::PartitionInfo* part, const char* p
 #include "../sysApps/tetris/tetris.h"
 #include "../sysApps/notepad/notepad.h"
 #include "../sysApps/imgTest/imgTest.h"
+#include "../tasks/doomTask/taskDoom.h"
+
+#include "../musicTest/musicTest.h"
 
 void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
 {
@@ -278,6 +281,47 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     if (StrEquals(input, "img"))
     {
         new SysApps::ImageViewer("");
+        RemoveFromStack();
+        return;
+    }
+
+    if (StrEquals(input, "doom"))
+    {
+        terminal->tasks.add(NewDoomTask(window));
+        RemoveFromStack();
+        return;
+    }
+
+    if (StrEquals(input, "music test"))
+    {
+        for (int i = 60; i < 103; i++)
+        {
+            Music::addCmd(Music::NoteCommand(i, 100, true));
+            Music::addCmd(Music::NoteCommand(100));
+        }
+
+        RemoveFromStack();
+        return;
+    }
+
+    if (StrEquals(input, "music clear"))
+    {
+        Music::listInUse = true;
+        Music::toPlay->clear();
+        Music::listInUse = false;
+
+        Music::rawAudioInUse = true;
+        Music::currentRawAudio->clear();
+        Music::rawAudioInUse = false;
+
+        RemoveFromStack();
+        return;
+    }
+
+    if (StrEquals(input, "music mario"))
+    {
+        Music::addMario();
+
         RemoveFromStack();
         return;
     }
@@ -381,7 +425,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
 
     if (StrEquals(data->data[0], "login") && terminal->mode == commandMode::enterPassword)
     {
-        terminal->mode = commandMode::none;
+        terminal->mode = commandMode::mode_none;
         StringArrData* data2 = SplitLine(input);
         if (data->len == 2)
         {
@@ -399,7 +443,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
 
     if (StrEquals(data->data[0], "set") && terminal->mode == commandMode::enterPassword)
     {
-        terminal->mode = commandMode::none;
+        terminal->mode = commandMode::mode_none;
         StringArrData* data2 = SplitLine(input);
         if (data->len == 2 || data->len == 3)
         {
@@ -490,7 +534,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             //  FS_STUFF::OpenFile(data->data[1]);
             char* buf = NULL;
             int len = 0;
-            if (FS_STUFF::LoadFileFromFullPath(data->data[1], &buf, &len))
+            if (FS_STUFF::ReadFileFromFullPath(data->data[1], &buf, &len))
                 terminal->tasks.add(NewDebugViewerTask(window, buf, len));
             else
                 LogError("File not found!", window);
@@ -502,7 +546,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
-
+    
     if(StrEquals(data->data[0], "mkdir")){
         FilesystemInterface::GenericFilesystemInterface *fs = 
                             FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
@@ -534,7 +578,6 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
-    
 
     if (StrEquals(data->data[0], "sleep"))
     {
@@ -758,13 +801,12 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     }
 
     if (StrEquals(data->data[0], "beep"))
-    {
-        int onDur = to_int(data->data[1]);
-        int offDur = to_int(data->data[2]);
-        int totDur = to_int(data->data[3]);
-        
+    {        
         if (data->len == 4)
         {
+            int onDur = to_int(data->data[1]);
+            int offDur = to_int(data->data[2]);
+            int totDur = to_int(data->data[3]);
             int size = to_int(data->data[3]);
             terminal->tasks.add(NewBeepTask(onDur, offDur, totDur));
             Println(window, "Playing beep...");
@@ -1734,7 +1776,7 @@ void login(const char* name, const char* pass, OSUser** user, Window* window)
 
     TerminalInstance* terminal = (TerminalInstance*)window->instance;
 
-    terminal->mode = commandMode::none;
+    terminal->mode = commandMode::mode_none;
 
     OSUser* usr = getUser(name);
     if (usr == 0)
@@ -1856,6 +1898,28 @@ void SetCmd(const char* name, const char* val, OSUser** user, Window* window)
         }
         else
             LogError("Wanted FPS of {} is out of range!", val, window);
+    }
+    else if (StrEquals(name, "mdiv"))
+    {
+        int mDiv = to_int(val);
+        if (mDiv > 10 && mDiv < 300)
+        {
+            PIT::MusicDiv = mDiv;
+            Println(window, "Music Div set to {}.", val);
+        }
+        else
+            LogError("Wanted Music Div of {} is out of range!", val, window);
+    }
+    else if (StrEquals(name, "mvol"))
+    {
+        int mVol = to_int(val);
+        if (mVol >= 0 && mVol <= 100)
+        {
+            Music::volume = mVol;
+            Println(window, "Music Volume set to {}.", val);
+        }
+        else
+            LogError("Wanted Music Volume of {} is out of range!", val, window);
     }
     else if (StrEquals(name, "username"))
     {
