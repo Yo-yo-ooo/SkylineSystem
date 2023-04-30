@@ -6,6 +6,10 @@ void outb(uint16_t port, uint8_t value)
     __asm__ __volatile__("outb %1, %0" : : "dN"(port), "a"(value));
 }
 
+void wrmsr(uint32_t msr, uint32_t lo, uint32_t hi){
+   asm volatile("wrmsr" : : "a"(lo), "d"(hi), "c"(msr));
+}
+
 uint8_t inb(uint16_t port)
 {
     // uint8_t returnVal;
