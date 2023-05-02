@@ -23,6 +23,7 @@
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
+#include "../kernelStuff/other_IO/rtc/rtc.h"
 
 void Println(Window* window)
 {
@@ -506,7 +507,6 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     // for (int i = 0; i < data->len; i++)
     //     Println(" - \"{}\"", data->data[i], Colors.bgreen);
 
-    #include "../kernelStuff/other_IO/rtc/rtc.h"
 	if(StrEquals(data->data[0], "mkdir")){
         FilesystemInterface::GenericFilesystemInterface *fs = 
                             FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
