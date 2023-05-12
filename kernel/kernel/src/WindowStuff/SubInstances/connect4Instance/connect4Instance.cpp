@@ -2,6 +2,7 @@
 #include "../../../cmdParsing/cstrTools.h"
 #include "../../../memory/heap.h"
 #include "../../../kernelStuff/stuff/cstr.h"
+#include "../../../memory/heap.h"
 
 Connect4Instance::Connect4Instance(Window* window)
 {
@@ -11,6 +12,24 @@ Connect4Instance::Connect4Instance(Window* window)
     ClearInput();
 }
 
+const char* itoa(int val)
+{
+    char* s=(char*)_Malloc(35);
+    if(!s) return NULL;
+    int sign=val&0x80000000;
+    if(sign) val=-val;
+    int len=0;
+    do{
+        s[len++]=val%10+'0';val/=10;
+    }while(val);
+    if(sign) s[len++]='-';
+    char* result=(char*)_Malloc(35);
+    if(!result) return NULL;
+    int i;
+    for(i=0;i<len;i++) result[i]=s[len-i-1];
+    return result;
+}
+
 
 void Connect4Instance::Init()
 {
@@ -18,7 +37,8 @@ void Connect4Instance::Init()
     bgCol = 0xFF000022;
     window->renderer->color = Colors.white;
     window->renderer->Clear(bgCol);
-    window->renderer->putStr("CONNECT FOUR", (window->size.width-(12*8))/2, 30);
+    //window->renderer->putStr(itoa((window->size.width-(12*8))/2),((window->size.width-(12*8))/2),20);
+    window->renderer->putStrCN("你好", (window->size.width-(12*8))/2, 30);
     window->renderer->putStr("________________", (window->size.width-(16*8))/2, 36);
     
     window->renderer->putStr("PRESS ENTER TO START", (window->size.width-(20*8))/2, 80);

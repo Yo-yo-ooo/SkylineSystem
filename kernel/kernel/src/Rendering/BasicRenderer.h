@@ -24,6 +24,8 @@ class BasicRenderer
         void delChar(int64_t xoff, int64_t yoff);
         void putStr(const char* chrs, int64_t xoff, int64_t yoff);
         void putStr(const char *chrs, int64_t xoff, int64_t yoff, uint32_t col);
+        //void putStr_CN(const char *chrs, int64_t xoff, int64_t yoff);
+        void putStrCN(const char*chrs, int64_t xoff, int64_t yoff);
 
         void printStr(const char* chrs);
         void printStr(const char* chrs, bool allowEscape);
