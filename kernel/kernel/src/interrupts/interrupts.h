@@ -69,7 +69,7 @@ __attribute__((interrupt)) void VMMCommunicationFault_handler(interrupt_frame* f
 __attribute__((interrupt)) void SecurityException_handler(interrupt_frame* frame);//, uint64_t error);
 
 __attribute__((interrupt)) void InvalidOpCode_handler(interrupt_frame* frame);//, uint64_t error);
-__attribute__((interrupt)) void Syscall_handler(interrupt_frame* frame);
+//__attribute__((interrupt)) void Syscall_handler(interrupt_frame* frame);
 
 
 void RemapPIC(uint8_t _a1, uint8_t _a2);

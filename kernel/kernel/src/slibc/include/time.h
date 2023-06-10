@@ -1,7 +1,7 @@
 #pragma once
 
 typedef long long time_t;
- 
+ // 使用RTC来获取时间
 struct tm {
    int tm_sec;         /* 秒，范围从 0 到 59        */
    int tm_min;         /* 分，范围从 0 到 59        */
@@ -13,3 +13,7 @@ struct tm {
    int tm_yday;        /* 一年中的第几天，范围从 0 到 365    */
    int tm_isdst;       /* 夏令时                */
 };
+
+struct tm *TimeZ(int houradd,struct tm *tmp);
+time_t mktime(struct tm *tp);
+char *asctime(const struct tm *timeptr);

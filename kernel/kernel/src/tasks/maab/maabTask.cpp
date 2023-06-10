@@ -14,7 +14,7 @@
 #include "../../userinput/keyboard.h"
 #include "../../rnd/rnd.h"
 
-
+#define RetSyscall(T,NByte) *((T*)((uint64_t)mem + instrPointer + NByte));
 
 TaskMAAB::TaskMAAB(uint32_t codeLen, uint8_t* code, Window* window, TerminalInstance* term)
 {

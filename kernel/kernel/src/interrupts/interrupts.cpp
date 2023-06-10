@@ -311,14 +311,6 @@ __attribute__((interrupt)) void InvalidOpCode_handler(interrupt_frame* frame)//,
     SURVIVE_CRASH
 }
 
-__attribute__((interrupt)) void Syscall_handler(interrupt_frame* frame)
-{
-    AddToStack();
-    Panic("Syscall Detected!", false);
-    RemoveFromStack();
-
-    SURVIVE_CRASH
-}
 
 
 

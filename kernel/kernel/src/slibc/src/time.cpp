@@ -161,3 +161,8 @@ void gettime(struct tm *timep){
 
     return;
 }
+
+struct tm *TimeZ(int houradd,struct tm *tmp){
+    tmp->tm_hour = (tmp->tm_hour - 8) + houradd;
+    return tmp;
+}
