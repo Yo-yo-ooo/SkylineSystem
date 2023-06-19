@@ -12,3 +12,13 @@ void* operator new(size_t size) {
     _X__line__ = 0;
     return ptr;
 }
+
+const char* _Z__file__ = "unknown";
+const char* _Z__func__ = "unknown";
+size_t _Z__line__ = 0;
+void operator delete(void* address){
+    _Yfree(address,_Z__func__,_Z__file__,_Z__line__);
+    _Z__file__ = "unknown";
+    _Z__func__ = "unknown";
+    _Z__line__ = 0;
+}

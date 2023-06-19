@@ -256,3 +256,42 @@ int32_t StrLastIndexOf(const char* str, char chr, int ignoreCount)
                 return i;
     return -1;
 }
+
+void *_memmove(void *dest, const void *src, size_t n) {
+    if (dest == src) {
+        return dest;
+    }
+    unsigned char *pDest = (unsigned char *)dest;
+    const unsigned char *pSrc = (const unsigned char *)src;
+    if (pDest < pSrc) {
+        for (size_t i = 0; i < n; i++) {
+            *(pDest + i) = *(pSrc + i);
+        }
+    } else {
+        for (size_t i = n; i > 0; i--) {
+            *(pDest + i - 1) = *(pSrc + i - 1);
+        }
+    }
+    return dest;
+}
+
+void StrReplace(char* str, char* oldSubStr, char* newSubStr) {
+    int len1 = 0, len2 = 0, len3 = 0;
+    while (str[len1]) len1++;
+    while (oldSubStr[len2]) len2++;
+    while (newSubStr[len3]) len3++;
+
+    int i = 0, j = 0;
+    while (str[i]) {
+        j = 0;
+        while (str[i + j] == oldSubStr[j] && j < len2) j++;
+        if (j == len2) {
+            _memmove(str + i + len3, str + i + len2, len1 - i - len2 + 1);
+            _memcpy(str + i, newSubStr, len3);
+            i += len3;
+            len1 += len3 - len2;
+        } else {
+            i++;
+        }
+    }
+}

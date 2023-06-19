@@ -17,6 +17,10 @@ namespace DiskInterface
 
         bool ReadBytes(uint64_t address, uint64_t count, void* buffer);
         bool WriteBytes(uint64_t address, uint64_t count, void* buffer);
+
+        bool WriteSector(uint8_t* data, uint32_t blocknum);
+        bool ReadSector(uint8_t *data,uint32_t sector);
+
         uint32_t GetMaxSectorCount();
     };
 }
