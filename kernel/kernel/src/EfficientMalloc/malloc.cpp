@@ -1,6 +1,8 @@
 #include "../memory/heap.h"
 #include "EfficientMalloc.h"
 
+//使用M&R编写的数中的malloc实现(因为高效的块处理)
+
 #define NALLOC 1024
 
 typedef long Align;
