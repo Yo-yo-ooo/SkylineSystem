@@ -41,6 +41,9 @@ typedef struct {
         uint64_t    rsp;
         uint64_t    dss;
     } base_frame;
+    uint64_t r10;
+    uint64_t r8;
+    uint64_t r9;
 } interrupt_frame;
 
 
@@ -69,7 +72,7 @@ __attribute__((interrupt)) void VMMCommunicationFault_handler(interrupt_frame* f
 __attribute__((interrupt)) void SecurityException_handler(interrupt_frame* frame);//, uint64_t error);
 
 __attribute__((interrupt)) void InvalidOpCode_handler(interrupt_frame* frame);//, uint64_t error);
-//__attribute__((interrupt)) void Syscall_handler(interrupt_frame* frame);
+__attribute__((interrupt)) void Syscall_handler(interrupt_frame* frame);
 
 
 void RemapPIC(uint8_t _a1, uint8_t _a2);

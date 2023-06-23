@@ -311,6 +311,32 @@ __attribute__((interrupt)) void InvalidOpCode_handler(interrupt_frame* frame)//,
     SURVIVE_CRASH
 }
 
+//Syscall Handler
+__attribute__((interrupt)) void Syscall_handler(interrupt_frame* frame)//, uint64_t error)
+{
+    AddToStack();
+    uint64_t syscall_num = frame->general_registers.rax;
+    uint64_t v1 = frame->general_registers.rdi;
+    uint64_t v2 = frame->general_registers.rsi;
+    uint64_t v3 = frame->general_registers.rdx;
+    uint64_t v4 = frame->r10;
+    uint64_t v5 = frame->r8;
+    uint64_t v6 = frame->r9;
+    switch (syscall_num)
+    {
+    case 1:
+        frame->general_registers.rax = (uint64_t)_Malloc1(v1);
+        break;
+    
+    default:
+        Panic("Invalid System Call!", false);
+        break;
+    }
+    RemoveFromStack();
+
+    SURVIVE_CRASH
+}
+
 
 
 
