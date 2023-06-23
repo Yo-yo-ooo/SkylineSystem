@@ -1,30 +1,21 @@
-# 设置编译器和编译选项
-CXX = g++
-CXXFLAGS = -ffreestanding -fshort-wchar -mno-red-zone -fno-omit-frame-pointer -fno-exceptions -fpermissive -Wno-pmf-conversions
+CC=gcc
+CFLAGS=-c -nostdlib
+LDFLAGS=-static
+INC=-I./include
+SRC=$(wildcard *.cpp)
+OBJ=$(patsubst %.cpp, obj/%.o, $(SRC))
+LIB=libmylib.a
 
-# 源文件和目标文件存放路径
-SRCDIR = src
-OBJDIR = obj
+.PHONY: all clean
 
-# 获取所有.cpp文件
-SRCS = $(wildcard $(SRCDIR)/*.cpp)
+all: $(LIB)
 
-# 将.cpp文件转换为.obj文件
-OBJS = $(patsubst $(SRCDIR)/%.cpp, $(OBJDIR)/%.o, $(SRCS))
+$(LIB): $(OBJ)
+	ar rcs $@ $(OBJ)
 
-# 设置目标文件名
-TARGET = myprogram
-
-# 编译规则
-$(TARGET): $(OBJS)
-    $(CXX) $(CXXFLAGS) $^ -o $@
-
-$(OBJDIR)/%.o: $(SRCDIR)/%.cpp | $(OBJDIR)
-    $(CXX) $(CXXFLAGS) -c $< -o $@
-
-$(OBJDIR):
-    mkdir $(OBJDIR)
+obj/%.o: %.c
+	mkdir -p obj
+	$(CC) $(CFLAGS) $(INC) $< -o $@
 
 clean:
-    rm -rf $(OBJDIR);
-    rm -f $(TARGET)
+	rm -rf $(LIB) obj/
