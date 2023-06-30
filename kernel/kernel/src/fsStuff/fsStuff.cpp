@@ -324,15 +324,6 @@ namespace FS_STUFF
             _Free(t2);
             return true;
         }
-        if (StrEndsWith(path, ".o"))
-        {
-            const char* t = StrCombine("testo \"", path);
-            const char* t2= StrCombine(t, "\"");
-            _Free(t);
-            RunTerminalCommand(t2, "TEST O FILE", false, false);
-            _Free(t2);
-            return true;
-        }
         if (StrEndsWith(path, ".mbaf"))
         {
             int totalLen = 0;

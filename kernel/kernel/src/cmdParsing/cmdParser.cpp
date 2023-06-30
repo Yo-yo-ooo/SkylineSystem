@@ -23,7 +23,6 @@
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
-#include "../kernelStuff/other_IO/rtc/rtc.h"
 
 void Println(Window* window)
 {
@@ -231,7 +230,9 @@ void EditPartitionSetting(PartitionInterface::PartitionInfo* part, const char* p
 #include "../tasks/doomTask/taskDoom.h"
 
 #include "../musicTest/musicTest.h"
-
+//#include "../kernelStuff/other_IO/sb16/sb16.h"
+#include "../musicTest/sbTest.h"
+#include "../kernelStuff/other_IO/serial/serial.h"
 
 
 BuiltinCommand BuiltinCommandFromStr(char* i)
@@ -247,6 +248,8 @@ BuiltinCommand BuiltinCommandFromStr(char* i)
   else if (StrEquals(i, "img")) return Command_Image;
   else if (StrEquals(i, "doom")) return Command_Doom;
   else if (StrEquals(i, "music test")) return Command_MusicTest;
+  else if (StrEquals(i, "sb test")) return Command_SbTest;
+  else if (StrEquals(i, "sb reset")) return Command_SbReset;
   else if (StrEquals(i, "music clear")) return Command_MusicClear;
   else if (StrEquals(i, "music mario")) return Command_MusicMario;
   else if (StrEquals(i, "tetris")) return Command_Tetris;
@@ -260,19 +263,23 @@ BuiltinCommand BuiltinCommandFromStr(char* i)
   else if (StrEquals(i, "debug viewer")) return Command_DebugViewer;
   else if (StrEquals(i, "crash")) return Command_Crash;
   else if (StrEquals(i, "crash 2")) return Command_Crash2;
+  else if (StrEquals(i, "crash 3")) return Command_Crash3;
+  else if (StrEquals(i, "crash 4")) return Command_Crash4;
+  else if (StrEquals(i, "renderloop")) return Command_RenderLoop;
   else return Command_Invalid;
 }
 
 void HelpCommand(Window* window)
 {
     const char* helpMessage =
-        "Help Commands:\n"
+        "Help Commands: (More Details are in the ThisOS Wiki)\n"
         " - help                    get this message\n"
         " - exit                    exit terminal\n"
         " - clear                   clears the terminal screen\n"
         " - benchmark reset         resets the bench mark\n"
         " - malloc                  mallocs memory 20G\n"
         " - music test              test music\n"
+        " - sb test                 test ac97\n"
         " - music clear             clear music\n"
         " - music mario             play mario music\n"
         " - shutdown                turn off operating system\n"
@@ -285,8 +292,11 @@ void HelpCommand(Window* window)
         " - taskmgr                 open task manager\n"
         " - dbg | debug viewer      open debug viewer\n"
         " - heapCheck               ...\n"
-        " - crash                   ...\n"
-        " - crash2                  ...\n";
+        " - crash                   Causes a trivial kernel panic\n"
+        " - crash 2                 Causes a trivial but blocking kernel panic\n"
+        " - crash 3                 Causes a kernel panic\n"
+        " - crash 4                 Causes a memory corruption and crashes\n"
+        ;
     Print(window, helpMessage);
 }
 
@@ -354,6 +364,104 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             RemoveFromStack();
             return;
         }
+        case Command_SbReset: 
+        {
+            Println(window, "> Resetting AC97 thingy");
+            Music::resetTest();
+            RemoveFromStack();
+            return;
+        }
+        case Command_SbTest: {
+            if (osData.ac97Driver != NULL)
+            {
+                AddToStack();
+                DefaultInstance* instance = window->instance;
+                if (instance != NULL && osData.audioDestinations.getCount() > 0)
+                {
+                    int sampleCount = 96000;
+                    int sampleRate = 12000;
+                    if (instance->audioSource == NULL)
+                    {
+                        Println(window, "> Creating Audiosource");
+                        instance->audioSource = (void*)new Audio::BasicAudioSource(
+                            Audio::AudioBuffer::Create16BitMonoBuffer(sampleRate, sampleCount)
+                        );
+                        Println(window, "> Linking Audiosource to AC97");
+                        ((Audio::BasicAudioSource*)instance->audioSource)->ConnectTo(osData.audioDestinations.elementAt(0));
+                    }
+                    Audio::BasicAudioSource* src = (Audio::BasicAudioSource*)instance->audioSource;
+
+                    if (!src->readyToSend)
+                    {
+                        Println(window, "> Filling Data");
+                        uint16_t* arr = (uint16_t*)src->buffer->data;
+                        MusicBit16Test::FillArray(arr, 0, sampleCount, 400, sampleRate);
+                        src->buffer->sampleCount = sampleCount;
+                        src->samplesSent = 0;
+                        src->readyToSend = true;
+                        Println(window, "> Ready To send");
+                    }
+                    else
+                    {
+                        Print(window, "> Still sending Data. ({}", to_string(src->samplesSent));
+                        Println(window, " of {} samples)", to_string(src->buffer->sampleCount));
+                    }
+                }
+
+
+                // int amt = 48000;
+                // int step = 0x1000;
+                // int hz = 200;
+                // uint16_t* testBuff = (uint16_t*)_Malloc(amt*2);
+                // Println(window, "Malloc Test Array: {}", ConvertHexToString((uint64_t)testBuff));
+                // for (int i = 0; i + step <= amt; i += step)
+                // {
+                //     AddToStack();
+                //     MusicBit16Test::FillArray(testBuff, i, step, hz);
+                //     //Println(window, "HZ: {}", to_string(hz));
+                //     hz += 10;
+                //     RemoveFromStack();
+                // }
+                // RemoveFromStack();
+                
+                // AddToStack();
+                // Println(window, "Fill Test Array");
+                // uint64_t tCount = 0;
+                // tCount = osData.ac97Driver->writeBuffer(0, (uint8_t*)testBuff, amt*2);
+                // RemoveFromStack();
+
+                // AddToStack();
+                // Println(window, "Wrote {} bytes", to_string(tCount));
+                // RemoveFromStack();
+
+                // AddToStack();
+                // _Free(testBuff);
+                // //terminal->tasks.add(NewDebugViewerTask(window, (uint8_t*)testBuff, amt*2));
+                // RemoveFromStack();
+
+                // AddToStack();
+                // Println(window, "Freed Test Array");
+                // RemoveFromStack();
+                
+                
+                // uint64_t tArr2 = (uint64_t)GlobalAllocator->RequestPage();
+                // Println(window, "ARR2: {}", ConvertHexToString(tArr2));
+                
+                // SB16Test::TestMusicArr = (uint16_t*)tArr2;
+                // SB16Test::FillArray();
+
+                // uint64_t tArr = (uint64_t)SB16Test::TestMusicArr;
+                // Println(window, "ARR1: {}", ConvertHexToString(tArr));
+                // SB16::SB16SetBuff((uint32_t)tArr, SB16Test::TestMusicArrLen * 2);
+            }
+            else
+            {
+                Println(window, "No AC97 Driver :(");
+            }
+
+            RemoveFromStack();
+            return;
+        }
         case Command_MusicClear: {
             Music::listInUse = true;
             Music::toPlay->clear();
@@ -368,7 +476,6 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         }
         case Command_MusicMario: {
             Music::addMario();
-
             RemoveFromStack();
             return;
         }
@@ -447,6 +554,34 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             RemoveFromStack();
             return;
         }
+        case Command_Crash3: {
+            Println(window, "Crashing 3...");
+
+            Panic("DEBUG KERNEL PANIC", true);
+            RemoveFromStack();
+            return;
+        }
+        case Command_RenderLoop: {
+            Println(window, "Re-Entering Render Loop...");
+            DoSafe();
+            RemoveFromStack();
+            return;
+        }
+        case Command_Crash4: {
+            Println(window, "Crashing 4...");
+
+            void* testo = _Malloc(10);
+            char* bruhus = (char*) testo;
+            for (int i = -100; i < 100; i++)
+                bruhus[i] = ((i * 7 + 1234) % 255);
+        
+            // Should crash
+            //_Free(testo);
+            _Malloc(10);
+
+            RemoveFromStack();
+            return;
+        }
     }
 
     StringArrData* data = SplitLine(oldInput);
@@ -507,55 +642,99 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     // for (int i = 0; i < data->len; i++)
     //     Println(" - \"{}\"", data->data[i], Colors.bgreen);
 
-	if(StrEquals(data->data[0], "mkdir")){
-        FilesystemInterface::GenericFilesystemInterface *fs = 
-                            FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
-        if(fs != NULL){
-            const char* res = fs->CreateFolder(
-                StrSubstr(data->data[1],StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[1]))+1));
-            if (res == FilesystemInterface::FSCommandResult.SUCCESS)
-                Println(window, "Folder Creation Success!");
-            else
-                LogError("Folder Creation failed! Error: \"{}\"", res, window);
-        }
-        _Free(data);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0],"time")){
-        Println(window,"RTC INFO");
-        Println(window,"TIME: ", Colors.yellow);
-        Print(window,"{}.", to_string((int)RTC::Year), Colors.yellow);
-        Print(window,"{}.", to_string((int)RTC::Month), Colors.yellow);
-        Print(window,"{}|", to_string((int)RTC::Day), Colors.yellow);
-        Print(window,"{}.", to_string((int)RTC::Hour), Colors.yellow);
-        Print(window,"{}.", to_string((int)RTC::Minute), Colors.yellow);
-        Print(window,"{}", to_string((int)RTC::Second), Colors.yellow);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0], "mkfile")){
-        FilesystemInterface::GenericFilesystemInterface *fs = 
-                            FS_STUFF::GetFsInterfaceFromFullPath(data->data[1]);
-        if(fs != NULL){
-            const char* res = fs->CreateFile(
-                StrSubstr(data->data[1],StrLen(FS_STUFF::GetDriveNameFromFullPath(data->data[1]))+1));
-            if (res == FilesystemInterface::FSCommandResult.SUCCESS)
-                Println(window, "File Creation Success!");
-            else
-                LogError("File Creation failed! Error: \"{}\"", res, window);
-        }
-        _Free(data);
-        RemoveFromStack();
-        return;
-    }
-
     if (StrEquals(data->data[0], "echo"))
     {
         if (data->len == 2)
             Println(window, data->data[1]);
+        else
+            LogInvalidArgumentCount(1, data->len-1, window);
+        
+        _Free(data);
+        RemoveFromStack();
+        return;
+    }
+
+    if (StrEquals(data->data[0], "io"))
+    {
+        // io [outb, outw, outl] port value (4)
+        // io [inb, inw, inl] port (3)
+        // io pci [outb, outw, outl] addr field value (6)
+        // io pci [inb, inw, inl] addr field (5)
+        
+        if (data->len == 4) // io [outb, outw, outl] port value (4)
+        {
+            if (StrEquals(data->data[1], "outb"))
+            {
+                //Print(window, "OUTB: {}, ", to_string((uint16_t)to_int(data->data[2])), Colors.yellow);
+                //Println(window, "{}", to_string((uint8_t)to_int(data->data[3])), Colors.yellow);
+                outb((uint16_t)to_int(data->data[2]), (uint8_t)to_int(data->data[3]));
+            }
+            else if (StrEquals(data->data[1], "outw"))
+                outw((uint16_t)to_int(data->data[2]), (uint16_t)to_int(data->data[3]));
+            else if (StrEquals(data->data[1], "outl"))
+                outl((uint16_t)to_int(data->data[2]), (uint32_t)to_int(data->data[3]));
+            else
+                LogError("Invalid IO Command!", window);
+        }
+        else if (data->len == 3) // io [inb, inw, inl] port (3)
+        {
+            if (StrEquals(data->data[1], "inb"))
+                Println(window, "INB: {}", to_string(inb((uint16_t)to_int(data->data[2]))), Colors.yellow);
+            else if (StrEquals(data->data[1], "inw"))
+                Println(window, "INW: {}", to_string(inw((uint16_t)to_int(data->data[2]))), Colors.yellow);
+            else if (StrEquals(data->data[1], "inl"))
+                Println(window, "INL: {}", to_string((uint64_t)inl((uint16_t)to_int(data->data[2]))), Colors.yellow);
+            else
+                LogError("Invalid IO Command!", window);
+        }
+        else if (data->len == 6) // io pci [outb, outw, outl] addr field value (6)
+        {
+            if (StrEquals(data->data[2], "outb"))
+                PCI::write_byte((uint8_t)to_int(data->data[4]), (uint8_t)to_int(data->data[4]), (uint8_t)to_int(data->data[5]));
+            else if (StrEquals(data->data[2], "outw"))
+                PCI::write_word((uint8_t)to_int(data->data[4]), (uint8_t)to_int(data->data[4]), (uint16_t)to_int(data->data[5]));
+            else if (StrEquals(data->data[2], "outl"))
+                PCI::write_dword((uint8_t)to_int(data->data[4]), (uint8_t)to_int(data->data[4]), (uint32_t)to_int(data->data[5]));
+            else
+                LogError("Invalid IO Command!", window);
+        }
+        else if (data->len == 5) // io pci [inb, inw, inl] addr field (5)
+        {
+            if (StrEquals(data->data[2], "inb"))
+                Println(window, "INB: {}", to_string(PCI::read_byte((uint8_t)to_int(data->data[4]), (uint8_t)to_int(data->data[4]))), Colors.yellow);
+            else if (StrEquals(data->data[2], "inw"))
+                Println(window, "INW: {}", to_string(PCI::read_word((uint8_t)to_int(data->data[4]), (uint8_t)to_int(data->data[4]))), Colors.yellow);
+            else if (StrEquals(data->data[2], "inl"))
+                Println(window, "INL: {}", to_string((uint64_t)PCI::read_dword((uint8_t)to_int(data->data[4]), (uint8_t)to_int(data->data[4]))), Colors.yellow);
+            else
+                LogError("Invalid IO Command!", window);
+        }
+        else
+            LogError("Invalid IO Command!", window);
+        
+        _Free(data);
+        RemoveFromStack();
+        return;
+    }
+
+    if (StrEquals(data->data[0], "serial"))
+    {
+        if (data->len == 2)
+        {
+            if (StrEquals(data->data[1], "init"))
+                Println(window, "Init: {}", to_string(Serial::Init()), Colors.yellow);
+            else if (StrEquals(data->data[1], "read"))
+                Println(window, "Read: {}", to_string(Serial::Read()), Colors.yellow);
+            else
+                LogError("Invalid Serial Command!", window);
+        }
+        else if (data->len == 3)
+        {
+            if (StrEquals(data->data[1], "write"))
+                Serial::Write(data->data[2]);
+            else
+                LogError("Invalid Serial Command!", window);
+        }
         else
             LogInvalidArgumentCount(1, data->len-1, window);
         

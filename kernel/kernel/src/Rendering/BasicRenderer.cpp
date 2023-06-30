@@ -5,9 +5,6 @@
 #include "Cols.h"
 #include "../cmdParsing/cstrTools.h"
 #include "../memory/heap.h"
-#include "../OSDATA/font.h"
-
-#define PIXEL(x, y) *(unsigned int *)(((unsigned int *)framebuffer->BaseAddress) + x + (y * framebuffer->PixelsPerScanLine))
 
 BasicRenderer *GlobalRenderer;
 
@@ -21,11 +18,6 @@ void BasicRenderer::putChar(char chr, int64_t xoff, int64_t yoff, uint32_t fg, u
     putChar(chr, xoff, yoff);
     overwrite = toverwrite;
     color = tcol;
-}
-
-
-void BasicRenderer::putStrCN(const char*str, int64_t xoff, int64_t yoff){
-    
 }
 
 void BasicRenderer::putChar(char chr, int64_t xoff, int64_t yoff)
@@ -79,13 +71,6 @@ void BasicRenderer::putStr(const char *chrs, int64_t xoff, int64_t yoff, uint32_
         putChar(chrs[x], xoff + (x * 8), yoff);
     color = tcol;
 }
-/*
-void BasicRenderer::putStr_CN(const char *chrs, int64_t xoff, int64_t yoff)
-{
-    for (unsigned int x = 0; chrs[x] != 0; x++)
-        putchr_CN(chrs[x], xoff + (x * 8), yoff);
-}
-*/
 
 void BasicRenderer::printStr(const char *chrs)
 {
@@ -152,7 +137,7 @@ void BasicRenderer::printStr(const char *chrs, const char *var, bool allowEscape
             else if (chrs[index + 1] == '}')
             {
                 index++;
-                putChar('{', CursorPosition.x, CursorPosition.y);
+                putChar('}', CursorPosition.x, CursorPosition.y);
                 CursorPosition.x += 8;
             }
             else if (chrs[index + 1] == 'C')
@@ -339,7 +324,7 @@ void BasicRenderer::ClearDotted(uint32_t col)
 void BasicRenderer::Cls()
 {
     BasicRenderer::Clear(0);
-    BasicRenderer::Println("(OLD) SkylineSystemv0.35", Colors.green);
+    BasicRenderer::Println("(OLD) SkylineSystem v0.35", Colors.green);
     BasicRenderer::Println("-------------------", Colors.green);
     BasicRenderer::Println();
 }

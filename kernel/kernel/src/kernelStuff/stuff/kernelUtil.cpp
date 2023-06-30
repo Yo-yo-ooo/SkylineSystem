@@ -65,7 +65,7 @@ void PrepareACPI(BootInfo* bootInfo)
         }
     }
     
-
+    PrintDebugTerminal();
     RemoveFromStack();
 
     
@@ -112,9 +112,13 @@ void PrepareACPI(BootInfo* bootInfo)
 
     //Panic("bruh", true);
 
+    PrintDebugTerminal();
+
     AddToStack();
     PCI::EnumeratePCI(mcfg);
     RemoveFromStack();
+
+    PrintDebugTerminal();
 
     // for (int i = 0; i < 20; i++)
     //     GlobalRenderer->Clear(Colors.bblue);
@@ -126,6 +130,7 @@ void PrepareACPI(BootInfo* bootInfo)
     // for (int i = 0; i < 20; i++)
     //     GlobalRenderer->Clear(Colors.orange);
 
+    PrintDebugTerminal();
     RemoveFromStack();
 }
 
@@ -339,6 +344,13 @@ void PrepareInterrupts()
     for (int i = 0; i < (0x1000 / sizeof(IDTDescEntry)); i++)
         SetIDTGate((void*)GenericInt_handler, i, IDT_TA_InterruptGate, 0x08);
 
+    for (int i = 0; i < 256; i++)
+    {
+        IRQHandlerCallbackHelpers[i] = NULL;
+        IRQHandlerCallbackFuncs[i] = NULL;
+    }
+
+    // Main Stuff
     SetIDTGate((void*)PageFault_handler, 0xE, IDT_TA_InterruptGate, 0x08);
     SetIDTGate((void*)DoubleFault_handler, 0x8, IDT_TA_InterruptGate, 0x08);
     SetIDTGate((void*)GPFault_handler, 0xD, IDT_TA_InterruptGate, 0x08);
@@ -346,12 +358,14 @@ void PrepareInterrupts()
     SetIDTGate((void*)MouseInt_handler, 0x2C, IDT_TA_InterruptGate, 0x08);
     SetIDTGate((void*)PITInt_handler, 0x20, IDT_TA_InterruptGate, 0x08);
     
+    // Main Exceptions
     SetIDTGate((void*)GenMathFault_handler, 0x0, IDT_TA_InterruptGate, 0x08); // Divide by 0
     SetIDTGate((void*)Debug_handler, 0x1, IDT_TA_InterruptGate, 0x08); // Debug
     SetIDTGate((void*)Breakpoint_handler, 0x3, IDT_TA_InterruptGate, 0x08); // Breakpoint
     SetIDTGate((void*)GenFloatFault_handler, 0x10, IDT_TA_InterruptGate, 0x08); // x87 Float error
     SetIDTGate((void*)GenFloatFault_handler, 0x13, IDT_TA_InterruptGate, 0x08); // SIMD Float error
 
+    // Other Exceptions
     SetIDTGate((void*)GenFault_handler, 0x2, IDT_TA_InterruptGate, 0x08); // Non Maskable interrupt
     SetIDTGate((void*)GenFault_handler, 0x4, IDT_TA_InterruptGate, 0x08); // Overflow
     SetIDTGate((void*)GenFault_handler, 0x5, IDT_TA_InterruptGate, 0x08); // Bound Range Exceeded
@@ -367,7 +381,25 @@ void PrepareInterrupts()
     SetIDTGate((void*)HypervisorFault_handler, 0x1C, IDT_TA_InterruptGate, 0x08); // Hypervisor Injection Exception
     SetIDTGate((void*)VMMCommunicationFault_handler, 0x1D, IDT_TA_InterruptGate, 0x08); // VMM Communication Exception
     SetIDTGate((void*)SecurityException_handler, 0x1E, IDT_TA_InterruptGate, 0x08); // Security Exception
-    SetIDTGate((void*)Syscall_handler, 0x80, IDT_TA_InterruptGate, 0x08); // Syscall Exception
+
+    // Unhandled IRQs
+    //SetIDTGate((void*)IRQ0_handler, 0x20, IDT_TA_InterruptGate, 0x08); // IRQ0 Handled
+    //SetIDTGate((void*)IRQ1_handler, 0x21, IDT_TA_InterruptGate, 0x08); // IRQ1 Handled
+    SetIDTGate((void*)IRQ2_handler, 0x22, IDT_TA_InterruptGate, 0x08); // IRQ2
+    SetIDTGate((void*)IRQ3_handler, 0x23, IDT_TA_InterruptGate, 0x08); // IRQ3
+    SetIDTGate((void*)IRQ4_handler, 0x24, IDT_TA_InterruptGate, 0x08); // IRQ4
+    SetIDTGate((void*)IRQ5_handler, 0x25, IDT_TA_InterruptGate, 0x08); // IRQ5
+    SetIDTGate((void*)IRQ6_handler, 0x26, IDT_TA_InterruptGate, 0x08); // IRQ6
+    SetIDTGate((void*)IRQ7_handler, 0x27, IDT_TA_InterruptGate, 0x08); // IRQ7
+    SetIDTGate((void*)IRQ8_handler, 0x28, IDT_TA_InterruptGate, 0x08); // IRQ8
+    SetIDTGate((void*)IRQ9_handler, 0x29, IDT_TA_InterruptGate, 0x08); // IRQ9
+    SetIDTGate((void*)IRQ10_handler, 0x2A, IDT_TA_InterruptGate, 0x08); // IRQ10
+    SetIDTGate((void*)IRQ11_handler, 0x2B, IDT_TA_InterruptGate, 0x08); // IRQ11
+    //SetIDTGate((void*)IRQ12_handler, 0x2C, IDT_TA_InterruptGate, 0x08); // IRQ12 Handled
+    //SetIDTGate((void*)IRQ13_handler, 0x2D, IDT_TA_InterruptGate, 0x08); // IRQ13 Handled
+    SetIDTGate((void*)IRQ14_handler, 0x2E, IDT_TA_InterruptGate, 0x08); // IRQ14
+    SetIDTGate((void*)IRQ15_handler, 0x2F, IDT_TA_InterruptGate, 0x08); // IRQ15
+
 
     io_wait();    
     __asm__ volatile ("lidt %0" : : "m" (idtr));
@@ -375,11 +407,16 @@ void PrepareInterrupts()
     //asm ("int $0x1");
 
     AddToStack();
+    // RemapPIC(
+    //     0b11111000, //0b11111000, 
+    //     0b11101111 //0b11101111
+    // );
     RemapPIC(
-        0b11111000, //0b11111000, 
-        0b11101111 //0b11101111
+        0, //0b11111000, 
+        0 //0b11101111
     );
-    
+
+
     io_wait();    
     __asm__ volatile ("sti");
     RemoveFromStack();
@@ -443,7 +480,7 @@ void PrepareWindows(Framebuffer* img)
 
         debugTerminalWindow->renderer->Clear(Colors.black);
         //KeyboardPrintStart(debugTerminalWindow);
-        debugTerminalWindow->renderer->Println("SkylineSystem - Debug Terminal (OUTPUT ONLY)", Colors.green);
+        debugTerminalWindow->renderer->Println("ThisOS - Debug Terminal (OUTPUT ONLY)", Colors.green);
         debugTerminalWindow->renderer->Println("-------------------------------------\n", Colors.green);
         debugTerminalWindow->renderer->color = Colors.yellow;
     }
@@ -736,7 +773,7 @@ void InitStartMenuWindow(BootInfo* bootInfo)
 BasicRenderer r = *((BasicRenderer*)NULL);
 
 #include "../../musicTest/musicTest.h"
-
+#include "../other_IO/serial/serial.h"
 
 
 KernelInfo InitializeKernel(BootInfo* bootInfo)
@@ -776,6 +813,10 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     //osData.realMainWindow->framebuffer = r.framebuffer;
 
+    PrintMsg("> Initing Serial Interface");
+    Serial::Init();
+    StepDone();
+
     AddToStack();
 
     PrintMsg("> Preparing GDT");
@@ -783,7 +824,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     gdtDescriptor.Size = sizeof(GDT) - 1;
     gdtDescriptor.Offset = (uint64_t)&DefaultGDT;
     LoadGDT(&gdtDescriptor);
-    StepDone(1);
+    StepDone();
 
     RemoveFromStack();
 
@@ -796,14 +837,14 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     PrepareMemory(bootInfo);
     PrintMsgEndLayer("Prepare Memory");
     RemoveFromStack();
-    StepDone(2);
+    StepDone();
     
 
     //while(true);
     
     PrintMsg("> Initializing Heap");
     InitializeHeap((void*)0x0000100000000000, 0x10);
-    StepDone(3);
+    StepDone();
 
     //GlobalRenderer->Println("BG IMG: {}", to_string((uint64_t)bootInfo->bgImage), Colors.orange);
 
@@ -818,27 +859,27 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     PrintMsg("> Getting Background Image");
     Framebuffer* bgImg = kernelFiles::ConvertImageToFramebuffer(bootInfo->bgImage);
-    StepDone(4);
+    StepDone();
     
     
     PrintMsg("> Preparing Windows (1/2)");
     PrepareWindowsTemp(bgImg);
-    StepDone(5);
+    StepDone();
 
     
 
     PrintMsg("> Initing RTC");
     RTC::InitRTC();
-    StepDone(6);
+    StepDone();
     PrintMsg("> Reading RTC");
     RTC::read_rtc();
-    StepDone(7);
+    StepDone();
 
     PrintMsg("> Updating RTC Time");
     RTC::UpdateTimeIfNeeded();
-    StepDone(8);
+    StepDone();
 
-    PrintMsgStartLayer("RTC Info:");
+    PrintMsgStartLayer("RTC Info");
     PrintMsgColSL("TIME: ", Colors.yellow);
     PrintMsgColSL("{}:", to_string((int)RTC::Hour), Colors.yellow);
     PrintMsgColSL("{}:", to_string((int)RTC::Minute), Colors.yellow);
@@ -852,8 +893,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     PrintMsg("> Initing PIT");
     PIT::InitPIT();
-    StepDone(9);
-    
+    StepDone();
 
     #define STAT 0x64
     #define CMD 0x60
@@ -867,25 +907,25 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
             inb(CMD);
         }
     }
-    StepDone(10);
+    StepDone();
     
     PrintMsg("> Initing PS/2 Mouse");
     InitPS2Mouse(bootInfo->mouseZIP, "default.mbif");
     //mouseImage = kernelFiles::ConvertFileToImage(kernelFiles::ZIP::GetFileFromFileName(bootInfo->mouseZIP, "default.mbif"));
-    StepDone(11);
+    StepDone();
 
     PrintMsg("> Initing Keyboard State List");
     InitKeyboardListRam();
-    StepDone(12);
+    StepDone();
 
     PrintMsg("> Initing PS/2 Keyboard");
     InitKeyboard();
-    StepDone(13);
+    StepDone();
     
     PrintMsg("> Preparing Interrupts");
     PrepareInterrupts();
     PIT::Inited = true;
-    StepDone(14);
+    StepDone();
 
 
     PrintMsg("> Clearing Input Buffer (2/2)");
@@ -897,19 +937,27 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
             inb(CMD);
         }
     }
-    StepDone(15);
+    StepDone();
+    
+    // PrintMsg("> Initing SB16");
+    // if (!SB16::SB16Init())
+    //     PrintMsg("> SB16 is not supported on this system");
+    // StepDone();
     
     PrintMsg("> Initing Users");
     initUsers();
-    StepDone(16);
+    StepDone();
 
 
     PrintMsg("> Creating List for Disk Interfaces");
     osData.diskInterfaces = List<DiskInterface::GenericDiskInterface*>();
 
+    PrintMsg("> Creating List for Audio Destinations");
+    osData.audioDestinations = List<Audio::BasicAudioDestination*>();
+
     osData.windowIconZIP = bootInfo->windowIconsZIP;
     osData.windowButtonZIP = bootInfo->windowButtonZIP;
-    StepDone(17);
+    StepDone();
 
     //GlobalRenderer->Clear(Colors.black);
     //GlobalRenderer->Println("                                     COUNT OF WINDOW ICONS: {}", to_string(WindowManager::countOfWindowIcons), Colors.yellow);
@@ -918,7 +966,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     PrintMsg("> Loading Window Icons");
     for (int i = 0; i < WindowManager::countOfWindowIcons; i++)
         WindowManager::internalWindowIcons[i] = kernelFiles::ConvertFileToImage(kernelFiles::ZIP::GetFileFromFileName(osData.windowIconZIP, WindowManager::windowIconNames[i]));
-    StepDone(18);
+    StepDone();
 
     PrintMsg("> Loading Window Button Icons");
     for (int i = 0; i < WindowManager::countOfButtonIcons; i++)
@@ -930,31 +978,26 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
         //osData.debugTerminalWindow->Log("- Width:  {}px", to_string(WindowManager::windowIcons[i]->width), Colors.yellow);
         //osData.debugTerminalWindow->Log("- Height: {}px", to_string(WindowManager::windowIcons[i]->height), Colors.yellow);
     }
-    StepDone(19);
+    StepDone();
     
 
     PrintMsg("> Preparing Windows (2/2)");
     PrepareWindows(bgImg);
     PrintDebugTerminal();
-    StepDone(20);
+    StepDone();
     
     PrintMsg("> Initing Taskbar");
     Taskbar::InitTaskbar(bootInfo->MButton, bootInfo->MButtonS);
-    StepDone(23);
+    StepDone();
 
     //bootInfo->rsdp = (ACPI::RSDP2*)((uint64_t)bootInfo->rsdp + 20); //idk why but this is very important unless ya want the whole os to crash on boot
 
     PrintMsg("> Initing Start Menu");
     InitStartMenuWindow(bootInfo);
-    StepDone(24);
+    StepDone();
 
     //while (true);
-    PrintMsg("> Prepare ACPI");
-    PrintMsgStartLayer("ACPI");
-    PrepareACPI(bootInfo);
-    PrintMsgEndLayer("ACPI");
-    PrintDebugTerminal();
-    StepDone(25);
+
 
     
 
@@ -963,7 +1006,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     PrintMsg("> Enabling FPU");
     enable_fpu();
-    StepDone(26);
+    StepDone();
     
     PrintMsg("> Creating OS Ram Disk");
     PrintMsgStartLayer("OS RAM DISK");
@@ -1052,14 +1095,21 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
         //while (true);
 
+        PrintMsg("> Prepare ACPI");
+        PrintMsgStartLayer("ACPI");
+        PrepareACPI(bootInfo);
+        PrintMsgEndLayer("ACPI");
+        PrintDebugTerminal();
+        StepDone();
+
     }
     RemoveFromStack();
     PrintMsgEndLayer("OS RAM DISK");
-    StepDone(27);
+    StepDone();
 
     PrintMsgEndLayer("BOOT");
 
-    StepDone(28);
+    StepDone();
     PIT::Sleep(200);
     PrintMsgCol("> Inited Kernel!", Colors.bgreen);
     RemoveFromStack();

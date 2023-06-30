@@ -5,6 +5,7 @@
 #include "../cmdParsing/cstrTools.h"
 #include "../memory/heap.h"
 #include "../OSDATA/osdata.h"
+#include "../kernelStuff/other_IO/serial/serial.h"
 
 bool PrintAll = true;
 int PrintLayer = 0;
@@ -34,7 +35,7 @@ void PrepBootScreen()
     GlobalRenderer->CursorPosition.y = menuBarPosY - 30;
     GlobalRenderer->CursorPosition.x = GlobalRenderer->framebuffer->Width / 2 - 
     12 * 8 / 2;
-    GlobalRenderer->Println("SkylineSystemBOOT", Colors.yellow);
+    GlobalRenderer->Println("SkylineSystem BOOT", Colors.yellow);
 
     GlobalRenderer->Clear(
         menuBarPosX - menuborderSize, menuBarPosY - menuborderSize, 
@@ -74,11 +75,19 @@ void PercentDone(int percent)
         ((((i + 70) * 140) / 100) * 0x00010101) & 0xFF00FF00 + 0xFF000000);
     }
 }
-int maxSteps = 28;
+int maxSteps = 27;
+int currStep = 0;
+void StepDone()
+{
+    StepDone(currStep + 1);
+}
+
 void StepDone(int step)
 {
     if (osData.verboseBoot)
         return;
+
+    currStep = step;
 
     if (step > maxSteps)
         Panic("TOO MANY STEPS", true);
@@ -88,11 +97,16 @@ void StepDone(int step)
 
 void PrintSpaces()
 {
-    GlobalRenderer->CursorPosition.x += PrintLayer * 8;
     // for (int i = 0; i < PrintLayer; i++)
     //     GlobalRenderer->Print("  ");
-    
-    PrintedSpace = true;
+
+    PrintedSpace = true;    
+    for (int i = 0; i < PrintLayer; i++)
+        Serial::Write("  ");
+
+    GlobalRenderer->CursorPosition.x += PrintLayer * 16;
+    if (!PrintAll || !osData.verboseBoot)
+        return;
 }
 
 void ScrollUp(int amt)
@@ -115,11 +129,12 @@ void ScrollUp(int amt)
 
 void PrintMsgColSL(const char* msg, const char* var, uint32_t col)
 {
-    if (!PrintAll || !osData.verboseBoot)
-        return;
     if (!PrintedSpace)
         PrintSpaces();
+    Serial::Write(msg, var, true);
 
+    if (!PrintAll || !osData.verboseBoot)
+        return;
     GlobalRenderer->Print(msg, var, col);
     while (GlobalRenderer->CursorPosition.y > GlobalRenderer->framebuffer->Height - 32)
         ScrollUp(16);

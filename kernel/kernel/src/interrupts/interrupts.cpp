@@ -15,6 +15,8 @@
 
 #include "../kernel.h"
 
+
+
 extern "C" void BruhusSafus()
 {
 
@@ -46,6 +48,11 @@ extern "C" void BruhusSafus()
         asm("hlt");
 }
 
+void DoSafe()
+{
+    BruhusSafus();
+}
+
 //void** search(void** addr, void* value) __attribute__((noinline));
 void** search(void** addr, void* value)
 {
@@ -68,7 +75,9 @@ void** search(void** addr, void* value)
 
 __attribute__((interrupt)) void GenericInt_handler(interrupt_frame* frame)
 {
-    
+    AddToStack();
+    //Panic("GENERIC INTERRUPT BRUH", true);   
+    RemoveFromStack();
 }
 
 
@@ -212,6 +221,7 @@ __attribute__((interrupt)) void KeyboardInt_handler(interrupt_frame* frame)
 __attribute__((interrupt)) void MouseInt_handler(interrupt_frame* frame)
 { 
     AddToStack();
+    //Panic("GENERIC INTERRUPT BRUH", true);   
     //osStats.lastMouseCall = PIT::TimeSinceBootMS();
     //io_wait();
     //Mousewait();
@@ -311,31 +321,6 @@ __attribute__((interrupt)) void InvalidOpCode_handler(interrupt_frame* frame)//,
     SURVIVE_CRASH
 }
 
-//Syscall Handler
-__attribute__((interrupt)) void Syscall_handler(interrupt_frame* frame)//, uint64_t error)
-{
-    AddToStack();
-    uint64_t syscall_num = frame->general_registers.rax;
-    uint64_t v1 = frame->general_registers.rdi;
-    uint64_t v2 = frame->general_registers.rsi;
-    uint64_t v3 = frame->general_registers.rdx;
-    uint64_t v4 = frame->r10;
-    uint64_t v5 = frame->r8;
-    uint64_t v6 = frame->r9;
-    switch (syscall_num)
-    {
-    case 1:
-        frame->general_registers.rax = (uint64_t)_Malloc1(v1);
-        break;
-    
-    default:
-        Panic("Invalid System Call!", false);
-        break;
-    }
-    RemoveFromStack();
-
-    SURVIVE_CRASH
-}
 
 
 
@@ -449,4 +434,87 @@ void PIC_EndSlave()
 }
 
 
+#define IRQHandlerCode(irq) \
+    {AddToStack(); \
+    IRQGenericDriverHandler(irq, frame); \
+    RemoveFromStack(); }\
 
+
+__attribute__((interrupt)) void IRQ2_handler(interrupt_frame* frame)
+    IRQHandlerCode(2); //Cascade
+__attribute__((interrupt)) void IRQ3_handler(interrupt_frame* frame)
+    IRQHandlerCode(3); //COM2
+__attribute__((interrupt)) void IRQ4_handler(interrupt_frame* frame)
+    IRQHandlerCode(4); //COM1
+__attribute__((interrupt)) void IRQ5_handler(interrupt_frame* frame)
+    IRQHandlerCode(5); //LPT2
+__attribute__((interrupt)) void IRQ6_handler(interrupt_frame* frame)
+    IRQHandlerCode(6); //Floppy
+__attribute__((interrupt)) void IRQ7_handler(interrupt_frame* frame)
+    IRQHandlerCode(7); //LPT1
+__attribute__((interrupt)) void IRQ8_handler(interrupt_frame* frame)
+    IRQHandlerCode(8); //RTC
+__attribute__((interrupt)) void IRQ9_handler(interrupt_frame* frame)
+    IRQHandlerCode(9); //Free
+__attribute__((interrupt)) void IRQ10_handler(interrupt_frame* frame)
+    IRQHandlerCode(10); //Free
+__attribute__((interrupt)) void IRQ11_handler(interrupt_frame* frame)
+    IRQHandlerCode(11); //Free
+__attribute__((interrupt)) void IRQ14_handler(interrupt_frame* frame)
+    IRQHandlerCode(14); //Primary ATA
+__attribute__((interrupt)) void IRQ15_handler(interrupt_frame* frame)
+    IRQHandlerCode(15); //Secondary ATA
+
+void* IRQHandlerCallbackHelpers[256];
+void* IRQHandlerCallbackFuncs[256];
+
+// void (*IRQHandlerCallbacks[256]) (interrupt_frame*) = {
+//     NULL, //PIT
+//     NULL, //Keyboard
+//     NULL, //Cascade
+//     NULL, //COM2
+//     NULL, //COM1
+//     NULL, //LPT2
+//     NULL, //Floppy
+//     NULL, //LPT1
+//     NULL, //RTC
+//     NULL, //Free
+//     NULL, //Free
+//     NULL, //Free
+//     NULL, //PS2 Mouse
+//     NULL, //FPU
+//     NULL, //Primary ATA
+//     NULL, //Secondary ATA
+// };
+
+void IRQGenericDriverHandler(int irq, interrupt_frame* frame)
+{
+    //Panic("BRUH IRQ {}", to_string(irq), true);
+    if (irq < 0 || irq > 15)
+    {
+        Panic("Invalid IRQ {}", to_string(irq), true);
+    }
+
+    void* callbackFunc = IRQHandlerCallbackFuncs[irq];
+    if (callbackFunc != NULL)
+    {
+        void* classInstance = IRQHandlerCallbackHelpers[irq];
+        if (classInstance == NULL)
+        {
+            // Static Func
+            ((void (*)(interrupt_frame*))callbackFunc)(frame);
+        }
+        else
+        {
+            // Member Func
+            ((void (*)(void*, interrupt_frame*))callbackFunc)(classInstance, frame);
+        }
+    }
+    else
+        ;//Panic("Unhandled IRQ {}", to_string(irq), false);
+
+    if (irq >= 8)
+        PIC_EndSlave();
+    else
+        PIC_EndMaster();
+}

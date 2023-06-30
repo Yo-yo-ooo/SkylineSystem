@@ -24,6 +24,11 @@ struct HeapSegHdr
 };
 
 
+extern bool backupHeapFailed;
+extern bool usingBackupHeap;
+void SwitchToBackupHeap();
+void TrySwitchToBackupHeap();
+
 void InitializeHeap(void* heapAddress, size_t pageCount);
 
 void* _Xmalloc(size_t size, const char* func, const char* file, int line);

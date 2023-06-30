@@ -104,7 +104,7 @@ void TestKeyHandler(GuiComponentStuff::BaseComponent* btn, GuiComponentStuff::Ke
 
 
 
-
+#include "./kernelStuff/other_IO/serial/serial.h"
 
 
 void RenderLoop()
@@ -154,6 +154,24 @@ void RenderLoop()
         freeCount = 0;
         mallocCount = 0;
         osStats.frameStartTime = PIT::TimeSinceBootMicroS();
+
+
+        if (Serial::CanRead())
+        {
+            char c = Serial::Read();
+            if (c == '\r')
+            {
+                Serial::Write("\r\n");
+            }
+            else if (c == '\b')
+            {
+                Serial::Write("\b \b");
+            }
+            else
+            {
+                Serial::Write(c);
+            }
+        }
 
         if (!osData.startMenuWindow->hidden && activeWindow != osData.startMenuWindow)
         {
@@ -646,7 +664,9 @@ void RenderLoop()
 
 
                 msgWindow = (Window*)_Malloc(sizeof(Window), "Crash Window");
-                Size size = Size(64*8, 16*10);
+                Size size = Size(64*8, 10*16);
+                // if (usingBackupHeap)
+                //     size = Size(40*8, 8*16);
                 Position pos = Position(((GlobalRenderer->framebuffer->Width - size.width) / 2), ((GlobalRenderer->framebuffer->Height) / 5));
                 
                 if (msgWindow != NULL)
@@ -674,7 +694,7 @@ void RenderLoop()
                 msgWindow->renderer->Clear(Colors.black);
                 //GlobalRenderer->Println("BRUH 5.2", Colors.yellow);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
-                msgWindow->renderer->Println("WARNING: SkylineSystem just had a fatal but somewhat recoverable crash", Colors.bred);
+                msgWindow->renderer->Println("WARNING: ThisOS just had a fatal but somewhat recoverable crash", Colors.bred);
                 msgWindow->renderer->Println("---------------------------------------------------------------", Colors.bred);
                 msgWindow->renderer->Println();
                 //GlobalRenderer->Println("BRUH 5.3", Colors.yellow);
@@ -818,6 +838,7 @@ void boot(BootInfo* bootInfo)
 
     PrintAll = true;
     KernelInfo kernelInfo = InitializeKernel(bootInfo);
+    Serial::Writeln("> Kernel Initialized");
     PageTableManager* pageTableManager = kernelInfo.pageTableManager;
     //AddToStack();
     osData.osTasks = List<Task*>(4);
@@ -1116,8 +1137,8 @@ void boot(BootInfo* bootInfo)
 
     debugTerminalWindow->Log("Kernel Initialised Successfully!");
 
-    for (int i = 0; i < 10; i++)
-        debugTerminalWindow->Log("<STAT>");
+    for (int i = 0; i < 15; i++)
+        debugTerminalWindow->Log("");
     //debugTerminalWindow->renderer->CursorPosition.y = 16 * 16;
 
     ((TerminalInstance*)mainWindow->instance)->Cls();
@@ -1180,7 +1201,7 @@ void boot(BootInfo* bootInfo)
 #include "kernel.h"
 
  
-void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, OsAssetStruct* assets, void* freeMemStart, void* extraMemStart, uint64_t freeMemSize, void* kernelStart, uint64_t kernelSize, void* kernelStartV)
+void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, ThisOSAssetStruct* assets, void* freeMemStart, void* extraMemStart, uint64_t freeMemSize, void* kernelStart, uint64_t kernelSize, void* kernelStartV)
 {
     MStackData::BenchmarkEnabled = false;
     BootInfo tempBootInfo;

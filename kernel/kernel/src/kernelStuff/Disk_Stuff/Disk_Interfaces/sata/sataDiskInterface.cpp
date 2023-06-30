@@ -119,65 +119,6 @@ namespace DiskInterface
         return true;
     }
 
-    bool SataDiskInterface::WriteSector(uint8_t* data, uint32_t blocknum) {
-        // 假设每个扇区大小为512字节
-        uint64_t sector = blocknum * 8; // 假设每个块包含8个扇区
-        uint32_t sectorCount = 8;
-        
-        // 分配缓冲区
-        void* buffer = _Malloc1(sectorCount * 512);
-        if (buffer == NULL) {
-            // 内存分配失败
-            return false;
-        }
-
-        // 将数据拷贝到缓冲区
-        _memcpy(buffer, data, sectorCount * 512);
-
-        // 写入数据
-        if (!SataDiskInterface::Write(sector, sectorCount, buffer)) {
-            // 写入失败
-            _Free(buffer);
-            return false;
-        }
-
-        // 释放缓冲区
-        _Free(buffer);
-
-        // 返回写入的字节数
-        return true;
-    }
-
-    bool SataDiskInterface::ReadSector(uint8_t *data,uint32_t sector){
-        //DiskInterface::SataDiskInterface sdi;
-        // 假设每个扇区大小为512字节，计算需要读取的扇区数量和读取的总字节数
-        uint32_t sectorCount = 1;
-        uint64_t totalBytes = sectorCount * 512;
-
-        // 分配缓冲区
-        void* buffer = _Malloc1(totalBytes);
-        if (buffer == NULL) {
-            // 内存分配失败
-            return false;
-        }
-
-        // 读取数据
-        if (!SataDiskInterface::Read(sector, sectorCount, buffer)) {
-            // 读取失败
-            _Free(buffer);
-            return false;
-        }
-
-        // 将数据拷贝到输出缓冲区
-        _memcpy(data, buffer, 512);
-
-        // 释放缓冲区
-        _Free(buffer);
-
-        // 返回读取的字节数
-        return true;
-    }
-
     bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffer)
     {
         //Window* window = osData.mainTerminalWindow;

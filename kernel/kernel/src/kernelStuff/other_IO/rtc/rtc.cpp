@@ -4,7 +4,7 @@
 #include "../pit/pit.h"
 #include "../../../OSDATA/MStack/MStackM.h"
 #define CURRENT_YEAR_STR        (__DATE__ + 7)                            // Change this each year!
-#define TIMEZONE 8
+
 // https://wiki.osdev.org/CMOS#RTC_Update_In_Progress
 
 namespace RTC
@@ -77,7 +77,7 @@ namespace RTC
         while (get_update_in_progress_flag());                // Make sure an update isn't in progress
         second = get_RTC_register(0x00);
         minute = get_RTC_register(0x02);
-        hour = get_RTC_register(0x04) + TIMEZONE;
+        hour = get_RTC_register(0x04);
         day = get_RTC_register(0x07);
         month = get_RTC_register(0x08);
         year = get_RTC_register(0x09);
@@ -98,7 +98,7 @@ namespace RTC
             while (get_update_in_progress_flag());           // Make sure an update isn't in progress
             second = get_RTC_register(0x00);
             minute = get_RTC_register(0x02);
-            hour = get_RTC_register(0x04) + TIMEZONE;
+            hour = get_RTC_register(0x04);
             day = get_RTC_register(0x07);
             month = get_RTC_register(0x08);
             year = get_RTC_register(0x09);

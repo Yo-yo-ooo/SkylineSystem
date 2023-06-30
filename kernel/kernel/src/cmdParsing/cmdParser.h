@@ -26,6 +26,8 @@ enum BuiltinCommand {
     Command_Image,
     Command_Doom,
     Command_MusicTest,
+    Command_SbTest,
+    Command_SbReset,
     Command_MusicClear,
     Command_MusicMario,
     Command_Tetris,
@@ -37,6 +39,9 @@ enum BuiltinCommand {
     Command_DebugViewer,
     Command_Crash,
     Command_Crash2,
+    Command_Crash3,
+    Command_Crash4,
+    Command_RenderLoop,
     Command_Invalid,
 };
 BuiltinCommand BuiltinCommandFromStr(char* i);

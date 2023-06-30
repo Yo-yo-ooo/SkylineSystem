@@ -1,5 +1,5 @@
 
-OSNAME = SkylineSystem
+OSNAME = ThisOS
 
 GNUEFI = ../gnu-efi
 OVMFDIR = ../ovmfbin
