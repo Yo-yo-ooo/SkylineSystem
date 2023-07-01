@@ -77,4 +77,4 @@ distclean: clean
 	$(MAKE) -C kernel distclean
 
 ca:
-	make clean && make run -j$(nproc)
+	make clean -j$(nproc) && make run -j$(nproc)
