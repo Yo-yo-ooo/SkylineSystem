@@ -23,6 +23,7 @@
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
+#include "../kernelStuff/other_IO/rtc/rtc.h"
 
 void Println(Window* window)
 {
@@ -1039,7 +1040,29 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         else
             LogInvalidArgumentCount(3, data->len-1, window);
     }
-    
+    if(StrEquals(data->data[0],"tadd")){
+        if(data->len == 2){
+            osData.tmp_hour = to_int(data->data[1]);
+        }else{
+            LogInvalidArgumentCount(3,data->len-1,window);
+        }
+        RemoveFromStack();
+        return;
+    }
+
+    if(StrEquals(data->data[0],"time")){
+        Println(window,"RTC INFO");
+        Println(window,"TIME: ", Colors.yellow);
+        Print(window,"{}.", to_string((int)RTC::Year), Colors.yellow);
+        Print(window,"{}.", to_string((int)RTC::Month), Colors.yellow);
+        Print(window,"{}|", to_string((int)RTC::Day), Colors.yellow);
+        Print(window,"{}:", to_string((int)RTC::Hour), Colors.yellow);
+        Print(window,"{}:", to_string((int)RTC::Minute), Colors.yellow);
+        Print(window,"{}", to_string((int)RTC::Second), Colors.yellow);
+        RemoveFromStack();
+        return;
+    }
+
     if (StrEquals(data->data[0], "disk"))
     {
         // if (data->len == 3)

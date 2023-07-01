@@ -98,7 +98,7 @@ namespace RTC
             while (get_update_in_progress_flag());           // Make sure an update isn't in progress
             second = get_RTC_register(0x00);
             minute = get_RTC_register(0x02);
-            hour = get_RTC_register(0x04);
+            hour = get_RTC_register(0x04) + osData.tmp_hour;
             day = get_RTC_register(0x07);
             month = get_RTC_register(0x08);
             year = get_RTC_register(0x09);

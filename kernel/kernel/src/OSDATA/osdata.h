@@ -62,7 +62,7 @@ struct OSData
 
     uint32_t wantedFps = 60;
     AC97::AC97Driver* ac97Driver = NULL;
-
+    unsigned char tmp_hour = NULL;
 };
 
 
