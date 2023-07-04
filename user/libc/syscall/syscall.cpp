@@ -1,5 +1,3 @@
-#include <stdint.h>
-
 #define _R1 "D"
 #define _R2 "S"
 #define _R3 "d"
@@ -7,6 +5,8 @@
 #define _R5 "r8"
 #define _R6 "r9"
 #define _SYSCALL "int $0x80"
+
+typedef unsigned long long uintptr_t;
 
 uintptr_t syscall(uintptr_t __n, uintptr_t __1, uintptr_t __2, uintptr_t __3, uintptr_t __4, uintptr_t __5, uintptr_t __6) {
     uintptr_t __result;
