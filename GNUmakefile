@@ -6,7 +6,7 @@ all-hdd: barebones.hdd
 
 .PHONY: run
 run: ThisOS.iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom ThisOS.iso -hda block.img -boot d
+	qemu-system-x86_64 -M q35 -m 2G -cdrom ThisOS.iso -hda block.img -monitor stdio  -boot d
 
 .PHONY: run-uefi
 run-uefi: ovmf-x64 ThisOS.iso
