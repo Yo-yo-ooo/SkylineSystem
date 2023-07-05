@@ -15,14 +15,11 @@ void memset(void* start, uint8_t value, uint64_t num)
 void read_sector(unsigned int lba, int num, int selector, void *dst) {
     DiskInterface::SataDiskInterface tmpsdi(osData.tmp_port);
     // 计算起始扇区号
-    uint64_t sector = ((uint64_t)lba + (uint64_t)selector);
-    
-    // 计算读取的扇区数量
-    uint32_t sectorCount = (uint32_t)(num);
     
     // 调用SATARead函数来实现读取扇区的操作
     // 这里假设SATARead函数实现良好且返回一个bool值表示操作成功与否
-    bool success = tmpsdi.Read(sector, sectorCount, dst);
+    bool success = tmpsdi.ReadBytes(((uint64_t)lba + (uint64_t)selector), 
+            (uint64_t)num, dst);
     
     // 如果读取操作成功，则不需要进行其他处理
     if (success) {
