@@ -343,6 +343,14 @@ namespace FS_STUFF
             }
             return false;
         }
+        if(StrEndsWith(path,".o")){
+            const char* t = StrCombine("testo \"", path);
+            const char* t2= StrCombine(t, "\"");
+            _Free(t);
+            RunTerminalCommand(t2, "OBJECTIVE ELF FILE TEST", false, false);
+            _Free(t2);
+            return true;
+        }
         return false;
     }
 

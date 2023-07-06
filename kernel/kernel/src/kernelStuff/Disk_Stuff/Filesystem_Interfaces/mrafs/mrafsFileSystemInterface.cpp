@@ -1419,7 +1419,7 @@ namespace FilesystemInterface
             _Free(buffer);
         }
 
-        // osData.mainTerminalWindow->Log("Total Size:         {} Bytes", to_string(totalSize), Colors.yellow);
+        osData.debugTerminalWindow->Log("Total Size:         {} Bytes", to_string(totalSize), Colors.yellow);
         // osData.mainTerminalWindow->Log("FS Partition Count: {}", to_string((uint64_t)fsPartCount), Colors.yellow);
         // osData.mainTerminalWindow->Log("File Count:         {}", to_string((uint64_t)fsFileCount), Colors.yellow);
         // osData.mainTerminalWindow->Log("Folder Count:       {}", to_string((uint64_t)fsFolderCount), Colors.yellow);

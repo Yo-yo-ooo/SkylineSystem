@@ -12,21 +12,28 @@ void memset(void* start, uint8_t value, uint64_t num)
 }
 
 
+AHCI::Port* get_fat32fs_type(){
+    for(int i = 0;i < 32;i ++){
+        DiskInterface::SataDiskInterface ts(osData.tmp_port);
+        unsigned char FirstSector[512];
+        ts.Read(0,1,(void*)FirstSector);
+        if(_memcmp(((void*)(*FirstSector + 54)),"FAT32  ",8) == 0){
+            return osData.tmp_port;
+        }
+    }
+}
+
 void read_sector(unsigned int lba, int num, int selector, void *dst) {
-    DiskInterface::SataDiskInterface tmpsdi(osData.tmp_port);
+    DiskInterface::SataDiskInterface tmpsdi(get_fat32fs_type());
     // 计算起始扇区号
     
     // 调用SATARead函数来实现读取扇区的操作
     // 这里假设SATARead函数实现良好且返回一个bool值表示操作成功与否
-    bool success = tmpsdi.ReadBytes(((uint64_t)lba + (uint64_t)selector), 
-            (uint64_t)num, dst);
+    bool success = tmpsdi.ReadBytes(lba,num,dst);
     
     // 如果读取操作成功，则不需要进行其他处理
-    if (success) {
-        return;
-    }else{
-        //.....
-        LogError("Failed Fat32 Read Sector Command",WindowManager::getWindowAtMousePosition());
+    if (success == false) {
+        LogError("Failed Fat32 Read Sector Command",osData.debugTerminalWindow);
     }
 }
 
