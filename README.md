@@ -1,5 +1,6 @@
 # SkylineSystem
 an OS written in C++ and a bit of C.
+Based on [MaslOS](https://github.com/marceldobehere/MaslOS)
 
 ## How to run (Linux)
 Install QEMU if you haven't.
@@ -15,7 +16,7 @@ Install QEMU if you haven't.
 
 Add QEMU To your PATH variable. [If ya have trouble installing it and don't know how to set the PATH variable, click here](https://linuxhint.com/qemu-windows/)
 
-Then download/clone the repo and run the `Just RUN OS (Windows).cmd` file.
+Then download/clone the repo and run the `run.cmd` file.
 
 
 
