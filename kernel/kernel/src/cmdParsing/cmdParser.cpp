@@ -2501,19 +2501,21 @@ void GetCmd(const char* name, OSUser* user, Window* window)
         #endif
 
     }
-    else if (StrEquals(name, "TSB S"))
+    else if (StrEquals(name, "TSB S")||StrEquals(name, "TSBS"))
     {
         Println(window, "Time since boot: {} s.", to_string(PIT::TimeSinceBootS()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "TSB MS"))
+    else if (StrEquals(name, "TSB MS")||StrEquals(name, "TSBMS"))
     {
         Println(window, "Time since boot: {} ms.", to_string(PIT::TimeSinceBootMS()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "disk count"))
+    else if (StrEquals(name, "disk count")||StrEquals(name, "diskC")
+        ||StrEquals(name,"disk_count"))
     {
         Println(window, "Disk Count: {}", to_string(osData.diskInterfaces.getCount()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "heap stats"))
+    else if (StrEquals(name, "heap stats")||StrEquals(name, "heapS")
+        ||StrEquals(name, "heap_stats"))
     {
         Println(window, "Heap Statistics:", Colors.yellow);
         {
