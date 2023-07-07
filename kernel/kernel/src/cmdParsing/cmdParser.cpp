@@ -1,6 +1,7 @@
 #include "cmdParser.h"
 #include "../Rendering/BasicRenderer.h"
 #include "cstrTools.h"
+#include <math.h>
 #include "../Rendering/Cols.h"
 #include <stdint.h>
 #include "../memory/heap.h"
@@ -654,29 +655,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
-#define SCRNY window->size.height
-#define SCRNX window->size.width
-#define FHeight window->framebuffer->Height
-    unsigned char* buf_back = (unsigned char*)window->framebuffer->BaseAddress;
-    if(osData.tmp_wy == SCRNY){
-        FHeight = SCRNY - 16;
-        for(int i = 0;i < SCRNY;i++){
-            for(int j = 0;j < SCRNX;j++){
-                buf_back[j + i * SCRNX] = buf_back[j + (i + 16) * SCRNX];
-            }
-        }
-    }
-    if(osData.tmp_wy == SCRNY - SCRNY % 16){
-        FHeight = SCRNY - 16;
-        for(int i = 0;i < SCRNY;i++){
-            for(int j = 0;j < SCRNX;j++){
-                buf_back[j + i * SCRNX] = buf_back[j + (i + 16 - SCRNY % 16) * SCRNX];
-            }
-        }
-    }
-#undef SCRNY
-#undef SCRNX
-#undef FHeight
+
     if (StrEquals(data->data[0], "io"))
     {
         // io [outb, outw, outl] port value (4)
@@ -821,7 +800,10 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
-    
+    if(StrEquals(data->data[0],"sqrt")){
+        double tmp = to_double(data->data[1]);
+        Println(window,"{}",to_string((double)sqrt((float)tmp)));
+    }
 
     if (StrEquals(data->data[0], "sleep"))
     {

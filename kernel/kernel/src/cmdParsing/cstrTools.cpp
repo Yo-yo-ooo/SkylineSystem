@@ -256,3 +256,78 @@ int32_t StrLastIndexOf(const char* str, char chr, int ignoreCount)
                 return i;
     return -1;
 }
+
+double to_double(const char *str)
+{
+	double s=0.0;
+
+	double d=10.0;
+	int jishu=0;
+
+	bool falg=false;
+
+	while(*str==' ')
+	{
+		str++;
+	}
+
+	if(*str=='-')//记录数字正负
+	{
+		falg=true;
+		str++;
+	}
+
+	if(!(*str>='0'&&*str<='9'))//假设一開始非数字则退出。返回0.0
+		return s;
+
+	while(*str>='0'&&*str<='9'&&*str!='.')//计算小数点前整数部分
+	{
+		s=s*10.0+*str-'0';
+		str++;
+	}
+
+	if(*str=='.')//以后为小树部分
+		str++;
+
+	while(*str>='0'&&*str<='9')//计算小数部分
+	{
+		s=s+(*str-'0')/d;
+		d*=10.0;
+		str++;
+	}
+
+	if(*str=='e'||*str=='E')//考虑科学计数法
+	{
+		str++;
+		if(*str=='+')
+		{
+			str++;
+			while(*str>='0'&&*str<='9')
+			{
+				jishu=jishu*10+*str-'0';
+				str++;
+			}
+			while(jishu>0)
+			{
+				s*=10;
+				jishu--;
+			}
+		}
+		if(*str=='-')
+		{
+			str++;
+			while(*str>='0'&&*str<='9')
+			{
+				jishu=jishu*10+*str-'0';
+				str++;
+			}
+			while(jishu>0)
+			{
+				s/=10;
+				jishu--;
+			}
+		}
+	}
+
+    return s*(falg?-1.0:1.0);
+}

@@ -27,3 +27,5 @@ int32_t StrLastIndexOf(const char* str, char chr);
 
 int32_t StrIndexOf(const char* str, char chr, int ignoreCount);
 int32_t StrLastIndexOf(const char* str, char chr, int ignoreCount);
+
+double to_double(const char *str);
