@@ -1,7 +1,7 @@
 #include "cmdParser.h"
 #include "../Rendering/BasicRenderer.h"
 #include "cstrTools.h"
-#include <math.h>
+#include "cmath.h"
 #include "../Rendering/Cols.h"
 #include <stdint.h>
 #include "../memory/heap.h"
@@ -801,8 +801,34 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         return;
     }
     if(StrEquals(data->data[0],"sqrt")){
+        //double tmp = to_double(data->data[1]);
+        Println(window,"{}",to_string((double)InvSqrt(to_double(data->data[1]))));
+        RemoveFromStack();
+        return;
+    }
+    if(StrEquals(data->data[0],"sin")){
         double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)sqrt((float)tmp)));
+        Println(window,"{}",to_string((double)sin((double)tmp)));
+        RemoveFromStack();
+        return;
+    }
+    if(StrEquals(data->data[0],"cos")){
+        double tmp = to_double(data->data[1]);
+        Println(window,"{}",to_string((double)cos((double)tmp)));
+        RemoveFromStack();
+        return;
+    }
+    if(StrEquals(data->data[0],"atan")){
+        double tmp = to_double(data->data[1]);
+        Println(window,"{}",to_string((double)atan((double)tmp)));
+        RemoveFromStack();
+        return;
+    }
+    if(StrEquals(data->data[0],"atan2")){
+        //double tmp = to_double(data->data[1]);
+        Println(window,"{}",to_string(atan2(to_double(data->data[1]),to_double(data->data[2]))));
+        RemoveFromStack();
+        return;
     }
 
     if (StrEquals(data->data[0], "sleep"))
