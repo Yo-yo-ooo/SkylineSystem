@@ -40,4 +40,5 @@ Use rufus to burn barebones.iso file to usb
 
 # Thanks For
 
+- RetroDude128 
 - marceldobehere
