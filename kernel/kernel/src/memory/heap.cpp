@@ -516,7 +516,7 @@ void* _Xmalloc(size_t size, const char* text, const char* func, const char* file
     return NULL;
 }
 
-char* sbrk(size_t size){
+char* sbrk(size_t size){ 
     if(ExpandHeap(size)){ // IF IT CAN EXPANED HEAP SIZE THEN RETURN POINTER TO THE HEARP START
         return (char*)heapStart;
     }

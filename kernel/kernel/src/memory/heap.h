@@ -127,4 +127,4 @@ extern int64_t lastFreeSize;
 #include "new.hpp"
 
 
-
+char* sbrk(size_t size);
