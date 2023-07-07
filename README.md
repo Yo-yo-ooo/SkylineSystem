@@ -37,3 +37,7 @@ Go into the ThisOS Folder and run the `RUN.sh` file
 # Real machine operation
 
 Use rufus to burn barebones.iso file to usb
+
+# Thanks For
+
+- marceldobehere
