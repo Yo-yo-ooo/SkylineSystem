@@ -1092,19 +1092,21 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
-
-    if(StrEquals(data->data[0],"scroll")||StrEquals(data->data[0],"scl")){
-        if(data->data[1] != NULL){
-            ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
-                    += to_int(data->data[1]);
-        }else{
-            ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
-                    += 120;
-        }
+#define SY ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
+    if(StrEquals(data->data[0],"scrolly")||StrEquals(data->data[0],"scly")){
+        SY += to_int(data->data[1]);
         RemoveFromStack();
         return;
     }
+#undef SY
 
+#define SX ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollX
+    if(StrEquals(data->data[0],"scrollx")||StrEquals(data->data[0],"sclx")){
+        SX += to_int(data->data[1]);
+        RemoveFromStack();
+        return;
+    }
+#undef SX
     if (StrEquals(data->data[0], "disk"))
     {
         // if (data->len == 3)
