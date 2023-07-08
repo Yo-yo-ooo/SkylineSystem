@@ -1093,6 +1093,13 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         return;
     }
 
+    if(StrEquals(data->data[0],"scroll")){
+        ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
+                += to_int(data->data[1]);
+        RemoveFromStack();
+        return;
+    }
+
     if (StrEquals(data->data[0], "disk"))
     {
         // if (data->len == 3)
