@@ -1093,9 +1093,14 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         return;
     }
 
-    if(StrEquals(data->data[0],"scroll")){
-        ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
-                += to_int(data->data[1]);
+    if(StrEquals(data->data[0],"scroll")||StrEquals(data->data[0],"scl")){
+        if(data->data[1] != NULL){
+            ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
+                    += to_int(data->data[1]);
+        }else{
+            ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
+                    += 120;
+        }
         RemoveFromStack();
         return;
     }
