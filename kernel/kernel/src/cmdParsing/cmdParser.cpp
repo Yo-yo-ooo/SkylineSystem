@@ -1068,7 +1068,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     }
     
     if(StrEquals(data->data[0],"sclx")){
-        ((NewTerminalInstance*)((TerminalInstance*)activeWindow->instance)->newTermInstance)->scrollX 
+        ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollX 
             += to_int(data->data[1]);
         RemoveFromStack();
         return;
