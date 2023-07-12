@@ -22,6 +22,7 @@
 #include "../tasks/bfTask/bfTask.h"
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
+#include "../kernelStuff/other_IO/rtc/rtc.h"
 #include "../tasks/maab/maabTask.h"
 
 void Println(Window* window)
@@ -1070,6 +1071,25 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     if(StrEquals(data->data[0],"sclx")){
         ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollX 
             += to_int(data->data[1]);
+        RemoveFromStack();
+        return;
+    }
+
+    if(StrEquals(data->data[0],"sett")){
+        osData.houra = to_int(data->data[1]);
+        RemoveFromStack();
+        return;
+    }
+
+    if(StrEquals(data->data[0],"time")){
+        Print(window,"{}:", to_string(RTC::Hour + osData.houra), Colors.white);
+        Print(window,"{}:", to_string(RTC::Minute), Colors.white);
+        Print(window,"{}", to_string(RTC::Second), Colors.white);
+        Println(window,"",Colors.white);
+        Print(window,"{}/", to_string(RTC::Year), Colors.white);
+        Print(window,"{}/", to_string(RTC::Month), Colors.white);
+        Print(window,"{}", to_string(RTC::Day), Colors.white);
+        
         RemoveFromStack();
         return;
     }
