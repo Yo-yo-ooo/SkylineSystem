@@ -29,6 +29,27 @@ bool StrEquals(const char* a, const char* b)
     return true;
 }
 
+bool StrEquals(const char* a, const char* b, int len)
+{
+    AddToStack();
+    if (a == NULL || b == NULL)
+    {
+        RemoveFromStack();
+        return false;
+    }
+
+    for (int index = 0; index < len; index++)
+    {
+        if (a[index] != b[index])
+        {
+            RemoveFromStack();
+            return false;
+        }
+    }
+    RemoveFromStack();
+    return true;
+}
+
 char* StrCopy(const char* og)
 {
     AddToStack();
@@ -40,6 +61,82 @@ char* StrCopy(const char* og)
     for (int i = 0; og[i] != 0; i++)
         newStr[i] = og[i];
     newStr[size] = 0;
+    RemoveFromStack();
+    return newStr;
+}
+
+char* StrAppend(const char* a, const char* b, bool freeA)
+{
+    AddToStack();
+    int sizeA = 0;
+    for (int i = 0; a[i] != 0; i++)
+        sizeA++;
+    int sizeB = 0;
+    for (int i = 0; b[i] != 0; i++)
+        sizeB++;
+
+    char* newStr = (char*)_Malloc(sizeA + sizeB + 1, "strappend");
+
+    for (int i = 0; i < sizeA; i++)
+        newStr[i] = a[i];
+    for (int i = 0; i < sizeB; i++)
+        newStr[i + sizeA] = b[i];
+    newStr[sizeA + sizeB] = 0;
+
+    if (freeA)
+        _Free((void*)a);
+    RemoveFromStack();
+    return newStr;
+}
+
+char* StrPadLeft(const char* a, char pad, int totalLen, bool freeA)
+{
+    AddToStack();
+    int size = StrLen(a);
+    if (size >= totalLen)
+    {
+        if (freeA)
+            _Free((void*)a);
+
+        RemoveFromStack();
+        return StrCopy(a);
+    }
+
+    char* newStr = (char*)_Malloc(totalLen + 1, "strpadleft");
+    for (int i = 0; i < totalLen - size; i++)
+        newStr[i] = pad;
+    for (int i = 0; i < size; i++)
+        newStr[i + totalLen - size] = a[i];
+    newStr[totalLen] = 0;
+
+    if (freeA)
+        _Free((void*)a);
+    RemoveFromStack();
+    return newStr;
+}
+
+char* StrPadRight(const char* a, char pad, int totalLen, bool freeA)
+{
+    AddToStack();
+    int size = StrLen(a);
+    if (size >= totalLen)
+    {
+        if (freeA)
+            _Free((void*)a);
+
+        RemoveFromStack();
+        return StrCopy(a);
+    }
+
+    char* newStr = (char*)_Malloc(totalLen + 1, "strpadright");
+    for (int i = 0; i < size; i++)
+        newStr[i] = a[i];
+    for (int i = 0; i < totalLen - size; i++)
+        newStr[i + size] = pad;
+    newStr[totalLen] = 0;
+
+    if (freeA)
+        _Free((void*)a);
     RemoveFromStack();
     return newStr;
 }
@@ -255,79 +352,4 @@ int32_t StrLastIndexOf(const char* str, char chr, int ignoreCount)
             if (--ignoreCount < 0)
                 return i;
     return -1;
-}
-
-double to_double(const char *str)
-{
-	double s=0.0;
-
-	double d=10.0;
-	int jishu=0;
-
-	bool falg=false;
-
-	while(*str==' ')
-	{
-		str++;
-	}
-
-	if(*str=='-')//记录数字正负
-	{
-		falg=true;
-		str++;
-	}
-
-	if(!(*str>='0'&&*str<='9'))//假设一開始非数字则退出。返回0.0
-		return s;
-
-	while(*str>='0'&&*str<='9'&&*str!='.')//计算小数点前整数部分
-	{
-		s=s*10.0+*str-'0';
-		str++;
-	}
-
-	if(*str=='.')//以后为小树部分
-		str++;
-
-	while(*str>='0'&&*str<='9')//计算小数部分
-	{
-		s=s+(*str-'0')/d;
-		d*=10.0;
-		str++;
-	}
-
-	if(*str=='e'||*str=='E')//考虑科学计数法
-	{
-		str++;
-		if(*str=='+')
-		{
-			str++;
-			while(*str>='0'&&*str<='9')
-			{
-				jishu=jishu*10+*str-'0';
-				str++;
-			}
-			while(jishu>0)
-			{
-				s*=10;
-				jishu--;
-			}
-		}
-		if(*str=='-')
-		{
-			str++;
-			while(*str>='0'&&*str<='9')
-			{
-				jishu=jishu*10+*str-'0';
-				str++;
-			}
-			while(jishu>0)
-			{
-				s/=10;
-				jishu--;
-			}
-		}
-	}
-
-    return s*(falg?-1.0:1.0);
 }

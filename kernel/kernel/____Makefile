@@ -1,5 +1,5 @@
 
-OSNAME = ThisOS
+OSNAME = MaslOS
 
 GNUEFI = ../gnu-efi
 OVMFDIR = ../ovmfbin

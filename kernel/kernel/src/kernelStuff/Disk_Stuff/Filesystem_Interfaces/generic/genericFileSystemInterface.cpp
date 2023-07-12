@@ -25,12 +25,10 @@ namespace FilesystemInterface
             t[7] = '\0';
             bool res = partitionInterface->diskInterface->ReadBytes(part->locationInBytes, 7, t); //partitionInterface. ->ReadPartition(, 0, 7, t);
             if (res)
-                if(StrEquals(t, "MRAFS01")){ // v01 is the only currently supported version
-                    return FilesystemInterfaceType::Mrafs;
-                }else if(StrEquals(t,"fat32")){
-                    return FilesystemInterfaceType::Fat32;
-                }
+                res = StrEquals(t, "MRAFS01"); // v01 is the only currently supported version
             _Free(t);
+            if (res)
+                return FilesystemInterfaceType::Mrafs;
         }
 
         return FilesystemInterfaceType::None;

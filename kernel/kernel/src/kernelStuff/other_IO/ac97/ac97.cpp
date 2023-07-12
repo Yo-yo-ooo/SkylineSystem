@@ -11,6 +11,7 @@ namespace AC97
 {
     void AC97Driver::HandleIRQ(interrupt_frame* frame)
     {
+        lastCheckTime = PIT::TimeSinceBootMS();
         //Panic("OO YES", true);
         //Serial::Writeln("<AC97 IRQ>");
         // if (!handle_irq())
@@ -18,8 +19,13 @@ namespace AC97
         //     //Serial::Writeln("</NVM>");
         //     //return;
         // }
+        
+        
         handle_irq();
         doCheck = true;
+        //Serial::Writeln("</AC97 IRQ>");
+        
+        
 
         //needManualRestart = CheckMusic();    
          
@@ -51,34 +57,89 @@ namespace AC97
         //Serial::Writeln("</AC97 IRQ: {}>", to_string(needManualRestart));  
     }
 
-    bool AC97Driver::CheckMusic()
+    bool AC97Driver::DoQuickCheck()
     {
-        //return true;
-        int c = audioDestination->RequestBuffers();
-        if (c > 0)
+        if (QuickCheck)
         {
-            if (osData.ac97Driver != NULL)
-            {
-                uint64_t tCount = 0;
-                //Serial::Writeln("> Writing {} bytes", to_string(audioDestination->buffer->byteCount));
-                tCount = osData.ac97Driver->writeBuffer(0, 
-                (uint8_t*)(audioDestination->buffer->data), 
-                audioDestination->buffer->byteCount);
- 
-                if (tCount != audioDestination->buffer->byteCount)
-                {
-                    Panic("AC97Driver::HandleIRQ: tCount != audioDestination->buffer->byteCount", true);
-                }
+            return false;
+        }
 
-                audioDestination->buffer->ClearBuffer();
-                audioDestination->buffer->sampleCount = audioDestination->buffer->totalSampleCount;
-                //lastDone = tDone;
-                //Panic("bruh: {}", to_string(c), true);
-                //return true;
-                return false;
+
+        QuickCheck = true;
+
+
+        if (!dataReady)
+        {
+            int c = audioDestination->RequestBuffers();
+            if (c > 0)
+            {
+                dataReady = true;
             }
         }
 
+        if (dataReady && 
+            osData.ac97Driver != NULL)
+        {
+            dataReady = false;
+            uint64_t tCount = 0;
+            //Serial::Writeln("> Writing {} bytes", to_string(audioDestination->buffer->byteCount));
+            tCount = osData.ac97Driver->writeBuffer(0, 
+            (uint8_t*)(audioDestination->buffer->data), 
+            audioDestination->buffer->byteCount);
+
+            if (tCount != audioDestination->buffer->byteCount)
+            {
+                Panic("AC97Driver::HandleIRQ: tCount != audioDestination->buffer->byteCount", true);
+            }
+
+            audioDestination->buffer->ClearBuffer();
+            audioDestination->buffer->sampleCount = audioDestination->buffer->totalSampleCount;
+            //lastDone = tDone;
+            //Panic("bruh: {}", to_string(c), true);
+            //Serial::Write("NICE");
+
+            //Serial::Writeln("<WROTE LE MUSIC>");
+            QuickCheck = false;
+            return true;
+        }
+
+        // if (!dataReady)
+        // {
+        //     int c = audioDestination->RequestBuffers();
+        //     if (c > 0)
+        //     {
+        //         dataReady = true;
+        //     }
+        // }
+
+
+        QuickCheck = false;
+        return false;
+    }
+
+    bool AC97Driver::CheckMusic()
+    {
+        //Serial::Writeln("<AC97 CheckMusic>");
+        if (dataReady)
+        {
+            return false;
+            bool ret =!handle_irq(); 
+            //Serial::Writeln("</AC97 CheckMusic: {}>", to_string(ret));
+            return ret;
+        }
+        //return true;
+
+
+        int c = audioDestination->RequestBuffers();
+        if (c > 0)
+        {
+            dataReady = true;
+            //Serial::Writeln("</AC97 CheckMusic: {}>", to_string(false));
+            return false;
+        }
+
+        
+        //Serial::Writeln("</AC97 CheckMusic: {}>", to_string(true));
         return true;
 
         // if (audioDestination != NULL)
@@ -160,6 +221,7 @@ namespace AC97
         _memset(m_output_buffer_descriptor_region, 0, sizeof(BufferDescriptor) * AC97_NUM_BUFFER_DESCRIPTORS);
         PrintMsgCol("> Output Buffer Descriptor Region: {}", ConvertHexToString((uint64_t)m_output_buffer_descriptor_region), Colors.yellow);
         Println();
+        writeBufferCount = 0;
 
         m_output_buffer_descriptors = (BufferDescriptor*) m_output_buffer_descriptor_region;
 
@@ -209,6 +271,11 @@ namespace AC97
         
         reset_output();
         PrintMsg("> Reset Output");
+        dataReady = false;
+        QuickCheck = false;
+        lastCheckTime = PIT::TimeSinceBootMS();
+
+        DEF_SAMPLE_COUNT = m_sample_rate / 47;
         
         audioDestination = new Audio::BasicAudioDestination(
             //Audio::AudioBuffer::Create16Bit48KHzStereoBuffer(DEF_SAMPLE_COUNT)
@@ -232,6 +299,7 @@ namespace AC97
 
     bool AC97Driver::handle_irq() 
     {
+        lastCheckTime = PIT::TimeSinceBootMS();
         //Read the status
         auto status_byte = inw(m_output_channel + ChannelRegisters::STATUS);
         BufferStatus status = {.value = status_byte};
@@ -239,9 +307,6 @@ namespace AC97
         if(status.fifo_error)
             Panic("AC97 GOT FIFO ERROR!");//KLog::err("AC97", "Encountered FIFO error!");
 
-        //If we're not done, don't do anything
-        if(!status.completion_interrupt_status)
-            return false;
 
 
         //osData.debugTerminalWindow->newPosition.x--;
@@ -252,13 +317,44 @@ namespace AC97
         status.fifo_error = true;
         outw(m_output_channel + ChannelRegisters::STATUS, status.value);
 
+        // DoQuickCheck();
+        // return true;
+
+
+
         auto current_index = inb(m_output_channel + ChannelRegisters::CURRENT_INDEX);
         auto last_valid_index = inb(m_output_channel + ChannelRegisters::LAST_VALID_INDEX);
-        if(last_valid_index == current_index) {
-            reset_output();
+        
+        int offset = 4;
+        int beginIndex = (last_valid_index + AC97_NUM_BUFFER_DESCRIPTORS - offset) % AC97_NUM_BUFFER_DESCRIPTORS;
+        int endIndex = (last_valid_index + 2) % AC97_NUM_BUFFER_DESCRIPTORS;
+
+        if (endIndex >= beginIndex)
+        {
+            if (current_index >= beginIndex && current_index <= endIndex)
+            {
+                return DoQuickCheck();
+            }
         }
+        else
+        {
+            if (current_index >= beginIndex || current_index <= endIndex)
+            {
+                return DoQuickCheck();
+            }
+        }
+
+        //If we're not done, don't do anything
+        if(!status.completion_interrupt_status)
+            return false;
+        
+        // if(current_index >= ((last_valid_index + AC97_NUM_BUFFER_DESCRIPTORS - 4) % AC97_NUM_BUFFER_DESCRIPTORS)) {
+        //     //reset_output();
+        //     DoQuickCheck();
+        // }
         m_blocker = true;
-        return true;
+
+        return false;
     }
 
     void AC97Driver::reset_output() 
@@ -269,11 +365,12 @@ namespace AC97
         do
         {
             outb(m_output_channel + ChannelRegisters::CONTROL, ControlFlags::RESET_REGISTERS);
-            io_wait(100);
+            io_wait(10);
         } while((timeOut-- > 0) && inb(m_output_channel + ChannelRegisters::CONTROL) & ControlFlags::RESET_REGISTERS);
 
         m_output_dma_enabled = false;
         m_current_buffer_descriptor = 0;
+        writeBufferCount = 0;
     }
 
     void AC97Driver::set_sample_rate(uint32_t sample_rate) {

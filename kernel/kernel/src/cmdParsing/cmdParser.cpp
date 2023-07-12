@@ -1,7 +1,6 @@
 #include "cmdParser.h"
 #include "../Rendering/BasicRenderer.h"
 #include "cstrTools.h"
-#include "cmath.h"
 #include "../Rendering/Cols.h"
 #include <stdint.h>
 #include "../memory/heap.h"
@@ -24,7 +23,6 @@
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
-#include "../kernelStuff/other_IO/rtc/rtc.h"
 
 void Println(Window* window)
 {
@@ -213,7 +211,7 @@ void EditPartitionSetting(PartitionInterface::PartitionInfo* part, const char* p
         part->descriptionLen = StrLen(val);
         Println(window, "Parameter changed!");
     }
-    else if (StrEquals(param, "drive name") || StrEquals(param, "dn"))
+    else if (StrEquals(param, "drive name"))
     {
         _Free((void*)part->driveName);
         part->driveName = StrCopy(val);
@@ -229,6 +227,7 @@ void EditPartitionSetting(PartitionInterface::PartitionInfo* part, const char* p
 #include "../sysApps/tetris/tetris.h"
 #include "../sysApps/notepad/notepad.h"
 #include "../sysApps/imgTest/imgTest.h"
+#include "../sysApps/musicPlayer/musicPlayer.h"
 #include "../tasks/doomTask/taskDoom.h"
 
 #include "../musicTest/musicTest.h"
@@ -248,6 +247,7 @@ BuiltinCommand BuiltinCommandFromStr(char* i)
   else if (StrEquals(i, "explorer")) return Command_Explorer;
   else if (StrEquals(i, "notepad")) return Command_NotePad;
   else if (StrEquals(i, "img")) return Command_Image;
+  else if (StrEquals(i, "music")) return Command_MusicPlayer;
   else if (StrEquals(i, "doom")) return Command_Doom;
   else if (StrEquals(i, "music test")) return Command_MusicTest;
   else if (StrEquals(i, "sb test")) return Command_SbTest;
@@ -274,7 +274,7 @@ BuiltinCommand BuiltinCommandFromStr(char* i)
 void HelpCommand(Window* window)
 {
     const char* helpMessage =
-        "Help Commands: (More Details are in the ThisOS Wiki)\n"
+        "Help Commands: (More Details are in the System Wiki)\n"
         " - help                    get this message\n"
         " - exit                    exit terminal\n"
         " - clear                   clears the terminal screen\n"
@@ -351,6 +351,11 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             RemoveFromStack();
             return;
         }
+        case Command_MusicPlayer: {
+            new SysApps::MusicPlayer("");
+            RemoveFromStack();
+            return;
+        }
         case Command_Doom: {
             terminal->tasks.add(NewDoomTask(window));
             RemoveFromStack();
@@ -370,6 +375,10 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         {
             Println(window, "> Resetting AC97 thingy");
             Music::resetTest();
+            if (osData.ac97Driver != NULL)
+            {
+                osData.ac97Driver->DoQuickCheck();
+            }
             RemoveFromStack();
             return;
         }
@@ -380,8 +389,8 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                 DefaultInstance* instance = window->instance;
                 if (instance != NULL && osData.audioDestinations.getCount() > 0)
                 {
-                    int sampleCount = 96000;
-                    int sampleRate = 12000;
+                    int sampleRate = 44100;
+                    int sampleCount = sampleRate * 10;
                     if (instance->audioSource == NULL)
                     {
                         Println(window, "> Creating Audiosource");
@@ -397,7 +406,11 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                     {
                         Println(window, "> Filling Data");
                         uint16_t* arr = (uint16_t*)src->buffer->data;
-                        MusicBit16Test::FillArray(arr, 0, sampleCount, 400, sampleRate);
+                        int dif = 40;
+                        for (int i = 0; i < dif; i++)
+                        {
+                            MusicBit16Test::FillArray(arr, (i * sampleCount)/dif, sampleCount/dif, ((1000*(i+1)) / dif), sampleRate);
+                        }
                         src->buffer->sampleCount = sampleCount;
                         src->samplesSent = 0;
                         src->readyToSend = true;
@@ -769,6 +782,18 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         return;
     }
 
+    if (StrEquals(data->data[0], "music"))
+    {
+        if (data->len == 2)
+            new SysApps::MusicPlayer(data->data[1]);
+        else
+            LogInvalidArgumentCount(1, data->len-1, window);
+        
+        _Free(data);
+        RemoveFromStack();
+        return;
+    }
+
     if (StrEquals(data->data[0], "run") || StrEquals(data->data[0], "opn") || StrEquals(data->data[0], "open"))
     {
         if (data->len == 2)
@@ -800,36 +825,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
-    if(StrEquals(data->data[0],"sqrt")){
-        //double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)InvSqrt(to_double(data->data[1]))));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"sin")){
-        double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)sin((double)tmp)));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"cos")){
-        double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)cos((double)tmp)));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"atan")){
-        double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)atan((double)tmp)));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"atan2")){
-        //double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string(atan2(to_double(data->data[1]),to_double(data->data[2]))));
-        RemoveFromStack();
-        return;
-    }
+    
 
     if (StrEquals(data->data[0], "sleep"))
     {
@@ -1070,43 +1066,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         else
             LogInvalidArgumentCount(3, data->len-1, window);
     }
-    if(StrEquals(data->data[0],"tadd")){
-        if(data->len == 2){
-            osData.tmp_hour = to_int(data->data[1]);
-        }else{
-            LogInvalidArgumentCount(3,data->len-1,window);
-        }
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0],"time")){
-        Println(window,"RTC INFO");
-        Println(window,"TIME: ", Colors.yellow);
-        Print(window,"{}.", to_string((int)RTC::Year), Colors.yellow);
-        Print(window,"{}.", to_string((int)RTC::Month), Colors.yellow);
-        Print(window,"{}|", to_string((int)RTC::Day), Colors.yellow);
-        Print(window,"{}:", to_string((int)RTC::Hour), Colors.yellow);
-        Print(window,"{}:", to_string((int)RTC::Minute), Colors.yellow);
-        Print(window,"{}", to_string((int)RTC::Second), Colors.yellow);
-        RemoveFromStack();
-        return;
-    }
-#define SY ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
-    if(StrEquals(data->data[0],"scrolly")||StrEquals(data->data[0],"scly")){
-        SY += to_int(data->data[1]);
-        RemoveFromStack();
-        return;
-    }
-#undef SY
-
-#define SX ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollX
-    if(StrEquals(data->data[0],"scrollx")||StrEquals(data->data[0],"sclx")){
-        SX += to_int(data->data[1]);
-        RemoveFromStack();
-        return;
-    }
-#undef SX
+    
     if (StrEquals(data->data[0], "disk"))
     {
         // if (data->len == 3)
@@ -2515,21 +2475,19 @@ void GetCmd(const char* name, OSUser* user, Window* window)
         #endif
 
     }
-    else if (StrEquals(name, "TSB S")||StrEquals(name, "TSBS"))
+    else if (StrEquals(name, "TSB S"))
     {
         Println(window, "Time since boot: {} s.", to_string(PIT::TimeSinceBootS()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "TSB MS")||StrEquals(name, "TSBMS"))
+    else if (StrEquals(name, "TSB MS"))
     {
         Println(window, "Time since boot: {} ms.", to_string(PIT::TimeSinceBootMS()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "disk count")||StrEquals(name, "diskC")
-        ||StrEquals(name,"disk_count"))
+    else if (StrEquals(name, "disk count"))
     {
         Println(window, "Disk Count: {}", to_string(osData.diskInterfaces.getCount()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "heap stats")||StrEquals(name, "heapS")
-        ||StrEquals(name, "heap_stats"))
+    else if (StrEquals(name, "heap stats"))
     {
         Println(window, "Heap Statistics:", Colors.yellow);
         {

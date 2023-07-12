@@ -5,7 +5,7 @@
 #include "../kernelStuff/stuff/kernelUtil.h"
 //#include "../customClasses/list.h"
 
-#include "../kernelStuff/other_IO/ahci/ahci.h"
+
 #include "../WindowStuff/WindowManager/windowManager.h"
 
 //#include "../WindowStuff/Window/window.h"
@@ -62,10 +62,7 @@ struct OSData
 
     uint32_t wantedFps = 60;
     AC97::AC97Driver* ac97Driver = NULL;
-    AHCI::Port *tmp_port = NULL;
-    int tmp_wx;
-    int tmp_wy;
-    unsigned char tmp_hour = NULL;
+
 };
 
 

@@ -2,8 +2,12 @@
 #include <stdint.h>
 
 bool StrEquals(const char* a, const char* b);
+bool StrEquals(const char* a, const char* b, int len);
 
 char* StrCopy(const char* og);
+char* StrAppend(const char* a, const char* b, bool freeA);
+char* StrPadLeft(const char* a, char pad, int totalLen, bool freeA);
+char* StrPadRight(const char* a, char pad, int totalLen, bool freeA);
 
 char* StrSubstr(const char* og, int index, int len);
 
@@ -27,5 +31,3 @@ int32_t StrLastIndexOf(const char* str, char chr);
 
 int32_t StrIndexOf(const char* str, char chr, int ignoreCount);
 int32_t StrLastIndexOf(const char* str, char chr, int ignoreCount);
-
-double to_double(const char *str);

@@ -516,11 +516,7 @@ void* _Xmalloc(size_t size, const char* text, const char* func, const char* file
     return NULL;
 }
 
-char* sbrk(size_t size){ 
-    if(ExpandHeap(size)){ // IF IT CAN EXPANED HEAP SIZE THEN RETURN POINTER TO THE HEARP START
-        return (char*)heapStart;
-    }
-}
+
 
 
 void _Xfree(void* address, const char* func, const char* file, int line)
@@ -580,7 +576,7 @@ void _Xfree(void* address, const char* func, const char* file, int line)
         }
         else
         {
-            Panic("Tried to free already free Segment!", true);
+            Panic("Tried to free already free Segment!");
             RemoveFromStack();
             return;
         }

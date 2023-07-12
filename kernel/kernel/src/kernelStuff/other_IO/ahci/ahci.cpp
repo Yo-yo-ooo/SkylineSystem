@@ -368,10 +368,9 @@ namespace AHCI
             Port* port = Ports[i];
             PortType portType = port->portType;
 
-            if (portType == PortType::SATA){
+            if (portType == PortType::SATA)
                 osData.debugTerminalWindow->Log("* SATA drive",  Colors.orange);
-                osData.tmp_port = port;
-            }else if (portType == PortType::SATAPI)
+            else if (portType == PortType::SATAPI)
                 osData.debugTerminalWindow->Log("* SATAPI drive",  Colors.orange);
             else
                 osData.debugTerminalWindow->Log("* Not interested",  Colors.orange);

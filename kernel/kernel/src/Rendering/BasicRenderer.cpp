@@ -324,7 +324,7 @@ void BasicRenderer::ClearDotted(uint32_t col)
 void BasicRenderer::Cls()
 {
     BasicRenderer::Clear(0);
-    BasicRenderer::Println("(OLD) SkylineSystem v0.35", Colors.green);
+    BasicRenderer::Println("(OLD) System v0.35", Colors.green);
     BasicRenderer::Println("-------------------", Colors.green);
     BasicRenderer::Println();
 }

@@ -272,7 +272,7 @@ void LockLoop()
         goto endLockLoop;
     }
 
-    Serial::Writeln("ThisOS Debug Panic Serial Terminal (DePaST)");
+    Serial::Writeln("System Debug Panic Serial Terminal (DePaST)");
     Serial::Writeln();
 
 
@@ -380,9 +380,6 @@ void LockLoop()
                     
                     if (inputLen > 0)
                     {
-                        //int x,y;
-                        osData.tmp_wy += 16;
-                        osData.tmp_wx = 0;
                         input[inputLen] = 0;    
                         ParseCommand(input, lastInput, &mainUser, mainWindow);
                     }

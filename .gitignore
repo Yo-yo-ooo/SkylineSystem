@@ -1,4 +1,3 @@
 *.o
 *.d
-*.elf
-*.iso
+disk.img
