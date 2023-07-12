@@ -108,7 +108,11 @@ $(KERNEL): $(OBJ)
 	@ echo !==== COMPILING $^
 	@ echo !==== COMPILING $^
 	nasm $(NASMFLAGS) $^ -f elf64 -o $@
-
+# Compilation rules for syscall.asm (nasm) files.
+%interrupts/syscall_asm.o: %interrupts/syscall.asm
+	@ echo !==== COMPILING $^
+	@ echo !==== COMPILING $^
+	nasm $(NASMFLAGS) $^ -f elf64 -o $@
 
 %interrupts/interrupts.o: %interrupts/interrupts.cpp
 	@ echo !==== COMPILING $^
