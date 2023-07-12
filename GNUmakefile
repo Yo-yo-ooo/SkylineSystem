@@ -1,16 +1,16 @@
 .PHONY: all
-all: MaslOS.iso
+all: System.iso
 
 .PHONY: all-hdd
 all-hdd: barebones.hdd
 
 .PHONY: run
-run: MaslOS.iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom MaslOS.iso -boot d
+run: System.iso
+	qemu-system-x86_64 -M q35 -m 2G -cdrom System.iso -boot d
 
 .PHONY: run-uefi
-run-uefi: ovmf-x64 MaslOS.iso
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf-x64/OVMF.fd -cdrom MaslOS.iso -boot d
+run-uefi: ovmf-x64 System.iso
+	qemu-system-x86_64 -M q35 -m 2G -bios ovmf-x64/OVMF.fd -cdrom System.iso -boot d
 
 .PHONY: run-hdd
 run-hdd: barebones.hdd
@@ -32,7 +32,7 @@ limine:
 kernel:
 	$(MAKE) -C kernel
 
-MaslOS.iso: limine kernel
+System.iso: limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root
 	cp kernel/kernel.elf \
@@ -43,8 +43,8 @@ MaslOS.iso: limine kernel
 		-no-emul-boot -boot-load-size 4 -boot-info-table \
 		--efi-boot limine-cd-efi.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		iso_root -o MaslOS.iso
-	limine/limine-deploy MaslOS.iso
+		iso_root -o System.iso
+	limine/limine-deploy System.iso
 	rm -rf iso_root
 
 barebones.hdd: limine kernel
@@ -68,10 +68,14 @@ barebones.hdd: limine kernel
 
 .PHONY: clean
 clean:
-	rm -rf iso_root MaslOS.iso barebones.hdd
+	rm -rf iso_root System.iso barebones.hdd
 	$(MAKE) -C kernel clean
 
 .PHONY: distclean
 distclean: clean
 	rm -rf limine ovmf-x64
 	$(MAKE) -C kernel distclean
+
+
+ca:
+	make clean && make run -j$(nproc)

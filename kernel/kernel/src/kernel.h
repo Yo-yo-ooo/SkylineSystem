@@ -9,7 +9,7 @@
 
 #include "Rendering/S-Font.h"
 
-struct MaslOsAssetStruct
+struct SystemAssetStruct
 {
     // Images
     kernelFiles::ImageFile* bgImage;
@@ -31,7 +31,7 @@ struct MaslOsAssetStruct
 };
 
 
-void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, MaslOsAssetStruct* assets, void* freeMemStart, void* extraMemStart, uint64_t freeMemSize, void* kernelStart, uint64_t kernelSize, void* kernelStartV);
+void bootTest(Framebuffer fb, ACPI::RSDP2* rsdp, PSF1_FONT* psf1_font, SystemAssetStruct* assets, void* freeMemStart, void* extraMemStart, uint64_t freeMemSize, void* kernelStart, uint64_t kernelSize, void* kernelStartV);
 
 void RenderLoop();
 void RecoverDed();

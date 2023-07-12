@@ -1,6 +1,6 @@
 # SkylineSystem
 an OS written in C++ and a bit of C.
-Based on [MaslOS](https://github.com/marceldobehere/MaslOS)
+Based on [System](https://github.com/marceldobehere/System)
 
 ## How to run (Linux)
 Install QEMU if you haven't.

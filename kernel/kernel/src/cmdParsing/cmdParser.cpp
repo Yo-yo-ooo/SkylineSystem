@@ -1067,6 +1067,13 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             LogInvalidArgumentCount(3, data->len-1, window);
     }
     
+    if(StrEquals(data->data[0],"sclx")){
+        ((NewTerminalInstance*)((TerminalInstance*)activeWindow->instance)->newTermInstance)->scrollX 
+            += to_int(data->data[1]);
+        RemoveFromStack();
+        return;
+    }
+
     if (StrEquals(data->data[0], "disk"))
     {
         // if (data->len == 3)
