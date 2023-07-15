@@ -4,7 +4,6 @@ uint64_t _KernelStart;
 uint64_t _KernelEnd;
 
 #include "../other_IO/acpi/acpiShutdown.h"
-#include "../../interrupts/syscall.h"
 
 // #include "../../interrupts/panic.h"
 
@@ -400,7 +399,6 @@ void PrepareInterrupts()
     //SetIDTGate((void*)IRQ13_handler, 0x2D, IDT_TA_InterruptGate, 0x08); // IRQ13 Handled
     SetIDTGate((void*)IRQ14_handler, 0x2E, IDT_TA_InterruptGate, 0x08); // IRQ14
     SetIDTGate((void*)IRQ15_handler, 0x2F, IDT_TA_InterruptGate, 0x08); // IRQ15
-    SetIDTGate((void*)system_call_handler_asm,0x80,IDT_TA_InterruptGate,0x08);//syscalls
 
 
     io_wait();    
@@ -482,7 +480,7 @@ void PrepareWindows(Framebuffer* img)
 
         debugTerminalWindow->renderer->Clear(Colors.black);
         //KeyboardPrintStart(debugTerminalWindow);
-        debugTerminalWindow->renderer->Println("System - Debug Terminal (OUTPUT ONLY)", Colors.green);
+        debugTerminalWindow->renderer->Println("MaslOS - Debug Terminal (OUTPUT ONLY)", Colors.green);
         debugTerminalWindow->renderer->Println("-------------------------------------\n", Colors.green);
         debugTerminalWindow->renderer->color = Colors.yellow;
     }
@@ -816,6 +814,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     //osData.realMainWindow->framebuffer = r.framebuffer;
 
     PrintMsg("> Initing Serial Interface");
+    Serial::pciCard = NULL;
     Serial::Init();
     StepDone();
 
@@ -955,7 +954,15 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     osData.diskInterfaces = List<DiskInterface::GenericDiskInterface*>();
 
     PrintMsg("> Creating List for Audio Destinations");
-    osData.audioDestinations = List<Audio::BasicAudioDestination*>();
+    //osData.audioDestinations = List<Audio::BasicAudioDestination*>();
+    osData.audioInputDevices = List<Audio::AudioInputDevice*>();
+    osData.audioOutputDevices = List<Audio::AudioOutputDevice*>();
+
+    osData.pcSpeakerDev = new Audio::AudioOutputDevice("PC Speaker", new Audio::AudioBuffer(8, 29829, 1, 1500));
+    osData.defaultAudioOutputDevice = osData.pcSpeakerDev;
+    Music::pcSpk = osData.pcSpeakerDev;
+    Music::pcSpk->destination->buffer->ClearBuffer();
+    Music::pcSpk->destination->buffer->sampleCount = Music::pcSpk->destination->buffer->totalSampleCount;
 
     osData.windowIconZIP = bootInfo->windowIconsZIP;
     osData.windowButtonZIP = bootInfo->windowButtonZIP;
@@ -1117,4 +1124,3 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     RemoveFromStack();
     return kernelInfo;
 }
-
