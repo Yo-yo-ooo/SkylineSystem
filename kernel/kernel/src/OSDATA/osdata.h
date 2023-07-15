@@ -68,7 +68,7 @@ struct OSData
 
     uint32_t wantedFps = 60;
     AC97::AC97Driver* ac97Driver = NULL;
-    Audio::AudioOutputDevice* pcSpeakerDev;
+    Audio::AudioOutputDevice* pcSpeakerDev = NULL;
 
     int houra = 0;
 
