@@ -1,11 +1,11 @@
 
 #include "BasicRenderer.h"
-#include "../kernelStuff/stuff/cstr.h"
+#include "../cStdLib/cstr.h"
 #include "Cols.h"
-#include "../cmdParsing/cstrTools.h"
+#include "../cStdLib/cstrTools.h"
 #include "../memory/heap.h"
-#include "../OSDATA/osdata.h"
-#include "../kernelStuff/other_IO/serial/serial.h"
+#include "../osData/osData.h"
+#include "..//devices/serial/serial.h"
 
 bool PrintAll = true;
 int PrintLayer = 0;
@@ -202,7 +202,7 @@ void PrintMsgColSL(const char* msg, uint32_t col)
     PrintMsgColSL(msg, "", col);
 }
 
-#include "../OSDATA/osdata.h"
+#include "../osData/osData.h"
 
 void PrintDebugTerminal()
 {

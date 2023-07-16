@@ -3,11 +3,11 @@
 uint64_t _KernelStart; 
 uint64_t _KernelEnd;
 
-#include "../other_IO/acpi/acpiShutdown.h"
+#include "../../devices/acpi/acpiShutdown.h"
 
 // #include "../../interrupts/panic.h"
 
-#include "../other_IO/rtc/rtc.h"
+#include "../../devices/rtc/rtc.h"
 
 
 void DoPCIWithoutMCFG(BootInfo* bootInfo)
@@ -480,7 +480,7 @@ void PrepareWindows(Framebuffer* img)
 
         debugTerminalWindow->renderer->Clear(Colors.black);
         //KeyboardPrintStart(debugTerminalWindow);
-        debugTerminalWindow->renderer->Println("MaslOS - Debug Terminal (OUTPUT ONLY)", Colors.green);
+        debugTerminalWindow->renderer->Println("System - Debug Terminal (OUTPUT ONLY)", Colors.green);
         debugTerminalWindow->renderer->Println("-------------------------------------\n", Colors.green);
         debugTerminalWindow->renderer->color = Colors.yellow;
     }
@@ -766,14 +766,15 @@ void InitStartMenuWindow(BootInfo* bootInfo)
 
 
 
-#include "../Disk_Stuff/Disk_Interfaces/ram/ramDiskInterface.h"
-#include "../Disk_Stuff/Partition_Interfaces/mraps/mrapsPartitionInterface.h"
-#include "../Disk_Stuff/Filesystem_Interfaces/mrafs/mrafsFileSystemInterface.h"
+#include "../diskStuff/Disk_Interfaces/ram/ramDiskInterface.h"
+#include "../diskStuff/Partition_Interfaces/mraps/mrapsPartitionInterface.h"
+#include "../diskStuff/Filesystem_Interfaces/mrafs/mrafsFileSystemInterface.h"
 
 BasicRenderer r = *((BasicRenderer*)NULL);
 
-#include "../../musicTest/musicTest.h"
-#include "../other_IO/serial/serial.h"
+#include "../../audio/audio.h"
+#include "../../audio/audioDevStuff.h"
+#include "../../devices/serial/serial.h"
 
 
 KernelInfo InitializeKernel(BootInfo* bootInfo)
@@ -849,7 +850,7 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     //GlobalRenderer->Println("BG IMG: {}", to_string((uint64_t)bootInfo->bgImage), Colors.orange);
 
-    Music::init();
+    AudioDeviceStuff::init();
     
 
     //uint8_t* bleh = (uint8_t*) malloc(sizeof(Framebuffer), "Converting Image to Framebuffer");;
@@ -960,9 +961,9 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     osData.pcSpeakerDev = new Audio::AudioOutputDevice("PC Speaker", new Audio::AudioBuffer(8, 29829, 1, 1500));
     osData.defaultAudioOutputDevice = osData.pcSpeakerDev;
-    Music::pcSpk = osData.pcSpeakerDev;
-    Music::pcSpk->destination->buffer->ClearBuffer();
-    Music::pcSpk->destination->buffer->sampleCount = Music::pcSpk->destination->buffer->totalSampleCount;
+    AudioDeviceStuff::pcSpk = osData.pcSpeakerDev;
+    AudioDeviceStuff::pcSpk->destination->buffer->ClearBuffer();
+    AudioDeviceStuff::pcSpk->destination->buffer->sampleCount = AudioDeviceStuff::pcSpk->destination->buffer->totalSampleCount;
 
     osData.windowIconZIP = bootInfo->windowIconsZIP;
     osData.windowButtonZIP = bootInfo->windowButtonZIP;
@@ -1124,3 +1125,4 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     RemoveFromStack();
     return kernelInfo;
 }
+

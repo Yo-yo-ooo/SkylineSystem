@@ -1,15 +1,15 @@
 #include "interrupts.h"
 
-#include "../Rendering/BasicRenderer.h"
+#include "../rendering/BasicRenderer.h"
 #include "../userinput/keyboard.h"
 #include "../userinput/mouse.h"
 #include "panic.h"
 #include "../kernelStuff/IO/IO.h"
-#include "../kernelStuff/other_IO/pit/pit.h"
-#include "../OSDATA/MStack/MStackM.h"
-#include "../OSDATA/osStats.h"
+#include "../devices/pit/pit.h"
+#include "../osData/MStack/MStackM.h"
+#include "../osData/osStats.h"
 
-#include "../kernelStuff/other_IO/acpi/acpiShutdown.h"
+#include "../devices/acpi/acpiShutdown.h"
 
 
 
@@ -252,14 +252,14 @@ __attribute__((interrupt)) void MouseInt_handler(interrupt_frame* frame)
 
 bool speakA = false;
 
-#include "../musicTest/musicTest.h"
+#include "../audio/audioDevStuff.h"
 
 __attribute__((interrupt)) void PITInt_handler(interrupt_frame* frame)
 { 
     AddToStack();
     PIT::Tick();
     PIC_EndMaster();
-    Music::play(PIT::FreqAdder);
+    AudioDeviceStuff::play(PIT::FreqAdder);
 
     // TestSetSpeakerPosition(speakA);
     // speakA = !speakA;

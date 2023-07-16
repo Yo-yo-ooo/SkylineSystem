@@ -1,11 +1,11 @@
 #include "musicPlayer.h"
-#include "../../cmdParsing/cstrTools.h"
+#include "../../cStdLib/cstrTools.h"
 #include "../../memory/heap.h"
-#include "../../OSDATA/osdata.h"
+#include "../../osData/osData.h"
 #include "../../fsStuff/fsStuff.h"
 #include "../../rnd/rnd.h"
 #include "../openFileExplorer/openFileExplorer.h"
-#include "../../kernelStuff/other_IO/serial/serial.h"
+#include "../..//devices/serial/serial.h"
 #include "../../tasks/readFile/taskReadFile.h"
 
 

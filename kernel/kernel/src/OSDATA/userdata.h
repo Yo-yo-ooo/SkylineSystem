@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Rendering/Cols.h"
+#include "../rendering/Cols.h"
 
 
 struct OSUserColData

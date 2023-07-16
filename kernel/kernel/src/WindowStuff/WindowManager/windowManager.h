@@ -1,9 +1,9 @@
 #pragma once
 
-//#include "../../customClasses/list.h"
+//#include "../../cStdLib/list.h"
 #include "../Window/window.h"
-//#include "../../OSDATA/osdata.h"
-#include "../../Rendering/Cols.h"
+//#include "../../osData/osData.h"
+#include "../../rendering/Cols.h"
 
 namespace WindowManager
 {

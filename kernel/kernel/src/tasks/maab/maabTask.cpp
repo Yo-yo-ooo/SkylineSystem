@@ -1,11 +1,11 @@
 #include "maabTask.h"
-//#include "../../kernelStuff/other_IO/pit/pit.h"
+//#include "../../devices/pit/pit.h"
 #include "../../memory/heap.h"
 //#include "../../interrupts/interrupts.h"
-#include "../../cmdParsing/cstrTools.h"
-//#include "../../OSDATA/MStack/MStackM.h"
+#include "../../cStdLib/cstrTools.h"
+//#include "../../osData/MStack/MStackM.h"
 //#include "terminalInstance.h"
-#include "../../kernelStuff/stuff/cstr.h"
+#include "../../cStdLib/cstr.h"
 #include "../sleep/taskSleep.h"
 #include "../../WindowStuff/SubInstances/guiInstance/guiInstance.h"
 #include "../../WindowStuff/SubInstances/guiInstance/guiStuff/components/text/textComponent.h"
@@ -82,7 +82,7 @@ TaskMAAB::TaskMAAB(uint32_t codeLen, uint8_t* code, Window* window, TerminalInst
 }
 
 #include "../../interrupts/panic.h"
-#include "../../OSDATA/MStack/MStackM.h"
+#include "../../osData/MStack/MStackM.h"
 
 void TaskMAAB::OnExternalWindowClose(Window* window)
 {
@@ -2173,7 +2173,7 @@ void TaskMAAB::Math(OpNumber opNum, DatatypeNumber typeNum, uint64_t addr1, uint
 
 
 #include "../closeWindow/taskWindowClose.h"
-#include "../../OSDATA/osdata.h"
+#include "../../osData/osData.h"
 
 void TaskMAAB::Free()
 {

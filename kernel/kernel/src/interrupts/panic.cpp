@@ -1,10 +1,10 @@
 #include "panic.h"
-#include "../Rendering/BasicRenderer.h"
-#include "../Rendering/Cols.h" 
-#include "../OSDATA/osdata.h"
-#include "../OSDATA/MStack/MStackM.h"
+#include "../rendering/BasicRenderer.h"
+#include "../rendering/Cols.h" 
+#include "../osData/osData.h"
+#include "../osData/MStack/MStackM.h"
 #include "../WindowStuff/SubInstances/customInstance/customInstance.h"
-#include "../kernelStuff/other_IO/serial/serial.h"
+#include "..//devices/serial/serial.h"
 
 void PrintRegisterDump(BasicRenderer* renderer)
 {
@@ -248,7 +248,7 @@ void LockOsStuffLoop(Window* termWindow)
 
 #include "../tasks/maab/maabTask.h"
 #include "../tasks/bfTask/bfTask.h"
-#include "../kernelStuff/other_IO/acpi/acpiShutdown.h"
+#include "../devices/acpi/acpiShutdown.h"
 
 void LockLoop()
 {

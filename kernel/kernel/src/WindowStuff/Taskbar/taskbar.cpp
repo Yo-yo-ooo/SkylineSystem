@@ -1,6 +1,6 @@
 #include "taskbar.h"
-#include "../../OSDATA/osdata.h"
-#include "../../kernelStuff/other_IO/rtc/rtc.h"
+#include "../../osData/osData.h"
+#include "../../devices/rtc/rtc.h"
 
 namespace Taskbar
 {

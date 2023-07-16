@@ -1,7 +1,7 @@
 #include "window.h"
 #include "../../memory/heap.h"
-#include "../../cmdParsing/cstrTools.h"
-#include "../../OSDATA/osdata.h"
+#include "../../cStdLib/cstrTools.h"
+#include "../../osData/osData.h"
 
 Window* activeWindow = NULL;
 

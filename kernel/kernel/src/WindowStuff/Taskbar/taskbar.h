@@ -1,6 +1,6 @@
 #pragma once
-#include "../../OSDATA/osdata.h"
-#include "../../customClasses/syncedList.h"
+#include "../../osData/osData.h"
+#include "../../cStdLib/syncedList.h"
 
 namespace Taskbar
 {

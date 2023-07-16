@@ -1,7 +1,7 @@
 #include "textComponent.h"
-#include "../../../../../../cmdParsing/cstrTools.h"
+#include "../../../../../../cStdLib/cstrTools.h"
 #include "../../../../../../memory/heap.h"
-#include "../../../../../../OSDATA/MStack/MStackM.h"
+#include "../../../../../../osData/MStack/MStackM.h"
 
 namespace GuiComponentStuff
 {

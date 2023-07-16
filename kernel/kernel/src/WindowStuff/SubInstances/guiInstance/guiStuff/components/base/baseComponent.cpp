@@ -1,5 +1,5 @@
 #include "baseComponent.h"
-#include "../../../../../../customClasses/list.h"
+#include "../../../../../../cStdLib/list.h"
 #include "../rectangle/rectangleComponent.h"
 #include "../screenComponent/screenComponent.h"
 #include "../box/boxComponent.h"
@@ -7,7 +7,7 @@
 #include "../button/buttonComponent.h"
 #include "../textField/textFieldComponent.h"
 #include "../imageRect/imageRectangleComponent.h"
-#include "../../../../../../OSDATA/MStack/MStackM.h"
+#include "../../../../../../osData/MStack/MStackM.h"
 #include "../../../guiInstance.h"
 
 namespace GuiComponentStuff

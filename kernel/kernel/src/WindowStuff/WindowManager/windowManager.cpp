@@ -1,9 +1,10 @@
 #include "windowManager.h"
-#include "../../OSDATA/osdata.h" 
-#include "../../OSDATA/osStats.h" 
-#include "../../Rendering/VirtualRenderer.h"
+#include "../../osData/osData.h" 
+#include "../../osData/osStats.h" 
+#include "../../rendering/VirtualRenderer.h"
 //#include "../../userinput/mouse.h"
-#include "../../musicTest/musicTest.h"
+#include "../../audio/audio.h"
+#include "../../audio/audioDevStuff.h"
 
 namespace WindowManager
 {
@@ -1026,7 +1027,7 @@ if (window != NULL)
             osData.debugTerminalWindow->renderer->CursorPosition.x + 240,
             osData.debugTerminalWindow->renderer->CursorPosition.y + 16,
             Colors.black);
-        osData.debugTerminalWindow->Log("PC SPEAKER INDEX: {}", to_string(Music::currentRawAudioIndex), Colors.yellow);
+        osData.debugTerminalWindow->Log("PC SPEAKER INDEX: {}", to_string(AudioDeviceStuff::currentRawAudioIndex), Colors.yellow);
         RemoveFromStack();
 
         AddToStack();
@@ -1125,3 +1126,4 @@ if (window != NULL)
         //                                              x2,   y2);
     }
 }
+

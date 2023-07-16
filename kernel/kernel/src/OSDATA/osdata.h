@@ -3,24 +3,15 @@
 
 //#include "../kernelStuff/stuff/stackmacro.h"
 #include "../kernelStuff/stuff/kernelUtil.h"
-//#include "../customClasses/list.h"
+//#include "../cStdLib/list.h"
 
 
 #include "../WindowStuff/WindowManager/windowManager.h"
 
-//#include "../WindowStuff/Window/window.h"
-//#include "../kernelStuff/Disk_Stuff/Disk_Interfaces/generic/genericDiskInterface.h"
 
-#define LIST_INCLUDE_GENERIC_DISK_INTERFACE
-#define LIST_INCLUDE_TASK
-#define LIST_INCLUDE_WINDOW
-#include "../customClasses/list.h"
-#undef LIST_INCLUDE_WINDOW
-#undef LIST_INCLUDE_TASK
-#undef LIST_INCLUDE_GENERIC_DISK_INTERFACE
+#include "../cStdLib/list.h"
 
-#include "../kernelStuff/other_IO/ac97/ac97.h"
-#include "../customClasses/list_audioStuff.h"
+#include "../devices/ac97/ac97.h"
 
 struct OSData
 {
@@ -54,7 +45,7 @@ struct OSData
     WindowManager::WindowPointerBufferThing* windowPointerThing;
 
     List<DiskInterface::GenericDiskInterface*> diskInterfaces;
-     //List<Audio::BasicAudioDestination*> audioDestinations;
+    //List<Audio::BasicAudioDestination*> audioDestinations;
 
     List<Audio::AudioInputDevice*> audioInputDevices;
     List<Audio::AudioOutputDevice*> audioOutputDevices;
@@ -68,9 +59,7 @@ struct OSData
 
     uint32_t wantedFps = 60;
     AC97::AC97Driver* ac97Driver = NULL;
-    Audio::AudioOutputDevice* pcSpeakerDev = NULL;
-
-    int houra = 0;
+    Audio::AudioOutputDevice* pcSpeakerDev;
 
 };
 

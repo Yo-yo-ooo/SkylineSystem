@@ -6,13 +6,13 @@ extern "C"
     #include "pureDoom/pureDoom.h"
 }
 
-#include "../../kernelStuff/other_IO/pit/pit.h"
-#include "../../Rendering/Cols.h"
+#include "../../devices/pit/pit.h"
+#include "../../rendering/Cols.h"
 #include "../../userinput/kbScancodeTranslation.h"
 #include "../../userinput/mouse.h"
 #include "../../fsStuff/fsStuff.h"
-#include "../../cmdParsing/cstrTools.h"
-#include "../../OSDATA/MStack/MStackM.h"
+#include "../../cStdLib/cstrTools.h"
+#include "../../osData/MStack/MStackM.h"
 
 List<void*>* openMallocs = NULL;
 

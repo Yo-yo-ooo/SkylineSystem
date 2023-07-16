@@ -1,3 +1,3 @@
-#include "osdata.h"
+#include "osData.h"
 
 OSData osData;

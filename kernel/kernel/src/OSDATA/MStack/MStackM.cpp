@@ -1,6 +1,6 @@
 #include "MStackM.h"
-//#include "../osdata.h"
-#include "../../kernelStuff/other_IO/serial/serial.h"
+//#include "../osData.h"
+#include "../..//devices/serial/serial.h"
 
 void PrintMStackTrace(MStack stack[], int64_t size, BasicRenderer* renderer, uint32_t col)
 {

@@ -6,7 +6,7 @@ namespace Audio
     class AudioInputDevice;
     class AudioOutputDevice;
 }
-#include "../customClasses/list.h"
+#include "../cStdLib/list.h"
 
 namespace Audio
 {
@@ -94,4 +94,6 @@ namespace Audio
     };
     
 
+
+    void FillArray(uint16_t* buf, int start, int len, int freq, int sampleRate);
 }

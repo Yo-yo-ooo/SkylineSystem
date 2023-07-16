@@ -1,9 +1,9 @@
 #include "bfTask.h"
-#include "../../kernelStuff/other_IO/pit/pit.h"
+#include "../../devices/pit/pit.h"
 #include "../../memory/heap.h"
 #include "../../interrupts/interrupts.h"
-#include "../../cmdParsing/cstrTools.h"
-#include "../../OSDATA/MStack/MStackM.h"
+#include "../../cStdLib/cstrTools.h"
+#include "../../osData/MStack/MStackM.h"
 
 
 TaskBF::TaskBF(const char* code, Window* window)

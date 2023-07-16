@@ -8,9 +8,9 @@ extern uint64_t _KernelStart;
 extern uint64_t _KernelEnd;
 
 
-#include "../../Rendering/BasicRenderer.h"
-#include "../../Rendering/Cols.h"
-#include "cstr.h" 
+#include "../../rendering/BasicRenderer.h"
+#include "../../rendering/Cols.h"
+#include "../../cStdLib/cstr.h" 
 
 // #include "paging/PageFrameAllocator.h"  
 // #include "paging/PageMapIndexer.h"
@@ -36,11 +36,11 @@ struct KernelInfo
 
 
 
-#include "../../OSDATA/osdata.h"
-#include "../../OSDATA/userdata.h"
-#include "../../OSDATA/MStack/MStackM.h"
+#include "../../osData/osData.h"
+#include "../../osData/userData.h"
+#include "../../osData/MStack/MStackM.h"
 
-#include "../other_IO/gdt/gdt.h" 
+#include "../../devices/gdt/gdt.h" 
 
 
 #include "../../interrupts/IDT.h"
@@ -55,24 +55,23 @@ struct KernelInfo
 #include "../../memory/heap.h"
 #include "../../cmdParsing/cmdParser.h"
 
-#include "../other_IO/pit/pit.h"
+#include "../../devices/pit/pit.h"
 
-//#include "../../customClasses/array.h"
-#include "../../customClasses/list.h"
+//#include "../../cStdLib/array.h"
+#include "../../cStdLib/list.h"
 
 #include "../kernelFiles/kernelFiles.h"
 #include "../kernelFiles/ZIPStruct.h"
 
-#include "../other_IO/acpi/acpi.h"
-#include "../other_IO/pci/pci.h"
+#include "../../devices/acpi/acpi.h"
+#include "../../devices/pci/pci.h"
 
-#include "../../Rendering/VirtualRenderer.h"
+#include "../../rendering/VirtualRenderer.h"
 
 #include "../../WindowStuff/Taskbar/taskbar.h"
 #include "../../WindowStuff/SubInstances/debugTerminalInstance/debugTerminalInstance.h"
 #include "../../WindowStuff/SubInstances/newTerminalInstance/newTerminalInstance.h"
 
-//#include "../other_IO/sb16/sb16.h"
 
 void PrepareACPI(BootInfo* bootInfo);
 

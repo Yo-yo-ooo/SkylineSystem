@@ -1,599 +1,28 @@
 #include "cmdParser.h"
-#include "../Rendering/BasicRenderer.h"
-#include "cstrTools.h"
-#include "../Rendering/Cols.h"
+#include "../rendering/BasicRenderer.h"
+#include "../cStdLib/cstrTools.h"
+#include "../rendering/Cols.h"
 #include <stdint.h>
 #include "../memory/heap.h"
 #include "../paging/PageFrameAllocator.h"
 #include "../userinput/keyboard.h"
 #include "../userinput/mouse.h"
-#include "../OSDATA/osdata.h"
-#include "../kernelStuff/other_IO/pit/pit.h"
+#include "../osData/osData.h"
+#include "../devices/pit/pit.h"
 #include "../tasks/sleep/taskSleep.h"
 #include "../tasks/playBeep/playBeep.h"
 #include "../tasks/test/testTask.h"
-#include "../kernelStuff/Disk_Stuff/Disk_Interfaces/ram/ramDiskInterface.h"
-#include "../kernelStuff/Disk_Stuff/Disk_Interfaces/file/fileDiskInterface.h"
-#include "../kernelStuff/Disk_Stuff/Partition_Interfaces/mraps/mrapsPartitionInterface.h"
-#include "../kernelStuff/Disk_Stuff/Filesystem_Interfaces/mrafs/mrafsFileSystemInterface.h"
+#include "../kernelStuff/diskStuff/Disk_Interfaces/ram/ramDiskInterface.h"
+#include "../kernelStuff/diskStuff/Disk_Interfaces/file/fileDiskInterface.h"
+#include "../kernelStuff/diskStuff/Partition_Interfaces/mraps/mrapsPartitionInterface.h"
+#include "../kernelStuff/diskStuff/Filesystem_Interfaces/mrafs/mrafsFileSystemInterface.h"
 #include "../WindowStuff/SubInstances/connect4Instance/connect4Instance.h"
 #include "../tasks/taskMgrTask/taskMgrTask.h"
 #include "../tasks/closeWindow/taskWindowClose.h"
 #include "../tasks/bfTask/bfTask.h"
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
-#include "../kernelStuff/other_IO/rtc/rtc.h"
 #include "../tasks/maab/maabTask.h"
-
-int sigma(int start, int end) {
-    int sum = 0;
-    for (int i = start; i <= end; i++) {
-        sum += i;
-    }
-    return sum;
-}
-
-double to_double(const char *str)
-{
-	double s=0.0;
-
-	double d=10.0;
-	int jishu=0;
-
-	bool falg=false;
-
-	while(*str==' ')
-	{
-		str++;
-	}
-
-	if(*str=='-')//记录数字正负
-	{
-		falg=true;
-		str++;
-	}
-
-	if(!(*str>='0'&&*str<='9'))//假设一開始非数字则退出。返回0.0
-		return s;
-
-	while(*str>='0'&&*str<='9'&&*str!='.')//计算小数点前整数部分
-	{
-		s=s*10.0+*str-'0';
-		str++;
-	}
-
-	if(*str=='.')//以后为小树部分
-		str++;
-
-	while(*str>='0'&&*str<='9')//计算小数部分
-	{
-		s=s+(*str-'0')/d;
-		d*=10.0;
-		str++;
-	}
-
-	if(*str=='e'||*str=='E')//考虑科学计数法
-	{
-		str++;
-		if(*str=='+')
-		{
-			str++;
-			while(*str>='0'&&*str<='9')
-			{
-				jishu=jishu*10+*str-'0';
-				str++;
-			}
-			while(jishu>0)
-			{
-				s*=10;
-				jishu--;
-			}
-		}
-		if(*str=='-')
-		{
-			str++;
-			while(*str>='0'&&*str<='9')
-			{
-				jishu=jishu*10+*str-'0';
-				str++;
-			}
-			while(jishu>0)
-			{
-				s/=10;
-				jishu--;
-			}
-		}
-	}
-
-    return s*(falg?-1.0:1.0);
-}
-
-double InvSqrt(double t) 
-{
-    float x = (float)t;
-    float xhalf = 0.5f*x;
-    int i = *(int*)&x; // get bits for floating VALUE 
-    i = 0x5f375a86- (i>>1); // gives initial guess y0
-    x = *(float*)&i; // convert bits BACK to float
-    x = x*(1.5f-xhalf*x*x); // Newton step, repeating increases accuracy
-    x = x*(1.5f-xhalf*x*x); // Newton step, repeating increases accuracy
-    x = x*(1.5f-xhalf*x*x); // Newton step, repeating increases accuracy
-
-    return ((double)(1/x));
-}
-
-double pi=3.14159265359;
- 
- 
- double fabs_self(double x){
- if(x>=0){
-   x=x;
- }else{
-   x=-x;
- }
- return x;
- }
- 
- 
- double power_self(double x,int k){
-	double sum=1;
-	double i;
- while (k != 0)
-    {
-		sum*=x;
-		--k;
-	}
-	return sum;
-}
- 
-double sin(double x)
-{
-	//****************************
-	int counter=0;
-	if(x<0){
-		counter=1;
-	}else{
-		counter =0;
-	}
-	x=fabs_self(x);
-	//****************************
- int t,q=1;
- double term,factorial=1.0,sum2,sxm,sum1=0;
- 
-sum2=x;
-      for(t=2;;t++)
-      {
-           factorial=factorial*t;
-             if(t%2!=0)
-                   {
-                 sum1=sum2;
-                 q=q*(-1);
-                 sxm=fabs_self(power_self(x,t));
-                 term=sxm/factorial;
-                 sum2=q*term+sum2;
-              }
-              if(fabs_self(sum2-sum1)<=1e-5)
-              break;
-        }
-          
-          if(counter==1){
-          	  sum2=-sum2;
-          	  return sum2; 
-		  }
-       
-         else{
-         	 return sum2;
-		 }
-        
- }
- 
-double cos(double x)
-{
- 
-	//********************
-	x=fabs_self(x);
-	//********************
- int t,q=1;
- double term,factorial=1.0,sum2=1,sxm,sum1=0;
-      for(t=2;;t++)
-      {
-           factorial=factorial*t;
-             if(t%2==0)
-                   {
-                 sum1=sum2;
-                 q=q*(-1);
-                 sxm=fabs_self(power_self(x,t));
-                 term=sxm/factorial;
-                 sum2=q*term+sum2;
-              }
-              if(fabs_self(sum2-sum1)<=1e-5)
-              break;
-        }
-        
-          
-          	  return sum2; 
-	
-		 
-        
- }
-
-static volatile const double Tiny = 0x1p-1022;
-
-bool isnan(double x) {
-    // 先判断 x 是否等于自己
-    // 如果 x 等于自己，那么 x 一定不是 NaN，返回 false
-    if (x == x) {
-        return false;
-    } else {
-        return true;
-    }
-}
-
-// Return arctangent(x) given that 2 < x, with the same properties as atan.
-static double Tail(double x)
-{
-	{
-		static const double HalfPi = 0x3.243f6a8885a308d313198a2e037ap-1;
-
-		// For large x, generate inexact and return pi/2.
-		if (0x1p53 <= x)
-			return HalfPi + Tiny;
-		if (isnan(x))
-			return x - x;
-	}
-
-	static const double p03 = -0x1.5555555554A51p-2;
-	static const double p05 = +0x1.999999989EBCAp-3;
-	static const double p07 = -0x1.249248E1422E3p-3;
-	static const double p09 = +0x1.C71C5EDFED480p-4;
-	static const double p11 = -0x1.745B7F2D72663p-4;
-	static const double p13 = +0x1.3AFD7A0E6EB75p-4;
-	static const double p15 = -0x1.104146B1A1AE8p-4;
-	static const double p17 = +0x1.D78252FA69C1Cp-5;
-	static const double p19 = -0x1.81D33E401836Dp-5;
-	static const double p21 = +0x1.007733E06CEB3p-5;
-	static const double p23 = -0x1.83DAFDA7BD3FDp-7;
-
-	static const double p000 = +0x1.921FB54442D18p0;
-	static const double p001 = +0x1.1A62633145C07p-54;
-
-	double y = 1/x;
-
-	// Square y.
-	double y2 = y * y;
-
-	return p001 - ((((((((((((
-		+ p23) * y2
-		+ p21) * y2
-		+ p19) * y2
-		+ p17) * y2
-		+ p15) * y2
-		+ p13) * y2
-		+ p11) * y2
-		+ p09) * y2
-		+ p07) * y2
-		+ p05) * y2
-		+ p03) * y2 * y + y) + p000;
-}
-
-
-/*	Return arctangent(x) given that 0x1p-27 < |x| <= 1/2, with the same
-	properties as atan.
-*/
-static double atani0(double x)
-{
-	static const double p03 = -0x1.555555555551Bp-2;
-	static const double p05 = +0x1.99999999918D8p-3;
-	static const double p07 = -0x1.2492492179CA3p-3;
-	static const double p09 = +0x1.C71C7096C2725p-4;
-	static const double p11 = -0x1.745CF51795B21p-4;
-	static const double p13 = +0x1.3B113F18AC049p-4;
-	static const double p15 = -0x1.10F31279EC05Dp-4;
-	static const double p17 = +0x1.DFE7B9674AE37p-5;
-	static const double p19 = -0x1.A38CF590469ECp-5;
-	static const double p21 = +0x1.56CDB5D887934p-5;
-	static const double p23 = -0x1.C0EB85F543412p-6;
-	static const double p25 = +0x1.4A9F5C4724056p-7;
-
-	// Square x.
-	double x2 = x * x;
-
-	return ((((((((((((
-		+ p25) * x2
-		+ p23) * x2
-		+ p21) * x2
-		+ p19) * x2
-		+ p17) * x2
-		+ p15) * x2
-		+ p13) * x2
-		+ p11) * x2
-		+ p09) * x2
-		+ p07) * x2
-		+ p05) * x2
-		+ p03) * x2 * x + x;
-}
-
-
-/*	Return arctangent(x) given that 1/2 < x <= 3/4, with the same properties as
-	atan.
-*/
-static double atani1(double x)
-{
-	static const double p00 = +0x1.1E00BABDEFED0p-1;
-	static const double p01 = +0x1.702E05C0B8155p-1;
-	static const double p02 = -0x1.4AF2B78215A1Bp-2;
-	static const double p03 = +0x1.5D0B7E9E69054p-6;
-	static const double p04 = +0x1.A1247CA5D9475p-4;
-	static const double p05 = -0x1.519E110F61B54p-4;
-	static const double p06 = +0x1.A759263F377F2p-7;
-	static const double p07 = +0x1.094966BE2B531p-5;
-	static const double p08 = -0x1.09BC0AB7F914Cp-5;
-	static const double p09 = +0x1.FF3B7C531AA4Ap-8;
-	static const double p10 = +0x1.950E69DCDD967p-7;
-	static const double p11 = -0x1.D88D31ABC3AE5p-7;
-	static const double p12 = +0x1.10F3E20F6A2E2p-8;
-
-	double y = x - 0x1.4000000000027p-1;
-
-	return ((((((((((((
-		+ p12) * y
-		+ p11) * y
-		+ p10) * y
-		+ p09) * y
-		+ p08) * y
-		+ p07) * y
-		+ p06) * y
-		+ p05) * y
-		+ p04) * y
-		+ p03) * y
-		+ p02) * y
-		+ p01) * y
-		+ p00;
-}
-
-
-/*	Return arctangent(x) given that 3/4 < x <= 1, with the same properties as
-	atan.
-*/
-static double atani2(double x)
-{
-	static const double p00 = +0x1.700A7C580EA7Ep-01;
-	static const double p01 = +0x1.21FB781196AC3p-01;
-	static const double p02 = -0x1.1F6A8499714A2p-02;
-	static const double p03 = +0x1.41B15E5E8DCD0p-04;
-	static const double p04 = +0x1.59BC93F81895Ap-06;
-	static const double p05 = -0x1.63B543EFFA4EFp-05;
-	static const double p06 = +0x1.C90E92AC8D86Cp-06;
-	static const double p07 = -0x1.91F7E2A7A338Fp-08;
-	static const double p08 = -0x1.AC1645739E676p-08;
-	static const double p09 = +0x1.152311B180E6Cp-07;
-	static const double p10 = -0x1.265EF51B17DB7p-08;
-	static const double p11 = +0x1.CA7CDE5DE9BD7p-14;
-
-	double y = x - 0x1.c0000000f4213p-1;
-
-	return (((((((((((
-		+ p11) * y
-		+ p10) * y
-		+ p09) * y
-		+ p08) * y
-		+ p07) * y
-		+ p06) * y
-		+ p05) * y
-		+ p04) * y
-		+ p03) * y
-		+ p02) * y
-		+ p01) * y
-		+ p00;
-}
-
-
-/*	Return arctangent(x) given that 1 < x <= 4/3, with the same properties as
-	atan.
-*/
-static double atani3(double x)
-{
-	static const double p00 = +0x1.B96E5A78C5C40p-01;
-	static const double p01 = +0x1.B1B1B1B1B1B3Dp-02;
-	static const double p02 = -0x1.AC97826D58470p-03;
-	static const double p03 = +0x1.3FD2B9F586A67p-04;
-	static const double p04 = -0x1.BC317394714B7p-07;
-	static const double p05 = -0x1.2B01FC60CC37Ap-07;
-	static const double p06 = +0x1.73A9328786665p-07;
-	static const double p07 = -0x1.C0B993A09CE31p-08;
-	static const double p08 = +0x1.2FCDACDD6E5B5p-09;
-	static const double p09 = +0x1.CBD49DA316282p-13;
-	static const double p10 = -0x1.0120E602F6336p-10;
-	static const double p11 = +0x1.A89224FF69018p-11;
-	static const double p12 = -0x1.883D8959134B3p-12;
-
-	double y = x - 0x1.2aaaaaaaaaa96p0;
-
-	return ((((((((((((
-		+ p12) * y
-		+ p11) * y
-		+ p10) * y
-		+ p09) * y
-		+ p08) * y
-		+ p07) * y
-		+ p06) * y
-		+ p05) * y
-		+ p04) * y
-		+ p03) * y
-		+ p02) * y
-		+ p01) * y
-		+ p00;
-}
-
-
-/*	Return arctangent(x) given that 4/3 < x <= 5/3, with the same properties as
-	atan.
-*/
-static double atani4(double x)
-{
-	static const double p00 = +0x1.F730BD281F69Dp-01;
-	static const double p01 = +0x1.3B13B13B13B0Cp-02;
-	static const double p02 = -0x1.22D719C06115Ep-03;
-	static const double p03 = +0x1.C963C83985742p-05;
-	static const double p04 = -0x1.135A0938EC462p-06;
-	static const double p05 = +0x1.13A254D6E5B7Cp-09;
-	static const double p06 = +0x1.DFAA5E77B7375p-10;
-	static const double p07 = -0x1.F4AC1342182D2p-10;
-	static const double p08 = +0x1.25BAD4D85CBE1p-10;
-	static const double p09 = -0x1.E4EEF429EB680p-12;
-	static const double p10 = +0x1.B4E30D1BA3819p-14;
-	static const double p11 = +0x1.0280537F097F3p-15;
-
-	double y = x - 0x1.8000000000003p0;
-
-	return (((((((((((
-		+ p11) * y
-		+ p10) * y
-		+ p09) * y
-		+ p08) * y
-		+ p07) * y
-		+ p06) * y
-		+ p05) * y
-		+ p04) * y
-		+ p03) * y
-		+ p02) * y
-		+ p01) * y
-		+ p00;
-}
-
-
-/*	Return arctangent(x) given that 5/3 < x <= 2, with the same properties as
-	atan.
-*/
-static double atani5(double x)
-{
-	static const double p00 = +0x1.124A85750FB5Cp+00;
-	static const double p01 = +0x1.D59AE78C11C49p-03;
-	static const double p02 = -0x1.8AD3C44F10DC3p-04;
-	static const double p03 = +0x1.2B090AAD5F9DCp-05;
-	static const double p04 = -0x1.881EC3D15241Fp-07;
-	static const double p05 = +0x1.8CB82A74E0699p-09;
-	static const double p06 = -0x1.3182219E21362p-12;
-	static const double p07 = -0x1.2B9AD13DB35A8p-12;
-	static const double p08 = +0x1.10F884EAC0E0Ap-12;
-	static const double p09 = -0x1.3045B70E93129p-13;
-	static const double p10 = +0x1.00B6A460AC05Dp-14;
-
-	double y = x - 0x1.d555555461337p0;
-
-	return ((((((((((
-		+ p10) * y
-		+ p09) * y
-		+ p08) * y
-		+ p07) * y
-		+ p06) * y
-		+ p05) * y
-		+ p04) * y
-		+ p03) * y
-		+ p02) * y
-		+ p01) * y
-		+ p00;
-}
-
-
-// See documentation above.
-double atan(double x)
-{
-	if (x < 0)
-		if (x < -1)
-			if (x < -5/3.)
-				if (x < -2)
-					return -Tail(-x);
-				else
-					return -atani5(-x);
-			else
-				if (x < -4/3.)
-					return -atani4(-x);
-				else
-					return -atani3(-x);
-		else
-			if (x < -.5)
-				if (x < -.75)
-					return -atani2(-x);
-				else
-					return -atani1(-x);
-			else
-				if (x < -0x1.d12ed0af1a27fp-27)
-					return atani0(x);
-				else
-					if (x <= -0x1p-1022)
-						// Generate inexact and return x.
-						return (Tiny + 1) * x;
-					else
-						if (x == 0)
-							return x;
-						else
-							// Generate underflow and return x.
-							return x*Tiny + x;
-	else
-		if (x <= +1)
-			if (x <= +.5)
-				if (x <= +0x1.d12ed0af1a27fp-27)
-					if (x < +0x1p-1022)
-						if (x == 0)
-							return x;
-						else
-							// Generate underflow and return x.
-							return x*Tiny + x;
-					else
-						// Generate inexact and return x.
-						return (Tiny + 1) * x;
-				else
-					return atani0(x);
-			else
-				if (x <= +.75)
-					return +atani1(+x);
-				else
-					return +atani2(+x);
-		else
-			if (x <= +5/3.)
-				if (x <= +4/3.)
-					return +atani3(+x);
-				else
-					return +atani4(+x);
-			else
-				if (x <= +2)
-					return +atani5(+x);
-				else
-					return +Tail(+x);
-}
-
-double fabs(double num) {
-    if (num < 0)
-        num = -num;
-    return num;
-}
-
-float normalized_atan2( float y, float x )
-{
-    static const uint32_t sign_mask = 0x80000000;
-    static const float b = 0.596227f;
-
-    // Extract the sign bits
-    uint32_t ux_s  = sign_mask & (uint32_t &)x;
-    uint32_t uy_s  = sign_mask & (uint32_t &)y;
-
-    // Determine the quadrant offset
-    float q = (float)( ( ~ux_s & uy_s ) >> 29 | ux_s >> 30 ); 
-
-    // Calculate the arctangent in the first quadrant
-    float bxy_a = fabs( b * x * y );
-    float num = bxy_a + y * y;
-    float atan_1q =  num / ( x * x + bxy_a + num );
-
-    // Translate it to the proper quadrant
-    uint32_t uatan_2q = (ux_s ^ uy_s) | (uint32_t &)atan_1q;
-    return q + (float &)uatan_2q;
-} 
-
-double atan2(double x,double y){
-    return (double)normalized_atan2((float)y,(float)x);
-}
 
 void Println(Window* window)
 {
@@ -794,17 +223,18 @@ void EditPartitionSetting(PartitionInterface::PartitionInfo* part, const char* p
     
 }
 
+#include "../tasks/doomTask/taskDoom.h"
+
 #include "../sysApps/explorer/explorer.h"
 #include "../sysApps/tetris/tetris.h"
 #include "../sysApps/notepad/notepad.h"
 #include "../sysApps/imgTest/imgTest.h"
 #include "../sysApps/musicPlayer/musicPlayer.h"
-#include "../tasks/doomTask/taskDoom.h"
 
-#include "../musicTest/musicTest.h"
-//#include "../kernelStuff/other_IO/sb16/sb16.h"
-#include "../musicTest/sbTest.h"
-#include "../kernelStuff/other_IO/serial/serial.h"
+#include "../sysApps/magnifier/magnifier.h"
+
+#include "../audio/audioDevStuff.h"
+#include "..//devices/serial/serial.h"
 
 
 BuiltinCommand BuiltinCommandFromStr(char* i)
@@ -820,8 +250,8 @@ BuiltinCommand BuiltinCommandFromStr(char* i)
   else if (StrEquals(i, "img")) return Command_Image;
   else if (StrEquals(i, "music")) return Command_MusicPlayer;
   else if (StrEquals(i, "doom")) return Command_Doom;
-  else if (StrEquals(i, "sb test")) return Command_SbTest;
-  else if (StrEquals(i, "sb reset")) return Command_SbReset;
+  else if (StrEquals(i, "music test")) return Command_MusicTest;
+  else if (StrEquals(i, "ac97 reset")) return Command_AC97Reset;
   else if (StrEquals(i, "tetris")) return Command_Tetris;
   else if (StrEquals(i, "heap check")) return Command_HeapCheck;
   else if (StrEquals(i, "shutdown")) return Command_ShutDown;
@@ -837,19 +267,22 @@ BuiltinCommand BuiltinCommandFromStr(char* i)
   else if (StrEquals(i, "crash 4")) return Command_Crash4;
   else if (StrEquals(i, "renderloop")) return Command_RenderLoop;
   else if (StrEquals(i, "resdefspk")) return Command_ResetDefaultSpeaker;
+  else if (StrEquals(i, "mag")) return Command_Magnifier;
+  else if (StrEquals(i, "magnifier")) return Command_Magnifier;
   else return Command_Invalid;
 }
 
 void HelpCommand(Window* window)
 {
     const char* helpMessage =
-        "Help Commands: (More Details are in the MaslOS Wiki)\n"
+        "Help Commands: (More Details are in the System Wiki)\n"
         " - help                    get this message\n"
         " - exit                    exit terminal\n"
         " - clear                   clears the terminal screen\n"
         " - benchmark reset         resets the bench mark\n"
-        " - malloc                  mallocs memory 20G\n"
-        " - sb test                 test ac97\n"
+        " - malloc                  mallocs memory 20KB\n"
+        " - ac97 reset              resets the ac97 card\n"
+        " - music test              test music\n"
         " - shutdown                turn off operating system\n"
         " - explorer                open explorer\n"
         " - notepad                 open notepad\n"
@@ -859,12 +292,13 @@ void HelpCommand(Window* window)
         " - connect [four | 4]      open connect four game\n"
         " - taskmgr                 open task manager\n"
         " - dbg | debug viewer      open debug viewer\n"
-        " - heapCheck               ...\n"
+        " - heapCheck               Performs a Heap Check\n"
         " - crash                   Causes a trivial kernel panic\n"
         " - crash 2                 Causes a trivial but blocking kernel panic\n"
         " - crash 3                 Causes a kernel panic\n"
         " - crash 4                 Causes a memory corruption and crashes\n"
         " - resdefspk               Resets the default speaker\n"
+        " - magnifier               Opens the magnifier\n"
         ;
     Print(window, helpMessage);
 }
@@ -928,10 +362,15 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             RemoveFromStack();
             return;
         }
-        case Command_SbReset: 
+        case Command_Magnifier: {
+            new SysApps::Magnifier();
+            RemoveFromStack();
+            return;
+        }
+        case Command_AC97Reset: 
         {
             Println(window, "> Resetting AC97 thingy");
-            Music::resetTest();
+            AudioDeviceStuff::resetTest();
             if (osData.ac97Driver != NULL)
             {
                 osData.ac97Driver->DoQuickCheck();
@@ -946,7 +385,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             RemoveFromStack();
             return;
         }
-        case Command_SbTest: 
+        case Command_MusicTest: 
         {
             AddToStack();
             DefaultInstance* instance = window->instance;
@@ -972,7 +411,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                     int dif = 40;
                     for (int i = 0; i < dif; i++)
                     {
-                        MusicBit16Test::FillArray(arr, (i * sampleCount)/dif, sampleCount/dif, ((1000*(i+1)) / dif), sampleRate);
+                        Audio::FillArray(arr, (i * sampleCount)/dif, sampleCount/dif, ((1000*(i+1)) / dif), sampleRate);
                     }
                     src->buffer->sampleCount = sampleCount;
                     src->samplesSent = 0;
@@ -1154,7 +593,10 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
 
     if (StrEquals(data->data[0], "echo"))
     {
-        Println(window,StrSubstr(input,5),Colors.white);
+        if (data->len == 2)
+            Println(window, data->data[1]);
+        else
+            LogInvalidArgumentCount(1, data->len-1, window);
         
         _Free(data);
         RemoveFromStack();
@@ -1558,79 +1000,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         else
             LogInvalidArgumentCount(3, data->len-1, window);
     }
-
-
-
-    if(StrEquals(data->data[0],"sqrt")){
-        //double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)InvSqrt(to_double(data->data[1]))));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"sin")){
-        double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)sin((double)tmp)));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"cos")){
-        double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)cos((double)tmp)));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"atan")){
-        double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string((double)atan((double)tmp)));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"atan2")){
-        //double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string(atan2(to_double(data->data[1]),to_double(data->data[2]))));
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"sigma")){
-        //double tmp = to_double(data->data[1]);
-        Println(window,"{}",to_string(sigma(to_int(data->data[1]),to_int(data->data[2]))));
-        RemoveFromStack();
-        return;
-    }
     
-    if(StrEquals(data->data[0],"sclx")){
-        ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollX 
-            += to_int(data->data[1]);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0],"scly")){
-        ((NewTerminalInstance*)((TerminalInstance*)window->instance)->newTermInstance)->scrollY 
-            += to_int(data->data[1]);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0],"sett")){
-        osData.houra = to_int(data->data[1]);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0],"time")){
-        Print(window,"{}:", to_string(RTC::Hour + osData.houra), Colors.white);
-        Print(window,"{}:", to_string(RTC::Minute), Colors.white);
-        Print(window,"{}", to_string(RTC::Second), Colors.white);
-        Println(window,"",Colors.white);
-        Print(window,"{}/", to_string(RTC::Year), Colors.white);
-        Print(window,"{}/", to_string(RTC::Month), Colors.white);
-        Print(window,"{}", to_string(RTC::Day), Colors.white);
-        
-        RemoveFromStack();
-        return;
-    }
-
     if (StrEquals(data->data[0], "disk"))
     {
         // if (data->len == 3)
@@ -3044,19 +2414,19 @@ void GetCmd(const char* name, OSUser* user, Window* window)
         #endif
 
     }
-    else if (StrEquals(name, "TSB S")||StrEquals(name, "TSBS"))
+    else if (StrEquals(name, "TSB S"))
     {
         Println(window, "Time since boot: {} s.", to_string(PIT::TimeSinceBootS()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "TSB MS")||StrEquals(name, "TSBMS"))
+    else if (StrEquals(name, "TSB MS"))
     {
         Println(window, "Time since boot: {} ms.", to_string(PIT::TimeSinceBootMS()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "disk count")||StrEquals(name, "diskc"))
+    else if (StrEquals(name, "disk count"))
     {
         Println(window, "Disk Count: {}", to_string(osData.diskInterfaces.getCount()), user->colData.defaultTextColor);
     }
-    else if (StrEquals(name, "heap stats")||StrEquals(name, "mem")||StrEquals(name, "heap_stats"))
+    else if (StrEquals(name, "heap stats"))
     {
         Println(window, "Heap Statistics:", Colors.yellow);
         {

@@ -5,8 +5,8 @@
 #include "guiStuff/components/imageRect/imageRectangleComponent.h"
 #include "guiStuff/components/textField/textFieldComponent.h"
 #include "../../../memory/heap.h"
-#include "../../../cmdParsing/cstrTools.h"
-#include "../../../kernelStuff/other_IO/serial/serial.h"
+#include "../../../cStdLib/cstrTools.h"
+#include "../../..//devices/serial/serial.h"
 
 GuiInstance::GuiInstance(Window* window)
 {
@@ -296,7 +296,7 @@ void RemoveThingFromList(GuiComponentStuff::BaseComponent* comp)
         currentInst->allComponents->removeAt(indx);
 }
 
-#include "../../../OSDATA/MStack/MStackM.h"
+#include "../../../osData/MStack/MStackM.h"
 
 void GuiInstance::Free() 
 {

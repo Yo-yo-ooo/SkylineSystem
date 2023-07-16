@@ -3,14 +3,13 @@
 #include <stdint.h>
 #include "../memory/heap.h"
 #include "../paging/PageFrameAllocator.h"
-#include "../kernelStuff/stuff/cstr.h"
-#include "../cmdParsing/cstrTools.h"
-#include "../OSDATA/osdata.h"
+#include "../cStdLib/cstr.h"
+#include "../cStdLib/cstrTools.h"
+#include "../osData/osData.h"
 #include "../tasks/enterHandler/taskEnterHandler.h"
 
 #include "../sysApps/imgTest/imgTest.h"
 #include "../sysApps/notepad/notepad.h"
-#include "../musicTest/musicTest.h"
 #include "../sysApps/musicPlayer/musicPlayer.h"
 
 namespace FS_STUFF

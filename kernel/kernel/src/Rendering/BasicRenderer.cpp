@@ -1,9 +1,9 @@
 
 #include "BasicRenderer.h"
-#include "../kernelStuff/stuff/cstr.h"
+#include "../cStdLib/cstr.h"
 #include <stdint.h>
 #include "Cols.h"
-#include "../cmdParsing/cstrTools.h"
+#include "../cStdLib/cstrTools.h"
 #include "../memory/heap.h"
 
 BasicRenderer *GlobalRenderer;
