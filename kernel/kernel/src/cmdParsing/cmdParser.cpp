@@ -2314,7 +2314,7 @@ void GetCmd(const char* name, OSUser* user, Window* window)
 
         MStackData::BenchmarkEnabled = tempBench;
     }
-    else if (StrEquals(name, "malloc cache"))
+    else if (StrEquals(name, "malloc cache")||StrEquals(name,"alloc_c"))
     {
         //MallocCache16BytesSize
         Println(window, "Malloc cache:", "", Colors.yellow);
