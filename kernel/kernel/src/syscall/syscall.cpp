@@ -2,5 +2,5 @@
 
 uint64_t num_syscalls = OS_NUM_SYSCALLS;
 void* syscalls[OS_NUM_SYSCALLS] = {
-    (void*)0
+    (void*)0,
 }
