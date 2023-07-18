@@ -16,7 +16,7 @@ extern uint64_t _KernelEnd;
 // #include "paging/PageMapIndexer.h"
 // #include "paging/paging.h" 
 #include "../../paging/PageTableManager.h"
-#include "../../syscall/syscall.h"
+
 
 
 

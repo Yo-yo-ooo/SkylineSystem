@@ -399,7 +399,6 @@ void PrepareInterrupts()
     //SetIDTGate((void*)IRQ13_handler, 0x2D, IDT_TA_InterruptGate, 0x08); // IRQ13 Handled
     SetIDTGate((void*)IRQ14_handler, 0x2E, IDT_TA_InterruptGate, 0x08); // IRQ14
     SetIDTGate((void*)IRQ15_handler, 0x2F, IDT_TA_InterruptGate, 0x08); // IRQ15
-    SetIDTGate((void*)system_call_handler_asm,0x80,IDT_TA_InterruptGate,0x08);
 
 
     io_wait();    
