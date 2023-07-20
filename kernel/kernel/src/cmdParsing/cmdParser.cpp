@@ -23,7 +23,6 @@
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
-#include "../cnfont/cnfont.h"
 
 void Println(Window* window)
 {
@@ -232,8 +231,9 @@ void EditPartitionSetting(PartitionInterface::PartitionInfo* part, const char* p
 #include "../sysApps/imgTest/imgTest.h"
 #include "../sysApps/musicPlayer/musicPlayer.h"
 #include "../sysApps/paint/paint.h"
-
 #include "../sysApps/magnifier/magnifier.h"
+#include "../sysApps/memUsageShower/memUsageShower.h"
+
 
 #include "../audio/audioDevStuff.h"
 #include "..//devices/serial/serial.h"
@@ -272,6 +272,7 @@ BuiltinCommand BuiltinCommandFromStr(char* i)
   else if (StrEquals(i, "mag")) return Command_Magnifier;
   else if (StrEquals(i, "magnifier")) return Command_Magnifier;
   else if (StrEquals(i, "paint")) return Command_Paint;
+  else if (StrEquals(i, "heap monitor"), StrEquals(i, "ram usg")) return Command_RamUsage;
   else return Command_Invalid;
 }
 
@@ -302,7 +303,8 @@ void HelpCommand(Window* window)
         " - crash 4                 Causes a memory corruption and crashes\n"
         " - resdefspk               Resets the default speaker\n"
         " - magnifier               Opens the magnifier\n"
-        " - paint                    Opens the paint app\n"
+        " - paint                   Opens the paint app\n"
+        " - heap monitor            Opens the heap monitor\n"
         ;
     Print(window, helpMessage);
 }
@@ -373,6 +375,11 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         }
         case Command_Paint: {
             new SysApps::Paint();
+            RemoveFromStack();
+            return;
+        }
+        case Command_RamUsage: {
+            new SysApps::MemUsageShower();
             RemoveFromStack();
             return;
         }
@@ -463,8 +470,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         case Command_ConnectFour: {
             {
                 Window* con4Window = (Window*)_Malloc(sizeof(Window), "Connect 4 Window");
-                Connect4Instance* connect4 = (Connect4Instance*)_Malloc(sizeof(Connect4Instance), "Connect 4 Instance");
-                *connect4 = Connect4Instance(con4Window);
+                Connect4Instance* connect4 = new Connect4Instance(con4Window);
                 *(con4Window) = Window((DefaultInstance*)connect4, Size(200, 200), Position(10, 40), "Connect 4", true, true, true);
                 osData.windows.add(con4Window);
 
@@ -602,14 +608,10 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
 
     if (StrEquals(data->data[0], "echo"))
     {
-        Println(window,StrSubstr(input,5),Colors.white);
-        
-        _Free(data);
-        RemoveFromStack();
-        return;
-    }
-    if(StrEquals(data->data[0],"Testcn")){
-        draw_cn(window,"我",Colors.white);
+        if (data->len == 2)
+            Println(window, data->data[1]);
+        else
+            LogInvalidArgumentCount(1, data->len-1, window);
         
         _Free(data);
         RemoveFromStack();

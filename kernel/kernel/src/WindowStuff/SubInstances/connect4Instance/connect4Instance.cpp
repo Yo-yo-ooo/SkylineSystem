@@ -9,6 +9,7 @@ Connect4Instance::Connect4Instance(Window* window)
     this->instanceType = InstanceType::Connect4;
     currentMode = CurrentMode::NONE;
     ClearInput();
+    FreeFunc = (void(*)(void*))&Free;
 }
 
 

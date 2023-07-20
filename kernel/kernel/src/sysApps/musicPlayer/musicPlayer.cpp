@@ -20,8 +20,7 @@ namespace SysApps
 
         AddToStack();
         window = (Window*)_Malloc(sizeof(Window), "Music Player Window");
-        GuiInstance* gui = (GuiInstance*)_Malloc(sizeof(GuiInstance), "Music Player GUI");
-        *gui = GuiInstance(window);
+        GuiInstance* gui = new  GuiInstance(window);
         *(window) = Window((DefaultInstance*)gui, Size(400, 300), Position(100, 100), "Music Player", true, true, true);
         osData.windows.insertAt(window, 0);
         window->hidden = true;
@@ -258,17 +257,17 @@ namespace SysApps
         int sampleRate = *((uint32_t*)(musicFileData + 24));
         int bitsPerSample = *((uint16_t*)(musicFileData + 34));
 
-        Serial::Writeln("Channels: {}", to_string(channels));
-        Serial::Writeln("SampleRate: {}", to_string(sampleRate));
-        Serial::Writeln("BitsPerSample: {}", to_string(bitsPerSample));
+        //Serial::Writeln("Channels: {}", to_string(channels));
+        //Serial::Writeln("SampleRate: {}", to_string(sampleRate));
+        //Serial::Writeln("BitsPerSample: {}", to_string(bitsPerSample));
 
 
         //AddToStack();
         if (osData.defaultAudioOutputDevice != NULL)
         {
             int sampleCount = sampleRate / 2;
-            Serial::Writeln("SampleCount: {}", to_string(sampleCount));
-            Serial::Writeln();
+            //Serial::Writeln("SampleCount: {}", to_string(sampleCount));
+            //Serial::Writeln();
             if (musicSource == NULL)
             {
                 //Println(window, "> Creating Audiosource");

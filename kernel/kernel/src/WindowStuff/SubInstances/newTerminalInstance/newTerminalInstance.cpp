@@ -332,6 +332,8 @@ NewTerminalInstance::NewTerminalInstance()
     ReInitCharArrWithSize(&tempPixels, (oldWidth/8), (oldHeight/16), foregroundColor, backgroundColor);
     ReInitCharArrWithSize(&tempPixels2, (oldWidth/8), (oldHeight/16), foregroundColor, backgroundColor);
 
+    FreeFunc = (void(*)(void*))&Free;
+
     AddNewLine();
     RemoveFromStack();
 }

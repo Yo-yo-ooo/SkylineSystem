@@ -5,6 +5,16 @@ namespace GuiComponentStuff
 {
     RectangleComponent::RectangleComponent(uint32_t fillColor, ComponentSize size, BaseComponent* parent)
     {
+        RenderFunc = (void (*)(void*, Field))&Render;
+        CheckUpdatesFunc = (void (*)(void*))&CheckUpdates;
+        MouseClickedFunc = (void (*)(void*, MouseClickEventInfo))&MouseClicked;
+        KeyHitFunc = (void (*)(void*, KeyHitEventInfo))&KeyHit;
+        DestroyFunc = (void (*)(void*, bool, void (*)(BaseComponent* comp)))&Destroy;
+        GetActualComponentSizeFunc = (ComponentSize (*)(void*))&GetActualComponentSize;
+        SetAttributeFunc = (bool (*)(void*, int32_t, uint64_t))&SetAttribute;
+        GetAttributeFunc = (uint64_t (*)(void*, int32_t))&GetAttribute;
+        GetAttributeSizeFunc = (int (*)(void*, int32_t))&GetAttributeSize;
+
         this->fillColor = fillColor;
         this->size = size;
         componentType = RECT;
@@ -91,6 +101,11 @@ namespace GuiComponentStuff
             temp.FixedY = size.FixedY;
          else
             temp.FixedY = size.ScaledY * parent->GetActualComponentSize().FixedY;
+
+        if (temp.FixedX < 0)
+            temp.FixedX = 0;
+        if (temp.FixedY < 0)
+            temp.FixedY = 0;
 
         return temp;
     }

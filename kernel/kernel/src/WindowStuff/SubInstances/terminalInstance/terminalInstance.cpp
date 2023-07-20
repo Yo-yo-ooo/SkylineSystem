@@ -18,6 +18,7 @@ TerminalInstance::TerminalInstance(OSUser* user)
     printUser = false;
     newTermInstance = _Malloc(sizeof(NewTerminalInstance));
     *((NewTerminalInstance*)newTermInstance) = NewTerminalInstance();
+    FreeFunc = (void(*)(void*))&Free;
 }
 void TerminalInstance::SetWindow(Window* window)
 {
@@ -122,7 +123,7 @@ void TerminalInstance::Cls()
 {
     NewTerminalInstance* tempInst = (NewTerminalInstance*)newTermInstance;
     tempInst->Clear();
-    tempInst->Println("SkylineSystem v0.55", Colors.green);
+    tempInst->Println("Masl OS v0.55", Colors.green);
     tempInst->Println("-------------", Colors.green);
     tempInst->Println();
     tempInst->Render();
