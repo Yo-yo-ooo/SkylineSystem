@@ -217,7 +217,11 @@ namespace PCI
             }
         }
 
-
+        if (pciDeviceHeader->Vendor_ID == 0x8086 && pciDeviceHeader->Device_ID == 0x3A3E)
+        {
+            //Panic("YOO WE GOT THE INTEL AC97", true);
+            new AC97::AC97Driver(pciDeviceHeader);
+        }
 
 
 

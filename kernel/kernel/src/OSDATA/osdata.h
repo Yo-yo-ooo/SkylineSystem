@@ -6,7 +6,7 @@
 
 
 #include "../WindowStuff/WindowManager/windowManager.h"
-
+#include "../serialManager/serialManager.h"
 
 #include "../cStdLib/list/list_all.h"
 
@@ -62,6 +62,7 @@ struct OSData
 
     void* RAM_Satrt_Address = NULL;
     //long long *tmp_addr_syscall = *(long long*)(RAM_Satrt_Address - sizeof(long long*));
+    SerialManager::Manager* serialManager = NULL;
 };
 
 

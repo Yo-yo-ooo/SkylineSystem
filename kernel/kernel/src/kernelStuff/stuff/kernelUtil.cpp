@@ -318,7 +318,6 @@ void PrepareMemory(BootInfo* bootInfo)
 
     while(true);
     */
-   osData.RAM_Satrt_Address = bootInfo->mMapStart;
 }
 
 uint8_t testIdtrArr[0x1000];
@@ -480,7 +479,7 @@ void PrepareWindows(Framebuffer* img)
 
         debugTerminalWindow->renderer->Clear(Colors.black);
         //KeyboardPrintStart(debugTerminalWindow);
-        debugTerminalWindow->renderer->Println("System - Debug Terminal (OUTPUT ONLY)", Colors.green);
+        debugTerminalWindow->renderer->Println("MaslOS - Debug Terminal (OUTPUT ONLY)", Colors.green);
         debugTerminalWindow->renderer->Println("-------------------------------------\n", Colors.green);
         debugTerminalWindow->renderer->color = Colors.yellow;
     }
@@ -1003,6 +1002,10 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     // if (!SB16::SB16Init())
     //     PrintMsg("> SB16 is not supported on this system");
     // StepDone();
+
+    PrintMsg("> Initing Serial Manager Thingy");
+    osData.serialManager = new SerialManager::Manager();
+    StepDone();
     
     PrintMsg("> Initing Users");
     initUsers();
@@ -1183,4 +1186,3 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     RemoveFromStack();
     return kernelInfo;
 }
-

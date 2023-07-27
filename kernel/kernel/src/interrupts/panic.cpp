@@ -138,7 +138,6 @@ void CreateWindowWithBenchmarkData()
 
 
 
-
     bool tempBench = MStackData::BenchmarkEnabled;
     MStackData::BenchmarkEnabled = false;
 
@@ -272,7 +271,7 @@ void LockLoop()
         goto endLockLoop;
     }
 
-    Serial::Writeln("System Debug Panic Serial Terminal (DePaST)");
+    Serial::Writeln("MaslOS Debug Panic Serial Terminal (DePaST)");
     Serial::Writeln();
 
 
@@ -558,6 +557,7 @@ void Panic(const char* panicMessage, const char* var, bool lock)
     else
     {
         kernelPanicCount++;
+        osData.serialManager = NULL;
         GlobalRenderer->ClearDotted(Colors.red);
         GlobalRenderer->Println();
         GlobalRenderer->Println();
@@ -639,5 +639,4 @@ bool CheckKernelSpaceAddr(void* addr)
 {
     return (uint64_t)addr >= 0xFFFF800000000000;
 }
-
 
