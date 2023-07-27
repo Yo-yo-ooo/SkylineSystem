@@ -87,7 +87,7 @@ unsigned long m_pow_n(unsigned long m, unsigned long n)
 }
 
 // 返回值为打印字符的个数
-// 支持%d，%o, %x，%s，%c，%f（只打印6位数字）
+// 支持%d,%o,%x,%s,%c,%f,%e,%E（只打印8位数字）
 int TSPrint(Window *win,const char* str, ...)
 {
     if (str == NULL) return -1;
@@ -267,7 +267,8 @@ int TSPrint(Window *win,const char* str, ...)
 
                 pStr++;
 				continue;
-
+            case 'e':
+            case 'E':
             case 'f':
                 // 接收浮点型 保留6为小数，不采取四舍五入
                 ArgFloVal = va_arg(pArgs, double);
