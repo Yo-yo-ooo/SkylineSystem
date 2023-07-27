@@ -60,6 +60,8 @@ struct OSData
     AC97::AC97Driver* ac97Driver = NULL;
     Audio::AudioOutputDevice* pcSpeakerDev;
 
+    void* RAM_Satrt_Address = NULL;
+    //long long *tmp_addr_syscall = *(long long*)(RAM_Satrt_Address - sizeof(long long*));
 };
 
 

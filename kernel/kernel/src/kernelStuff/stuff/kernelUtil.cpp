@@ -318,6 +318,7 @@ void PrepareMemory(BootInfo* bootInfo)
 
     while(true);
     */
+   osData.RAM_Satrt_Address = bootInfo->mMapStart;
 }
 
 uint8_t testIdtrArr[0x1000];
