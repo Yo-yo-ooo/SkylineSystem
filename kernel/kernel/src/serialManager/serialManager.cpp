@@ -78,7 +78,7 @@ namespace SerialManager
             Serial::_Write(Signature[i]);
         
         // write hoi packet
-        Serial::Write("\nConnection to MaslOS established!\n");
+        Serial::Write("\nConnection to System established!\n");
         RemoveFromStack();
     }
 

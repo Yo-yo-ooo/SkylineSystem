@@ -271,7 +271,7 @@ void LockLoop()
         goto endLockLoop;
     }
 
-    Serial::Writeln("MaslOS Debug Panic Serial Terminal (DePaST)");
+    Serial::Writeln("System Debug Panic Serial Terminal (DePaST)");
     Serial::Writeln();
 
 
