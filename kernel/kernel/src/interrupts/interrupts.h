@@ -29,9 +29,6 @@ typedef struct {
         uint64_t    rcx;
         uint64_t    rbx;
         uint64_t    rax;
-        uint64_t    r10;
-        uint64_t    r8;
-        uint64_t    r9;
     } general_registers;
 	
     struct {
@@ -91,8 +88,6 @@ __attribute__((interrupt)) void IRQ14_handler(interrupt_frame* frame); //Primary
 __attribute__((interrupt)) void IRQ15_handler(interrupt_frame* frame); //Secondary ATA
 
 void IRQGenericDriverHandler(int irq, interrupt_frame* frame);
-
-__attribute__((interrupt)) void Syscall_handler(interrupt_frame* frame);//Syscall Trap Gate
 
 extern void* IRQHandlerCallbackHelpers[256];
 extern void* IRQHandlerCallbackFuncs[256];

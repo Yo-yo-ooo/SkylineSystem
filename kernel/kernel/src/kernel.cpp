@@ -155,8 +155,6 @@ void RenderLoop()
         osStats.frameStartTime = PIT::TimeSinceBootMicroS();
 
 
-        
-
         if (!osData.startMenuWindow->hidden && activeWindow != osData.startMenuWindow)
         {
             osData.startMenuWindow->hidden = true;
@@ -210,10 +208,9 @@ void RenderLoop()
         }
 
         AddToStack();
-        if (osData.windowsToGetActive.getCount() > 0)
+        if (osData.windowsToGetActive.GetCount() > 0)
         {
-            Window* w = osData.windowsToGetActive[0];
-            osData.windowsToGetActive.removeAt(0);
+            Window* w = osData.windowsToGetActive.Dequeue();
 
             Window* oldActive = activeWindow;
             activeWindow = w;          
@@ -241,17 +238,17 @@ void RenderLoop()
                 if (activeWindow->moveToFront)
                 {
                     activeWindow->moveToFront = false;
-                    int index = osData.windows.getIndexOf(activeWindow);
-                    if (index == osData.windows.getCount() - 1)
+                    int index = osData.windows.GetIndexOf(activeWindow);
+                    if (index == osData.windows.GetCount() - 1)
                     {
                         osData.windowPointerThing->UpdateWindowBorder(activeWindow);
                         osData.windowPointerThing->RenderWindow(activeWindow);
                     }
                     else if (index != -1)
                     {
-                        Window* oldActive = osData.windows[osData.windows.getCount() - 1];
-                        osData.windows.removeAt(index);
-                        osData.windows.add(activeWindow);
+                        Window* oldActive = osData.windows[osData.windows.GetCount() - 1];
+                        osData.windows.RemoveAt(index);
+                        osData.windows.Add(activeWindow);
                         
                         osData.windowPointerThing->UpdateWindowBorder(oldActive);
 
@@ -266,14 +263,14 @@ void RenderLoop()
                 {
                     updateBorder = false;
                     {
-                        Window* oldActive = osData.windows[osData.windows.getCount() - 1];
+                        Window* oldActive = osData.windows[osData.windows.GetCount() - 1];
                         
                         osData.windowPointerThing->UpdateWindowBorder(oldActive);
                     }
                 }
             }
 
-            for (int i = 0; i < osData.windows.getCount(); i++)
+            for (int i = 0; i < osData.windows.GetCount(); i++)
             {            
                 Window* window = osData.windows[i];
 
@@ -307,8 +304,8 @@ void RenderLoop()
                     if (window->maximize && window->oldMaximize)
                     {
                         if (window->position.x != 0 || window->position.y != 23 || 
-                        window->size.width != GlobalRenderer->framebuffer->Width ||
-                        window->size.height != GlobalRenderer->framebuffer->Height - 23)
+                        window->size.width != osData.windowPointerThing->actualScreenBuffer->Width ||
+                        window->size.height != osData.windowPointerThing->actualScreenBuffer->Height - 23)
                         {
                             window->maximize = false;
                             
@@ -343,7 +340,7 @@ void RenderLoop()
                             window->oldPreMaxTitle = window->showTitleBar;
 
                             window->newPosition = Position(0, 23);
-                            window->newSize = Size(GlobalRenderer->framebuffer->Width, GlobalRenderer->framebuffer->Height - 23);
+                            window->newSize = Size(osData.windowPointerThing->actualScreenBuffer->Width, osData.windowPointerThing->actualScreenBuffer->Height - 23);
 
                             window->showBorder = false;
                             //window->showTitleBar = false;
@@ -440,7 +437,7 @@ void RenderLoop()
 
         AddToStack();
         {
-            for (int i = 0; i < osData.windows.getCount(); i++)
+            for (int i = 0; i < osData.windows.GetCount(); i++)
             {     
                 Window* window = osData.windows[i];
                 window->RenderStuff();
@@ -493,7 +490,7 @@ void RenderLoop()
 
             AddToStack();
             {
-                for (int i = 0; i < osData.windows.getCount(); i++)
+                for (int i = 0; i < osData.windows.GetCount(); i++)
                 {     
                     Window* window = osData.windows[i];
                     if (window->instance == NULL)
@@ -505,14 +502,14 @@ void RenderLoop()
 
                     TerminalInstance* terminal = (TerminalInstance*)window->instance;
 
-                    if (terminal->tasks.getCount() != 0)
+                    if (terminal->tasks.GetCount() != 0)
                     {
                         Task* task = terminal->tasks[0];
                         task->tempTime = 0;
                     }
                     else if (terminal->closeWindowAfterTask)
                     {
-                        osData.osTasks.add(NewWindowCloseTask(window));
+                        osData.osTasks.Add(NewWindowCloseTask(window));
                     }
                 }
             }
@@ -530,7 +527,7 @@ void RenderLoop()
                     //for (int ax = 0; ax < 10; ax++)
                     {
                         //GlobalRenderer->Print("A");
-                        for (int i = 0; i < osData.windows.getCount(); i++)
+                        for (int i = 0; i < osData.windows.GetCount(); i++)
                         {     
                             //GlobalRenderer->Print("B");
                             
@@ -544,7 +541,7 @@ void RenderLoop()
 
                             TerminalInstance* terminal = (TerminalInstance*)window->instance;
 
-                            if (terminal->tasks.getCount() > 0)
+                            if (terminal->tasks.GetCount() > 0)
                             {
                                 uint64_t tS2 = PIT::TimeSinceBootMicroS();
                                 Task* task = terminal->tasks[0];
@@ -554,7 +551,7 @@ void RenderLoop()
                                 task->tempTime += PIT::TimeSinceBootMicroS() - tS2;
                                 if (task->GetDone())
                                 {
-                                    terminal->tasks.removeFirst();
+                                    terminal->tasks.RemoveFirst();
                                     FreeTask(task);
                                     //GlobalRenderer->Println("TASK DONE");
                                     terminal->PrintUserIfNeeded();
@@ -576,7 +573,7 @@ void RenderLoop()
                 //AddToStack();
                 {
                     uint64_t tS = PIT::TimeSinceBootMicroS();
-                    if (osData.osTasks.getCount() > 0)
+                    if (osData.osTasks.GetCount() > 0)
                     {
                         uint64_t tS2 = PIT::TimeSinceBootMicroS();
                         Task* task = osData.osTasks[0];
@@ -586,7 +583,7 @@ void RenderLoop()
                         task->tempTime += PIT::TimeSinceBootMicroS() - tS2;
                         if (task->GetDone())
                         {
-                            osData.osTasks.removeFirst();
+                            osData.osTasks.RemoveFirst();
                             FreeTask(task);
                         }
                     }
@@ -598,7 +595,7 @@ void RenderLoop()
 
             AddToStack();
             {
-                for (int i = 0; i < osData.windows.getCount(); i++)
+                for (int i = 0; i < osData.windows.GetCount(); i++)
                 {     
                     Window* window = osData.windows[i];
                     if (window->instance == NULL)
@@ -608,7 +605,7 @@ void RenderLoop()
 
                     TerminalInstance* terminal = (TerminalInstance*)window->instance;
 
-                    if (terminal->tasks.getCount() != 0)
+                    if (terminal->tasks.GetCount() != 0)
                     {
                         Task* task = terminal->tasks[0];
                         task->actTime = task->tempTime;
@@ -651,14 +648,14 @@ void RenderLoop()
                 Size size = Size(64*8, 10*16);
                 // if (usingBackupHeap)
                 //     size = Size(40*8, 8*16);
-                Position pos = Position(((GlobalRenderer->framebuffer->Width - size.width) / 2), ((GlobalRenderer->framebuffer->Height) / 5));
+                Position pos = Position(((osData.windowPointerThing->actualScreenBuffer->Width - size.width) / 2), ((osData.windowPointerThing->actualScreenBuffer->Height) / 5));
                 
                 if (msgWindow != NULL)
                 {
                     //GlobalRenderer->Println("BRUH 4.5", Colors.yellow);
                     *(msgWindow) = Window(new CustomInstance(InstanceType::CRASH), size, pos, "FATAL OS CRASH WARNING", true, true, true);
                     //GlobalRenderer->Println("BRUH 4.6", Colors.yellow);
-                    osData.windows.add(msgWindow); 
+                    osData.windows.Add(msgWindow); 
                     //msgWindow->instance
                     //GlobalRenderer->Println("BRUH 4.7", Colors.yellow);
 
@@ -728,10 +725,10 @@ void RecoverDed()
     RemoveFromStack();
 
     AddToStack();
-    for (int i = 0; i < osData.windows.getCount(); i++)
+    for (int i = 0; i < osData.windows.GetCount(); i++)
     {
-        osData.windows.elementAt(i)->hidden = true;
-        osData.windows.elementAt(i)->oldHidden = true;
+        osData.windows.ElementAt(i)->hidden = true;
+        osData.windows.ElementAt(i)->oldHidden = true;
     }
     RemoveFromStack();
 
@@ -757,11 +754,11 @@ void RecoverDed()
         {
             AddToStack();
             TerminalInstance* terminal = (TerminalInstance*)osData.preCrashWindow->instance;
-            while (terminal->tasks.getCount() > 0)
+            while (terminal->tasks.GetCount() > 0)
             {
-                Task* tsk = terminal->tasks.elementAt(0);
+                Task* tsk = terminal->tasks.ElementAt(0);
                 //FreeTask(tsk);
-                terminal->tasks.removeFirst();
+                terminal->tasks.RemoveFirst();
             }
             RemoveFromStack();
 
@@ -846,8 +843,8 @@ void boot(BootInfo* bootInfo)
         int64_t _x = 0;
         int64_t _y = 0;
 
-        _x = ((int)GlobalRenderer->framebuffer->Width - bootInfo->bootImage->width) / 2;
-        _y = ((int)GlobalRenderer->framebuffer->Height - bootInfo->bootImage->height) / 2;
+        _x = ((int)osData.windowPointerThing->actualScreenBuffer->Width - bootInfo->bootImage->width) / 2;
+        _y = ((int)osData.windowPointerThing->actualScreenBuffer->Height - bootInfo->bootImage->height) / 2;
 
         GlobalRenderer->DrawImage(bootInfo->bootImage, _x, _y, 1, 1);
         // GlobalRenderer->Println("X: {}", to_string(_x), Colors.yellow);
@@ -941,7 +938,7 @@ void boot(BootInfo* bootInfo)
         //*terminal = TerminalInstance(&adminUser);
 
         *(mainWindow) = Window((DefaultInstance*)terminal, Size(600, 500), Position(5, 30), "Main Window", true, true, true);
-        osData.windows.add(mainWindow);
+        osData.windows.Add(mainWindow);
         terminal->SetWindow(mainWindow);
 
 
@@ -953,7 +950,7 @@ void boot(BootInfo* bootInfo)
 
 
     
-    osData.windows.add(osData.debugTerminalWindow);
+    osData.windows.Add(osData.debugTerminalWindow);
 
 
 
@@ -978,6 +975,9 @@ void boot(BootInfo* bootInfo)
     MStackData::BenchmarkStackPointer1 = 0;
     MStackData::BenchmarkStackPointer2 = 0;
     MStackData::BenchmarkStackPointerSave = 0;
+
+    //osData.serialManager->InitClientStuff();
+
     RenderLoop();
 
 

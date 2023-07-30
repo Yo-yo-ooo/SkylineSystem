@@ -5,3 +5,4 @@
 
 template class Array<SerialManager::GenericPacket*>;
 template class List<SerialManager::GenericPacket*>;
+

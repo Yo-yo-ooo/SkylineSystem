@@ -6,11 +6,17 @@
 
 
 #include "../WindowStuff/WindowManager/windowManager.h"
-#include "../serialManager/serialManager.h"
+
 
 #include "../cStdLib/list/list_all.h"
 
 #include "../devices/ac97/ac97.h"
+
+#include "../serialManager/serialManager.h"
+
+#include "../display/generic/genericDisplay.h"
+
+#include "../cStdLib/queue/queue_all.h"
 
 struct OSData
 {
@@ -19,7 +25,7 @@ struct OSData
     bool verboseBoot;
     KernelInfo* kernelInfo;
     List<Window*> windows;
-    List<Window*> windowsToGetActive;
+    Queue<Window*> windowsToGetActive;
     List<Task*> osTasks;
     kernelFiles::ZIPFile* windowButtonZIP;
     kernelFiles::ZIPFile* windowIconZIP;
@@ -59,10 +65,9 @@ struct OSData
     uint32_t wantedFps = 60;
     AC97::AC97Driver* ac97Driver = NULL;
     Audio::AudioOutputDevice* pcSpeakerDev;
-
-    void* RAM_Satrt_Address = NULL;
-    //long long *tmp_addr_syscall = *(long long*)(RAM_Satrt_Address - sizeof(long long*));
     SerialManager::Manager* serialManager = NULL;
+    GenericDisplay* currentDisplay = NULL;
+
 };
 
 

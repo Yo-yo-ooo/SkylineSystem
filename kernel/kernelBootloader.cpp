@@ -356,8 +356,6 @@ extern "C" void _start(void) {
             kernelSize = e->length;
         }
     }
-    freeMemStart + sizeof(long long*); //Add long long*(Bytes) For Syscall Module's Arguments
-    //long long *x = *(long long*)freeMemStart; 写的位置不对所有跟换的task文件夹中
     if (freeMemStart == NULL) 
     {
         e9_printf("> No valid Memory space found for OS!");

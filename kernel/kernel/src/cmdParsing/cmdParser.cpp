@@ -23,7 +23,6 @@
 #include "../tasks/debugViewTask/debugViewTask.h"
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
-#include "../cStdLib/vaargs.h"
 
 void Println(Window* window)
 {
@@ -67,266 +66,8 @@ void Print(Window* window, const char *chrs, dispVar vars[], uint32_t col)
     temp->Print(chrs, vars, col);
 }
 
-void my_send_char( char chr,Window*window)
-{
-    // 可以替换成自己的函数，比如LCD显示字符
-    // LCD_Show_Char(chr);   // 注意移动光标位置
-    NewTerminalInstance* temp = (NewTerminalInstance*)(((TerminalInstance*)window->instance)->newTermInstance);
-    temp->Print(chr);
-}
-// 计算m^n
-unsigned long m_pow_n(unsigned long m, unsigned long n)
-{
-    unsigned long i = 0, ret = 1;
-    if (n < 0) return 0;
-    for (i = 0; i < n; i++)
-    {
-        ret *= m;
-    }
-    return ret;
-}
-
-// 返回值为打印字符的个数
-// 支持%d,%o,%x,%s,%c,%f,%e,%E（只打印8位数字）
-int TSPrint(Window *win,const char* str, ...)
-{
-    if (str == NULL) return -1;
-
-	unsigned int ret_num = 0;// 返回打印字符的个数
-    char* pStr = (char*)str;// 指向str
-    int ArgIntVal = 0;  // 接收整型
-    unsigned long ArgHexVal = 0;// 接十六进制
-    char* ArgStrVal = NULL;  // 接收字符型
-    double ArgFloVal = 0.0; // 接受浮点型
-    unsigned long val_seg = 0;   // 数据切分
-    unsigned long val_temp = 0;  // 临时保存数据
-    int cnt = 0;       // 数据长度计数
-    int i = 0;
-    
-    va_list pArgs; // 定义va_list类型指针，用于存储参数的地址
-    va_start(pArgs, str); // 初始化pArgs
-    while (*pStr != '\0')
-    {
-        switch (*pStr)
-        {
-        case ' ':
-            my_send_char(*pStr,win); ret_num++; break;
-        case '\t':
-            my_send_char(*pStr,win); ret_num += 4; break;
-        case '\r':
-            my_send_char(*pStr,win); ret_num++; break;
-        case '\n':
-            my_send_char(*pStr,win); ret_num++; break;
-        case '%':
-            pStr++;
-            // % 格式解析
-            switch (*pStr)
-            {
-            case '%':
-                my_send_char('%',win);// %%，输出%
-                ret_num++;
-                pStr++;
-				continue;
-            case 'c':
-                ArgIntVal = va_arg(pArgs, int);// %c，输出char
-                my_send_char((char)ArgIntVal,win);
-                ret_num++;
-                pStr++;
-				continue;
-            case 'd':
-                // 接收整型
-                ArgIntVal = va_arg(pArgs, int);
-                if (ArgIntVal < 0)// 如果为负数打印，负号
-                {
-                    ArgIntVal = -ArgIntVal;// 取相反数
-
-                    my_send_char('-',win);
-                    ret_num++;
-                }
-                val_seg = ArgIntVal;// 赋值给 val_seg处理数据
-                // 计算ArgIntVal长度
-                if (ArgIntVal)
-                {
-                    while (val_seg) {
-                        cnt++;
-                        val_seg /= 10;
-                    }
-                }
-                else cnt = 1;// 数字0的长度为1
-
-                ret_num += cnt;// 字符个数加上整数的长度
-
-                // 将整数转为单个字符打印
-                while (cnt)
-                {
-                    val_seg = ArgIntVal / m_pow_n(10, cnt - 1);
-                    ArgIntVal %= m_pow_n(10, cnt - 1);
-                    my_send_char((char)val_seg + '0',win);
-                    cnt--;
-                }
-                pStr++;
-                continue;
-            case 'o':
-                // 接收整型
-                ArgIntVal = va_arg(pArgs, int);
-                if (ArgIntVal < 0)// 如果为负数打印，负号
-                {
-                    ArgIntVal = -ArgIntVal;// 取相反数
-
-                    my_send_char('-',win);
-                    ret_num++;
-                }
-                val_seg = ArgIntVal;// 赋值给 val_seg处理数据
-                // 计算ArgIntVal长度
-                if (ArgIntVal)
-                {
-                    while (val_seg) {
-                        cnt++;
-                        val_seg /= 8;
-                    }
-                }
-                else cnt = 1;// 数字0的长度为1
-
-                ret_num += cnt;// 字符个数加上整数的长度
-
-                // 将整数转为单个字符打印
-                while (cnt)
-                {
-                    val_seg = ArgIntVal / m_pow_n(8, cnt - 1);
-                    ArgIntVal %= m_pow_n(8, cnt - 1);
-                    my_send_char((char)val_seg + '0',win);
-                    cnt--;
-                }
-                pStr++;
-				continue;
-            case 'x':
-                // 接收16进制
-                ArgHexVal = va_arg(pArgs, unsigned long);
-                val_seg = ArgHexVal;
-                // 计算ArgIntVal长度
-                if (ArgHexVal)
-                {
-                    while (val_seg) {
-                        cnt++;
-                        val_seg /= 16;
-                    }
-                }
-                else cnt = 1;// 数字0的长度为1
-
-                ret_num += cnt;// 字符个数加上整数的长度
-                // 将整数转为单个字符打印
-                while (cnt)
-                {
-                    val_seg = ArgHexVal / m_pow_n(16, cnt - 1);
-                    ArgHexVal %= m_pow_n(16, cnt - 1);
-                    if (val_seg <= 9)
-                        my_send_char((char)val_seg + '0',win);
-                    else
-                    {
-						//my_send_char((char)val_seg - 10 + 'a'); //小写字母
-                        my_send_char((char)val_seg - 10 + 'A',win);
-                    }
-                    cnt--;
-                }
-                pStr++;
-				continue;
-            case 'b':
-                // 接收整型
-                ArgIntVal = va_arg(pArgs, int);
-                val_seg = ArgIntVal;
-                // 计算ArgIntVal长度
-                if (ArgIntVal)
-                {
-                    while (val_seg) {
-                        cnt++;
-                        val_seg /= 2;
-                    }
-                }
-                else cnt = 1;// 数字0的长度为1
-
-                ret_num += cnt;// 字符个数加上整数的长度
-                // 将整数转为单个字符打印
-                while (cnt)
-                {
-                    val_seg = ArgIntVal / m_pow_n(2, cnt - 1);
-                    ArgIntVal %= m_pow_n(2, cnt - 1);
-                    my_send_char((char)val_seg + '0',win);
-                    cnt--;
-                }
-                pStr++;
-				continue;
-            case 's':
-                // 接收字符
-                ArgStrVal = va_arg(pArgs, char*);
-                ret_num += (unsigned int)StrLen(ArgStrVal);
-                while (*ArgStrVal)
-                {
-                    my_send_char(*ArgStrVal,win);
-                    ArgStrVal++;
-                }
-
-                pStr++;
-				continue;
-            case 'e':
-            case 'E':
-            case 'f':
-                // 接收浮点型 保留6为小数，不采取四舍五入
-                ArgFloVal = va_arg(pArgs, double);
-                val_seg = (unsigned long)ArgFloVal;// 取整数部分
-                val_temp = val_seg;      // 临时保存整数部分数据
-                ArgFloVal = ArgFloVal - val_seg;// 得出余下的小数部分
-                // 计算整数部分长度
-                if (val_seg)
-                {
-                    while (val_seg) {
-                        cnt++;
-                        val_seg /= 10;
-                    }
-                }
-                else cnt = 1;// 数字0的长度为1
-                ret_num += cnt;// 字符个数加上整数的长度
-                // 将整数转为单个字符打印
-                while (cnt)
-                {
-                    val_seg = val_temp / m_pow_n(10, cnt - 1);
-                    val_temp %= m_pow_n(10, cnt - 1);
-                    my_send_char((char)val_seg + '0',win);
-                    cnt--;
-                }
-                // 打印小数点
-                my_send_char('.',win);
-                ret_num++;
-                // 开始输出小数部分
-                ArgFloVal *= 1000000;
-                // printf("\r\n %f\r\n", ArgFloVal);
-                cnt = 6;
-                val_temp = (int)ArgFloVal;// 取整数部分
-                while (cnt)
-                {
-                    val_seg = val_temp / m_pow_n(10, cnt - 1);
-                    val_temp %= m_pow_n(10, cnt - 1);
-                    my_send_char((char)val_seg + '0',win);
-                    cnt--;
-                }
-                ret_num += 6;
-                pStr++;
-				continue;
-            default:// % 匹配错误，暂输出空格
-				my_send_char(' ',win); ret_num++;
-				continue;
-            }
 
 
-        default:
-            my_send_char(*pStr,win); ret_num++;
-            break;
-        }
-        pStr++;
-    }
-    va_end(pArgs);// 结束取参数
-
-    return ret_num;
-}
 /*
 void Println(Window* window)
 {
@@ -531,7 +272,8 @@ BuiltinCommand BuiltinCommandFromStr(char* i)
   else if (StrEquals(i, "mag")) return Command_Magnifier;
   else if (StrEquals(i, "magnifier")) return Command_Magnifier;
   else if (StrEquals(i, "paint")) return Command_Paint;
-  else if (StrEquals(i, "heap monitor"), StrEquals(i, "ram usg"),StrEquals(i,"heapi")) return Command_RamUsage;
+  else if (StrEquals(i, "heap monitor")) return Command_RamUsage;
+  else if (StrEquals(i, "ram usg")) return Command_RamUsage;
   else return Command_Invalid;
 }
 
@@ -623,7 +365,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             return;
         }
         case Command_Doom: {
-            terminal->tasks.add(NewDoomTask(window));
+            terminal->tasks.Add(NewDoomTask(window));
             RemoveFromStack();
             return;
         }
@@ -722,7 +464,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             return;
         }
         case Command_Exit: {
-            osData.osTasks.add(NewWindowCloseTask(window));
+            osData.osTasks.Add(NewWindowCloseTask(window));
             RemoveFromStack();
             return;
         }
@@ -731,11 +473,11 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                 Window* con4Window = (Window*)_Malloc(sizeof(Window), "Connect 4 Window");
                 Connect4Instance* connect4 = new Connect4Instance(con4Window);
                 *(con4Window) = Window((DefaultInstance*)connect4, Size(200, 200), Position(10, 40), "Connect 4", true, true, true);
-                osData.windows.add(con4Window);
+                osData.windows.Add(con4Window);
 
                 connect4->Init();
 
-                osData.windowsToGetActive.add(con4Window);
+                osData.windowsToGetActive.Enqueue(con4Window);
 
                 RemoveFromStack();
                 return;
@@ -744,12 +486,12 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             return;
         }
         case Command_TaskManager: {
-            terminal->tasks.add(NewTaskManagerTask(window));
+            terminal->tasks.Add(NewTaskManagerTask(window));
             RemoveFromStack();
             return;
         }
         case Command_DebugViewer: {
-            terminal->tasks.add(NewDebugViewerTask(window));
+            terminal->tasks.Add(NewDebugViewerTask(window));
             RemoveFromStack();
             return;
         }
@@ -867,7 +609,10 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
 
     if (StrEquals(data->data[0], "echo"))
     {
-        Println(window,StrSubstr(input,5),Colors.white);
+        if (data->len == 2)
+            Println(window, data->data[1]);
+        else
+            LogInvalidArgumentCount(1, data->len-1, window);
         
         _Free(data);
         RemoveFromStack();
@@ -966,7 +711,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
     if (StrEquals(data->data[0], "bf"))
     {
         if (data->len == 2)
-            terminal->tasks.add(NewBFTask(data->data[1], window));
+            terminal->tasks.Add(NewBFTask(data->data[1], window));
         else
             LogInvalidArgumentCount(1, data->len-1, window);
         
@@ -998,11 +743,6 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         RemoveFromStack();
         return;
     }
-    if(StrEquals(data->data[0],"tptf")){
-        TSPrint(window,"%d",38294);
-        RemoveFromStack();
-        return;
-    }
 
     if (StrEquals(data->data[0], "run") || StrEquals(data->data[0], "opn") || StrEquals(data->data[0], "open"))
     {
@@ -1024,7 +764,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             char* buf = NULL;
             int len = 0;
             if (FS_STUFF::ReadFileFromFullPath(data->data[1], &buf, &len))
-                terminal->tasks.add(NewDebugViewerTask(window, buf, len));
+                terminal->tasks.Add(NewDebugViewerTask(window, buf, len));
             else
                 LogError("File not found!", window);
         }
@@ -1054,7 +794,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                         {
                             TerminalInstance* terminal = (TerminalInstance*)window->instance;
 
-                            terminal->tasks.add(NewSleepTask(time));
+                            terminal->tasks.Add(NewSleepTask(time));
                         }
                     }
 
@@ -1081,14 +821,6 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             LogInvalidArgumentCount(2, data->len-1, window);
         
         _Free(data);
-        RemoveFromStack();
-        return;
-    }
-
-    if(StrEquals(data->data[0],"rams")){
-        //uint64_t x = 0x100603;
-        Println(window,"0x{}",ConvertHexToString((uint64_t)osData.RAM_Satrt_Address));
-
         RemoveFromStack();
         return;
     }
@@ -1144,7 +876,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                             //Println(window, "> File exists!");
                             int fSize = fsInterface->GetFileInfo(relPath)->sizeInBytes;
 
-                            terminal->tasks.add(NewMAABTask(fSize, buf, window, terminal));
+                            terminal->tasks.Add(NewMAABTask(fSize, buf, window, terminal));
 
                             _Free((void*)buf);
                         }
@@ -1210,7 +942,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                             //Println(window, "> File exists!");
                             int fSize = fsInterface->GetFileInfo(relPath)->sizeInBytes;
 
-                            terminal->tasks.add(NewTestTask(buf, fSize, window));
+                            terminal->tasks.Add(NewTestTask(buf, fSize, window));
                             
                             _Free((void*)buf);
                         }
@@ -1274,7 +1006,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
             int offDur = to_int(data->data[2]);
             int totDur = to_int(data->data[3]);
             int size = to_int(data->data[3]);
-            terminal->tasks.add(NewBeepTask(onDur, offDur, totDur));
+            terminal->tasks.Add(NewBeepTask(onDur, offDur, totDur));
             Println(window, "Playing beep...");
 
             _Free(data);
@@ -1303,7 +1035,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         if (data->len > 1)
             BLEH = to_int(data->data[1]);
         // Println(window, "TEST VAL: {}", to_string(BLEH), Colors.yellow);
-        if (data->len > 1 && !StrEquals(data->data[1], "create") && (BLEH < 0 || BLEH >= osData.diskInterfaces.getCount()))
+        if (data->len > 1 && !StrEquals(data->data[1], "create") && (BLEH < 0 || BLEH >= osData.diskInterfaces.GetCount()))
             LogError("Invalid Disk Number selected!", window);
         else if (data->len == 4)
         {
@@ -1312,7 +1044,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                 if (StrEquals(data->data[2], "ram disk"))
                 {
                     int size = to_int(data->data[3]);
-                    osData.diskInterfaces.add(new DiskInterface::RamDiskInterface(size));
+                    osData.diskInterfaces.Add(new DiskInterface::RamDiskInterface(size));
                     Println(window, "Ram Disk with {} sectors created!", to_string(size), (*user)->colData.defaultTextColor);
                 }
                 else
@@ -1431,7 +1163,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                     PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                     if (partInterface != NULL)
                     {
-                        uint64_t partCount = partInterface->partitionList.getCount();
+                        uint64_t partCount = partInterface->partitionList.GetCount();
                         Println(window, "Partition Count: {}", to_string(partCount), Colors.yellow);
                         Println(window, "Partition Data:", Colors.yellow);
                         for (int i = 0; i < partCount; i++)
@@ -1477,7 +1209,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                 PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                 if (partInterface == NULL)
                     LogError("Drive has no Partition Manager!", window);
-                else if (partNum < 0 || partNum >= partInterface->partitionList.getCount())
+                else if (partNum < 0 || partNum >= partInterface->partitionList.GetCount())
                     LogError("Invalid Partition selected!", window);
                 else
                 {
@@ -1616,7 +1348,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                     int64_t partID = to_int(data->data[4]);
                     const char* filename = data->data[5];
 
-                    if (diskID < 0 || diskID >= osData.diskInterfaces.getCount())
+                    if (diskID < 0 || diskID >= osData.diskInterfaces.GetCount())
                         LogError("Invalid Disk selected!", window);
                     else
                     {
@@ -1624,7 +1356,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                         PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                         if (partInterface == NULL)
                             LogError("Drive has no Partition Manager!", window);
-                        else if (partID < 0 || partID >= partInterface->partitionList.getCount())
+                        else if (partID < 0 || partID >= partInterface->partitionList.GetCount())
                             LogError("Invalid Partition selected!", window);
                         else
                         {
@@ -1637,7 +1369,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                                     LogError("The File was not found!", window);
                                 else
                                 {
-                                    osData.diskInterfaces.add(new DiskInterface::FileDiskInterface(filename, fsInterface));
+                                    osData.diskInterfaces.Add(new DiskInterface::FileDiskInterface(filename, fsInterface));
                                     Println(window, "File Disk from file \"{}\" created!", filename, (*user)->colData.defaultTextColor);
                                 }
                             }
@@ -1664,7 +1396,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                     PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                     if (partInterface == NULL)
                         LogError("Drive has no Partition Manager!", window);
-                    else if (partNum < 0 || partNum >= partInterface->partitionList.getCount())
+                    else if (partNum < 0 || partNum >= partInterface->partitionList.GetCount())
                         LogError("Invalid Partition selected!", window);
                     else
                     {
@@ -1722,7 +1454,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
 
                                             AddToStack();
                                             {
-                                                uint64_t partCount = mrafsInterface->fsPartitionList.getCount();
+                                                uint64_t partCount = mrafsInterface->fsPartitionList.GetCount();
                                                 Println(window, "Partition Count: {}", to_string(partCount), Colors.yellow);
                                                 Println(window, "Partition Data:", Colors.yellow);
                                                 for (int i = 0; i < partCount; i++)
@@ -1738,7 +1470,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                                             
                                             AddToStack();
                                             {
-                                                uint64_t partCount = mrafsInterface->fsFileList.getCount();
+                                                uint64_t partCount = mrafsInterface->fsFileList.GetCount();
                                                 Println(window, "File Count: {}", to_string(partCount), Colors.yellow);
                                                 Println(window, "File Data:", Colors.yellow);
                                                 for (int i = 0; i < partCount; i++)
@@ -1758,7 +1490,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                                             
                                             AddToStack();
                                             {
-                                                uint64_t partCount = mrafsInterface->fsFolderList.getCount();
+                                                uint64_t partCount = mrafsInterface->fsFolderList.GetCount();
                                                 Println(window, "Folder Count: {}", to_string(partCount), Colors.yellow);
                                                 Println(window, "Folder Data:", Colors.yellow);
                                                 for (int i = 0; i < partCount; i++)
@@ -1798,7 +1530,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                     PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                     if (partInterface == NULL)
                         LogError("Drive has no Partition Manager!", window);
-                    else if (partNum < 0 || partNum >= partInterface->partitionList.getCount())
+                    else if (partNum < 0 || partNum >= partInterface->partitionList.GetCount())
                         LogError("Invalid Partition selected!", window);
                     else
                     {
@@ -1856,7 +1588,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                 PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                 if (partInterface == NULL)
                     LogError("Drive has no Partition Manager!", window);
-                else if (partNum < 0 || partNum >= partInterface->partitionList.getCount())
+                else if (partNum < 0 || partNum >= partInterface->partitionList.GetCount())
                     LogError("Invalid Partition selected!", window);
                 else
                 { 
@@ -1889,7 +1621,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                 PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                 if (partInterface == NULL)
                     LogError("Drive has no Partition Manager!", window);
-                else if (partNum < 0 || partNum >= partInterface->partitionList.getCount())
+                else if (partNum < 0 || partNum >= partInterface->partitionList.GetCount())
                     LogError("Invalid Partition selected!", window);
                 else
                 {
@@ -1963,7 +1695,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                 PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                 if (partInterface == NULL)
                     LogError("Drive has no Partition Manager!", window);
-                else if (partNum < 0 || partNum >= partInterface->partitionList.getCount())
+                else if (partNum < 0 || partNum >= partInterface->partitionList.GetCount())
                     LogError("Invalid Partition selected!", window);
                 else
                 { 
@@ -2107,7 +1839,7 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
                 PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
                 if (partInterface == NULL)
                     LogError("Drive has no Partition Manager!", window);
-                else if (partNum < 0 || partNum >= partInterface->partitionList.getCount())
+                else if (partNum < 0 || partNum >= partInterface->partitionList.GetCount())
                     LogError("Invalid Partition selected!", window);
                 else
                 { 
@@ -2617,13 +2349,13 @@ void GetCmd(const char* name, OSUser* user, Window* window)
     else if (StrEquals(name, "drives"))
     {
         Println(window, "Available Drives:", Colors.bgreen);
-        for (int i = 0; i < osData.diskInterfaces.getCount(); i++)
+        for (int i = 0; i < osData.diskInterfaces.GetCount(); i++)
         {
             DiskInterface::GenericDiskInterface* diskInterface = osData.diskInterfaces[i];
             if (diskInterface->partitionInterface == NULL)
                 continue;
             PartitionInterface::GenericPartitionInterface* partInterface = (PartitionInterface::GenericPartitionInterface*)diskInterface->partitionInterface;
-            for (int i2 = 0; i2 < partInterface->partitionList.getCount(); i2++)
+            for (int i2 = 0; i2 < partInterface->partitionList.GetCount(); i2++)
             {
                 PartitionInterface::PartitionInfo* partInfo = partInterface->partitionList[i2];
                 if (!partInfo->hidden && partInfo->type == PartitionInterface::PartitionType::Normal)
@@ -2651,7 +2383,7 @@ void GetCmd(const char* name, OSUser* user, Window* window)
     }
     else if (StrEquals(name, "screen resolution"))
     {
-        dispVar vars[] = {dispVar((uint64_t)GlobalRenderer->framebuffer->Width), dispVar((uint64_t)GlobalRenderer->framebuffer->Height)};
+        dispVar vars[] = {dispVar((uint64_t)osData.windowPointerThing->actualScreenBuffer->Width), dispVar((uint64_t)osData.windowPointerThing->actualScreenBuffer->Height)};
         Println(window, "Screen Resolution: {0}x{1}.", vars);
     }
     else if (StrEquals(name, "mnfcc") || StrEquals(name, "max non fatal crash count"))
@@ -2708,7 +2440,7 @@ void GetCmd(const char* name, OSUser* user, Window* window)
     }
     else if (StrEquals(name, "disk count"))
     {
-        Println(window, "Disk Count: {}", to_string(osData.diskInterfaces.getCount()), user->colData.defaultTextColor);
+        Println(window, "Disk Count: {}", to_string(osData.diskInterfaces.GetCount()), user->colData.defaultTextColor);
     }
     else if (StrEquals(name, "heap stats"))
     {

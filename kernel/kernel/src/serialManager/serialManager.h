@@ -10,6 +10,8 @@ namespace SerialManager
 
 #include "../cStdLib/list/list_serialPacket.h"
 #include "../cStdLib/list/list_basics.h"
+#include "../cStdLib/queue/queue_serialPacket.h"
+#include "../cStdLib/queue/queue_basics.h"
 
 namespace SerialManager
 {
@@ -68,10 +70,9 @@ namespace SerialManager
 
     enum PacketType : uint8_t
     {
-        ON = 10,
-        OFF = 20,
-        PING = 30,
-        DATA = 40,
+        STATE = 10,
+        PING = 20,
+        DATA = 30,
     };
 
     class GenericPacket
@@ -86,6 +87,7 @@ namespace SerialManager
         uint64_t timeSent; // only used for timeout on the list
 
         GenericPacket(PacketType type, uint16_t from, uint16_t to, int len, uint8_t* data); // data will be copied into the buffer, so it will need to be freed later
+        GenericPacket(PacketType type, uint16_t from, uint16_t to, int len, uint8_t* data, bool copy); 
 
         void Free();
     };
@@ -108,11 +110,12 @@ namespace SerialManager
     class Manager
     {
     public:
-        List<GenericPacket*>* packetsToBeSent = NULL; // to be sent out to serial
+        Queue<GenericPacket*>* packetsToBeSent = NULL; // to be sent out to serial
         List<GenericPacket*>* packetsReceived = NULL; // received from serial or locally
         
         GenericPacket* currentSendPacket = NULL;
-        List<char>* sendBuffer = NULL;
+        Queue<char>* sendBuffer = NULL;
+        int sendBufferIndex = 0;
 
         List<char>* receiveBuffer = NULL;
         int receiveBufferLen = 0;
@@ -123,15 +126,43 @@ namespace SerialManager
 
         Manager();
         void SendPacket(uint16_t from, uint16_t to, GenericPacket* packet);
+        bool HasPacketToBeSentOut(GenericPacket* packet);
+        bool CanPacketBeSent(bool sentOut, GenericPacket* packet);
         void SendPacket(GenericPacket* packet);
         bool HasPacket(uint16_t to);
         GenericPacket* GetPacket(uint16_t to);
 
+        bool InInt;
         void DoStuff();
         bool DoSendStuff();
         bool DoReceiveStuff();
         
         void InitClientStuff();
 
+
+
+
+        bool WorkingHostPorts[ReservedHostPortLen]
+        {
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false
+        };
+
+
+        bool WorkingOutClientPorts[ReservedOutClientPortLen]
+        {
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false
+        }; 
     };
 }
