@@ -283,7 +283,7 @@ namespace PCI
     void Write(IOAddress *dev, uint32_t field, uint32_t value)
     {
         // Calculate the PCI configuration address
-        uint32_t address = (1 << 31) | (dev->attrs->bus << 16) | (dev->attrs->slot << 11) | (dev->attrs->function << 8) | (field & 0xfc);
+        uint32_t address = (1 << 31) | (dev.attrs.bus << 16) | (dev.attrs.slot << 11) | (dev.attrs.function << 8) | (field & 0xfc);
 
         // Write the address to the configuration address port (0xCF8)
         outl(0xCF8, address);
