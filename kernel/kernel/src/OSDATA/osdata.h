@@ -69,7 +69,7 @@ struct OSData
 
     GenericDisplay* fallbackOriginalDisplay = NULL;
     GenericDisplay* currentDisplay = NULL;
-    uint64_t AddressOfNetDriver;
+
 };
 
 

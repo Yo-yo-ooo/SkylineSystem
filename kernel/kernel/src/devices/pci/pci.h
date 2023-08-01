@@ -133,12 +133,10 @@ namespace PCI
     uint8_t read_byte(uint64_t address, uint8_t field);
 	uint16_t read_word(uint64_t address, uint8_t field);
 	uint32_t read_dword(uint64_t address, uint8_t field);
-    uint16_t ReadWord(uint16_t bus, uint16_t slot, uint16_t func, uint16_t offset);
 
 	void write_byte(uint64_t address, uint8_t field, uint8_t value);
 	void write_word(uint64_t address, uint8_t field, uint16_t value);
 	void write_dword(uint64_t address, uint8_t field, uint32_t value);
-    //void Write(IOAddress *dev, uint32_t field, uint32_t value);
 
 	void enable_interrupt(uint64_t address);
 	void disable_interrupt(uint64_t address);

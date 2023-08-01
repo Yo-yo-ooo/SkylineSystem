@@ -223,9 +223,6 @@ namespace PCI
             //Panic("YOO WE GOT THE INTEL AC97", true);
             new AC97::AC97Driver(pciDeviceHeader);
         }
-        if(pciDeviceHeader->Vendor_ID == 0x10EC && pciDeviceHeader->Device_ID == 0x8139){
-            osData.AddressOfNetDriver = (uint64_t)pciDeviceHeader;
-        }
 
 
 
@@ -269,20 +266,6 @@ namespace PCI
 	    outl(PCI_ADDRESS_PORT, get_address(address, field).value);
 		return inl(PCI_DATA_PORT);
 	}
-
-    uint16_t ReadWord(uint16_t bus, uint16_t slot, uint16_t func, uint16_t offset)
-    {
-        uint64_t address;
-        uint64_t lbus = (uint64_t)bus;
-        uint64_t lslot = (uint64_t)slot;
-        uint64_t lfunc = (uint64_t)func;
-        uint16_t tmp = 0;
-        address = (uint64_t)((lbus << 16) | (lslot << 11) |
-                            (lfunc << 8) | (offset & 0xfc) | ((uint32_t)0x80000000));
-        outl(0xCF8, address);
-        tmp = (uint16_t)((inl(0xCFC) >> ((offset & 2) * 8)) & 0xffff);
-        return (tmp);
-    }
 
 	void write_byte(uint64_t address, uint8_t field, uint8_t value) {
 		outl(PCI_ADDRESS_PORT, get_address(address, field).value);

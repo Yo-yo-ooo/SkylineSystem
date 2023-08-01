@@ -399,7 +399,6 @@ void PrepareInterrupts()
     //SetIDTGate((void*)IRQ13_handler, 0x2D, IDT_TA_InterruptGate, 0x08); // IRQ13 Handled
     SetIDTGate((void*)IRQ14_handler, 0x2E, IDT_TA_InterruptGate, 0x08); // IRQ14
     SetIDTGate((void*)IRQ15_handler, 0x2F, IDT_TA_InterruptGate, 0x08); // IRQ15
-    SetIDTGate((void*)SyscallHandler,0x80,IDT_TA_TrapGate,0x08);
 
 
     io_wait();    
@@ -834,6 +833,7 @@ BasicRenderer r = *((BasicRenderer*)NULL);
 #include "../../audio/audioDevStuff.h"
 #include "../../devices/serial/serial.h"
 #include "../../display/normalDisplay/normalDisplay.h"
+#include "../../network/tcp/tcpClient.h"
 
 
 KernelInfo InitializeKernel(BootInfo* bootInfo)
@@ -1015,6 +1015,10 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     PrintMsg("> Initing Serial Manager Thingy");
     osData.serialManager = new SerialManager::Manager();
     StepDone();
+
+    PrintMsg("> Initing TCP Client Thingy");
+    TcpClient::InitTcpClientStuff();
+    StepDone();
     
     PrintMsg("> Initing Users");
     initUsers();
@@ -1192,7 +1196,8 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     PrintMsgEndLayer("BOOT");
 
     StepDone();
-    PIT::Sleep(200);
+    if (PIT::TicksSinceBoot != 0)
+        PIT::Sleep(200);
     PrintMsgCol("> Inited Kernel!", Colors.bgreen);
     RemoveFromStack();
     return kernelInfo;
