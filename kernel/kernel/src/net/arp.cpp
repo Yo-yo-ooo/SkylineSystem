@@ -52,7 +52,7 @@ static void Network::ARP::Handler(arp_packet_t *arp_packet, int len) {
 
     }
     else {
-        kprintf(" arp opcode = %d\n", arp_packet->opcode);
+        //kprintf(" arp opcode = %d\n", arp_packet->opcode);
     }
 
     // Now, store the ip-mac address mapping relation

@@ -1,4 +1,5 @@
 #include "net.h"
+#include "../cStdLib/cStdLib.h"
 
 char IpAddr[4];
 int IsIpAllocated;
@@ -112,8 +113,8 @@ static void Network::Dhcp::MakePacket(Network::dhcp_packet_t * packet, uint8_t m
     // Host Name
     *(options++) = 12;
     *(options++) = 0x09;
-    memcpy(options, "hydrogen", strlen("hydrogen"));
-    options += strlen("hydrogen");
+    memcpy(options, "hydrogen", StrLen("hydrogen"));
+    options += StrLen("hydrogen");
     *(options++) = 0x00;
 
     // Parameter request list

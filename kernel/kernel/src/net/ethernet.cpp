@@ -39,7 +39,7 @@ static void Network::Ethernet::Handler(Network::ethernet_frame_t *packet, int le
     }
     else if (ntohs(packet->type) == 0x08)
     {
-        kprintf("\nicmp");
+        //kprintf("\nicmp");
     }
     else if (ntohs(packet->type) == ETHERNET_TYPE_IP)
     {

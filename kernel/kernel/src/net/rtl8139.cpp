@@ -1,6 +1,7 @@
 #include "net.h"
 #include "../devices/pci/pci.h"
 #include "../kernelStuff/IO/IO.h"
+#include "../osData/osData.h"
 
 static inline void OutS(unsigned short _port, unsigned short _data)
 {
@@ -109,16 +110,19 @@ static void Network::RTL8139::Init()
 
     // Get PCI device information for RTL8139
     //pci_device *rtl8139_pci = //PCI::GetDevice(0x10EC, 0x8139);
-    PCI::IOAddress *rtl8139_pci = PCI::GetDeviceName(0x10EC, 0x8139);
+    uint16_t AddressOfBus = PCI::read_word(osData.AddressOfNetDriver, PCI_BAR1) & ~1;
+    uint16_t AddressOfSlot = (osData.AddressOfNetDriver >> 11) & 0x1F;
+    uint16_t AddressOfFunction = (osData.AddressOfNetDriver >> 8) & 0x07;
     // Read and set the I/O address for RTL8139
-    uint16_t ret = PCI::ReadWord(rtl8139_pci.attrs.bus, rtl8139_pci.attrs.slot, rtl8139_pci.attrs.function, 0x10);
+    uint16_t ret = PCI::ReadWord(AddressOfBus, AddressOfSlot, AddressOfFunction, 0x10);
     ioaddr = (ret & (~0x3));
 
-    uint32_t pci_command_reg = PCI::ReadWord(rtl8139_pci.attrs.bus, rtl8139_pci.attrs.slot, rtl8139_pci.attrs.function, 0x04);
+    uint32_t pci_command_reg = PCI::ReadWord(AddressOfBus, AddressOfSlot, AddressOfFunction, 0x04);
     if (!(pci_command_reg & (1 << 2)))
     {
         pci_command_reg |= (1 << 2);
-        PCI::Write(rtl8139_pci, 0x04, pci_command_reg);
+        //PCI::Write(rtl8139_pci, 0x04, pci_command_reg);
+        PCI::write_byte(osData.AddressOfNetDriver,0x04,pci_command_reg);
     }
 
     // Send 0x00 to the CONFIG_1 register (0x52) to set the LWAKE + LWPTN to active high. this should essentially *power on* the device.

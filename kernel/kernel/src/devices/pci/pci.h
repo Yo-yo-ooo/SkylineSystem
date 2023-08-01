@@ -138,7 +138,7 @@ namespace PCI
 	void write_byte(uint64_t address, uint8_t field, uint8_t value);
 	void write_word(uint64_t address, uint8_t field, uint16_t value);
 	void write_dword(uint64_t address, uint8_t field, uint32_t value);
-    void Write(IOAddress *dev, uint32_t field, uint32_t value);
+    //void Write(IOAddress *dev, uint32_t field, uint32_t value);
 
 	void enable_interrupt(uint64_t address);
 	void disable_interrupt(uint64_t address);
