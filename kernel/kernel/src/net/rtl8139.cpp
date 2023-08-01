@@ -110,9 +110,9 @@ static void Network::RTL8139::Init()
 
     // Get PCI device information for RTL8139
     //pci_device *rtl8139_pci = //PCI::GetDevice(0x10EC, 0x8139);
-    uint16_t AddressOfBus = PCI::read_word(osData.AddressOfNetDriver, PCI_BAR1) & ~1;
-    uint16_t AddressOfSlot = (osData.AddressOfNetDriver >> 11) & 0x1F;
-    uint16_t AddressOfFunction = (osData.AddressOfNetDriver >> 8) & 0x07;
+    uint16_t AddressOfBus = (osData.AddressOfNetDriver >> 20) & 0b11111111;
+    uint16_t AddressOfSlot = (osData.AddressOfNetDriver >> 15) & 0b11111;
+    uint16_t AddressOfFunction = (osData.AddressOfNetDriver >> 12) & 0b111;
     // Read and set the I/O address for RTL8139
     uint16_t ret = PCI::ReadWord(AddressOfBus, AddressOfSlot, AddressOfFunction, 0x10);
     ioaddr = (ret & (~0x3));
