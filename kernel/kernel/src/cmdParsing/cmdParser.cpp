@@ -24,6 +24,51 @@
 #include "../fsStuff/fsStuff.h"
 #include "../tasks/maab/maabTask.h"
 
+int IpToInt(const char* Tchar){
+    StringArrData *data = SplitLine(Tchar);
+    char TArry[4] = {data->data[0],data->data[1],data->data[2],data->data[3]};
+    int nIP;
+    for(int i = 0;i < 4;i++){
+        nIP += (TArry[i] << (24 - (i * 8)) & 0xFFFFFFFF);
+    }
+    return nIP;
+}
+
+
+void Reverse(char *s,int n){
+    for(int i=0,j=n-1;i<j;i++,j--){
+        char c=s[i];
+        s[i]=s[j];
+        s[j]=c;
+    }
+}
+
+int IntToHex( uint32_t integer )
+{
+    uint8_t c;
+    int i, j, digit;
+
+    for ( i = 7, j = 0; i >= 0; i--, j++ )
+    {
+        digit = (integer >> (i * 4)) & 0xf;
+        if (digit < 10)
+        {
+            c = digit + 0x30;
+        }
+        else
+        {
+            c = digit + 0x37;
+        }
+    }
+    return digit;
+}
+
+int IPToo(const char*str)<% // Oh! My keyboard!
+    const char *tstr = ConvertHexToString((unsigned int)IntToHex(IpToInt(str)));
+    Reverse(tstr,StrLen(tstr));
+    return to_int(tstr);
+%>
+
 void Println(Window* window)
 {
     NewTerminalInstance* temp = (NewTerminalInstance*)(((TerminalInstance*)window->instance)->newTermInstance);
@@ -566,11 +611,13 @@ void ParseCommand(char* input, char* oldInput, OSUser** user, Window* window)
         #define TCP_PORT 1234
         // EITHER 8E FB 24 A3 = 2398823587
         // OR A3 24 FB 8E =      2737109902
-        #define TCP_EXT_IP 2737109902
+        //1A 69 3B 51  | 51 3B 69 1A
+        //#define IP_TO_INT()
+        #define TCP_EXT_IP 1362848026
         #define TCP_EXT_PORT 80
         case Command_Tcp_Connect:
         {
-            Println(window, "Connecting to 142.251.36.163");
+            Println(window, "Connecting to 192.168.0.1");
             TcpClient::ConnectPortToIp(TCP_PORT, TCP_EXT_IP, TCP_EXT_PORT);
             RemoveFromStack();
             return;
