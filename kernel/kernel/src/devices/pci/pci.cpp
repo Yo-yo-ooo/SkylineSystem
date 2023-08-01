@@ -267,6 +267,31 @@ namespace PCI
 		return inl(PCI_DATA_PORT);
 	}
 
+    uint16_t ReadWord(uint16_t bus, uint16_t slot, uint16_t func, uint16_t offset)
+    {
+        uint64_t address;
+        uint64_t lbus = (uint64_t)bus;
+        uint64_t lslot = (uint64_t)slot;
+        uint64_t lfunc = (uint64_t)func;
+        uint16_t tmp = 0;
+        address = (uint64_t)((lbus << 16) | (lslot << 11) |
+                            (lfunc << 8) | (offset & 0xfc) | ((uint32_t)0x80000000));
+        inl(0xCF8, address);
+        tmp = (uint16_t)((inl(0xCFC) >> ((offset & 2) * 8)) & 0xffff);
+        return (tmp);
+    }
+    void Write(IOAddress *dev, uint32_t field, uint32_t value)
+    {
+        // Calculate the PCI configuration address
+        uint32_t address = (1 << 31) | (dev->attrs->bus << 16) | (dev->attrs->slot << 11) | (dev->attrs->function << 8) | (field & 0xfc);
+
+        // Write the address to the configuration address port (0xCF8)
+        outl(0xCF8, address);
+
+        // Write the value to the configuration data port (0xCFC)
+        outl(0xCFC, value);
+    }
+
 	void write_byte(uint64_t address, uint8_t field, uint8_t value) {
 		outl(PCI_ADDRESS_PORT, get_address(address, field).value);
 		outb(PCI_DATA_PORT + (field & 3), value);
