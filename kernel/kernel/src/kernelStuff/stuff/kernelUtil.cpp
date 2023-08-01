@@ -872,6 +872,10 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
     //osData.realMainWindow->framebuffer = r.framebuffer;
 
+    AddToStack();
+    osData.debugTerminalWindow = NULL;
+    RemoveFromStack();
+
     PrintMsg("> Initing Serial Interface");
     Serial::pciCard = NULL;
     Serial::Init();
@@ -916,7 +920,8 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
     //*bleh = 5;
 
     
-    osData.currentDisplay = new NormalDisplay(GlobalRenderer->framebuffer);
+    osData.fallbackOriginalDisplay = new NormalDisplay(GlobalRenderer->framebuffer);
+    osData.currentDisplay = osData.fallbackOriginalDisplay;
 
 
     PrintMsg("> Getting Background Image");
@@ -1169,17 +1174,19 @@ KernelInfo InitializeKernel(BootInfo* bootInfo)
 
         //while (true);
 
-        PrintMsg("> Prepare ACPI");
-        PrintMsgStartLayer("ACPI");
-        PrepareACPI(bootInfo);
-        PrintMsgEndLayer("ACPI");
-        PrintDebugTerminal();
-        StepDone();
-
     }
     RemoveFromStack();
     PrintMsgEndLayer("OS RAM DISK");
     StepDone();
+
+    AddToStack();
+    PrintMsg("> Prepare ACPI");
+    PrintMsgStartLayer("ACPI");
+    PrepareACPI(bootInfo);
+    PrintMsgEndLayer("ACPI");
+    PrintDebugTerminal();
+    StepDone();
+    RemoveFromStack();
 
     PrintMsgEndLayer("BOOT");
 
