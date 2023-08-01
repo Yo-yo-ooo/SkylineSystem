@@ -86,6 +86,7 @@ __attribute__((interrupt)) void IRQ11_handler(interrupt_frame* frame); //Free
 // IRQ 13 (FPU) is Handled
 __attribute__((interrupt)) void IRQ14_handler(interrupt_frame* frame); //Primary ATA
 __attribute__((interrupt)) void IRQ15_handler(interrupt_frame* frame); //Secondary ATA
+void SyscallHandler(interrupt_frame* frame); //Syscall
 
 void IRQGenericDriverHandler(int irq, interrupt_frame* frame);
 

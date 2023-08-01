@@ -522,3 +522,18 @@ void IRQGenericDriverHandler(int irq, interrupt_frame* frame)
     else
         PIC_EndMaster();
 }
+
+__attribute__((interrupt)) void SyscallHandler(interrupt_frame* frame)
+<%
+    switch (frame->general_registers.rax)
+    <%
+    case 1:
+        /* code */
+        break;
+    
+    default:
+        break;
+    %>
+
+
+%>
