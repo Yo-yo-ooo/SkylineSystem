@@ -6,8 +6,9 @@ namespace Serial
 {
     int SerialPort = 0x3F8;          // COM1
     uint64_t pciCard = 0;
+    PCI::PCI_BAR_TYPE pciType;
+    int serialPciOffset = 0;
     bool SerialWorks = false;
-    uint16_t pciIoBase = 0;
     SerialManager::GenericPacket* currentSerialReadPacket = NULL;
     int currentSerialReadPacketIndex = 0;
 
@@ -19,26 +20,27 @@ namespace Serial
         {
             osData.debugTerminalWindow->Log("Serial PCI CARD AT: 0x{}", ConvertHexToString(pciCard), Colors.yellow);
             uint64_t bar0 = ((PCI::PCIHeader0*)pciCard)->BAR0;
-            uint64_t bar1 = ((PCI::PCIHeader0*)pciCard)->BAR1;
-            uint64_t bar2 = ((PCI::PCIHeader0*)pciCard)->BAR2;
             osData.debugTerminalWindow->Log("Serial PCI CARD BAR0: {}", ConvertHexToString(bar0), Colors.yellow);
-            //osData.debugTerminalWindow->Log("Serial PCI CARD BAR2: {}", ConvertHexToString(bar2), Colors.yellow);
-            //uint32_t ret = PCI::read_word(pciCard, PCI_BAR0);
-            //osData.debugTerminalWindow->Log("Serial PCI CARD BAR0 (2): {}", ConvertHexToString(ret), Colors.yellow);
-            //ret = PCI::read_word(pciCard, PCI_BAR2);
-            //osData.debugTerminalWindow->Log("Serial PCI CARD BAR2 (2): {}", ConvertHexToString(ret), Colors.yellow);
-            pciIoBase = bar0;// & (~0x3);
+            //pciIoBase = bar0;// & (~0x3);
             //pciIoBase = bar2;// & (~0x3);
-            pciIoBase += 0xC0;
 
+
+            pciType = PCI::pci_get_bar((PCI::PCIHeader0*)pciCard, 0);
+            serialPciOffset = 0xC0;
 
             // try with membase?
             //pciIoBase = bar0 + 0x3A7;
 
             //pciIoBase += 0x08;
-            osData.debugTerminalWindow->Log("Serial PCI CARD IO BASE: {}", to_string(pciIoBase), Colors.bgreen);
+            osData.debugTerminalWindow->Log("Serial PCI CARD TYPE: {}", (pciType.type < 3 ? "MMIO" : "IO"), Colors.bgreen);
+            osData.debugTerminalWindow->Log("Serial PCI CARD IO BASE: {}", to_string(pciType.io_address), Colors.bgreen);
+            osData.debugTerminalWindow->Log("Serial PCI CARD MEM BASE: {}", ConvertHexToString(pciType.mem_address), Colors.bgreen);
+            
+            PCI::enable_io_space(pciCard);
+            PCI::enable_mem_space(pciCard);
             PCI::enable_interrupt(pciCard);
             PCI::enable_bus_mastering(pciCard);
+
 
             // Soutb(1, 0x80);
             // io_wait(100);
@@ -399,18 +401,122 @@ namespace Serial
         }
     }
 
+    void Writef(const char* str, ...)
+    {
+        va_list arg;
+        va_start(arg, str);
+        _Writef(str, arg);
+        va_end(arg);
+    }
+
+    void Writelnf(const char* str, ...)
+    {
+        va_list arg;
+        va_start(arg, str);
+        _Writef(str, arg);
+        va_end(arg);
+        Writeln();
+    }
+
+
+    // %s -> string
+    // %c -> char
+    // %d/i -> int (32 bit)
+    // %D/I -> int (64 bit)
+    // %x -> hex (32 bit)
+    // %X -> hex (64 bit)
+    // %b -> byte
+    // %B -> bool
+    // %f -> float
+    // %F -> double
+    // %% -> %
+
+    void _Writef(const char* str, va_list arg)
+    {
+        int len = StrLen(str);
+
+        for (int i = 0; i < len; i++)
+        {
+            if (str[i] == '%' && i + 1 < len)
+            {
+                i++;
+                if (str[i] == 's')
+                {
+                    char* argStr = va_arg(arg, char*);
+                    Write(argStr);
+                }
+                else if (str[i] == 'c')
+                {
+                    char argChar = va_arg(arg, int);
+                    Write(argChar);
+                }
+                else if (str[i] == 'd' || str[i + 1] == 'i')
+                {
+                    int argInt = va_arg(arg, int);
+                    Write(to_string(argInt));
+                }
+                else if (str[i] == 'D' || str[i + 1] == 'I')
+                {
+                    uint64_t argInt = va_arg(arg, uint64_t);
+                    Write(to_string(argInt));
+                }
+                else if (str[i] == 'x')
+                {
+                    uint32_t argInt = va_arg(arg, uint32_t);
+                    Write(ConvertHexToString(argInt));
+                }
+                else if (str[i] == 'X')
+                {
+                    uint64_t argInt = va_arg(arg, uint64_t);
+                    Write(ConvertHexToString(argInt));
+                }
+                else if (str[i] == 'b')
+                {
+                    uint8_t argInt = (uint8_t)va_arg(arg, int);
+                    Write(to_string(argInt));
+                }
+                else if (str[i] == 'B')
+                {
+                    bool argInt = (bool)va_arg(arg, int);
+                    Write(to_string(argInt));
+                }
+                else if (str[i] == 'f')
+                {
+                    // compiler be trolling me
+                    // float argFloat = va_arg(arg, float);
+                    // Write(to_string(argFloat));
+                    
+
+                    double argDouble = va_arg(arg, double);
+                    Write(to_string(argDouble));
+                }
+                else if (str[i] == 'F')
+                {
+                    double argDouble = va_arg(arg, double);
+                    Write(to_string(argDouble));
+                }
+                else if (str[i] == '%')
+                {
+                    Write('%');
+                }
+                else
+                {
+                    Write(str[i]);
+                }
+            }
+            else
+            {
+                Write(str[i]);
+            }
+        }
+    }
+
     void Soutb(uint16_t port, uint8_t value)
     {
         if (pciCard == 0)
             outb(SerialPort + port, value);
         else
-            //PCI::write_byte(pciCard, port, value);
-        {
-            if (false)
-                mOutb(pciIoBase + port, value);
-            else
-                outb(pciIoBase + port, value);
-        }
+            PCI::write_byte(pciCard, pciType, serialPciOffset + port, value);
     }
 
     uint8_t Sinb(uint16_t port)
@@ -418,12 +524,6 @@ namespace Serial
         if (pciCard == 0)
             return inb(SerialPort + port);
         else
-            //return PCI::read_byte(pciCard, port);
-        {
-            if (false)
-                return mInb(pciIoBase + port);
-            else
-                return inb(pciIoBase + port);
-        }
+            return PCI::read_byte(pciCard, pciType, serialPciOffset + port);
     }
 }
