@@ -127,7 +127,7 @@ void UpdateDirectoryEntrysToDisk(int hd){
 
 }
 
-void MakeDirectory(int hd,char *name) {
+void TMakeDirectory(int hd,char *name) {
 
     //Check if the name is a valid FAT32 name
     //if(!Fat32::IsValidFAT32Name(name)) return;
@@ -182,4 +182,71 @@ void MakeDirectory(int hd,char *name) {
     DirectoryEntry thisDir;                                         //Directory entry for the "." directory, this points to the current directory
     DirectoryEntry parentDir;                                       //Directory entry for the ".." directory, this points to the parent directory
 
+}
+
+void TRemoveDirectory(int hd,char *name) {
+    int index = -1;
+   
+    //Loop  through all the dirictory entrys
+    for(int i = 0; i < 16; i++) {
+        DirectoryEntry *tp = dirent + i * sizeof(DirectoryEntry);
+        if ((tp.attributes & 0x0F) == 0x0F || (tp.attributes & 0x10) != 0x10)  //If the atrribute is 0x0F then this is a long file name entry, skip it. Or if its not a directory
+            continue;
+
+        if (tp.name[0] == 0x00)                                  //If the name is 0x00 then there are no more entries
+            break;
+
+        if (tp.name[0] == 0xE5)                                  //If the name is 0xE5 then the entry is free
+            continue;
+
+        if (StrEquals(name, (char*)tp.name)) {         //If the name is the same as the parameter
+            tp.name[0] = 0xE5;                                   //Set the name to 0xE5 to indicate that the entry is free
+            index = i;
+            break;
+        }
+    }
+
+    DirectoryEntry *tep = dirent + index * sizeof(DirectoryEntry);
+    //Get the first cluster of the directory
+    uint32_t cluster = (tep.firstClusterHigh << 16) | tep.firstClusterLow;
+
+	//De allocate any clusters
+    DeallocateCluster(hd, cluster, fatLocation, fatSize);
+
+    //Write the directory entry to the disk
+    UpdateDirectoryEntrysToDisk(hd);
+}
+
+FatManager::FatManager(int NumOfDiskI){
+    NODI = NumOfDiskI;
+}
+
+void FatManager::MakeDirectory(char *name){
+    TMakeDirectory(NODI,name);
+}
+
+void FatManager::RemoveDirectory(char *name){
+    TRemoveDirectory(NODI,name);
+}
+
+long llseek(long F_POS,long off,int whence){
+    long NewPos = 0;
+    int offset = off;
+    switch(whence){
+        case 0:    //SEEK_SET代表以文件头为偏移起始值
+            NewPos = offset;
+        break;
+        case 1:    //SEEK_CUP代表以当前位置为偏移起始值
+            NewPos= F_POS + offset;
+        break;
+        case 2:    //SEEK_END代表以文件结尾为偏移起始值
+            NewPos = 4 + offset;
+        break;
+        default:
+            return -1;
+    }
+    if(NewPos<0)
+        return -1;
+    F_POS = NewPos;
+    return NewPos;
 }
