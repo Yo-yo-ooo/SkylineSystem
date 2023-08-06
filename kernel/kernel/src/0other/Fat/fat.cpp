@@ -190,17 +190,17 @@ void TRemoveDirectory(int hd,char *name) {
     //Loop  through all the dirictory entrys
     for(int i = 0; i < 16; i++) {
         DirectoryEntry *tp = dirent + i * sizeof(DirectoryEntry);
-        if ((tp.attributes & 0x0F) == 0x0F || (tp.attributes & 0x10) != 0x10)  //If the atrribute is 0x0F then this is a long file name entry, skip it. Or if its not a directory
+        if ((tp->attributes & 0x0F) == 0x0F || (tp->attributes & 0x10) != 0x10)  //If the atrribute is 0x0F then this is a long file name entry, skip it. Or if its not a directory
             continue;
 
-        if (tp.name[0] == 0x00)                                  //If the name is 0x00 then there are no more entries
+        if (tp->name[0] == 0x00)                                  //If the name is 0x00 then there are no more entries
             break;
 
-        if (tp.name[0] == 0xE5)                                  //If the name is 0xE5 then the entry is free
+        if (tp->name[0] == 0xE5)                                  //If the name is 0xE5 then the entry is free
             continue;
 
-        if (StrEquals(name, (char*)tp.name)) {         //If the name is the same as the parameter
-            tp.name[0] = 0xE5;                                   //Set the name to 0xE5 to indicate that the entry is free
+        if (StrEquals(name, (char*)tp->name)) {         //If the name is the same as the parameter
+            tp->name[0] = 0xE5;                                   //Set the name to 0xE5 to indicate that the entry is free
             index = i;
             break;
         }
@@ -208,7 +208,7 @@ void TRemoveDirectory(int hd,char *name) {
 
     DirectoryEntry *tep = dirent + index * sizeof(DirectoryEntry);
     //Get the first cluster of the directory
-    uint32_t cluster = (tep.firstClusterHigh << 16) | tep.firstClusterLow;
+    uint32_t cluster = (tep->firstClusterHigh << 16) | tep->firstClusterLow;
 
 	//De allocate any clusters
     DeallocateCluster(hd, cluster, fatLocation, fatSize);
