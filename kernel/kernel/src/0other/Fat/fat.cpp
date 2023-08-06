@@ -3,14 +3,14 @@
 #define RD28(hd,S,D,C) osData.diskInterfaces[hd]->ReadBytes(S,C,D)
 #define W28(hd,S,D,C) osData.diskInterfaces[hd]->WriteBytes(S,C,D)
 
-DirectoryEntry *dirent;
+DirectoryEntry *dirent = nullptr;
 
-static uint32_t dataStartSector;
-static uint32_t sectorsPrCluster;
-static uint32_t fatLocation;
-static uint32_t fatSize;
-static uint32_t directorySector;
-static uint32_t directoryCluster;
+static uint32_t dataStartSector = NULL;
+static uint32_t sectorsPrCluster = NULL;
+static uint32_t fatLocation = NULL;
+static uint32_t fatSize = NULL;
+static uint32_t directorySector = NULL;
+static uint32_t directoryCluster = NULL;
 
 void UpdateEntryInFat(int hd, uint32_t cluster, uint32_t newFatValue, uint32_t fatLocation){
     uint32_t  fatBuffer[512 / sizeof(uint32_t)];
@@ -135,15 +135,16 @@ void MakeDirectory(int hd,char *name) {
     //Check if the name is already in use
     for(int i = 0; i < 16; i++) {
 
-        uint8_t ss = ((DirectoryEntry)(*(dirent + i))).attributes;
-        uint8_t tname = ((DirectoryEntry)(*(dirent + i))).name[0];
-        if ((ss & 0x0F) == 0x0F || (ss & 0x10) != 0x10)  //If the atrribute is 0x0F then this is a long file name entry, skip it. Or if its not a directory
+        //uint8_t ss = ((DirectoryEntry)(*(dirent + i))).attributes;
+        //uint8_t tname = ((DirectoryEntry)(*(dirent + i))).name[0];
+        DirectoryEntry *tp = dirent + i * sizeof(DirectoryEntry);
+        if ((tp->attributes & 0x0F) == 0x0F || (tp->attributes & 0x10) != 0x10)  //If the atrribute is 0x0F then this is a long file name entry, skip it. Or if its not a directory
             continue;
 
-        if (tname == 0x00)                                  //If the name is 0x00 then there are no more entries
+        if (tp->name[0] == 0x00)                                  //If the name is 0x00 then there are no more entries
             break;
 
-        if (tname == 0xE5)                                  //If the name is 0xE5 then the entry is free
+        if (tp->name[0] == 0xE5)                                  //If the name is 0xE5 then the entry is free
             continue;
 
     }
@@ -165,10 +166,11 @@ void MakeDirectory(int hd,char *name) {
 
     //Find the first free directory entry
     for(int i = 0; i < 16; i++) {
-        uint8_t tname = ((DirectoryEntry)(*(dirent + i*sizeof(DirectoryEntry)))).name[0];
+        DirectoryEntry *s = dirent + i * sizeof(DirectoryEntry);
+        //uint8_t tname = ((DirectoryEntry)(*(dirent + i * sizeof(DirectoryEntry)))).name[0];
         //uint8_t tname2 = *(dirent + i)->name[0];
-        if (tname == 0x00) {                            //If the name is 0x00 then there are no more entries
-            *(dirent + i) = (DirectoryEntry)newDir;                                     //Set the directory entry to the new directory entry
+        if (s->name[0] == 0x00) {                            //If the name is 0x00 then there are no more entries
+            _memcpy(s,&newDir,sizeof(DirectoryEntry));       //Set the directory entry to the new directory entry
             break;
         }
     }
