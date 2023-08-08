@@ -117,5 +117,6 @@ public:
     FatManager(int NumOfDiskI);
     void RemoveDirectory(char *name);
     void MakeDirectory(char *name);
+    void WriteDirectoryInfoChange(DirectoryEntry* e);
     ~FatManager();
 };

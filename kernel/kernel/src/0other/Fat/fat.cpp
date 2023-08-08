@@ -250,3 +250,27 @@ long llseek(long F_POS,long off,int whence){
     F_POS = NewPos;
     return NewPos;
 }
+
+void WriteDirectoryInfoChange(int hd,DirectoryEntry* e) {
+
+    DirectoryEntry entry = *e;
+    for (int i = 0; i < 16; ++i) {
+
+        //Calculate the first cluster position in the FAT
+        uint32_t  firstFileCluster = ((uint32_t) entry.firstClusterHigh << 16)       //Shift the high cluster number 16 bits to the left
+                                     | entry.firstClusterLow;                        //Add the low cluster number
+
+        uint32_t  afirstFileCluster = ((uint32_t) dirent[i].firstClusterHigh << 16)       //Shift the high cluster number 16 bits to the left
+                                     | dirent[i].firstClusterLow;                        //Add the low cluster number
+
+        //Check if they are the same
+        if(firstFileCluster == afirstFileCluster){
+            dirent[i] = entry;
+            break;
+        }
+
+    }
+
+    UpdateDirectoryEntrysToDisk(hd);
+
+}
