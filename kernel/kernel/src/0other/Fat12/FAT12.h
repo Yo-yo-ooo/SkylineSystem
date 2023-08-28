@@ -127,5 +127,5 @@ int CreateFile(int hd,char *fatherPath, char fileName[8], char fileType[3], uint
 void RemoveFp(int hd,FileDescriptor *fp);
 int RemoveFile(int hd,char *fatherPath, char *fileName);
 
-int ReadFile(char *path, char *buf);
-int WriteFile(char *path, char *buf, int bufSz);
+int ReadFile(int hd,char *path, char *buf);
+int WriteFile(int hd,char *path, char *buf, int bufSz);

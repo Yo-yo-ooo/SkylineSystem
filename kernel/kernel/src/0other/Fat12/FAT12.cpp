@@ -813,3 +813,10 @@ int WriteFile(int hd,char *path, char *buf, int bufSz)
 void WriteDisk(int hd){
     osData.diskInterfaces[hd]->WriteBytes(0x00,sizeof(Disk),&disk);
 }
+
+void InializeFat12(int hd){
+    InitMBR();
+    InitFAT();
+    WriteDisk(hd);
+    CreatRootDict(hd,"/");
+}
