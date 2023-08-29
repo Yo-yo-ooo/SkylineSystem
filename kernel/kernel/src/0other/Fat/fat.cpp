@@ -274,3 +274,9 @@ void WriteDirectoryInfoChange(int hd,DirectoryEntry* e) {
     UpdateDirectoryEntrysToDisk(hd);
 
 }
+
+inline void* ReadSector(int NDisks,uint64_t addr){
+    void *tmp;
+    osData.diskInterfaces[NDisks]->ReadBytes(addr,512,tmp);
+    return tmp;
+}
