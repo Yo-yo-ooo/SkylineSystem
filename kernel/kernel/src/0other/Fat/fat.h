@@ -104,19 +104,3 @@ struct DirectoryEntry{
     uint32_t  size;
 
 } __attribute__((packed));
-
-//DirectoryEntry dirent[50];
-
-
-//FRBB_t ReadBiosBlock(int disknum, uint32_t partitionOffset);
-class FatManager
-{
-private:
-    int NODI;
-public:
-    FatManager(int NumOfDiskI);
-    void RemoveDirectory(char *name);
-    void MakeDirectory(char *name);
-    void WriteDirectoryInfoChange(DirectoryEntry* e);
-    ~FatManager();
-};
