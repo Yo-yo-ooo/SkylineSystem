@@ -520,3 +520,28 @@ void IRQGenericDriverHandler(int irq, interrupt_frame* frame)
     else
         PIC_EndMaster();
 }
+
+__attribute__((interrupt)) void Syscall_Handler(interrupt_frame* frame){
+    AddToStack();
+    uint64_t rax,rdi,rsi,rdx,r10,r8,r9;
+    asm("mov %%rax, %0" : "=r" (rax));
+    asm("mov %%rdi, %0" : "=r"(rdi));
+    asm("mov %%rsi, %0" : "=r"(rsi));
+    asm("mov %%rdx, %0" : "=r"(rdx));
+    asm("mov %%r10, %0" : "=r"(r10));
+    asm("mov %%r8, %0" : "=r"(r8));
+    asm("mov %%r9, %0" : "=r"(r9));
+    switch (rax)
+    {
+    case 1:
+
+        break;
+    
+    default:
+        break;
+    }
+
+    asm("mov %0, %%rax" : : "r" (rax));
+
+    SURVIVE_CRASH
+}

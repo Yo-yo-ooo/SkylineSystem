@@ -88,6 +88,7 @@ __attribute__((interrupt)) void IRQ14_handler(interrupt_frame* frame); //Primary
 __attribute__((interrupt)) void IRQ15_handler(interrupt_frame* frame); //Secondary ATA
 
 void IRQGenericDriverHandler(int irq, interrupt_frame* frame);
+__attribute__((interrupt)) void Syscall_Handler(interrupt_frame* frame);
 
 extern void* IRQHandlerCallbackHelpers[256];
 extern void* IRQHandlerCallbackFuncs[256];
