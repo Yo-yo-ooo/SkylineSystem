@@ -1,5 +1,8 @@
 # SkylineSystem
 
+Version 1.0 (Official version)
+
+Audio Bug Fix + Support Fat32 
 
 ## How to run (Linux)
 Install QEMU if you haven't.
