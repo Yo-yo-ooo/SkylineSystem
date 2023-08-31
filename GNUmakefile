@@ -1,80 +1,88 @@
-.PHONY: all
-all: System.iso
+all: MaslOS2.iso
 
-.PHONY: all-hdd
-all-hdd: barebones.hdd
 
-.PHONY: run
-run: System.iso
-	qemu-system-x86_64 -M q35 -m 2G -cdrom System.iso -boot d
-
-.PHONY: run-uefi
-run-uefi: ovmf-x64 System.iso
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf-x64/OVMF.fd -cdrom System.iso -boot d
-
-.PHONY: run-hdd
-run-hdd: barebones.hdd
-	qemu-system-x86_64 -M q35 -m 2G -hda barebones.hdd
-
-.PHONY: run-hdd-uefi
-run-hdd-uefi: ovmf-x64 barebones.hdd
-	qemu-system-x86_64 -M q35 -m 2G -bios ovmf-x64/OVMF.fd -hda barebones.hdd
-
-ovmf-x64:
-	mkdir -p ovmf-x64
-	cd ovmf-x64 && curl -o OVMF-X64.zip https://efi.akeo.ie/OVMF/OVMF-X64.zip && 7z x OVMF-X64.zip
+.PHONY: kernel
+kernel:
+	$(MAKE) -C libm
+	$(MAKE) -C kernel
+	$(MAKE) -C modules
+	$(MAKE) -C programs
+	$(MAKE) -C kernel-loader
 
 limine:
 	git clone https://github.com/limine-bootloader/limine.git --branch=v4.x-branch-binary --depth=1
 	make -C limine
 
-.PHONY: kernel
-kernel:
-	$(MAKE) -C kernel
-
-System.iso: limine kernel
+MaslOS2.iso:
+	$(MAKE) cleanObjFolder --silent
+	$(MAKE) kernel
 	rm -rf iso_root
 	mkdir -p iso_root
-	cp kernel/kernel.elf \
+	# cp modules/test/test.elf external/test.elf
+	# cp modules/nothing-doer/nothing-doer.elf external/nothing-doer.elf
+	
+	for i in ./modules/*/; do \
+		if [ -d "$$i" ]; \
+		then \
+			echo "$$(basename "$$i")"; \
+			cp "$$i/$$(basename "$$i").elf" objects/external/modules/$$(basename "$$i").elf; \
+		fi \
+	done
+	
+	for i in ./programs/*/; do \
+		if [ -d "$$i" ]; \
+		then \
+			echo "$$(basename "$$i")"; \
+			cp "$$i/$$(basename "$$i").elf" objects/external/programs/$$(basename "$$i").elf; \
+		fi \
+	done
+	
+	$(MAKE) -C saf
+	./saf/saf-make ./objects/external ./external/programs.saf
+	
+	
+	
+	cp kernel-loader/kernel.elf \
 		limine.cfg limine/limine.sys limine/limine-cd.bin limine/limine-cd-efi.bin \
-		kernel/kernel/src/external/toAdd/* \
+		external/* \
 		iso_root/
+		
 	xorriso -as mkisofs -b limine-cd.bin \
 		-no-emul-boot -boot-load-size 4 -boot-info-table \
 		--efi-boot limine-cd-efi.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		iso_root -o System.iso
-	limine/limine-deploy System.iso
+		iso_root -o MaslOS2.iso
+		
+	limine/limine-deploy MaslOS2.iso
 	rm -rf iso_root
 
-barebones.hdd: limine kernel
-	rm -f barebones.hdd
-	dd if=/dev/zero bs=1M count=0 seek=64 of=barebones.hdd
-	parted -s barebones.hdd mklabel gpt
-	parted -s barebones.hdd mkpart ESP fat32 2048s 100%
-	parted -s barebones.hdd set 1 esp on
-	limine/limine-deploy barebones.hdd
-	sudo losetup -Pf --show barebones.hdd >loopback_dev
-	sudo mkfs.fat -F 32 `cat loopback_dev`p1
-	mkdir -p img_mount
-	sudo mount `cat loopback_dev`p1 img_mount
-	sudo mkdir -p img_mount/EFI/BOOT
-	sudo cp -v kernel/kernel.elf limine.cfg limine/limine.sys img_mount/
-	sudo cp -v limine/BOOTX64.EFI img_mount/EFI/BOOT/
-	sync
-	sudo umount img_mount
-	sudo losetup -d `cat loopback_dev`
-	rm -rf loopback_dev img_mount
 
-.PHONY: clean
-clean:
-	rm -rf iso_root System.iso barebones.hdd
-	$(MAKE) -C kernel clean
+clean: clean2
+	@rm -rf iso_root MaslOS2.iso barebones.hdd ./external/programs.saf
+	
 
-.PHONY: distclean
-distclean: clean
-	rm -rf limine ovmf-x64
-	$(MAKE) -C kernel distclean
 
-ca:
-	make clean && make run -j$(nproc)
+clean2:
+	@rm -rf iso_root barebones.hdd ./external/programs.saf
+	@$(MAKE) cleanObjFolder
+	@$(MAKE) -C libm clean
+	@$(MAKE) -C kernel clean
+	@$(MAKE) -C modules clean
+	@$(MAKE) -C programs clean
+	@$(MAKE) -C kernel-loader clean
+	@$(MAKE) -C saf clean
+
+
+cleanObjFolder:
+	@rm -rf objects || true
+	@mkdir objects
+	@mkdir objects/kernel
+	@mkdir objects/kernel-loader
+	@mkdir objects/libm
+	@mkdir objects/modules
+	@mkdir objects/programs
+	@mkdir objects/external
+	@mkdir objects/external/modules
+	@mkdir objects/external/programs
+	
+	
