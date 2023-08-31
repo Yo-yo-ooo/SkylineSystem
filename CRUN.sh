@@ -1,9 +1,7 @@
 #!/bin/bash
 
 find . -type f -name '*.o' -delete
-make clean --silent
- 
+make clean
+
 ./RUN.sh
 
-
-make clean2 --silent
