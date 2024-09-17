@@ -49,9 +49,28 @@ override KCFLAGS += \
 # Internal C preprocessor flags that should not be changed by the user.
 override KCPPFLAGS := \
     -I src \
+	-I include \
     $(KCPPFLAGS) \
     -MMD \
     -MP
+
+override KCPPFLAGS += \
+    -Wall \
+    -Wextra \
+    -std=c++17 \
+    -ffreestanding \
+    -fno-stack-protector \
+    -fno-stack-check \
+    -fno-lto \
+    -fno-PIC \
+    -m64 \
+    -march=x86-64 \
+    -mno-80387 \
+    -mno-mmx \
+    -mno-sse \
+    -mno-sse2 \
+    -mno-red-zone \
+    -mcmodel=kernel
 
 # Internal nasm flags that should not be changed by the user.
 override KNASMFLAGS += \
@@ -71,7 +90,8 @@ override KLDFLAGS += \
 override CFILES := $(shell cd src && find -L * -type f -name '*.c' | LC_ALL=C sort)
 override ASFILES := $(shell cd src && find -L * -type f -name '*.S' | LC_ALL=C sort)
 override NASMFILES := $(shell cd src && find -L * -type f -name '*.asm' | LC_ALL=C sort)
-override OBJ := $(addprefix obj/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(NASMFILES:.asm=.asm.o))
+override CPPFILES := $(shell cd src && find -L * -type f -name '*.cpp' | LC_ALL=C sort)
+override OBJ := $(addprefix obj/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(NASMFILES:.asm=.asm.o) $(CPPFILES:.cpp=.cpp.o))
 override HEADER_DEPS := $(addprefix obj/,$(CFILES:.c=.c.d) $(ASFILES:.S=.S.d))
 
 # Default target.
@@ -85,6 +105,11 @@ bin/$(OUTPUT): GNUmakefile linker.ld $(OBJ)
 
 # Include header dependencies.
 -include $(HEADER_DEPS)
+
+# Compilation rules for load.c file.
+obj/load.c.o: src/load.c GNUmakefile
+	mkdir -p "$$(dirname $@)"
+	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -I../limine/ -c $< -o $@
 
 # Compilation rules for *.c files.
 obj/%.c.o: src/%.c GNUmakefile
@@ -100,6 +125,11 @@ obj/%.S.o: src/%.S GNUmakefile
 obj/%.asm.o: src/%.asm GNUmakefile
 	mkdir -p "$$(dirname $@)"
 	nasm $(KNASMFLAGS) $< -o $@
+
+# Compilation rules for *.cpp files.
+obj/%.cpp.o: src/%.cpp GNUmakefile
+	mkdir -p "$$(dirname $@)"
+	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 # Remove object files and the final executable.
 .PHONY: clean

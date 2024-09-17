@@ -36,9 +36,20 @@ limine:
 # Build "limine" utility.
 	make -C limine
 
-run:
+run: #just run
 	qemu-system-x86_64 -machine q35 -m 2G -cpu qemu64 -smp 4 -serial stdio -boot d -cdrom image.iso
-jm:
-	make clean -j$(nproc --all)
-	make -j$(nproc --all)
-	bash ./cDisk.sh
+
+jm: #just make
+	$(MAKE) -C kernel clean
+	rm -rf image.iso
+	
+	$(MAKE) -C kernel
+	$(MAKE) image.iso
+
+clean:
+	$(MAKE) -C kernel clean
+	rm -rf image.iso
+
+ACAR: #All Clean And Run
+	$(MAKE) jm
+	$(MAKE) run
