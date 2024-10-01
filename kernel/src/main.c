@@ -3,6 +3,9 @@
 #include <stdbool.h>
 #include <limine.h>
 
+#include "print/e9print.h"
+#include "flanterm/flanterm.h"
+#include "flanterm/backends/fb.h"
 // Set the base revision to 2, this is recommended as this is the latest
 // base revision described by the Limine boot protocol specification.
 // See specification for further info.
@@ -100,6 +103,7 @@ static void hcf(void) {
     }
 }
 
+struct flanterm_context* ft_ctx = NULL;
 // The following will be our kernel's entry point.
 // If renaming kmain() to something else, make sure to change the
 // linker script accordingly.
@@ -116,13 +120,25 @@ void kmain(void) {
     }
 
     // Fetch the first framebuffer.
-    struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
+    struct limine_framebuffer *fb = framebuffer_request.response->framebuffers[0];
 
-    // Note: we assume the framebuffer model is RGB with 32-bit pixels.
-    for (size_t i = 0; i < 100; i++) {
-        volatile uint32_t *fb_ptr = framebuffer->address;
-        fb_ptr[i * (framebuffer->pitch / 4) + i] = 0xffffff;
-    }
+    ft_ctx = flanterm_fb_init(
+        NULL,
+        NULL,
+        (uint32_t*)fb->address, fb->width, fb->height, fb->pitch,
+        fb->red_mask_size, fb->red_mask_shift,
+        fb->green_mask_size, fb->green_mask_shift,
+        fb->blue_mask_size, fb->blue_mask_shift,
+        NULL,
+        NULL, NULL,
+        NULL, NULL,
+        NULL, NULL,
+        NULL, 0, 0, 1,
+        0, 0,
+        0
+    );
+
+    e9_printf("Hello, world!");
 
     // We're done, just hang...
     hcf();
