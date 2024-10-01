@@ -3,13 +3,11 @@
 #include <stdbool.h>
 #include <limine.h>
 
-#define SECTION_REQ __attribute__((section(".requests")))
-
 // Set the base revision to 2, this is recommended as this is the latest
 // base revision described by the Limine boot protocol specification.
 // See specification for further info.
 
-SECTION_REQ
+__attribute__((used, section(".requests")))
 static volatile LIMINE_BASE_REVISION(2);
 
 // The Limine requests can be placed anywhere, but it is important that
@@ -17,15 +15,9 @@ static volatile LIMINE_BASE_REVISION(2);
 // be made volatile or equivalent, _and_ they should be accessed at least
 // once or marked as used with the "used" attribute as done here.
 
-SECTION_REQ
+__attribute__((used, section(".requests")))
 static volatile struct limine_framebuffer_request framebuffer_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST,
-    .revision = 0
-};
-
-SECTION_REQ
-static volatile struct limine_memmap_request memmap_request = {
-    .id = LIMINE_MEMMAP_REQUEST,
     .revision = 0
 };
 
@@ -98,7 +90,13 @@ int memcmp(const void *s1, const void *s2, size_t n) {
 // Halt and catch fire function.
 static void hcf(void) {
     for (;;) {
+#if defined (__x86_64__)
         asm ("hlt");
+#elif defined (__aarch64__) || defined (__riscv)
+        asm ("wfi");
+#elif defined (__loongarch64)
+        asm ("idle 0");
+#endif
     }
 }
 
@@ -117,9 +115,8 @@ void kmain(void) {
         hcf();
     }
 
-    // Fetch the first framebuffer and memory map.
+    // Fetch the first framebuffer.
     struct limine_framebuffer *framebuffer = framebuffer_request.response->framebuffers[0];
-    struct limine_memmap_response *memmap_response = memmap_request.response;
 
     // Note: we assume the framebuffer model is RGB with 32-bit pixels.
     for (size_t i = 0; i < 100; i++) {

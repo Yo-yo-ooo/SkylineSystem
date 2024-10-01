@@ -1,1 +1,5 @@
-iso_root/**
+/kernel-deps
+/limine
+/ovmf
+*.iso
+*.hdd
