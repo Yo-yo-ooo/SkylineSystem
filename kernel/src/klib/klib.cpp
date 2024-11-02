@@ -9,7 +9,6 @@ void Panic(const char* message){
 }
 
 
-
 // Halt and catch fire function.
 void hcf(void) {
     for (;;) {

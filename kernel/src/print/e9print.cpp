@@ -89,3 +89,25 @@ void e9_printf(const char *format, ...) {
     e9_putc('\n');
     va_end(argp);
 }
+
+void e9_printNL(const char *format, ...) {
+    va_list argp;
+    va_start(argp, format);
+
+    while (*format != '\0') {
+        if (*format == '%') {
+            format++;
+            if (*format == 'x') {
+                e9_printhex(va_arg(argp, size_t));
+            } else if (*format == 'd') {
+                e9_printdec(va_arg(argp, size_t));
+            } else if (*format == 's') {
+                e9_print(va_arg(argp, char*));
+            }
+        } else {
+            e9_putc(*format);
+        }
+        format++;
+    }
+    va_end(argp);
+}

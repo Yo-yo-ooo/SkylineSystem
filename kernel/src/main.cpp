@@ -84,6 +84,12 @@ static volatile struct limine_framebuffer_request framebuffer_request = {
     .revision = 0
 };
 
+__attribute__((used, section(".requests")))
+static volatile struct limine_hhdm_request hhdm_request = {
+    .id = LIMINE_HHDM_REQUEST,
+    .revision = 0
+};
+
 // Finally, define the start and end markers for the Limine requests.
 // These can also be moved anywhere, to any .c file, as seen fit.
 
@@ -97,6 +103,8 @@ static volatile LIMINE_REQUESTS_END_MARKER;
 
 
 struct flanterm_context* ft_ctx = NULL;
+
+uint64_t hhdm_offset = 0;
 // The following will be our kernel's entry point.
 // If renaming kmain() to something else, make sure to change the
 // linker script accordingly.
@@ -130,6 +138,11 @@ extern "C" void kmain(void) {
         0, 0,
         0
     );
+
+    if(hhdm_request.response == NULL) {
+        hcf();
+    }
+    hhdm_offset = hhdm_request.response->offset;
 
     e9_printf("> Starting kernel...");
 
