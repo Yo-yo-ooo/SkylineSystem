@@ -251,3 +251,11 @@ clean:
 distclean:
 	$(MAKE) -C kernel distclean
 	rm -rf iso_root *.iso *.hdd kernel-deps limine ovmf
+
+
+cm:
+	make clean && make -j$(nproc) 
+
+cmr:
+	make clean && make -j$(nproc) 
+	make run
