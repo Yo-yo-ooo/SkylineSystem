@@ -1,5 +1,8 @@
 {
     "files.associations": {
+        "Makefrag": "makefile",
+        "*.S": "asm-intel-x86-generic",
+        "script": "bat",
         "typeinfo": "cpp",
         "cctype": "cpp",
         "cmath": "cpp",
@@ -11,7 +14,8 @@
         "*.tcc": "cpp",
         "cstdint": "cpp",
         "climits": "cpp",
-        "cstdbool": "cpp"
+        "cstdbool": "cpp",
+        "interrupt.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }

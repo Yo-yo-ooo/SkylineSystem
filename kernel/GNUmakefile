@@ -23,6 +23,9 @@ ifeq ($(filter $(KARCH),aarch64 loongarch64 riscv64 x86_64),)
     $(error Architecture $(KARCH) not supported)
 endif
 
+# User controllable C++ compiler command.
+$(call USER_VARIABLE,KCXX,g++)
+
 # User controllable C compiler command.
 $(call USER_VARIABLE,KCC,cc)
 
@@ -153,10 +156,11 @@ override KLDFLAGS += \
 # object and header dependency file names.
 override CFILES := $(shell cd src && find -L * -type f -name '*.c' | LC_ALL=C sort)
 override ASFILES := $(shell cd src && find -L * -type f -name '*.S' | LC_ALL=C sort)
+override CPPFILES := $(shell cd src && find -L * -type f -name '*.cpp' | LC_ALL=C sort)
 ifeq ($(KARCH),x86_64)
 override NASMFILES := $(shell cd src && find -L * -type f -name '*.asm' | LC_ALL=C sort)
 endif
-override OBJ := $(addprefix obj-$(KARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o))
+override OBJ := $(addprefix obj-$(KARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(CPPFILES:.cpp=.cpp.o))
 ifeq ($(KARCH),x86_64)
 override OBJ += $(addprefix obj-$(KARCH)/,$(NASMFILES:.asm=.asm.o))
 endif
@@ -183,6 +187,10 @@ obj-$(KARCH)/%.c.o: src/%.c GNUmakefile
 obj-$(KARCH)/%.S.o: src/%.S GNUmakefile
 	mkdir -p "$$(dirname $@)"
 	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+
+obj-$(KARCH)/%.cpp.o: src/%.cpp GNUmakefile
+	mkdir -p "$$(dirname $@)"
+	$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 ifeq ($(KARCH),x86_64)
 # Compilation rules for *.asm (nasm) files.
