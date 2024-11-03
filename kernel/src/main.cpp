@@ -140,15 +140,18 @@ extern "C" void kmain(void) {
     );
 
     if(hhdm_request.response == NULL) {
+        e9_printf("Can not get (limine hhdm request)->response\n");
         hcf();
     }
     hhdm_offset = hhdm_request.response->offset;
 
     e9_printf("> Starting kernel...");
 
-    // We're done, just hang...
+    
 #ifdef __x86_64__
     x86_64_init();
 #endif
+    // We're done, just hang...
+    e9_printf("> Kernel started! hanging...");
     hcf();
 }
