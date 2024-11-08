@@ -30,8 +30,26 @@
 #include "../flanterm.h"
 #include "fb.h"
 
-void *memset(void *, int, size_t);
-void *memcpy(void *, const void *, size_t);
+void *memcpy_flanterm(void *d, const void *s, size_t n) {
+    uint8_t *pdest = (uint8_t *)d;
+    const uint8_t *psrc = (const uint8_t *)s;
+
+    for (size_t i = 0; i < n; i++) {
+        pdest[i] = psrc[i];
+    }
+
+    return d;
+}
+
+void *memset_flanterm(void *s, int c, size_t n) {
+    uint8_t *p = (uint8_t *)s;
+
+    for (size_t i = 0; i < n; i++) {
+        p[i] = (uint8_t)c;
+    }
+
+    return s;
+}
 
 #ifndef FLANTERM_FB_DISABLE_BUMP_ALLOC
 
@@ -924,7 +942,7 @@ struct flanterm_context *flanterm_fb_init(
     }
 
     struct flanterm_context *_ctx = (void *)ctx;
-    memset(ctx, 0, sizeof(struct flanterm_fb_context));
+    memset_flanterm(ctx, 0, sizeof(struct flanterm_fb_context));
 
     ctx->red_mask_size = red_mask_size;
     ctx->red_mask_shift = red_mask_shift + (red_mask_size - 8);
@@ -1005,7 +1023,7 @@ struct flanterm_context *flanterm_fb_init(
         if (ctx->font_bits == NULL) {
             goto fail;
         }
-        memcpy(ctx->font_bits, font, ctx->font_bits_size);
+        memcpy_flanterm(ctx->font_bits, font, ctx->font_bits_size);
     } else {
         ctx->font_width = font_width = 8;
         ctx->font_height = font_height = 16;
@@ -1015,7 +1033,7 @@ struct flanterm_context *flanterm_fb_init(
         if (ctx->font_bits == NULL) {
             goto fail;
         }
-        memcpy(ctx->font_bits, builtin_font, ctx->font_bits_size);
+        memcpy_flanterm(ctx->font_bits, builtin_font, ctx->font_bits_size);
     }
 
 #undef FONT_BYTES
@@ -1086,14 +1104,14 @@ struct flanterm_context *flanterm_fb_init(
         goto fail;
     }
     ctx->queue_i = 0;
-    memset(ctx->queue, 0, ctx->queue_size);
+    memset_flanterm(ctx->queue, 0, ctx->queue_size);
 
     ctx->map_size = _ctx->rows * _ctx->cols * sizeof(struct flanterm_fb_queue_item *);
     ctx->map = _malloc(ctx->map_size);
     if (ctx->map == NULL) {
         goto fail;
     }
-    memset(ctx->map, 0, ctx->map_size);
+    memset_flanterm(ctx->map, 0, ctx->map_size);
 
     if (canvas != NULL) {
         ctx->canvas_size = ctx->width * ctx->height * sizeof(uint32_t);

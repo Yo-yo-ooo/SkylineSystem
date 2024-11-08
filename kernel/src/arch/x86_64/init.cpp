@@ -1,6 +1,7 @@
 #include "interrupt/idt.h"
 #include "interrupt/gdt.h"
 #include "../pinc.h"
+#include "../../mem/pmm.h"
 
 void x86_64_init(void){
     e9_printf("x86_64_init() called!");
@@ -13,6 +14,9 @@ void x86_64_init(void){
     idt_init();
     e9_printf("IDT INIT!");
 
+    e9_printf("INIT PMM...");
+    PMM::Init();
+    e9_printf("PMM INIT!");
 
     WELCOME_X86_64
 }
