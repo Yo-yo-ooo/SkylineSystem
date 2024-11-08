@@ -7,7 +7,8 @@
 #include "flanterm/flanterm.h"
 #include "flanterm/backends/fb.h"
 #include "klib/klib.h"
-
+#include "mem/pmm.h"
+#include "mem/vmm.h"
 
 
 #if defined (__x86_64__)
@@ -110,6 +111,13 @@ extern "C" void kmain(void) {
 #ifdef __x86_64__
     x86_64_init();
 #endif
+    e9_printf("INIT PMM...");
+    PMM::Init();
+    e9_printf("PMM INIT!");
+
+    e9_printf("INIT VMM...");
+    VMM::Init();
+    e9_printf("VMM INIT!");
     // We're done, just hang...
     e9_printf("> Kernel started! hanging...");
     hcf();

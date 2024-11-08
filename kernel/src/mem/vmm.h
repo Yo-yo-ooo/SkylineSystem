@@ -28,7 +28,7 @@ static inline uint64_t paging_mode_higher_half(int paging_mode) {
     }
 }
 
-typedef struct {
+typedef struct PageMapType{
     int   levels;
     void *top_level;
 } pagemap_t;
@@ -164,12 +164,15 @@ int vmm_max_paging_mode(void);
 void map_pages(pagemap_t pagemap, uint64_t virt, uint64_t phys, uint64_t flags, uint64_t count);
 
 namespace VMM{
-    
-
     void Init();
     void MapPage(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags);
+    void MapPages(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, uint64_t count);
+
+    void MapMemory(void* virtualMemory, void* physicalMemory, int flags);
+    void MapMemories(void* virtualMemory, void* physicalMemory, int flags, int count);
 }
 
-pagemap_t GlobalPageMap;
+extern pagemap_t GlobalPageMap;
+
 
 #endif

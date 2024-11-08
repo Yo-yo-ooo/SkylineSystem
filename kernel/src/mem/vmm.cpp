@@ -569,6 +569,7 @@ static pt_entry_t *get_next_level(pagemap_t pagemap, pt_entry_t *current_level,
 
 
 extern uint64_t paging_mode;
+pagemap_t GlobalPageMap = {0};
 
 namespace VMM{
     void Init(){
@@ -577,5 +578,28 @@ namespace VMM{
 
     void MapPage(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags){
         map_page(GlobalPageMap, virt_addr, phys_addr, flags, Size4KiB);
+    }
+
+    void MapPages(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, uint64_t count){
+        map_pages(GlobalPageMap, virt_addr, phys_addr, flags, count);
+    }
+
+    void MapMemory(void* virtualMemory, void* physicalMemory, int flags){
+        MapPage((uint64_t)virtualMemory, (uint64_t)physicalMemory, flags);
+    }
+
+    void MapMemory(void* virtualMemory, void* physicalMemory){
+#ifdef __x86_64__
+        MapMemory(virtualMemory, physicalMemory, PT_FLAG_WRITE | 1);
+#endif
+    }
+
+    void MapMemories(void* virtualMemory, void* physicalMemory, int flags, int count){
+        MapPages((uint64_t)virtualMemory, (uint64_t)physicalMemory, flags, count);
+    }
+
+    void MapMemories(void* virtualMemory, void* physicalMemory, int count){
+        for(int i = 0;i < count;i++)
+            MapMemory((void*)((uint64_t)virtualMemory + i * 0x1000), (void*)((uint64_t)physicalMemory + i * 0x1000));
     }
 }
