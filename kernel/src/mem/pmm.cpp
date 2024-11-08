@@ -10,7 +10,7 @@ u64 pmm_last_page = 0;
 atomic_lock pmm_lock;
 
 __attribute__((used, section(".requests")))
-static struct limine_memmap_request memmap_request = {
+static volatile struct limine_memmap_request memmap_request = {
     .id = LIMINE_MEMMAP_REQUEST,
     .revision = 0
 };
@@ -39,7 +39,7 @@ void Init() {
     pmm_total_pages = higher_address / PAGE_SIZE;
     u64 bitmap_size = ALIGN_UP(pmm_total_pages / 8, PAGE_SIZE);
 
-    kprintf("pmm_init(): STEP(GET DATA) DONE\n");
+    kprintf("PMM::Init(): STEP(GET DATA) DONE\n");
 
     for (u64 i = 0; i < pmm_memmap->entry_count; i++) {
         entry = entries[i];

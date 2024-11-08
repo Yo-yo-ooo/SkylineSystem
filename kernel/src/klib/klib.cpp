@@ -8,6 +8,13 @@ void Panic(const char* message){
     hcf();
 }
 
+void Panic(bool halt, const char* message){
+    e9_print("Panic!");
+    e9_printf(message);
+    if(halt){
+        hcf();
+    }
+}
 
 // Halt and catch fire function.
 void hcf(void) {
