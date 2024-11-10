@@ -33,3 +33,5 @@
 void lapic_write(u32 reg, u32 val);
 u32 lapic_read(u32 reg);
 u32 lapic_get_id();
+
+void lapic_eoi();

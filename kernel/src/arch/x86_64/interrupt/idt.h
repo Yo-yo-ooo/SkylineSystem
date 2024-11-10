@@ -51,3 +51,6 @@ typedef struct stackframe {
 
 void idt_init();
 void idt_set_entry(u8 vec, void* isr, u8 type, u8 dpl);
+
+void irq_register(u8 vec, void* handler);
+void irq_unregister(u8 vec);

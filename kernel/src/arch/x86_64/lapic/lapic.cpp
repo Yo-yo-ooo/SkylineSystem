@@ -11,3 +11,7 @@ u32 lapic_read(u32 reg) {
 u32 lapic_get_id() {
   return lapic_read(0x0020) >> LAPIC_ICDESTSHIFT;
 }
+
+void lapic_eoi() {
+    lapic_write((u8)0xb0, 0x0);
+}

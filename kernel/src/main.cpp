@@ -43,6 +43,12 @@ static volatile struct limine_paging_mode_request paging_mode_request = {
     .id = LIMINE_PAGING_MODE_REQUEST,
     .revision = 0
 };
+
+__attribute__((used, section(".requests")))
+static volatile struct limine_boot_time_request boot_time_request = {
+    .id = LIMINE_BOOT_TIME_REQUEST,
+    .revision = 0
+};
 // Finally, define the start and end markers for the Limine requests.
 // These can also be moved anywhere, to any .c file, as seen fit.
 
@@ -94,31 +100,30 @@ extern "C" void kmain(void) {
     );
 
     if(hhdm_request.response == NULL) {
-        e9_printf("Can not get (limine hhdm request)->response\n");
+        e9_printf("[INFO] Can not get (limine hhdm request)->response\n");
         hcf();
     }
     hhdm_offset = hhdm_request.response->offset;
 
     if(paging_mode_request.response == NULL) {
-        e9_printf("Can not get (limine paging_mode_request)->response\n");
+        e9_printf("[INFO] Can not get (limine paging_mode_request)->response\n");
         hcf();
     }
     paging_mode = paging_mode_request.response->mode;
+    
+    if(boot_time_request.response == NULL) {
+        e9_printf("[INFO] Can not get (limine boot_time_request)->response\n");
+        hcf();
+    }
 
-    e9_printf("> Starting kernel...");
-
+    e9_printf("[INFO] Starting kernel...");
+    kprintf("[INFO] Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->boot_time);
     
 #ifdef __x86_64__
     x86_64_init();
 #endif
-    e9_printf("INIT PMM...");
-    PMM::Init();
-    e9_printf("PMM INIT!");
-
-    e9_printf("INIT VMM...");
-    VMM::Init();
-    e9_printf("VMM INIT!");
+    
     // We're done, just hang...
-    e9_printf("> Kernel started! hanging...");
+    e9_printf("[INFO] Kernel started! hanging...");
     hcf();
 }
