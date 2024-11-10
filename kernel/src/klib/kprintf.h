@@ -71,6 +71,8 @@ int printf_(const char* format, ...);
  */
 #define sprintf sprintf_
 int sprintf_(char* buffer, const char* format, ...);
+int kpok(const char* format, ...);
+int kinfo(const char* format, ...);
 
 
 /**

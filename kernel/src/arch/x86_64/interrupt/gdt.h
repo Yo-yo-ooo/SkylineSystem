@@ -34,3 +34,5 @@ typedef struct tssr_{
 } __attribute__((packed)) tssr; // Per CPU
 
 void gdt_init();
+
+extern tssr tss_list[256];

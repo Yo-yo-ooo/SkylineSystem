@@ -3,33 +3,41 @@
 #include "../pinc.h"
 #include "../../mem/pmm.h"
 #include "../../mem/vmm.h"
+#include "../../mem/heap.h"
 #include "../../klib/klib.h"
 #include "pit/pit.h"
 
 void x86_64_init(void){
     WELCOME_X86_64
-    kprintf("[INFO] INIT x86_64 ARCH\n");
+    kinfo("INIT x86_64 ARCH\n");
 
-    kprintf("[INFO] CPU TSC DATA: %ld\n",rdtsc());
+    kinfo("CPU TSC DATA: %ld\n",rdtsc());
 
-    kprintf("[INFO] INIT GDT...\n");
+    kinfo("INIT GDT...\n");
     gdt_init();
-    kprintf("[ OK ] GDT INIT!\n");
+    kpok("GDT INIT!\n");
 
-    kprintf("[INFO] INIT IDT...\n");
+    kinfo("INIT IDT...\n");
     idt_init();
-    kprintf("[ OK ] IDT INIT!\n");
+    kpok("IDT INIT!\n");
 
-    e9_printf("[INFO] INIT PMM...");
+    kinfo("INIT PMM...\n");
     PMM::Init();
-    e9_printf("[ OK ] PMM INIT!");
+    kpok("PMM INIT!\n");
 
-    e9_printf("[INFO] INIT VMM...");
+    kinfo("INIT VMM...\n");
     VMM::Init();
-    e9_printf("[ OK ] VMM INIT!");
+    kpok("VMM INIT!\n");
 
-    e9_printf("[INFO] INIT PIT...");
+    kinfo("INIT PIT...\n");
     PIT::Init();
-    e9_printf("[ OK ] PIT INIT!");
+    kpok("PIT INIT!\n");
+
+
+    void* stack = HIGHER_HALF(pmm_alloc(3) + (3 * PAGE_SIZE));
+    tss_list[0].rsp[0] = (u64)stack;
+
+    Heap::Init();
+    kpok("KHeap initialised.\n");
 
 }

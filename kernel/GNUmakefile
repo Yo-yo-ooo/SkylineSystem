@@ -68,7 +68,8 @@ override KCFLAGS += \
     -fno-lto \
     -fno-PIC \
     -ffunction-sections \
-    -fdata-sections
+    -fdata-sections \
+	-fpermissive
 
 # Internal C preprocessor flags that should not be changed by the user.
 override KCPPFLAGS := \

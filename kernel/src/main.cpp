@@ -99,30 +99,30 @@ extern "C" void kmain(void) {
     );
 
     if(hhdm_request.response == NULL) {
-        e9_printf("[INFO] Can not get (limine hhdm request)->response\n");
+        kinfo("Can not get (limine hhdm request)->response\n");
         hcf();
     }
     hhdm_offset = hhdm_request.response->offset;
 
     if(paging_mode_request.response == NULL) {
-        e9_printf("[INFO] Can not get (limine paging_mode_request)->response\n");
+        kinfo("Can not get (limine paging_mode_request)->response\n");
         hcf();
     }
     paging_mode = paging_mode_request.response->mode;
     
     if(boot_time_request.response == NULL) {
-        e9_printf("[INFO] Can not get (limine boot_time_request)->response\n");
+        kinfo("Can not get (limine boot_time_request)->response\n");
         hcf();
     }
 
-    e9_printf("[INFO] Starting kernel...");
-    kprintf("[INFO] Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->boot_time);
+    kinfo("Starting kernel...");
+    kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->boot_time);
     
 #ifdef __x86_64__
     x86_64_init();
 #endif
     
     // We're done, just hang...
-    kprintf("[INFO] \033[38;2;0;255;255mSkylineSystem\033[0m Booted successfully hanging...");
+    kinfo("Kernel started.\n");
     hcf();
 }

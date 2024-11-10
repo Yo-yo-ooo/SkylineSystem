@@ -877,6 +877,27 @@ int printf_(const char* format, ...)
     return ret;
 }
 
+int kinfo(const char* format, ...)
+{
+    kprintf("[\033[38;2;0;255;255mINFO\033[0m] ");
+    va_list va;
+    va_start(va, format);
+    char buffer[1];
+    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
+    va_end(va);
+    return ret;
+}
+
+int kpok(const char* format, ...)
+{
+    kprintf("[\033[38;2;0;255;0m OK \033[0m] ");
+    va_list va;
+    va_start(va, format);
+    char buffer[1];
+    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
+    va_end(va);
+    return ret;
+}
 
 int sprintf_(char* buffer, const char* format, ...)
 {
