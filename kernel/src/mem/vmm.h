@@ -1,178 +1,75 @@
-#ifndef MM__VMM_H__
-#define MM__VMM_H__
+#pragma once
 
-#include <stdint.h>
-#include <stdbool.h>
+#include <types.h>
+#include <mm/pmm.h>
+#include <sys/idt.h>
 
-#if defined (__x86_64__) || defined (__i386__)
+#define PTE_PRESENT (u64)1
+#define PTE_WRITABLE (u64)2
+#define PTE_USER (u64)4
+#define PTE_NX (1ull << 63)
 
-#define VMM_FLAG_WRITE   ((uint64_t)1 << 1)
-#define VMM_FLAG_NOEXEC  ((uint64_t)1 << 63)
-#define VMM_FLAG_FB      (((uint64_t)1 << 3) | ((uint64_t)1 << 12))
+#define PTE_ADDR_MASK 0x000ffffffffff000
+#define PTE_GET_ADDR(VALUE) ((VALUE) & PTE_ADDR_MASK)
+#define PTE_GET_FLAGS(VALUE) ((VALUE) & ~PTE_ADDR_MASK)
 
-#define VMM_MAX_LEVEL 3
+typedef struct vma_region {
+  uptr vaddr;
+  uptr end;
 
-#define PAGING_MODE_X86_64_4LVL 0
-#define PAGING_MODE_X86_64_5LVL 1
+  u64 pages;
+  u64 flags;
 
-#define PAGING_MODE_MIN PAGING_MODE_X86_64_4LVL
-#define PAGING_MODE_MAX PAGING_MODE_X86_64_5LVL
+  uptr paddr;
 
-#define paging_mode_va_bits(mode) ((mode) ? 57 : 48)
+  u64 ref_count;
 
-static inline uint64_t paging_mode_higher_half(int paging_mode) {
-    if (paging_mode == PAGING_MODE_X86_64_5LVL) {
-        return 0xff00000000000000;
-    } else {
-        return 0xffff800000000000;
-    }
-}
-
-typedef struct PageMapType{
-    int   levels;
-    void *top_level;
-} pagemap_t;
-
-enum page_size {
-    Size4KiB,
-    Size2MiB,
-    Size1GiB
-};
-
-pagemap_t new_pagemap(int lv);
-void map_page(pagemap_t pagemap, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, enum page_size page_size);
-
-#elif defined (__aarch64__)
-
-// We use fake flags here because these don't properly map onto the
-// aarch64 flags.
-#define VMM_FLAG_WRITE   ((uint64_t)1 << 0)
-#define VMM_FLAG_NOEXEC  ((uint64_t)1 << 1)
-#define VMM_FLAG_FB      ((uint64_t)1 << 2)
-
-#define VMM_MAX_LEVEL 3
-
-#define PAGING_MODE_AARCH64_4LVL 0
-#define PAGING_MODE_AARCH64_5LVL 1
-
-#define PAGING_MODE_MIN PAGING_MODE_AARCH64_4LVL
-#define PAGING_MODE_MAX PAGING_MODE_AARCH64_5LVL
-
-#define paging_mode_va_bits(mode) ((mode) ? 53 : 49)
-
-static inline uint64_t paging_mode_higher_half(int paging_mode) {
-    if (paging_mode == PAGING_MODE_AARCH64_5LVL) {
-        return 0xffe0000000000000;
-    } else {
-        return 0xffff000000000000;
-    }
-}
+  struct vma_region* next;
+  struct vma_region* prev;
+} vma_region;
 
 typedef struct {
-    int   levels;
-    void *top_level[2];
-} pagemap_t;
+  uptr* top_lvl;
+  vma_region* vma_head;
+} pagemap;
 
-enum page_size {
-    Size4KiB,
-    Size2MiB,
-    Size1GiB
-};
+extern pagemap* vmm_kernel_pm;
 
-void vmm_assert_4k_pages(void);
-pagemap_t new_pagemap(int lv);
-void map_page(pagemap_t pagemap, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, enum page_size page_size);
+extern symbol text_start_ld;
+extern symbol text_end_ld;
 
-#elif defined (__riscv)
+extern symbol rodata_start_ld;
+extern symbol rodata_end_ld;
 
-// We use fake flags here because these don't properly map onto the
-// RISC-V flags.
-#define VMM_FLAG_WRITE   ((uint64_t)1 << 0)
-#define VMM_FLAG_NOEXEC  ((uint64_t)1 << 1)
-#define VMM_FLAG_FB      ((uint64_t)1 << 2)
+extern symbol data_start_ld;
+extern symbol data_end_ld;
 
-#define VMM_MAX_LEVEL 5
+void vmm_init();
 
-#define PAGING_MODE_RISCV_SV39 8
-#define PAGING_MODE_RISCV_SV48 9
-#define PAGING_MODE_RISCV_SV57 10
+pagemap* vmm_new_pm();
+void vmm_destroy_pm(pagemap* pm);
 
-#define PAGING_MODE_MIN PAGING_MODE_RISCV_SV39
-#define PAGING_MODE_MAX PAGING_MODE_RISCV_SV57
+void vmm_switch_pm_nocpu(pagemap* pm);
+void vmm_switch_pm(pagemap* pm);
 
-int paging_mode_va_bits(int paging_mode);
+vma_region* vmm_create_region(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
+void vmm_delete_region(vma_region* region);
 
-enum page_size {
-    Size4KiB,
-    Size2MiB,
-    Size1GiB,
-    Size512GiB,
-    Size256TiB
-};
+void vmm_map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
+void vmm_map_user(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
+void vmm_unmap(pagemap* pm, uptr vaddr);
 
-typedef struct {
-    enum page_size max_page_size;
-    int            paging_mode;
-    void          *top_level;
-} pagemap_t;
+uptr vmm_get_page(pagemap* pm, uptr vaddr);
 
-uint64_t paging_mode_higher_half(int paging_mode);
-int vmm_max_paging_mode(void);
-pagemap_t new_pagemap(int paging_mode);
-void map_page(pagemap_t pagemap, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, enum page_size page_size);
+void vmm_map_range(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
+void vmm_map_user_range(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
 
-#elif defined (__loongarch64)
+void* vmm_alloc(pagemap* pm, u64 pages, u64 flags);
+void vmm_free(pagemap* pm, void* ptr, u64 pages);
 
-#define paging_mode_va_bits(mode) 49
+vma_region* vmm_find_range(pagemap* pm, uptr vaddr);
+uptr vmm_get_region_paddr(pagemap* pm, uptr ptr);
 
-static inline uint64_t paging_mode_higher_half(int paging_mode) {
-    (void)paging_mode;
-    return 0xffff000000000000;
-}
+bool vmm_handle_pf(registers* r);
 
-// We use fake flags here because these don't properly map onto the
-// LoongArch flags.
-#define VMM_FLAG_WRITE   ((uint64_t)1 << 0)
-#define VMM_FLAG_NOEXEC  ((uint64_t)1 << 1)
-#define VMM_FLAG_FB      ((uint64_t)1 << 2)
-
-#define VMM_MAX_LEVEL 3
-
-#define PAGING_MODE_LOONGARCH64_4LVL 0
-
-#define PAGING_MODE_MIN PAGING_MODE_LOONGARCH64_4LVL
-#define PAGING_MODE_MAX PAGING_MODE_LOONGARCH64_4LVL
-
-enum page_size {
-    Size4KiB,
-    Size2MiB,
-    Size1GiB
-};
-
-typedef struct {
-    void *pgd[2];
-} pagemap_t;
-
-pagemap_t new_pagemap(int paging_mode);
-void map_page(pagemap_t pagemap, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, enum page_size page_size);
-
-#else
-#error Unknown architecture
-#endif
-
-int vmm_max_paging_mode(void);
-void map_pages(pagemap_t pagemap, uint64_t virt, uint64_t phys, uint64_t flags, uint64_t count);
-
-namespace VMM{
-    void Init();
-    void MapPage(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags);
-    void MapPages(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, uint64_t count);
-
-    void MapMemory(void* virtualMemory, void* physicalMemory, int flags);
-    void MapMemories(void* virtualMemory, void* physicalMemory, int flags, int count);
-}
-
-extern pagemap_t GlobalPageMap;
-
-
-#endif
+pagemap* vmm_clone(pagemap* pm);

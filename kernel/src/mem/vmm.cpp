@@ -1,605 +1,364 @@
-#include <stdint.h>
-#include <stddef.h>
-#include "vmm.h"
-#include "pmm.h"
-
+#include <limine.h>
+#include "vmm.h"   
 #include "../klib/klib.h"
+#include "../mem/pmm.h"
 
-
-
-#define PT_SIZE ((uint64_t)0x1000)
-
-typedef uint64_t pt_entry_t;
-
-// Maps level indexes to the page size for that level.
-static_assert(VMM_MAX_LEVEL <= 5, "6-level paging not supported");
-static uint64_t page_sizes[5] = {
-    0x1000,
-    0x200000,
-    0x40000000,
-    0x8000000000,
-    0x1000000000000,
+__attribute__((used, section(".requests")))
+static volatile struct limine_kernel_address_request kernel_address_request = {
+  .id = LIMINE_KERNEL_ADDRESS_REQUEST,
+  .revision = 0
 };
 
-static pt_entry_t *get_next_level(pagemap_t pagemap, pt_entry_t *current_level,
-                                  uint64_t virt, enum page_size desired_sz,
-                                  size_t level_idx, size_t entry);
+pagemap* vmm_kernel_pm = NULL;
 
-void map_pages(pagemap_t pagemap, uint64_t virt, uint64_t phys, uint64_t flags, uint64_t count) {
-    if (virt % 0x1000 != 0 || phys % 0x1000 != 0 || count % 0x1000 != 0) {
-        panic(true, "vmm: Misaligned call to map_pages()");
+void vmm_init() {
+    vmm_kernel_pm = (pagemap*)HIGHER_HALF(pmm_alloc(1));
+    memset(vmm_kernel_pm, 0, PAGE_SIZE);
+
+    vmm_kernel_pm->top_lvl = (uptr*)HIGHER_HALF(pmm_alloc(1));
+    memset(vmm_kernel_pm->top_lvl, 0, PAGE_SIZE);
+
+    vmm_kernel_pm->vma_head = (vma_region*)HIGHER_HALF(pmm_alloc(1));
+    memset(vmm_kernel_pm->vma_head, 0, PAGE_SIZE);
+
+    vmm_kernel_pm->vma_head->next = vmm_kernel_pm->vma_head;
+    vmm_kernel_pm->vma_head->prev = vmm_kernel_pm->vma_head;
+
+    uptr phys_base = kernel_address_request.response->physical_base;
+    uptr virt_base = kernel_address_request.response->virtual_base;
+
+    uptr text_start = ALIGN_DOWN((uptr)text_start_ld, PAGE_SIZE);
+    uptr text_end = ALIGN_UP((uptr)text_end_ld, PAGE_SIZE);
+    uptr rodata_start = ALIGN_DOWN((uptr)rodata_start_ld, PAGE_SIZE);
+    uptr rodata_end = ALIGN_UP((uptr)rodata_end_ld, PAGE_SIZE);
+    uptr data_start = ALIGN_DOWN((uptr)data_start_ld, PAGE_SIZE);
+    uptr data_end = ALIGN_UP((uptr)data_end_ld, PAGE_SIZE);
+
+    for (uptr text = text_start; text < text_end; text += PAGE_SIZE)
+        vmm_map(vmm_kernel_pm, text, text - virt_base + phys_base, PTE_PRESENT);
+    for (uptr rodata = rodata_start; rodata < rodata_end; rodata += PAGE_SIZE)
+        vmm_map(vmm_kernel_pm, rodata, rodata - virt_base + phys_base, PTE_PRESENT | PTE_NX);
+    for (uptr data = data_start; data < data_end; data += PAGE_SIZE)
+        vmm_map(vmm_kernel_pm, data, data - virt_base + phys_base, PTE_PRESENT | PTE_WRITABLE | PTE_NX);
+    for (uptr gb4 = 0; gb4 < 0x100000000; gb4 += PAGE_SIZE) {
+        vmm_map(vmm_kernel_pm, gb4, gb4, PTE_PRESENT | PTE_WRITABLE);
+        vmm_map(vmm_kernel_pm, (uptr)HIGHER_HALF(gb4), gb4, PTE_PRESENT | PTE_WRITABLE);
     }
 
-    for (uint64_t i = 0; i < count; ) {
-        if (((phys + i) & (0x40000000 - 1)) == 0 && ((virt + i) & (0x40000000 - 1)) == 0 && count - i >= 0x40000000) {
-            map_page(pagemap, virt + i, phys + i, flags, Size1GiB);
-            i += 0x40000000;
-            continue;
-        }
-        if (((phys + i) & (0x200000 - 1)) == 0 && ((virt + i) & (0x200000 - 1)) == 0 && count - i >= 0x200000) {
-            map_page(pagemap, virt + i, phys + i, flags, Size2MiB);
-            i += 0x200000;
-            continue;
-        }
-        map_page(pagemap, virt + i, phys + i, flags, Size4KiB);
-        i += 0x1000;
-    }
+    vmm_switch_pm_nocpu(vmm_kernel_pm);
+    kprintf("vmm_init(): VMM Initialised. Kernel's page map located at %lx.\n", (u64)vmm_kernel_pm);
 }
 
-#if defined (__x86_64__) || defined (__i386__)
+vma_region* vmm_create_region(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
+    vma_region* region = (vma_region*)HIGHER_HALF(pmm_alloc(1));
+    region->vaddr = vaddr;
+    region->end = vaddr + (pages * PAGE_SIZE);
+    region->paddr = paddr;
+    region->pages = pages;
+    region->flags = flags;
 
-#define PT_FLAG_VALID    ((uint64_t)1 << 0)
-#define PT_FLAG_WRITE    ((uint64_t)1 << 1)
-#define PT_FLAG_USER     ((uint64_t)1 << 2)
-#define PT_FLAG_LARGE    ((uint64_t)1 << 7)
-#define PT_FLAG_NX       ((uint64_t)1 << 63)
-#define PT_PADDR_MASK    ((uint64_t)0x0000FFFFFFFFF000)
+    region->ref_count = 0;
 
-#define PT_TABLE_FLAGS   (PT_FLAG_VALID | PT_FLAG_WRITE | PT_FLAG_USER)
-#define PT_IS_TABLE(x) (((x) & (PT_FLAG_VALID | PT_FLAG_LARGE)) == PT_FLAG_VALID)
-#define PT_IS_LARGE(x) (((x) & (PT_FLAG_VALID | PT_FLAG_LARGE)) == (PT_FLAG_VALID | PT_FLAG_LARGE))
-#define PT_TO_VMM_FLAGS(x) ((x) & (PT_FLAG_WRITE | PT_FLAG_NX))
+    region->prev = pm->vma_head->prev;
+    region->next = pm->vma_head;
 
-#define pte_new(addr, flags)    ((pt_entry_t)(addr) | (flags))
-#define pte_addr(pte)           ((pte) & PT_PADDR_MASK)
+    pm->vma_head->prev->next = region;
+    pm->vma_head->prev = region;
 
-pagemap_t new_pagemap(int paging_mode) {
-    pagemap_t pagemap;
-    pagemap.levels    = paging_mode == PAGING_MODE_X86_64_5LVL ? 5 : 4;
-    pagemap.top_level = pmm_alloc(1);
-    return pagemap;
+    return region;
 }
 
-static bool is_1gib_page_supported(void) {
-    // Cache the cpuid result :^)
-    static bool CACHE_INIT = false;
-    static bool CACHE = false;
+vma_region* vmm_insert_after(vma_region* prev, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
+    vma_region* region = (vma_region*)HIGHER_HALF(pmm_alloc(1));
+    region->vaddr = vaddr;
+    region->end = vaddr + (pages * PAGE_SIZE);
+    region->paddr = paddr;
+    region->pages = pages;
+    region->flags = flags;
+    region->ref_count = 0;
 
-    if (!CACHE_INIT) {
-        // Check if 1GiB pages are supported:
-        uint32_t eax, ebx, ecx, edx;
+    region->prev = prev;
+    region->next = prev->next;
 
-        CACHE = cpuid(0x80000001, 0, &eax, &ebx, &ecx, &edx) && ((edx & 1 << 26) == 1 << 26);
-        CACHE_INIT = true;
+    prev->next->prev = region;
+    prev->next = region;
 
-        kprintf("paging: 1GiB pages are %s!\n", CACHE ? "supported" : "not supported");
-    }
-
-    return CACHE;
+    return region;
 }
 
-void map_page(pagemap_t pagemap, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, enum page_size pg_size) {
-    // Calculate the indices in the various tables using the virtual address
-    size_t pml5_entry = (virt_addr & ((uint64_t)0x1ff << 48)) >> 48;
-    size_t pml4_entry = (virt_addr & ((uint64_t)0x1ff << 39)) >> 39;
-    size_t pml3_entry = (virt_addr & ((uint64_t)0x1ff << 30)) >> 30;
-    size_t pml2_entry = (virt_addr & ((uint64_t)0x1ff << 21)) >> 21;
-    size_t pml1_entry = (virt_addr & ((uint64_t)0x1ff << 12)) >> 12;
+void vmm_delete_region(vma_region* region) {
+    region->prev->next = region->prev;
+    region->next->prev = region->prev;
 
-    pt_entry_t *pml5, *pml4, *pml3, *pml2, *pml1;
+    pmm_free(PHYSICAL(region), 1);
+}
 
-    static bool pat_supported = false, pat_supported_got = false;
-    if (!pat_supported_got) {
-        uint32_t eax, ebx, ecx, edx;
-        if (cpuid(1, 0, &eax, &ebx, &ecx, &edx) && (edx & (1 << 16))) {
-            pat_supported = true;
+vma_region* vmm_get_region(pagemap* pm, uptr vaddr) {
+    vma_region* region = pm->vma_head->next;
+    for (; region != pm->vma_head; region = region->next)
+        if (region->vaddr == vaddr)
+        return region;
+    return NULL;
+}
+
+vma_region* vmm_find_range(pagemap* pm, uptr vaddr) {
+    vma_region* region = pm->vma_head->next;
+    for (; region != pm->vma_head; region = region->next)
+        if (region->vaddr <= vaddr && region->end >= vaddr)
+        return region;
+    return NULL;
+}
+
+uptr* vmm_get_next_lvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
+    if (lvl[entry] & PTE_PRESENT)
+        return HIGHER_HALF(PTE_GET_ADDR(lvl[entry]));
+    if (alloc) {
+        uptr* pml = (uptr*)HIGHER_HALF(pmm_alloc(1));
+        memset(pml, 0, PAGE_SIZE);
+        lvl[entry] = (uptr)PHYSICAL(pml) | flags;
+        return pml;
+    }
+    return NULL;
+}
+
+pagemap* vmm_new_pm() {
+    pagemap* pm = (pagemap*)HIGHER_HALF(pmm_alloc(1));
+    memset(pm, 0, PAGE_SIZE);
+
+    pm->top_lvl = (uptr*)HIGHER_HALF(pmm_alloc(1));
+    memset(pm->top_lvl, 0, PAGE_SIZE);
+
+    pm->vma_head = (vma_region*)HIGHER_HALF(pmm_alloc(1));
+    memset(pm->vma_head, 0, PAGE_SIZE);
+
+    pm->vma_head->next = pm->vma_head;
+    pm->vma_head->prev = pm->vma_head;
+
+    for (usize i = 256; i < 512; i++)
+        pm->top_lvl[i] = vmm_kernel_pm->top_lvl[i];
+    return pm;
+}
+
+void vmm_destroy_pm(pagemap* pm) {
+    vma_region* next;
+    for (vma_region* region = pm->vma_head->next; region != pm->vma_head;) {
+        next = region->next;
+        pmm_free(PHYSICAL(region), 1);
+        region = next;
+    }
+    pmm_free(PHYSICAL(pm->vma_head), 1);
+    pmm_free(PHYSICAL(pm->top_lvl), 1);
+    pmm_free(PHYSICAL(pm), 1);
+}
+
+void vmm_switch_pm_nocpu(pagemap* pm) {
+    __asm__ volatile ("mov %0, %%cr3" : : "r"((u64)PHYSICAL(pm->top_lvl)) : "memory");
+}
+
+void vmm_switch_pm(pagemap* pm) {
+    __asm__ volatile ("mov %0, %%cr3" : : "r"((u64)PHYSICAL(pm->top_lvl)) : "memory");
+    this_cpu()->pm = pm;
+}
+
+void vmm_map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
+    uptr pml1_entry = (vaddr >> 12) & 0x1ff;
+    uptr pml2_entry = (vaddr >> 21) & 0x1ff;
+    uptr pml3_entry = (vaddr >> 30) & 0x1ff;
+    uptr pml4_entry = (vaddr >> 39) & 0x1ff;
+
+    uptr* pml3 = vmm_get_next_lvl(pm->top_lvl, pml4_entry, PTE_PRESENT | PTE_WRITABLE, true);       // pml4[pml4Entry] = pml3
+    uptr* pml2 = vmm_get_next_lvl(pml3, pml3_entry, PTE_PRESENT | PTE_WRITABLE, true);     // pml3[pml3Entry] = pml2
+    uptr* pml1 = vmm_get_next_lvl(pml2, pml2_entry, PTE_PRESENT | PTE_WRITABLE, true);     // pml2[pml2Entry] = pml1
+
+    pml1[pml1_entry] = paddr | flags;
+}
+
+void vmm_map_user(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
+    uptr pml1_entry = (vaddr >> 12) & 0x1ff;
+    uptr pml2_entry = (vaddr >> 21) & 0x1ff;
+    uptr pml3_entry = (vaddr >> 30) & 0x1ff;
+    uptr pml4_entry = (vaddr >> 39) & 0x1ff;
+
+    uptr* pml3 = vmm_get_next_lvl(pm->top_lvl, pml4_entry, flags, true);
+    uptr* pml2 = vmm_get_next_lvl(pml3, pml3_entry, flags, true);
+    uptr* pml1 = vmm_get_next_lvl(pml2, pml2_entry, flags, true);
+
+    pml1[pml1_entry] = paddr | flags;
+}
+
+void vmm_unmap(pagemap* pm, uptr vaddr) {
+    uptr pml1_entry = (vaddr >> 12) & 0x1ff;
+    uptr pml2_entry = (vaddr >> 21) & 0x1ff;
+    uptr pml3_entry = (vaddr >> 30) & 0x1ff;
+    uptr pml4_entry = (vaddr >> 39) & 0x1ff;
+
+    uptr* pml3 = vmm_get_next_lvl(pm->top_lvl, pml4_entry, 0, false);
+    if (pml3 == NULL) return;
+    uptr* pml2 = vmm_get_next_lvl(pml3, pml3_entry, 0, false);
+    if (pml2 == NULL) return;
+    uptr* pml1 = vmm_get_next_lvl(pml2, pml2_entry, 0, false);
+    if (pml1 == NULL) return;
+    pml1[pml1_entry] = 0;
+    __asm__ volatile ("invlpg (%0)" : : "b"(vaddr) : "memory");
+}
+
+uptr vmm_get_page(pagemap* pm, uptr vaddr) {
+    uptr pml1_entry = (vaddr >> 12) & 0x1ff;
+    uptr pml2_entry = (vaddr >> 21) & 0x1ff;
+    uptr pml3_entry = (vaddr >> 30) & 0x1ff;
+    uptr pml4_entry = (vaddr >> 39) & 0x1ff;
+
+    uptr* pml3 = vmm_get_next_lvl(pm->top_lvl, pml4_entry, 0, false);
+    if (!pml3) return 0;
+    uptr* pml2 = vmm_get_next_lvl(pml3, pml3_entry, 0, false);
+    if (!pml2) return 0;
+    uptr* pml1 = vmm_get_next_lvl(pml2, pml2_entry, 0, false);
+    if (!pml1) return 0;
+
+    return pml1[pml1_entry];
+}
+
+uptr vmm_get_pml2(pagemap* pm, uptr vaddr) {
+    uptr pml2_entry = (vaddr >> 21) & 0x1ff;
+    uptr pml3_entry = (vaddr >> 30) & 0x1ff;
+    uptr pml4_entry = (vaddr >> 39) & 0x1ff;
+
+    uptr* pml3 = vmm_get_next_lvl(pm->top_lvl, pml4_entry, 0, false);
+    if (!pml3) return 0;
+    uptr* pml2 = vmm_get_next_lvl(pml3, pml3_entry, 0, false);
+    if (!pml2) return 0;
+    return pml2[pml2_entry];
+}
+
+void vmm_map_range(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
+    for (u64 i = 0; i < pages; i++)
+        vmm_map(pm, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
+}
+
+void vmm_map_user_range(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
+    for (u64 i = 0; i < pages; i++)
+        vmm_map_user(pm, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
+}
+
+void vmm_unmap_range(pagemap* pm, uptr vaddr, u64 pages) {
+    for (u64 i = 0; i < pages; i++)
+        vmm_unmap(pm, vaddr + (i * PAGE_SIZE));
+}
+
+void* vmm_alloc(pagemap* pm, u64 pages, u64 flags) {
+    void* pg = pmm_alloc(pages);
+    if (!pg) return NULL;
+    // In case we didn't find a hole, create a new region
+    uptr vaddr = pm->vma_head->prev->end + PAGE_SIZE;
+    bool found = false;
+    vma_region* region = pm->vma_head->next;
+    for (; region != pm->vma_head; region = region->next) {
+        if (region->end >= region->next->vaddr)
+        continue;
+        // We found a hole, now check it's size
+        if (region->next->vaddr - region->end >= ((pages + 1) * PAGE_SIZE)) {
+        vaddr = region->end + PAGE_SIZE;
+        region = vmm_insert_after(region, vaddr, (uptr)pg, pages, flags);
+        found = true;
+        break;
         }
-        pat_supported_got = true;
     }
+    if (!found) region = vmm_create_region(pm, vaddr, (uptr)pg, pages, flags);
+    vmm_map_user_range(pm, vaddr, (uptr)pg, pages, flags);
+    region->ref_count++;
+    return (void*)vaddr;
+}
 
-    flags |= PT_FLAG_VALID; // Always present
-    if ((flags & VMM_FLAG_FB) && !pat_supported) {
-        flags &= ~(uint64_t)VMM_FLAG_FB;
-    }
-
-    // Paging levels
-    switch (pagemap.levels) {
-        case 5:
-            pml5 = (pt_entry_t*)pagemap.top_level;
-            goto level5;
-        case 4:
-            pml4 = (pt_entry_t*)pagemap.top_level;
-            goto level4;
-        default:
-            __builtin_unreachable();
-    }
-
-level5:
-    pml4 = get_next_level(pagemap, pml5, virt_addr, pg_size, 4, pml5_entry);
-level4:
-    pml3 = get_next_level(pagemap, pml4, virt_addr, pg_size, 3, pml4_entry);
-
-    if (pg_size == Size1GiB) {
-        // Check if 1GiB pages are available.
-        if (is_1gib_page_supported()) {
-            pml3[pml3_entry] = (pt_entry_t)(phys_addr | flags | PT_FLAG_LARGE);
-        } else {
-            // If 1GiB pages are not supported then emulate it by splitting them into
-            // 2MiB pages.
-            for (uint64_t i = 0; i < 0x40000000; i += 0x200000) {
-                map_page(pagemap, virt_addr + i, phys_addr + i, flags, Size2MiB);
-            }
-        }
-
+void vmm_free(pagemap* pm, void* ptr, u64 pages) {
+    if (!ptr) return;
+    vma_region* region = vmm_get_region(pm, (uptr)ptr);
+    if (!region)
         return;
-    }
-
-    pml2 = get_next_level(pagemap, pml3, virt_addr, pg_size, 2, pml3_entry);
-
-    if (pg_size == Size2MiB) {
-        pml2[pml2_entry] = (pt_entry_t)(phys_addr | flags | PT_FLAG_LARGE);
-        return;
-    }
-
-    pml1 = get_next_level(pagemap, pml2, virt_addr, pg_size, 1, pml2_entry);
-
-    // PML1 wants PAT bit at 7 instead of 12
-    if (flags & ((uint64_t)1 << 12)) {
-        flags &= ~((uint64_t)1 << 12);
-        flags |= ((uint64_t)1 << 7);
-    }
-
-    pml1[pml1_entry] = (pt_entry_t)(phys_addr | flags);
+    pmm_free((void*)region->paddr, pages);
+    vmm_unmap_range(pm, region->vaddr, pages);
+    vmm_delete_region(region);
 }
 
-#elif defined (__aarch64__)
-
-// Here we operate under the assumption that 4K pages are supported by the CPU.
-// This appears to be guaranteed by UEFI, as section 2.3.6 "AArch64 Platforms"
-// states that the primary processor core configuration includes 4K translation
-// granules (TCR_EL1.TG0 = 0).
-// Support for 4K pages also implies 2M, 1G and 512G blocks.
-
-// Sanity check that 4K pages are supported.
-void vmm_assert_4k_pages(void) {
-    uint64_t aa64mmfr0;
-    asm volatile ("mrs %0, id_aa64mmfr0_el1" : "=r"(aa64mmfr0));
-
-    if (((aa64mmfr0 >> 28) & 0b1111) == 0b1111) {
-        panic(false, "vmm: CPU does not support 4K pages, please make a bug report about this.");
-    }
+uptr vmm_get_region_paddr(pagemap* pm, uptr ptr) {
+    vma_region* region = vmm_get_region(pm, ptr);
+    if (!region)
+        return 0;
+    return region->paddr;
 }
 
-#define PT_FLAG_VALID    ((uint64_t)1 << 0)
-#define PT_FLAG_TABLE    ((uint64_t)1 << 1)
-#define PT_FLAG_4K_PAGE  ((uint64_t)1 << 1)
-#define PT_FLAG_BLOCK    ((uint64_t)0 << 1)
-#define PT_FLAG_USER     ((uint64_t)1 << 6)
-#define PT_FLAG_READONLY ((uint64_t)1 << 7)
-#define PT_FLAG_INNER_SH ((uint64_t)3 << 8)
-#define PT_FLAG_ACCESS   ((uint64_t)1 << 10)
-#define PT_FLAG_XN       ((uint64_t)1 << 54)
-#define PT_FLAG_WB       ((uint64_t)0 << 2)
-#define PT_FLAG_FB       ((uint64_t)1 << 2)
-#define PT_PADDR_MASK    ((uint64_t)0x0000FFFFFFFFF000)
-
-#define PT_TABLE_FLAGS   (PT_FLAG_VALID | PT_FLAG_TABLE)
-
-#define PT_IS_TABLE(x) (((x) & (PT_FLAG_VALID | PT_FLAG_TABLE)) == (PT_FLAG_VALID | PT_FLAG_TABLE))
-#define PT_IS_LARGE(x) (((x) & (PT_FLAG_VALID | PT_FLAG_TABLE)) == PT_FLAG_VALID)
-#define PT_TO_VMM_FLAGS(x) (pt_to_vmm_flags_internal(x))
-
-#define pte_new(addr, flags)    ((pt_entry_t)(addr) | (flags))
-#define pte_addr(pte)           ((pte) & PT_PADDR_MASK)
-
-static uint64_t pt_to_vmm_flags_internal(pt_entry_t entry) {
-    uint64_t flags = 0;
-
-    if (!(entry & PT_FLAG_READONLY))
-        flags |= VMM_FLAG_WRITE;
-    if (entry & PT_FLAG_XN)
-        flags |= VMM_FLAG_NOEXEC;
-    if (entry & PT_FLAG_FB)
-        flags |= VMM_FLAG_FB;
-
-    return flags;
+void vmm_invlpg_range(uptr vaddr, u64 pages) {
+    for (u64 i = 0; i < pages; i++)
+        __asm__ volatile ("invlpg (%0)" : : "r"(vaddr + (i * PAGE_SIZE)));
 }
 
-pagemap_t new_pagemap(int paging_mode) {
-    pagemap_t pagemap;
-    pagemap.levels       = paging_mode == PAGING_MODE_AARCH64_5LVL ? 5 : 4;
-    pagemap.top_level[0] = pmm_alloc(1);
-    pagemap.top_level[1] = pmm_alloc(1);
-    return pagemap;
+bool vmm_handle_pf(registers* r) {
+    bool halt = false;
+    if (this_cpu()->pm == vmm_kernel_pm) {
+        printf("cpu%lu: Page fault. Died.\n", this_cpu()->lapic_id);
+        kprintf("cpu%lu: Page fault. Died.\n", this_cpu()->lapic_id);
+        halt = true;
+    } else
+        halt = false;
+    u64 cr2;
+    __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+    pagemap* pm = this_thread()->pm;
+    u64 vaddr = ALIGN_DOWN(cr2, PAGE_SIZE);
+    uptr page = vmm_get_page(pm, vaddr);
+    uptr paddr = page & ~0xFFF;
+    if (!halt) {
+        // Check if the page is a CoW
+        if (!(page & PTE_PRESENT))
+        goto nocow;
+        if (page & PTE_WRITABLE)
+        goto nocow;
+
+        vma_region* region = vmm_find_range(pm, cr2);
+        if (!region)
+        goto nocow;
+
+        void* newpage = pmm_alloc(region->pages);
+        memcpy(HIGHER_HALF(newpage), HIGHER_HALF(region->paddr), region->pages * PAGE_SIZE);
+
+        // It is CoW now we just need to re-map it.
+        vmm_map_range(pm, region->vaddr, (uptr)newpage, region->pages, region->flags);
+        region->paddr = (uptr)newpage;
+        region->ref_count++;
+
+        vmm_invlpg_range(region->vaddr, region->pages);
+
+        return false;
 }
 
-void map_page(pagemap_t pagemap, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, enum page_size pg_size) {
-    // Calculate the indices in the various tables using the virtual address
-    size_t pml5_entry = (virt_addr & ((uint64_t)0xf << 48)) >> 48;
-    size_t pml4_entry = (virt_addr & ((uint64_t)0x1ff << 39)) >> 39;
-    size_t pml3_entry = (virt_addr & ((uint64_t)0x1ff << 30)) >> 30;
-    size_t pml2_entry = (virt_addr & ((uint64_t)0x1ff << 21)) >> 21;
-    size_t pml1_entry = (virt_addr & ((uint64_t)0x1ff << 12)) >> 12;
+nocow:
+    kprintf("Segmentation fault on proc %lu\n", this_proc()->pid);
 
-    pt_entry_t *pml5, *pml4, *pml3, *pml2, *pml1;
-
-    bool is_higher_half = virt_addr & ((uint64_t)1 << 63);
-
-    uint64_t real_flags = PT_FLAG_VALID | PT_FLAG_INNER_SH | PT_FLAG_ACCESS | PT_FLAG_WB;
-    if (!(flags & VMM_FLAG_WRITE))
-        real_flags |= PT_FLAG_READONLY;
-    if (flags & VMM_FLAG_NOEXEC)
-        real_flags |= PT_FLAG_XN;
-    if (flags & VMM_FLAG_FB)
-        real_flags |= PT_FLAG_FB;
-
-    // Paging levels
-    switch (pagemap.levels) {
-        case 5:
-            pml5 = pagemap.top_level[is_higher_half];
-            goto level5;
-        case 4:
-            pml4 = pagemap.top_level[is_higher_half];
-            goto level4;
-        default:
-            __builtin_unreachable();
-    }
-
-level5:
-    pml4 = get_next_level(pagemap, pml5, virt_addr, pg_size, 4, pml5_entry);
-level4:
-    pml3 = get_next_level(pagemap, pml4, virt_addr, pg_size, 3, pml4_entry);
-
-    if (pg_size == Size1GiB) {
-        pml3[pml3_entry] = (pt_entry_t)(phys_addr | real_flags | PT_FLAG_BLOCK);
-        return;
-    }
-
-    pml2 = get_next_level(pagemap, pml3, virt_addr, pg_size, 2, pml3_entry);
-
-    if (pg_size == Size2MiB) {
-        pml2[pml2_entry] = (pt_entry_t)(phys_addr | real_flags | PT_FLAG_BLOCK);
-        return;
-    }
-
-    pml1 = get_next_level(pagemap, pml2, virt_addr, pg_size, 1, pml2_entry);
-
-    pml1[pml1_entry] = (pt_entry_t)(phys_addr | real_flags | PT_FLAG_4K_PAGE);
+    kprintf("Vaddr: %lx Paddr: %lx PM: %lx Page flags: 0x%lx\n", vaddr, paddr, pm, page & 0xFFF);
+    kprintf("RIP: 0x%lx RSP: 0x%lx CR2: 0x%lx err: %lx\n", r->rip, r->rsp, cr2, r->err_code);
+    if (!halt)
+        sig_raise(SIGSEGV);
+    return halt;
 }
 
-#elif defined (__riscv)
+pagemap* vmm_clone(pagemap* pm) {
+    pagemap* clone = vmm_new_pm();
 
-#define PT_FLAG_VALID       ((uint64_t)1 << 0)
-#define PT_FLAG_READ        ((uint64_t)1 << 1)
-#define PT_FLAG_WRITE       ((uint64_t)1 << 2)
-#define PT_FLAG_EXEC        ((uint64_t)1 << 3)
-#define PT_FLAG_USER        ((uint64_t)1 << 4)
-#define PT_FLAG_ACCESSED    ((uint64_t)1 << 6)
-#define PT_FLAG_DIRTY       ((uint64_t)1 << 7)
-#define PT_FLAG_PBMT_NC     ((uint64_t)1 << 62)
-#define PT_PADDR_MASK       ((uint64_t)0x003ffffffffffc00)
+    // Create a new region for the clone.
 
-#define PT_FLAG_RWX         (PT_FLAG_READ | PT_FLAG_WRITE | PT_FLAG_EXEC)
+    for (vma_region* region = pm->vma_head->next; region != pm->vma_head; region = region->next) {
+        // Set page as read only.
+        vmm_map_range(pm, region->vaddr, region->paddr, region->pages, region->flags & ~PTE_WRITABLE);
 
-#define PT_TABLE_FLAGS      PT_FLAG_VALID
-#define PT_IS_TABLE(x)      (((x) & (PT_FLAG_VALID | PT_FLAG_RWX)) == PT_FLAG_VALID)
-#define PT_IS_LARGE(x)      (((x) & (PT_FLAG_VALID | PT_FLAG_RWX)) > PT_FLAG_VALID)
-#define PT_TO_VMM_FLAGS(x)  (pt_to_vmm_flags_internal(x))
+        // Map the directories with the right flags
+        vmm_map_user_range(clone, region->vaddr, region->paddr, region->pages, region->flags);
+        // Map the page with the right flags
+        vmm_map_range(clone, region->vaddr, region->paddr, region->pages, region->flags & ~PTE_WRITABLE);
 
-#define pte_new(addr, flags)    (((pt_entry_t)(addr) >> 2) | (flags))
-#define pte_addr(pte)           (((pte) & PT_PADDR_MASK) << 2)
+        vmm_invlpg_range(region->vaddr, region->pages);
 
-static uint64_t pt_to_vmm_flags_internal(pt_entry_t entry) {
-    uint64_t flags = 0;
-
-    if (entry & PT_FLAG_WRITE)
-        flags |= VMM_FLAG_WRITE;
-    if (!(entry & PT_FLAG_EXEC))
-        flags |= VMM_FLAG_NOEXEC;
-    if (entry & PT_FLAG_PBMT_NC)
-        flags |= VMM_FLAG_FB;
-
-    return flags;
-}
-
-uint64_t paging_mode_higher_half(int paging_mode) {
-    switch (paging_mode) {
-        case PAGING_MODE_RISCV_SV39:
-            return 0xffffffc000000000;
-        case PAGING_MODE_RISCV_SV48:
-            return 0xffff800000000000;
-        case PAGING_MODE_RISCV_SV57:
-            return 0xff00000000000000;
-        default:
-            panic(false, "paging_mode_higher_half: invalid mode");
-    }
-}
-
-int paging_mode_va_bits(int paging_mode) {
-    switch (paging_mode) {
-        case PAGING_MODE_RISCV_SV39:
-            return 39;
-        case PAGING_MODE_RISCV_SV48:
-            return 48;
-        case PAGING_MODE_RISCV_SV57:
-            return 57;
-        default:
-            panic(false, "paging_mode_va_bits: invalid mode");
-    }
-}
-
-int vmm_max_paging_mode(void)
-{
-    static int max_level;
-    if (max_level > 0)
-        goto done;
-
-    pt_entry_t *table = pmm_alloc(1);
-
-    // Test each paging mode starting with Sv57.
-    // Since writes to `satp` with an invalid MODE have no effect, and pages can be mapped at
-    // any level, we can identity map the entire lower half (very likely guaranteeing everything
-    // this code needs will be mapped) and check if enabling the paging mode succeeds.
-    int lvl = 4;
-    for (; lvl >= 2; lvl--) {
-        pt_entry_t entry = PT_FLAG_ACCESSED | PT_FLAG_DIRTY | PT_FLAG_RWX | PT_FLAG_VALID;
-        for (int i = 0; i < 256; i++) {
-            table[i] = entry;
-            entry += page_sizes[lvl] >> 2;
-        }
-
-        uint64_t satp = ((uint64_t)(6 + lvl) << 60) | ((uint64_t)table >> 12);
-        csr_write("satp", satp);
-        if (csr_read("satp") == satp) {
-            max_level = lvl;
-            break;
-        }
-    }
-    csr_write("satp", 0);
-    pmm_free(table, PT_SIZE);
-
-    if (max_level == 0)
-        panic(false, "vmm: paging is not supported");
-done:
-    return 6 + max_level;
-}
-
-static pt_entry_t pbmt_nc = 0;
-
-pagemap_t new_pagemap(int paging_mode) {
-    pagemap_t pagemap;
-    pagemap.paging_mode   = paging_mode;
-    pagemap.max_page_size = paging_mode - 6;
-    pagemap.top_level     = pmm_alloc(1);
-
-    if (riscv_check_isa_extension("svpbmt", NULL, NULL)) {
-        kprintf("riscv: Svpbmt extension is supported.\n");
-        pbmt_nc = PT_FLAG_PBMT_NC;
+        // Create a new region in clone vma
+        vmm_create_region(clone, region->vaddr, region->paddr, region->pages, region->flags)->ref_count = 0;
+        region->ref_count = 0;
     }
 
-    return pagemap;
-}
-
-void map_page(pagemap_t pagemap, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, enum page_size page_size) {
-    // Truncate the requested page size to the maximum supported.
-    if (page_size > pagemap.max_page_size)
-        page_size = pagemap.max_page_size;
-
-    // Convert VMM_FLAG_* into PT_FLAG_*.
-    // Set the ACCESSED and DIRTY flags to avoid faults.
-    pt_entry_t ptflags = PT_FLAG_VALID | PT_FLAG_READ | PT_FLAG_ACCESSED | PT_FLAG_DIRTY;
-    if (flags & VMM_FLAG_WRITE)
-        ptflags |= PT_FLAG_WRITE;
-    if (!(flags & VMM_FLAG_NOEXEC))
-        ptflags |= PT_FLAG_EXEC;
-    if (flags & VMM_FLAG_FB)
-        ptflags |= pbmt_nc;
-
-    // Start at the highest level.
-    // The values of `enum page_size` map to the level index at which that size is mapped.
-    int level = pagemap.max_page_size;
-    pt_entry_t *table = pagemap.top_level;
-    for (;;) {
-        int index = (virt_addr >> (12 + 9 * level)) & 0x1ff;
-
-        // Stop when we reach the level for the requested page size.
-        if (level == (int)page_size) {
-            table[index] = pte_new(phys_addr, ptflags);
-            break;
-        }
-
-        table = get_next_level(pagemap, table, virt_addr, page_size, level, index);
-        level--;
-    }
-}
-
-#elif defined (__loongarch64)
-
-#define INVALID_PAGE    0
-
-#define PT_FLAG_VALID   ((uint64_t)1 << 0)
-#define PT_FLAG_DIRTY   ((uint64_t)1 << 1)
-#define PT_FLAG_MAT_CC  ((uint64_t)1 << 4)
-#define PT_FLAG_MAT_WUC ((uint64_t)1 << 5)
-#define PT_FLAG_GLOBAL  ((uint64_t)1 << 6)
-#define PT_FLAG_HUGE    ((uint64_t)1 << 6)
-#define PT_FLAG_WRITE   ((uint64_t)1 << 8)
-#define PT_FLAG_HGLOBAL ((uint64_t)1 << 12)
-#define PT_FLAG_NX      ((uint64_t)1 << 62)
-#define PT_PADDR_MASK   ((uint64_t)0x0000FFFFFFFFF000)
-#define PT_PADDR_HMASK  ((uint64_t)0x0000FFFFFF000000)
-
-#define PT_TABLE_FLAGS      0
-#define PT_IS_TABLE(x)      ((level_idx > 0) && (((x) & PT_FLAG_VALID) == 0) && ((x) != INVALID_PAGE))
-#define PT_IS_LARGE(x)      (((x) & (PT_FLAG_HGLOBAL | PT_FLAG_HUGE)) == (PT_FLAG_HGLOBAL | PT_FLAG_HUGE))
-#define PT_TO_VMM_FLAGS(x)  (pt_to_vmm_flags_internal(x))
-
-#define pte_new(addr, flags)    (pt_entry_t)((addr) | (flags))
-
-static inline uint64_t pte_addr(uint64_t pte) {
-    if (PT_IS_LARGE(pte)) {
-        return pte & PT_PADDR_HMASK;
-    }
-    return pte & PT_PADDR_MASK;
-}
-
-static uint64_t pt_to_vmm_flags_internal(pt_entry_t entry) {
-    uint64_t flags = 0;
-
-    if (entry & PT_FLAG_WRITE)
-        flags |= VMM_FLAG_WRITE;
-    if (entry & PT_FLAG_NX)
-        flags |= VMM_FLAG_NOEXEC;
-    if (entry & PT_FLAG_MAT_WUC)
-        flags |= VMM_FLAG_FB;
-
-    return flags;
-}
-
-pagemap_t new_pagemap(int paging_mode) {
-    (void)paging_mode;
-    pagemap_t pagemap;
-    pagemap.pgd[0] = pmm_alloc(1);
-    pagemap.pgd[1] = pmm_alloc(1);
-    return pagemap;
-}
-
-void map_page(pagemap_t pagemap, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, enum page_size pg_size) {
-    size_t pml4_entry = (virt_addr & ((uint64_t)0x1ff << 39)) >> 39;
-    size_t pml3_entry = (virt_addr & ((uint64_t)0x1ff << 30)) >> 30;
-    size_t pml2_entry = (virt_addr & ((uint64_t)0x1ff << 21)) >> 21;
-    size_t pml1_entry = (virt_addr & ((uint64_t)0x1ff << 12)) >> 12;
-
-    pt_entry_t *pml4, *pml3, *pml2, *pml1;
-
-    bool is_higher_half = virt_addr & ((uint64_t)1 << 63);
-
-    uint64_t real_flags = PT_FLAG_VALID | PT_FLAG_GLOBAL;
-    if (flags & VMM_FLAG_WRITE)
-        real_flags |= PT_FLAG_DIRTY | PT_FLAG_WRITE;
-    if (flags & VMM_FLAG_NOEXEC)
-        real_flags |= PT_FLAG_NX;
-    if (flags & VMM_FLAG_FB)
-        real_flags |= PT_FLAG_MAT_WUC;
-    else
-        real_flags |= PT_FLAG_MAT_CC;
-
-    pml4 = pagemap.pgd[is_higher_half];
-
-    pml3 = get_next_level(pagemap, pml4, virt_addr, pg_size, 3, pml4_entry);
-
-    if (pg_size == Size1GiB) {
-        pml3[pml3_entry] = pte_new(phys_addr, real_flags | PT_FLAG_HGLOBAL | PT_FLAG_HUGE);
-        return;
-    }
-
-    pml2 = get_next_level(pagemap, pml3, virt_addr, pg_size, 2, pml3_entry);
-
-    if (pg_size == Size2MiB) {
-        pml2[pml2_entry] = pte_new(phys_addr, real_flags | PT_FLAG_HGLOBAL | PT_FLAG_HUGE);
-        return;
-    }
-
-    pml1 = get_next_level(pagemap, pml2, virt_addr, pg_size, 1, pml2_entry);
-
-    pml1[pml1_entry] = pte_new(phys_addr, real_flags);
-}
-
-#else
-#error Unknown architecture
-#endif
-
-static pt_entry_t *get_next_level(pagemap_t pagemap, pt_entry_t *current_level,
-                                  uint64_t virt, enum page_size desired_sz,
-                                  size_t level_idx, size_t entry) {
-    pt_entry_t *ret;
-
-    if (PT_IS_TABLE(current_level[entry])) {
-        ret = (pt_entry_t *)(size_t)pte_addr(current_level[entry]);
-    } else {
-        if (PT_IS_LARGE(current_level[entry])) {
-            // We are replacing an existing large page with a smaller page.
-            // Split the previous mapping into mappings of the newly requested size
-            // before performing the requested map operation.
-
-
-            if ((level_idx >= VMM_MAX_LEVEL) || (level_idx == 0))
-                panic(false, "Unexpected level in get_next_level");
-            if (desired_sz >= VMM_MAX_LEVEL)
-                panic(false, "Unexpected page size in get_next_level");
-
-            uint64_t old_page_size = page_sizes[level_idx];
-            uint64_t new_page_size = page_sizes[desired_sz];
-
-            // Save all the information from the old entry at this level
-            uint64_t old_flags = PT_TO_VMM_FLAGS(current_level[entry]);
-            uint64_t old_phys = pte_addr(current_level[entry]);
-            uint64_t old_virt = virt & ~(old_page_size - 1);
-
-            if (old_phys & (old_page_size - 1))
-                panic(false, "Unexpected page table entry address in get_next_level");
-
-            // Allocate a table for the next level
-            ret = (pt_entry_t*)pmm_alloc(1);
-            current_level[entry] = pte_new((size_t)ret, PT_TABLE_FLAGS);
-
-            // Recreate the old mapping with smaller pages
-            for (uint64_t i = 0; i < old_page_size; i += new_page_size) {
-                map_page(pagemap, old_virt + i, old_phys + i, old_flags, desired_sz);
-            }
-        } else {
-            // Allocate a table for the next level
-            ret = (pt_entry_t*)pmm_alloc(1);
-            current_level[entry] = pte_new((size_t)ret, PT_TABLE_FLAGS);
-        }
-    }
-
-    return ret;
-}
-
-
-extern uint64_t paging_mode;
-pagemap_t GlobalPageMap = {0};
-
-namespace VMM{
-    void Init(){
-        GlobalPageMap = new_pagemap(paging_mode);
-    }
-
-    void MapPage(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags){
-        map_page(GlobalPageMap, virt_addr, phys_addr, flags, Size4KiB);
-    }
-
-    void MapPages(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags, uint64_t count){
-        map_pages(GlobalPageMap, virt_addr, phys_addr, flags, count);
-    }
-
-    void MapMemory(void* virtualMemory, void* physicalMemory, int flags){
-        MapPage((uint64_t)virtualMemory, (uint64_t)physicalMemory, flags);
-    }
-
-    void MapMemory(void* virtualMemory, void* physicalMemory){
-#ifdef __x86_64__
-        MapMemory(virtualMemory, physicalMemory, PT_FLAG_WRITE | 1);
-#endif
-    }
-
-    void MapMemories(void* virtualMemory, void* physicalMemory, int flags, int count){
-        MapPages((uint64_t)virtualMemory, (uint64_t)physicalMemory, flags, count);
-    }
-
-    void MapMemories(void* virtualMemory, void* physicalMemory, int count){
-        for(int i = 0;i < count;i++)
-            MapMemory((void*)((uint64_t)virtualMemory + i * 0x1000), (void*)((uint64_t)physicalMemory + i * 0x1000));
-    }
+  return clone;
 }

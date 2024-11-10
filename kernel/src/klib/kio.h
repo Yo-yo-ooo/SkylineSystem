@@ -214,6 +214,18 @@ static inline uint64_t rdtsc(void) {
 
 #elif defined (__aarch64__)
 
+#define read_ttbr_el1(num)                                   \
+({                                                           \
+    uint64_t value;                                          \
+    asm volatile ("mrs %0, ttbr" #num "_el1" : "=r"(value)); \
+    value;                                                   \
+})
+
+#define write_ttbr_el1(num, value)                           \
+{                                                            \
+    asm volatile ("msr ttbr" #num "_el1, %0" :: "r"(value)); \
+}
+
 static inline uint64_t rdtsc(void) {
     uint64_t v;
     asm volatile ("mrs %0, cntpct_el0" : "=r" (v));
