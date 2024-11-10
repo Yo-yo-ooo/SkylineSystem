@@ -46,7 +46,7 @@ void Init() {
     }
 
     vmm_switch_pm_nocpu(vmm_kernel_pm);
-    kprintf("[INFO] vmm_init(): VMM Initialised. Kernel's page map located at %lx.\n", (u64)vmm_kernel_pm);
+    kinfo(" vmm_init(): VMM Initialised. Kernel's page map located at %lx.\n", (u64)vmm_kernel_pm);
 }
 
 vma_region* CreateRegion(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {

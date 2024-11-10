@@ -39,7 +39,7 @@ void Init() {
     pmm_total_pages = higher_address / PAGE_SIZE;
     u64 bitmap_size = ALIGN_UP(pmm_total_pages / 8, PAGE_SIZE);
 
-    kprintf("[INFO] PMM::Init(): STEP(GET DATA) DONE\n");
+    kinfo(" PMM::Init(): STEP(GET DATA) DONE\n");
 
     for (u64 i = 0; i < pmm_memmap->entry_count; i++) {
         entry = entries[i];
@@ -57,7 +57,7 @@ void Init() {
         for (u64 j = 0; j < entry->length; j += PAGE_SIZE)
         bitmap_clear(pmm_bitmap, (entry->base + j) / PAGE_SIZE);
     }
-    kprintf("[INFO] PMM::Init(): PMM Initialised at %lx with bitmap size of %ld.\n", (u64)pmm_bitmap, bitmap_size);
+    kinfo(" PMM::Init(): PMM Initialised at %lx with bitmap size of %ld.\n", (u64)pmm_bitmap, bitmap_size);
 }
 
 u64 FindPages(usize n) {
