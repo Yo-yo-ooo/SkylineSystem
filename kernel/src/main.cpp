@@ -123,6 +123,6 @@ extern "C" void kmain(void) {
 #endif
     
     // We're done, just hang...
-    e9_printf("[INFO] Kernel started! hanging...");
+    kprintf("[INFO] \033[38;2;0;255;255mSkylineSystem\033[0m Booted successfully hanging...");
     hcf();
 }

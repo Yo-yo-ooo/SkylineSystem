@@ -1,7 +1,10 @@
 #pragma once
 
-#include "../../../klib/klib.h"
-#include "../interrupt/idt.h"
+#include "../klib/klib.h"
+
+#ifdef __x86_64__
+
+#include "../arch/x86_64/interrupt/idt.h"
 
 #define PTE_PRESENT (u64)1
 #define PTE_WRITABLE (u64)2
@@ -11,6 +14,8 @@
 #define PTE_ADDR_MASK 0x000ffffffffff000
 #define PTE_GET_ADDR(VALUE) ((VALUE) & PTE_ADDR_MASK)
 #define PTE_GET_FLAGS(VALUE) ((VALUE) & ~PTE_ADDR_MASK)
+
+#endif
 
 typedef struct vma_region {
     uptr vaddr;

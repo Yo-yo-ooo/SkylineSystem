@@ -1,7 +1,6 @@
 #include <limine.h>
 #include "vmm.h"   
-#include "../../../klib/klib.h"
-#include "../../../mem/pmm.h"
+#include "pmm.h"
 
 __attribute__((used, section(".requests")))
 static volatile struct limine_kernel_address_request kernel_address_request = {
@@ -46,7 +45,7 @@ void vmm_init() {
     }
 
     vmm_switch_pm_nocpu(vmm_kernel_pm);
-    kprintf("vmm_init(): VMM Initialised. Kernel's page map located at %lx.\n", (u64)vmm_kernel_pm);
+    kprintf("[INFO] vmm_init(): VMM Initialised. Kernel's page map located at %lx.\n", (u64)vmm_kernel_pm);
 }
 
 vma_region* vmm_create_region(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
