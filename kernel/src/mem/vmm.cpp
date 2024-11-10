@@ -10,7 +10,8 @@ static volatile struct limine_kernel_address_request kernel_address_request = {
 
 pagemap* vmm_kernel_pm = NULL;
 
-void vmm_init() {
+namespace VMM {
+void Init() {
     vmm_kernel_pm = (pagemap*)HIGHER_HALF(pmm_alloc(1));
     memset(vmm_kernel_pm, 0, PAGE_SIZE);
 
@@ -48,7 +49,7 @@ void vmm_init() {
     kprintf("[INFO] vmm_init(): VMM Initialised. Kernel's page map located at %lx.\n", (u64)vmm_kernel_pm);
 }
 
-vma_region* vmm_create_region(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
+vma_region* CreateRegion(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
     vma_region* region = (vma_region*)HIGHER_HALF(pmm_alloc(1));
     region->vaddr = vaddr;
     region->end = vaddr + (pages * PAGE_SIZE);
@@ -67,7 +68,7 @@ vma_region* vmm_create_region(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u6
     return region;
 }
 
-vma_region* vmm_insert_after(vma_region* prev, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
+vma_region* InsertAfter(vma_region* prev, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
     vma_region* region = (vma_region*)HIGHER_HALF(pmm_alloc(1));
     region->vaddr = vaddr;
     region->end = vaddr + (pages * PAGE_SIZE);
@@ -85,14 +86,14 @@ vma_region* vmm_insert_after(vma_region* prev, uptr vaddr, uptr paddr, u64 pages
     return region;
 }
 
-void vmm_delete_region(vma_region* region) {
+void DeleteRegion(vma_region* region) {
     region->prev->next = region->prev;
     region->next->prev = region->prev;
 
     pmm_free(PHYSICAL(region), 1);
 }
 
-vma_region* vmm_get_region(pagemap* pm, uptr vaddr) {
+vma_region* GetRegion(pagemap* pm, uptr vaddr) {
     vma_region* region = pm->vma_head->next;
     for (; region != pm->vma_head; region = region->next)
         if (region->vaddr == vaddr)
@@ -100,7 +101,7 @@ vma_region* vmm_get_region(pagemap* pm, uptr vaddr) {
     return NULL;
 }
 
-vma_region* vmm_find_range(pagemap* pm, uptr vaddr) {
+vma_region* FindRange(pagemap* pm, uptr vaddr) {
     vma_region* region = pm->vma_head->next;
     for (; region != pm->vma_head; region = region->next)
         if (region->vaddr <= vaddr && region->end >= vaddr)
@@ -108,7 +109,7 @@ vma_region* vmm_find_range(pagemap* pm, uptr vaddr) {
     return NULL;
 }
 
-uptr* vmm_get_next_lvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
+uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
     if (lvl[entry] & PTE_PRESENT)
         return (uptr*)HIGHER_HALF(PTE_GET_ADDR(lvl[entry]));
     if (alloc) {
@@ -120,7 +121,7 @@ uptr* vmm_get_next_lvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
     return NULL;
 }
 
-pagemap* vmm_new_pm() {
+pagemap* NewPM() {
     pagemap* pm = (pagemap*)HIGHER_HALF(pmm_alloc(1));
     memset(pm, 0, PAGE_SIZE);
 
@@ -138,7 +139,7 @@ pagemap* vmm_new_pm() {
     return pm;
 }
 
-void vmm_destroy_pm(pagemap* pm) {
+void DestroyPM(pagemap* pm) {
     vma_region* next;
     for (vma_region* region = pm->vma_head->next; region != pm->vma_head;) {
         next = region->next;
@@ -150,7 +151,7 @@ void vmm_destroy_pm(pagemap* pm) {
     pmm_free(PHYSICAL(pm), 1);
 }
 
-void vmm_switch_pm_nocpu(pagemap* pm) {
+void SwitchPMNocpu(pagemap* pm) {
 #ifdef __x86_64__
     __asm__ volatile ("mov %0, %%cr3" : : "r"((u64)PHYSICAL(pm->top_lvl)) : "memory");
 #elif defined(__aarch64__)
@@ -158,12 +159,12 @@ void vmm_switch_pm_nocpu(pagemap* pm) {
 #endif
 }
 
-void vmm_switch_pm(pagemap* pm) {
-    //__asm__ volatile ("mov %0, %%cr3" : : "r"((u64)PHYSICAL(pm->top_lvl)) : "memory");
+void SwitchPM(pagemap* pm) {
+    vmm_switch_pm_nocpu(pm);
     //this_cpu()->pm = pm;
 }
 
-void vmm_map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
+void Map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
     uptr pml1_entry = (vaddr >> 12) & 0x1ff;
     uptr pml2_entry = (vaddr >> 21) & 0x1ff;
     uptr pml3_entry = (vaddr >> 30) & 0x1ff;
@@ -176,7 +177,7 @@ void vmm_map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
     pml1[pml1_entry] = paddr | flags;
 }
 
-void vmm_map_user(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
+void MapUser(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
     uptr pml1_entry = (vaddr >> 12) & 0x1ff;
     uptr pml2_entry = (vaddr >> 21) & 0x1ff;
     uptr pml3_entry = (vaddr >> 30) & 0x1ff;
@@ -189,7 +190,7 @@ void vmm_map_user(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
     pml1[pml1_entry] = paddr | flags;
 }
 
-void vmm_unmap(pagemap* pm, uptr vaddr) {
+void Unmap(pagemap* pm, uptr vaddr) {
     uptr pml1_entry = (vaddr >> 12) & 0x1ff;
     uptr pml2_entry = (vaddr >> 21) & 0x1ff;
     uptr pml3_entry = (vaddr >> 30) & 0x1ff;
@@ -205,7 +206,7 @@ void vmm_unmap(pagemap* pm, uptr vaddr) {
     __asm__ volatile ("invlpg (%0)" : : "b"(vaddr) : "memory");
 }
 
-uptr vmm_get_page(pagemap* pm, uptr vaddr) {
+uptr GetPage(pagemap* pm, uptr vaddr) {
     uptr pml1_entry = (vaddr >> 12) & 0x1ff;
     uptr pml2_entry = (vaddr >> 21) & 0x1ff;
     uptr pml3_entry = (vaddr >> 30) & 0x1ff;
@@ -221,7 +222,7 @@ uptr vmm_get_page(pagemap* pm, uptr vaddr) {
     return pml1[pml1_entry];
 }
 
-uptr vmm_get_pml2(pagemap* pm, uptr vaddr) {
+uptr GetPML2(pagemap* pm, uptr vaddr) {
     uptr pml2_entry = (vaddr >> 21) & 0x1ff;
     uptr pml3_entry = (vaddr >> 30) & 0x1ff;
     uptr pml4_entry = (vaddr >> 39) & 0x1ff;
@@ -233,22 +234,22 @@ uptr vmm_get_pml2(pagemap* pm, uptr vaddr) {
     return pml2[pml2_entry];
 }
 
-void vmm_map_range(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
+void MapRange(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
     for (u64 i = 0; i < pages; i++)
         vmm_map(pm, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
 }
 
-void vmm_map_user_range(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
+void MapUserRange(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
     for (u64 i = 0; i < pages; i++)
         vmm_map_user(pm, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
 }
 
-void vmm_unmap_range(pagemap* pm, uptr vaddr, u64 pages) {
+void UnmapRange(pagemap* pm, uptr vaddr, u64 pages) {
     for (u64 i = 0; i < pages; i++)
         vmm_unmap(pm, vaddr + (i * PAGE_SIZE));
 }
 
-void* vmm_alloc(pagemap* pm, u64 pages, u64 flags) {
+void* Alloc(pagemap* pm, u64 pages, u64 flags) {
     void* pg = pmm_alloc(pages);
     if (!pg) return NULL;
     // In case we didn't find a hole, create a new region
@@ -272,7 +273,7 @@ void* vmm_alloc(pagemap* pm, u64 pages, u64 flags) {
     return (void*)vaddr;
 }
 
-void vmm_free(pagemap* pm, void* ptr, u64 pages) {
+void Free(pagemap* pm, void* ptr, u64 pages) {
     if (!ptr) return;
     vma_region* region = vmm_get_region(pm, (uptr)ptr);
     if (!region)
@@ -282,19 +283,19 @@ void vmm_free(pagemap* pm, void* ptr, u64 pages) {
     vmm_delete_region(region);
 }
 
-uptr vmm_get_region_paddr(pagemap* pm, uptr ptr) {
+uptr GetRegionPAddr(pagemap* pm, uptr ptr) {
     vma_region* region = vmm_get_region(pm, ptr);
     if (!region)
         return 0;
     return region->paddr;
 }
 
-void vmm_invlpg_range(uptr vaddr, u64 pages) {
+void INVLPGRange(uptr vaddr, u64 pages) {
     for (u64 i = 0; i < pages; i++)
         __asm__ volatile ("invlpg (%0)" : : "r"(vaddr + (i * PAGE_SIZE)));
 }
 
-bool vmm_handle_pf(registers* r) {
+bool HandlePF(registers* r) {
     bool halt = false;
     /*
     if (this_cpu()->pm == vmm_kernel_pm) {
@@ -345,7 +346,7 @@ nocow:
     return halt;
 }
 
-pagemap* vmm_clone(pagemap* pm) {
+pagemap* Clone(pagemap* pm) {
     pagemap* clone = vmm_new_pm();
 
     // Create a new region for the clone.
@@ -353,7 +354,7 @@ pagemap* vmm_clone(pagemap* pm) {
     for (vma_region* region = pm->vma_head->next; region != pm->vma_head; region = region->next) {
         // Set page as read only.
         vmm_map_range(pm, region->vaddr, region->paddr, region->pages, region->flags & ~PTE_WRITABLE);
-
+        
         // Map the directories with the right flags
         vmm_map_user_range(clone, region->vaddr, region->paddr, region->pages, region->flags);
         // Map the page with the right flags
@@ -367,4 +368,6 @@ pagemap* vmm_clone(pagemap* pm) {
     }
 
   return clone;
+}
+
 }

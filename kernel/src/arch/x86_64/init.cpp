@@ -25,7 +25,7 @@ void x86_64_init(void){
     e9_printf("[ OK ] PMM INIT!");
 
     e9_printf("[INFO] INIT VMM...");
-    vmm_init();
+    VMM::Init();
     e9_printf("[ OK ] VMM INIT!");
 
     e9_printf("[INFO] INIT PIT...");

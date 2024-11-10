@@ -48,32 +48,53 @@ extern symbol rodata_end_ld;
 extern symbol data_start_ld;
 extern symbol data_end_ld;
 
-void vmm_init();
 
-pagemap* vmm_new_pm();
-void vmm_destroy_pm(pagemap* pm);
 
-void vmm_switch_pm_nocpu(pagemap* pm);
-void vmm_switch_pm(pagemap* pm);
+namespace VMM{
+    void Init();
+    vma_region* CreateRegion(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
+    vma_region* GetRegion(pagemap* pm, uptr vaddr);
+    vma_region* FindRange(pagemap* pm, uptr vaddr);
+    void DeleteRegion(vma_region* region);
+    uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc);
+    pagemap* NewPM();
+    void DestroyPM(pagemap* pm);
+    void SwitchPM(pagemap* pm);
+    void SwitchPMNocpu(pagemap* pm);
+    void Map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
+    void MapUser(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
+    void MapRange(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
+    void MapUserRange(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
+    void UnmapRange(pagemap* pm, uptr vaddr, u64 pages);
+    void* Alloc(pagemap* pm, u64 pages, u64 flags);
+    void Free(pagemap* pm, void* ptr, u64 pages);
+    uptr GetRegionPAddr(pagemap* pm, uptr ptr);
+    uptr GetPage(pagemap* pm, uptr vaddr);
+    bool HandlePF(registers* r);
+    pagemap* Clone(pagemap* pm);
+}
 
-vma_region* vmm_create_region(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
-void vmm_delete_region(vma_region* region);
-
-void vmm_map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
-void vmm_map_user(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
-void vmm_unmap(pagemap* pm, uptr vaddr);
-
-uptr vmm_get_page(pagemap* pm, uptr vaddr);
-
-void vmm_map_range(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
-void vmm_map_user_range(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
-
-void* vmm_alloc(pagemap* pm, u64 pages, u64 flags);
-void vmm_free(pagemap* pm, void* ptr, u64 pages);
-
-vma_region* vmm_find_range(pagemap* pm, uptr vaddr);
-uptr vmm_get_region_paddr(pagemap* pm, uptr ptr);
-
-bool vmm_handle_pf(registers* r);
-
-pagemap* vmm_clone(pagemap* pm);
+#define vmm_init VMM::Init
+#define vmm_create_region VMM::CreateRegion
+#define vmm_get_region VMM::GetRegion
+#define vmm_find_range VMM::FindRange
+#define vmm_delete_region VMM::DeleteRegion
+#define vmm_get_next_lvl VMM::GetNextlvl
+#define vmm_new_pm VMM::NewPM
+#define vmm_destroy_pm VMM::DestroyPM
+#define vmm_switch_pm VMM::SwitchPM
+#define vmm_switch_pm_nocpu VMM::SwitchPMNocpu
+#define vmm_map VMM::Map
+#define vmm_unmap VMM::Unmap
+#define vmm_map_user VMM::MapUser
+#define vmm_map_range VMM::MapRange
+#define vmm_map_user_range VMM::MapUserRange
+#define vmm_unmap_range VMM::UnmapRange
+#define vmm_alloc VMM::Alloc
+#define vmm_free VMM::Free
+#define vmm_get_region_paddr VMM::GetRegionPAddr
+#define vmm_get_page VMM::GetPage
+#define vmm_handle_pf VMM::HandlePF
+#define vmm_clone VMM::Clone
+#define vmm_invlpg_range(vaddr,pages) VMM::INVLPGRange(vaddr,pages)
+#define vmm_insert_after VMM::InsertAfter
