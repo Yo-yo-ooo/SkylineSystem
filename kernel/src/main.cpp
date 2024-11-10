@@ -8,7 +8,6 @@
 #include "flanterm/backends/fb.h"
 #include "klib/klib.h"
 #include "mem/pmm.h"
-#include "mem/vmm.h"
 
 
 #if defined (__x86_64__)

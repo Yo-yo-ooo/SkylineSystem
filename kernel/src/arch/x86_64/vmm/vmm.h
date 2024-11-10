@@ -1,8 +1,7 @@
 #pragma once
 
-#include <types.h>
-#include <mm/pmm.h>
-#include <sys/idt.h>
+#include "../../../klib/klib.h"
+#include "../interrupt/idt.h"
 
 #define PTE_PRESENT (u64)1
 #define PTE_WRITABLE (u64)2
@@ -14,23 +13,23 @@
 #define PTE_GET_FLAGS(VALUE) ((VALUE) & ~PTE_ADDR_MASK)
 
 typedef struct vma_region {
-  uptr vaddr;
-  uptr end;
+    uptr vaddr;
+    uptr end;
 
-  u64 pages;
-  u64 flags;
+    u64 pages;
+    u64 flags;
 
-  uptr paddr;
+    uptr paddr;
 
-  u64 ref_count;
+    u64 ref_count;
 
-  struct vma_region* next;
-  struct vma_region* prev;
+    struct vma_region* next;
+    struct vma_region* prev;
 } vma_region;
 
 typedef struct {
-  uptr* top_lvl;
-  vma_region* vma_head;
+    uptr* top_lvl;
+    vma_region* vma_head;
 } pagemap;
 
 extern pagemap* vmm_kernel_pm;

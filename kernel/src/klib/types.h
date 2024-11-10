@@ -17,3 +17,5 @@ typedef i64 isize;
 
 typedef uintptr_t uptr;
 typedef intptr_t iptr;
+
+typedef char symbol[];

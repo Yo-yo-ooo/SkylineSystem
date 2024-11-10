@@ -1,7 +1,7 @@
 #include <limine.h>
 #include "vmm.h"   
-#include "../klib/klib.h"
-#include "../mem/pmm.h"
+#include "../../../klib/klib.h"
+#include "../../../mem/pmm.h"
 
 __attribute__((used, section(".requests")))
 static volatile struct limine_kernel_address_request kernel_address_request = {
@@ -111,7 +111,7 @@ vma_region* vmm_find_range(pagemap* pm, uptr vaddr) {
 
 uptr* vmm_get_next_lvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
     if (lvl[entry] & PTE_PRESENT)
-        return HIGHER_HALF(PTE_GET_ADDR(lvl[entry]));
+        return (uptr*)HIGHER_HALF(PTE_GET_ADDR(lvl[entry]));
     if (alloc) {
         uptr* pml = (uptr*)HIGHER_HALF(pmm_alloc(1));
         memset(pml, 0, PAGE_SIZE);
@@ -152,12 +152,16 @@ void vmm_destroy_pm(pagemap* pm) {
 }
 
 void vmm_switch_pm_nocpu(pagemap* pm) {
+#ifdef __x86_64__
     __asm__ volatile ("mov %0, %%cr3" : : "r"((u64)PHYSICAL(pm->top_lvl)) : "memory");
+#elif defined(__aarch64__)
+    write_ttbr_el1(1,(u64)PHYSICAL(pm->top_lvl));
+#endif
 }
 
 void vmm_switch_pm(pagemap* pm) {
-    __asm__ volatile ("mov %0, %%cr3" : : "r"((u64)PHYSICAL(pm->top_lvl)) : "memory");
-    this_cpu()->pm = pm;
+    //__asm__ volatile ("mov %0, %%cr3" : : "r"((u64)PHYSICAL(pm->top_lvl)) : "memory");
+    //this_cpu()->pm = pm;
 }
 
 void vmm_map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
@@ -293,15 +297,18 @@ void vmm_invlpg_range(uptr vaddr, u64 pages) {
 
 bool vmm_handle_pf(registers* r) {
     bool halt = false;
+    /*
     if (this_cpu()->pm == vmm_kernel_pm) {
         printf("cpu%lu: Page fault. Died.\n", this_cpu()->lapic_id);
         kprintf("cpu%lu: Page fault. Died.\n", this_cpu()->lapic_id);
         halt = true;
     } else
+    */
         halt = false;
     u64 cr2;
     __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
-    pagemap* pm = this_thread()->pm;
+    //pagemap* pm = this_thread()->pm;
+    pagemap* pm = {0};
     u64 vaddr = ALIGN_DOWN(cr2, PAGE_SIZE);
     uptr page = vmm_get_page(pm, vaddr);
     uptr paddr = page & ~0xFFF;
@@ -330,12 +337,12 @@ bool vmm_handle_pf(registers* r) {
 }
 
 nocow:
-    kprintf("Segmentation fault on proc %lu\n", this_proc()->pid);
+    //kprintf("Segmentation fault on proc %lu\n", this_proc()->pid);
 
     kprintf("Vaddr: %lx Paddr: %lx PM: %lx Page flags: 0x%lx\n", vaddr, paddr, pm, page & 0xFFF);
     kprintf("RIP: 0x%lx RSP: 0x%lx CR2: 0x%lx err: %lx\n", r->rip, r->rsp, cr2, r->err_code);
-    if (!halt)
-        sig_raise(SIGSEGV);
+    //if (!halt)
+        //sig_raise(SIGSEGV);
     return halt;
 }
 

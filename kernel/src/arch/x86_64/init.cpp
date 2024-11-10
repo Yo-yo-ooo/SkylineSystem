@@ -2,7 +2,7 @@
 #include "interrupt/gdt.h"
 #include "../pinc.h"
 #include "../../mem/pmm.h"
-#include "../../mem/vmm.h"
+#include "vmm/vmm.h"
 #include "../../klib/klib.h"
 #include "pit/pit.h"
 
@@ -25,7 +25,7 @@ void x86_64_init(void){
     e9_printf("[ OK ] PMM INIT!");
 
     e9_printf("[INFO] INIT VMM...");
-    VMM::Init();
+    vmm_init();
     e9_printf("[ OK ] VMM INIT!");
 
     e9_printf("[INFO] INIT PIT...");
