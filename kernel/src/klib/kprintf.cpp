@@ -899,6 +899,28 @@ int kpok(const char* format, ...)
     return ret;
 }
 
+int kwarn(const char* format, ...)
+{
+    kprintf("[\033[38;2;255;255;0mWARN\033[0m] ");
+    va_list va;
+    va_start(va, format);
+    char buffer[1];
+    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
+    va_end(va);
+    return ret;
+}
+
+int kerror(const char* format, ...)
+{
+    kprintf("[\033[38;2;255;0;0mERR:\033[0m] ");
+    va_list va;
+    va_start(va, format);
+    char buffer[1];
+    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
+    va_end(va);
+    return ret;
+}
+
 int sprintf_(char* buffer, const char* format, ...)
 {
     va_list va;
