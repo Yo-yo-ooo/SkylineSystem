@@ -1,18 +1,25 @@
 #pragma once
 #include <stdint.h>
-
-#include "../../../klib/klib.h"
-#include "../interrupt/idt.h"
-
+#include "../../../klib/kio.h"
 namespace PIT
 {
-#define PIT_FREQ 1000
+    extern uint64_t TicksSinceBoot;
+    extern uint64_t freq;
+    extern uint16_t Divisor;
+    static const uint64_t BaseFrequency = 1193182;
+    extern bool Inited;
+    extern int FreqAdder;
+    extern uint16_t NonMusicDiv;
 
-    extern u64 pit_ticks;
 
-    void Handler(registers* r);
+    void Sleepd(double seconds);
+    void Sleep(uint64_t milliseconds);
+    void InitPIT();
 
-    void Init();
-
-    void Sleep(u64 ms);
+    void SetDivisor(uint16_t divisor);
+    uint64_t TimeSinceBootMS();
+    uint64_t TimeSinceBootMicroS();
+    uint64_t GetFrequency();
+    void SetFrequency(uint64_t frequency);
+    void Tick();
 }

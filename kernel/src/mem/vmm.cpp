@@ -110,6 +110,7 @@ vma_region* FindRange(pagemap* pm, uptr vaddr) {
 }
 
 uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
+#ifdef __x86_64__
     if (lvl[entry] & PTE_PRESENT)
         return (uptr*)HIGHER_HALF(PTE_GET_ADDR(lvl[entry]));
     if (alloc) {
@@ -119,6 +120,12 @@ uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
         return pml;
     }
     return NULL;
+#elif defined(__aarch64__) || defined(__loongarch64__) || defined(__riscv)
+    uptr* pml = (uptr*)HIGHER_HALF(pmm_alloc(1));
+    memset(pml, 0, PAGE_SIZE);
+    lvl[entry] = (uptr)PHYSICAL(pml) | flags;
+    return pml;
+#endif
 }
 
 pagemap* NewPM() {

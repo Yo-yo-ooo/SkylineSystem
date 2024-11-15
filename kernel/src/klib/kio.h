@@ -51,6 +51,22 @@ static inline uint32_t ind(uint16_t port) {
     return value;
 }
 
+inline void io_wait()
+{
+    inb(0x80);
+    outb(0x80, 0);
+    //asm volatile ("outb %%al, $0x80" : : "a"(0));
+} 
+
+inline void io_wait(uint64_t ms)
+{
+    while (ms--)
+    {
+        inb(0x80);
+        outb(0x80, 0);
+    }
+} 
+
 static inline void mmoutb(uintptr_t addr, uint8_t value) {
     asm volatile (
         "movb %1, (%0)"
@@ -77,6 +93,8 @@ static inline void mmoutd(uintptr_t addr, uint32_t value) {
         : "memory"
     );
 }
+
+
 
 #if defined (__x86_64__)
 static inline void mmoutq(uintptr_t addr, uint64_t value) {
