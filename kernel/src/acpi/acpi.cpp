@@ -41,9 +41,8 @@ namespace ACPI{
         //void* addr = (void*)rsdp_request.response->address;
         struct ACPI_RSDP* rsdp = (struct ACPI_RSDP*)addr;
 
-        //if (_memcmp(rsdp->sign, "RSD PTR", 7))
-        //    return 0;
-        //kinfo("ACPI: Copyed RSDP SIGN\n");
+        if (_memcmp(rsdp->sign, "RSD PTR", 7))
+            return 0;
         
         if (rsdp->revision != 0) {
             // Use XSDT
