@@ -32,6 +32,12 @@ static volatile struct limine_framebuffer_request framebuffer_request = {
 };
 
 __attribute__((used, section(".requests")))
+static volatile struct limine_rsdp_request rsdp_request = {
+  .id = LIMINE_RSDP_REQUEST,
+  .revision = 0
+};
+
+__attribute__((used, section(".requests")))
 static volatile struct limine_hhdm_request hhdm_request = {
     .id = LIMINE_HHDM_REQUEST,
     .revision = 0
@@ -48,6 +54,13 @@ static volatile struct limine_boot_time_request boot_time_request = {
     .id = LIMINE_BOOT_TIME_REQUEST,
     .revision = 0
 };
+
+__attribute__((used, section(".requests")))
+static volatile struct limine_module_request module_request = {
+    .id = LIMINE_MODULE_REQUEST,
+    .revision = 0
+};
+
 // Finally, define the start and end markers for the Limine requests.
 // These can also be moved anywhere, to any .c file, as seen fit.
 
@@ -58,12 +71,55 @@ __attribute__((used, section(".requests_end_marker")))
 static volatile LIMINE_REQUESTS_END_MARKER;
 
 
+bool checkStringEndsWith(const char* str, const char* end)
+{
+    const char* _str = str;
+    const char* _end = end;
 
+    while(*str != 0)
+        str++;
+    str--;
+
+    while(*end != 0)
+        end++;
+    end--;
+
+    while (true)
+    {
+        if (*str != *end)
+            return false;
+
+        str--;
+        end--;
+
+        if (end == _end || (str == _str && end == _end))
+            return true;
+
+        if (str == _str)
+            return false;
+    }
+
+    return true;
+}
+
+
+
+limine_file* getFile(const char* name)
+{
+    limine_module_response *module_response = module_request.response;
+    for (size_t i = 0; i < module_response->module_count; i++) {
+        limine_file *f = module_response->modules[i];
+        if (checkStringEndsWith(f->path, name))
+            return f;
+    }
+    return NULL;
+}
 
 struct flanterm_context* ft_ctx = NULL;
 
 uint64_t hhdm_offset = 0;
 uint64_t paging_mode = 0;
+uint64_t RSDP_ADDR = 0;
 // The following will be our kernel's entry point.
 // If renaming kmain() to something else, make sure to change the
 // linker script accordingly.
@@ -99,21 +155,26 @@ extern "C" void kmain(void) {
     );
 
     if(hhdm_request.response == NULL) {
-        kinfo("Can not get (limine hhdm request)->response\n");
+        kerror("Can not get (limine hhdm request)->response\n");
         hcf();
     }
     hhdm_offset = hhdm_request.response->offset;
 
     if(paging_mode_request.response == NULL) {
-        kinfo("Can not get (limine paging_mode_request)->response\n");
+        kerror("Can not get (limine paging_mode_request)->response\n");
         hcf();
     }
     paging_mode = paging_mode_request.response->mode;
     
     if(boot_time_request.response == NULL) {
-        kinfo("Can not get (limine boot_time_request)->response\n");
+        kerror("Can not get (limine boot_time_request)->response\n");
         hcf();
     }
+
+    if(rsdp_request.response == NULL){
+        kerror("ACPI::Init(): RSDP request is NULL.\n");
+    }
+    RSDP_ADDR = rsdp_request.response->address;
 
     kinfo("Starting kernel...\n");
     kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->boot_time);
@@ -125,4 +186,60 @@ extern "C" void kmain(void) {
     // We're done, just hang...
     kinfo("Kernel started.\n");
     hcf();
+}
+
+
+extern "C" {
+
+void *memcpy(void *dest, const void *src, size_t n) {
+    uint8_t *pdest = static_cast<uint8_t *>(dest);
+    const uint8_t *psrc = static_cast<const uint8_t *>(src);
+
+    for (size_t i = 0; i < n; i++) {
+        pdest[i] = psrc[i];
+    }
+
+    return dest;
+}
+
+void *memset(void *s, int c, size_t n) {
+    uint8_t *p = static_cast<uint8_t *>(s);
+
+    for (size_t i = 0; i < n; i++) {
+        p[i] = static_cast<uint8_t>(c);
+    }
+
+    return s;
+}
+
+void *memmove(void *dest, const void *src, size_t n) {
+    uint8_t *pdest = static_cast<uint8_t *>(dest);
+    const uint8_t *psrc = static_cast<const uint8_t *>(src);
+
+    if (src > dest) {
+        for (size_t i = 0; i < n; i++) {
+            pdest[i] = psrc[i];
+        }
+    } else if (src < dest) {
+        for (size_t i = n; i > 0; i--) {
+            pdest[i-1] = psrc[i-1];
+        }
+    }
+
+    return dest;
+}
+
+int memcmp(const void *s1, const void *s2, size_t n) {
+    const uint8_t *p1 = static_cast<const uint8_t *>(s1);
+    const uint8_t *p2 = static_cast<const uint8_t *>(s2);
+
+    for (size_t i = 0; i < n; i++) {
+        if (p1[i] != p2[i]) {
+            return p1[i] < p2[i] ? -1 : 1;
+        }
+    }
+
+    return 0;
+}
+
 }

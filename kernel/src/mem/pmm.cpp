@@ -45,7 +45,7 @@ void Init() {
         entry = entries[i];
         if (entry->type != LIMINE_MEMMAP_USABLE || entry->length < bitmap_size) continue;
         pmm_bitmap = (u8*)HIGHER_HALF(entry->base);
-        memset(pmm_bitmap, 0xFF, bitmap_size);
+        _memset(pmm_bitmap, 0xFF, bitmap_size);
         entry->base += bitmap_size;
         entry->length -= bitmap_size;
         break;

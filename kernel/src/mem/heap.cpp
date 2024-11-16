@@ -68,7 +68,7 @@ void* Realloc(heap* h, void* ptr, u64 size) {
     void* new_ptr = Heap::Alloc(h, size);
     if (!new_ptr)
         return NULL;
-    memcpy(new_ptr, ptr, block->size);
+    _memcpy(new_ptr, ptr, block->size);
     Heap::Free(h, ptr);
     return new_ptr;
 }

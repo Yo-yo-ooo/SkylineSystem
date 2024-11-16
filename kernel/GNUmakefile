@@ -56,11 +56,14 @@ endif
 # Check if KCC is Clang.
 override KCC_IS_CLANG := $(shell ! $(KCC) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
 
+# Check if CXX is Clang.
+override KCXX_IS_CLANG := $(shell ! $(CXX) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
+
 # Internal C flags that should not be changed by the user.
 override KCFLAGS += \
     -Wall \
     -Wextra \
-    -std=gnu11 \
+    -std=gnu17 \
     -nostdinc \
     -ffreestanding \
     -fno-stack-protector \
@@ -92,15 +95,20 @@ ifeq ($(KARCH),x86_64)
         override KCC += \
             -target x86_64-unknown-none
     endif
+	ifeq ($(KCXX_IS_CLANG),1)
+		override KCXX += \
+			-target x86_64-unknown-none
+	endif
     override KCFLAGS += \
         -m64 \
         -march=x86-64 \
         -mno-80387 \
 		-mno-mmx \
+		-mno-red-zone \
+        -mcmodel=kernel \
 		-mno-sse \
         -mno-sse2 \
-        -mno-red-zone \
-        -mcmodel=kernel
+		-msoft-float
     override KLDFLAGS += \
         -m elf_x86_64
     override KNASMFLAGS += \
@@ -111,6 +119,10 @@ ifeq ($(KARCH),aarch64)
         override KCC += \
             -target aarch64-unknown-none
     endif
+	ifeq ($(KCXX_IS_CLANG),1)
+		override KCXX += \
+			-target aarch64-unknown-none
+	endif
     override KCFLAGS += \
         -mgeneral-regs-only
     override KLDFLAGS += \
@@ -126,6 +138,15 @@ ifeq ($(KARCH),riscv64)
         override KCFLAGS += \
             -march=rv64imac_zicsr_zifencei
     endif
+	ifeq ($(KCXX_IS_CLANG),1)
+        override KCXX += \
+            -target riscv64-unknown-none
+        override KCPPFLAGS += \
+            -march=rv64imac
+    else
+        override KCPPFLAGS += \
+            -march=rv64imac_zicsr_zifencei
+    endif
     override KCFLAGS += \
         -mabi=lp64 \
         -mno-relax
@@ -138,6 +159,10 @@ ifeq ($(KARCH),loongarch64)
         override KCC += \
             -target loongarch64-unknown-none
     endif
+	ifeq ($(KCXX_IS_CLANG),1)
+		override KCXX += \
+			-target loongarch64-unknown-none
+	endif
     override KCFLAGS += \
         -march=loongarch64 \
         -mabi=lp64s

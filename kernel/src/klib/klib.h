@@ -11,6 +11,7 @@
 
 
 extern uint64_t hhdm_offset;
+extern uint64_t RSDP_ADDR;
 
 #define PAGE_SIZE 4096
 
@@ -27,10 +28,10 @@ void Panic(bool halt, const char* message);
 #define panic Panic
 void hcf(void);
 
-void *memcpy(void *dest, const void *src, size_t n);
-void *memset(void *s, int c, size_t n);
-void *memmove(void *dest, const void *src, size_t n);
-int memcmp(const void *s1, const void *s2, size_t n);
+void _memcpy(void* src, void* dest, uint64_t size);
+void _memset(void* dest, uint8_t value, uint64_t size);
+void _memmove(void* src, void* dest, uint64_t size);
+int _memcmp(const void* buffer1,const void* buffer2,size_t  count);
 
 
 inline void bitmap_set(u8* bitmap, u64 bit) {

@@ -13,13 +13,13 @@ pagemap* vmm_kernel_pm = NULL;
 namespace VMM {
 void Init() {
     vmm_kernel_pm = (pagemap*)HIGHER_HALF(pmm_alloc(1));
-    memset(vmm_kernel_pm, 0, PAGE_SIZE);
+    _memset(vmm_kernel_pm, 0, PAGE_SIZE);
 
     vmm_kernel_pm->top_lvl = (uptr*)HIGHER_HALF(pmm_alloc(1));
-    memset(vmm_kernel_pm->top_lvl, 0, PAGE_SIZE);
+    _memset(vmm_kernel_pm->top_lvl, 0, PAGE_SIZE);
 
     vmm_kernel_pm->vma_head = (vma_region*)HIGHER_HALF(pmm_alloc(1));
-    memset(vmm_kernel_pm->vma_head, 0, PAGE_SIZE);
+    _memset(vmm_kernel_pm->vma_head, 0, PAGE_SIZE);
 
     vmm_kernel_pm->vma_head->next = vmm_kernel_pm->vma_head;
     vmm_kernel_pm->vma_head->prev = vmm_kernel_pm->vma_head;
@@ -115,14 +115,14 @@ uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
         return (uptr*)HIGHER_HALF(PTE_GET_ADDR(lvl[entry]));
     if (alloc) {
         uptr* pml = (uptr*)HIGHER_HALF(pmm_alloc(1));
-        memset(pml, 0, PAGE_SIZE);
+        _memset(pml, 0, PAGE_SIZE);
         lvl[entry] = (uptr)PHYSICAL(pml) | flags;
         return pml;
     }
     return NULL;
 #elif defined(__aarch64__) || defined(__loongarch64__) || defined(__riscv)
     uptr* pml = (uptr*)HIGHER_HALF(pmm_alloc(1));
-    memset(pml, 0, PAGE_SIZE);
+    _memset(pml, 0, PAGE_SIZE);
     lvl[entry] = (uptr)PHYSICAL(pml) | flags;
     return pml;
 #endif
@@ -130,13 +130,13 @@ uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
 
 pagemap* NewPM() {
     pagemap* pm = (pagemap*)HIGHER_HALF(pmm_alloc(1));
-    memset(pm, 0, PAGE_SIZE);
+    _memset(pm, 0, PAGE_SIZE);
 
     pm->top_lvl = (uptr*)HIGHER_HALF(pmm_alloc(1));
-    memset(pm->top_lvl, 0, PAGE_SIZE);
+    _memset(pm->top_lvl, 0, PAGE_SIZE);
 
     pm->vma_head = (vma_region*)HIGHER_HALF(pmm_alloc(1));
-    memset(pm->vma_head, 0, PAGE_SIZE);
+    _memset(pm->vma_head, 0, PAGE_SIZE);
 
     pm->vma_head->next = pm->vma_head;
     pm->vma_head->prev = pm->vma_head;
@@ -331,7 +331,7 @@ bool HandlePF(registers* r) {
         goto nocow;
 
         void* newpage = pmm_alloc(region->pages);
-        memcpy(HIGHER_HALF(newpage), HIGHER_HALF(region->paddr), region->pages * PAGE_SIZE);
+        _memcpy(HIGHER_HALF(newpage), HIGHER_HALF(region->paddr), region->pages * PAGE_SIZE);
 
         // It is CoW now we just need to re-map it.
         vmm_map_range(pm, region->vaddr, (uptr)newpage, region->pages, region->flags);

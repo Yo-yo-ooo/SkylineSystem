@@ -7,6 +7,7 @@
 #include "../../klib/klib.h"
 #include "pit/pit.h"
 #include "rtc/rtc.h"
+#include "../../acpi/acpi.h"
 
 void sse_enable() {
     u64 cr0;
@@ -23,8 +24,6 @@ void sse_enable() {
 void x86_64_init(void){
     WELCOME_X86_64
     kinfo("INIT x86_64 ARCH\n");
-
-    kinfo("CPU TSC DATA: %ld\n",rdtsc());
 
     kinfo("INIT GDT...\n");
     gdt_init();
@@ -54,6 +53,10 @@ void x86_64_init(void){
     RTC::InitRTC();
     kpok("RTC INIT!\n");
 
+    uint64_t TSC1 = rdtsc();
+    PIT::Sleep(1000);
+    kinfo("CPU Hz %lld\n", (rdtsc() - TSC1));
+
     kinfo("INIT HEAP...\n");
 
     void* stack = HIGHER_HALF(pmm_alloc(3) + (3 * PAGE_SIZE));
@@ -61,5 +64,12 @@ void x86_64_init(void){
 
     Heap::Init();
     kpok("KHeap initialised.\n");
+
+    if(!ACPI::Init((void*)RSDP_ADDR)){
+        kerror("ACPI INIT FAILED:Couldn't find ACPI.\n");
+        hcf();
+    }
+
+    kpok("ACPI INIT!\n");
 
 }
