@@ -178,7 +178,7 @@ extern "C" void kmain(void) {
 
     kinfo("Starting kernel...\n");
     kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->boot_time);
-    
+
 #ifdef __x86_64__
     x86_64_init();
 #endif

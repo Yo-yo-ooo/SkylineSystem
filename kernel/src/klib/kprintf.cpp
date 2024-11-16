@@ -912,7 +912,7 @@ int kwarn(const char* format, ...)
 
 int kerror(const char* format, ...)
 {
-    kprintf("[\033[38;2;255;0;0mERR:\033[0m] ");
+    kprintf("[\033[38;2;255;0;0mERR!\033[0m] ");
     va_list va;
     va_start(va, format);
     char buffer[1];
