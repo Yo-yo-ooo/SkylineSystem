@@ -61,7 +61,7 @@ void x86_64_init(void){
 
     kinfo("INIT HEAP...\n");
 
-    void* stack = HIGHER_HALF(pmm_alloc(3) + (3 * PAGE_SIZE));
+    void* stack = HIGHER_HALF(PMM::Alloc(3) + (3 * PAGE_SIZE));
     tss_list[0].rsp[0] = (u64)stack;
 
     Heap::Init();

@@ -10,8 +10,8 @@ void Init() {
 }
 
 heap* Create(pagemap* pm) {
-    heap* h = (heap*)HIGHER_HALF(pmm_alloc(1));
-    h->block_head = (heap_block*)HIGHER_HALF(pmm_alloc(1));
+    heap* h = (heap*)HIGHER_HALF(PMM::Alloc(1));
+    h->block_head = (heap_block*)HIGHER_HALF(PMM::Alloc(1));
     h->block_head->magic = HEAP_MAGIC;
     h->block_head->next = h->block_head->prev = h->block_head;
     h->block_head->size = 0;
@@ -24,7 +24,7 @@ void* Alloc(heap* h, u64 size) {
     lock(&h->hl);
     u64 pages = DIV_ROUND_UP(sizeof(heap_block) + size, PAGE_SIZE);
     u8* buf = (h == kernel_heap ?
-                HIGHER_HALF(pmm_alloc(pages)) :
+                HIGHER_HALF(PMM::Alloc(pages)) :
                 vmm_alloc(h->pm, pages, PTE_PRESENT | PTE_WRITABLE | PTE_USER));
     heap_block* block = (heap_block*)buf;
     block->magic = HEAP_MAGIC;
@@ -52,7 +52,7 @@ void Free(heap* h, void* ptr) {
     u8* buf = (u8*)(ptr - sizeof(heap_block));
     if (h == kernel_heap) {
         buf = PHYSICAL(buf);
-        pmm_free(buf, pages);
+        PMM::Free(buf, pages);
     } else {
         //vmm_free(this_cpu()->pm, buf, pages);
     }

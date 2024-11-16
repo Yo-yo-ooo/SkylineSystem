@@ -12,13 +12,13 @@ pagemap* vmm_kernel_pm = NULL;
 
 namespace VMM {
 void Init() {
-    vmm_kernel_pm = (pagemap*)HIGHER_HALF(pmm_alloc(1));
+    vmm_kernel_pm = (pagemap*)HIGHER_HALF(PMM::Alloc(1));
     _memset(vmm_kernel_pm, 0, PAGE_SIZE);
 
-    vmm_kernel_pm->top_lvl = (uptr*)HIGHER_HALF(pmm_alloc(1));
+    vmm_kernel_pm->top_lvl = (uptr*)HIGHER_HALF(PMM::Alloc(1));
     _memset(vmm_kernel_pm->top_lvl, 0, PAGE_SIZE);
 
-    vmm_kernel_pm->vma_head = (vma_region*)HIGHER_HALF(pmm_alloc(1));
+    vmm_kernel_pm->vma_head = (vma_region*)HIGHER_HALF(PMM::Alloc(1));
     _memset(vmm_kernel_pm->vma_head, 0, PAGE_SIZE);
 
     vmm_kernel_pm->vma_head->next = vmm_kernel_pm->vma_head;
@@ -50,7 +50,7 @@ void Init() {
 }
 
 vma_region* CreateRegion(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
-    vma_region* region = (vma_region*)HIGHER_HALF(pmm_alloc(1));
+    vma_region* region = (vma_region*)HIGHER_HALF(PMM::Alloc(1));
     region->vaddr = vaddr;
     region->end = vaddr + (pages * PAGE_SIZE);
     region->paddr = paddr;
@@ -69,7 +69,7 @@ vma_region* CreateRegion(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 fla
 }
 
 vma_region* InsertAfter(vma_region* prev, uptr vaddr, uptr paddr, u64 pages, u64 flags) {
-    vma_region* region = (vma_region*)HIGHER_HALF(pmm_alloc(1));
+    vma_region* region = (vma_region*)HIGHER_HALF(PMM::Alloc(1));
     region->vaddr = vaddr;
     region->end = vaddr + (pages * PAGE_SIZE);
     region->paddr = paddr;
@@ -90,7 +90,7 @@ void DeleteRegion(vma_region* region) {
     region->prev->next = region->prev;
     region->next->prev = region->prev;
 
-    pmm_free(PHYSICAL(region), 1);
+    PMM::Free(PHYSICAL(region), 1);
 }
 
 vma_region* GetRegion(pagemap* pm, uptr vaddr) {
@@ -114,14 +114,14 @@ uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
     if (lvl[entry] & PTE_PRESENT)
         return (uptr*)HIGHER_HALF(PTE_GET_ADDR(lvl[entry]));
     if (alloc) {
-        uptr* pml = (uptr*)HIGHER_HALF(pmm_alloc(1));
+        uptr* pml = (uptr*)HIGHER_HALF(PMM::Alloc(1));
         _memset(pml, 0, PAGE_SIZE);
         lvl[entry] = (uptr)PHYSICAL(pml) | flags;
         return pml;
     }
     return NULL;
 #elif defined(__aarch64__) || defined(__loongarch64__) || defined(__riscv)
-    uptr* pml = (uptr*)HIGHER_HALF(pmm_alloc(1));
+    uptr* pml = (uptr*)HIGHER_HALF(PMM::Alloc(1));
     _memset(pml, 0, PAGE_SIZE);
     lvl[entry] = (uptr)PHYSICAL(pml) | flags;
     return pml;
@@ -129,13 +129,13 @@ uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
 }
 
 pagemap* NewPM() {
-    pagemap* pm = (pagemap*)HIGHER_HALF(pmm_alloc(1));
+    pagemap* pm = (pagemap*)HIGHER_HALF(PMM::Alloc(1));
     _memset(pm, 0, PAGE_SIZE);
 
-    pm->top_lvl = (uptr*)HIGHER_HALF(pmm_alloc(1));
+    pm->top_lvl = (uptr*)HIGHER_HALF(PMM::Alloc(1));
     _memset(pm->top_lvl, 0, PAGE_SIZE);
 
-    pm->vma_head = (vma_region*)HIGHER_HALF(pmm_alloc(1));
+    pm->vma_head = (vma_region*)HIGHER_HALF(PMM::Alloc(1));
     _memset(pm->vma_head, 0, PAGE_SIZE);
 
     pm->vma_head->next = pm->vma_head;
@@ -150,12 +150,12 @@ void DestroyPM(pagemap* pm) {
     vma_region* next;
     for (vma_region* region = pm->vma_head->next; region != pm->vma_head;) {
         next = region->next;
-        pmm_free(PHYSICAL(region), 1);
+        PMM::Free(PHYSICAL(region), 1);
         region = next;
     }
-    pmm_free(PHYSICAL(pm->vma_head), 1);
-    pmm_free(PHYSICAL(pm->top_lvl), 1);
-    pmm_free(PHYSICAL(pm), 1);
+    PMM::Free(PHYSICAL(pm->vma_head), 1);
+    PMM::Free(PHYSICAL(pm->top_lvl), 1);
+    PMM::Free(PHYSICAL(pm), 1);
 }
 
 void SwitchPMNocpu(pagemap* pm) {
@@ -257,7 +257,7 @@ void UnmapRange(pagemap* pm, uptr vaddr, u64 pages) {
 }
 
 void* Alloc(pagemap* pm, u64 pages, u64 flags) {
-    void* pg = pmm_alloc(pages);
+    void* pg = PMM::Alloc(pages);
     if (!pg) return NULL;
     // In case we didn't find a hole, create a new region
     uptr vaddr = pm->vma_head->prev->end + PAGE_SIZE;
@@ -285,7 +285,7 @@ void Free(pagemap* pm, void* ptr, u64 pages) {
     vma_region* region = vmm_get_region(pm, (uptr)ptr);
     if (!region)
         return;
-    pmm_free((void*)region->paddr, pages);
+    PMM::Free((void*)region->paddr, pages);
     vmm_unmap_range(pm, region->vaddr, pages);
     vmm_delete_region(region);
 }
@@ -330,7 +330,7 @@ bool HandlePF(registers* r) {
         if (!region)
         goto nocow;
 
-        void* newpage = pmm_alloc(region->pages);
+        void* newpage = PMM::Alloc(region->pages);
         _memcpy(HIGHER_HALF(newpage), HIGHER_HALF(region->paddr), region->pages * PAGE_SIZE);
 
         // It is CoW now we just need to re-map it.

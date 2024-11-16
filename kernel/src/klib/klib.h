@@ -54,3 +54,6 @@ void lock(atomic_lock* l);
 void unlock(atomic_lock* l);
 
 u64 rdtsc(void);
+
+
+#define __init

@@ -18,7 +18,7 @@ static volatile struct limine_memmap_request memmap_request = {
 struct limine_memmap_response* pmm_memmap = NULL;
 
 namespace PMM{
-void Init() {
+void __init Init() {
     pmm_memmap = memmap_request.response;
     struct limine_memmap_entry** entries = pmm_memmap->entries;
     
@@ -87,10 +87,10 @@ u64 FindPages(usize n) {
 
 void* Alloc(usize n) {
     lock(&pmm_lock);
-    u64 first = pmm_find_pages(n);
+    u64 first = PMM::FindPages(n);
     if (first == 0) {
         pmm_last_page = 0;
-        first = pmm_find_pages(n);
+        first = PMM::FindPages(n);
         if (first == 0) {
         kprintf("    PMM::Alloc(): Couldn't allocate %lu pages: Not enough memory.\n", n);
         unlock(&pmm_lock);

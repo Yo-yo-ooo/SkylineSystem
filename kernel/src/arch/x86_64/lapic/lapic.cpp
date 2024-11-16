@@ -3,7 +3,7 @@
 namespace LAPIC{
     void Init() {
         LAPIC::Write(0xf0, 0x1ff);
-        kinfo("    lapic_init(): LAPIC Initialised.\n");
+        kinfo("    LAPIC::Init(): LAPIC Initialised.\n");
     }
 
     void Write(u32 reg, u32 val) {
