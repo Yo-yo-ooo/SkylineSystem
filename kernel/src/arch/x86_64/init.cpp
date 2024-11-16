@@ -10,6 +10,7 @@
 #include "../../acpi/madt.h"
 #include "../../acpi/acpi.h"
 #include "lapic/lapic.h"
+#include "ioapic/ioapic.h"
 
 void sse_enable() {
     u64 cr0;
@@ -80,5 +81,9 @@ void x86_64_init(void){
     kinfo("INIT LAPIC...\n");
     LAPIC::Init();
     kpok("LAPIC INIT!\n");
+
+    kinfo("INIT IOAPIC...\n");
+    IOAPIC::Init();
+    kpok("IOAPIC INIT!\n");
 
 }

@@ -35,6 +35,8 @@ void lock(atomic_lock* l) {
     while (__atomic_test_and_set(&l->locked, __ATOMIC_ACQUIRE)) {
 #if defined(__x86_64__)
         __asm__ volatile("pause");
+#else
+        __asm__ volatile("nop");
 #endif
     }
 }

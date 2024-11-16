@@ -1,6 +1,8 @@
+#pragma once
+
 #include "../klib/klib.h"
 
-typedef struct {
+typedef struct ACPI_MADT{
     char sign[4];
     u32 len;
     u8 revision;
@@ -18,19 +20,19 @@ typedef struct {
     char table[];
 } acpi_madt;
 
-typedef struct {
+typedef struct MADT_Entry{
     u8 type;
     u8 len;
 } madt_entry;
 
-typedef struct {
+typedef struct MADT_CPU_LAPIC{
     madt_entry un;
     u8 cpu_id;
     u8 apic_id;
     u32 flags;
 } madt_cpu_lapic;
 
-typedef struct {
+typedef struct MADT_IOAPIC{
     madt_entry un;
     u8 apic_id;
     u8 resv;
@@ -38,7 +40,7 @@ typedef struct {
     u32 gsi_base;
 } madt_ioapic;
 
-typedef struct {
+typedef struct MADT_ISO{
     madt_entry un;
     u8 bus_src;
     u8 irq_src;
@@ -46,7 +48,7 @@ typedef struct {
     u16 flags;
 } madt_iso;
 
-typedef struct {
+typedef struct MADT_LAPIC_ADDR{
     madt_entry un;
     u16 resv;
     u64 phys_lapic;
