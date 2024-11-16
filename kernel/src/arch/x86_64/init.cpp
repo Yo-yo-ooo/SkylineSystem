@@ -9,6 +9,7 @@
 #include "rtc/rtc.h"
 #include "../../acpi/madt.h"
 #include "../../acpi/acpi.h"
+#include "lapic/lapic.h"
 
 void sse_enable() {
     u64 cr0;
@@ -76,5 +77,8 @@ void x86_64_init(void){
     MADT_Init();
     kpok("MADT INIT!\n");
     
+    kinfo("INIT LAPIC...\n");
+    LAPIC::Init();
+    kpok("LAPIC INIT!\n");
 
 }

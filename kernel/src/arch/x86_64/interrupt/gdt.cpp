@@ -24,8 +24,8 @@ gdt_table def_table = {
 tssr tss_list[256]; // One tssr per CPU
 
 void gdt_init() {
-    tss_list[lapic_get_id()].iopb = sizeof(tssr);
-    uptr tss = (uptr)&tss_list[lapic_get_id()];
+    tss_list[LAPIC::GetID()].iopb = sizeof(tssr);
+    uptr tss = (uptr)&tss_list[LAPIC::GetID()];
 
     def_table.tss_entry.length = sizeof(tss_entry);
     def_table.tss_entry.base = (u16)(tss & 0xffff);

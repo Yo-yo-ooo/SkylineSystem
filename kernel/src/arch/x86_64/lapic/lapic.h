@@ -30,8 +30,14 @@
 #define LAPIC_TIMER_CURCNT 0x390
 #define LAPIC_TIMER_PERIODIC 0x20000
 
-void lapic_write(u32 reg, u32 val);
-u32 lapic_read(u32 reg);
-u32 lapic_get_id();
 
-void lapic_eoi();
+
+namespace LAPIC{
+    void Init();
+
+    void Write(u32 reg, u32 val);
+    u32 Read(u32 reg);
+    u32 GetID();
+
+    void EOI();
+}

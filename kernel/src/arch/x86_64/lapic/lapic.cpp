@@ -1,17 +1,24 @@
 #include "lapic.h"
 
-void lapic_write(u32 reg, u32 val) {
-    *((volatile u32*)(HIGHER_HALF(0xfee00000) + reg)) = val;
-}
+namespace LAPIC{
+    void Init() {
+        LAPIC::Write(0xf0, 0x1ff);
+        kinfo("    lapic_init(): LAPIC Initialised.\n");
+    }
 
-u32 lapic_read(u32 reg) {
-    return *((volatile u32*)(HIGHER_HALF(0xfee00000) + reg));
-}
+    void Write(u32 reg, u32 val) {
+        *((volatile u32*)(HIGHER_HALF(0xfee00000) + reg)) = val;
+    }
 
-u32 lapic_get_id() {
-  return lapic_read(0x0020) >> LAPIC_ICDESTSHIFT;
-}
+    u32 Read(u32 reg) {
+        return *((volatile u32*)(HIGHER_HALF(0xfee00000) + reg));
+    }
 
-void lapic_eoi() {
-    lapic_write((u8)0xb0, 0x0);
+    u32 GetID() {
+    return LAPIC::Read(0x0020) >> LAPIC_ICDESTSHIFT;
+    }
+
+    void EOI() {
+        LAPIC::Write((u8)0xb0, 0x0);
+    }
 }
