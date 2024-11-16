@@ -7,6 +7,7 @@
 #include "../../klib/klib.h"
 #include "pit/pit.h"
 #include "rtc/rtc.h"
+#include "../../acpi/madt.h"
 #include "../../acpi/acpi.h"
 
 void sse_enable() {
@@ -65,11 +66,15 @@ void x86_64_init(void){
     Heap::Init();
     kpok("KHeap initialised.\n");
 
+    kinfo("INIT ACPI...\n");
     if(!ACPI::Init((void*)RSDP_ADDR)){
         kerror("ACPI INIT FAILED:Couldn't find ACPI.\n");
         hcf();
     }
-
     kpok("ACPI INIT!\n");
+    kinfo("INIT MADT...\n");
+    MADT_Init();
+    kpok("MADT INIT!\n");
+    
 
 }
