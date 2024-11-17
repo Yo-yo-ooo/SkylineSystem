@@ -7,6 +7,11 @@
 
 namespace Schedule{
 
+    u64 sched_pid = 0;
+    atomic_lock sched_lock;
+    list* sched_sleep_list = NULL;
+
+
     process* GetNextProc(cpu_info* c) {
         lock(&c->sched_lock);
         struct process* proc;
@@ -36,6 +41,16 @@ namespace Schedule{
         return t;
     }
 
+    void Init(){
+        if (!sched_sleep_list)
+            sched_sleep_list = List::Create();
+        cpu_info* cpu = this_cpu();
+        cpu->idle_proc = Schedule::NewProc("Idle", SCHED_IDLE, cpu->lapic_id, false);
+        Schedule::ProcAddThread(cpu->idle_proc, (void*)hcf, false);
+        cpu->proc_idx = -1;
+        cpu->thread = NULL;
+        cpu->proc = NULL;
+    }
 
     void Schedule(registers* r){
         LAPIC::StopTimer();
@@ -70,5 +85,96 @@ namespace Schedule{
 
         LAPIC::EOI();
         LAPIC::Oneshot(0x80, 5);
+    }
+
+    process* NewProc(char* name, u8 type, u64 cpu, bool child) {
+        cpu_info* c = get_cpu(cpu);
+        if (!c) return NULL;
+
+        process* proc = (process*)kmalloc(sizeof(process));
+        if (!proc) {
+            return NULL;
+        }
+        _memset(proc, 0, sizeof(proc));
+
+        proc->cpu = cpu;
+
+        proc->pm = (child ? NULL : vmm_new_pm());
+
+        proc->type = type;
+
+        //proc->current_dir = vfs_root;
+        //proc->fds[0] = fd_open(kb_node, FS_READ, 0);
+        //proc->fds[1] = fd_open(tty_node, FS_WRITE, 1);
+        //proc->fds[2] = fd_open(tty_node, FS_WRITE, 2);
+
+        proc->threads = List::Create();
+
+        proc->name = (char*)kmalloc(strlen(name));
+        _memcpy(proc->name, name, strlen(name));
+
+        proc->tidx = -1;
+        proc->scheduled = false;
+
+        proc->idx = c->proc_list->count;
+        proc->pid = sched_pid++; // TODO: hash this
+
+        lock(&c->sched_lock);
+        List::Add(c->proc_list, proc);
+        unlock(&c->sched_lock);
+
+        kinfo("New proc %lu created.\n", proc->pid);
+        return proc;
+    }
+
+    thread* ProcAddThread(process* proc, void* entry, bool fork) {
+        thread* t = (thread*)kmalloc(sizeof(thread));
+        if (!t) return NULL;
+        _memset(t, 0, sizeof(thread));
+
+        t->pm = proc->pm;
+        t->heap_area = Heap::Create(proc->pm);
+
+        char* kstack = (char*)kmalloc(SCHED_STACK_SIZE);
+        char* stack = NULL;
+
+        if (proc->type == SCHED_USER && !fork) {
+            pagemap* pm = this_cpu()->pm;
+            vmm_switch_pm(t->pm);
+            stack = (char*)Heap::Alloc(t->heap_area, SCHED_STACK_SIZE);
+            _memset(stack, 0, SCHED_STACK_SIZE);
+            vmm_switch_pm(pm);
+        } else if (!fork) {
+            stack = (char*)kmalloc(SCHED_STACK_SIZE);
+            _memset(stack, 0, SCHED_STACK_SIZE);
+        }
+
+        t->stack_base = (u64)(stack + SCHED_STACK_SIZE);
+        t->kernel_stack = (u64)(kstack + SCHED_STACK_SIZE);
+
+        t->stack_bottom = (u64)stack;
+        t->kstack_bottom = (u64)kstack;
+
+        __asm__ volatile ("fxsave %0" : : "m"(t->fxsave));
+
+        t->gs = 0;
+
+        t->ctx.rip = (u64)entry;
+        t->ctx.rsp = (u64)t->stack_base;
+        t->ctx.cs  = (proc->type == SCHED_USER ? 0x43 : 0x28);
+        t->ctx.ss  = (proc->type == SCHED_USER ? 0x3B : 0x30);
+        t->ctx.rflags = 0x202;
+
+        t->sleeping_time = 0;
+
+        t->state = (fork ? SCHED_BLOCKED : SCHED_RUNNING);
+        t->idx = proc->threads->count;
+        t->parent = proc;
+
+        lock(&proc->lock);
+        List::Add(proc->threads, t);
+        unlock(&proc->lock);
+
+        return t;
     }
 }

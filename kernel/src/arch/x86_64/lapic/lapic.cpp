@@ -49,4 +49,10 @@ namespace LAPIC{
         apic_ticks = ticks;
         LAPIC::StopTimer();
     }
+
+    void IPI(u32 id, u8 dat) {
+        LAPIC::Write(LAPIC_ICRHI, id << LAPIC_ICDESTSHIFT);
+        LAPIC::Write(LAPIC_ICRLO, dat);
+    }
+
 }

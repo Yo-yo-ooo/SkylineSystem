@@ -12,33 +12,9 @@
 #include "lapic/lapic.h"
 #include "ioapic/ioapic.h"
 #include "cpuid.h"
+#include "schedule/sched.h"
 
-u64 fpu_init() {
-    u32 eax, unused, edx;
-    __get_cpuid(1, &eax, &unused, &unused, &edx);
-    if (!(edx & (1 << 0)))
-        return 1; // CPU Doesnt support FPU.
 
-    u64 cr0;
-    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0) : : "memory");
-    cr0 &= ~(1 << 3); // Clear TS bit
-    cr0 &= ~(1 << 2); // Clear EM bit
-    __asm__ volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
-    __asm__ volatile("fninit");
-    return 0;
-}
-
-void sse_enable() {
-    u64 cr0;
-    u64 cr4;
-    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0) : : "memory");
-    cr0 &= ~((u64)1 << 2);
-    cr0 |= (u64)1 << 1;
-    __asm__ volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
-    __asm__ volatile("mov %%cr4, %0" :"=r"(cr4) : : "memory");
-    cr4 |= (u64)3 << 9;
-    __asm__ volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
-}
 
 void x86_64_init(void){
     WELCOME_X86_64
@@ -102,10 +78,18 @@ void x86_64_init(void){
     IOAPIC::Init();
     kpok("IOAPIC INIT!\n");
 
+    kinfo("INIT FPU...\n");
     if (fpu_init()){
         kerror("FPU INIT FAILED: x86_64 CPU doesn't support FPU.\n");
         hcf();
     }
+    kpok("FPU INIT!\n");
     
-    
+    kinfo("INIT SCHEDULE...\n");
+    irq_register(0x80 - 32, Schedule::Schedule);
+    kpok("SCHEDULE INIT!\n");
+
+    kinfo("INIT SMP...\n");
+    smp_init();
+    kpok("SMP INIT!\n");
 }

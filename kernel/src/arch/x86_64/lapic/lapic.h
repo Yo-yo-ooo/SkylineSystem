@@ -47,4 +47,5 @@ namespace LAPIC{
     void Oneshot(u8 vec, u64 ms);
     void CalibrateTimer();
 
+    void IPI(u32 id, u8 dat);
 }

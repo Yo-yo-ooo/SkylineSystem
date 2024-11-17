@@ -33,7 +33,7 @@ $(call USER_VARIABLE,KCC,cc)
 $(call USER_VARIABLE,KLD,ld)
 
 # User controllable C flags.
-$(call USER_VARIABLE,KCFLAGS,-g -pipe)
+$(call USER_VARIABLE,KCFLAGS,-g -O2 -pipe)
 
 # User controllable C preprocessor flags. We set none by default.
 $(call USER_VARIABLE,KCPPFLAGS,)
@@ -76,7 +76,6 @@ override KCFLAGS += \
 	-w \
 	-Wno-error=deprecated \
 	-Werror \
-	-O0
 
 # Internal C preprocessor flags that should not be changed by the user.
 override KCPPFLAGS := \

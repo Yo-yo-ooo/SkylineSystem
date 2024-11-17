@@ -129,6 +129,7 @@ uint64_t paging_mode = 0;
 uint64_t RSDP_ADDR = 0;
 uint32_t bsp_lapic_id = 0;
 uint64_t smp_cpu_count = 0;
+struct limine_smp_response* smp_response;
 // The following will be our kernel's entry point.
 // If renaming kmain() to something else, make sure to change the
 // linker script accordingly.
@@ -189,7 +190,7 @@ extern "C" void kmain(void) {
         kerror("SMP::Init(): SMP request is NULL.\n");
     }
 
-    struct limine_smp_response* smp_response = smp_request.response;
+    smp_response  = smp_request.response;
 
     bsp_lapic_id = smp_response->bsp_lapic_id;
     smp_cpu_count = smp_response->cpu_count;

@@ -58,6 +58,13 @@ void unlock(atomic_lock* l);
 
 #define __init
 
-
+inline int strlen(const char* str) {
+    int i = 0;
+    while (*str != '\0') {
+        i++;
+        str++;
+    }
+    return i;
+}
 
 #endif

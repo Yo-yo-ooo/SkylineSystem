@@ -85,4 +85,7 @@ namespace Schedule{
 
     thread* GetNextThread(process* proc);
     process* GetNextProc(cpu_info* c);
+
+    process* NewProc(char* name, u8 type, u64 cpu, bool child);
+    thread* ProcAddThread(process* proc, void* entry, bool fork);
 }

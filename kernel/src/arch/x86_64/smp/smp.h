@@ -33,4 +33,6 @@ typedef struct cpu_info{
 cpu_info* this_cpu();
 cpu_info* get_cpu(u64 lapic_id);
 
+void smp_init();
+
 #endif
