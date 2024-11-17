@@ -1,8 +1,12 @@
 #pragma once
 
+#ifndef _SMP_H_
+#define _SMP_H_
+
 #include "../../../klib/klib.h"
 #include "../schedule/sched.h"
 #include "../../../mem/vmm.h"
+#include "../cpu.h"
 
 extern u32 bsp_lapic_id;
 extern u64 smp_cpu_count;
@@ -28,3 +32,5 @@ typedef struct cpu_info{
 
 cpu_info* this_cpu();
 cpu_info* get_cpu(u64 lapic_id);
+
+#endif

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../klib/klib.h"
+#ifndef _KLIB_TYPES_H_
+#define _KLIB_TYPES_H_
 
 typedef uint64_t u64;
 typedef uint32_t u32;
@@ -20,6 +21,8 @@ typedef intptr_t iptr;
 
 typedef char symbol[];
 
-typedef struct{
+typedef struct atomic_lock{
     bool locked;
 } atomic_lock;
+
+#endif

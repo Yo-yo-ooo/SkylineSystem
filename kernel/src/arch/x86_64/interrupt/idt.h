@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef _X86_64_IDT_H
+#define _X86_64_IDT_H
+
 #include "../../../klib/klib.h"
 
 typedef struct {
@@ -19,7 +22,9 @@ typedef struct {
     u64 offset;
 } __attribute__((packed)) idtr;
 
-typedef struct {
+
+
+typedef struct registers__{
     u64 r15;
     u64 r14;
     u64 r13;
@@ -54,3 +59,5 @@ void idt_set_entry(u8 vec, void* isr, u8 type, u8 dpl);
 
 void irq_register(u8 vec, void* handler);
 void irq_unregister(u8 vec);
+
+#endif

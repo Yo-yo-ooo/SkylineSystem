@@ -1,11 +1,16 @@
 #pragma once
 
+#ifndef _KLIB_LIST_H_
+#define _KLIB_LIST_H_
+
 #include "klib.h"
 #include "types.h"
 #include "../mem/heap.h"
 
 #define SCHED_STACK_SIZE (4 * PAGE_SIZE)
 
+struct atomic_lock;
+typedef struct atomic_lock atomic_lock;
 typedef struct list_item {
     void* val;
     struct list_item* next;
@@ -26,3 +31,5 @@ namespace List{
     void* Iterate(list* l, bool wrap);
     list_item* Find(list* l, void* v);
 }
+
+#endif

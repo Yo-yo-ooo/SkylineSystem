@@ -5,6 +5,12 @@
 
 #define HEAP_MAGIC 0xdeadbeef
 
+struct vma_region;
+typedef struct vma_region vma_region;
+struct pagemap;
+typedef struct pagemap pagemap;
+struct atomic_lock;
+typedef struct atomic_lock atomic_lock;
 typedef struct heap_block {
     struct heap_block* next;
     struct heap_block* prev;

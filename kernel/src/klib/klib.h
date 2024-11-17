@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef _KLIB_H_
+#define _KLIB_H_
+
 #include "../print/e9print.h"
 #include "kprintf.h"
 
@@ -49,9 +52,12 @@ inline bool bitmap_get(u8* bitmap, u64 bit) {
 }
 
 
-
 void lock(atomic_lock* l);
 void unlock(atomic_lock* l);
 
 
 #define __init
+
+
+
+#endif

@@ -22,3 +22,4 @@ inline u64 read_kernel_gs() {
 inline void write_kernel_gs(u64 value) {
     wrmsr(IA32_GS_KERNEL_MSR, value);
 }
+

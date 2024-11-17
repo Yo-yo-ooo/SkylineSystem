@@ -24,6 +24,11 @@ enum {
 typedef void(*signal_handler)(int);
 
 struct process;
+struct registers__;
+typedef struct registers__ registers;
+
+struct cpu_info;
+typedef struct cpu_info cpu_info;
 
 typedef struct thread{
     u64 stack_base;   // gs:0

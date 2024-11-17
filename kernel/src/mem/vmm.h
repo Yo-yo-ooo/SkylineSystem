@@ -1,5 +1,8 @@
 #pragma once
 
+#ifndef _VMM_H_
+#define _VMM_H_
+
 #include "../klib/klib.h"
 
 #ifdef __x86_64__
@@ -14,6 +17,9 @@
 #define PTE_ADDR_MASK 0x000ffffffffff000
 #define PTE_GET_ADDR(VALUE) ((VALUE) & PTE_ADDR_MASK)
 #define PTE_GETES(VALUE) ((VALUE) & ~PTE_ADDR_MASK)
+
+struct registers__;
+typedef struct registers__ registers;
 
 #elif defined (__loongarch64)
 
@@ -144,7 +150,7 @@ typedef struct vma_region {
     struct vma_region* prev;
 } vma_region;
 
-typedef struct {
+typedef struct pagemap{
     uptr* top_lvl;
     vma_region* vma_head;
 } pagemap;
@@ -210,3 +216,5 @@ namespace VMM{
 #define vmm_clone VMM::Clone
 #define vmm_invlpg_range(vaddr,pages) VMM::INVLPGRange(vaddr,pages)
 #define vmm_insert_after VMM::InsertAfter
+
+#endif

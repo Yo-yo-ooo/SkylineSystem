@@ -12,6 +12,9 @@
 #define IOAPIC_ARB    0x02
 #define IOAPIC_REDTBL 0x10
 
+struct atomic_lock;
+typedef struct atomic_lock atomic_lock;
+
 namespace IOAPIC{
     u64 __init Init();
 
