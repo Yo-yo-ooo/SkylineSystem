@@ -1,7 +1,7 @@
 #include <limine.h>
 #include "vmm.h"   
-#include "pmm.h"
-
+#include "../../../mem/pmm.h"
+#include "../smp/smp.h"
 
 
 __attribute__((used, section(".requests")))
@@ -170,7 +170,7 @@ void SwitchPMNocpu(pagemap* pm) {
 
 void SwitchPM(pagemap* pm) {
     vmm_switch_pm_nocpu(pm);
-    //this_cpu()->pm = pm;
+    this_cpu()->pm = pm;
 }
 
 void Map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
@@ -306,13 +306,11 @@ void INVLPGRange(uptr vaddr, u64 pages) {
 
 bool HandlePF(registers* r) {
     bool halt = false;
-    /*
     if (this_cpu()->pm == vmm_kernel_pm) {
-        printf("cpu%lu: Page fault. Died.\n", this_cpu()->lapic_id);
-        kprintf("cpu%lu: Page fault. Died.\n", this_cpu()->lapic_id);
+        kerror("cpu%lu: Page fault. Died.\n", this_cpu()->lapic_id);
+        kerror("cpu%lu: Page fault. Died.\n", this_cpu()->lapic_id);
         halt = true;
     } else
-    */
         halt = false;
     u64 cr2;
     __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));

@@ -5,7 +5,7 @@
 
 #include "../../../klib/klib.h"
 #include "../schedule/sched.h"
-#include "../../../mem/vmm.h"
+#include "../vmm/vmm.h"
 #include "../cpu.h"
 
 extern u32 bsp_lapic_id;

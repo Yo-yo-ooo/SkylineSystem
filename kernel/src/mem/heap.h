@@ -1,7 +1,9 @@
 #pragma once
 
 #include "../klib/klib.h"
-#include "vmm.h"
+#ifdef __x86_64__
+#include "../arch/x86_64/vmm/vmm.h"
+#endif
 
 #define HEAP_MAGIC 0xdeadbeef
 

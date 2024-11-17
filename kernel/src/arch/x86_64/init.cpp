@@ -2,7 +2,7 @@
 #include "interrupt/gdt.h"
 #include "../pinc.h"
 #include "../../mem/pmm.h"
-#include "../../mem/vmm.h"
+#include "vmm/vmm.h"
 #include "../../mem/heap.h"
 #include "../../klib/klib.h"
 #include "pit/pit.h"

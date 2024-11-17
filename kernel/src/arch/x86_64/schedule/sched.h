@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../../../klib/klib.h"
-#include "../../../mem/vmm.h"
+#include "../vmm/vmm.h"
 #include "../../../mem/heap.h"
 #include "../../../fs/vfs.h"
 #include "../interrupt/idt.h"
