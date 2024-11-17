@@ -54,7 +54,7 @@ namespace PIT
             asm("hlt");
     }
 
-    void Sleepd(double seconds)
+    void Sleepd(uint64_t seconds)
     {
         Sleepd((uint64_t)(seconds * 1000));
     }

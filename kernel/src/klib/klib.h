@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include "kio.h"
 #include "types.h"
+#include "list.h"
 
 
 extern uint64_t hhdm_offset;
@@ -47,14 +48,10 @@ inline bool bitmap_get(u8* bitmap, u64 bit) {
     return (bitmap[bit / 8] & (1 << (bit % 8))) != 0;
 }
 
-typedef struct {
-    bool locked;
-} atomic_lock;
+
 
 void lock(atomic_lock* l);
 void unlock(atomic_lock* l);
-
-u64 rdtsc(void);
 
 
 #define __init

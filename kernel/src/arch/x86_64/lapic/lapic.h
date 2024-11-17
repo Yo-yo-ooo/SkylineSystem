@@ -33,11 +33,18 @@
 
 
 namespace LAPIC{
+
+    extern u64 apic_ticks;
+
     void Init();
 
     void Write(u32 reg, u32 val);
     u32 Read(u32 reg);
     u32 GetID();
-
     void EOI();
+
+    void StopTimer();
+    void Oneshot(u8 vec, u64 ms);
+    void CalibrateTimer();
+
 }

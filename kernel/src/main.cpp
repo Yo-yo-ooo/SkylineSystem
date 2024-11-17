@@ -61,6 +61,13 @@ static volatile struct limine_module_request module_request = {
     .revision = 0
 };
 
+__attribute__((used, section(".requests")))
+static volatile struct limine_smp_request smp_request = {
+  .id = LIMINE_SMP_REQUEST,
+  .revision = 0
+};
+
+
 // Finally, define the start and end markers for the Limine requests.
 // These can also be moved anywhere, to any .c file, as seen fit.
 
@@ -120,6 +127,8 @@ struct flanterm_context* ft_ctx = NULL;
 uint64_t hhdm_offset = 0;
 uint64_t paging_mode = 0;
 uint64_t RSDP_ADDR = 0;
+uint32_t bsp_lapic_id = 0;
+uint64_t smp_cpu_count = 0;
 // The following will be our kernel's entry point.
 // If renaming kmain() to something else, make sure to change the
 // linker script accordingly.
@@ -175,6 +184,15 @@ extern "C" void kmain(void) {
         kerror("ACPI::Init(): RSDP request is NULL.\n");
     }
     RSDP_ADDR = rsdp_request.response->address;
+
+    if(smp_request.response == NULL){
+        kerror("SMP::Init(): SMP request is NULL.\n");
+    }
+
+    struct limine_smp_response* smp_response = smp_request.response;
+
+    bsp_lapic_id = smp_response->bsp_lapic_id;
+    smp_cpu_count = smp_response->cpu_count;
 
     kinfo("Starting kernel...\n");
     kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->boot_time);

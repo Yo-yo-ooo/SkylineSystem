@@ -73,7 +73,10 @@ override KCFLAGS += \
     -ffunction-sections \
     -fdata-sections \
 	-fpermissive \
-	-w
+	-w \
+	-Wno-error=deprecated \
+	-Werror \
+	-O0
 
 # Internal C preprocessor flags that should not be changed by the user.
 override KCPPFLAGS := \

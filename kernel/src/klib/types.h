@@ -19,3 +19,7 @@ typedef uintptr_t uptr;
 typedef intptr_t iptr;
 
 typedef char symbol[];
+
+typedef struct{
+    bool locked;
+} atomic_lock;

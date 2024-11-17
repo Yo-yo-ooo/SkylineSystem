@@ -12,7 +12,7 @@ namespace PIT
     extern uint16_t NonMusicDiv;
 
 
-    void Sleepd(double seconds);
+    void Sleepd(uint64_t seconds);
     void Sleep(uint64_t milliseconds);
     void InitPIT();
 

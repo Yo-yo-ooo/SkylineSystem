@@ -2,10 +2,12 @@
 #include "vmm.h"   
 #include "pmm.h"
 
+
+
 __attribute__((used, section(".requests")))
 static volatile struct limine_kernel_address_request kernel_address_request = {
-  .id = LIMINE_KERNEL_ADDRESS_REQUEST,
-  .revision = 0
+    .id = LIMINE_KERNEL_ADDRESS_REQUEST,
+    .revision = 0
 };
 
 pagemap* vmm_kernel_pm = NULL;
@@ -341,7 +343,7 @@ bool HandlePF(registers* r) {
         vmm_invlpg_range(region->vaddr, region->pages);
 
         return false;
-}
+    }
 
 nocow:
     //kprintf("Segmentation fault on proc %lu\n", this_proc()->pid);

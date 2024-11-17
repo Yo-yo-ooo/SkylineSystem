@@ -11,6 +11,22 @@
 #include "../../acpi/acpi.h"
 #include "lapic/lapic.h"
 #include "ioapic/ioapic.h"
+#include "cpuid.h"
+
+u64 fpu_init() {
+    u32 eax, unused, edx;
+    __get_cpuid(1, &eax, &unused, &unused, &edx);
+    if (!(edx & (1 << 0)))
+        return 1; // CPU Doesnt support FPU.
+
+    u64 cr0;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0) : : "memory");
+    cr0 &= ~(1 << 3); // Clear TS bit
+    cr0 &= ~(1 << 2); // Clear EM bit
+    __asm__ volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
+    __asm__ volatile("fninit");
+    return 0;
+}
 
 void sse_enable() {
     u64 cr0;
@@ -86,4 +102,10 @@ void x86_64_init(void){
     IOAPIC::Init();
     kpok("IOAPIC INIT!\n");
 
+    if (fpu_init()){
+        kerror("FPU INIT FAILED: x86_64 CPU doesn't support FPU.\n");
+        hcf();
+    }
+    
+    
 }
