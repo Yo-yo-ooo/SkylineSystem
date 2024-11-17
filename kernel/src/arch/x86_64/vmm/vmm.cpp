@@ -122,12 +122,6 @@ uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
         return pml;
     }
     return NULL;
-#elif defined(__aarch64__) || defined(__loongarch64__) || defined(__riscv)
-    uptr* pml = (uptr*)HIGHER_HALF(PMM::Alloc(1));
-    _memset(pml, 0, PAGE_SIZE);
-    lvl[entry] = (uptr)PHYSICAL(pml) | flags;
-    return pml;
-#endif
 }
 
 pagemap* NewPM() {
@@ -161,11 +155,7 @@ void DestroyPM(pagemap* pm) {
 }
 
 void SwitchPMNocpu(pagemap* pm) {
-#ifdef __x86_64__
     __asm__ volatile ("mov %0, %%cr3" : : "r"((u64)PHYSICAL(pm->top_lvl)) : "memory");
-#elif defined(__aarch64__)
-    write_ttbr_el1(1,(u64)PHYSICAL(pm->top_lvl));
-#endif
 }
 
 void SwitchPM(pagemap* pm) {
