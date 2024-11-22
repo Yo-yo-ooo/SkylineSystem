@@ -112,7 +112,6 @@ vma_region* FindRange(pagemap* pm, uptr vaddr) {
 }
 
 uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc) {
-#ifdef __x86_64__
     if (lvl[entry] & PTE_PRESENT)
         return (uptr*)HIGHER_HALF(PTE_GET_ADDR(lvl[entry]));
     if (alloc) {
