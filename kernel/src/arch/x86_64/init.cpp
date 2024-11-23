@@ -16,7 +16,7 @@
 #include "schedule/syscall.h"
 
 
-void x86_64_init(void){
+void __init x86_64_init(void){
     WELCOME_X86_64
     kinfo("INIT x86_64 ARCH\n");
 

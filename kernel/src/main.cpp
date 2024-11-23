@@ -11,7 +11,7 @@
 
 
 #if defined (__x86_64__)
-extern void x86_64_init(void);
+extern void __init x86_64_init(void);
 #endif
 // Set the base revision to 2, this is recommended as this is the latest
 // base revision described by the Limine boot protocol specification.

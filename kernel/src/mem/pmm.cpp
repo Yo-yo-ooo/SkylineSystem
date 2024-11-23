@@ -18,7 +18,7 @@ static volatile struct limine_memmap_request memmap_request = {
 struct limine_memmap_response* pmm_memmap = NULL;
 
 namespace PMM{
-void __init Init() {
+void Init() {
     pmm_memmap = memmap_request.response;
     struct limine_memmap_entry** entries = pmm_memmap->entries;
     

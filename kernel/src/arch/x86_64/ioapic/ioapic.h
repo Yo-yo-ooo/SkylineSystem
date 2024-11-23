@@ -16,7 +16,7 @@ struct atomic_lock;
 typedef struct atomic_lock atomic_lock;
 
 namespace IOAPIC{
-    u64 __init Init();
+    u64 Init();
 
     void Write(madt_ioapic* ioapic, u8 reg, u32 val);
     u32 Read(madt_ioapic* ioapic, u8 reg);

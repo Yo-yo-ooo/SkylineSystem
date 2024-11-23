@@ -1,7 +1,7 @@
 #include "ioapic.h"
 
 namespace IOAPIC{
-    u64 __init Init(){
+    u64 Init(){
         madt_ioapic* ioapic = madt_ioapic_list[0];
   
         u32 val = IOAPIC::Read(ioapic, IOAPIC_VER);

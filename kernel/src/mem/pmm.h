@@ -3,7 +3,7 @@
 #include "../klib/klib.h"
 
 namespace PMM{
-    void __init Init();
+    void Init();
 
     u64 FindPages(usize n);
     void* Alloc(usize n);
