@@ -13,7 +13,7 @@
 #include "ioapic/ioapic.h"
 #include "cpuid.h"
 #include "schedule/sched.h"
-
+#include "schedule/syscall.h"
 
 
 void x86_64_init(void){
@@ -85,11 +85,16 @@ void x86_64_init(void){
     }
     kpok("FPU INIT!\n");
     
-    kinfo("INIT SCHEDULE...\n");
+    kinfo("REGIST SCHEDULE...\n");
     irq_register(0x80 - 32, Schedule::Schedule);
-    kpok("SCHEDULE INIT!\n");
+    kpok("SCHEDULE REGISTED!\n");
 
     kinfo("INIT SMP...\n");
     smp_init();
     kpok("SMP INIT!\n");
+
+    Schedule::Init();
+    user_init();
+    LAPIC::CalibrateTimer();
+    
 }

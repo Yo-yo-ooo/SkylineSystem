@@ -81,6 +81,12 @@ typedef struct process {
 } process;
 
 namespace Schedule{
+    extern u64 sched_pid;
+    extern atomic_lock sched_lock;
+    extern list* sched_sleep_list;
+
+    void Init();
+
     void Schedule(registers* r);
 
     thread* GetNextThread(process* proc);

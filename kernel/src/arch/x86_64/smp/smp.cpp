@@ -3,6 +3,7 @@
 #include "../interrupt/idt.h"
 #include "../interrupt/gdt.h"
 #include "../../../mem/pmm.h"
+#include "../schedule/syscall.h"
 #include <limine.h>
 
 extern struct limine_smp_response* smp_response;
@@ -46,8 +47,8 @@ void smp_init_cpu(struct limine_smp_info* smp_info) {
 
     LAPIC::Init();
     LAPIC::CalibrateTimer();
-    //user_init();
-    //sched_init();
+    user_init();
+    Schedule::Init();
 
     kinfo("   smp_init_cpu(): CPU %ld started.\n", smp_info->lapic_id);
     smp_cpu_started++;

@@ -1,5 +1,7 @@
 #include "pit.h"
+
 #include "../rtc/rtc.h"
+#include "../schedule/sched.h"
 namespace PIT
 {
     int roughCount = (BaseFrequency/200) / 2;
@@ -20,7 +22,16 @@ namespace PIT
         TicksSinceBoot = 0;
         SetDivisor(NonMusicDiv /*65535*/);
         freq = GetFrequency();
+        irq_register(0, PIT::Handler);
         //Inited = true;
+    }
+
+    void Handler(registers *r){
+        Tick();
+        if (Schedule::sched_sleep_list != NULL)
+            asm volatile("nop");
+        
+        LAPIC::EOI();
     }
 
     void SetDivisor(uint16_t divisor)

@@ -5,6 +5,18 @@
 #include "../../../klib/kio.h"
 #include "../cpu.h"
 
+void *__memcpy(void *d, const void *s, size_t n) {
+    __asm__ volatile ("rep movsb"
+                    : "=D" (d),
+                    "=S" (s),
+                    "=c" (n)
+                    : "0" (d),
+                    "1" (s),
+                    "2" (n)
+                    : "memory");
+    return d;
+}
+
 namespace Schedule{
 
     u64 sched_pid = 0;
@@ -107,17 +119,22 @@ namespace Schedule{
         //proc->fds[0] = fd_open(kb_node, FS_READ, 0);
         //proc->fds[1] = fd_open(tty_node, FS_WRITE, 1);
         //proc->fds[2] = fd_open(tty_node, FS_WRITE, 2);
+        //kinfo("New proc step 1 done.\n");
 
         proc->threads = List::Create();
 
-        proc->name = (char*)kmalloc(strlen(name));
-        _memcpy(proc->name, name, strlen(name));
+        proc->name = (char*)kmalloc((u64)strlen(name));
+        
+        __memcpy(proc->name, name, (size_t)strlen(name));
+        //kinfo("New proc step 2 done.\n");
 
         proc->tidx = -1;
         proc->scheduled = false;
 
         proc->idx = c->proc_list->count;
         proc->pid = sched_pid++; // TODO: hash this
+
+        
 
         lock(&c->sched_lock);
         List::Add(c->proc_list, proc);

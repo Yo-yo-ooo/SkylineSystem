@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include "../../../klib/kio.h"
+#include "../lapic/lapic.h"
 namespace PIT
 {
     extern uint64_t TicksSinceBoot;
@@ -11,6 +12,7 @@ namespace PIT
     extern int FreqAdder;
     extern uint16_t NonMusicDiv;
 
+    void Handler(registers *r);
 
     void Sleepd(uint64_t seconds);
     void Sleep(uint64_t milliseconds);
