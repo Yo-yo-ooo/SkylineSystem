@@ -48,7 +48,7 @@ $(call USER_VARIABLE,KLDFLAGS,)
 
 # Ensure the dependencies have been obtained.
 ifneq ($(shell ( test '$(MAKECMDGOALS)' = clean || test '$(MAKECMDGOALS)' = distclean ); echo $$?),0)
-    ifeq ($(shell ( ! test -d freestnd-c-hdrs-0bsd || ! test -f src/cc-runtime.c || ! test -f src/limine.h ); echo $$?),0)
+    ifeq ($(shell ( ! test -d freestnd-c-hdrs || ! test -f src/cc-runtime.c || ! test -f src/limine.h || ! test -d freestnd-cxx-hdrs); echo $$?),0)
         $(error Please run the ./get-deps script first)
     endif
 endif
@@ -80,10 +80,12 @@ override KCFLAGS += \
 # Internal C preprocessor flags that should not be changed by the user.
 override KCPPFLAGS := \
     -I src \
-    -isystem freestnd-c-hdrs-0bsd \
+	-isystem freestnd-c-hdrs/$(KARCH)/include \
     $(KCPPFLAGS) \
     -MMD \
     -MP
+
+KCXX += -isystem freestnd-cxx-hdrs/$(KARCH)/include 
 
 ifeq ($(KARCH),x86_64)
     # Internal nasm flags that should not be changed by the user.
