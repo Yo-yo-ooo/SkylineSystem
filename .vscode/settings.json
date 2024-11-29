@@ -18,7 +18,8 @@
         "interrupt.h": "c",
         "stdint.h": "c",
         "kprintf.h": "c",
-        "float.h": "c"
+        "float.h": "c",
+        "regex": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled",
     "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",

@@ -3,3 +3,5 @@
 /ovmf
 *.iso
 *.hdd
+.vscode/
+
