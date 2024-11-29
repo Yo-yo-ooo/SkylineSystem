@@ -35,7 +35,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 
-#define PRINTF_DISABLE_SUPPORT_FLOAT
+//#define PRINTF_DISABLE_SUPPORT_FLOAT
 
 #ifdef __cplusplus
 extern "C" {
