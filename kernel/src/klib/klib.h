@@ -57,7 +57,11 @@ void unlock(atomic_lock* l);
 
 
 #define __init
+#ifdef __x86_64__
 #define __ffunc __attribute__((target("sse2")))
+#else
+#define __ffunc
+#endif
 
 inline int strlen(const char* str) {
     int i = 0;
