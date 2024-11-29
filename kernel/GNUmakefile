@@ -111,8 +111,8 @@ ifeq ($(KARCH),x86_64)
 		-mno-red-zone \
         -mcmodel=kernel \
 		-mno-sse \
-        -mno-sse2 \
-		-msoft-float
+        -mno-sse2 
+		
     override KLDFLAGS += \
         -m elf_x86_64
     override KNASMFLAGS += \
