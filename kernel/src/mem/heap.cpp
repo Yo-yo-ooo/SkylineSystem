@@ -3,6 +3,7 @@
 
 heap* kernel_heap;
 
+extern void *__memcpy(void *d, const void *s, size_t n);
 namespace Heap{
 
 void Init() {
@@ -68,7 +69,7 @@ void* Realloc(heap* h, void* ptr, u64 size) {
     void* new_ptr = Heap::Alloc(h, size);
     if (!new_ptr)
         return NULL;
-    _memcpy(new_ptr, ptr, block->size);
+    __memcpy(new_ptr, ptr, block->size);
     Heap::Free(h, ptr);
     return new_ptr;
 }
