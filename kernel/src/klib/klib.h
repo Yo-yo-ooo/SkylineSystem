@@ -43,7 +43,7 @@ inline void bitmap_set(u8* bitmap, u64 bit) {
 #if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
     bitmap[bit / 8] |= 1 << (bit % 8);
 #elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    bitmap[bit / 8] |= __builtin_bswap64(1 << (bit % 8));
+    bitmap[bit / 8] = __builtin_bswap64(bitmap[bit / 8] | (1 << (bit % 8)));
 #else
 #error "Unknown endianness"
 #endif
@@ -53,7 +53,7 @@ inline void bitmap_clear(u8* bitmap, u64 bit) {
 #if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
     bitmap[bit / 8] &= ~(1 << (bit % 8));
 #elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    bitmap[bit / 8] &= __builtin_bswap64((~(1 << (bit % 8))));
+    bitmap[bit / 8] = __builtin_bswap64(bitmap[bit / 8] & (~(1 << (bit % 8))));
 #else
 #error "Unknown endianness"
 #endif
@@ -63,7 +63,7 @@ inline bool bitmap_get(u8* bitmap, u64 bit) {
 #if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
     return (bitmap[bit / 8] & (1 << (bit % 8))) != 0;
 #elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    return (bitmap[bit / 8] & __builtin_bswap64(1 << (bit % 8))) != 0;
+    return __builtin_bswap64(bitmap[bit / 8] & (1 << (bit % 8))) != 0;
 #else
 #error "Unknown endianness"
 #endif
