@@ -14,7 +14,7 @@
 #include "cpuid.h"
 #include "schedule/sched.h"
 #include "schedule/syscall.h"
-
+#include "dev/vstorage/ata.h"
 
 void __init x86_64_init(void){
     WELCOME_X86_64
@@ -96,5 +96,12 @@ void __init x86_64_init(void){
     Schedule::Init();
     user_init();
     LAPIC::CalibrateTimer();
-    
+
+    ATA::Init();
+
+    u8 buf[512];
+    ATA::Read(0, (u8*)buf, 1);
+    for(int i = 0; i < 512; i++){
+        kprintf("%d\n", buf[i]);
+    }
 }
