@@ -78,6 +78,8 @@ void unlock(atomic_lock* l);
 #define __init
 #ifdef __x86_64__
 #define __ffunc __attribute__((target("sse2")))
+#include "../arch/x86_64/MStack/MStackM.h"
+#include "../arch/x86_64/MStack/MStackS.h"
 #else
 #define __ffunc
 #endif

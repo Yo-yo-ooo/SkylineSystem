@@ -8,7 +8,7 @@
 #include "flanterm/backends/fb.h"
 #include "klib/klib.h"
 #include "mem/pmm.h"
-
+#include "klib/renderer/fb.h"
 
 #if defined (__x86_64__)
 extern void __init x86_64_init(void);
@@ -130,6 +130,9 @@ uint64_t RSDP_ADDR = 0;
 uint32_t bsp_lapic_id = 0;
 uint64_t smp_cpu_count = 0;
 struct limine_smp_response* smp_response;
+struct limine_framebuffer *fb;
+Framebuffer FB;
+Framebuffer *Fb;
 // The following will be our kernel's entry point.
 // If renaming kmain() to something else, make sure to change the
 // linker script accordingly.
@@ -146,7 +149,14 @@ extern "C" void kmain(void) {
     }
 
     // Fetch the first framebuffer.
-    struct limine_framebuffer *fb = framebuffer_request.response->framebuffers[0];
+    fb = framebuffer_request.response->framebuffers[0];
+    FB.BaseAddress = fb->address;
+    FB.Width = fb->width;
+    FB.Height = fb->height;
+    FB.PixelsPerScanLine = fb->pitch / 4;
+    FB.BufferSize = fb->pitch * fb->height;
+
+    Fb = &FB;
 
     ft_ctx = flanterm_fb_init(
         NULL,

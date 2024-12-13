@@ -17,6 +17,8 @@
 #include "dev/vstorage/ata.h"
 #include "MStack/MStackM.h"
 #include "MStack/MStackS.h"
+#include "dev/pci/pci.h"
+#include "../../klib/renderer/rnd.h"
 
 void __init x86_64_init(void){
     WELCOME_X86_64
@@ -41,6 +43,7 @@ void __init x86_64_init(void){
     MStackData::stackPointer = 0;
     for (int i = 0; i < 1000; i++)
         MStackData::stackArr[i] = MStack();
+    MStackData::BenchmarkEnabled = false;
 
     kinfo("INIT SSE\n");
     sse_enable();
@@ -104,4 +107,13 @@ void __init x86_64_init(void){
     LAPIC::CalibrateTimer();
 
     ATA::Init();
+
+    kinfo("INIT PCI...\n");
+    PCI::Init();
+    kpok("PCI INIT!\n");
+
+    kinfo("INIT DONE!\n");
+
+    PIT::Sleep(2000);
+    Renderer::Clear(Colors.black);
 }

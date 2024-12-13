@@ -51,6 +51,9 @@ static inline uint32_t ind(uint16_t port) {
     return value;
 }
 
+#define inl ind
+#define outl outd
+
 inline void io_wait()
 {
     inb(0x80);
