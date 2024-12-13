@@ -13,7 +13,7 @@
 #include "kio.h"
 #include "types.h"
 #include "list.h"
-
+#include "cstr.h"
 
 extern uint64_t hhdm_offset;
 extern uint64_t RSDP_ADDR;
@@ -30,6 +30,7 @@ extern uint64_t RSDP_ADDR;
 
 void Panic(const char* message);
 void Panic(bool halt, const char* message);
+void Panic(const char* message,bool halt);
 #define panic Panic
 void hcf(void);
 

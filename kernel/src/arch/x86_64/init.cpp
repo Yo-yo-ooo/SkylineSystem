@@ -15,6 +15,8 @@
 #include "schedule/sched.h"
 #include "schedule/syscall.h"
 #include "dev/vstorage/ata.h"
+#include "MStack/MStackM.h"
+#include "MStack/MStackS.h"
 
 void __init x86_64_init(void){
     WELCOME_X86_64
@@ -35,6 +37,10 @@ void __init x86_64_init(void){
     kinfo("INIT VMM...\n");
     VMM::Init();
     kpok("VMM INIT!\n");
+
+    MStackData::stackPointer = 0;
+    for (int i = 0; i < 1000; i++)
+        MStackData::stackArr[i] = MStack();
 
     kinfo("INIT SSE\n");
     sse_enable();
@@ -98,10 +104,4 @@ void __init x86_64_init(void){
     LAPIC::CalibrateTimer();
 
     ATA::Init();
-
-    u8 buf[512];
-    ATA::Read(0, (u8*)buf, 1);
-    for(int i = 0; i < 512; i++){
-        kprintf("%d\n", buf[i]);
-    }
 }

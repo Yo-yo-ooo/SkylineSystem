@@ -1,31 +1,11 @@
 #include "rtc.h"
 #include "../../../klib/kio.h"
+#include "../../../klib/klib.h"
 #define CURRENT_YEAR_STR        (__DATE__ + 7)                            // Change this each year!
 
 // https://wiki.osdev.org/CMOS#RTC_Update_In_Progress
 
-int64_t to_int(const char* string)
-{
-    uint64_t number = 0;
-    uint64_t size = 0;
-    while (string[size] != 0)
-        size++;
 
-    int64_t end = 0;
-    int64_t exp = 1;
-    if (string[0] == '-')
-    {
-        end = 1;
-        exp *= -1;
-    }
-
-    for (int64_t i = size - 1; i >= end; i--)
-    {
-        number += exp * (string[i] - '0');
-        exp *= 10;
-    }
-    return number;
-}
 
 namespace RTC
 {
