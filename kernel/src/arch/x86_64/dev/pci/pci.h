@@ -73,7 +73,7 @@ namespace PCI{
     void WriteWord(u8 bus, u8 dev, u8 func, u8 offset, u16 value);
     void WriteDword(u8 bus, u8 slot, u8 func, u8 offset, u32 value);
     
-    i8 FindDevice(u8 kind, u8 subclass);
+    i16 FindDevice(u8 kind, u8 subclass);
     void AddDevice(u8 bus, u8 func, u8 kind, u8 subclass, u16 device_id, u16 vendor_id, u32* bars);
 
     extern const char* unknownString;

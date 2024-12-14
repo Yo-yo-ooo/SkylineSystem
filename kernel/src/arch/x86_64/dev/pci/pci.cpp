@@ -89,7 +89,7 @@ namespace PCI{
         pci_list_idx++;
     }
 
-    i8 FindDevice(u8 kind, u8 subclass) {
+    i16 FindDevice(u8 kind, u8 subclass) {
         for (i8 i = 0; i < pci_list_idx; i++) {
             if (pci_list[i].kind == kind && pci_list[i].subclass == subclass)
             return i;
