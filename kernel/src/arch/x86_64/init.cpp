@@ -114,6 +114,6 @@ void __init x86_64_init(void){
 
     kinfo("INIT DONE!\n");
 
-    PIT::Sleep(2000);
-    Renderer::Clear(Colors.black);
+    //PIT::Sleep(2000);
+    //Renderer::Clear(Colors.black);
 }

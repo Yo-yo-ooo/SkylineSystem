@@ -1,6 +1,8 @@
 #include "pci.h"
 #include "../../../../klib/kio.h"
 #include "../../../../acpi/acpi.h"
+#include "../../vmm/vmm.h"
+#include "../../../../mem/heap.h"
 
 extern void *__memcpy(void *d, const void *s, size_t n);
 
@@ -116,9 +118,8 @@ namespace PCI{
                 kind = (u8)class_subclass;
                 subclass = (u8)((class_subclass & 0xFF00) >> 8);
                 for (int i = 0; i < 6; i++) {
-                bars[i] = PCI::ReadDword(bus, slot, func, PCI_BAR0 + (sizeof(u32) * i));
+                    bars[i] = PCI::ReadDword(bus, slot, func, PCI_BAR0 + (sizeof(u32) * i));
                 }
-
                 PCI::AddDevice(bus, func, kind, subclass, device, vendor, bars);
             }
         }
