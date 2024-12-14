@@ -83,6 +83,7 @@ void unlock(atomic_lock* l);
 #else
 #define __ffunc
 #endif
+#define UnCompleteCode 1
 
 inline int strlen(const char* str) {
     int i = 0;
