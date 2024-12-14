@@ -213,7 +213,7 @@ extern "C" void kmain(void) {
 #endif
     
     // We're done, just hang...
-    kinfo("Kernel started.\n");
+    kpok("Kernel started.\n");
     hcf();
 }
 
