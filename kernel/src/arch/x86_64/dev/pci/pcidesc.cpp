@@ -595,4 +595,74 @@ namespace PCI {
 
         return progIFEntry->name;
     }
+
+    void PrintDevMessage(PCI::PCIDeviceHeader* pciDeviceHeader) {
+        kinfoln(" > ");
+
+        {
+            const char* vendorName = PCI::GetVendorName(pciDeviceHeader->Vendor_ID);
+            if (vendorName != unknownString)
+                kinfoln(vendorName);
+            else
+            {
+                kinfoln("<");
+                kinfoln(ConvertHexToString(pciDeviceHeader->Vendor_ID));
+                kinfoln(">");
+            }
+            kinfoln(" / ");
+        }
+
+        {
+            const char* deviceName = PCI::GetDeviceName(pciDeviceHeader->Vendor_ID, pciDeviceHeader->Device_ID);
+            if (deviceName != unknownString)
+                kinfoln(deviceName);
+            else
+            {
+                kinfoln("<");
+                kinfoln(ConvertHexToString(pciDeviceHeader->Device_ID));
+                kinfoln(">");
+            }
+            kinfoln(" / ");
+        }
+
+        {
+            const char* className = PCI::GetClassName(pciDeviceHeader->Class);
+            if (className != unknownString)
+                kinfoln(className);
+            else
+            {
+                kinfoln("<");
+                kinfoln(ConvertHexToString(pciDeviceHeader->Class));
+                kinfoln(">");
+            }
+            kinfoln(" / ");
+        }
+
+        {
+            const char* subclassName = PCI::GetSubclassName(pciDeviceHeader->Class, pciDeviceHeader->SubClass);
+            if (subclassName != unknownString)
+                ;
+            else
+            {
+                kinfoln("<");
+                kinfoln(ConvertHexToString(pciDeviceHeader->SubClass));
+                kinfoln(">");
+            }
+            kinfoln(" / ");
+        }
+
+        {
+            const char* progIFName = PCI::GetProgIFName(pciDeviceHeader->Class, pciDeviceHeader->SubClass, pciDeviceHeader->Prog_IF);
+            if (progIFName != unknownString)
+                kinfoln(progIFName);
+            else
+            {
+                kinfoln("<");
+                kinfoln(ConvertHexToString(pciDeviceHeader->Prog_IF));
+                kinfoln(">");
+            }
+            //renderer->Print(" / ");
+        }
+        printf_("\n");
+    }
 }

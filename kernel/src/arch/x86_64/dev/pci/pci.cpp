@@ -80,10 +80,10 @@ namespace PCI{
     }
 
 
-    void AddDevice(u8 bus, u8 func, u8 kind, u8 subclass, u16 device_id, u16 vendor_id, u32* bars) {
+    void AddDevice(u8 bus, u8 func, u8 Class, u8 subclass, u16 device_id, u16 vendor_id, u32* bars) {
         pci_list[pci_list_idx].bus = bus;
         pci_list[pci_list_idx].function = func;
-        pci_list[pci_list_idx].kind = kind;
+        pci_list[pci_list_idx].Class = Class;
         pci_list[pci_list_idx].subclass = subclass;
         pci_list[pci_list_idx].device_id = device_id;
         pci_list[pci_list_idx].vendor_id = vendor_id;
@@ -91,18 +91,21 @@ namespace PCI{
         pci_list_idx++;
     }
 
-    i8 FindDevice(u8 kind, u8 subclass) {
+    i8 FindDevice(u8 Class, u8 subclass) {
         for (i8 i = 0; i < pci_list_idx; i++) {
-            if (pci_list[i].kind == kind && pci_list[i].subclass == subclass)
+            if (pci_list[i].Class == Class && pci_list[i].subclass == subclass)
             return i;
         }
         return -1;
     }
 
+    
+
     void Init() {
+        AddToStack();
         u16 vendor, device;
         u16 class_subclass;
-        u8 kind, subclass;
+        u8 Class, subclass;
         u32 bars[6];
 
         acpi_mcfg* mcfg = ACPI::FindTable("MCFG");
@@ -111,17 +114,28 @@ namespace PCI{
         for (u64 bus = entry->first_bus; bus < entry->last_bus; bus++){
             for (u8 slot = 0; slot < PCI_MAX_SLOT; slot++)
             for (u8 func = 0; func < PCI_MAX_FUNC; func++) {
+                u64 BusAddress = entry->addr + (bus << 20);
+                if(BusAddress == 0) continue; 
+                else VMM::Map(vmm_kernel_pm, BusAddress, BusAddress, PTE_PRESENT | PTE_WRITABLE);
+                u64 DeviceAddress = BusAddress + (device << 15);
+                if (DeviceAddress == 0) continue;
+                else VMM::Map(vmm_kernel_pm, DeviceAddress, DeviceAddress, PTE_PRESENT | PTE_WRITABLE);
+                u64 FunctionAddress = DeviceAddress + (func << 12);
+                if (FunctionAddress == 0) continue;
+                else VMM::Map(vmm_kernel_pm, FunctionAddress, FunctionAddress, PTE_PRESENT | PTE_WRITABLE);
                 vendor = PCI::ReadWord(bus, slot, func, 0);
                 if (vendor == 0xFFFF) continue;
                 device = PCI::ReadWord(bus, slot, func, 2);
                 class_subclass = PCI::ReadWord(bus, slot, func, 0x8 + 2);
-                kind = (u8)class_subclass;
+                Class = (u8)class_subclass;
                 subclass = (u8)((class_subclass & 0xFF00) >> 8);
                 for (int i = 0; i < 6; i++) {
                     bars[i] = PCI::ReadDword(bus, slot, func, PCI_BAR0 + (sizeof(u32) * i));
                 }
-                PCI::AddDevice(bus, func, kind, subclass, device, vendor, bars);
+                PCI::PrintDevMessage((PCIDeviceHeader*)FunctionAddress);
+                PCI::AddDevice(bus, func, Class, subclass, device, vendor, bars);
             }
         }
+        RemoveFromStack();
     }
 }
