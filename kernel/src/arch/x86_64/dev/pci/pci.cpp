@@ -108,13 +108,13 @@ namespace PCI{
         u8 Class, subclass;
         u32 bars[6];
 
-        ACPI::MCFGHeader* mcfg = (ACPI::MCFGHeader*)ACPI::FindTable("MCFG");
+        //ACPI::MCFGHeader* mcfg = (ACPI::MCFGHeader*)ACPI::FindTable("MCFG");
         //int entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
-        int entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI_DeviceConfig);
+        int entries = (ACPI::mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
         kinfo("PCI: Found %d entries\n", entries);
         for(int t = 0;t < entries; t++){
-            ACPI_DeviceConfig* newDeviceConfig = (ACPI_DeviceConfig*)((uint64_t)mcfg + 
-            sizeof(ACPI::MCFGHeader) + sizeof(ACPI_DeviceConfig) * t);
+            ACPI::DeviceConfig* newDeviceConfig = (ACPI::DeviceConfig*)((uint64_t)ACPI::mcfg + 
+            sizeof(ACPI::MCFGHeader) + sizeof(ACPI::DeviceConfig) * t);
             for (u64 bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++){
                 u64 BusAddress = newDeviceConfig->BaseAddress + (bus << 20);
                 if(BusAddress == 0) continue; 

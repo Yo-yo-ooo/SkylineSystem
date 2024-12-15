@@ -597,7 +597,7 @@ namespace PCI {
     }
 
     void PrintDevMessage(PCI::PCIDeviceHeader* pciDeviceHeader) {
-        printf_(" > ");
+        kinfo(" > ");
 
         {
             const char* vendorName = PCI::GetVendorName(pciDeviceHeader->Vendor_ID);

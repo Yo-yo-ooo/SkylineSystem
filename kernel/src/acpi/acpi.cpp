@@ -4,56 +4,140 @@
 
 
 namespace ACPI{
-    bool acpi_use_xsdt = false;
+    ACPI::MCFGHeader* mcfg = NULL;
+    int ACPI_DIV = 0;
+    ACPI::SDTHeader* rootThing = NULL;
 
-    void* acpi_root_sdt;
+    void* FindTable(SDTHeader* sdtHeader, const char* signature, int div)
+    {
+        AddToStack();
+        SDTHeader* xsdt = sdtHeader;
+        int entries = (xsdt->Length - sizeof(ACPI::SDTHeader)) / div;
+        //osData.debugTerminalWindow->Log("Entry count: {}", to_string(entries));
 
-    void* FindTable(const char* name) {
-        if (acpi_use_xsdt == false) {
-            acpi_rsdt* rsdt = (acpi_rsdt*)acpi_root_sdt;
-            u32 entries = (rsdt->sdt.len - sizeof(rsdt->sdt)) / 4;
-
-            for (u32 i = 0; i < entries; i++) {
-            struct ACPI_SDT* sdt = (struct ACPI_SDT*)HIGHER_HALF(*((u32*)rsdt->table + i));
-            if (!_memcmp(sdt->sign, name, 4))
-                return (void*)sdt;
+        //osData.debugTerminalWindow->renderer->Print("> ");
+        for (int t = 0; t < entries; t++)
+        {
+            uint64_t bleh1 = *(uint64_t*)PHYSICAL((uint64_t)xsdt + sizeof(ACPI::SDTHeader) + (t * div));
+            if (div == 4)
+                bleh1 &= 0x00000000FFFFFFFF;
+            ACPI::SDTHeader* newSDTHeader = (ACPI::SDTHeader*)(bleh1);
+            
+            for (int i = 0; i < 4; i++)
+            {
+                if (newSDTHeader->Signature[i] != signature[i])
+                {
+                    break;
+                }
+                
+                if (i == 3)
+                {
+                    RemoveFromStack();
+                    return newSDTHeader;
+                }
             }
-            return NULL;
+
+            //osData.debugTerminalWindow->renderer->Print(" ");
         }
-
-        // Use XSDT
-        acpi_xsdt* xsdt = (acpi_xsdt*)acpi_root_sdt;
-        u32 entries = (xsdt->sdt.len - sizeof(xsdt->sdt)) / 8;
-
-        for (u32 i = 0; i < entries; i++) {
-            struct ACPI_SDT* sdt = (struct ACPI_SDT*)HIGHER_HALF(*((u64*)xsdt->table + i));
-            if (!_memcmp(sdt->sign, name, 4)) {
-            return (void*)sdt;
-            }
-        }
-
+        //osData.debugTerminalWindow->renderer->Println();
+        RemoveFromStack();
         return NULL;
     }
 
     u64 Init(void *addr) {
-        
+        AddToStack();
 
-        //void* addr = (void*)rsdp_request.response->address;
-        struct ACPI_RSDP* rsdp = (struct ACPI_RSDP*)addr;
+        AddToStack();
+        kinfoln("Preparing ACPI...");
+        kinfoln("RSDP Addr: %X", (uint64_t)addr);
+        RemoveFromStack();
 
-        if (_memcmp(rsdp->sign, "RSD PTR", 7))
-            return 0;
+        ACPI::RSDP2 *rsdp = (ACPI::RSDP2*)(addr);
+
+        AddToStack();   
         
-        if (rsdp->revision != 0) {
-            // Use XSDT
-            acpi_use_xsdt = true;
-            struct ACPI_XSDP* xsdp = (struct ACPI_XSDP*)addr;
-            acpi_root_sdt = (acpi_xsdt*)HIGHER_HALF((u64)xsdp->xsdt_addr);
-            return xsdp->xsdt_addr;
+        int div = 1;
+
+        if (rsdp->firstPart.Revision == 0)
+        {
+            kinfoln("ACPI Version: 1");
+            rootThing = (ACPI::SDTHeader*)(uint64_t)HIGHER_HALF(rsdp->firstPart.RSDTAddress);
+            kinfoln("RSDT Header Addr: %X", (uint64_t)rootThing);
+            div = 4;
+
+            if (rootThing == NULL)
+            {
+                Panic("RSDT Header is at NULL!", true);
+            }
+            else
+            {
+                //GlobalRenderer->Clear(Colors.black);
+                kinfoln("> Testing ACPI Loader...");
+
+                //InitAcpiShutdownThing(rootThing);
+                //while (true);
+            }
         }
-        
-        acpi_root_sdt = (acpi_rsdt*)HIGHER_HALF((u64)rsdp->rsdt_addr);
+        else
+        {
+            kinfoln("ACPI Version: 2");
+            rootThing = (ACPI::SDTHeader*)HIGHER_HALF(rsdp->XSDTAddress);
 
-        return rsdp->rsdt_addr;
+            kinfoln("XSDT Header Addr: %X", (uint64_t)rootThing);
+            div = 8;
+
+            if (rootThing == NULL)
+            {
+                Panic("XSDT Header is at NULL!", true);
+            }
+        }
+        RemoveFromStack();
+
+        
+        AddToStack();
+        int entries = (rootThing->Length - sizeof(ACPI::SDTHeader)) / div;
+        kinfoln("Entry count: %d", entries);
+        RemoveFromStack();
+
+        AddToStack();
+        kinfoln("> ");
+        for (int t = 0; t < entries; t++)
+        {
+            uint64_t bleh1 = *(uint64_t*)((uint64_t)rootThing + sizeof(ACPI::SDTHeader) + (t * div));
+            if (div == 4)
+                bleh1 &= 0x00000000FFFFFFFF;
+            ACPI::SDTHeader* newSDTHeader = (ACPI::SDTHeader*)bleh1;
+            
+            char bruh[2];
+            bruh[1] = 0;
+
+            for (int i = 0; i < 4; i++)
+            {
+                bruh[0] = newSDTHeader->Signature[i];
+                kinfoln("%d",bruh);
+            }
+
+            kinfoln(" ");
+        }
+        kinfoln("");
+        RemoveFromStack();
+
+        AddToStack();
+        ACPI::mcfg = (ACPI::MCFGHeader*)ACPI::FindTable(rootThing, (char*)"MCFG", div);
+        ACPI_DIV = div;
+
+        kinfoln("MCFG Header Addr: %X", (uint64_t)ACPI::mcfg);
+        RemoveFromStack();
+
+        if (ACPI::mcfg == NULL)
+        {
+            RemoveFromStack();
+            return;
+        }
+    
+        RemoveFromStack();
+
+        //PrintMsgEndLayer("ACPI");
+        return 1;
     }
 }
