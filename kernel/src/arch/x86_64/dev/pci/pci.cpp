@@ -108,32 +108,38 @@ namespace PCI{
         u8 Class, subclass;
         u32 bars[6];
 
-        acpi_mcfg* mcfg = ACPI::FindTable("MCFG");
-
-        mcfg_entry* entry = &mcfg->table[0];
-        for (u64 bus = entry->first_bus; bus < entry->last_bus; bus++){
-            for (u8 slot = 0; slot < PCI_MAX_SLOT; slot++)
-            for (u8 func = 0; func < PCI_MAX_FUNC; func++) {
-                u64 BusAddress = entry->addr + (bus << 20);
+        ACPI::MCFGHeader* mcfg = ACPI::FindTable("MCFG");
+        //int entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
+        int entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI_DeviceConfig);
+        kinfo("PCI: Found %d entries\n", entries);
+        for(int t = 0;t < entries; t++){
+            ACPI_DeviceConfig* newDeviceConfig = (ACPI_DeviceConfig*)((uint64_t)mcfg + 
+            sizeof(ACPI::MCFGHeader) + sizeof(ACPI_DeviceConfig) * t);
+            for (u64 bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++){
+                u64 BusAddress = newDeviceConfig->BaseAddress + (bus << 20);
                 if(BusAddress == 0) continue; 
                 else VMM::Map(vmm_kernel_pm, BusAddress, BusAddress, PTE_PRESENT | PTE_WRITABLE);
-                u64 DeviceAddress = BusAddress + (device << 15);
-                if (DeviceAddress == 0) continue;
-                else VMM::Map(vmm_kernel_pm, DeviceAddress, DeviceAddress, PTE_PRESENT | PTE_WRITABLE);
-                u64 FunctionAddress = DeviceAddress + (func << 12);
-                if (FunctionAddress == 0) continue;
-                else VMM::Map(vmm_kernel_pm, FunctionAddress, FunctionAddress, PTE_PRESENT | PTE_WRITABLE);
-                vendor = PCI::ReadWord(bus, slot, func, 0);
-                if (vendor == 0xFFFF) continue;
-                device = PCI::ReadWord(bus, slot, func, 2);
-                class_subclass = PCI::ReadWord(bus, slot, func, 0x8 + 2);
-                Class = (u8)class_subclass;
-                subclass = (u8)((class_subclass & 0xFF00) >> 8);
-                for (int i = 0; i < 6; i++) {
-                    bars[i] = PCI::ReadDword(bus, slot, func, PCI_BAR0 + (sizeof(u32) * i));
+                for (u8 slot = 0; slot < PCI_MAX_SLOT; slot++){
+                    u64 DeviceAddress = BusAddress + (device << 15);
+                    if (DeviceAddress == 0) continue;
+                    else VMM::Map(vmm_kernel_pm, DeviceAddress, DeviceAddress, PTE_PRESENT | PTE_WRITABLE);
+                    for (u8 func = 0; func < PCI_MAX_FUNC; func++) {
+                        u64 FunctionAddress = DeviceAddress + (func << 12);
+                        if (FunctionAddress == 0) continue;
+                        else VMM::Map(vmm_kernel_pm, FunctionAddress, FunctionAddress, PTE_PRESENT | PTE_WRITABLE);
+                        vendor = PCI::ReadWord(bus, slot, func, 0);
+                        if (vendor == 0xFFFF) continue;
+                        device = PCI::ReadWord(bus, slot, func, 2);
+                        class_subclass = PCI::ReadWord(bus, slot, func, 0x8 + 2);
+                        Class = (u8)class_subclass;
+                        subclass = (u8)((class_subclass & 0xFF00) >> 8);
+                        for (int i = 0; i < 6; i++) {
+                            bars[i] = PCI::ReadDword(bus, slot, func, PCI_BAR0 + (sizeof(u32) * i));
+                        }
+                        PCI::PrintDevMessage((PCIDeviceHeader*)FunctionAddress);
+                        PCI::AddDevice(bus, func, Class, subclass, device, vendor, bars);
+                    }
                 }
-                PCI::PrintDevMessage((PCIDeviceHeader*)FunctionAddress);
-                PCI::AddDevice(bus, func, Class, subclass, device, vendor, bars);
             }
         }
         RemoveFromStack();

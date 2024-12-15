@@ -38,6 +38,15 @@ typedef struct ACPI_SDT{
     u32 creator_revision;
 } __attribute__((packed)) acpi_sdt;
 
+struct ACPI_DeviceConfig
+{
+    uint64_t BaseAddress;
+    uint16_t PCISegGroup;
+    uint8_t StartBus;
+    uint8_t EndBus;
+    uint32_t Reserved;
+} __attribute__((packed));
+
 typedef struct ACPI_RSDT{
     struct ACPI_SDT sdt;
     char table[];
@@ -52,6 +61,25 @@ typedef struct ACPI_XSDT{
 namespace ACPI{
     extern bool acpi_use_xsdt;
     extern void* acpi_root_sdt;
+
+    struct SDTHeader
+    {
+        unsigned char Signature[4];
+        uint32_t Length;
+        uint8_t Revision;
+        uint8_t Checksum;
+        uint8_t OEM_ID[6];
+        uint8_t OEM_TABLE_ID[8];
+        uint32_t OEM_Revision;
+        uint32_t Creator_ID; 
+        uint32_t CreatorRevision;
+    } __attribute__((packed));
+
+    struct MCFGHeader
+    {
+        SDTHeader Header;
+        uint64_t Reserved;
+    } __attribute__((packed));
 
     u64 Init(void *addr);
     void* FindTable(const char* name);

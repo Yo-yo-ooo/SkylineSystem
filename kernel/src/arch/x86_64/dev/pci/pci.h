@@ -29,28 +29,7 @@ namespace PCI{
         uint16_t size;
     };
 
-    typedef struct mcfg_entry_{
-        u64 addr;
-        u16 seg;
-        u8 first_bus;
-        u8 last_bus;
-        u32 resv;
-    }mcfg_entry __attribute__((packed)) ;
-
-    typedef struct acpi_mcfg_{
-        char sign[4];
-        u32 len;
-        u8 revision;
-        u8 checksum;
-        char oem_id[6];
-        char oem_table_id[8];
-        u32 oem_revision;
-        u32 creator_id;
-        u32 creator_revision;
-        u64 resv;
-
-        mcfg_entry table[];
-    }acpi_mcfg  __attribute__((packed));
+    
 
     typedef struct {
         u8 bus;

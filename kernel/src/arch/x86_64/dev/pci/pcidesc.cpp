@@ -597,45 +597,45 @@ namespace PCI {
     }
 
     void PrintDevMessage(PCI::PCIDeviceHeader* pciDeviceHeader) {
-        kinfoln(" > ");
+        printf_(" > ");
 
         {
             const char* vendorName = PCI::GetVendorName(pciDeviceHeader->Vendor_ID);
             if (vendorName != unknownString)
-                kinfoln(vendorName);
+                printf_(vendorName);
             else
             {
-                kinfoln("<");
-                kinfoln(ConvertHexToString(pciDeviceHeader->Vendor_ID));
-                kinfoln(">");
+                printf_("<");
+                printf_(ConvertHexToString(pciDeviceHeader->Vendor_ID));
+                printf_(">");
             }
-            kinfoln(" / ");
+            printf_(" / ");
         }
 
         {
             const char* deviceName = PCI::GetDeviceName(pciDeviceHeader->Vendor_ID, pciDeviceHeader->Device_ID);
             if (deviceName != unknownString)
-                kinfoln(deviceName);
+                printf_(deviceName);
             else
             {
-                kinfoln("<");
-                kinfoln(ConvertHexToString(pciDeviceHeader->Device_ID));
-                kinfoln(">");
+                printf_("<");
+                printf_(ConvertHexToString(pciDeviceHeader->Device_ID));
+                printf_(">");
             }
-            kinfoln(" / ");
+            printf_(" / ");
         }
 
         {
             const char* className = PCI::GetClassName(pciDeviceHeader->Class);
             if (className != unknownString)
-                kinfoln(className);
+                printf_(className);
             else
             {
-                kinfoln("<");
-                kinfoln(ConvertHexToString(pciDeviceHeader->Class));
-                kinfoln(">");
+                printf_("<");
+                printf_(ConvertHexToString(pciDeviceHeader->Class));
+                printf_(">");
             }
-            kinfoln(" / ");
+            printf_(" / ");
         }
 
         {
@@ -644,22 +644,22 @@ namespace PCI {
                 ;
             else
             {
-                kinfoln("<");
-                kinfoln(ConvertHexToString(pciDeviceHeader->SubClass));
-                kinfoln(">");
+                printf_("<");
+                printf_(ConvertHexToString(pciDeviceHeader->SubClass));
+                printf_(">");
             }
-            kinfoln(" / ");
+            printf_(" / ");
         }
 
         {
             const char* progIFName = PCI::GetProgIFName(pciDeviceHeader->Class, pciDeviceHeader->SubClass, pciDeviceHeader->Prog_IF);
             if (progIFName != unknownString)
-                kinfoln(progIFName);
+                printf_(progIFName);
             else
             {
-                kinfoln("<");
-                kinfoln(ConvertHexToString(pciDeviceHeader->Prog_IF));
-                kinfoln(">");
+                printf_("<");
+                printf_(ConvertHexToString(pciDeviceHeader->Prog_IF));
+                printf_(">");
             }
             //renderer->Print(" / ");
         }
