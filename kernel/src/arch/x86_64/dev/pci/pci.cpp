@@ -108,7 +108,7 @@ namespace PCI{
         u8 Class, subclass;
         u32 bars[6];
 
-        ACPI::MCFGHeader* mcfg = ACPI::FindTable("MCFG");
+        ACPI::MCFGHeader* mcfg = (ACPI::MCFGHeader*)ACPI::FindTable("MCFG");
         //int entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
         int entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI_DeviceConfig);
         kinfo("PCI: Found %d entries\n", entries);
