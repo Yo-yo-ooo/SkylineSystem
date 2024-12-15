@@ -4,9 +4,9 @@
 #include "../../../../acpi/acpi.h"
 #include "../../vmm/vmm.h"
 #include "../../../../mem/heap.h"
-#if UnCompleteCode
+#include "../../../../mem/pmm.h"
 
-#else
+#ifndef UnCompleteCode
 namespace AHCI 
 {
     #define HBA_PORT_DEV_PRESENT 0x3
@@ -21,7 +21,7 @@ namespace AHCI
     {
         StopCMD();
 
-        void* newBase = GlobalAllocator->RequestPage();
+        void* newBase = HIGHER_HALF(PMM::Alloc(1));
         GlobalPageTableManager.MapMemory(newBase, newBase);
         hbaPort->commandListBase = (uint32_t)(uint64_t)newBase;
         hbaPort->commandListBaseUpper = (uint32_t)((uint64_t)newBase >> 32);
