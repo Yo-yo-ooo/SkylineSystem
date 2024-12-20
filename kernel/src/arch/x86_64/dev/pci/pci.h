@@ -100,6 +100,7 @@ namespace PCI{
     const char* GetSubclassName(uint8_t classCode, uint8_t subclassCode);
     const char* GetProgIFName(uint8_t classCode, uint8_t subclassCode, uint8_t progIFCode);
     void PrintDevMessage(PCI::PCIDeviceHeader* pciDeviceHeader);
+    void PrintDevMessage(uint16_t VendorID, uint16_t DeviceID, uint8_t Class, uint8_t Subclass, uint8_t ProgIF);
 }
 
 #endif

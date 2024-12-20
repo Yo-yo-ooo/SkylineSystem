@@ -5,7 +5,7 @@
 
 #include "../print/e9print.h"
 #include "kprintf.h"
-
+#include "../conf.h"
 
 #include <stdint.h>
 #include <stddef.h>

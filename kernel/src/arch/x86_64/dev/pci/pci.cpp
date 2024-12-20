@@ -116,17 +116,8 @@ namespace PCI{
             ACPI::DeviceConfig* newDeviceConfig = (ACPI::DeviceConfig*)((uint64_t)ACPI::mcfg + 
             sizeof(ACPI::MCFGHeader) + sizeof(ACPI::DeviceConfig) * t);
             for (u64 bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++){
-                u64 BusAddress = newDeviceConfig->BaseAddress + (bus << 20);
-                if(BusAddress == 0) continue; 
-                else VMM::Map(vmm_kernel_pm, BusAddress, BusAddress, PTE_PRESENT | PTE_WRITABLE);
                 for (u8 slot = 0; slot < PCI_MAX_SLOT; slot++){
-                    u64 DeviceAddress = BusAddress + (device << 15);
-                    if (DeviceAddress == 0) continue;
-                    else VMM::Map(vmm_kernel_pm, DeviceAddress, DeviceAddress, PTE_PRESENT | PTE_WRITABLE);
                     for (u8 func = 0; func < PCI_MAX_FUNC; func++) {
-                        u64 FunctionAddress = DeviceAddress + (func << 12);
-                        if (FunctionAddress == 0) continue;
-                        else VMM::Map(vmm_kernel_pm, FunctionAddress, FunctionAddress, PTE_PRESENT | PTE_WRITABLE);
                         vendor = PCI::ReadWord(bus, slot, func, 0);
                         if (vendor == 0xFFFF) continue;
                         device = PCI::ReadWord(bus, slot, func, 2);
@@ -136,7 +127,7 @@ namespace PCI{
                         for (int i = 0; i < 6; i++) {
                             bars[i] = PCI::ReadDword(bus, slot, func, PCI_BAR0 + (sizeof(u32) * i));
                         }
-                        PCI::PrintDevMessage((PCIDeviceHeader*)FunctionAddress);
+                        PCI::PrintDevMessage(vendor,device,Class,subclass,0);
                         PCI::AddDevice(bus, func, Class, subclass, device, vendor, bars);
                     }
                 }

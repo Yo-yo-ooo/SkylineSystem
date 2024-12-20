@@ -879,6 +879,7 @@ int printf_(const char* format, ...)
 
 int kinfo(const char* format, ...)
 {
+#if PRINT_INFORMATION_ == 1
     kprintf("[\033[38;2;0;255;255mINFO\033[0m] ");
     va_list va;
     va_start(va, format);
@@ -886,10 +887,14 @@ int kinfo(const char* format, ...)
     const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
     va_end(va);
     return ret;
+#else
+    return 0;
+#endif
 }
 
 int kinfoln(const char* format, ...)
 {
+#if PRINT_INFORMATION_ == 1
     kprintf("[\033[38;2;0;255;255mINFO\033[0m] ");
     va_list va;
     va_start(va, format);
@@ -898,6 +903,9 @@ int kinfoln(const char* format, ...)
     va_end(va);
     kprintf("\n");
     return ret;
+#else
+    return 0;
+#endif
 }
 
 int kpok(const char* format, ...)

@@ -596,6 +596,76 @@ namespace PCI {
         return progIFEntry->name;
     }
 
+    void PrintDevMessage(uint16_t VendorID, uint16_t DeviceID, uint8_t Class, uint8_t Subclass, uint8_t ProgIF) {
+        kinfo(" > ");
+
+        {
+            const char* vendorName = GetVendorName(VendorID);
+            if (vendorName != unknownString)
+                printf_(vendorName);
+            else
+            {
+                printf_("<");
+                printf_(ConvertHexToString(VendorID));
+                printf_(">");
+            }
+            printf_(" / ");
+        }
+
+        {
+            const char* deviceName = GetDeviceName(VendorID, DeviceID);
+            if (deviceName != unknownString)
+                printf_(deviceName);
+            else
+            {
+                printf_("<");
+                printf_(ConvertHexToString(DeviceID));
+                printf_(">");
+            }
+            printf_(" / ");
+        }
+
+        {
+            const char* className = GetClassName(Class);
+            if (className != unknownString)
+                printf_(className);
+            else
+            {
+                printf_("<");
+                printf_(ConvertHexToString(Class));
+                printf_(">");
+            }
+            printf_(" / ");
+        }
+
+        {
+            const char* subclassName = GetSubclassName(Class, Subclass);
+            if (subclassName != unknownString)
+                ;
+            else
+            {
+                printf_("<");
+                printf_(ConvertHexToString(Subclass));
+                printf_(">");
+            }
+            printf_(" / ");
+        }
+
+        {
+            const char* progIFName = GetProgIFName(Class, Subclass, ProgIF);
+            if (progIFName != unknownString)
+                printf_(progIFName);
+            else
+            {
+                printf_("<");
+                printf_(ConvertHexToString(ProgIF));
+                printf_(">");
+            }
+            //renderer->Print(" / ");
+        }
+        printf_("\n");
+    }
+
     void PrintDevMessage(PCI::PCIDeviceHeader* pciDeviceHeader) {
         kinfo(" > ");
 
