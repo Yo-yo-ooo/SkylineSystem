@@ -108,7 +108,7 @@ extern "C" void isr_handler(registers* r) {
     
     if (r->int_no == 14) {
         // Page fault
-        //if (!vmm_handle_pf(r))
+        if (!VMM::HandlePF(r))
         return;
     }
     
