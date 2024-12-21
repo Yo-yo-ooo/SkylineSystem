@@ -5,8 +5,8 @@
 #include "../../vmm/vmm.h"
 #include "../../../../mem/heap.h"
 #include "../../../../mem/pmm.h"
-
-#ifndef UnCompleteCode
+#include "../../pit/pit.h"
+//#ifndef UnCompleteCode
 namespace AHCI 
 {
     #define HBA_PORT_DEV_PRESENT 0x3
@@ -22,13 +22,13 @@ namespace AHCI
         StopCMD();
 
         void* newBase = HIGHER_HALF(PMM::Alloc(1));
-        GlobalPageTableManager.MapMemory(newBase, newBase);
+        VMM::Map(newBase, newBase);
         hbaPort->commandListBase = (uint32_t)(uint64_t)newBase;
         hbaPort->commandListBaseUpper = (uint32_t)((uint64_t)newBase >> 32);
         _memset((void*)(uint64_t)hbaPort->commandListBase, 0, 1024);
 
-        void* fisBase = GlobalAllocator->RequestPage();
-        GlobalPageTableManager.MapMemory(fisBase, fisBase);
+        void* fisBase = HIGHER_HALF(PMM::Alloc(1));
+        VMM::Map(fisBase, fisBase);
         hbaPort->fisBaseAddress = (uint32_t)(uint64_t)fisBase;
         hbaPort->fisBaseAddressUpper = (uint32_t)((uint64_t)fisBase >> 32);
         _memset(fisBase, 0, 256);
@@ -39,8 +39,8 @@ namespace AHCI
         {
             cmdHeader[i].prdtLength = 8;
 
-            void* cmdTableAddress = GlobalAllocator->RequestPage();
-            GlobalPageTableManager.MapMemory(cmdTableAddress, cmdTableAddress);
+            void* cmdTableAddress = HIGHER_HALF(PMM::Alloc(1));
+            VMM::Map(cmdTableAddress, cmdTableAddress);
             uint64_t address = (uint64_t)cmdTableAddress + (i << 8);
             cmdHeader[i].commandTableBaseAddress = (uint32_t)(uint64_t)address;
             cmdHeader[i].commandTableBaseAddressUpper = (uint32_t)((uint64_t)address >> 32);
@@ -95,7 +95,7 @@ namespace AHCI
 
         AddToStack();
         /***Make the Command Table***/
-        HBACommandTable* cmdtbl = (HBACommandTable*)((uint64_t)cmdhead->commandTableBaseAddress);//(HBACommandTable*)GlobalAllocator->RequestPage();// kmalloc(sizeof(HBA_CMD_TBL));
+        HBACommandTable* cmdtbl = (HBACommandTable*)((uint64_t)cmdhead->commandTableBaseAddress);//(HBACommandTable*)HIGHER_HALF(PMM::Alloc(1));// kmalloc(sizeof(HBA_CMD_TBL));
         //cmdhead->commandTableBaseAddress = (uint32_t)(uint64_t)cmdtbl;
         RemoveFromStack();
 
@@ -110,9 +110,9 @@ namespace AHCI
             RemoveFromStack();
             return test;
         }
-        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)GlobalAllocator->RequestPage();
+        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)HIGHER_HALF(PMM::Alloc(1));
         //_memset((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress , 0, 0x1000);
-        //GlobalPageTableManager.MapMemory((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress, (void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress);
+        //VMM::Map((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress, (void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress);
         RemoveFromStack();
 
         AddToStack();
@@ -153,7 +153,8 @@ namespace AHCI
         uint32_t* baddr = (uint32_t*)(uint64_t)data_base;
         SATA_Ident test = *((SATA_Ident*)baddr);
 
-        GlobalAllocator->FreePage((void*)(uint64_t)data_base);
+        //GlobalAllocator->FreePage((void*)(uint64_t)data_base);
+        PMM::Free((void*)(uint64_t)data_base, 1);
         //GlobalAllocator->FreePage((void*)(uint64_t)cmdtbl);
         RemoveFromStack();
 
@@ -170,7 +171,7 @@ namespace AHCI
                 return i;
             slots >>= 1;
         }
-        Serial::Writelnf("> Could not find free Command Slot!");
+        kerror("Could not find free Command Slot!\n");
         return -1;
     }
 
@@ -356,15 +357,15 @@ namespace AHCI
     AHCIDriver::AHCIDriver (PCI::PCIDeviceHeader* pciBaseAddress)
     {
         this->PCIBaseAddress = pciBaseAddress;
-        PrintfMsg("> AHCIDriver has been created! (PCI: %X)", (uint64_t)pciBaseAddress);
+        kinfoln("> AHCIDriver has been created! (PCI: %X)", (uint64_t)pciBaseAddress);
 
         ABAR = (HBAMemory*)(uint64_t)((PCI::PCIHeader0*)(uint64_t)pciBaseAddress)->BAR5;
-        GlobalPageTableManager.MapMemory(ABAR, ABAR);
+        VMM::Map(ABAR, ABAR);
         ABAR->globalHostControl |= 0x80000000;
 
         ProbePorts();
 
-        PrintfMsg("Checking %d Ports:", PortCount);
+        kinfoln("Checking %d Ports:", PortCount);
 
         for (int i = 0; i < PortCount; i++)
         {
@@ -372,122 +373,16 @@ namespace AHCI
             PortType portType = port->portType;
 
             if (portType == PortType::SATA)
-                Serial::Writelnf("* SATA drive");
+                kprintf("* SATA drive\n");
             else if (portType == PortType::SATAPI)
-                Serial::Writelnf("* SATAPI drive");
+                kprintf("* SATAPI drive\n");
             else
-                Serial::Writelnf("* Not interested");
+                kprintf("* Not interested\n");
 
 
             port->Configure();
 
-            DiskInterface::SataDiskInterface* testDiskInterface = new DiskInterface::SataDiskInterface(port);
-            {
-                PartitionInterface::PartitionInterfaceType diskPartType = PartitionInterface ::GetPartitionInterfaceTypeFromDisk(testDiskInterface);
-                if (diskPartType == PartitionInterface::PartitionInterfaceType::mraps)
-                {
-                    Serial::Writelnf("* - Partition Type: \"MRAPS\"");
-                    PartitionInterface::MRAPSPartitionInterface* diskPart = new PartitionInterface::MRAPSPartitionInterface(testDiskInterface);
-                }
-                else if (true)
-                {
-                    Serial::Writelnf("* - Partition Type: undefined");
-                }
-            }
-            osData.diskInterfaces.Add((DiskInterface::GenericDiskInterface*)testDiskInterface);
-
-            {
-                if (testDiskInterface->partitionInterface != NULL)
-                {
-                    PartitionInterface::GenericPartitionInterface* tDiskInterface = ((PartitionInterface::GenericPartitionInterface*)testDiskInterface->partitionInterface);
-                    tDiskInterface->LoadPartitionTable();
-                    
-                    int pLen = tDiskInterface->partitionList.GetCount();
-                    //osData.debugTerminalWindow->Log("<bruh {}>", to_string(pLen),  Colors.orange);
-                    for (int i = 0; i < pLen; i++)
-                    {
-                        PartitionInterface::PartitionInfo* p = tDiskInterface->partitionList[i];
-                        if (p->type != PartitionInterface::PartitionType::Normal)
-                            continue;
-                        FilesystemInterface::FilesystemInterfaceType fsType = FilesystemInterface::GetFilesystemInterfaceTypeFromPartition(tDiskInterface, i);
-                        if (fsType == FilesystemInterface::FilesystemInterfaceType::Mrafs)
-                        {
-                            Serial::Writelnf("  * - Filesystem Type: \"MRAFS\"");
-                            FilesystemInterface::GenericFilesystemInterface* fsInterface = new FilesystemInterface::MrafsFilesystemInterface(tDiskInterface, p);
-                        }
-                        else if (true)
-                        {
-                            Serial::Writelnf("  * - Filesystem Type: undefined");
-                        }
-
-                        if (p->fsInterface != NULL)
-                            ((FilesystemInterface::GenericFilesystemInterface*)p->fsInterface)->LoadFSTable();
-                    }
-
-
-                }
-
-            }
-
-            // if (i == 1)
-            // {
-            //     // Test Read 
-            //     // Buffer only has 4096 bytes
-            //     port->buffer = (uint8_t*)GlobalAllocator->RequestPage();
-                
-            //     // Read 1
-            //     osData.debugTerminalWindow->Log("Preparing To Read From Disk {}...", to_string(i), Colors.yellow);
-            //     _memset(port->buffer, 0, 0x1000);
-            //     if (port->Read(1, 1, port->buffer))
-            //     {
-            //         osData.debugTerminalWindow->Log("Raw Data:");
-            //         for (int t = 0; t < 256; t++)
-            //         {
-            //             osData.debugTerminalWindow->renderer->Print(port->buffer[t]);
-            //         }
-            //         osData.debugTerminalWindow->renderer->Println();
-            //     }
-            //     else
-            //     {
-            //         osData.debugTerminalWindow->Log("Reading Disk failed!");
-            //     }
-
-            //     // Write
-            //     osData.debugTerminalWindow->Log("Preparing To Write To Disk {}...", to_string(i), Colors.yellow);
-            //     _memset(port->buffer, 'E', 0x1000);
-            //     if (port->TestWrite(0, 4, port->buffer))
-            //     {
-            //         osData.debugTerminalWindow->Log("Raw Data:");
-            //         for (int t = 0; t < 128; t++)
-            //         {
-            //             osData.debugTerminalWindow->renderer->Print(port->buffer[t]);
-            //         }
-            //         osData.debugTerminalWindow->renderer->Println();
-            //     }
-            //     else
-            //     {
-            //         osData.debugTerminalWindow->Log("Writing to Disk failed!");
-            //     }
-
-            //     // Read 2
-            //     osData.debugTerminalWindow->Log("Preparing To Read From Disk {}...", to_string(i), Colors.yellow);
-            //     _memset(port->buffer, 0, 0x1000);
-            //     if (port->Read(1, 1, port->buffer))
-            //     {
-            //         osData.debugTerminalWindow->Log("Raw Data:");
-            //         for (int t = 0; t < 256; t++)
-            //         {
-            //             osData.debugTerminalWindow->renderer->Print(port->buffer[t]);
-            //         }
-            //         osData.debugTerminalWindow->renderer->Println();
-            //     }
-            //     else
-            //     {
-            //         osData.debugTerminalWindow->Log("Reading Disk failed!");
-            //     }
-
-
-            // }
+            
         }
     }
 
@@ -563,4 +458,4 @@ namespace AHCI
     }
 }
 
-#endif
+//#endif

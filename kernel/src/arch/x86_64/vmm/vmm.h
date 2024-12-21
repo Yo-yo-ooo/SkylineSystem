@@ -65,6 +65,7 @@ namespace VMM{
     void SwitchPM(pagemap* pm);
     void SwitchPMNocpu(pagemap* pm);
     void Map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
+    void Map(uptr vaddr, uptr paddr);
     void MapUser(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
     void MapRange(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
     void MapUserRange(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);

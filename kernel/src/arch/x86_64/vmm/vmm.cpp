@@ -162,6 +162,10 @@ void SwitchPM(pagemap* pm) {
     this_cpu()->pm = pm;
 }
 
+void Map(uptr vaddr, uptr paddr){
+    VMM::Map(vmm_kernel_pm, vaddr, paddr, PTE_PRESENT | PTE_WRITABLE);
+}
+
 void Map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags) {
     uptr pml1_entry = (vaddr >> 12) & 0x1ff;
     uptr pml2_entry = (vaddr >> 21) & 0x1ff;
