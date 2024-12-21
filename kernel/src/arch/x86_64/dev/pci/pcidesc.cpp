@@ -602,12 +602,12 @@ namespace PCI {
         {
             const char* vendorName = GetVendorName(VendorID);
             if (vendorName != unknownString)
-                printf_(vendorName);
+                printf_("\033[38;2;255;255;0m%s\033[0m",vendorName);
             else
             {
-                printf_("<");
-                printf_(ConvertHexToString(VendorID));
-                printf_(">");
+                printf_("\033[38;2;255;255;0m<\033[0m");
+                printf_("\033[38;2;255;255;0m%s\033[0m",ConvertHexToString(VendorID));
+                printf_("\033[38;2;255;255;0m>\033[0m");
             }
             printf_(" / ");
         }
@@ -615,12 +615,12 @@ namespace PCI {
         {
             const char* deviceName = GetDeviceName(VendorID, DeviceID);
             if (deviceName != unknownString)
-                printf_(deviceName);
+                printf_("\033[38;2;255;255;0m%s\033[0m",deviceName);
             else
             {
-                printf_("<");
-                printf_(ConvertHexToString(DeviceID));
-                printf_(">");
+                printf_("\033[38;2;255;255;0m<\033[0m");
+                printf_("\033[38;2;255;255;0m%s\033[0m",ConvertHexToString(DeviceID));
+                printf_("\033[38;2;255;255;0m>\033[0m");
             }
             printf_(" / ");
         }
@@ -628,12 +628,12 @@ namespace PCI {
         {
             const char* className = GetClassName(Class);
             if (className != unknownString)
-                printf_(className);
+                printf_("\033[38;2;255;255;0m%s\033[0m",className);
             else
             {
-                printf_("<");
-                printf_(ConvertHexToString(Class));
-                printf_(">");
+                printf_("\033[38;2;255;255;0m<\033[0m");
+                printf_("\033[38;2;255;255;0m%s\033[0m",ConvertHexToString(Class));
+                printf_("\033[38;2;255;255;0m>\033[0m");
             }
             printf_(" / ");
         }
@@ -644,9 +644,9 @@ namespace PCI {
                 ;
             else
             {
-                printf_("<");
-                printf_(ConvertHexToString(Subclass));
-                printf_(">");
+                printf_("\033[38;2;255;255;0m<\033[0m");
+                printf_("\033[38;2;255;255;0m%s\033[0m",ConvertHexToString(Subclass));
+                printf_("\033[38;2;255;255;0m>\033[0m");
             }
             printf_(" / ");
         }
@@ -654,12 +654,12 @@ namespace PCI {
         {
             const char* progIFName = GetProgIFName(Class, Subclass, ProgIF);
             if (progIFName != unknownString)
-                printf_(progIFName);
+                printf_("\033[38;2;255;255;0m%s\033[0m",progIFName);
             else
             {
-                printf_("<");
-                printf_(ConvertHexToString(ProgIF));
-                printf_(">");
+                printf_("\033[38;2;255;255;0m<\033[0m");
+                printf_("\033[38;2;255;255;0m%s\033[0m",ConvertHexToString(ProgIF));
+                printf_("\033[38;2;255;255;0m>\033[0m");
             }
             //renderer->Print(" / ");
         }
@@ -675,9 +675,9 @@ namespace PCI {
                 printf_(vendorName);
             else
             {
-                printf_("<");
+                printf_("[\033[38;2;255;255;0m<\033[0m]");
                 printf_(ConvertHexToString(pciDeviceHeader->Vendor_ID));
-                printf_(">");
+                printf_("[\033[38;2;255;255;0m>\033[0m]");
             }
             printf_(" / ");
         }
@@ -688,9 +688,9 @@ namespace PCI {
                 printf_(deviceName);
             else
             {
-                printf_("<");
+                printf_("[\033[38;2;255;255;0m<\033[0m]");
                 printf_(ConvertHexToString(pciDeviceHeader->Device_ID));
-                printf_(">");
+                printf_("[\033[38;2;255;255;0m>\033[0m]");
             }
             printf_(" / ");
         }
@@ -701,9 +701,9 @@ namespace PCI {
                 printf_(className);
             else
             {
-                printf_("<");
+                printf_("[\033[38;2;255;255;0m<\033[0m]");
                 printf_(ConvertHexToString(pciDeviceHeader->Class));
-                printf_(">");
+                printf_("[\033[38;2;255;255;0m>\033[0m]");
             }
             printf_(" / ");
         }
@@ -714,9 +714,9 @@ namespace PCI {
                 ;
             else
             {
-                printf_("<");
+                printf_("[\033[38;2;255;255;0m<\033[0m]");
                 printf_(ConvertHexToString(pciDeviceHeader->SubClass));
-                printf_(">");
+                printf_("[\033[38;2;255;255;0m>\033[0m]");
             }
             printf_(" / ");
         }
@@ -727,9 +727,9 @@ namespace PCI {
                 printf_(progIFName);
             else
             {
-                printf_("<");
+                printf_("[\033[38;2;255;255;0m<\033[0m]");
                 printf_(ConvertHexToString(pciDeviceHeader->Prog_IF));
-                printf_(">");
+                printf_("[\033[38;2;255;255;0m>\033[0m]");
             }
             //renderer->Print(" / ");
         }
