@@ -127,7 +127,7 @@ namespace PCI{
                         for (int i = 0; i < 6; i++) {
                             bars[i] = PCI::ReadDword(bus, slot, func, PCI_BAR0 + (sizeof(u32) * i));
                         }
-                        PCI::PrintDevMessage(vendor,device,Class,subclass,0);
+                        PCI::PrintDevMessage(vendor,device,Class,subclass,(PCI::ReadDword(bus,slot,func,0x08) >> 8) & 0xFF);
                         PCI::AddDevice(bus, func, Class, subclass, device, vendor, bars);
                     }
                 }
