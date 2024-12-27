@@ -39,6 +39,11 @@ namespace PCI{
         u16 device_id;
         u16 vendor_id;
         u32 bars[6];
+        u8 slot;
+
+        uint64_t busAddress;
+        uint64_t deviceAddress;
+        uint64_t functionAddress;
     } pci_device;
 
     struct PCIDeviceHeader
@@ -80,6 +85,10 @@ namespace PCI{
     }__attribute__((packed));
 
     extern pci_device pci_list[128];
+    extern uint64_t offset;
+    extern uint64_t busAddress;
+    extern uint64_t deviceAddress;
+    extern uint64_t functionAddress;
 
     void Init();
 
@@ -91,7 +100,10 @@ namespace PCI{
     void WriteDword(u8 bus, u8 slot, u8 func, u8 offset, u32 value);
     
     i8 FindDevice(u8 Class, u8 subclass);
-    void AddDevice(u8 bus, u8 func, u8 Class, u8 subclass, u16 device_id, u16 vendor_id, u32* bars);
+    i8 FindDevice__(u16 vendor_id, u16 device_id);
+    PCI::PCIDeviceHeader* FindDevice_(uint16_t vendor_id, uint16_t device_id);
+    void AddDevice(u8 bus, u8 func, u8 Class, u8 subclass, u16 device_id, u16 vendor_id, u32* bars,u8 slot,
+    u64 busAddress,u64 deviceAddress,u64 functionAddress);
 
     extern const char* unknownString;
     const char* GetVendorName(uint16_t vendorID);

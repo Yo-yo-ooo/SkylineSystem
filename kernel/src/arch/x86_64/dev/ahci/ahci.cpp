@@ -6,7 +6,6 @@
 #include "../../../../mem/heap.h"
 #include "../../../../mem/pmm.h"
 #include "../../pit/pit.h"
-//#ifndef UnCompleteCode
 namespace AHCI 
 {
     #define HBA_PORT_DEV_PRESENT 0x3
@@ -457,5 +456,3 @@ namespace AHCI
         }
     }
 }
-
-//#endif

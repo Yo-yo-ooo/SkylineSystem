@@ -5,11 +5,14 @@
 #include "../../../../mem/heap.h"
 
 extern void *__memcpy(void *d, const void *s, size_t n);
-
 namespace PCI{
 
     pci_device pci_list[128];
     i8 pci_list_idx = 0;
+    uint64_t offset = 0;
+    uint64_t busAddress = 0;
+    uint64_t deviceAddress = 0;
+    uint64_t functionAddress = 0;
 
     uint8_t ReadByte(uint8_t bus, uint8_t slot,uint8_t func, uint32_t offset)
     {
@@ -80,13 +83,19 @@ namespace PCI{
     }
 
 
-    void AddDevice(u8 bus, u8 func, u8 Class, u8 subclass, u16 device_id, u16 vendor_id, u32* bars) {
+    void AddDevice(u8 bus, u8 func, u8 Class, u8 subclass, 
+    u16 device_id, u16 vendor_id, u32* bars,u8 slot,
+    u64 busAddress,u64 deviceAddress,u64 functionAddress) {
         pci_list[pci_list_idx].bus = bus;
         pci_list[pci_list_idx].function = func;
         pci_list[pci_list_idx].Class = Class;
         pci_list[pci_list_idx].subclass = subclass;
         pci_list[pci_list_idx].device_id = device_id;
         pci_list[pci_list_idx].vendor_id = vendor_id;
+        pci_list[pci_list_idx].slot = slot;
+        pci_list[pci_list_idx].busAddress = busAddress;
+        pci_list[pci_list_idx].deviceAddress = deviceAddress;
+        pci_list[pci_list_idx].functionAddress = functionAddress;
         __memcpy(pci_list[pci_list_idx].bars, bars, sizeof(u32) * 6);
         pci_list_idx++;
     }
@@ -97,6 +106,18 @@ namespace PCI{
             return i;
         }
         return -1;
+    }
+
+    i8 FindDevice__(u16 vendor_id, u16 device_id) {
+        for (i8 i = 0; i < pci_list_idx; i++) {
+            if (pci_list[i].vendor_id == vendor_id && pci_list[i].device_id == device_id)
+            return i;
+        }
+        return -1;
+    }
+
+    PCIDeviceHeader* FindDevice_(uint16_t vendor_id, uint16_t device_id){
+        return (PCIDeviceHeader*)pci_list[FindDevice__(vendor_id, device_id)].functionAddress;
     }
 
     
@@ -116,8 +137,15 @@ namespace PCI{
             ACPI::DeviceConfig* newDeviceConfig = (ACPI::DeviceConfig*)((uint64_t)ACPI::mcfg + 
             sizeof(ACPI::MCFGHeader) + sizeof(ACPI::DeviceConfig) * t);
             for (u64 bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++){
+                offset = bus << 20;
+                busAddress = newDeviceConfig->BaseAddress + offset;
                 for (u8 slot = 0; slot < PCI_MAX_SLOT; slot++){
+                    offset = (slot << 15);
+                    deviceAddress = busAddress + offset;
                     for (u8 func = 0; func < PCI_MAX_FUNC; func++) {
+                        offset = (func << 12);
+                        functionAddress = deviceAddress + offset;
+
                         vendor = PCI::ReadWord(bus, slot, func, 0);
                         if (vendor == 0xFFFF) continue;
                         device = PCI::ReadWord(bus, slot, func, 2);
@@ -128,7 +156,8 @@ namespace PCI{
                             bars[i] = PCI::ReadDword(bus, slot, func, PCI_BAR0 + (sizeof(u32) * i));
                         }
                         PCI::PrintDevMessage(vendor,device,Class,subclass,(PCI::ReadDword(bus,slot,func,0x08) >> 8) & 0xFF);
-                        PCI::AddDevice(bus, func, Class, subclass, device, vendor, bars);
+                        PCI::AddDevice(bus, func, Class, subclass,
+                         device, vendor, bars, slot, busAddress, deviceAddress, functionAddress);
                     }
                 }
             }
