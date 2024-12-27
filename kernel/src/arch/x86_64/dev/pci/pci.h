@@ -100,8 +100,9 @@ namespace PCI{
     void WriteDword(u8 bus, u8 slot, u8 func, u8 offset, u32 value);
     
     i8 FindDevice(u8 Class, u8 subclass);
-    i8 FindDevice__(u16 vendor_id, u16 device_id);
-    PCI::PCIDeviceHeader* FindDevice_(uint16_t vendor_id, uint16_t device_id);
+    i8 FindDevice_(u16 vendor_id, u16 device_id);
+    PCI::PCIDeviceHeader* _FindDevice_(uint16_t vendor_id, uint16_t device_id);
+    PCIDeviceHeader* _FindDevice__(u8 Class, u8 subclass);
     void AddDevice(u8 bus, u8 func, u8 Class, u8 subclass, u16 device_id, u16 vendor_id, u32* bars,u8 slot,
     u64 busAddress,u64 deviceAddress,u64 functionAddress);
 

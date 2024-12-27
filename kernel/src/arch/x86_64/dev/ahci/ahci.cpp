@@ -353,8 +353,9 @@ namespace AHCI
     }
 
 
-    AHCIDriver::AHCIDriver (PCI::PCIDeviceHeader* pciBaseAddress)
+    AHCIDriver::AHCIDriver ()
     {
+        PCI::PCIDeviceHeader* pciBaseAddress = PCI::_FindDevice__(0x01,0x06);
         this->PCIBaseAddress = pciBaseAddress;
         kinfoln("> AHCIDriver has been created! (PCI: %X)", (uint64_t)pciBaseAddress);
 

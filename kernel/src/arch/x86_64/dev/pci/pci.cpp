@@ -108,7 +108,7 @@ namespace PCI{
         return -1;
     }
 
-    i8 FindDevice__(u16 vendor_id, u16 device_id) {
+    i8 FindDevice_(u16 vendor_id, u16 device_id) {
         for (i8 i = 0; i < pci_list_idx; i++) {
             if (pci_list[i].vendor_id == vendor_id && pci_list[i].device_id == device_id)
             return i;
@@ -116,10 +116,13 @@ namespace PCI{
         return -1;
     }
 
-    PCIDeviceHeader* FindDevice_(uint16_t vendor_id, uint16_t device_id){
-        return (PCIDeviceHeader*)pci_list[FindDevice__(vendor_id, device_id)].functionAddress;
+    PCIDeviceHeader* _FindDevice_(uint16_t vendor_id, uint16_t device_id){
+        return (PCIDeviceHeader*)pci_list[FindDevice_(vendor_id, device_id)].functionAddress;
     }
 
+    PCIDeviceHeader* _FindDevice__(u8 Class, u8 subclass){
+        return (PCIDeviceHeader*)pci_list[FindDevice(Class, subclass)].functionAddress;
+    }
     
 
     void Init() {

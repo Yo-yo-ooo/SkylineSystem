@@ -168,7 +168,7 @@ namespace AHCI
 
     class AHCIDriver {
     public:
-        AHCIDriver (PCI::PCIDeviceHeader* pciBaseAddress);
+        AHCIDriver ();
         ~AHCIDriver();
 
         PCI::PCIDeviceHeader* PCIBaseAddress;
