@@ -389,3 +389,28 @@ static inline void delay(uint64_t cycles) {
 
     while (rdtsc() < next_stop);
 }
+
+
+//HAL
+
+#if defined(__x86_64__) || defined(__i386__)
+
+#define ENABLE_INTERRUPTS() asm volatile ("sti")
+#define DISABLE_INTERRUPTS() asm volatile ("cli")
+
+#elif defined(__aarch64__)
+
+#define ENABLE_INTERRUPTS() asm volatile ("msr daifclr, #2" : : : "memory")
+#define DISABLE_INTERRUPTS() asm volatile ("msr daifset, #2" : : : "memory")
+
+#elif defined(__riscv)
+
+#define ENABLE_INTERRUPTS() asm volatile ("csrsi mstatus, 8")
+#define DISABLE_INTERRUPTS() asm volatile ("csrci mstatus, 8")
+
+#elif defined(__loongarch64)
+
+#define ENABLE_INTERRUPTS() asm volatile ("csrsi sstatus, 1")
+#define DISABLE_INTERRUPTS() asm volatile ("csrci sstatus, 1")
+
+#endif

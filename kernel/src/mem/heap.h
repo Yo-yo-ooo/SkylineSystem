@@ -47,3 +47,7 @@ extern heap* kernel_heap;
 void* kmalloc(u64 size);
 void kfree(void* ptr);
 void* krealloc(void* ptr, u64 size);
+
+inline void* operator new(size_t Size) {return kmalloc(Size);}
+inline void* operator new[](size_t Size) {return kmalloc(Size);}
+inline void operator delete(void* p) {kfree(p);}

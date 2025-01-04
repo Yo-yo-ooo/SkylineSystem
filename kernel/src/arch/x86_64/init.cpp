@@ -19,6 +19,7 @@
 #include "MStack/MStackS.h"
 #include "dev/pci/pci.h"
 #include "../../klib/renderer/rnd.h"
+#include "dev/ahci/ahci.h"
 
 void __init x86_64_init(void){
     WELCOME_X86_64
@@ -114,6 +115,7 @@ void __init x86_64_init(void){
 
     kinfo("INIT DONE!\n");
 
-    //PIT::Sleep(2000);
-    //Renderer::Clear(Colors.black);
+    kinfo("INIT AHCI...\n");
+    AHCI::AHCIDriver();
+    kpok("AHCI INIT!\n");
 }

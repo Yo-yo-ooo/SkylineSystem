@@ -12,3 +12,4 @@ void kfree(void* ptr) {
 void* krealloc(void* ptr, u64 size) {
     return Heap::Realloc(kernel_heap, ptr, size);
 }
+

@@ -44,7 +44,7 @@ void lock(atomic_lock* l) {
 #if defined(__x86_64__)
         __asm__ volatile("pause");
 #else
-        __asm__ volatile("nop");
+        ;
 #endif
     }
 }

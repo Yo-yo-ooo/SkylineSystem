@@ -6,6 +6,7 @@
 #include "../../../../mem/heap.h"
 #include "../../../../mem/pmm.h"
 #include "../../pit/pit.h"
+#include "../../../../mem/heap.h"
 namespace AHCI 
 {
     #define HBA_PORT_DEV_PRESENT 0x3
@@ -355,7 +356,7 @@ namespace AHCI
 
     AHCIDriver::AHCIDriver ()
     {
-        PCI::PCIDeviceHeader* pciBaseAddress = PCI::_FindDevice__(0x01,0x06);
+        PCI::PCIDeviceHeader* pciBaseAddress = PCI::_FindDevice___(0x01,0x06,0x01);
         this->PCIBaseAddress = pciBaseAddress;
         kinfoln("> AHCIDriver has been created! (PCI: %X)", (uint64_t)pciBaseAddress);
 
