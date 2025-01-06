@@ -5,7 +5,6 @@
 
 #include <stdint.h>
 #include "../../../../klib/klib.h"
-#include "../../../../conf.h"
 
 #define PCI_BAR0 0x10
 
@@ -32,7 +31,23 @@ namespace PCI{
 
     
 
-    
+    typedef struct {
+        u8 bus;
+        u8 function;
+        u8 Class;
+        u8 subclass;
+        u16 device_id;
+        u16 vendor_id;
+        u32 bars[6];
+        u8 slot;
+
+        uint64_t busAddress;
+        uint64_t deviceAddress;
+        uint64_t functionAddress;
+
+        uint8_t Revision_ID;
+        uint8_t Prog_IF;
+    } pci_device;
 
     struct PCIDeviceHeader
     {
@@ -72,9 +87,11 @@ namespace PCI{
         uint8_t MaxLatency;
     }__attribute__((packed));
 
-    typedef struct PCI_DEV{
-        PCI::PCIDeviceHeader* pciDeviceHeader;
-    } pci_device;
+    extern pci_device pci_list[128];
+    extern uint64_t offset;
+    extern uint64_t busAddress;
+    extern uint64_t deviceAddress;
+    extern uint64_t functionAddress;
 
     void Init();
 
@@ -87,10 +104,12 @@ namespace PCI{
     
     i8 FindDevice(u8 Class, u8 subclass);
     i8 FindDevice_(u16 vendor_id, u16 device_id);
+    i8 FindDevice__(u8 Class, u8 subclass, u8 progif);
     PCIDeviceHeader* _FindDevice_(uint16_t vendor_id, uint16_t device_id);
     PCIDeviceHeader* _FindDevice__(u8 Class, u8 subclass);
-    PCIDeviceHeader* _FindDevice___(u8 Class, u8 subclass,u8 ProgIF);
-    void AddDevice(PCIDeviceHeader* header);
+    PCIDeviceHeader* _FindDevice___(u8 Class, u8 subclass, u8 progif);
+    void AddDevice(u8 bus, u8 func, u8 Class, u8 subclass, u16 device_id, u16 vendor_id, u32* bars,u8 slot,
+    u64 busAddress,u64 deviceAddress,u64 functionAddress);
 
     extern const char* unknownString;
     const char* GetVendorName(uint16_t vendorID);
