@@ -19,7 +19,7 @@
 #include "MStack/MStackS.h"
 #include "dev/pci/pci.h"
 #include "../../klib/renderer/rnd.h"
-#include "dev/ahci/ahci.h"
+#include "../../drivers/ahci/ahci.h"
 
 void __init x86_64_init(void){
     WELCOME_X86_64

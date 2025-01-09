@@ -1,6 +1,8 @@
 #pragma once
 #include <stdint.h>
-#include "../pci/pci.h"
+#ifdef __x86_64__
+#include "../../arch/x86_64/dev/pci/pci.h"
+#endif
 #include "portstuff.h"
 
 

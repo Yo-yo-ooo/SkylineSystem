@@ -1,12 +1,14 @@
 #include "ahci.h"
-#include "../../../../klib/cstr.h"
-#include "../../../../klib/kio.h"
-#include "../../../../acpi/acpi.h"
-#include "../../vmm/vmm.h"
-#include "../../../../mem/heap.h"
-#include "../../../../mem/pmm.h"
-#include "../../pit/pit.h"
-#include "../../../../mem/heap.h"
+#include "../../klib/klib.h"
+#include "../../klib/kio.h"
+#include "../../acpi/acpi.h"
+#ifdef __x86_64__
+#include "arch/x86_64/vmm/vmm.h"
+#include "../../mem/heap.h"
+#include "../../mem/pmm.h"
+#include "../../arch/x86_64/pit/pit.h"
+#endif
+
 namespace AHCI 
 {
     #define HBA_PORT_DEV_PRESENT 0x3
