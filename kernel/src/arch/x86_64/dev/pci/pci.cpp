@@ -149,7 +149,7 @@ namespace PCI{
         u16 class_subclass;
         u8 Class, subclass;
         u32 bars[6];
-
+        PCIDeviceHeader* pciDeviceHeader;
         //ACPI::MCFGHeader* mcfg = (ACPI::MCFGHeader*)ACPI::FindTable("MCFG");
         //int entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
         int entries = (ACPI::mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
@@ -160,15 +160,25 @@ namespace PCI{
             for (u64 bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++){
                 offset = bus << 20;
                 busAddress = newDeviceConfig->BaseAddress + offset;
+                VMM::Map((void*)busAddress, (void*)busAddress);
+                pciDeviceHeader  = (PCIDeviceHeader*)busAddress;
+                if (pciDeviceHeader ->Device_ID == 0x0000) {continue;}
+                if (pciDeviceHeader ->Device_ID == 0xFFFF) {continue;}
                 for (u8 slot = 0; slot < PCI_MAX_SLOT; slot++){
                     offset = (slot << 15);
                     deviceAddress = busAddress + offset;
+                    VMM::Map((void*)deviceAddress, (void*)deviceAddress);
+                    pciDeviceHeader  = (PCIDeviceHeader*)deviceAddress;
+                    if (pciDeviceHeader ->Device_ID == 0x0000) {continue;}
+                    if (pciDeviceHeader ->Device_ID == 0xFFFF) {continue;}
                     for (u8 func = 0; func < PCI_MAX_FUNC; func++) {
                         offset = (func << 12);
                         functionAddress = deviceAddress + offset;
-
+                        VMM::Map((void*)functionAddress, (void*)functionAddress);
+                        pciDeviceHeader  = (PCIDeviceHeader*)functionAddress;
+                        if (pciDeviceHeader ->Device_ID == 0x0000) {continue;}
+                        if (pciDeviceHeader ->Device_ID == 0xFFFF) {continue;}
                         vendor = PCI::ReadWord(bus, slot, func, 0);
-                        if (vendor == 0xFFFF) continue;
                         device = PCI::ReadWord(bus, slot, func, 2);
                         class_subclass = PCI::ReadWord(bus, slot, func, 0x8 + 2);
                         Class = (u8)class_subclass;
