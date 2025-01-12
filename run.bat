@@ -3,16 +3,18 @@
 SET SourceFile=disk.img
 
 if not exist %SourceFile% (
-    qemu-img create disk.img 1M
+    qemu-img create %SourceFile% 1M -f qcow2
 ) else (
     echo %SourceFile% is exist, Stop creating disk.img
 )
 
-qemu-system-%1 -M q35 -cpu qemu64 ^
+qemu-system-%1 -machine q35 -cpu qemu64 ^
 -cdrom SkylineSystem-%1.iso -m 2G -smp 4 ^
 -serial stdio -net nic -device AC97 ^
--drive id=disk,file=disk.img,if=none ^
--device ahci,id=ahci ^
--device ide-hd,drive=disk,bus=ahci.0
+-drive file=%SourceFile%,if=none,id=sata1 ^
+-device ahci,id=ahci1 ^
+-device ide-hd,drive=sata1,bus=ahci1.0 ^
+-no-reboot --no-shutdown
+
 
 pause

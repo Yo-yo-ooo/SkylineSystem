@@ -406,19 +406,22 @@ namespace AHCI
 
         PortCount = 0;
 
-        //osData.debugTerminalWindow->Log("Probing Ports:",  Colors.bred);
+        if (portsImplemented > 0)
+            kinfo("AHCI: Probing ports via ABAR 0x%016lx, value 0x%04X\n", (uint64_t)ABAR, ABAR->portsImplemented);
+	    else
+		    kinfo("AHCI: Port not implemented, skipping probing\n");
         for (int i = 0; i < 32; i++)
         {
             if (portsImplemented & (1 << i))
             {
                 PortType portType = CheckPortType(&ABAR->ports[i]);
 
-                // if (portType == PortType::SATA)
-                //     osData.debugTerminalWindow->Log("* SATA drive",  Colors.orange);
-                // else if (portType == PortType::SATAPI)
-                //     osData.debugTerminalWindow->Log("* SATAPI drive",  Colors.orange);
-                // else
-                //     osData.debugTerminalWindow->Log("* Not interested",  Colors.orange);
+                if (portType == PortType::SATA)
+                    kprintf("\033[38;2;255;165;0m* SATA drive\033[0m\n");
+                else if (portType == PortType::SATAPI)
+                    kprintf("\033[38;2;255;165;0m* SATAPI drive\033[0m\n");
+                else
+                    kprintf("\033[38;2;255;165;0m* Not interested\033[0m\n");
 
                 if (portType == PortType::SATA || portType == PortType::SATAPI)
                 {

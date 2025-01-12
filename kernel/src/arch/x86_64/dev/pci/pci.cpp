@@ -160,6 +160,7 @@ namespace PCI{
             for (u64 bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++){
                 offset = bus << 20;
                 busAddress = newDeviceConfig->BaseAddress + offset;
+                if(busAddress == 0) continue;
                 VMM::Map((void*)busAddress, (void*)busAddress);
                 pciDeviceHeader  = (PCIDeviceHeader*)busAddress;
                 if (pciDeviceHeader ->Device_ID == 0x0000) {continue;}
@@ -167,6 +168,7 @@ namespace PCI{
                 for (u8 slot = 0; slot < PCI_MAX_SLOT; slot++){
                     offset = (slot << 15);
                     deviceAddress = busAddress + offset;
+                    if(deviceAddress == 0) continue;
                     VMM::Map((void*)deviceAddress, (void*)deviceAddress);
                     pciDeviceHeader  = (PCIDeviceHeader*)deviceAddress;
                     if (pciDeviceHeader ->Device_ID == 0x0000) {continue;}
@@ -174,6 +176,7 @@ namespace PCI{
                     for (u8 func = 0; func < PCI_MAX_FUNC; func++) {
                         offset = (func << 12);
                         functionAddress = deviceAddress + offset;
+                        if(functionAddress == 0) continue;
                         VMM::Map((void*)functionAddress, (void*)functionAddress);
                         pciDeviceHeader  = (PCIDeviceHeader*)functionAddress;
                         if (pciDeviceHeader ->Device_ID == 0x0000) {continue;}
