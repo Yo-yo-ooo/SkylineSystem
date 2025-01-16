@@ -11,3 +11,12 @@ void VsDev::AddStorageDevice(VsDevType type, SALOPS* ops)
     vsdev_list_idx++;
 }
 
+u32 VsDev::GetSDEVTCount(VsDevType type){
+    u32 c;
+    for(u32 i = 0; i < vsdev_list_idx; i++){
+        if(DevList[i].type == type){
+            return c++;
+        }
+    }
+    return c;
+}

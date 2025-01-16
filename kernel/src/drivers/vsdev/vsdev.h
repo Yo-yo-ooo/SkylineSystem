@@ -3,13 +3,13 @@
 #ifndef _VSDEV_H
 #define _VSDEV_H
 
-#include "../../../../klib/klib.h"
-#include "../../../../conf.h"
+#include "../../klib/klib.h"
+#include "../../conf.h"
 
 typedef enum VsDevType
 {
     SATA = 0,
-    SATAPI,
+    IDE, // SATAPI/IDE
     ATA,
     NVME,
     SAS,
