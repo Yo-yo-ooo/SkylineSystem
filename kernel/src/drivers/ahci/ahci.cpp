@@ -23,13 +23,13 @@ namespace AHCI
     {
         StopCMD();
 
-        void* newBase = HIGHER_HALF(PMM::Alloc(1));
+        void* newBase = PMM::Alloc(1);
         VMM::Map(newBase, newBase);
         hbaPort->commandListBase = (uint32_t)(uint64_t)newBase;
         hbaPort->commandListBaseUpper = (uint32_t)((uint64_t)newBase >> 32);
         _memset((void*)(uint64_t)hbaPort->commandListBase, 0, 1024);
 
-        void* fisBase = HIGHER_HALF(PMM::Alloc(1));
+        void* fisBase = PMM::Alloc(1);
         VMM::Map(fisBase, fisBase);
         hbaPort->fisBaseAddress = (uint32_t)(uint64_t)fisBase;
         hbaPort->fisBaseAddressUpper = (uint32_t)((uint64_t)fisBase >> 32);
@@ -41,7 +41,7 @@ namespace AHCI
         {
             cmdHeader[i].prdtLength = 8;
 
-            void* cmdTableAddress = HIGHER_HALF(PMM::Alloc(1));
+            void* cmdTableAddress = PMM::Alloc(1);
             VMM::Map(cmdTableAddress, cmdTableAddress);
             uint64_t address = (uint64_t)cmdTableAddress + (i << 8);
             cmdHeader[i].commandTableBaseAddress = (uint32_t)(uint64_t)address;
@@ -97,7 +97,7 @@ namespace AHCI
 
         AddToStack();
         /***Make the Command Table***/
-        HBACommandTable* cmdtbl = (HBACommandTable*)((uint64_t)cmdhead->commandTableBaseAddress);//(HBACommandTable*)HIGHER_HALF(PMM::Alloc(1));// kmalloc(sizeof(HBA_CMD_TBL));
+        HBACommandTable* cmdtbl = (HBACommandTable*)((uint64_t)cmdhead->commandTableBaseAddress);//(HBACommandTable*)PMM::Alloc(1);// kmalloc(sizeof(HBA_CMD_TBL));
         //cmdhead->commandTableBaseAddress = (uint32_t)(uint64_t)cmdtbl;
         RemoveFromStack();
 
@@ -112,7 +112,7 @@ namespace AHCI
             RemoveFromStack();
             return test;
         }
-        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)HIGHER_HALF(PMM::Alloc(1));
+        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)PMM::Alloc(1);
         //_memset((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress , 0, 0x1000);
         //VMM::Map((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress, (void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress);
         RemoveFromStack();
@@ -356,9 +356,9 @@ namespace AHCI
     }
 
 
-    AHCIDriver::AHCIDriver ()
+    AHCIDriver::AHCIDriver (PCI::PCIDeviceHeader* PCIBaseAddr)
     {
-        PCI::PCIDeviceHeader* pciBaseAddress = PCI::_FindDevice___(0x01,0x06,0x01);
+        PCI::PCIDeviceHeader* pciBaseAddress = PCIBaseAddr;
         this->PCIBaseAddress = pciBaseAddress;
         kinfoln("> AHCIDriver has been created! (PCI: %X)", (uint64_t)pciBaseAddress);
 

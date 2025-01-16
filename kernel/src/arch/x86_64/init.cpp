@@ -110,12 +110,12 @@ void __init x86_64_init(void){
     ATA::Init();
 
     kinfo("INIT PCI...\n");
-    PCI::Init();
+    PCI::EnumeratePCI(ACPI::mcfg);
     kpok("PCI INIT!\n");
 
     kinfo("INIT DONE!\n");
 
     kinfo("INIT AHCI...\n");
-    AHCI::AHCIDriver();
+    new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01));
     kpok("AHCI INIT!\n");
 }

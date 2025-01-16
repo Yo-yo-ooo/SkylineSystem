@@ -177,10 +177,13 @@ endif
 
 # Internal linker flags that should not be changed by the user.
 override KLDFLAGS += \
+	-unresolved-symbols=ignore-all \
     -nostdlib \
     -static \
     -z max-page-size=0x1000 \
     -gc-sections \
+	-Bsymbolic \
+	--gc-sections   \
     -T linker-$(KARCH).ld
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
