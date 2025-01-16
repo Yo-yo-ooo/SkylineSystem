@@ -3,7 +3,9 @@
 #ifndef _ATA_H
 #define _ATA_H
 
-#include "../../../../klib/klib.h"
+#include "../../klib/klib.h"
+#include "../../klib/kio.h"
+#include "../../acpi/acpi.h"
 
 #define ATA_PRIMARY 0x1F0
 #define ATA_SECONDARY 0x170

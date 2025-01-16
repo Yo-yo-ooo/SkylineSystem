@@ -14,7 +14,7 @@
 #include "cpuid.h"
 #include "schedule/sched.h"
 #include "schedule/syscall.h"
-#include "dev/ata/ata.h"
+#include "../../drivers/ata/ata.h"
 #include "MStack/MStackM.h"
 #include "MStack/MStackS.h"
 #include "dev/pci/pci.h"
