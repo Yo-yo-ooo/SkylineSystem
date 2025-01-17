@@ -1,7 +1,7 @@
 #include "cstr.h"
 
 char intTo_stringOutput[128];
-const char* to_string(uint64_t value)
+const char *to_string(uint64_t value)
 {
     uint8_t size = 0;
     uint64_t sizetest = value;
@@ -13,7 +13,7 @@ const char* to_string(uint64_t value)
 
     uint8_t index = 0;
     while (value / 10 > 0)
-    {        
+    {
         uint8_t remainder = value % 10;
         value /= 10;
         intTo_stringOutput[size - index] = remainder + '0';
@@ -26,7 +26,7 @@ const char* to_string(uint64_t value)
     return intTo_stringOutput;
 }
 
-const char* to_string(int64_t value)
+const char *to_string(int64_t value)
 {
     uint8_t size = 0;
     if (value < 0)
@@ -36,7 +36,6 @@ const char* to_string(int64_t value)
         size = 1;
     }
 
-
     uint64_t sizetest = value;
     while (sizetest / 10 > 0)
     {
@@ -46,34 +45,32 @@ const char* to_string(int64_t value)
 
     uint8_t index = 0;
     while (value / 10 > 0)
-    {        
+    {
         uint8_t remainder = value % 10;
         value /= 10;
         intTo_stringOutput[size - index] = remainder + '0';
         index++;
     }
 
-    
     uint8_t remainder = value % 10;
     intTo_stringOutput[size - index] = remainder + '0';
     intTo_stringOutput[size + 1] = 0;
     intTo_stringOutput[size + 2] = 0;
 
-
     return intTo_stringOutput;
 }
 
-const char* to_string(int value)
+const char *to_string(int value)
 {
-    return to_string((int64_t) value);
+    return to_string((int64_t)value);
 }
 
-const char* to_string(uint32_t value)
+const char *to_string(uint32_t value)
 {
-    return to_string((int64_t) value);
+    return to_string((int64_t)value);
 }
 
-const char* to_string(char value)
+const char *to_string(char value)
 {
     intTo_stringOutput[0] = value;
     intTo_stringOutput[1] = 0;
@@ -81,7 +78,7 @@ const char* to_string(char value)
 }
 
 char doubleTo_stringOutput[128];
-__attribute__((target("sse2"))) const char* to_string(double value, uint8_t places)
+__attribute__((target("sse2"))) const char *to_string(double value, uint8_t places)
 {
     uint8_t size = 0;
     if (value < 0)
@@ -90,7 +87,6 @@ __attribute__((target("sse2"))) const char* to_string(double value, uint8_t plac
         doubleTo_stringOutput[0] = '-';
         size = 1;
     }
-
 
     uint64_t sizetest = (int64_t)value;
     while (sizetest / 10 > 0)
@@ -101,20 +97,19 @@ __attribute__((target("sse2"))) const char* to_string(double value, uint8_t plac
 
     uint8_t index = 0;
 
-    if(places > 0)
+    if (places > 0)
     {
         size += places + 1;
-
 
         double temp = 1;
 
         for (int i = 0; i < places; i++)
             temp *= 10;
 
-        uint64_t value3 = (uint64_t)((value - ((uint64_t)value)) * temp); 
+        uint64_t value3 = (uint64_t)((value - ((uint64_t)value)) * temp);
 
         for (int i = 0; i < places; i++)
-        {        
+        {
             uint8_t remainder = value3 % 10;
             value3 /= 10;
             doubleTo_stringOutput[size - index] = remainder + '0';
@@ -124,36 +119,30 @@ __attribute__((target("sse2"))) const char* to_string(double value, uint8_t plac
         doubleTo_stringOutput[size - index] = '.';
         index++;
     }
-    
-
 
     uint64_t value2 = (int64_t)value;
     if (value2 == 0)
         doubleTo_stringOutput[size - index] = '0';
     else
         while (value2 > 0)
-        {        
+        {
             uint8_t remainder = value2 % 10;
             value2 /= 10;
             doubleTo_stringOutput[size - index] = remainder + '0';
             index++;
         }
-    
-
-    
 
     doubleTo_stringOutput[size + 1] = 0;
-
 
     return doubleTo_stringOutput;
 }
 
-const char* to_string(double value)
+const char *to_string(double value)
 {
     return to_string(value, 2);
 }
 
-const char* to_string(bool value)
+const char *to_string(bool value)
 {
     if (value)
         return "true";
@@ -161,9 +150,7 @@ const char* to_string(bool value)
         return "false";
 }
 
-
-
-unsigned int ConvertStringToHex(const char* data)
+unsigned int ConvertStringToHex(const char *data)
 {
     unsigned int hex = 0;
 
@@ -183,15 +170,15 @@ unsigned int ConvertStringToHex(const char* data)
         hex = hex << 8;
         hex += temp;
     }
-    
-    return hex; 
+
+    return hex;
 }
 
-unsigned long ConvertStringToLongHex(const char* data)
+unsigned long ConvertStringToLongHex(const char *data)
 {
     unsigned long hex = 0;
 
-    for (unsigned int i = 0; i < 16;  i++)
+    for (unsigned int i = 0; i < 16; i++)
     {
         if (data[i] == 0)
             break;
@@ -200,48 +187,47 @@ unsigned long ConvertStringToLongHex(const char* data)
             if (data[i] >= '0' && data[i] <= '9')
                 temp += (data[i] - '0');
             else if (data[i] >= 'A' && data[i] <= 'F')
-                temp += (data[i] + 10 - 'A') ;
+                temp += (data[i] + 10 - 'A');
             else if (data[i] >= 'a' && data[i] <= 'f')
-                temp += (data[i] + 10 - 'a') ;
+                temp += (data[i] + 10 - 'a');
         }
         hex = hex << 4;
         hex += temp;
     }
-    
-    return hex; 
+
+    return hex;
 }
 
-
 char hexTo_stringOutput[128];
-const char* hexABC = "0123456789ABCDEF";
-const char* ConvertHexToString(uint64_t hex, uint8_t size)
+const char *hexABC = "0123456789ABCDEF";
+const char *ConvertHexToString(uint64_t hex, uint8_t size)
 {
     hex = (hex << (16 - size) * 4);
     for (uint8_t i = 0; i < size; i++)
         hexTo_stringOutput[i] = hexABC[((hex << i * 4) >> ((15) * 4))];
-    
+
     hexTo_stringOutput[size] = 0;
 
-    return hexTo_stringOutput; 
+    return hexTo_stringOutput;
 }
-const char* ConvertHexToString(uint64_t hex)
+const char *ConvertHexToString(uint64_t hex)
 {
-    return ConvertHexToString(hex, (64/4));
+    return ConvertHexToString(hex, (64 / 4));
 }
-const char* ConvertHexToString(uint32_t hex)
+const char *ConvertHexToString(uint32_t hex)
 {
-    return ConvertHexToString(hex, (32/4));
+    return ConvertHexToString(hex, (32 / 4));
 }
-const char* ConvertHexToString(uint16_t hex)
+const char *ConvertHexToString(uint16_t hex)
 {
-    return ConvertHexToString(hex, (16/4));
+    return ConvertHexToString(hex, (16 / 4));
 }
-const char* ConvertHexToString(uint8_t hex)
+const char *ConvertHexToString(uint8_t hex)
 {
-    return ConvertHexToString(hex, (8/4));
+    return ConvertHexToString(hex, (8 / 4));
 }
 
-int64_t to_int(const char* string)
+int64_t to_int(const char *string)
 {
     uint64_t number = 0;
     uint64_t size = 0;
@@ -262,4 +248,50 @@ int64_t to_int(const char* string)
         exp *= 10;
     }
     return number;
+}
+
+int strcmp(const char *cs, const char *ct)
+{
+    unsigned char c1, c2;
+
+    while (1)
+    {
+        c1 = *cs++;
+        c2 = *ct++;
+        if (c1 != c2)
+            return c1 < c2 ? -1 : 1;
+        if (!c1)
+            break;
+    }
+    return 0;
+}
+
+char *strtok(char *str, const char *delim)
+{
+    static char *p = NULL;
+    if (str != NULL)
+        p = str;
+    else if (p == NULL)
+        return NULL;
+
+    char *start = p;
+    while (*p != '\0')
+    {
+        const char *d = delim;
+        while (*d != '\0')
+        {
+            if (*p == *d)
+            {
+                *p = '\0';
+                p++;
+                if (start == p){start = p;continue;}
+                return start;
+            }
+            d++;
+        }
+        p++;
+    }
+    if (start == p)
+        return NULL;
+    return start;
 }
