@@ -14,6 +14,7 @@
 #include "types.h"
 #include "list.h"
 #include "cstr.h"
+#include "utf8.h"
 
 extern uint64_t hhdm_offset;
 extern uint64_t RSDP_ADDR;

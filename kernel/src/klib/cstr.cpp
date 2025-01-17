@@ -268,11 +268,11 @@ int strcmp(const char *cs, const char *ct)
 
 char *strtok(char *str, const char *delim)
 {
-    static char *p = NULL;
-    if (str != NULL)
+    static char *p = 0;
+    if (str != 0)
         p = str;
-    else if (p == NULL)
-        return NULL;
+    else if (p == 0)
+        return 0;
 
     char *start = p;
     while (*p != '\0')
@@ -292,6 +292,6 @@ char *strtok(char *str, const char *delim)
         p++;
     }
     if (start == p)
-        return NULL;
+        return 0;
     return start;
 }
