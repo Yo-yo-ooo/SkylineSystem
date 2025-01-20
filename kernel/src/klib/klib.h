@@ -35,6 +35,12 @@ void Panic(const char* message,bool halt);
 #define panic Panic
 void hcf(void);
 
+
+#define ASSERT(CONDITION) \
+if (CONDITION){} \
+/* 符号#让编译器将宏的参数转化为字符串字面量 */ \
+else {Panic(#CONDITION);}
+
 void _memcpy(void* src, void* dest, uint64_t size);
 void _memset(void* dest, uint8_t value, uint64_t size);
 void _memmove(void* src, void* dest, uint64_t size);

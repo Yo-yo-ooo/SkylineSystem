@@ -29,3 +29,4 @@ unsigned long ConvertStringToLongHex(const char* data);
 
 int strcmp(const char *cs, const char *ct);
 char *strtok(char *str, const char *delim);
+char* strchr(char* str, int c);

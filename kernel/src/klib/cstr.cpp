@@ -295,3 +295,13 @@ char *strtok(char *str, const char *delim)
         return 0;
     return start;
 }
+
+
+char* strchr(char* str, int c) {
+	for (; *str != 0; ++str) {
+		if (*str == c) {
+			return str;
+		}
+	}
+	return 0;
+}
