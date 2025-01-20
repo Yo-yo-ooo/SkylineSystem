@@ -23,7 +23,9 @@
 #include "../../klib/klib.h"
 #include "ff.h"			/* Declarations of FatFs API */
 #include "diskio.h"		/* Declarations of device I/O functions */
-
+#if defined (__x86_64__)
+#include "../../arch/x86_64/rtc/rtc.h"
+#endif
 
 /*--------------------------------------------------------------------------
 
@@ -7105,3 +7107,15 @@ FRESULT f_setcp (
 }
 #endif	/* FF_CODE_PAGE == 0 */
 
+
+
+#if !FF_FS_READONLY && !FF_FS_NORTC
+DWORD get_fattime (void){
+    return (DWORD)(RTC::Year - 80) << 25 |
+           (DWORD)(RTC::Month + 1) << 21 |
+           (DWORD)RTC::Day << 16 |
+           (DWORD)RTC::Hour << 11 |
+           (DWORD)RTC::Minute << 5 |
+           (DWORD)RTC::Second >> 1;
+}
+#endif
