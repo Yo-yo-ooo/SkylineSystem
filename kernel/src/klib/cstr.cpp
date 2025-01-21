@@ -1,4 +1,5 @@
 #include "cstr.h"
+#include "klib.h"
 
 char intTo_stringOutput[128];
 const char *to_string(uint64_t value)
@@ -304,4 +305,29 @@ char* strchr(char* str, int c) {
 		}
 	}
 	return 0;
+}
+
+char *strcpy(char *strDest, const char *strSrc){
+    ASSERT((strDest!=NULL) && (strSrc !=NULL)); 
+    char *address = strDest;
+    while( (*strDest++ = * strSrc++) != '\0' ) 
+        NULL ;
+    return address ;
+}
+
+int strncmp(const char* a, const char* b, size_t n) {
+    while (true) {
+        unsigned char ac = n ? *a : '\0', bc = n ? *b : '\0';
+        if (ac == '\0' || bc == '\0' || ac != bc) {
+            return (ac > bc) - (ac < bc);
+        }
+        ++a, ++b, --n;
+    }
+}
+
+char *strncpy(char *dest, const char *src, size_t n) {
+    char *tmp = dest;
+    while (n-- > 0 && (*dest++ = *src++) != '\0')
+        ;
+    return tmp;
 }

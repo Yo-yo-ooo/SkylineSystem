@@ -10,7 +10,6 @@ typedef enum VsDevType
 {
     SATA = 0,
     IDE, // SATAPI/IDE
-    ATA,
     NVME,
     SAS,
     Undefined

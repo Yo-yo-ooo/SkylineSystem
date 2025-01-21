@@ -60,7 +60,7 @@ void _putchar(char character);
  */
 #define kprintf printf_
 int printf_(const char* format, ...);
-
+#define _printf printf_
 
 /**
  * Tiny sprintf implementation

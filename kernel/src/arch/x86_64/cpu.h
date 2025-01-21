@@ -3,6 +3,7 @@
 #include "cpuid.h"
 
 #include "../../klib/klib.h"
+#include "../../klib/kio.h"
 
 #define IA32_GS_MSR 0xC0000101
 #define IA32_GS_KERNEL_MSR 0xC0000102

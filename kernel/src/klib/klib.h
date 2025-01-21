@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "kio.h"
+//#include "kio.h"
 #include "types.h"
 #include "list.h"
 #include "cstr.h"
@@ -100,5 +100,7 @@ inline int strlen(const char* str) {
     }
     return i;
 }
+
+void qsort(void *base, size_t num, size_t width, int (*sort)(const void *e1, const void *e2));
 
 #endif

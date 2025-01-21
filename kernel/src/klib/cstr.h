@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 const char* to_string(uint64_t value);
 
@@ -30,3 +31,6 @@ unsigned long ConvertStringToLongHex(const char* data);
 int strcmp(const char *cs, const char *ct);
 char *strtok(char *str, const char *delim);
 char* strchr(char* str, int c);
+char *strcpy(char *strDest, const char *strSrc);
+int strncmp(const char* a, const char* b, size_t n);
+char *strncpy(char *dest, const char *src, size_t n);

@@ -1,4 +1,5 @@
 #include "ata.h"
+#include "../vsdev/vsdev.h"
 
 u16 ata_base = 0;
 u8 ata_type = 0;
@@ -78,6 +79,20 @@ u8 Read(u32 lba, u8* buffer, u32 sector_count) {
     return ATA_OKAY;
 }
 
+u8 FRegVsDEV_R(u32 lba, u8* buffer, u32 sector_count){
+    if(ATA::Read(lba,buffer, sector_count) == ATA_OKAY)
+        return VsDev::RW_OK;
+    else 
+        return VsDev::RW_ERROR;
+}
+
+u8 FRegVsDEV_W(u32 lba, u8* buffer, u32 sector_count){
+    if(ATA::Write(lba, buffer,sector_count) == ATA_OKAY)
+        return VsDev::RW_OK;
+    else 
+        return VsDev::RW_ERROR;
+}
+
 u8 Write(u32 lba, u8* buffer, u32 sector_count) {
     outb(ata_base + 6, (ata_type == ATA_MASTER ? 0xE0 : 0xF0) | ((lba >> 24) & 0x0F));
     outb(ata_base + 1, ATA_WAIT);
@@ -106,6 +121,12 @@ u8 Write(u32 lba, u8* buffer, u32 sector_count) {
 
 u8 Init() {
     u8 ata_status = Identify(ATA_PRIMARY, ATA_MASTER);
+    SALOPS* ops = nullptr;
+    ops->Read = FRegVsDEV_R;
+    ops->Write = FRegVsDEV_W;
+    ops->ReadBytes = nullptr;
+    ops->WriteBytes = nullptr;
+    VsDev::AddStorageDevice(SATA, ops);
     return ata_status;
 }
 }
