@@ -64,7 +64,8 @@
 
 #include "../../../klib/klib.h"
 #include "../../../klib/cstr.h"
-
+uint32_t registed_blockdevs;
+uint32_t registed_mountpoints;
 /**@brief   Mount point OS dependent lock*/
 #define EXT4_MP_LOCK(_m)                                                       \
 	do {                                                                   \
@@ -115,10 +116,10 @@ struct ext4_block_devices {
 };
 
 /**@brief   Block devices.*/
-static struct ext4_block_devices s_bdevices[CONFIG_EXT4_BLOCKDEVS_COUNT];
+static struct ext4_block_devices *s_bdevices;
 
 /**@brief   Mountpoints.*/
-static struct ext4_mountpoint s_mp[CONFIG_EXT4_MOUNTPOINTS_COUNT];
+static struct ext4_mountpoint *s_mp;
 
 int ext4_device_register(struct ext4_blockdev *bd,
 			 const char *dev_name)
@@ -127,13 +128,23 @@ int ext4_device_register(struct ext4_blockdev *bd,
 
 	if (strlen(dev_name) > CONFIG_EXT4_MAX_BLOCKDEV_NAME)
 		return EINVAL;
+    if(registed_blockdevs == 0)
+        s_bdevices = (struct ext4_block_devices*)ext4_malloc(CONFIG_EXT4_BLOCKDEVS_COUNT * sizeof(struct ext4_block_devices));
+    if((registed_blockdevs + 1) < CONFIG_EXT4_BLOCKDEVS_COUNT){registed_blockdevs++;}else{
+        registed_blockdevs++;
+        ext4_realloc(s_bdevices, registed_blockdevs * sizeof(struct ext4_block_devices));
+    }
+    if((registed_mountpoints + 1) < CONFIG_EXT4_MOUNTPOINTS_COUNT){registed_mountpoints++;}else{
+        registed_mountpoints++;
+        ext4_realloc(s_mp, registed_mountpoints * sizeof(struct ext4_mountpoint));
+    }
 
-	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT; ++i) {
+	for (size_t i = 0; i < registed_blockdevs; ++i) {
 		if (!strcmp(s_bdevices[i].name, dev_name))
 			return EEXIST;
 	}
 
-	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT; ++i) {
+	for (size_t i = 0; i < registed_blockdevs; ++i) {
 		if (!s_bdevices[i].bd) {
 			strcpy(s_bdevices[i].name, dev_name);
 			s_bdevices[i].bd = bd;
@@ -148,7 +159,7 @@ int ext4_device_unregister(const char *dev_name)
 {
 	ext4_assert(dev_name);
 
-	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT; ++i) {
+	for (size_t i = 0; i < registed_blockdevs; ++i) {
 		if (strcmp(s_bdevices[i].name, dev_name))
 			continue;
 
@@ -387,7 +398,7 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (mount_point[mp_len - 1] != '/')
 		return ENOTSUP;
 
-	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT; ++i) {
+	for (size_t i = 0; i < registed_blockdevs; ++i) {
 		if (!strcmp(dev_name, s_bdevices[i].name)) {
 			bd = s_bdevices[i].bd;
 			break;
