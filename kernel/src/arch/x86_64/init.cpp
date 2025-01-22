@@ -20,6 +20,7 @@
 #include "dev/pci/pci.h"
 #include "../../klib/renderer/rnd.h"
 #include "../../drivers/ahci/ahci.h"
+#include "../../drivers/vsdev/vsdev.h"
 
 void __init x86_64_init(void){
     WELCOME_X86_64
@@ -106,6 +107,8 @@ void __init x86_64_init(void){
     Schedule::Init();
     user_init();
     LAPIC::CalibrateTimer();
+
+    VsDev::Init();
 
     ATA::Init();
 
