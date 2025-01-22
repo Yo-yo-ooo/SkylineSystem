@@ -32,9 +32,9 @@ namespace ATA{
     u8 Init();
 
     /*Do not use it*/ 
-    u8 FRegVsDEV_R(u32 lba, u8* buffer, u32 sector_count);
+    u8 FRegVsDEV_R(uint64_t lba, uint32_t SectorCount, void* Buffer);
     /*Do not use it*/ 
-    u8 FRegVsDEV_W(u32 lba, u8* buffer, u32 sector_count);
+    u8 FRegVsDEV_W(uint64_t lba, uint32_t SectorCount, void* Buffer);
     
     u8 Read(u32 lba, u8* buffer, u32 sector_count);
     u8 Write(u32 lba, u8* buffer, u32 sector_count);

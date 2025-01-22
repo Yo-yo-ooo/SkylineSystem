@@ -79,15 +79,15 @@ u8 Read(u32 lba, u8* buffer, u32 sector_count) {
     return ATA_OKAY;
 }
 
-u8 FRegVsDEV_R(u32 lba, u8* buffer, u32 sector_count){
-    if(ATA::Read(lba,buffer, sector_count) == ATA_OKAY)
+u8 FRegVsDEV_R(uint64_t lba, uint32_t SectorCount, void* Buffer){
+    if(ATA::Read(lba,Buffer, SectorCount) == ATA_OKAY)
         return VsDev::RW_OK;
     else 
         return VsDev::RW_ERROR;
 }
 
-u8 FRegVsDEV_W(u32 lba, u8* buffer, u32 sector_count){
-    if(ATA::Write(lba, buffer,sector_count) == ATA_OKAY)
+u8 FRegVsDEV_W(uint64_t lba, uint32_t SectorCount, void* Buffer){
+    if(ATA::Write(lba, Buffer,SectorCount) == ATA_OKAY)
         return VsDev::RW_OK;
     else 
         return VsDev::RW_ERROR;
@@ -121,6 +121,13 @@ u8 Write(u32 lba, u8* buffer, u32 sector_count) {
 
 u8 Init() {
     u8 ata_status = Identify(ATA_PRIMARY, ATA_MASTER);
+    SALOPS *ops;
+    ops->Read = FRegVsDEV_R;
+    ops->Write = FRegVsDEV_W;
+    ops->ReadBytes = nullptr;
+    ops->WriteBytes = nullptr;
+    ops->GetMaxSectorCount = nullptr;
+    VsDev::AddStorageDevice(VsDevType::IDE, ops);
     return ata_status;
 }
 }
