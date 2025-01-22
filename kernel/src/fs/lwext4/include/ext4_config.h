@@ -39,7 +39,6 @@
 
 #include "../../../klib/klib.h"
 #include "../../../klib/kprintf.h"
-#include "../../../../conf.h"
 
 
 #define CONFIG_USE_DEFAULT_CFG 1
