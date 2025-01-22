@@ -39,7 +39,7 @@
 
 #include "../../../klib/klib.h"
 #include "../../../klib/kprintf.h"
-
+#include "../../../../conf.h"
 
 
 #define CONFIG_USE_DEFAULT_CFG 1
@@ -140,8 +140,7 @@
 
 /**@brief   Maximum block device count*/
 #ifndef CONFIG_EXT4_BLOCKDEVS_COUNT
-#define CONFIG_EXT4_BLOCKDEVS_COUNT  2
-extern uint32_t registed_blockdevs;
+#define CONFIG_EXT4_BLOCKDEVS_COUNT  16
 #endif
 
 /**@brief   Maximum mountpoint name*/
@@ -151,8 +150,7 @@ extern uint32_t registed_blockdevs;
 
 /**@brief   Maximum mountpoint count*/
 #ifndef CONFIG_EXT4_MOUNTPOINTS_COUNT
-#define CONFIG_EXT4_MOUNTPOINTS_COUNT 2
-extern uint32_t registed_mountpoints;
+#define CONFIG_EXT4_MOUNTPOINTS_COUNT 16
 #endif
 
 /**@brief   Include open flags from ext4_errno or standard library.*/

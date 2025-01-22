@@ -88,7 +88,6 @@ static int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id
 			 uint32_t blk_cnt)
 {
 	/*blockdev_bread: skeleton*/
-    VsDev::SetSDev(0);
     if(VsDev::Read(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
@@ -102,7 +101,6 @@ static int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 			  uint64_t blk_id, uint32_t blk_cnt)
 {
 	/*blockdev_bwrite: skeleton*/
-    VsDev::SetSDev(0);
     if(VsDev::Write(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
@@ -119,6 +117,7 @@ static int blockdev_close(struct ext4_blockdev *bdev)
 static int blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
+    
 	return EIO;
 }
 
@@ -134,4 +133,5 @@ struct ext4_blockdev *ext4_blockdev_get(void)
 	return &blockdev;
 }
 /******************************************************************************/
+
 
