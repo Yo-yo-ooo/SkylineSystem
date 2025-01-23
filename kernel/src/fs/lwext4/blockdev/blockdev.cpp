@@ -57,26 +57,36 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "blockdev.h"
 
-#include "../../../drivers/vsdev/vsdev.h"
+/*
+In SkylineSystem We use dynamic device change, 
+so we need to get the device info
+from the VsDev "namespace". 
+*/
+
 
 /**********************BLOCKDEV INTERFACE**************************************/
-static int blockdev_open(struct ext4_blockdev *bdev);
-static int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
-			 uint32_t blk_cnt);
-static int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
-			  uint64_t blk_id, uint32_t blk_cnt);
-static int blockdev_close(struct ext4_blockdev *bdev);
-static int blockdev_lock(struct ext4_blockdev *bdev);
-static int blockdev_unlock(struct ext4_blockdev *bdev);
+
+VsDevInfo ThisInfo;
 
 /******************************************************************************/
-EXT4_BLOCKDEV_STATIC_INSTANCE(blockdev, 512, 0, blockdev_open,
-			      blockdev_bread, blockdev_bwrite, blockdev_close,
-			      blockdev_lock, blockdev_unlock);
-
+static uint8_t blockdev_ph_bbuf[(512)]; 
+static struct ext4_blockdev_iface blockdev_iface = { 
+    .open = blockdev_open, 
+    .bread = blockdev_bread, 
+    .bwrite = blockdev_bwrite, 
+    .close = blockdev_close, 
+    .lock = blockdev_lock, 
+    .unlock = blockdev_unlock, 
+    .ph_bsize = 512, 
+    .ph_bcnt = 0, 
+    .ph_bbuf = blockdev_ph_bbuf, }; 
+static struct ext4_blockdev blockdev = { 
+    .bdif = &blockdev_iface, 
+    .part_offset = 0, .part_size = (0) * (512), };
 /******************************************************************************/
-static int blockdev_open(struct ext4_blockdev *bdev)
+int blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
 	return EIO;
@@ -84,11 +94,11 @@ static int blockdev_open(struct ext4_blockdev *bdev)
 
 /******************************************************************************/
 
-static int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
+int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 			 uint32_t blk_cnt)
 {
 	/*blockdev_bread: skeleton*/
-    if(VsDev::Read(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
+    if(ThisInfo.ops->Read(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
         return EIO;
@@ -97,24 +107,24 @@ static int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id
 
 
 /******************************************************************************/
-static int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
+int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 			  uint64_t blk_id, uint32_t blk_cnt)
 {
 	/*blockdev_bwrite: skeleton*/
-    if(VsDev::Write(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
+    if(ThisInfo.ops->Write(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
         return EIO;
 	return EIO;
 }
 /******************************************************************************/
-static int blockdev_close(struct ext4_blockdev *bdev)
+int blockdev_close(struct ext4_blockdev *bdev)
 {
 	/*blockdev_close: skeleton*/
 	return EIO;
 }
 
-static int blockdev_lock(struct ext4_blockdev *bdev)
+int blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
     lock(bdev->bdif->p);
@@ -122,7 +132,7 @@ static int blockdev_lock(struct ext4_blockdev *bdev)
 	return EIO;
 }
 
-static int blockdev_unlock(struct ext4_blockdev *bdev)
+int blockdev_unlock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_unlock: skeleton*/
     unlock(bdev->bdif->p);
@@ -133,7 +143,7 @@ static int blockdev_unlock(struct ext4_blockdev *bdev)
 /******************************************************************************/
 struct ext4_blockdev *ext4_blockdev_get(u32 which)
 {
-    VsDev::SetSDev(which);
+    ThisInfo = VsDev::GetSDEV(which);
 	return &blockdev;
 }
 /******************************************************************************/
