@@ -116,11 +116,11 @@ struct ext4_block_devices {
 
 /**@brief   Block devices.*/
 uint32_t registed_blockdevs;
-static struct ext4_block_devices *s_bdevices;
+struct ext4_block_devices *s_bdevices;
 
 /**@brief   Mountpoints.*/
 uint32_t registed_mountpoints;
-static struct ext4_mountpoint *s_mp;
+struct ext4_mountpoint *s_mp;
 
 int ext4_device_register(struct ext4_blockdev *bd,
 			 const char *dev_name)

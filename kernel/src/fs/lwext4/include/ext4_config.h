@@ -141,6 +141,7 @@
 #ifndef CONFIG_EXT4_BLOCKDEVS_COUNT
 #define CONFIG_EXT4_BLOCKDEVS_COUNT  16
 extern uint32_t registed_blockdevs;
+extern struct ext4_block_devices *s_bdevices;
 #endif
 
 /**@brief   Maximum mountpoint name*/
@@ -152,6 +153,7 @@ extern uint32_t registed_blockdevs;
 #ifndef CONFIG_EXT4_MOUNTPOINTS_COUNT
 #define CONFIG_EXT4_MOUNTPOINTS_COUNT 16
 extern uint32_t registed_mountpoints;
+extern struct ext4_mountpoint *s_mp;
 #endif
 
 /**@brief   Include open flags from ext4_errno or standard library.*/
