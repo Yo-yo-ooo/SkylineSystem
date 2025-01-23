@@ -60,6 +60,6 @@
 #include <stdbool.h>
 
 /**@brief   File blockdev get.*/
-struct ext4_blockdev *ext4_blockdev_get(void);
+struct ext4_blockdev *ext4_blockdev_get(u32 which);
 
 #endif /* BLOCKDEV_H_ */

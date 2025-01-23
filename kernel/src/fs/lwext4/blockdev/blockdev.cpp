@@ -117,6 +117,7 @@ static int blockdev_close(struct ext4_blockdev *bdev)
 static int blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
+    lock(bdev->bdif->p);
     
 	return EIO;
 }
@@ -124,12 +125,15 @@ static int blockdev_lock(struct ext4_blockdev *bdev)
 static int blockdev_unlock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_unlock: skeleton*/
+    unlock(bdev->bdif->p);
+
 	return EIO;
 }
 
 /******************************************************************************/
-struct ext4_blockdev *ext4_blockdev_get(void)
+struct ext4_blockdev *ext4_blockdev_get(u32 which)
 {
+    VsDev::SetSDev(which);
 	return &blockdev;
 }
 /******************************************************************************/
