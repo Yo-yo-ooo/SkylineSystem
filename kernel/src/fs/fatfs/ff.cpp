@@ -2027,7 +2027,7 @@ static void gen_numname (
 	DWORD crc_sreg;
 
 
-	_memcpy(dst, src, 11);	/* Prepare the SFN to be modified */
+	__memcpy(dst, src, 11);	/* Prepare the SFN to be modified */
 
 	if (seq > 5) {	/* In case of many collisions, generate a hash number instead of sequential number */
 		crc_sreg = seq;
@@ -2161,7 +2161,7 @@ static FRESULT load_xdir (	/* FR_INT_ERR: invalid entry block */
 	res = move_window(dp->obj.fs, dp->sect);
 	if (res != FR_OK) return res;
 	if (dp->dir[XDIR_Type] != ET_FILEDIR) return FR_INT_ERR;	/* Invalid order? */
-	_memcpy(dirb + 0 * SZDIRE, dp->dir, SZDIRE);
+	__memcpy(dirb + 0 * SZDIRE, dp->dir, SZDIRE);
 	sz_ent = ((UINT)dirb[XDIR_NumSec] + 1) * SZDIRE;	/* Size of this entry block */
 	if (sz_ent < 3 * SZDIRE || sz_ent > 19 * SZDIRE) return FR_INT_ERR;	/* Invalid block size? */
 
@@ -2172,7 +2172,7 @@ static FRESULT load_xdir (	/* FR_INT_ERR: invalid entry block */
 	res = move_window(dp->obj.fs, dp->sect);
 	if (res != FR_OK) return res;
 	if (dp->dir[XDIR_Type] != ET_STREAM) return FR_INT_ERR;	/* Invalid order? */
-	_memcpy(dirb + 1 * SZDIRE, dp->dir, SZDIRE);
+	__memcpy(dirb + 1 * SZDIRE, dp->dir, SZDIRE);
 	if (MAXDIRB(dirb[XDIR_NumName]) > sz_ent) return FR_INT_ERR;	/* Invalid block size for the name? */
 
 	/* Load file name entries */
@@ -2184,7 +2184,7 @@ static FRESULT load_xdir (	/* FR_INT_ERR: invalid entry block */
 		res = move_window(dp->obj.fs, dp->sect);
 		if (res != FR_OK) return res;
 		if (dp->dir[XDIR_Type] != ET_FILENAME) return FR_INT_ERR;	/* Invalid order? */
-		if (i < MAXDIRB(FF_MAX_LFN)) _memcpy(dirb + i, dp->dir, SZDIRE);	/* Load name entries only if the object is accessible */
+		if (i < MAXDIRB(FF_MAX_LFN)) __memcpy(dirb + i, dp->dir, SZDIRE);	/* Load name entries only if the object is accessible */
 	} while ((i += SZDIRE) < sz_ent);
 
 	/* Sanity check (do it for only accessible object) */
@@ -2265,7 +2265,7 @@ static FRESULT store_xdir (
 		/* Set an entry to the directory */
 		res = move_window(dp->obj.fs, dp->sect);
 		if (res != FR_OK) break;
-		_memcpy(dp->dir, dirb, SZDIRE);
+		__memcpy(dp->dir, dirb, SZDIRE);
 		dp->obj.fs->wflag = 1;
 
 		if (--nent == 0) break;	/* All done? */
@@ -2533,7 +2533,7 @@ static FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too
 	}
 #endif
 	/* On the FAT/FAT32 volume */
-	_memcpy(sn, dp->fn, 12);
+	__memcpy(sn, dp->fn, 12);
 	if (sn[NSFLAG] & NS_LOSS) {			/* When LFN is out of 8.3 format, generate a numbered name */
 		dp->fn[NSFLAG] = NS_NOLFN;		/* Find only SFN */
 		for (n = 1; n < 100; n++) {
@@ -2573,7 +2573,7 @@ static FRESULT dir_register (	/* FR_OK:succeeded, FR_DENIED:no free entry or too
 		res = move_window(fs, dp->sect);
 		if (res == FR_OK) {
 			_memset(dp->dir, 0, SZDIRE);	/* Clean the entry */
-			_memcpy(dp->dir + DIR_Name, dp->fn, 11);	/* Put SFN */
+			__memcpy(dp->dir + DIR_Name, dp->fn, 11);	/* Put SFN */
 #if FF_USE_LFN
 			dp->dir[DIR_NTres] = dp->fn[NSFLAG] & (NS_BODY | NS_EXT);	/* Put NT flag */
 #endif
@@ -3984,11 +3984,11 @@ FRESULT f_read (
 #if !FF_FS_READONLY && FF_FS_MINIMIZE <= 2		/* Replace one of the read sectors with cached data if it contains a dirty sector */
 #if FF_FS_TINY
 				if (fs->wflag && fs->winsect - sect < cc) {
-					_memcpy(rbuff + ((fs->winsect - sect) * SS(fs)), fs->win, SS(fs));
+					__memcpy(rbuff + ((fs->winsect - sect) * SS(fs)), fs->win, SS(fs));
 				}
 #else
 				if ((fp->flag & FA_DIRTY) && fp->sect - sect < cc) {
-					_memcpy(rbuff + ((fp->sect - sect) * SS(fs)), fp->buf, SS(fs));
+					__memcpy(rbuff + ((fp->sect - sect) * SS(fs)), fp->buf, SS(fs));
 				}
 #endif
 #endif
@@ -4012,9 +4012,9 @@ FRESULT f_read (
 		if (rcnt > btr) rcnt = btr;					/* Clip it by btr if needed */
 #if FF_FS_TINY
 		if (move_window(fs, fp->sect) != FR_OK) ABORT(fs, FR_DISK_ERR);	/* Move sector window */
-		_memcpy(rbuff, fs->win + fp->fptr % SS(fs), rcnt);	/* Extract partial sector */
+		__memcpy(rbuff, fs->win + fp->fptr % SS(fs), rcnt);	/* Extract partial sector */
 #else
-		_memcpy(rbuff, fp->buf + fp->fptr % SS(fs), rcnt);	/* Extract partial sector */
+		__memcpy(rbuff, fp->buf + fp->fptr % SS(fs), rcnt);	/* Extract partial sector */
 #endif
 	}
 
@@ -4099,12 +4099,12 @@ FRESULT f_write (
 #if FF_FS_MINIMIZE <= 2
 #if FF_FS_TINY
 				if (fs->winsect - sect < cc) {	/* Refill sector cache if it gets invalidated by the direct write */
-					_memcpy(fs->win, wbuff + ((fs->winsect - sect) * SS(fs)), SS(fs));
+					__memcpy(fs->win, wbuff + ((fs->winsect - sect) * SS(fs)), SS(fs));
 					fs->wflag = 0;
 				}
 #else
 				if (fp->sect - sect < cc) { /* Refill sector cache if it gets invalidated by the direct write */
-					_memcpy(fp->buf, wbuff + ((fp->sect - sect) * SS(fs)), SS(fs));
+					__memcpy(fp->buf, wbuff + ((fp->sect - sect) * SS(fs)), SS(fs));
 					fp->flag &= (BYTE)~FA_DIRTY;
 				}
 #endif
@@ -4130,10 +4130,10 @@ FRESULT f_write (
 		if (wcnt > btw) wcnt = btw;					/* Clip it by btw if needed */
 #if FF_FS_TINY
 		if (move_window(fs, fp->sect) != FR_OK) ABORT(fs, FR_DISK_ERR);	/* Move sector window */
-		_memcpy(fs->win + fp->fptr % SS(fs), wbuff, wcnt);	/* Fit data to the sector */
+		__memcpy(fs->win + fp->fptr % SS(fs), wbuff, wcnt);	/* Fit data to the sector */
 		fs->wflag = 1;
 #else
-		_memcpy(fp->buf + fp->fptr % SS(fs), wbuff, wcnt);	/* Fit data to the sector */
+		__memcpy(fp->buf + fp->fptr % SS(fs), wbuff, wcnt);	/* Fit data to the sector */
 		fp->flag |= FA_DIRTY;
 #endif
 	}
@@ -5109,7 +5109,7 @@ FRESULT f_mkdir (
 						fs->win[DIR_Attr] = AM_DIR;
 						st_dword(fs->win + DIR_ModTime, tm);
 						st_clust(fs, fs->win, dcl);
-						_memcpy(fs->win + SZDIRE, fs->win, SZDIRE);	/* Create ".." entry */
+						__memcpy(fs->win + SZDIRE, fs->win, SZDIRE);	/* Create ".." entry */
 						fs->win[SZDIRE + 1] = '.'; pcl = dj.obj.sclust;
 						st_clust(fs, fs->win + SZDIRE, pcl);
 						fs->wflag = 1;
@@ -5186,8 +5186,8 @@ FRESULT f_rename (
 				BYTE nf, nn;
 				WORD nh;
 
-				_memcpy(buf, fs->dirbuf, SZDIRE * 2);	/* Save 85+C0 entry of old object */
-				_memcpy(&djn, &djo, sizeof djo);
+				__memcpy(buf, fs->dirbuf, SZDIRE * 2);	/* Save 85+C0 entry of old object */
+				__memcpy(&djn, &djo, sizeof djo);
 				res = follow_path(&djn, path_new);		/* Make sure if new object name is not in use */
 				if (res == FR_OK) {						/* Is new name already in use by any other object? */
 					res = (djn.obj.sclust == djo.obj.sclust && djn.dptr == djo.dptr) ? FR_NO_FILE : FR_EXIST;
@@ -5197,7 +5197,7 @@ FRESULT f_rename (
 					if (res == FR_OK) {
 						nf = fs->dirbuf[XDIR_NumSec]; nn = fs->dirbuf[XDIR_NumName];
 						nh = ld_word(fs->dirbuf + XDIR_NameHash);
-						_memcpy(fs->dirbuf, buf, SZDIRE * 2);	/* Restore 85+C0 entry */
+						__memcpy(fs->dirbuf, buf, SZDIRE * 2);	/* Restore 85+C0 entry */
 						fs->dirbuf[XDIR_NumSec] = nf; fs->dirbuf[XDIR_NumName] = nn;
 						st_word(fs->dirbuf + XDIR_NameHash, nh);
 						if (!(fs->dirbuf[XDIR_Attr] & AM_DIR)) fs->dirbuf[XDIR_Attr] |= AM_ARC;	/* Set archive attribute if it is a file */
@@ -5208,8 +5208,8 @@ FRESULT f_rename (
 			} else
 #endif
 			{	/* At FAT/FAT32 volume */
-				_memcpy(buf, djo.dir, SZDIRE);			/* Save directory entry of the object */
-				_memcpy(&djn, &djo, sizeof (DIR));		/* Duplicate the directory object */
+				__memcpy(buf, djo.dir, SZDIRE);			/* Save directory entry of the object */
+				__memcpy(&djn, &djo, sizeof (DIR));		/* Duplicate the directory object */
 				res = follow_path(&djn, path_new);		/* Make sure if new object name is not in use */
 				if (res == FR_OK) {						/* Is new name already in use by any other object? */
 					res = (djn.obj.sclust == djo.obj.sclust && djn.dptr == djo.dptr) ? FR_NO_FILE : FR_EXIST;
@@ -5218,7 +5218,7 @@ FRESULT f_rename (
 					res = dir_register(&djn);			/* Register the new entry */
 					if (res == FR_OK) {
 						dir = djn.dir;					/* Copy directory entry of the object except name */
-						_memcpy(dir + 13, buf + 13, SZDIRE - 13);
+						__memcpy(dir + 13, buf + 13, SZDIRE - 13);
 						dir[DIR_Attr] = buf[DIR_Attr];
 						if (!(dir[DIR_Attr] & AM_DIR)) dir[DIR_Attr] |= AM_ARC;	/* Set archive attribute if it is a file */
 						fs->wflag = 1;
@@ -5537,10 +5537,10 @@ FRESULT f_setlabel (
 		if (res == FR_OK) {
 			if (FF_FS_EXFAT && fs->fs_type == FS_EXFAT) {
 				dj.dir[XDIR_NumLabel] = (BYTE)di;	/* Change the volume label */
-				_memcpy(dj.dir + XDIR_Label, dirvn, 22);
+				__memcpy(dj.dir + XDIR_Label, dirvn, 22);
 			} else {
 				if (di != 0) {
-					_memcpy(dj.dir, dirvn, 11);	/* Change the volume label */
+					__memcpy(dj.dir, dirvn, 11);	/* Change the volume label */
 				} else {
 					dj.dir[DIR_Name] = DDEM;	/* Remove the volume label */
 				}
@@ -5557,10 +5557,10 @@ FRESULT f_setlabel (
 						if (FF_FS_EXFAT && fs->fs_type == FS_EXFAT) {
 							dj.dir[XDIR_Type] = ET_VLABEL;	/* Create volume label entry */
 							dj.dir[XDIR_NumLabel] = (BYTE)di;
-							_memcpy(dj.dir + XDIR_Label, dirvn, 22);
+							__memcpy(dj.dir + XDIR_Label, dirvn, 22);
 						} else {
 							dj.dir[DIR_Attr] = AM_VOL;		/* Create volume label entry */
-							_memcpy(dj.dir, dirvn, 11);
+							__memcpy(dj.dir, dirvn, 11);
 						}
 						fs->wflag = 1;
 						res = sync_fs(fs);
@@ -5810,7 +5810,7 @@ static FRESULT create_partition (
 			}
 			if (sz_part != 0) {				/* Add a partition? */
 				ofs = pi * SZ_GPTE % ss;
-				_memcpy(buf + ofs + GPTE_PtGuid, GUID_MS_Basic, 16);	/* Set partition GUID (Microsoft Basic Data) */
+				__memcpy(buf + ofs + GPTE_PtGuid, GUID_MS_Basic, 16);	/* Set partition GUID (Microsoft Basic Data) */
 				rnd = make_rand(rnd, buf + ofs + GPTE_UpGuid, 16);	/* Set unique partition GUID */
 				st_qword(buf + ofs + GPTE_FstLba, nxt_alloc);		/* Set partition start LBA */
 				st_qword(buf + ofs + GPTE_LstLba, nxt_alloc + sz_part - 1);	/* Set partition end LBA */
@@ -5825,7 +5825,7 @@ static FRESULT create_partition (
 
 		/* Create primary GPT header */
 		_memset(buf, 0, ss);
-		_memcpy(buf + GPTH_Sign, "EFI PART" "\0\0\1\0" "\x5C\0\0", 16);	/* Signature, version (1.0) and size (92) */
+		__memcpy(buf + GPTH_Sign, "EFI PART" "\0\0\1\0" "\x5C\0\0", 16);	/* Signature, version (1.0) and size (92) */
 		st_dword(buf + GPTH_PtBcc, ~bcc);			/* Table check sum */
 		st_qword(buf + GPTH_CurLba, 1);				/* LBA of this header */
 		st_qword(buf + GPTH_BakLba, sz_drv - 1);	/* LBA of secondary header */
@@ -5850,7 +5850,7 @@ static FRESULT create_partition (
 
 		/* Create protective MBR */
 		_memset(buf, 0, ss);
-		_memcpy(buf + MBR_Table, gpt_mbr, 16);		/* Create a GPT partition */
+		__memcpy(buf + MBR_Table, gpt_mbr, 16);		/* Create a GPT partition */
 		st_word(buf + BS_55AA, 0xAA55);
 		if (disk_write(drv, buf, 0, 1) != RES_OK) return FR_DISK_ERR;
 
@@ -6164,7 +6164,7 @@ FRESULT f_mkfs (
 		for (n = 0; n < 2; n++) {
 			/* Main record (+0) */
 			_memset(buf, 0, ss);
-			_memcpy(buf + BS_JmpBoot, "\xEB\x76\x90" "EXFAT   ", 11);	/* Boot jump code (x86), OEM name */
+			__memcpy(buf + BS_JmpBoot, "\xEB\x76\x90" "EXFAT   ", 11);	/* Boot jump code (x86), OEM name */
 			st_qword(buf + BPB_VolOfsEx, b_vol);					/* Volume offset in the physical drive [sector] */
 			st_qword(buf + BPB_TotSecEx, sz_vol);					/* Volume size [sector] */
 			st_dword(buf + BPB_FatOfsEx, (DWORD)(b_fat - b_vol));	/* FAT offset [sector] */
@@ -6285,7 +6285,7 @@ FRESULT f_mkfs (
 #endif
 		/* Create FAT VBR */
 		_memset(buf, 0, ss);
-		_memcpy(buf + BS_JmpBoot, "\xEB\xFE\x90" "MSDOS5.0", 11);	/* Boot jump code (x86), OEM name */
+		__memcpy(buf + BS_JmpBoot, "\xEB\xFE\x90" "MSDOS5.0", 11);	/* Boot jump code (x86), OEM name */
 		st_word(buf + BPB_BytsPerSec, ss);				/* Sector size [byte] */
 		buf[BPB_SecPerClus] = (BYTE)pau;				/* Cluster size [sector] */
 		st_word(buf + BPB_RsvdSecCnt, (WORD)sz_rsv);	/* Size of reserved area */
@@ -6308,13 +6308,13 @@ FRESULT f_mkfs (
 			st_word(buf + BPB_BkBootSec32, 6);			/* Offset of backup VBR (VBR + 6) */
 			buf[BS_DrvNum32] = 0x80;					/* Drive number (for int13) */
 			buf[BS_BootSig32] = 0x29;					/* Extended boot signature */
-			_memcpy(buf + BS_VolLab32, "NO NAME    " "FAT32   ", 19);	/* Volume label, FAT signature */
+			__memcpy(buf + BS_VolLab32, "NO NAME    " "FAT32   ", 19);	/* Volume label, FAT signature */
 		} else {
 			st_dword(buf + BS_VolID, vsn);				/* VSN */
 			st_word(buf + BPB_FATSz16, (WORD)sz_fat);	/* FAT size [sector] */
 			buf[BS_DrvNum] = 0x80;						/* Drive number (for int13) */
 			buf[BS_BootSig] = 0x29;						/* Extended boot signature */
-			_memcpy(buf + BS_VolLab, "NO NAME    " "FAT     ", 19);	/* Volume label, FAT signature */
+			__memcpy(buf + BS_VolLab, "NO NAME    " "FAT     ", 19);	/* Volume label, FAT signature */
 		}
 		st_word(buf + BS_55AA, 0xAA55);					/* Signature (offset is fixed here regardless of sector size) */
 		if (disk_write(pdrv, buf, b_vol, 1) != RES_OK) LEAVE_MKFS(FR_DISK_ERR);	/* Write it to the VBR sector */

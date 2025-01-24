@@ -107,7 +107,7 @@ static int sb2info(struct ext4_sblock *sb, struct ext4_mkfs_info *info)
 	info->label = sb->volume_name;
 	info->len = (uint64_t)info->block_size * ext4_sb_get_blocks_cnt(sb);
 	info->dsc_size = to_le16(sb->desc_size);
-	_memcpy(info->uuid, sb->uuid, UUID_SIZE);
+	__memcpy(info->uuid, sb->uuid, UUID_SIZE);
 
 	return EOK;
 }
@@ -273,7 +273,7 @@ static void fill_sb(struct fs_aux_info *aux_info, struct ext4_mkfs_info *info)
 	sb->features_incompatible = to_le32(info->feat_incompat);
 	sb->features_read_only = to_le32(info->feat_ro_compat);
 
-	_memcpy(sb->uuid, info->uuid, UUID_SIZE);
+	__memcpy(sb->uuid, info->uuid, UUID_SIZE);
 
 	_memset(sb->volume_name, 0, sizeof(sb->volume_name));
 	strncpy(sb->volume_name, info->label, sizeof(sb->volume_name));
@@ -338,7 +338,7 @@ static int write_bgroup_block(struct ext4_blockdev *bd,
 		if (r != EOK)
 			return r;
 
-		_memcpy(b.data, aux_info->bg_desc_blk, block_size);
+		__memcpy(b.data, aux_info->bg_desc_blk, block_size);
 
 		ext4_bcache_set_dirty(b.buf);
 		r = ext4_block_set(bd, &b);
@@ -702,7 +702,7 @@ static int create_journal_inode(struct ext4_fs *fs,
 			goto Finish;
 	}
 
-	_memcpy(fs->sb.journal_blocks, inode->blocks, sizeof(inode->blocks));
+	__memcpy(fs->sb.journal_blocks, inode->blocks, sizeof(inode->blocks));
 
 	Finish:
 	ext4_fs_put_inode_ref(&inode_ref);

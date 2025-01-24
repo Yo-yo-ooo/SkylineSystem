@@ -3,7 +3,7 @@
 
 heap* kernel_heap;
 
-extern void *__memcpy(void *d, const void *s, size_t n);
+;
 namespace Heap{
 
 void Init() {

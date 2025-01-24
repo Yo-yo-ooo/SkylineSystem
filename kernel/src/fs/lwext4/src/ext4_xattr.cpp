@@ -419,7 +419,7 @@ static int ext4_xattr_set_entry(struct ext4_xattr_info *i,
 			last->e_value_offs = to_le16(value_offs);
 			last->e_value_block = 0;
 			last->e_value_size = to_le32(i->value_len);
-			_memcpy(EXT4_XATTR_NAME(last), i->name, name_len);
+			__memcpy(EXT4_XATTR_NAME(last), i->name, name_len);
 
 			/* Set valid last entry indicator */
 			*(uint32_t *)EXT4_XATTR_NEXT(last) = 0;
@@ -429,7 +429,7 @@ static int ext4_xattr_set_entry(struct ext4_xattr_info *i,
 
 		/* Insert the value's part */
 		if (value_offs) {
-			_memcpy((char *)s->base + value_offs, i->value,
+			__memcpy((char *)s->base + value_offs, i->value,
 			       i->value_len);
 
 			/* Clear the padding bytes if there is */
@@ -899,7 +899,7 @@ int ext4_xattr_list(struct ext4_inode_ref *inode_ref,
 				list->name_index = entry->e_name_index;
 				list->name_len = name_len;
 				list->name = (char *)(list + 1);
-				_memcpy(list->name, EXT4_XATTR_NAME(entry),
+				__memcpy(list->name, EXT4_XATTR_NAME(entry),
 				       list->name_len);
 
 				if (list_prev)
@@ -959,7 +959,7 @@ int ext4_xattr_list(struct ext4_inode_ref *inode_ref,
 				list->name_index = entry->e_name_index;
 				list->name_len = name_len;
 				list->name = (char *)(list + 1);
-				_memcpy(list->name, EXT4_XATTR_NAME(entry),
+				__memcpy(list->name, EXT4_XATTR_NAME(entry),
 				       list->name_len);
 
 				if (list_prev)
@@ -1037,7 +1037,7 @@ int ext4_xattr_get(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 		if (buf_len && buf) {
 			void *data_loc =
 			    (char *)ibody_finder.s.base + value_offs;
-			_memcpy(buf, data_loc,
+			__memcpy(buf, data_loc,
 			       (buf_len < value_len) ? buf_len : value_len);
 		}
 	} else {
@@ -1073,7 +1073,7 @@ int ext4_xattr_get(struct ext4_inode_ref *inode_ref, uint8_t name_index,
 		if (buf_len && buf) {
 			void *data_loc =
 			    (char *)block_finder.s.base + value_offs;
-			_memcpy(buf, data_loc,
+			__memcpy(buf, data_loc,
 			       (buf_len < value_len) ? buf_len : value_len);
 		}
 
@@ -1135,7 +1135,7 @@ static int ext4_xattr_copy_new_block(struct ext4_inode_ref *inode_ref,
 			goto out;
 
 		/* Copy the content of the whole block */
-		_memcpy(new_block->data, block->data,
+		__memcpy(new_block->data, block->data,
 		       ext4_sb_get_block_size(&inode_ref->fs->sb));
 
 		/*

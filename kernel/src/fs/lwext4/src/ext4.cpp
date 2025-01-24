@@ -754,7 +754,7 @@ int ext4_mount_point_stats(const char *mount_point,
 	stats->blocks_per_group = ext4_get32(&mp->fs.sb, blocks_per_group);
 	stats->inodes_per_group = ext4_get32(&mp->fs.sb, inodes_per_group);
 
-	_memcpy(stats->volume_name, mp->fs.sb.volume_name, 16);
+	__memcpy(stats->volume_name, mp->fs.sb.volume_name, 16);
 	EXT4_MP_UNLOCK(mp);
 
 	return EOK;
@@ -1754,7 +1754,7 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
 			size_t len = size;
 			if (unalg + size > (uint32_t)file->fsize)
 				len = (uint32_t)file->fsize - unalg;
-			_memcpy(buf, content + unalg, len);
+			__memcpy(buf, content + unalg, len);
 			if (rcnt)
 				*rcnt = len;
 
@@ -2147,7 +2147,7 @@ int ext4_raw_inode_fill(const char *path, uint32_t *ret_ino,
 	if (ret_ino)
 		*ret_ino = f.inode;
 
-	_memcpy(inode, inode_ref.inode, sizeof(struct ext4_inode));
+	__memcpy(inode, inode_ref.inode, sizeof(struct ext4_inode));
 	ext4_fs_put_inode_ref(&inode_ref);
 	EXT4_MP_UNLOCK(mp);
 
@@ -2498,7 +2498,7 @@ static int ext4_fsymlink_set(ext4_file *f, const void *buf, uint32_t size)
 	/*If the size of symlink is smaller than 60 bytes*/
 	if (size < sizeof(ref.inode->blocks)) {
 		_memset(ref.inode->blocks, 0, sizeof(ref.inode->blocks));
-		_memcpy(ref.inode->blocks, buf, size);
+		__memcpy(ref.inode->blocks, buf, size);
 		ext4_inode_clear_flag(ref.inode, EXT4_INODE_FLAG_EXTENTS);
 	} else {
 		uint64_t off;
@@ -2828,9 +2828,9 @@ int ext4_listxattr(const char *path, char *list, size_t size, size_t *ret_size)
 			}
 
 			if (list && size) {
-				_memcpy(list, prefix, prefix_len);
+				__memcpy(list, prefix, prefix_len);
 				list += prefix_len;
-				_memcpy(list, entry->name,
+				__memcpy(list, entry->name,
 					entry->name_len);
 				list[entry->name_len] = 0;
 				list += entry->name_len + 1;
@@ -3234,7 +3234,7 @@ const ext4_direntry *ext4_dir_entry_next(ext4_dir *dir)
 	_memset(&dir->de.name, 0, sizeof(dir->de.name));
 	name_length = ext4_dir_en_get_name_len(&dir->f.mp->fs.sb,
 					       it.curr);
-	_memcpy(&dir->de.name, it.curr->name, name_length);
+	__memcpy(&dir->de.name, it.curr->name, name_length);
 
 	/* Directly copying the content isn't safe for Big-endian targets*/
 	dir->de.inode = ext4_dir_en_get_inode(it.curr);

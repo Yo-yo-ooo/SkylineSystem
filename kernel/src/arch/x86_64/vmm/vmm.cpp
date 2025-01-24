@@ -324,7 +324,7 @@ bool HandlePF(registers* r) {
         goto nocow;
 
         void* newpage = PMM::Alloc(region->pages);
-        _memcpy(HIGHER_HALF(newpage), HIGHER_HALF(region->paddr), region->pages * PAGE_SIZE);
+        __memcpy(HIGHER_HALF(newpage), HIGHER_HALF(region->paddr), region->pages * PAGE_SIZE);
 
         // It is CoW now we just need to re-map it.
         vmm_map_range(pm, region->vaddr, (uptr)newpage, region->pages, region->flags);

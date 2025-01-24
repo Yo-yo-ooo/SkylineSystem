@@ -355,7 +355,7 @@ int ext4_block_writebytes(struct ext4_blockdev *bdev, uint64_t off,
 		if (r != EOK)
 			return r;
 
-		_memcpy(bdev->bdif->ph_bbuf + unalg, p, wlen);
+		__memcpy(bdev->bdif->ph_bbuf + unalg, p, wlen);
 		r = ext4_bdif_bwrite(bdev, bdev->bdif->ph_bbuf, block_idx, 1);
 		if (r != EOK)
 			return r;
@@ -384,7 +384,7 @@ int ext4_block_writebytes(struct ext4_blockdev *bdev, uint64_t off,
 		if (r != EOK)
 			return r;
 
-		_memcpy(bdev->bdif->ph_bbuf, p, len);
+		__memcpy(bdev->bdif->ph_bbuf, p, len);
 		r = ext4_bdif_bwrite(bdev, bdev->bdif->ph_bbuf, block_idx, 1);
 		if (r != EOK)
 			return r;
@@ -425,7 +425,7 @@ int ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf,
 		if (r != EOK)
 			return r;
 
-		_memcpy(p, bdev->bdif->ph_bbuf + unalg, rlen);
+		__memcpy(p, bdev->bdif->ph_bbuf + unalg, rlen);
 
 		p += rlen;
 		len -= rlen;
@@ -452,7 +452,7 @@ int ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf,
 		if (r != EOK)
 			return r;
 
-		_memcpy(p, bdev->bdif->ph_bbuf, len);
+		__memcpy(p, bdev->bdif->ph_bbuf, len);
 	}
 
 	return r;

@@ -593,7 +593,7 @@ static int ext4_dir_dx_get_leaf(struct ext4_hash_info *hinfo,
 		at = p - 1;
 
 		/* Write results */
-		_memcpy(&tmp_dx_blk->b, tmp_blk, sizeof(struct ext4_block));
+		__memcpy(&tmp_dx_blk->b, tmp_blk, sizeof(struct ext4_block));
 		tmp_dx_blk->entries = entries;
 		tmp_dx_blk->position = at;
 
@@ -714,7 +714,7 @@ static int ext4_dir_dx_next_block(struct ext4_inode_ref *inode_ref,
 		if (r != EOK)
 			return r;
 
-		_memcpy(&p->b, &b, sizeof(b));
+		__memcpy(&p->b, &b, sizeof(b));
 		p->entries = ((struct ext4_dir_idx_node *)b.data)->entries;
 		p->position = p->entries;
 	}
@@ -933,7 +933,7 @@ static int ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 
 	/* Initialize hinfo */
 	struct ext4_hash_info hinfo_tmp;
-	_memcpy(&hinfo_tmp, hinfo, sizeof(struct ext4_hash_info));
+	__memcpy(&hinfo_tmp, hinfo, sizeof(struct ext4_hash_info));
 
 	/* Load all valid entries to the buffer */
 	struct ext4_dir_en *de = (void *)old_data_block->data;
@@ -954,7 +954,7 @@ static int ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 			if ((rec_len % 4) != 0)
 				rec_len += 4 - (rec_len % 4);
 
-			_memcpy(entry_buffer_ptr, de, rec_len);
+			__memcpy(entry_buffer_ptr, de, rec_len);
 
 			sort[idx].dentry = entry_buffer_ptr;
 			sort[idx].rec_len = rec_len;
@@ -1023,7 +1023,7 @@ static int ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 	/* First part - to the old block */
 	for (i = 0; i < mid; ++i) {
 		ptr = old_data_block->data + off;
-		_memcpy(ptr, sort[i].dentry, sort[i].rec_len);
+		__memcpy(ptr, sort[i].dentry, sort[i].rec_len);
 
 		struct ext4_dir_en *t = ptr;
 		if (i < (mid - 1))
@@ -1038,7 +1038,7 @@ static int ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 	off = 0;
 	for (i = mid; i < idx; ++i) {
 		ptr = new_data_block_tmp.data + off;
-		_memcpy(ptr, sort[i].dentry, sort[i].rec_len);
+		__memcpy(ptr, sort[i].dentry, sort[i].rec_len);
 
 		struct ext4_dir_en *t = ptr;
 		if (i < (idx - 1))
@@ -1155,7 +1155,7 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 			hash_right = ext4_dir_dx_entry_get_hash(e + count_left);
 			/* Copy data to new node */
 			sz = count_right * sizeof(struct ext4_dir_idx_entry);
-			_memcpy(new_en, e + count_left, sz);
+			__memcpy(new_en, e + count_left, sz);
 
 			/* Initialize new node */
 			left_climit = (struct ext4_dir_idx_climit *)e;
@@ -1205,7 +1205,7 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 			size_t sz;
 			/* Copy data from root to child block */
 			sz = leaf_count * sizeof(struct ext4_dir_idx_entry);
-			_memcpy(new_en, e, sz);
+			__memcpy(new_en, e, sz);
 
 			struct ext4_dir_idx_climit *new_climit = (void*)new_en;
 			if (meta_csum)

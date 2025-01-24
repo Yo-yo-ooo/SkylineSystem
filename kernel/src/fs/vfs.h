@@ -46,3 +46,14 @@ typedef struct {
     u16 mode;
     u16 fd_num;
 } file_descriptor;
+
+extern vfs_node* vfs_root; // "/" path
+
+void vfs_init();
+i32 vfs_write(vfs_node* vnode, u8* buffer, u32 count);
+i32 vfs_read(vfs_node* vnode, u8* buffer, u32 count);
+vfs_dirent* vfs_readdir(vfs_node* vnode, u32 index);
+vfs_node* vfs_finddir(vfs_node* vnode, char* path);
+vfs_node* vfs_open(vfs_node* vnode, char* path); // traverse directories
+u64 vfs_poll(vfs_node* vnode);
+void vfs_destroy(vfs_node* vnode);

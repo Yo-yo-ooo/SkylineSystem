@@ -15,6 +15,7 @@
 #include "list.h"
 #include "cstr.h"
 #include "utf8.h"
+#include "fifo.h"
 
 extern uint64_t hhdm_offset;
 extern uint64_t RSDP_ADDR;
@@ -80,7 +81,10 @@ inline bool bitmap_get(u8* bitmap, u64 bit) {
 
 void lock(atomic_lock* l);
 void unlock(atomic_lock* l);
-
+inline void *__memcpy(void *d, const void *s, size_t n) {
+   _memcpy(s, d, n);
+    return d;
+}
 
 #define __init
 #ifdef __x86_64__

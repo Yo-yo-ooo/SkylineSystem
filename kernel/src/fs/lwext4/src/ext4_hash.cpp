@@ -288,7 +288,7 @@ int ext2_htree_hash(const char *name, int len, const uint32_t *hash_seed,
 	hash[3] = 0x10325476;
 
 	if (hash_seed)
-		_memcpy(hash, hash_seed, sizeof(hash));
+		__memcpy(hash, hash_seed, sizeof(hash));
 
 	switch (hash_version) {
 	case EXT2_HTREE_TEA_UNSIGNED:

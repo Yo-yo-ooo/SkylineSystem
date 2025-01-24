@@ -351,7 +351,7 @@ void ext4_dir_write_entry(struct ext4_sblock *sb, struct ext4_dir_en *en,
 	ext4_dir_en_set_name_len(sb, en, (uint16_t)name_len);
 
 	/* Write name */
-	_memcpy(en->name, name, name_len);
+	__memcpy(en->name, name, name_len);
 }
 
 int ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,

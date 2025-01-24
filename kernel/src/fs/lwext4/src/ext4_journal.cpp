@@ -695,7 +695,7 @@ jbd_extract_block_tag(struct jbd_fs *jbd_fs,
 			uuid_start = (char *)tag + tag_bytes;
 			tag_info->uuid_exist = true;
 			tag_info->tag_bytes += UUID_SIZE;
-			_memcpy(tag_info->uuid, uuid_start, UUID_SIZE);
+			__memcpy(tag_info->uuid, uuid_start, UUID_SIZE);
 		}
 
 		if (jbd_get32(tag, flags) & JBD_FLAG_LAST_TAG)
@@ -720,7 +720,7 @@ jbd_extract_block_tag(struct jbd_fs *jbd_fs,
 			uuid_start = (char *)tag + tag_bytes;
 			tag_info->uuid_exist = true;
 			tag_info->tag_bytes += UUID_SIZE;
-			_memcpy(tag_info->uuid, uuid_start, UUID_SIZE);
+			__memcpy(tag_info->uuid, uuid_start, UUID_SIZE);
 		}
 
 		if (jbd_get16(tag, flags) & JBD_FLAG_LAST_TAG)
@@ -766,7 +766,7 @@ jbd_write_block_tag(struct jbd_fs *jbd_fs,
 
 			uuid_start = (char *)tag + tag_bytes;
 			tag_info->tag_bytes += UUID_SIZE;
-			_memcpy(uuid_start, tag_info->uuid, UUID_SIZE);
+			__memcpy(uuid_start, tag_info->uuid, UUID_SIZE);
 		} else
 			jbd_set32(tag, flags,
 				  jbd_get32(tag, flags) | JBD_FLAG_SAME_UUID);
@@ -796,7 +796,7 @@ jbd_write_block_tag(struct jbd_fs *jbd_fs,
 
 			uuid_start = (char *)tag + tag_bytes;
 			tag_info->tag_bytes += UUID_SIZE;
-			_memcpy(uuid_start, tag_info->uuid, UUID_SIZE);
+			__memcpy(uuid_start, tag_info->uuid, UUID_SIZE);
 		} else
 			jbd_set16(tag, flags,
 				  jbd_get16(tag, flags) | JBD_FLAG_SAME_UUID);
@@ -929,7 +929,7 @@ static void jbd_replay_block_tags(struct jbd_fs *jbd_fs,
 			return;
 		}
 
-		_memcpy(ext4_block.data,
+		__memcpy(ext4_block.data,
 			journal_block.data,
 			jbd_get32(&jbd_fs->sb, blocksize));
 
@@ -944,7 +944,7 @@ static void jbd_replay_block_tags(struct jbd_fs *jbd_fs,
 		mount_count = ext4_get16(&fs->sb, mount_count);
 		state = ext4_get16(&fs->sb, state);
 
-		_memcpy(&fs->sb,
+		__memcpy(&fs->sb,
 			journal_block.data + EXT4_SUPERBLOCK_OFFSET,
 			EXT4_SUPERBLOCK_SIZE);
 
@@ -1350,7 +1350,7 @@ static void jbd_journal_flush_trans(struct jbd_trans *trans)
 						&jbd_block,
 						jbd_buf->jbd_lba);
 			ext4_assert(r == EOK);
-			_memcpy(tmp_data, jbd_block.data,
+			__memcpy(tmp_data, jbd_block.data,
 					journal->block_size);
 			ext4_block_set(fs->bdev, &jbd_block);
 			r = ext4_blocks_set_direct(fs->bdev, tmp_data,
@@ -1579,7 +1579,7 @@ jbd_trans_finish_callback(struct jbd_journal *journal,
 							&jbd_block,
 							jbd_buf->jbd_lba);
 				ext4_assert(r == EOK);
-				_memcpy(block.data, jbd_block.data,
+				__memcpy(block.data, jbd_block.data,
 						journal->block_size);
 
 				jbd_trans_change_ownership(block_rec,
@@ -1947,7 +1947,7 @@ again:
 		tag_info.checksum = checksum;
 
 		if (uuid_exist)
-			_memcpy(tag_info.uuid, journal->jbd_fs->sb.uuid,
+			__memcpy(tag_info.uuid, journal->jbd_fs->sb.uuid,
 					UUID_SIZE);
 
 		rc = jbd_write_block_tag(journal->jbd_fs,
@@ -1974,7 +1974,7 @@ again:
 		}
 
 		data = data_block.data;
-		_memcpy(data, jbd_buf->block.data,
+		__memcpy(data, jbd_buf->block.data,
 			journal->block_size);
 		if (is_escape)
 			((struct jbd_bhdr *)data)->magic = 0;

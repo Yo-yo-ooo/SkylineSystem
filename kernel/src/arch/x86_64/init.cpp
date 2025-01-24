@@ -21,43 +21,28 @@
 #include "../../klib/renderer/rnd.h"
 #include "../../drivers/ahci/ahci.h"
 #include "../../drivers/vsdev/vsdev.h"
+#include "../../drivers/keyboard/x86/keyboard.h"
+#include "../../drivers/dev/dev.h"
+
+#define InitFunc(name,func) kinfo("INIT %s...\n",name);func;kpok("%s INIT!\n",name)
 
 void __init x86_64_init(void){
     WELCOME_X86_64
     kinfo("INIT x86_64 ARCH\n");
 
-    kinfo("INIT GDT...\n");
-    gdt_init();
-    kpok("GDT INIT!\n");
-
-    kinfo("INIT IDT...\n");
-    idt_init();
-    kpok("IDT INIT!\n");
-
-    kinfo("INIT PMM...\n");
-    PMM::Init();
-    kpok("PMM INIT!\n");
-
-    kinfo("INIT VMM...\n");
-    VMM::Init();
-    kpok("VMM INIT!\n");
+    InitFunc("GDT",gdt_init());
+    InitFunc("IDT",idt_init());
+    InitFunc("PMM",PMM::Init());
+    InitFunc("VMM",VMM::Init());
 
     MStackData::stackPointer = 0;
     for (int i = 0; i < 1000; i++)
         MStackData::stackArr[i] = MStack();
     MStackData::BenchmarkEnabled = false;
 
-    kinfo("INIT SSE\n");
-    sse_enable();
-    kpok("SSE INIT!\n");
-
-    kinfo("INIT PIT...\n");
-    PIT::InitPIT();
-    kpok("PIT INIT!\n");
-
-    kinfo("INIT RTC...\n");
-    RTC::InitRTC();
-    kpok("RTC INIT!\n");
+    InitFunc("SSE",sse_enable());
+    InitFunc("PIT",PIT::InitPIT());
+    InitFunc("RTC",RTC::InitRTC());
 
     uint64_t TSC1 = rdtsc();
     PIT::Sleep(1000);
@@ -77,17 +62,9 @@ void __init x86_64_init(void){
         hcf();
     }
     kpok("ACPI INIT!\n");
-    kinfo("INIT MADT...\n");
-    MADT_Init();
-    kpok("MADT INIT!\n");
-    
-    kinfo("INIT LAPIC...\n");
-    LAPIC::Init();
-    kpok("LAPIC INIT!\n");
-
-    kinfo("INIT IOAPIC...\n");
-    IOAPIC::Init();
-    kpok("IOAPIC INIT!\n");
+    InitFunc("MADT",MADT_Init());
+    InitFunc("LAPIC",LAPIC::Init());
+    InitFunc("IOAPIC",IOAPIC::Init());
 
     kinfo("INIT FPU...\n");
     if (fpu_init()){
@@ -99,26 +76,28 @@ void __init x86_64_init(void){
     kinfo("REGIST SCHEDULE...\n");
     irq_register(0x80 - 32, Schedule::Schedule);
     kpok("SCHEDULE REGISTED!\n");
-
-    kinfo("INIT SMP...\n");
-    smp_init();
-    kpok("SMP INIT!\n");
+    InitFunc("SMP",smp_init());
 
     Schedule::Init();
     user_init();
     LAPIC::CalibrateTimer();
+    InitFunc("VsDev",VsDev::Init());
+    InitFunc("ATA",ATA::Init());
+    InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));
+    InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
 
-    VsDev::Init();
-
-    ATA::Init();
-
-    kinfo("INIT PCI...\n");
-    PCI::EnumeratePCI(ACPI::mcfg);
-    kpok("PCI INIT!\n");
-
-    kinfo("INIT DONE!\n");
-
-    kinfo("INIT AHCI...\n");
-    new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01));
-    kpok("AHCI INIT!\n");
+    InitFunc("Dev",Dev::Init());
+    #define STAT 0x64
+    #define CMD 0x60
+    
+    kinfo("> Clearing Input Buffer (1/2)\n");
+    {
+        // Clear the input buffer.
+        size_t timeout = 1024;
+        while ((inb(STAT) & 1) && timeout > 0) {
+            timeout--;
+            inb(CMD);
+        }
+    }
+    InitFunc("KEYBOARD(x86)",keyboard_init());
 }
