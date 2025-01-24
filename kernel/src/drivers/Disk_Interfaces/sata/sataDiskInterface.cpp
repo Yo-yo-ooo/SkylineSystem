@@ -5,7 +5,7 @@
 #include "../../../arch/x86_64/vmm/vmm.h"
 #endif
 #include "../../ahci/ahci.h"
-
+#include "../../vsdev/vsdev.h"
 namespace SataDiskInterface
 {
     AHCI::Port* Port;
@@ -18,6 +18,8 @@ namespace SataDiskInterface
     void Init(AHCI::Port* port)
     {
         AddToStack();
+        if(port == nullptr)
+            return;
         Port = port;
         Port->buffer = (uint8_t*)PMM::Alloc(1); // 4096 Bytes
         VMM::Map(Port->buffer, Port->buffer);
@@ -26,6 +28,45 @@ namespace SataDiskInterface
         AddToStack();
         SectorCount = GetMaxSectorCount();
         RemoveFromStack();
+
+        AddToStack();
+        SALOPS* ops;
+        ops->Read = FRegVsDEV_R;
+        ops->Write = FRegVsDEV_W;
+        ops->ReadBytes = FRegVsDEV_R;
+        ops->WriteBytes = FRegVsDEV_Wb;
+        ops->GetMaxSectorCount = GetMaxSectorCount;
+        VsDev::AddStorageDevice(VsDevType::SATA, ops);
+        RemoveFromStack();
+
+    }
+
+    u8 FRegVsDEV_R(uint64_t lba, uint32_t SectorCount, void* Buffer){
+        if(Read(lba, SectorCount, Buffer) == true)
+            return VsDev::RW_OK;
+        else 
+            return VsDev::RW_ERROR;
+    }
+
+    u8 FRegVsDEV_W(uint64_t lba, uint32_t SectorCount, void* Buffer){
+        if(Write(lba, SectorCount, Buffer) == true)
+            return VsDev::RW_OK;
+        else 
+            return VsDev::RW_ERROR;
+    }
+
+    u8 FRegVsDEV_Wb(uint64_t address, uint64_t count, void* buffer){
+        if(WriteBytes(address, count, buffer) == true)
+            return VsDev::RW_OK;
+        else 
+            return VsDev::RW_ERROR;
+    }
+
+    u8 FRegVsDEV_Rb(uint64_t address, uint64_t count, void* buffer){
+        if(ReadBytes(address, count, buffer) == true)
+            return VsDev::RW_OK;
+        else 
+            return VsDev::RW_ERROR;
     }
 
     bool Read(uint64_t sector, uint32_t sectorCount, void* buffer)

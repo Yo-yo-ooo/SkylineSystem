@@ -121,6 +121,8 @@ u8 Write(u32 lba, u8* buffer, u32 sector_count) {
 
 u8 Init() {
     u8 ata_status = Identify(ATA_PRIMARY, ATA_MASTER);
+    if(ata_status != ATA_OKAY)
+        return ata_status;
     SALOPS *ops;
     ops->Read = FRegVsDEV_R;
     ops->Write = FRegVsDEV_W;
