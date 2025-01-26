@@ -254,8 +254,10 @@ distclean:
 
 
 cm:
-	make clean && make 
+	make clean 
+	make -j$(nproc)
 
 cmr:
-	make clean && make 
+	make clean 
+	make -j$(nproc)
 	make run
