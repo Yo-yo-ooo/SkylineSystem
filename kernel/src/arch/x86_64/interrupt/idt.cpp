@@ -1,7 +1,7 @@
 #include "idt.h"
 #include "../../../print/e9print.h"
-
-
+#include "../ioapic/ioapic.h"
+#include "../smp/smp.h"
 
 __attribute__((aligned(0x10))) static idt_entry idt_entries[256];
 static idtr idt;
@@ -64,8 +64,8 @@ void idt_reinit() {
 }
 
 void irq_register(u8 vec, void* handler) {
-    //if (vec < 15)
-    //    ioapic_redirect_irq(bsp_lapic_id, vec + 32, vec, false);
+    if (vec < 15)
+        IOAPIC::RedirectIRQ(bsp_lapic_id, vec + 32, vec, false);
     irq_handlers[vec] = handler;
 }
 
@@ -116,6 +116,5 @@ extern "C" void isr_handler(registers* r) {
     e9_printf("isr_handler(): System fault!");
     e9_printNL("Backtrace:");
     backtrace();
-    for (;;) 
-        __asm__ volatile("hlt");
+    hcf();
 }

@@ -24,7 +24,6 @@ atomic_lock kb_lock;
 void keyboard_handle_key(u8 key)
 {
     lock(&kb_lock);
-    kinfo ("HERE!!!!!!!!!!!!!!!\n");
 
     switch (key)
     {
@@ -41,7 +40,7 @@ void keyboard_handle_key(u8 key)
         // Caps
         keyboard_caps = !keyboard_caps;
         keyboard_state = (keyboard_state == 0 ? 1 : 2);
-        printf_("   ");
+        kprintf("   ");
         break;
     default:
         // Letter
@@ -56,13 +55,13 @@ void keyboard_handle_key(u8 key)
         }
         if (keyboard_shift){
             keyboard_char = kb_map_keys_shift[key];
-            printf_("%c", keyboard_char);
+            kprintf("%c", keyboard_char);
         }else if (keyboard_caps){
             keyboard_char = kb_map_keys_caps[key];
-            printf_("%c", keyboard_char);
+            kprintf("%c", keyboard_char);
         }else{
             keyboard_char = kb_map_keys[key];
-            printf_("%c", keyboard_char);
+            kprintf("%c", keyboard_char);
         }
         keyboard_event ev;
         ev.type = 1;

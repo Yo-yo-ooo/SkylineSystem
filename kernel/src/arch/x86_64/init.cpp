@@ -87,17 +87,5 @@ void __init x86_64_init(void){
     InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
 
     InitFunc("Dev",Dev::Init());
-    #define STAT 0x64
-    #define CMD 0x60
-    
-    kinfo("> Clearing Input Buffer (1/2)\n");
-    {
-        // Clear the input buffer.
-        size_t timeout = 1024;
-        while ((inb(STAT) & 1) && timeout > 0) {
-            timeout--;
-            inb(CMD);
-        }
-    }
     InitFunc("KEYBOARD(x86)",keyboard_init());
 }

@@ -46,45 +46,15 @@ void _memcpy(void* src, void* dest, uint64_t size);
 void _memset(void* dest, uint8_t value, uint64_t size);
 void _memmove(void* src, void* dest, uint64_t size);
 int _memcmp(const void* buffer1,const void* buffer2,size_t  count);
+void *__memcpy(void *d, const void *s, size_t n);
 
-
-inline void bitmap_set(u8* bitmap, u64 bit) {
-#if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
-    bitmap[bit / 8] |= 1 << (bit % 8);
-#elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    bitmap[bit / 8] = __builtin_bswap64(bitmap[bit / 8] | (1 << (bit % 8)));
-#else
-#error "Unknown endianness"
-#endif
-}
-
-inline void bitmap_clear(u8* bitmap, u64 bit) {
-#if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
-    bitmap[bit / 8] &= ~(1 << (bit % 8));
-#elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    bitmap[bit / 8] = __builtin_bswap64(bitmap[bit / 8] & (~(1 << (bit % 8))));
-#else
-#error "Unknown endianness"
-#endif
-}
-
-inline bool bitmap_get(u8* bitmap, u64 bit) {
-#if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
-    return (bitmap[bit / 8] & (1 << (bit % 8))) != 0;
-#elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    return __builtin_bswap64(bitmap[bit / 8] & (1 << (bit % 8))) != 0;
-#else
-#error "Unknown endianness"
-#endif
-}
-
+void bitmap_set(u8* bitmap, u64 bit);
+void bitmap_clear(u8* bitmap, u64 bit);
+bool bitmap_get(u8* bitmap, u64 bit);
 
 void lock(atomic_lock* l);
 void unlock(atomic_lock* l);
-inline void *__memcpy(void *d, const void *s, size_t n) {
-   _memcpy(s, d, n);
-    return d;
-}
+
 
 #define __init
 #ifdef __x86_64__

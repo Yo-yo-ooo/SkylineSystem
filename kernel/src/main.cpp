@@ -214,7 +214,7 @@ extern "C" void kmain(void) {
     
     // We're done, just hang...
     kpok("Kernel started.\n");
-    hcf();
+    for(;;);
 }
 
 
