@@ -2,7 +2,7 @@
 
 #include "../../../klib/klib.h"
 
-static const u8 kb_map_keys[] = {
+constexpr u8 kb_map_keys[] = {
     0, 0, '1', '2', '3', '4', '5', '6', '7', '8',     /* 9 */
     '9', '0', '-', '=', '\b',                         /* Backspace */
     '\t',                                             /* Tab */
@@ -41,7 +41,7 @@ static const u8 kb_map_keys[] = {
     0, /* All other keys are undefined */
 };
 
-static const u8 kb_map_keys_shift[] = {
+constexpr u8 kb_map_keys_shift[] = {
     0, 27, '!', '@', '#', '$', '%', '^', '&', '*',
     '(', ')', '_', '+', '\b',
     '\t',
@@ -79,7 +79,7 @@ static const u8 kb_map_keys_shift[] = {
     0,
     0};
 
-static const u8 kb_map_keys_caps[] = {
+constexpr u8 kb_map_keys_caps[] = {
     0, 27, '1', '2', '3', '4', '5', '6', '7', '8',
     '9', '0', '-', '=', '\b',
     '\t',
