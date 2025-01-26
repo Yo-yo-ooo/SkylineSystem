@@ -88,4 +88,5 @@ void __init x86_64_init(void){
 
     InitFunc("Dev",Dev::Init());
     InitFunc("KEYBOARD(x86)",keyboard_init());
+
 }

@@ -63,7 +63,8 @@ void keyboard_handle_key(u8 key)
         ev.type = 1;
         ev.value = keyboard_state;
         ev.code = keyboard_char;
-        kprintf("%c", keyboard_char);
+        if(keyboard_state == 1 )
+            kprintf("%c", keyboard_char);
         FIFO::Push(keyboard_fifo, &ev);
         break;
     }
