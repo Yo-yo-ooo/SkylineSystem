@@ -53,20 +53,17 @@ void keyboard_handle_key(u8 key)
             keyboard_state = 2;
             key -= 0x80;
         }
-        if (keyboard_shift){
+        if (keyboard_shift)
             keyboard_char = kb_map_keys_shift[key];
-            kprintf("%c", keyboard_char);
-        }else if (keyboard_caps){
+        else if (keyboard_caps)
             keyboard_char = kb_map_keys_caps[key];
-            kprintf("%c", keyboard_char);
-        }else{
+        else
             keyboard_char = kb_map_keys[key];
-            kprintf("%c", keyboard_char);
-        }
         keyboard_event ev;
         ev.type = 1;
         ev.value = keyboard_state;
         ev.code = keyboard_char;
+        kprintf("%c", keyboard_char);
         FIFO::Push(keyboard_fifo, &ev);
         break;
     }
