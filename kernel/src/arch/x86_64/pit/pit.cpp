@@ -1,7 +1,4 @@
-#include "pit.h"
-
-#include "../rtc/rtc.h"
-#include "../schedule/sched.h"
+#include <arch/x86_64/allin.h>
 namespace PIT
 {
     int roughCount = (BaseFrequency/200) / 2;

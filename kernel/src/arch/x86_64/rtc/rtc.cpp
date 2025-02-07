@@ -1,6 +1,4 @@
-#include "rtc.h"
-#include "../../../klib/kio.h"
-#include "../../../klib/klib.h"
+#include <arch/x86_64/allin.h>
 #define CURRENT_YEAR_STR        (__DATE__ + 7)                            // Change this each year!
 
 // https://wiki.osdev.org/CMOS#RTC_Update_In_Progress

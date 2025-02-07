@@ -1,9 +1,4 @@
-#include "smp.h"
-#include "../lapic/lapic.h"
-#include "../interrupt/idt.h"
-#include "../interrupt/gdt.h"
-#include "../../../mem/pmm.h"
-#include "../schedule/syscall.h"
+#include <arch/x86_64/allin.h>
 #include <limine.h>
 
 extern struct limine_smp_response* smp_response;

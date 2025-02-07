@@ -7,11 +7,12 @@
 /* storage control modules to the FatFs module with a defined API.       */
 /*-----------------------------------------------------------------------*/
 
-#include "ff.h"			/* Obtains integer types */
-#include "diskio.h"		/* Declarations of disk functions */
-#include "../../drivers/Disk_Interfaces/ram/ramDiskInterface.h"
-#include "../../drivers/Disk_Interfaces/sata/sataDiskInterface.h"
-#include "../../drivers/vsdev/vsdev.h"
+#include <fs/fatfs/ff.h>			/* Obtains integer types */
+#include <fs/fatfs/diskio.h>
+#include <fs/fatfs/ffconf.h>		/* Declarations of disk functions */
+#include <drivers/Disk_Interfaces/ram/ramDiskInterface.h>
+#include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
+#include <drivers/vsdev/vsdev.h>
 /* Definitions of physical drive number for each drive */
 #define DEV_RAM		0	/* Example: Map Ramdisk to physical drive 0 */
 #define DEV_MMC		1	/* Example: Map MMC/SD card to physical drive 1 */

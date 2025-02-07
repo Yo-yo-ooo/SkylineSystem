@@ -1,9 +1,4 @@
-#include "sched.h"
-#include "../lapic/lapic.h"
-#include "../../../klib/klib.h"
-#include "../smp/smp.h"
-#include "../../../klib/kio.h"
-#include "../cpu.h"
+#include <arch/x86_64/allin.h>
 
 
 

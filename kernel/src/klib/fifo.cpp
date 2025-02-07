@@ -1,6 +1,6 @@
-#include "klib.h"
-#include "../mem/heap.h"
-#include "fifo.h"
+#include <klib/klib.h>
+#include <mem/heap.h>
+#include <klib/fifo.h>
 
 ;
 namespace FIFO

@@ -1,5 +1,4 @@
-#include "MStackS.h"
-#include "../../../klib/klib.h"
+#include <arch/x86_64/allin.h>
 
 MStack::MStack(const char* name, const char* filename, int line, int layer, uint64_t time, bool close)
 {

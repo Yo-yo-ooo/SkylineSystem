@@ -1,7 +1,7 @@
-#include "idt.h"
-#include "../../../print/e9print.h"
-#include "../ioapic/ioapic.h"
-#include "../smp/smp.h"
+#include <arch/x86_64/interrupt/idt.h>
+#include <print/e9print.h>
+#include <arch/x86_64/ioapic/ioapic.h>
+#include <arch/x86_64/smp/smp.h>
 
 __attribute__((aligned(0x10))) static idt_entry idt_entries[256];
 static idtr idt;

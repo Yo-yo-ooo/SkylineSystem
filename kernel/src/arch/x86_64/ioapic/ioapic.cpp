@@ -1,5 +1,4 @@
-#include "ioapic.h"
-
+#include <arch/x86_64/allin.h>
 namespace IOAPIC{
     u64 Init(){
         madt_ioapic* ioapic = madt_ioapic_list[0];

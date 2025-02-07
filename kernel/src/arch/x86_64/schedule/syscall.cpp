@@ -1,7 +1,7 @@
-#include "sched.h"
-#include "../smp/smp.h"
-#include "../../../klib/klib.h"
-#include "syscall.h"
+#include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/smp/smp.h>
+#include <klib/klib.h>
+#include <arch/x86_64/schedule/syscall.h>
 
 u64 syscall_rsvd(syscall_args a) {return 0;}
 

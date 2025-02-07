@@ -1,5 +1,4 @@
-#include "cstr.h"
-#include "klib.h"
+#include <klib/klib.h>
 
 char intTo_stringOutput[128];
 const char *to_string(uint64_t value)

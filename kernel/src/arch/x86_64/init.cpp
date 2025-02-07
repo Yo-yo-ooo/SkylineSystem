@@ -1,28 +1,11 @@
-#include "interrupt/idt.h"
-#include "interrupt/gdt.h"
-#include "../pinc.h"
-#include "../../mem/pmm.h"
-#include "vmm/vmm.h"
-#include "../../mem/heap.h"
-#include "../../klib/klib.h"
-#include "pit/pit.h"
-#include "rtc/rtc.h"
-#include "../../acpi/madt.h"
-#include "../../acpi/acpi.h"
-#include "lapic/lapic.h"
-#include "ioapic/ioapic.h"
-#include "cpuid.h"
-#include "schedule/sched.h"
-#include "schedule/syscall.h"
-#include "../../drivers/ata/ata.h"
-#include "MStack/MStackM.h"
-#include "MStack/MStackS.h"
-#include "dev/pci/pci.h"
-#include "../../klib/renderer/rnd.h"
-#include "../../drivers/ahci/ahci.h"
-#include "../../drivers/vsdev/vsdev.h"
-#include "../../drivers/keyboard/x86/keyboard.h"
-#include "../../drivers/dev/dev.h"
+#include <arch/x86_64/allin.h>
+#include <arch/pinc.h>
+#include <drivers/ahci/ahci.h>
+#include <drivers/ata/ata.h>
+#include <drivers/keyboard/x86/keyboard.h>
+#include <drivers/vsdev/vsdev.h>
+#include <fs/vfs.h>
+#include <drivers/dev/dev.h>
 
 #define InitFunc(name,func) kinfo("INIT %s...\n",name);func;kpok("%s INIT!\n",name)
 

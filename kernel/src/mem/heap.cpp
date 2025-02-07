@@ -1,5 +1,5 @@
-#include "heap.h"
-#include "pmm.h"
+#include <mem/heap.h>
+#include <mem/pmm.h>
 
 heap* kernel_heap;
 

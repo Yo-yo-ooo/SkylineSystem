@@ -1,11 +1,11 @@
-#include "sataDiskInterface.h"
-#include "../../../mem/heap.h"
-#include "../../../mem/pmm.h"
+#include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
+#include <mem/heap.h>
+#include <mem/pmm.h>
 #ifdef __x86_64__
-#include "../../../arch/x86_64/vmm/vmm.h"
+#include <arch/x86_64/allin.h>
 #endif
-#include "../../ahci/ahci.h"
-#include "../../vsdev/vsdev.h"
+#include <drivers/ahci/ahci.h>
+#include <drivers/vsdev/vsdev.h>
 namespace SataDiskInterface
 {
     AHCI::Port* Port;

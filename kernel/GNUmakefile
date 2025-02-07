@@ -64,6 +64,7 @@ override KCFLAGS += \
     -Wall \
     -Wextra \
     -std=gnu17 \
+	-I$(SS_BUILD_DIR)/kernel/include \
     -nostdinc \
     -ffreestanding \
     -fno-stack-protector \
@@ -81,6 +82,7 @@ override KCFLAGS += \
 override KCPPFLAGS := \
     -I src \
 	-isystem freestnd-c-hdrs/$(KARCH)/include \
+	-I$(SS_BUILD_DIR)/kernel/include \
     $(KCPPFLAGS) \
     -MMD \
     -MP

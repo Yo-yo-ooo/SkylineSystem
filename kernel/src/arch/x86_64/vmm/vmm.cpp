@@ -1,7 +1,5 @@
 #include <limine.h>
-#include "vmm.h"   
-#include "../../../mem/pmm.h"
-#include "../smp/smp.h"
+#include <arch/x86_64/allin.h>
 
 
 __attribute__((used, section(".requests")))

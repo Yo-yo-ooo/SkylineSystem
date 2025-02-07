@@ -19,12 +19,12 @@
 /----------------------------------------------------------------------------*/
 
 
-#include "../../klib/cstr.h"
-#include "../../klib/klib.h"
-#include "ff.h"			/* Declarations of FatFs API */
-#include "diskio.h"		/* Declarations of device I/O functions */
+#include <klib/cstr.h>
+#include <klib/klib.h>
+#include <fs/fatfs/ff.h>		/* Declarations of FatFs API */
+#include <fs/fatfs/diskio.h>		/* Declarations of device I/O functions */
 #if defined (__x86_64__)
-#include "../../arch/x86_64/rtc/rtc.h"
+#include <arch/x86_64/rtc/rtc.h>
 #endif
 
 /*--------------------------------------------------------------------------

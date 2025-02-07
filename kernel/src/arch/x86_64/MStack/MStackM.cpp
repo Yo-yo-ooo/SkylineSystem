@@ -1,7 +1,4 @@
-#include "MStackM.h"
-#include "../../../klib/klib.h"
-#include "../../../klib/kprintf.h"
-#include "../pit/pit.h"
+#include <arch/x86_64/allin.h>
 
 void PrintMStackTrace(MStack stack[], int64_t size)
 {

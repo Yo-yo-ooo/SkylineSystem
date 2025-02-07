@@ -27,8 +27,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#include "../flanterm.h"
-#include "fb.h"
+#include <flanterm/flanterm.h>
+#include <flanterm/backends/fb.h>
 
 void *memcpy_flanterm(void *d, const void *s, size_t n) {
     uint8_t *pdest = (uint8_t *)d;

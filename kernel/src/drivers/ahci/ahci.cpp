@@ -1,12 +1,7 @@
-#include "ahci.h"
-#include "../../klib/klib.h"
-#include "../../klib/kio.h"
-#include "../../acpi/acpi.h"
+#include <drivers/ahci/ahci.h>
+#include <allin.h>
 #ifdef __x86_64__
-#include "arch/x86_64/vmm/vmm.h"
-#include "../../mem/heap.h"
-#include "../../mem/pmm.h"
-#include "../../arch/x86_64/pit/pit.h"
+#include <arch/x86_64/allin.h>
 #endif
 
 namespace AHCI 

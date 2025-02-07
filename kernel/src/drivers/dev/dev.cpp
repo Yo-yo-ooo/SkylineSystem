@@ -1,4 +1,4 @@
-#include "dev.h"
+#include <drivers/dev/dev.h>
 
 vfs_node *vfs_dev;
 

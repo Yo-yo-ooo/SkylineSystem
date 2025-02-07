@@ -1,5 +1,5 @@
-#include "ramDiskInterface.h"
-#include "../../../mem/heap.h"
+#include <drivers/Disk_Interfaces/ram/ramDiskInterface.h>
+#include <mem/heap.h>
 
 namespace RamDiskInterface
 {

@@ -1,6 +1,6 @@
-#include "../klib/klib.h"
-#include "vfs.h"
-#include "../mem/heap.h"
+#include <klib/klib.h>
+#include <fs/vfs.h>
+#include <mem/heap.h>
 
 vfs_node *vfs_root;
 

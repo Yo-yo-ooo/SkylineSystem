@@ -33,10 +33,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "kprintf.h"
+#include <klib/kprintf.h>
 
-#include "klib.h"
-#include "../print/e9print.h"
+#include <klib/klib.h>
+#include <print/e9print.h>
 
 
 void _putchar(char character){

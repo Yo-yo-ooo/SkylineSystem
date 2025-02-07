@@ -1,8 +1,8 @@
-#include "e9print.h"
+#include <print/e9print.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#include "../flanterm/flanterm.h"
+#include <flanterm/flanterm.h>
 extern struct flanterm_context *ft_ctx;
 
 static const char CONVERSION_TABLE[] = "0123456789abcdef";

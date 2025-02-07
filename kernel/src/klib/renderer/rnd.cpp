@@ -1,7 +1,7 @@
-#include "rnd.h"
-#include "fb.h"
-#include "../../flanterm/flanterm.h"
-#include "../../flanterm/backends/fb.h"
+#include <klib/renderer/rnd.h>
+#include <klib/renderer/fb.h>
+#include <flanterm/backends/fb.h>
+#include <flanterm/flanterm.h>
 
 extern struct flanterm_context* ft_ctx;
 

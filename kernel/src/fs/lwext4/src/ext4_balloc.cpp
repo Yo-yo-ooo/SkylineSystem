@@ -38,20 +38,20 @@
  * @brief Physical block allocator.
  */
 
-#include "../include/ext4_config.h"
-#include "../include/ext4_types.h"
-#include "../include/ext4_misc.h"
-#include "../include/ext4_errno.h"
-#include "../include/ext4_debug.h"
+#include <fs/lwext4/ext4_config.h>
+#include <fs/lwext4/ext4_types.h>
+#include <fs/lwext4/ext4_misc.h>
+#include <fs/lwext4/ext4_errno.h>
+#include <fs/lwext4/ext4_debug.h>
 
-#include "../include/ext4_trans.h"
-#include "../include/ext4_balloc.h"
-#include "../include/ext4_super.h"
-#include "../include/ext4_crc32.h"
-#include "../include/ext4_block_group.h"
-#include "../include/ext4_fs.h"
-#include "../include/ext4_bitmap.h"
-#include "../include/ext4_inode.h"
+#include <fs/lwext4/ext4_trans.h>
+#include <fs/lwext4/ext4_balloc.h>
+#include <fs/lwext4/ext4_super.h>
+#include <fs/lwext4/ext4_crc32.h>
+#include <fs/lwext4/ext4_block_group.h>
+#include <fs/lwext4/ext4_fs.h>
+#include <fs/lwext4/ext4_bitmap.h>
+#include <fs/lwext4/ext4_inode.h>
 
 /**@brief Compute number of block group from block address.
  * @param s superblock pointer.

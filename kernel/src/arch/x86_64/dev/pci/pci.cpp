@@ -1,13 +1,13 @@
-#include "pci.h"
+#include <arch/x86_64/dev/pci/pci.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "../../../../klib/klib.h"
-#include "../../../../klib/kio.h"
-#include "../../../../klib/kprintf.h"
-#include "../../../../klib/cstr.h"
-#include "../../../../acpi/acpi.h"
-#include "../../vmm/vmm.h"
-#include "../../../../conf.h"
+#include <klib/klib.h>
+#include <klib/kio.h>
+#include <klib/kprintf.h>
+#include <klib/cstr.h>
+#include <acpi/acpi.h>
+#include <arch/x86_64/vmm/vmm.h>
+#include <conf.h>
 
 PCI::PCIDeviceHeader *pciDevices[128];
 u8 pciDeviceidx;

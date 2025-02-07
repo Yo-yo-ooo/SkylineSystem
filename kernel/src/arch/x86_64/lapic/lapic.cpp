@@ -1,6 +1,4 @@
-#include "lapic.h"
-#include "../ioapic/ioapic.h"
-#include "../pit/pit.h"
+#include <arch/x86_64/allin.h>
 namespace LAPIC{
 
     u64 apic_ticks = 0;

@@ -34,16 +34,36 @@
  * @brief Block cache allocator.
  */
 
-#include "../include/ext4_config.h"
-#include "../include/ext4_types.h"
-#include "../include/ext4_bcache.h"
-#include "../include/ext4_blockdev.h"
-#include "../include/ext4_debug.h"
-#include "../include/ext4_errno.h"
+#include <fs/lwext4/ext4.h>
+#include <fs/lwext4/ext4_balloc.h>
+#include <fs/lwext4/ext4_bcache.h>
+#include <fs/lwext4/ext4_bitmap.h>
+#include <fs/lwext4/ext4_block_group.h>
+#include <fs/lwext4/ext4_blockdev.h>
+#include <fs/lwext4/ext4_config.h>
+#include <fs/lwext4/ext4_crc32.h>
+#include <fs/lwext4/ext4_debug.h>
+#include <fs/lwext4/ext4_dir.h>
+#include <fs/lwext4/ext4_dir_idx.h>
+#include <fs/lwext4/ext4_errno.h>
+#include <fs/lwext4/ext4_extent.h>
+#include <fs/lwext4/ext4_fs.h>
+#include <fs/lwext4/ext4_hash.h>
+#include <fs/lwext4/ext4_ialloc.h>
+#include <fs/lwext4/ext4_inode.h>
+#include <fs/lwext4/ext4_journal.h>
+#include <fs/lwext4/ext4_mbr.h>
+#include <fs/lwext4/ext4_misc.h>
+#include <fs/lwext4/ext4_mkfs.h>
+#include <fs/lwext4/ext4_oflags.h>
+#include <fs/lwext4/ext4_super.h>
+#include <fs/lwext4/ext4_trans.h>
+#include <fs/lwext4/ext4_types.h>
+#include <fs/lwext4/ext4_xattr.h>
 
-#include "../../../klib/cstr.h"
-#include "../../../klib/klib.h"
-#include "../../../mem/heap.h"
+#include <klib/cstr.h>
+#include <klib/klib.h>
+#include <mem/heap.h>
 
 static int ext4_bcache_lba_compare(struct ext4_buf *a, struct ext4_buf *b)
 {

@@ -1,10 +1,7 @@
-#include "../../../klib/klib.h"
-#include "keyboard.h"
-#include "../../../klib/kio.h"
-
-#include "../../../arch/x86_64/lapic/lapic.h"
-#include "../../dev/dev.h"
-#include "keyboard_map.h"
+#include <arch/x86_64/allin.h>
+#include <drivers/keyboard/x86/keyboard.h>
+#include <drivers/keyboard/x86/keyboard_map.h>
+#include <drivers/dev/dev.h>
 
 bool keyboard_pressed = false;
 

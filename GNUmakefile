@@ -5,6 +5,10 @@ MAKEFLAGS += -rR
 # Convenience macro to reliably declare user overridable variables.
 override USER_VARIABLE = $(if $(filter $(origin $(1)),default undefined),$(eval override $(1) := $(2)))
 
+# Get Path of build directory
+override SS_BUILD_DIR := $(shell pwd)
+export SS_BUILD_DIR
+
 # Target architecture to build for. Default to x86_64.
 $(call USER_VARIABLE,KARCH,x86_64)
 

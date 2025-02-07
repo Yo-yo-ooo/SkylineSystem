@@ -1,5 +1,5 @@
-#include "ata.h"
-#include "../vsdev/vsdev.h"
+#include <drivers/ata/ata.h>
+#include <drivers/vsdev/vsdev.h>
 
 u16 ata_base = 0;
 u8 ata_type = 0;

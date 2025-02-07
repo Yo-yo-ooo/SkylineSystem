@@ -1,5 +1,5 @@
-#include "madt.h"
-#include "acpi.h"
+#include <acpi/madt.h>
+#include <acpi/acpi.h>
 
 madt_ioapic* madt_ioapic_list[128] = {0};
 madt_iso* madt_iso_list[128] = {0};

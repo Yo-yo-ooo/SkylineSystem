@@ -1,6 +1,6 @@
-//#include "heap.h"
+//#include <mem/heap.h>
 #include <stddef.h>
-#include "new2.h"
+#include <mem/new2.h>
 const char* _X__file__ = "unknown";
 const char* _X__func__ = "unknown";
 size_t _X__line__ = 0;

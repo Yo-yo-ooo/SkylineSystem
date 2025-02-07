@@ -1,5 +1,5 @@
-#include "gdt.h"
-#include "../lapic/lapic.h"
+#include <arch/x86_64/interrupt/gdt.h>
+#include <arch/x86_64/lapic/lapic.h>
 
 gdt_table def_table = {
   {

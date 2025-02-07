@@ -34,35 +34,36 @@
  * @brief Directory indexing procedures.
  */
 
-#include "../include/ext4.h"
-#include "../include/ext4_balloc.h"
-#include "../include/ext4_bcache.h"
-#include "../include/ext4_bitmap.h"
-#include "../include/ext4_block_group.h"
-#include "../include/ext4_blockdev.h"
-#include "../include/ext4_config.h"
-#include "../include/ext4_crc32.h"
-#include "../include/ext4_debug.h"
-#include "../include/ext4_dir.h"
-#include "../include/ext4_dir_idx.h"
-#include "../include/ext4_errno.h"
-#include "../include/ext4_extent.h"
-#include "../include/ext4_fs.h"
-#include "../include/ext4_hash.h"
-#include "../include/ext4_ialloc.h"
-#include "../include/ext4_inode.h"
-#include "../include/ext4_journal.h"
-#include "../include/ext4_mbr.h"
-#include "../include/ext4_misc.h"
-#include "../include/ext4_mkfs.h"
-#include "../include/ext4_oflags.h"
-#include "../include/ext4_super.h"
-#include "../include/ext4_trans.h"
-#include "../include/ext4_types.h"
-#include "../include/ext4_xattr.h"
+#include <fs/lwext4/ext4.h>
+#include <fs/lwext4/ext4_balloc.h>
+#include <fs/lwext4/ext4_bcache.h>
+#include <fs/lwext4/ext4_bitmap.h>
+#include <fs/lwext4/ext4_block_group.h>
+#include <fs/lwext4/ext4_blockdev.h>
+#include <fs/lwext4/ext4_config.h>
+#include <fs/lwext4/ext4_crc32.h>
+#include <fs/lwext4/ext4_debug.h>
+#include <fs/lwext4/ext4_dir.h>
+#include <fs/lwext4/ext4_dir_idx.h>
+#include <fs/lwext4/ext4_errno.h>
+#include <fs/lwext4/ext4_extent.h>
+#include <fs/lwext4/ext4_fs.h>
+#include <fs/lwext4/ext4_hash.h>
+#include <fs/lwext4/ext4_ialloc.h>
+#include <fs/lwext4/ext4_inode.h>
+#include <fs/lwext4/ext4_journal.h>
+#include <fs/lwext4/ext4_mbr.h>
+#include <fs/lwext4/ext4_misc.h>
+#include <fs/lwext4/ext4_mkfs.h>
+#include <fs/lwext4/ext4_oflags.h>
+#include <fs/lwext4/ext4_super.h>
+#include <fs/lwext4/ext4_trans.h>
+#include <fs/lwext4/ext4_types.h>
+#include <fs/lwext4/ext4_xattr.h>
 
-#include "../../../klib/cstr.h"
-#include "../../../klib/klib.h"
+#include <klib/cstr.h>
+#include <klib/klib.h>
+#include <mem/heap.h>
 
 /**@brief Get hash version used in directory index.
  * @param ri Pointer to root info structure of index

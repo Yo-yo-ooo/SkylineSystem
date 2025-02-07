@@ -1,5 +1,5 @@
 #include <stdint.h>
-#include "pci.h"
+#include <arch/x86_64/dev/pci/pci.h>
 
 namespace PCI {
 

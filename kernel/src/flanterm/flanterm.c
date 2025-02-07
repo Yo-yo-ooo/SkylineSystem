@@ -27,7 +27,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-#include "flanterm.h"
+#include <flanterm/flanterm.h>
 
 // Tries to implement this standard for terminfo
 // https://man7.org/linux/man-pages/man4/console_codes.4.html

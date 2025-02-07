@@ -1,6 +1,6 @@
 #pragma once
 
-#include "klib.h"
+#include <klib/klib.h>
 
 void qsort(void *base, size_t num, size_t width, int (*sort)(const void *e1, const void *e2)) {
     for (int i = 0; i < (int)num - 1; i++) {
