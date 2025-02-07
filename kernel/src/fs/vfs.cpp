@@ -9,7 +9,7 @@ void vfs_init()
     vfs_root = (vfs_node *)kmalloc(sizeof(vfs_node));
     vfs_root->parent = NULL;
     vfs_root->open = true;
-    vfs_root->name = kmalloc(2);
+    vfs_root->name = (char*)kmalloc(2);
     vfs_root->name[0] = '/';
     vfs_root->name[1] = '\0';
     vfs_root->ino = 2;

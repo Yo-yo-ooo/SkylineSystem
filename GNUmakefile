@@ -179,17 +179,17 @@ kernel: kernel-deps
 	$(MAKE) -C kernel
 
 $(IMAGE_NAME).iso: limine/limine kernel
-	rm -rf iso_root
-	mkdir -p iso_root/boot
-	cp -v kernel/bin-$(KARCH)/kernel iso_root/boot/
-	mkdir -p iso_root/boot/limine
-	cp -v limine.conf iso_root/boot/limine/
-	mkdir -p iso_root/EFI/BOOT
+	@rm -rf iso_root
+	@mkdir -p iso_root/boot
+	@cp -v kernel/bin-$(KARCH)/kernel iso_root/boot/
+	@mkdir -p iso_root/boot/limine
+	@cp -v limine.conf iso_root/boot/limine/
+	@mkdir -p iso_root/EFI/BOOT
 ifeq ($(KARCH),x86_64)
-	cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp -v limine/BOOTX64.EFI iso_root/EFI/BOOT/
-	cp -v limine/BOOTIA32.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs -b boot/limine/limine-bios-cd.bin \
+	@cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
+	@cp -v limine/BOOTX64.EFI iso_root/EFI/BOOT/
+	@cp -v limine/BOOTIA32.EFI iso_root/EFI/BOOT/
+	@xorriso -as mkisofs -b boot/limine/limine-bios-cd.bin \
 		-no-emul-boot -boot-load-size 4 -boot-info-table \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
@@ -197,55 +197,55 @@ ifeq ($(KARCH),x86_64)
 	./limine/limine bios-install $(IMAGE_NAME).iso
 endif
 ifeq ($(KARCH),aarch64)
-	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp -v limine/BOOTAA64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs \
+	@cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
+	@cp -v limine/BOOTAA64.EFI iso_root/EFI/BOOT/
+	@xorriso -as mkisofs \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
 endif
 ifeq ($(KARCH),riscv64)
-	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp -v limine/BOOTRISCV64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs \
+	@cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
+	@cp -v limine/BOOTRISCV64.EFI iso_root/EFI/BOOT/
+	@xorriso -as mkisofs \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
 endif
 ifeq ($(KARCH),loongarch64)
-	cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	cp -v limine/BOOTLOONGARCH64.EFI iso_root/EFI/BOOT/
-	xorriso -as mkisofs \
+	@cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
+	@cp -v limine/BOOTLOONGARCH64.EFI iso_root/EFI/BOOT/
+	@xorriso -as mkisofs \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
 endif
-	rm -rf iso_root
+	@rm -rf iso_root
 
 $(IMAGE_NAME).hdd: limine/limine kernel
-	rm -f $(IMAGE_NAME).hdd
-	dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
-	sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
+	@rm -f $(IMAGE_NAME).hdd
+	@dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
+	@sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
 ifeq ($(KARCH),x86_64)
 	./limine/limine bios-install $(IMAGE_NAME).hdd
 endif
-	mformat -i $(IMAGE_NAME).hdd@@1M
-	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(KARCH)/kernel ::/boot
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
+	@mformat -i $(IMAGE_NAME).hdd@@1M
+	@mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	@mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(KARCH)/kernel ::/boot
+	@mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
 ifeq ($(KARCH),x86_64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
+	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
+	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
+	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
 endif
 ifeq ($(KARCH),aarch64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTAA64.EFI ::/EFI/BOOT
+	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTAA64.EFI ::/EFI/BOOT
 endif
 ifeq ($(KARCH),riscv64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTRISCV64.EFI ::/EFI/BOOT
+	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTRISCV64.EFI ::/EFI/BOOT
 endif
 ifeq ($(KARCH),loongarch64)
-	mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
+	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
 endif
 
 .PHONY: clean
