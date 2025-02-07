@@ -48,7 +48,7 @@ $(call USER_VARIABLE,KLDFLAGS,)
 
 # Ensure the dependencies have been obtained.
 ifneq ($(shell ( test '$(MAKECMDGOALS)' = clean || test '$(MAKECMDGOALS)' = distclean ); echo $$?),0)
-    ifeq ($(shell ( ! test -d freestnd-c-hdrs || ! test -f src/cc-runtime.c || ! test -f src/limine.h || ! test -d freestnd-cxx-hdrs); echo $$?),0)
+    ifeq ($(shell ( ! test -d freestnd-c-hdrs || ! test -d cc-runtime || ! test -f src/limine.h || ! test -d freestnd-cxx-hdrs); echo $$?),0)
         $(error Please run the ./get-deps script first)
     endif
 endif
@@ -65,6 +65,7 @@ override KCFLAGS += \
     -Wextra \
     -std=gnu17 \
 	-I$(SS_BUILD_DIR)/kernel/include \
+	-Icc-runtime -Lcc-runtime \
     -nostdinc \
     -ffreestanding \
     -fno-stack-protector \
@@ -81,6 +82,7 @@ override KCPPFLAGS := \
     -I src \
 	-isystem freestnd-c-hdrs/$(KARCH)/include \
 	-I$(SS_BUILD_DIR)/kernel/include \
+	-Icc-runtime -Lcc-runtime \
     $(KCPPFLAGS) \
     -MMD \
     -MP

@@ -73,4 +73,10 @@ clone_repo_commit \
     https://github.com/osdev0/freestnd-cxx-hdrs.git \
     freestnd-cxx-hdrs 
     
+clone_repo_commit \
+    https://github.com/osdev0/cc-runtime.git \
+    cc-runtime
 
+cd cc-runtime
+make -f cc-runtime.mk
+cd ..
