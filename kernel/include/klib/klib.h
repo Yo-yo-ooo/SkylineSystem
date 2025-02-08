@@ -68,6 +68,6 @@ void unlock(atomic_lock* l);
 
 
 
-void qsort(void *base, size_t num, size_t width, uint32_t (*sort)(const void *e1, const void *e2));
+void qsort(void *base, size_t num, size_t width, int32_t (*sort)(const void *e1, const void *e2));
 
 #endif
