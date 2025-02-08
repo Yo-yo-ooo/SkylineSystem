@@ -261,9 +261,9 @@ distclean:
 
 cm:
 	make clean 
-	make -j$(nproc)
+	make -j$(shell nproc)
 
 cmr:
 	make clean 
-	make -j$(nproc)
+	make -j$(shell nproc)
 	make run

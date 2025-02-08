@@ -61,9 +61,7 @@ override KCXX_IS_CLANG := $(shell ! $(CXX) --version 2>/dev/null | grep 'clang' 
 
 # Internal C flags that should not be changed by the user.
 override KCFLAGS += \
-	-Wall \
-	-Wextra \
-    -std=gnu17 \
+	-w \
 	-I$(SS_BUILD_DIR)/kernel/include \
 	-Icc-runtime -Lcc-runtime \
     -nostdinc \
@@ -87,7 +85,8 @@ override KCPPFLAGS := \
     -MMD \
     -MP
 
-KCXX += -isystem freestnd-cxx-hdrs/$(KARCH)/include 
+KCC += -std=gnu17
+KCXX += -isystem freestnd-cxx-hdrs/$(KARCH)/include -std=gnu++17
 
 ifeq ($(KARCH),x86_64)
     # Internal nasm flags that should not be changed by the user.
