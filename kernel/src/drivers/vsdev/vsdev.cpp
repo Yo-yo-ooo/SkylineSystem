@@ -12,8 +12,25 @@ namespace VsDev{
         ThisDev = 0;
     }
 
+    char* TypeToString(VsDevType type){
+        switch(type){
+            case SATA:
+                return "sata";
+            case IDE:
+                return "ide";
+            case NVME:
+                return "nvme";
+            case SAS:
+                return "sas";
+            case Undefined:
+                return "UNDEF";
+        }
+    }
+
     void AddStorageDevice(VsDevType type, SALOPS* ops)
     {
+        DevList[vsdev_list_idx].Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)GetSDEVTCount(type))) + 1);
+        DevList[vsdev_list_idx].Name = StrCombine(TypeToString(type),to_string((uint64_t)GetSDEVTCount(type)));
         DevList[vsdev_list_idx].type = type;
         DevList[vsdev_list_idx].ops = ops;
         vsdev_list_idx++;

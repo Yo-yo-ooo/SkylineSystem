@@ -1,5 +1,39 @@
 #include <klib/klib.h>
 
+char* strcat(char* dest, const char* source){
+	if (dest == NULL || source == NULL){		//合法性校验
+		return dest;
+	}
+	char* p = dest;			//将目的数组赋给p
+	while (*p != '\0'){		//循环看大小
+		p++;
+	}
+	while (*source != '\0'){			//注意指针的用法
+		*p = *source;
+		p++;			//依次加加进行连接
+		source++;
+	}
+	*p = '\0';
+	return dest;
+}
+
+char* StrCombine(const char* a, const char* b)
+{
+    int lenA = strlen(a);
+    int lenB = strlen(b);
+    
+    int totalLen = lenA + lenB;
+    char* tempStr = (char*) kmalloc(totalLen + 1);
+    tempStr[totalLen] = 0;
+
+    for (int i = 0; i < lenA; i++)
+        tempStr[i] = a[i];
+    for (int i = 0; i < lenB; i++)
+        tempStr[i + lenA] = b[i];
+
+    return tempStr;
+}
+
 char intTo_stringOutput[128];
 const char *to_string(uint64_t value)
 {
@@ -329,4 +363,13 @@ char *strncpy(char *dest, const char *src, size_t n) {
     while (n-- > 0 && (*dest++ = *src++) != '\0')
         ;
     return tmp;
+}
+
+uint32_t strlen(const char* str) {
+    uint32_t i = 0;
+    while (*str != '\0') {
+        i++;
+        str++;
+    }
+    return i;
 }

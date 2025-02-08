@@ -62,7 +62,7 @@ override KCXX_IS_CLANG := $(shell ! $(CXX) --version 2>/dev/null | grep 'clang' 
 # Internal C flags that should not be changed by the user.
 override KCFLAGS += \
 	-Wall \
-    -Wextra \
+	-Wextra \
     -std=gnu17 \
 	-I$(SS_BUILD_DIR)/kernel/include \
 	-Icc-runtime -Lcc-runtime \
@@ -212,7 +212,7 @@ all: bin-$(KARCH)/$(OUTPUT)
 
 # Link rules for the final executable.
 bin-$(KARCH)/$(OUTPUT): GNUmakefile linker-$(KARCH).ld $(OBJ)
-	mkdir -p "$$(dirname $@)"
+	@mkdir -p "$$(dirname $@)"
 	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
 
 # Include header dependencies.
@@ -220,22 +220,25 @@ bin-$(KARCH)/$(OUTPUT): GNUmakefile linker-$(KARCH).ld $(OBJ)
 
 # Compilation rules for *.c files.
 obj-$(KARCH)/%.c.o: src/%.c GNUmakefile
-	mkdir -p "$$(dirname $@)"
+	@echo CC $<
+	@mkdir -p "$$(dirname $@)"
 	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
 obj-$(KARCH)/%.S.o: src/%.S GNUmakefile
-	mkdir -p "$$(dirname $@)"
+	@echo AS $<
+	@mkdir -p "$$(dirname $@)"
 	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 obj-$(KARCH)/%.cpp.o: src/%.cpp GNUmakefile
-	mkdir -p "$$(dirname $@)"
+	@echo CXX $<
+	@mkdir -p "$$(dirname $@)"
 	@$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 ifeq ($(KARCH),x86_64)
 # Compilation rules for *.asm (nasm) files.
 obj-$(KARCH)/%.asm.o: src/%.asm GNUmakefile
-	mkdir -p "$$(dirname $@)"
+	@mkdir -p "$$(dirname $@)"
 	@nasm $(KNASMFLAGS) $< -o $@
 endif
 

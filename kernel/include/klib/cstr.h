@@ -28,9 +28,13 @@ const char* ConvertHexToString(uint16_t hex);
 const char* ConvertHexToString(uint8_t hex);
 unsigned long ConvertStringToLongHex(const char* data);
 
+char* StrCombine(const char* a, const char* b);
+
 int strcmp(const char *cs, const char *ct);
 char *strtok(char *str, const char *delim);
 char* strchr(char* str, int c);
 char *strcpy(char *strDest, const char *strSrc);
 int strncmp(const char* a, const char* b, size_t n);
 char *strncpy(char *dest, const char *src, size_t n);
+char* strcat(char* dest, const char* source);
+uint32_t strlen(const char* str);

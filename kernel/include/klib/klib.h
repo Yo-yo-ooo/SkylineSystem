@@ -66,15 +66,8 @@ void unlock(atomic_lock* l);
 #endif
 #define UnCompleteCode 1
 
-inline int strlen(const char* str) {
-    int i = 0;
-    while (*str != '\0') {
-        i++;
-        str++;
-    }
-    return i;
-}
 
-void qsort(void *base, size_t num, size_t width, int (*sort)(const void *e1, const void *e2));
+
+void qsort(void *base, size_t num, size_t width, uint32_t (*sort)(const void *e1, const void *e2));
 
 #endif
