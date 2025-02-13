@@ -4,12 +4,13 @@ namespace VsDev{
     VsDevList DevList[MAX_VSDEV_COUNT];
     uint32_t vsdev_list_idx = 0;
 
-    
+    VsDevInfo TempInfo;
 
     u32 ThisDev = 0;
     void Init(){
         vsdev_list_idx = 0;
         ThisDev = 0;
+        _memset(&ThisDev,0,sizeof(VsDevInfo));
     }
 
     char* TypeToString(VsDevType type){
@@ -17,11 +18,11 @@ namespace VsDev{
             case SATA:
                 return "sata";
             case IDE:
-                return "ide";
+                return "ide ";
             case NVME:
                 return "nvme";
             case SAS:
-                return "sas";
+                return "sas ";
             case Undefined:
                 return "UNDEF";
         }
@@ -29,11 +30,15 @@ namespace VsDev{
 
     void AddStorageDevice(VsDevType type, SALOPS* ops)
     {
+        kinfo("HIT! %s %d\n", TypeToString(type),vsdev_list_idx);
         DevList[vsdev_list_idx].Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)GetSDEVTCount(type))) + 1);
-        DevList[vsdev_list_idx].Name = StrCombine(TypeToString(type),to_string((uint64_t)GetSDEVTCount(type)));
+        char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)GetSDEVTCount(type)));
+        DevList[vsdev_list_idx].Name = temp_str;
         DevList[vsdev_list_idx].type = type;
         DevList[vsdev_list_idx].ops = ops;
+        DevList[vsdev_list_idx].buf = 1;
         vsdev_list_idx++;
+        kfree(temp_str);
     }
 
     u32 GetSDEVTCount(VsDevType type){
@@ -49,13 +54,14 @@ namespace VsDev{
     void SetSDev(u32 idx){ThisDev = idx;}
 
     VsDevInfo GetSDEV(u32 idx){
-        VsDevInfo info;
-        info.ops = DevList[idx].ops;
-        info.type = DevList[idx].type;
-        info.MaxSectorCount = DevList[idx].MaxSectorCount;
-        info.SectorSize = DevList[idx].SectorSize;
-        return info;
+        TempInfo.ops = DevList[idx].ops;
+        TempInfo.type = DevList[idx].type;
+        TempInfo.MaxSectorCount = DevList[idx].MaxSectorCount;
+        TempInfo.SectorSize = DevList[idx].SectorSize;
+        TempInfo.buf = DevList[idx].buf;
+        return TempInfo;
     }
+
 
     u8 Read(uint64_t lba, uint32_t SectorCount, void* Buffer){
         return DevList[ThisDev].ops->Read(lba, SectorCount, Buffer);
@@ -66,7 +72,7 @@ namespace VsDev{
     }
 
     u8 ReadBytes(uint64_t address, uint32_t Count, void* Buffer){
-        if(DevList[ThisDev].ops->ReadBytes != NULL)
+        if(DevList[ThisDev].ops->ReadBytes != nullptr)
             return DevList[ThisDev].ops->ReadBytes(address, Count, Buffer);
         else {
             if (Count == 0)
@@ -100,7 +106,7 @@ namespace VsDev{
     }
 
     u8 WriteBytes(uint64_t address, uint32_t Count, void* Buffer){
-        if(DevList[ThisDev].ops->WriteBytes != NULL)
+        if(DevList[ThisDev].ops->WriteBytes != nullptr)
             return DevList[ThisDev].ops->WriteBytes(address, Count, Buffer);
         else{
             if (Count == 0)

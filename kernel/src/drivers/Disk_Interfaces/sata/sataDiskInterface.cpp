@@ -35,7 +35,7 @@ namespace SataDiskInterface
         ops->Write = FRegVsDEV_W;
         ops->ReadBytes = FRegVsDEV_R;
         ops->WriteBytes = FRegVsDEV_Wb;
-        ops->GetMaxSectorCount = GetMaxSectorCount;
+        ops->GetMaxSectorCount = (uint32_t(*)(void))GetMaxSectorCount;
         VsDev::AddStorageDevice(VsDevType::SATA, ops);
         RemoveFromStack();
 

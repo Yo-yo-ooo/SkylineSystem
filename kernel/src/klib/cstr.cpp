@@ -112,7 +112,7 @@ const char *to_string(char value)
 }
 
 char doubleTo_stringOutput[128];
-__attribute__((target("sse2"))) const char *to_string(double value, uint8_t places)
+__ffunc const char *to_string(double value, uint8_t places)
 {
     uint8_t size = 0;
     if (value < 0)
@@ -184,7 +184,7 @@ const char *to_string(bool value)
         return "false";
 }
 
-unsigned int ConvertStringToHex(const char *data)
+__ffunc unsigned int ConvertStringToHex(const char *data)
 {
     unsigned int hex = 0;
 

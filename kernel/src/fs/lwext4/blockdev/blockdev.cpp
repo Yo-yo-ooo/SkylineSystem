@@ -75,8 +75,8 @@ from the VsDev "namespace".
 VsDevInfo ThisInfo;
 
 /******************************************************************************/
-static uint8_t blockdev_ph_bbuf[(512)]; 
-static struct ext4_blockdev_iface blockdev_iface = { 
+uint8_t blockdev_ph_bbuf[(512)]; 
+struct ext4_blockdev_iface blockdev_iface = { 
     .open = blockdev_open, 
     .bread = blockdev_bread, 
     .bwrite = blockdev_bwrite, 
@@ -86,14 +86,21 @@ static struct ext4_blockdev_iface blockdev_iface = {
     .ph_bsize = 512, 
     .ph_bcnt = 0, 
     .ph_bbuf = blockdev_ph_bbuf, }; 
-static struct ext4_blockdev blockdev = { 
+struct ext4_blockdev blockdev = { 
     .bdif = &blockdev_iface, 
     .part_offset = 0, .part_size = (0) * (512), };
 /******************************************************************************/
 int blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
-	return EIO;
+    ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
+    kinfo("%d\n",bdev->block_reg_idx);
+    kinfo("%d\n",ThisInfo.buf);
+    bdev->part_offset = 0;
+    uint64_t temp = ThisInfo.ops->GetMaxSectorCount();
+    bdev->part_size = temp * 512;
+    bdev->bdif->ph_bcnt = bdev->part_size / bdev->bdif->ph_bsize;
+	return EOK;
 }
 
 /******************************************************************************/
@@ -102,6 +109,7 @@ int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 			 uint32_t blk_cnt)
 {
 	/*blockdev_bread: skeleton*/
+    ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
     if(ThisInfo.ops->Read(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
@@ -115,6 +123,7 @@ int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 			  uint64_t blk_id, uint32_t blk_cnt)
 {
 	/*blockdev_bwrite: skeleton*/
+    ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
     if(ThisInfo.ops->Write(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
@@ -125,7 +134,7 @@ int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 int blockdev_close(struct ext4_blockdev *bdev)
 {
 	/*blockdev_close: skeleton*/
-	return EIO;
+	return EOK;
 }
 
 int blockdev_lock(struct ext4_blockdev *bdev)
@@ -133,7 +142,7 @@ int blockdev_lock(struct ext4_blockdev *bdev)
 	/*blockdev_lock: skeleton*/
     lock(bdev->bdif->p);
     
-	return EIO;
+	return EOK;
 }
 
 int blockdev_unlock(struct ext4_blockdev *bdev)
@@ -141,13 +150,14 @@ int blockdev_unlock(struct ext4_blockdev *bdev)
 	/*blockdev_unlock: skeleton*/
     unlock(bdev->bdif->p);
 
-	return EIO;
+	return EOK;
 }
 
 /******************************************************************************/
 struct ext4_blockdev *ext4_blockdev_get(u32 which)
 {
     ThisInfo = VsDev::GetSDEV(which);
+    blockdev.block_reg_idx = which;
 	return &blockdev;
 }
 /******************************************************************************/

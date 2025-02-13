@@ -76,10 +76,9 @@ void irq_unregister(u8 vec) {
 void backtrace() {
     struct stackframe *stk;
     __asm__ volatile ("mov %%rbp, %0" : "=r"(stk));
-    for (u64 i = 0; i < 10 && stk; ++i) {
-        e9_printf("  %x", stk->rip);
-        stk = stk->rbp;
-    }
+    kprintf("  %lx", stk->rip);
+    stk = stk->rbp;
+    hcf();
 }
 
 void idt_set_entry(u8 vec, void* isr, u8 type, u8 dpl) {
@@ -109,12 +108,12 @@ extern "C" void isr_handler(registers* r) {
     if (r->int_no == 14) {
         // Page fault
         if (!VMM::HandlePF(r))
-        return;
+            return;
     }
     
     __asm__ volatile ("cli");
-    e9_printf("isr_handler(): System fault!");
-    e9_printNL("Backtrace:");
+    kerror("isr_handler(): System fault! %s. RIP: %llx. CS: %x SS: %x\n", isr_errors[r->int_no], r->rip, r->cs, r->ss);
+    kerror("Backtrace:");
     backtrace();
     hcf();
 }

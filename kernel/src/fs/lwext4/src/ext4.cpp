@@ -142,12 +142,12 @@ int ext4_device_register(struct ext4_blockdev *bd,
     if((registed_mountpoints + 1) > CONFIG_EXT4_MOUNTPOINTS_COUNT)
         ext4_realloc(s_mp, sizeof(struct ext4_block_devices) * (registed_mountpoints + 1));
 
-	for (size_t i = 0; i < registed_blockdevs; ++i) {
+	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
 		if (!strcmp(s_bdevices[i].name, dev_name))
 			return EEXIST;
 	}
 
-	for (size_t i = 0; i < registed_blockdevs; ++i) {
+	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 		if (!s_bdevices[i].bd) {
 			strcpy(s_bdevices[i].name, dev_name);
 			s_bdevices[i].bd = bd;
@@ -163,7 +163,7 @@ int ext4_device_unregister(const char *dev_name)
 {
 	ext4_assert(dev_name);
 
-	for (size_t i = 0; i < registed_blockdevs; ++i) {
+	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
 		if (strcmp(s_bdevices[i].name, dev_name))
 			continue;
 
@@ -177,6 +177,7 @@ int ext4_device_unregister(const char *dev_name)
 int ext4_device_unregister_all(void)
 {
 	_memset(s_bdevices, 0, sizeof(s_bdevices));
+    kfree(s_bdevices);
 
 	return EOK;
 }
@@ -402,8 +403,10 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (mount_point[mp_len - 1] != '/')
 		return ENOTSUP;
 
-	for (size_t i = 0; i < registed_blockdevs; ++i) {
+	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
 		if (!strcmp(dev_name, s_bdevices[i].name)) {
+            kinfo("DEV NAME: %s\n", dev_name);
+            kinfo("s_bdevices[i].name: %s\n", s_bdevices[i].name);
 			bd = s_bdevices[i].bd;
 			break;
 		}
@@ -412,7 +415,7 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (!bd)
 		return ENODEV;
 
-	for (size_t i = 0; i < registed_mountpoints; ++i) {
+	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 		if (!s_mp[i].mounted) {
 			strcpy(s_mp[i].name, mount_point);
 			mp = &s_mp[i];
@@ -428,10 +431,13 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (!mp)
 		return ENOMEM;
 
+    
 	r = ext4_block_init(bd);
 	if (r != EOK)
 		return r;
 
+    kinfo("[MNT STEP] 1\n");
+    hcf();
 	r = ext4_fs_init(&mp->fs, bd, read_only);
 	if (r != EOK) {
 		ext4_block_fini(bd);
@@ -442,6 +448,8 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	ext4_block_set_lb_size(bd, bsize);
 	bc = &mp->bc;
 
+    kinfo("[MNT STEP] 2\n");
+    hcf();
 	r = ext4_bcache_init_dynamic(bc, CONFIG_BLOCK_DEV_CACHE_SIZE, bsize);
 	if (r != EOK) {
 		ext4_block_fini(bd);
@@ -451,6 +459,8 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (bsize != bc->itemsize)
 		return ENOTSUP;
 
+    kinfo("[MNT STEP] 3\n");
+    hcf();
 	/*Bind block cache to block device*/
 	r = ext4_block_bind_bcache(bd, bc);
 	if (r != EOK) {
@@ -472,7 +482,7 @@ int ext4_umount(const char *mount_point)
 	int r;
 	struct ext4_mountpoint *mp = 0;
 
-	for (i = 0; i < registed_mountpoints; ++i) {
+	for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 		if (!strcmp(s_mp[i].name, mount_point)) {
 			mp = &s_mp[i];
 			break;
@@ -499,7 +509,7 @@ Finish:
 
 static struct ext4_mountpoint *ext4_get_mount(const char *path)
 {
-	for (size_t i = 0; i < registed_mountpoints; ++i) {
+	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 
 		if (!s_mp[i].mounted)
 			continue;
@@ -765,7 +775,7 @@ int ext4_mount_setup_locks(const char *mount_point,
 	uint32_t i;
 	struct ext4_mountpoint *mp = 0;
 
-	for (i = 0; i < registed_mountpoints; ++i) {
+	for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 		if (!strcmp(s_mp[i].name, mount_point)) {
 			mp = &s_mp[i];
 			break;

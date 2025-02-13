@@ -128,6 +128,9 @@ struct ext4_blockdev {
 	/**@brief   The filesystem this block device belongs to. */
 	struct ext4_fs *fs;
 
+    /**@brief   BLOCK REG IDX */
+    uint32_t block_reg_idx;
+
 	void *journal;
 };
 

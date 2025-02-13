@@ -122,6 +122,8 @@ int ext4_block_init(struct ext4_blockdev *bdev)
 	rc = bdev->bdif->open(bdev);
 	if (rc != EOK)
 		return rc;
+    kinfo("[MNT STEP] 0\n");
+    hcf();
 
 	bdev->bdif->ph_refctr = 1;
 	return EOK;

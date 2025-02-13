@@ -22,7 +22,7 @@ typedef struct SALOPS{ //存储器抽象层
     //可选 Can Select
     u8 (*ReadBytes)(uint64_t address, uint32_t Count, void* Buffer);
     u8 (*WriteBytes)(uint64_t address, uint32_t Count, void* Buffer);
-    u8 (*GetMaxSectorCount)(void);
+    uint32_t (*GetMaxSectorCount)(void);
 }SALOPS;
 
 typedef struct VsDevList{
@@ -31,6 +31,7 @@ typedef struct VsDevList{
     char* Name;
     u64 MaxSectorCount;    //按照SectorSize计
     u64 SectorSize;
+    bool buf;
 }VDL;
 
 typedef struct VsDevList VsDevInfo;

@@ -52,7 +52,7 @@ typedef struct registers__{
 typedef struct stackframe {
     struct stackframe* rbp;
     u64 rip;
-} stackframe;
+}__attribute__((packed)) stackframe;
 
 void idt_init();
 void idt_reinit();
