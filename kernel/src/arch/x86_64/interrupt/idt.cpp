@@ -112,8 +112,8 @@ extern "C" void isr_handler(registers* r) {
     }
     
     __asm__ volatile ("cli");
-    kerror("isr_handler(): System fault! %s. RIP: %llx. CS: %x SS: %x\n", isr_errors[r->int_no], r->rip, r->cs, r->ss);
-    kerror("Backtrace:");
-    backtrace();
+    kerror("isr_handler(): "
+        "System fault! %s. "
+        "RIP: %llx. CS: %x SS: %x\n", isr_errors[r->int_no], r->rip, r->cs, r->ss);
     hcf();
 }

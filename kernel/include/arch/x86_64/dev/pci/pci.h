@@ -43,8 +43,16 @@ namespace PCI
         uint8_t MaxLatency;
     };
 
+    #define PCI_CONF_VENDOR		0X0 // Vendor ID
+    #define PCI_CONF_DEVICE		0X2 // Device ID
+    #define PCI_CONF_COMMAND	0x4 // Command
+    #define PCI_CONF_STATUS		0x6 // Status
+    #define PCI_CONF_REVISION	0x8 // Revision ID
+
+    #define PCI_DEVICE_MAX 256
     //PORTS
     #define PCI_ADDRESS_PORT 0xCF8
+    #define PCI_COMMAND_PORT 0xCF8
     #define PCI_DATA_PORT 0xCFC
 
     // Fields
@@ -117,6 +125,10 @@ namespace PCI
     void EnumerateDevice(uint64_t busAddress, uint64_t device);
 
     void EnumerateFunction(uint64_t deviceAddress, uint64_t function);
+
+    void DoPCIWithoutMCFG();
+
+    uint32_t read_pci0(uint32_t bus, uint32_t dev, uint32_t function,uint8_t registeroffset);
 
     extern const char* unknownString;
 

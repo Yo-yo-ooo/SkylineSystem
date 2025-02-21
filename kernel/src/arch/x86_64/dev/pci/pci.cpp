@@ -13,6 +13,70 @@ PCI::PCIDeviceHeader *pciDevices[128];
 u8 pciDeviceidx;
 namespace PCI
 {
+
+    uint32_t read_pci0(uint32_t bus, uint32_t dev, uint32_t function,uint8_t registeroffset){
+        uint32_t id = 1U << 31 | ((bus & 0xff) << 16) | ((dev & 0x1f) << 11) |
+                      ((function & 0x07) << 8) | (registeroffset & 0xfc);
+        io_out32(PCI_COMMAND_PORT, id);
+        uint32_t result = io_in32(PCI_DATA_PORT);
+        return result >> (8 * (registeroffset % 4));
+    }
+
+    void DoPCIWithoutMCFG(){
+        uint32_t BUS, Equipment, F,PCI_NUM = 0;
+        for (BUS = 0; BUS < 256; BUS++) {
+            for (Equipment = 0; Equipment < 32; Equipment++) {
+                for (F = 0; F < 8; F++) {
+                    //pci_config0(BUS,F,Equipment,0);
+                    unsigned int cmd = 0;
+                    cmd = 0x80000000 + (uint32_t) 0 + ((uint32_t) F << 8) +
+                        ((uint32_t) Equipment << 11) + ((uint32_t) BUS << 16);
+                    // cmd = cmd | 0x01;
+                    __asm__ volatile("outl %0, %1" : : "a"(PCI_COMMAND_PORT), "Nd"(cmd));
+                    if(io_in32(PCI_DATA_PORT) != 0xFFFFFFFF){
+                        PCI_NUM++;
+                        //load_pci_device(BUS,Equipment,F);
+                        uint32_t value_c = PCI::read_pci0(BUS, Equipment, F, PCI_CONF_REVISION);
+                        uint32_t class_code = value_c >> 8;
+
+                        uint16_t value_v = PCI::read_pci0(BUS, Equipment, F, PCI_CONF_VENDOR);
+                        uint16_t value_d = PCI::read_pci0(BUS, Equipment, F, PCI_CONF_DEVICE);
+                        uint16_t vendor_id = value_v & 0xffff;
+                        uint16_t device_id = value_d & 0xffff;
+
+                        /*
+                        pci_device_t device = malloc(sizeof(struct pci_device));
+                        device->name = pci_classname(class_code);
+                        device->vendor_id = vendor_id;
+                        device->device_id = device_id;
+                        device->class_code = class_code;
+                        device->bus = BUS;
+                        device->slot = Equipment;
+                        device->func = F;
+                        */
+                        PCIDeviceHeader* device = (PCIDeviceHeader*)kmalloc(sizeof(PCIDeviceHeader));
+                        device->Vendor_ID = vendor_id;
+                        device->Device_ID = device_id;
+                        device->Class = class_code;
+                        device->Prog_IF = io_in8(PCI_PROG_IF);
+                        device->SubClass = io_in8(PCI_SUBCLASS);
+
+                        if (pciDeviceidx > PCI_DEVICE_MAX) {
+                            kwarn("PCI:add device full %d", pciDeviceidx);
+                            return;
+                        }
+                        pciDevices[pciDeviceidx++] = device;
+
+                        if(device->Class == 0x060400 || (device->Class & 0xFFFF00) == 0x060400){
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        kinfo("PCI device loaded: %d", PCI_NUM);
+    }
+
     void EnumeratePCI(ACPI::MCFGHeader* mcfg)
     {
         AddToStack();

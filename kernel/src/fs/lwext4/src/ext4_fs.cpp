@@ -83,8 +83,10 @@ int ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev,
 	fs->read_only = read_only;
 
 	r = ext4_sb_read(fs->bdev, &fs->sb);
-	if (r != EOK)
+	if (r != EOK){
+        kinfo("Hit!(ext4_sb_read)");
 		return r;
+    }
 
 	if (!ext4_sb_check(&fs->sb))
 		return ENOTSUP;

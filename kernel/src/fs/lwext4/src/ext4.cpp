@@ -436,8 +436,6 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (r != EOK)
 		return r;
 
-    kinfo("[MNT STEP] 1\n");
-    hcf();
 	r = ext4_fs_init(&mp->fs, bd, read_only);
 	if (r != EOK) {
 		ext4_block_fini(bd);

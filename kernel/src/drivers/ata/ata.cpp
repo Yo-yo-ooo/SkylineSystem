@@ -123,12 +123,12 @@ u8 Init() {
     u8 ata_status = Identify(ATA_PRIMARY, ATA_MASTER);
     if(ata_status != ATA_OKAY)
         return ata_status;
-    SALOPS *ops;
-    ops->Read = FRegVsDEV_R;
-    ops->Write = FRegVsDEV_W;
-    ops->ReadBytes = nullptr;
-    ops->WriteBytes = nullptr;
-    ops->GetMaxSectorCount = nullptr;
+    SALOPS ops;
+    ops.Read = FRegVsDEV_R;
+    ops.Write = FRegVsDEV_W;
+    ops.ReadBytes = nullptr;
+    ops.WriteBytes = nullptr;
+    ops.GetMaxSectorCount = nullptr;
     VsDev::AddStorageDevice(VsDevType::IDE, ops);
     return ata_status;
 }

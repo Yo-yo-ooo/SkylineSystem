@@ -94,11 +94,12 @@ int blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    kinfo("%d\n",bdev->block_reg_idx);
-    kinfo("%d\n",ThisInfo.buf);
+    kinfo("bdev->block_reg_idx:%d\n",bdev->block_reg_idx);
+    kinfo("ThisInfo.buf:%d\n",ThisInfo.buf);
     bdev->part_offset = 0;
-    uint64_t temp = ThisInfo.ops->GetMaxSectorCount();
-    bdev->part_size = temp * 512;
+    ext4_assert(ThisInfo.ops.GetMaxSectorCount == nullptr);
+    bdev->part_size = ThisInfo.ops.GetMaxSectorCount() * 512;
+    kinfo("%d",bdev->part_size);
     bdev->bdif->ph_bcnt = bdev->part_size / bdev->bdif->ph_bsize;
 	return EOK;
 }
@@ -110,7 +111,7 @@ int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 {
 	/*blockdev_bread: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    if(ThisInfo.ops->Read(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
+    if(ThisInfo.ops.Read(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
         return EIO;
@@ -124,7 +125,7 @@ int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 {
 	/*blockdev_bwrite: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    if(ThisInfo.ops->Write(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
+    if(ThisInfo.ops.Write(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
         return EIO;

@@ -27,7 +27,7 @@ typedef struct SALOPS{ //存储器抽象层
 
 typedef struct VsDevList{
     VsDevType type;
-    SALOPS* ops;
+    SALOPS ops;
     char* Name;
     u64 MaxSectorCount;    //按照SectorSize计
     u64 SectorSize;
@@ -49,7 +49,7 @@ namespace VsDev
     void Init();
 
     char* TypeToString(VsDevType type);
-    void AddStorageDevice(VsDevType type,SALOPS* ops);
+    void AddStorageDevice(VsDevType type,SALOPS ops);
     /*获取存储器的相关信息*/
     VsDevInfo GetSDEV(u32 idx);
     /*获取该类型存储设备下数量*/

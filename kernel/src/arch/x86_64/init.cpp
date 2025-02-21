@@ -68,6 +68,8 @@ void __init x86_64_init(void){
     LAPIC::CalibrateTimer();
     InitFunc("VsDev",VsDev::Init());
     //InitFunc("ATA",ATA::Init());
+    if(ACPI::mcfg == NULL)
+        PCI::DoPCIWithoutMCFG();
     InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));
     InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
 

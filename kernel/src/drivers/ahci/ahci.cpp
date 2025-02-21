@@ -3,7 +3,7 @@
 #ifdef __x86_64__
 #include <arch/x86_64/allin.h>
 #endif
-
+#include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
 namespace AHCI 
 {
     #define HBA_PORT_DEV_PRESENT 0x3
@@ -370,9 +370,10 @@ namespace AHCI
             Port* port = Ports[i];
             PortType portType = port->portType;
 
-            if (portType == PortType::SATA)
+            if (portType == PortType::SATA){
                 kprintf("* SATA drive\n");
-            else if (portType == PortType::SATAPI)
+                SataDiskInterface* sataDiskInterface = new SataDiskInterface(port);
+            }else if (portType == PortType::SATAPI)
                 kprintf("* SATAPI drive\n");
             else
                 kprintf("* Not interested\n");
