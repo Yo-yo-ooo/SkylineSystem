@@ -26,25 +26,37 @@ namespace VsDev{
         }
     }
 
-    void AddStorageDevice(VsDevType type, SALOPS ops)
+    void AddStorageDevice(VsDevType type, SALOPS ops,u32 SectorCount = 0,void* Class = nullptr)
     {
+        lock(&DevList->lock);
         kinfo("[AddStorageDevice]HIT! %s %d\n", TypeToString(type),vsdev_list_idx);
         DevList[vsdev_list_idx].Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)GetSDEVTCount(type))) + 1);
         char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)GetSDEVTCount(type)));
         DevList[vsdev_list_idx].Name = temp_str;
         DevList[vsdev_list_idx].type = type;
         
+        if(Class != nullptr){
+            DevList[vsdev_list_idx].buf = true;
+            DevList[vsdev_list_idx].classp = Class;
+        }else{
+            DevList[vsdev_list_idx].buf = false;
+            DevList[vsdev_list_idx].classp = nullptr;
+        }
         DevList[vsdev_list_idx].ops.GetMaxSectorCount = ops.GetMaxSectorCount;
         DevList[vsdev_list_idx].ops.Read = ops.Read;
         DevList[vsdev_list_idx].ops.Write = ops.Write;
         DevList[vsdev_list_idx].ops.ReadBytes = ops.ReadBytes;
         DevList[vsdev_list_idx].ops.WriteBytes = ops.WriteBytes;
-
-        ASSERT(DevList[vsdev_list_idx].ops.GetMaxSectorCount == nullptr);
-        DevList[vsdev_list_idx].buf = 1;
+        DevList[vsdev_list_idx].MaxSectorCount = SectorCount;
+        kinfo("[AddStorageDevice]DevList[vsdev_list_idx].MaxSectorCount Data %d\n", DevList[vsdev_list_idx].MaxSectorCount);
+        if(type == VsDevType::SATA)
+            kinfo("[AddStorageDevice]ops.GetMaxSectorCount Data %d\n", 
+                ops.GetMaxSectorCount(DevList[vsdev_list_idx].classp));
         vsdev_list_idx++;
         kfree(temp_str);
         kinfo("[AddStorageDevice]END");
+        
+        unlock(&DevList->lock);
     }
 
     u32 GetSDEVTCount(VsDevType type){
@@ -65,16 +77,16 @@ namespace VsDev{
 
 
     u8 Read(uint64_t lba, uint32_t SectorCount, void* Buffer){
-        return DevList[ThisDev].ops.Read(lba, SectorCount, Buffer);
+        return DevList[ThisDev].ops.Read(DevList[ThisDev].classp,lba, SectorCount, Buffer);
     }
 
     u8 Write(uint64_t lba, uint32_t SectorCount, void* Buffer){
-        return DevList[ThisDev].ops.Write(lba, SectorCount, Buffer);
+        return DevList[ThisDev].ops.Write(DevList[ThisDev].classp,lba, SectorCount, Buffer);
     }
 
     u8 ReadBytes(uint64_t address, uint32_t Count, void* Buffer){
         if(DevList[ThisDev].ops.ReadBytes != nullptr)
-            return DevList[ThisDev].ops.ReadBytes(address, Count, Buffer);
+            return DevList[ThisDev].ops.ReadBytes(DevList[ThisDev].classp,address, Count, Buffer);
         else {
             if (Count == 0)
                 return true;
@@ -85,7 +97,7 @@ namespace VsDev{
             uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);//"Malloc for Read Buffer"
             _memset(buffer2, 0, tempSectorCount * 512);
 
-            if (!DevList[ThisDev].ops.Read((address / 512), tempSectorCount, buffer2))
+            if (!DevList[ThisDev].ops.Read(DevList[ThisDev].classp,(address / 512), tempSectorCount, buffer2))
             {
                 uint16_t offset = address % 512;
                 for (uint64_t i = 0; i < Count; i++)
@@ -108,7 +120,7 @@ namespace VsDev{
 
     u8 WriteBytes(uint64_t address, uint32_t Count, void* Buffer){
         if(DevList[ThisDev].ops.WriteBytes != nullptr)
-            return DevList[ThisDev].ops.WriteBytes(address, Count, Buffer);
+            return DevList[ThisDev].ops.WriteBytes(DevList[ThisDev].classp,address, Count, Buffer);
         else{
             if (Count == 0)
                 return true;
@@ -124,7 +136,7 @@ namespace VsDev{
                 //window->Log("Writing Bytes (1/1)");
                 //uint8_t* buffer2 = (uint8_t*)malloc(512, "Malloc for Read Buffer (1/1)");
                 _memset(buffer2, 0, 512);
-                if (!DevList[ThisDev].ops.Read((address / 512), 1, buffer2))
+                if (!DevList[ThisDev].ops.Read(DevList[ThisDev].classp,(address / 512), 1, buffer2))
                 {
                     kfree(buffer2);
                     RemoveFromStack();
@@ -135,7 +147,7 @@ namespace VsDev{
                 for (uint64_t i = 0; i < Count; i++)
                     buffer2[i + offset] = ((uint8_t*)Buffer)[i];
 
-                if (!DevList[ThisDev].ops.Write((address / 512), 1, buffer2))
+                if (!DevList[ThisDev].ops.Write(DevList[ThisDev].classp,(address / 512), 1, buffer2))
                 {
                     kfree(buffer2);
                     RemoveFromStack();
@@ -158,7 +170,7 @@ namespace VsDev{
                     //uint8_t* buffer2 = (uint8_t*)malloc(512, "Malloc for Read Buffer (1/2)");
                     _memset(buffer2, 0, 512);
                     //window->Log("Writing to Sector: {}", to_string((address / 512)), Colors.yellow);
-                    if (!DevList[ThisDev].ops.Read((address / 512), 1, buffer2))
+                    if (!DevList[ThisDev].ops.Read(DevList[ThisDev].classp,(address / 512), 1, buffer2))
                     {
                         kfree(buffer2);
                         RemoveFromStack();
@@ -174,7 +186,7 @@ namespace VsDev{
                     for (uint64_t i = 0; i < specialCount; i++)
                         buffer2[i + offset] = ((uint8_t*)Buffer)[i];
 
-                    if (!DevList[ThisDev].ops.Write((address / 512), 1, buffer2))
+                    if (!DevList[ThisDev].ops.Write(DevList[ThisDev].classp,(address / 512), 1, buffer2))
                     {
                         kfree(buffer2);
                         RemoveFromStack();
@@ -183,7 +195,7 @@ namespace VsDev{
                 }
                 {
                     _memset(buffer2, 0, 512);
-                    if (!DevList[ThisDev].ops.Read(((address + Count) / 512), 1, buffer2))
+                    if (!DevList[ThisDev].ops.Read(DevList[ThisDev].classp,((address + Count) / 512), 1, buffer2))
                     {
                         kfree(buffer2);
                         RemoveFromStack();
@@ -198,7 +210,7 @@ namespace VsDev{
                     for (int64_t i = 0; i < specialCount; i++)
                         buffer2[i] = ((uint8_t*)Buffer)[i + blehus];
 
-                    if (!DevList[ThisDev].ops.Write(((address + Count) / 512), 1, buffer2))
+                    if (!DevList[ThisDev].ops.Write(DevList[ThisDev].classp,((address + Count) / 512), 1, buffer2))
                     {
                         kfree(buffer2);
                         RemoveFromStack();
@@ -211,7 +223,7 @@ namespace VsDev{
                     {
                         uint64_t newSectorStartId = newAddr / 512;
 
-                        if (!DevList[ThisDev].ops.Write(newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset)))
+                        if (!DevList[ThisDev].ops.Write(DevList[ThisDev].classp,newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset)))
                         {
                             kfree(buffer2);
                             RemoveFromStack();

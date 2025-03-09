@@ -94,12 +94,13 @@ int blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    kinfo("bdev->block_reg_idx:%d\n",bdev->block_reg_idx);
-    kinfo("ThisInfo.buf:%d\n",ThisInfo.buf);
+    kinfo("(blockdev_open)bdev->block_reg_idx:%d\n",bdev->block_reg_idx);
+    kinfo("(blockdev_open)ThisInfo.buf:%d\n",ThisInfo.buf);
     bdev->part_offset = 0;
-    ext4_assert(ThisInfo.ops.GetMaxSectorCount == nullptr);
-    bdev->part_size = ThisInfo.ops.GetMaxSectorCount() * 512;
-    kinfo("%d",bdev->part_size);
+    //ext4_assert(ThisInfo.ops.GetMaxSectorCount == nullptr);
+    kinfo("(blockdev_open)%u",ThisInfo.ops.GetMaxSectorCount(ThisInfo.classp));
+    bdev->part_size = ThisInfo.ops.GetMaxSectorCount(ThisInfo.classp) * 512;
+    kinfo("(blockdev_open)%d",bdev->part_size);
     bdev->bdif->ph_bcnt = bdev->part_size / bdev->bdif->ph_bsize;
 	return EOK;
 }
@@ -111,7 +112,7 @@ int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 {
 	/*blockdev_bread: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    if(ThisInfo.ops.Read(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
+    if(ThisInfo.ops.Read(ThisInfo.classp,bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
         return EIO;
@@ -125,7 +126,7 @@ int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 {
 	/*blockdev_bwrite: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    if(ThisInfo.ops.Write(bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
+    if(ThisInfo.ops.Write(ThisInfo.classp,bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
         return EIO;
@@ -141,7 +142,7 @@ int blockdev_close(struct ext4_blockdev *bdev)
 int blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
-    lock(bdev->bdif->p);
+    lock(&bdev->bdif->p);
     
 	return EOK;
 }
@@ -149,7 +150,7 @@ int blockdev_lock(struct ext4_blockdev *bdev)
 int blockdev_unlock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_unlock: skeleton*/
-    unlock(bdev->bdif->p);
+    unlock(&bdev->bdif->p);
 
 	return EOK;
 }

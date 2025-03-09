@@ -99,7 +99,7 @@ struct ext4_blockdev_iface {
 	/**@brief   User data pointer*/
 	void* p_user;
 
-    atomic_lock *p;
+    atomic_lock p;
 };
 
 /**@brief   Definition of the simple block device.*/

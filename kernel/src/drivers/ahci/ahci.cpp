@@ -370,6 +370,8 @@ namespace AHCI
             Port* port = Ports[i];
             PortType portType = port->portType;
 
+            port->Configure();
+
             if (portType == PortType::SATA){
                 kprintf("* SATA drive\n");
                 SataDiskInterface* sataDiskInterface = new SataDiskInterface(port);
@@ -377,10 +379,6 @@ namespace AHCI
                 kprintf("* SATAPI drive\n");
             else
                 kprintf("* Not interested\n");
-
-
-            port->Configure();
-
             
         }
     }

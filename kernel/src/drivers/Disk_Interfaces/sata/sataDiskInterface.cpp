@@ -29,12 +29,13 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
 
     AddToStack();
     SALOPS ops;
-    ops.Read = (u8(*)(void*,uint64_t,uint32_t,void*))&SataDiskInterface::FRegVsDEV_R;
-    ops.Write = (u8(*)(void*,uint64_t,uint32_t,void*))&SataDiskInterface::FRegVsDEV_W;
-    ops.ReadBytes = (u8(*)(void*,uint64_t,uint32_t,void*))&SataDiskInterface::FRegVsDEV_R;
-    ops.WriteBytes = (u8(*)(void*,uint64_t,uint32_t,void*))&SataDiskInterface::FRegVsDEV_Wb;
-    ops.GetMaxSectorCount = (uint32_t(*)(void*))&SataDiskInterface::GetMaxSectorCount;
-    VsDev::AddStorageDevice(VsDevType::SATA, ops);
+    _memset(&ops, 0, sizeof(SALOPS));
+    ops.Read = CFCast<decltype(ops.Read)>(&SataDiskInterface::FRegVsDEV_R);
+    ops.Write = CFCast<decltype(ops.Write)>(&SataDiskInterface::FRegVsDEV_W);
+    ops.ReadBytes = CFCast<decltype(ops.ReadBytes)>(&SataDiskInterface::FRegVsDEV_Rb);
+    ops.WriteBytes = CFCast<decltype(ops.WriteBytes)>(&SataDiskInterface::FRegVsDEV_Wb);
+    ops.GetMaxSectorCount = CFCast<decltype(ops.GetMaxSectorCount)>(&SataDiskInterface::GetMaxSectorCount);
+    VsDev::AddStorageDevice(VsDevType::SATA, ops,SectorCount,this);
     RemoveFromStack();
 
 }
