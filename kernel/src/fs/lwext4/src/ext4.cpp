@@ -412,8 +412,11 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 		}
 	}
 
-	if (!bd)
-		return ENODEV;
+    kinfoln("HIT!(0)");
+	if (!bd){
+        kinfoln("NO BD");
+        return ENODEV;
+    }
 
 	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 		if (!s_mp[i].mounted) {
@@ -431,23 +434,25 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (!mp)
 		return ENOMEM;
 
-    
+    kinfoln("HIT!(1)");
 	r = ext4_block_init(bd);
 	if (r != EOK)
 		return r;
-
+    
+    kinfoln("HIT!(2)");
 	r = ext4_fs_init(&mp->fs, bd, read_only);
 	if (r != EOK) {
 		ext4_block_fini(bd);
 		return r;
 	}
 
+    kinfoln("HIT!(3)");
 	bsize = ext4_sb_get_block_size(&mp->fs.sb);
 	ext4_block_set_lb_size(bd, bsize);
 	bc = &mp->bc;
 
     kinfo("[MNT STEP] 2\n");
-    hcf();
+    //hcf();
 	r = ext4_bcache_init_dynamic(bc, CONFIG_BLOCK_DEV_CACHE_SIZE, bsize);
 	if (r != EOK) {
 		ext4_block_fini(bd);
@@ -458,7 +463,7 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 		return ENOTSUP;
 
     kinfo("[MNT STEP] 3\n");
-    hcf();
+    //hcf();
 	/*Bind block cache to block device*/
 	r = ext4_block_bind_bcache(bd, bc);
 	if (r != EOK) {

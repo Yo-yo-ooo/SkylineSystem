@@ -87,6 +87,7 @@ static int ext4_bdif_bread(struct ext4_blockdev *bdev, void *buf,
 			   uint64_t blk_id, uint32_t blk_cnt)
 {
 	ext4_bdif_lock(bdev);
+    //kinfoln("ext4_bdif_bread: HIT!");
 	int r = bdev->bdif->bread(bdev, buf, blk_id, blk_cnt);
 	bdev->bdif->bread_ctr++;
 	ext4_bdif_unlock(bdev);
@@ -409,11 +410,13 @@ int ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf,
 	if (!bdev->bdif->ph_refctr)
 		return EIO;
 
+    //kinfoln("(ext4_block_readbytes)HIT 1");
 	if (off + len > bdev->part_size)
 		return EINVAL; /*Ups. Out of range operation*/
 
 	block_idx = ((off + bdev->part_offset) / bdev->bdif->ph_bsize);
 
+    //kinfoln("(ext4_block_readbytes)HIT 2");
 	/*OK lets deal with the first possible unaligned block*/
 	unalg = (off & (bdev->bdif->ph_bsize - 1));
 	if (unalg) {
@@ -434,13 +437,17 @@ int ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf,
 	}
 
 	/*Aligned data*/
+    //kinfoln("(ext4_block_readbytes)HIT 3");
 	blen = len / bdev->bdif->ph_bsize;
 
 	if (blen != 0) {
+        //kinfoln("(ext4_block_readbytes)HIT 4");
 		r = ext4_bdif_bread(bdev, p, block_idx, blen);
-		if (r != EOK)
-			return r;
-
+		if (r != EOK){
+			//kinfoln("(ext4_block_readbytes)HIT EOK RETURN!");
+            return r;
+        }
+        //kinfoln("(ext4_block_readbytes)HIT 5");
 		p += bdev->bdif->ph_bsize * blen;
 		len -= bdev->bdif->ph_bsize * blen;
 

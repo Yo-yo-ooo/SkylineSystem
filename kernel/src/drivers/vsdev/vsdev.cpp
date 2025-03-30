@@ -29,7 +29,6 @@ namespace VsDev{
     void AddStorageDevice(VsDevType type, SALOPS ops,u32 SectorCount = 0,void* Class = nullptr)
     {
         lock(&DevList->lock);
-        kinfo("[AddStorageDevice]HIT! %s %d\n", TypeToString(type),vsdev_list_idx);
         DevList[vsdev_list_idx].Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)GetSDEVTCount(type))) + 1);
         char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)GetSDEVTCount(type)));
         DevList[vsdev_list_idx].Name = temp_str;
@@ -48,10 +47,6 @@ namespace VsDev{
         DevList[vsdev_list_idx].ops.ReadBytes = ops.ReadBytes;
         DevList[vsdev_list_idx].ops.WriteBytes = ops.WriteBytes;
         DevList[vsdev_list_idx].MaxSectorCount = SectorCount;
-        kinfo("[AddStorageDevice]DevList[vsdev_list_idx].MaxSectorCount Data %d\n", DevList[vsdev_list_idx].MaxSectorCount);
-        if(type == VsDevType::SATA)
-            kinfo("[AddStorageDevice]ops.GetMaxSectorCount Data %d\n", 
-                ops.GetMaxSectorCount(DevList[vsdev_list_idx].classp));
         vsdev_list_idx++;
         kfree(temp_str);
         kinfo("[AddStorageDevice]END");

@@ -49,4 +49,6 @@ void kfree(void* ptr);
 void* krealloc(void* ptr, u64 size);
 void *kcalloc(size_t numitems, size_t size);
 
+inline void operator delete(void* p) {kfree(p);}
+
 #include "new.hpp"

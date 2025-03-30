@@ -1,6 +1,8 @@
 #include <mem/heap.h>
 #include <mem/pmm.h>
 
+#include <arch/x86_64/smp/smp.h>
+
 heap* kernel_heap;
 
 ;
@@ -55,7 +57,7 @@ void Free(heap* h, void* ptr) {
         buf = PHYSICAL(buf);
         PMM::Free(buf, pages);
     } else {
-        //vmm_free(this_cpu()->pm, buf, pages);
+        VMM::Free(this_cpu()->pm, buf, pages);
     }
     unlock(&h->hl);
 }

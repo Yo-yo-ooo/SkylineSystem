@@ -4,6 +4,9 @@
 #include <arch/x86_64/allin.h>
 #endif
 #include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
+
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
 namespace AHCI 
 {
     #define HBA_PORT_DEV_PRESENT 0x3
@@ -171,10 +174,10 @@ namespace AHCI
         kerror("Could not find free Command Slot!\n");
         return -1;
     }
-
+    
     bool Port::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
     {
-        //osData.mainTerminalWindow->Log("This Port: 0x{}", ConvertHexToString((uint64_t)this), Colors.yellow);
+        kinfoln("This Port: 0x%s", ConvertHexToString((uint64_t)this));
         uint32_t sectorL = (uint32_t)sector;
         uint32_t sectorH = (uint32_t)(sector >> 32);
         uint32_t sectorCountCopy = sectorCount;
@@ -184,7 +187,7 @@ namespace AHCI
         if (slot == -1)
             return false;
         
-        //osData.mainTerminalWindow->Log("This Slot: {}", to_string(slot), Colors.yellow);
+        kinfoln("This Slot: %s", to_string(slot));
 
         HBACommandHeader* cmdHeader = (HBACommandHeader*)(uint64_t)hbaPort->commandListBase;
         cmdHeader += slot;
@@ -209,7 +212,7 @@ namespace AHCI
         commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
         commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
         commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1; // 512 bytes per sector
-        //osData.debugTerminalWindow->Log("Writing {} Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)), Colors.bgreen);
+        kinfoln("Writing %s Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)));
         commandTable->prdtEntry[i].interruptOnCompletion = 1;
         
         FIS_REG_H2D* cmdFIS = (FIS_REG_H2D*)(&commandTable->commandFIS);
@@ -217,19 +220,22 @@ namespace AHCI
         cmdFIS->commandControl = 1;
         cmdFIS->command = ATA_CMD_READ_DMA_EX;
 
-        // cmdFIS->lba0 = (uint8_t)sectorL;
-        // cmdFIS->lba1 = (uint8_t)(sectorL >> 8);
-        // cmdFIS->lba2 = (uint8_t)(sectorL >> 16);
-        // cmdFIS->lba3 = (uint8_t)sectorH;
-        // cmdFIS->lba4 = (uint8_t)(sectorH >> 8);
-        // cmdFIS->lba5 = (uint8_t)(sectorH >> 16);
+        /*
+        cmdFIS->lba0 = (uint8_t)sectorL;
+        cmdFIS->lba1 = (uint8_t)(sectorL >> 8);
+        cmdFIS->lba2 = (uint8_t)(sectorL >> 16);
+        cmdFIS->lba3 = (uint8_t)sectorH;
+        cmdFIS->lba4 = (uint8_t)(sectorH >> 8);
+        cmdFIS->lba5 = (uint8_t)(sectorH >> 16);*/
 
+        
         cmdFIS->lba0 = (uint8_t)sectorL;
         cmdFIS->lba1 = (uint8_t)(sectorL >> 8);
         cmdFIS->lba2 = (uint8_t)(sectorL >> 16);
         cmdFIS->lba3 = (uint8_t)(sectorL >> 24);
         cmdFIS->lba4 = (uint8_t)sectorH;
         cmdFIS->lba5 = (uint8_t)(sectorH >> 8);
+        
 
         cmdFIS->deviceRegister = 1<<6; // Set to LBA Mode
 
@@ -241,20 +247,26 @@ namespace AHCI
             spin++;
         if (spin == 1000000)
             return false;
-        //osData.debugTerminalWindow->Log("Spin: {}", to_string(spin), Colors.bblue);
+        kinfoln("Spin: %s", to_string(spin));
 
-        hbaPort->commandIssue = 1<<slot;
+        hbaPort->commandIssue = 1 << slot;
+
+        //kinfoln("HHHHHHH");
         
         while (true)
         {
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
-            if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
+            if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
+                kinfoln("HIT hbaPort->interruptStatus & HBA_PxIS_TFES RETURN 1");
                 return false;
+            }
         }
 
-        if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
-                return false;
+        if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
+            kinfoln("HIT hbaPort->interruptStatus & HBA_PxIS_TFES RETURN 2");
+            return false;
+        }
 
         return true;
     }
@@ -327,6 +339,8 @@ namespace AHCI
         //osData.debugTerminalWindow->Log("Spin: {}", to_string(spin), Colors.bblue);
 
         hbaPort->commandIssue = 1<<slot; // A
+
+        //kinfoln("HIT  Port::Write");
         
         while (true)
         {
@@ -335,6 +349,8 @@ namespace AHCI
             if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
                 return false;
         }
+
+        //kinfoln("HIT  Port::Write");
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
                 return false;
@@ -457,3 +473,5 @@ namespace AHCI
         }
     }
 }
+
+#pragma GCC pop_options

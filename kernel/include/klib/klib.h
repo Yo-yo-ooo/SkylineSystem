@@ -16,6 +16,7 @@
 #include <klib/cstr.h>
 #include <klib/utf8.h>
 #include <klib/fifo.h>
+#include <klib/serial.h>
 
 extern uint64_t hhdm_offset;
 extern uint64_t RSDP_ADDR;

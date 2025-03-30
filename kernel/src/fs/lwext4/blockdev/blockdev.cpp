@@ -94,13 +94,9 @@ int blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    kinfo("(blockdev_open)bdev->block_reg_idx:%d\n",bdev->block_reg_idx);
-    kinfo("(blockdev_open)ThisInfo.buf:%d\n",ThisInfo.buf);
     bdev->part_offset = 0;
-    //ext4_assert(ThisInfo.ops.GetMaxSectorCount == nullptr);
-    kinfo("(blockdev_open)%u",ThisInfo.ops.GetMaxSectorCount(ThisInfo.classp));
+    bdev->bdif->ph_bsize = 512;
     bdev->part_size = ThisInfo.ops.GetMaxSectorCount(ThisInfo.classp) * 512;
-    kinfo("(blockdev_open)%d",bdev->part_size);
     bdev->bdif->ph_bcnt = bdev->part_size / bdev->bdif->ph_bsize;
 	return EOK;
 }
@@ -111,11 +107,16 @@ int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 			 uint32_t blk_cnt)
 {
 	/*blockdev_bread: skeleton*/
+    //kinfoln("blockdev_bread: HIT!");
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    if(ThisInfo.ops.Read(ThisInfo.classp,bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
+    //kinfoln("blk_id: %d,blk_cnt: %d",blk_id,blk_cnt);
+    if(ThisInfo.ops.Read(ThisInfo.classp, blk_id,blk_cnt, buf) == VsDev::RW_OK){
+        
         return EOK;
-    else
+    }else{
+        //kinfoln("blockdev_bread HIT ERROR RETURN!");
         return EIO;
+    }
 	return EIO;
 }
 

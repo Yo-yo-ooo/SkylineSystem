@@ -41,6 +41,7 @@
 
 void _putchar(char character){
     e9_putc(character);
+    Serial::Write(character);
 }
 
 

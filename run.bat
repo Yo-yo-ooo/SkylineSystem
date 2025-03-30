@@ -16,6 +16,3 @@ qemu-system-%1 -machine q35 -cpu qemu64 ^
 -device ide-hd,drive=sata1,bus=ahci1.0 ^
 -no-reboot --no-shutdown ^
 -gdb tcp::26000
-
-
-pause

@@ -12,6 +12,7 @@
 #define InitFunc(name,func) kinfo("INIT %s...\n",name);func;kpok("%s INIT!\n",name)
 
 void __init x86_64_init(void){
+    Serial::Init();
     WELCOME_X86_64
     kinfo("INIT x86_64 ARCH\n");
 
@@ -79,7 +80,6 @@ void __init x86_64_init(void){
     uint32_t r = ext4_device_register(ext4_blockdev_get(0), "sata0");
 	if (r != EOK) {
 		kerror("ext4_device_register: rc = %d\n", r);
-		//return;
 	}
 
 	r = ext4_mount("sata0", "/mp/", false);
@@ -90,9 +90,8 @@ void __init x86_64_init(void){
 	r = ext4_recover("/mp/");
 	if (r != EOK && r != ENOTSUP) {
 		kerror("ext4_recover: rc = %d\n", r);
-		//return;
 	}
-    hcf();
+    //hcf();
 
 	r = ext4_journal_start("/mp/");
 	if (r != EOK) {
