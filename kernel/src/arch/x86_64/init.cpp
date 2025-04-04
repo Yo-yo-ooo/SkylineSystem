@@ -77,31 +77,13 @@ void __init x86_64_init(void){
     InitFunc("Dev",Dev::Init());
     InitFunc("KEYBOARD(x86)",keyboard_init());
 
-    uint32_t r = ext4_device_register(ext4_blockdev_get(0), "sata0");
-	if (r != EOK) {
-		kerror("ext4_device_register: rc = %d\n", r);
-	}
+    if(ext4_kernel_init("sata0","/mp/") == false){
+        kerror("EXT4 Init fault");
+    }
 
-	r = ext4_mount("sata0", "/mp/", false);
-	if (r != EOK){kerror("ext4_mount: rc = %d\n", r);hcf();}
-    kpok("EXT4 MOUNTED!\n");
-    
-
-	r = ext4_recover("/mp/");
-	if (r != EOK && r != ENOTSUP) {
-		kerror("ext4_recover: rc = %d\n", r);
-	}
-    //hcf();
-
-	r = ext4_journal_start("/mp/");
-	if (r != EOK) {
-		kerror("ext4_journal_start: rc = %d\n", r);
-		//return;
-	}
-    hcf();
-
-	ext4_cache_write_back("/mp/", 1);
-    ext4_file* f;
-    ext4_fopen(f,"/mp/test.txt", "w+");
-    ext4_fclose(f);
+	
+    ext4_file f;
+    ext4_fopen(&f,"/mp/test.txt", "wb");
+    ext4_fwrite(&f,"Hello World\n",13,0);
+    ext4_fclose(&f);
 }

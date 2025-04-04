@@ -61,6 +61,8 @@
 #include <fs/lwext4/ext4_types.h>
 #include <fs/lwext4/ext4_xattr.h>
 
+#include <fs/lwext4/blockdev/blockdev.h>
+
 #include <klib/cstr.h>
 #include <klib/klib.h>
 #include <mem/heap.h>
@@ -405,14 +407,14 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 
 	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
 		if (!strcmp(dev_name, s_bdevices[i].name)) {
-            kinfo("DEV NAME: %s\n", dev_name);
-            kinfo("s_bdevices[i].name: %s\n", s_bdevices[i].name);
+            //kinfo("DEV NAME: %s\n", dev_name);
+            //kinfo("s_bdevices[i].name: %s\n", s_bdevices[i].name);
 			bd = s_bdevices[i].bd;
 			break;
 		}
 	}
 
-    kinfoln("HIT!(0)");
+    //kinfoln("HIT!(0)");
 	if (!bd){
         kinfoln("NO BD");
         return ENODEV;
@@ -434,24 +436,24 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (!mp)
 		return ENOMEM;
 
-    kinfoln("HIT!(1)");
+    //kinfoln("HIT!(1)");
 	r = ext4_block_init(bd);
 	if (r != EOK)
 		return r;
     
-    kinfoln("HIT!(2)");
+    //kinfoln("HIT!(2)");
 	r = ext4_fs_init(&mp->fs, bd, read_only);
 	if (r != EOK) {
 		ext4_block_fini(bd);
 		return r;
 	}
 
-    kinfoln("HIT!(3)");
+    //kinfoln("HIT!(3)");
 	bsize = ext4_sb_get_block_size(&mp->fs.sb);
 	ext4_block_set_lb_size(bd, bsize);
 	bc = &mp->bc;
 
-    kinfo("[MNT STEP] 2\n");
+    //kinfo("[MNT STEP] 2\n");
     //hcf();
 	r = ext4_bcache_init_dynamic(bc, CONFIG_BLOCK_DEV_CACHE_SIZE, bsize);
 	if (r != EOK) {
@@ -3277,3 +3279,37 @@ void ext4_dir_entry_rewind(ext4_dir *dir)
 /**
  * @}
  */
+
+/*
+Extra Function(Not in lwext4)
+Ext4_Kernel_INIT
+*/
+
+bool ext4_kernel_init(const char* devname,const char* mpname){
+    uint32_t r = ext4_device_register(ext4_blockdev_get(0), devname);
+	if (r != EOK) {
+		kerror("ext4_device_register: rc = %d\n", r);
+	}
+
+	r = ext4_mount(devname, mpname, false);
+	if (r != EOK){kerror("ext4_mount: rc = %d\n", r);hcf();}
+    kpok("EXT4 MOUNTED!\n");
+    
+
+	r = ext4_recover(mpname);
+	if (r != EOK && r != ENOTSUP) {
+		kerror("ext4_recover: rc = %d\n", r);
+        return false;
+	}
+    kpok("ext4_recover !\n");
+
+	r = ext4_journal_start(mpname);
+	if (r != EOK) {
+		kerror("ext4_journal_start: rc = %d\n", r);
+		return false;
+	}
+    kpok("ext4_journal_start !\n");
+
+    ext4_cache_write_back(mpname, 1);
+    return true;
+}

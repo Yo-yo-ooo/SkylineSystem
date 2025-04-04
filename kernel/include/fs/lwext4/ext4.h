@@ -613,7 +613,7 @@ const ext4_direntry *ext4_dir_entry_next(ext4_dir *dir);
  * @param   dir Directory handle.*/
 void ext4_dir_entry_rewind(ext4_dir *dir);
 
-
+bool ext4_kernel_init(const char* devname,const char* mpname);
 
 
 #endif /* EXT4_H_ */
@@ -621,3 +621,5 @@ void ext4_dir_entry_rewind(ext4_dir *dir);
 /**
  * @}
  */
+
+ 

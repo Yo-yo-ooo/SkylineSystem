@@ -177,7 +177,7 @@ namespace AHCI
     
     bool Port::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
     {
-        kinfoln("This Port: 0x%s", ConvertHexToString((uint64_t)this));
+        //kinfoln("This Port: 0x%s", ConvertHexToString((uint64_t)this));
         uint32_t sectorL = (uint32_t)sector;
         uint32_t sectorH = (uint32_t)(sector >> 32);
         uint32_t sectorCountCopy = sectorCount;
@@ -187,7 +187,7 @@ namespace AHCI
         if (slot == -1)
             return false;
         
-        kinfoln("This Slot: %s", to_string(slot));
+        //kinfoln("This Slot: %s", to_string(slot));
 
         HBACommandHeader* cmdHeader = (HBACommandHeader*)(uint64_t)hbaPort->commandListBase;
         cmdHeader += slot;
@@ -212,7 +212,7 @@ namespace AHCI
         commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
         commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
         commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1; // 512 bytes per sector
-        kinfoln("Writing %s Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)));
+        //kinfoln("Writing %s Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)));
         commandTable->prdtEntry[i].interruptOnCompletion = 1;
         
         FIS_REG_H2D* cmdFIS = (FIS_REG_H2D*)(&commandTable->commandFIS);
@@ -247,7 +247,7 @@ namespace AHCI
             spin++;
         if (spin == 1000000)
             return false;
-        kinfoln("Spin: %s", to_string(spin));
+        //kinfoln("Spin: %s", to_string(spin));
 
         hbaPort->commandIssue = 1 << slot;
 

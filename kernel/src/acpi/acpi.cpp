@@ -96,11 +96,11 @@ namespace ACPI{
         
         AddToStack();
         int entries = (rootThing->Length - sizeof(ACPI::SDTHeader)) / div;
-        kinfoln("Entry count: %d", entries);
+        //kinfoln("Entry count: %d", entries);
         RemoveFromStack();
 
         AddToStack();
-        kinfoln("> ");
+        //kinfoln("> ");
         for (int t = 0; t < entries; t++)
         {
             uint64_t bleh1 = *(uint64_t*)((uint64_t)rootThing + sizeof(ACPI::SDTHeader) + (t * div));
@@ -114,12 +114,12 @@ namespace ACPI{
             for (int i = 0; i < 4; i++)
             {
                 bruh[0] = newSDTHeader->Signature[i];
-                kinfoln("%d",bruh);
+                //kinfoln("%d",bruh);
             }
 
-            kinfoln(" ");
+            //kinfoln(" ");
         }
-        kinfoln("");
+        //kinfoln("");
         RemoveFromStack();
 
         AddToStack();
