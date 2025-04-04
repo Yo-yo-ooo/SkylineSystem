@@ -3313,3 +3313,28 @@ bool ext4_kernel_init(const char* devname,const char* mpname){
     ext4_cache_write_back(mpname, 1);
     return true;
 }
+
+char * ext4_entry_to_str(uint8_t type)
+{
+	switch (type) {
+	case EXT4_DE_UNKNOWN:
+		return "[unk] ";
+	case EXT4_DE_REG_FILE:
+		return "[fil] ";
+	case EXT4_DE_DIR:
+		return "[dir] ";
+	case EXT4_DE_CHRDEV:
+		return "[cha] ";
+	case EXT4_DE_BLKDEV:
+		return "[blk] ";
+	case EXT4_DE_FIFO:
+		return "[fif] ";
+	case EXT4_DE_SOCK:
+		return "[soc] ";
+	case EXT4_DE_SYMLINK:
+		return "[sym] ";
+	default:
+		break;
+	}
+	return "[???]";
+}
