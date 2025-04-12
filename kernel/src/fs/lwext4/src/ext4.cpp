@@ -3338,3 +3338,50 @@ char * ext4_entry_to_str(uint8_t type)
 	}
 	return "[???]";
 }
+
+bool test_lwext4_dir_test(int len)
+{
+	ext4_file f;
+	int r;
+	int i;
+	char path[64];
+
+	kinfo("test_lwext4_dir_test: %d\n", len);
+	//io_timings_clear();
+	kinfo("directory create: /mp/dir1\n");
+	r = ext4_dir_mk("/mp/dir1");
+	if (r != EOK) {
+		kinfo("ext4_dir_mk: rc = %d\n", r);
+		return false;
+	}
+
+	kinfo("add files to: /mp/dir1\n");
+	for (i = 0; i < len; ++i) {
+		sprintf(path, "/mp/dir1/f%d", i);
+		r = ext4_fopen(&f, path, "wb");
+		if (r != EOK) {
+			kinfo("ext4_fopen: rc = %d\n", r);
+			return false;
+		}
+	}
+
+	test_lwext4_dir_ls("/mp/dir1");
+	return true;
+}
+
+void test_lwext4_dir_ls(char *path){
+    //char sss[255];
+	ext4_dir d;
+	ext4_direntry *de;
+
+	kinfo("ls %s\n", path);
+
+	ext4_dir_open(&d, path);
+	de = ext4_dir_entry_next(&d);
+
+	while (de) {
+		kinfo("  %s%s\n", ext4_entry_to_str(de->inode_type), de->name);
+		de = ext4_dir_entry_next(&d);
+	}
+	ext4_dir_close(&d);
+}

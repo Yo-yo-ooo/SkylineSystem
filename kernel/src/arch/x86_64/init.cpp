@@ -77,13 +77,14 @@ void __init x86_64_init(void){
     InitFunc("Dev",Dev::Init());
     InitFunc("KEYBOARD(x86)",keyboard_init());
 
-    if(ext4_kernel_init("sata0","/mp/") == false){
-        kerror("EXT4 Init fault");
-    }
+    if(!ext4_kernel_init("sata0","/mp/")){hcf();}
 
-	
+	test_lwext4_dir_ls("/mp/");
+
     ext4_file f;
     ext4_fopen(&f,"/mp/test.txt", "wb");
     ext4_fwrite(&f,"Hello World\n",13,0);
     ext4_fclose(&f);
+
+    test_lwext4_dir_ls("/mp/");
 }

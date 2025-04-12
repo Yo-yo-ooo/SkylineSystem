@@ -615,6 +615,8 @@ void ext4_dir_entry_rewind(ext4_dir *dir);
 
 bool ext4_kernel_init(const char* devname,const char* mpname);
 char * ext4_entry_to_str(uint8_t type);
+bool test_lwext4_dir_test(int len);
+void test_lwext4_dir_ls(char *path);
 
 #endif /* EXT4_H_ */
 
