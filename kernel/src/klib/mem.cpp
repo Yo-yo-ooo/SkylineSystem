@@ -1,32 +1,8 @@
 #include <klib/klib.h>
 
-void _memcpy_128(void* src, void* dest, int64_t size)
-{
-	// __uint128_t is 16 bytes
-	auto _src = (__uint128_t*)src;
-	auto _dest = (__uint128_t*)dest;
-	size >>= 4; // size /= 16
-	while (size--)
-		*(_dest++) = *(_src++);
-}
-
 void _memcpy(void* src, void* dest, uint64_t size)
 {
-	if (size & 0xFFE0)//(size >= 32)
-	{
-		uint64_t s2 = size & 0xFFFFFFF0;
-		_memcpy_128(src, dest, s2);
-		if (!s2)
-			return;
-		src = (void*)((uint64_t)src + s2);
-		dest = (void*)((uint64_t)dest + s2);
-		size = size & 0xF;
-	}
-
-    const char* _src  = (const char*)src;
-    char* _dest = (char*)dest;
-    while (size--)
-        *(_dest++) = *(_src++);
+	__memcpy(dest,src,size);
 }
 
 void _memset_128(void* dest, uint8_t value, int64_t size)

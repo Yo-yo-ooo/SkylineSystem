@@ -1769,7 +1769,7 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
 			size_t len = size;
 			if (unalg + size > (uint32_t)file->fsize)
 				len = (uint32_t)file->fsize - unalg;
-			__memcpy(buf, content + unalg, len);
+			_EXT4_T_memcpy(buf, content + unalg, len);
             debugpln("[ext4_fread]A READ BUFFER:%s",content + unalg);
 			if (rcnt)
 				*rcnt = len;

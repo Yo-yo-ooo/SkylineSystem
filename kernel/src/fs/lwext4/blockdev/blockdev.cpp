@@ -75,17 +75,17 @@ from the VsDev "namespace".
 VsDevInfo ThisInfo;
 
 /******************************************************************************/
-uint8_t blockdev_ph_bbuf[(512)]; 
+uint8_t blockdev_ph_bbuf[(PAGE_SIZE)]; 
 struct ext4_blockdev_iface blockdev_iface = { 
     .open = blockdev_open, 
     .bread = blockdev_bread, 
     .bwrite = blockdev_bwrite, 
     .close = blockdev_close, 
-    .lock = blockdev_lock, 
-    .unlock = blockdev_unlock, 
+    .lock = NULL, 
+    .unlock = NULL, 
     .ph_bsize = 512, 
     .ph_bcnt = 0, 
-    .ph_bbuf = blockdev_ph_bbuf, }; 
+    .ph_bbuf = blockdev_ph_bbuf,}; 
 struct ext4_blockdev blockdev = { 
     .bdif = &blockdev_iface, 
     .part_offset = 0, .part_size = (0) * (512), };
@@ -142,7 +142,6 @@ int blockdev_close(struct ext4_blockdev *bdev)
 int blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
-    lock(&bdev->bdif->p);
     
 	return EOK;
 }
@@ -150,7 +149,6 @@ int blockdev_lock(struct ext4_blockdev *bdev)
 int blockdev_unlock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_unlock: skeleton*/
-    unlock(&bdev->bdif->p);
 
 	return EOK;
 }
