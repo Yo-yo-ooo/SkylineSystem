@@ -909,6 +909,23 @@ int kinfoln(const char* format, ...)
 #endif
 }
 
+#ifdef _SYS_DEBUG_
+int debugpln(const char* format, ...){
+#if PRINT_INFORMATION_ == 1
+    kprintf("[\033[38;2;0;255;255mINFO\033[0m] ");
+    va_list va;
+    va_start(va, format);
+    char buffer[1];
+    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
+    va_end(va);
+    kprintf("\n");
+    return ret;
+#else
+    return 0;
+#endif
+}
+#endif
+
 int kpok(const char* format, ...)
 {
     kprintf("[\033[38;2;0;255;0m OK \033[0m] ");

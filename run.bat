@@ -5,7 +5,7 @@ SET SourceFile=disk.img
 if not exist %SourceFile% (
     qemu-img create %SourceFile% 1000M -f qcow2
 ) else (
-    echo %SourceFile% is exist, Stop creating disk.img
+    echo %SourceFile% is exist, Stop create disk.img
 )
 
 qemu-system-%1 -machine q35 -cpu qemu64 ^

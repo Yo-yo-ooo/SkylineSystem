@@ -111,7 +111,6 @@ int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
     //kinfoln("blk_id: %d,blk_cnt: %d",blk_id,blk_cnt);
     if(ThisInfo.ops.Read(ThisInfo.classp, blk_id,blk_cnt, buf) == VsDev::RW_OK){
-        
         return EOK;
     }else{
         //kinfoln("blockdev_bread HIT ERROR RETURN!");

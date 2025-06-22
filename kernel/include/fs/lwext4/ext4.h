@@ -617,6 +617,7 @@ bool ext4_kernel_init(const char* devname,const char* mpname);
 char * ext4_entry_to_str(uint8_t type);
 bool test_lwext4_dir_test(int len);
 void test_lwext4_dir_ls(char *path);
+int ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c);
 
 #endif /* EXT4_H_ */
 

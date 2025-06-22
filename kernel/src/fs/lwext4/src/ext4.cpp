@@ -1729,13 +1729,14 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
 	if (file->flags & O_WRONLY)
 		return EPERM;
 
-	if (!size)
-		return EOK;
-
+	if (!size){
+        debugpln("HIT !size");
+        return EOK;
+    }
 	EXT4_MP_LOCK(file->mp);
 
-	struct ext4_fs *const fs = &file->mp->fs;
-	struct ext4_sblock *const sb = &file->mp->fs.sb;
+	const struct ext4_fs *fs = &file->mp->fs;
+	const struct ext4_sblock *sb = &file->mp->fs.sb;
 
 	if (rcnt)
 		*rcnt = 0;
@@ -1769,6 +1770,7 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
 			if (unalg + size > (uint32_t)file->fsize)
 				len = (uint32_t)file->fsize - unalg;
 			__memcpy(buf, content + unalg, len);
+            debugpln("[ext4_fread]A READ BUFFER:%s",content + unalg);
 			if (rcnt)
 				*rcnt = len;
 
@@ -1853,6 +1855,7 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
 
 		off = fblock * block_size;
 		r = ext4_block_readbytes(file->mp->fs.bdev, off, u8_buf, size);
+        kinfoln("[ext4_fread]B READ BUFFER:%s",u8_buf);
 		if (r != EOK)
 			goto Finish;
 
@@ -1861,10 +1864,11 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
 		if (rcnt)
 			*rcnt += size;
 	}
-
+    kinfoln("[ext4_fread]C READ BUFFER:%s",u8_buf);
 Finish:
 	ext4_fs_put_inode_ref(&ref);
 	EXT4_MP_UNLOCK(file->mp);
+    //kinfoln("HIT");
 	return r;
 }
 
@@ -3384,4 +3388,15 @@ void test_lwext4_dir_ls(char *path){
 		de = ext4_dir_entry_next(&d);
 	}
 	ext4_dir_close(&d);
+}
+
+int ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c)
+{
+	size_t i;
+	for (i = 0; i < len; ++i) {
+		if (b[i] != c)
+			return c - b[i];
+	}
+
+	return 0;
 }

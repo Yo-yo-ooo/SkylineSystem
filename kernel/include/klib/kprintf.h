@@ -35,6 +35,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 
+#include <conf.h>
 //#define PRINTF_DISABLE_SUPPORT_FLOAT
 
 #ifdef __cplusplus
@@ -76,6 +77,12 @@ int kpok(const char* format, ...);
 int kinfo(const char* format, ...);
 int kwarn(const char* format, ...);
 int kerror(const char* format, ...);
+
+#ifdef _SYS_DEBUG_
+int debugpln(const char* format, ...);
+#else 
+#define debugpln
+#endif
 
 /**
  * Tiny snprintf/vsnprintf implementation
