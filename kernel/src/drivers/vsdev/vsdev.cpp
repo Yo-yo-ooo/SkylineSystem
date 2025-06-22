@@ -1,5 +1,6 @@
 #include <drivers/vsdev/vsdev.h>
-
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
 namespace VsDev{
     VsDevList DevList[MAX_VSDEV_COUNT] = {0};
     uint32_t vsdev_list_idx = 0;
@@ -236,3 +237,5 @@ namespace VsDev{
         }
     }
 }
+
+#pragma GCC pop_options

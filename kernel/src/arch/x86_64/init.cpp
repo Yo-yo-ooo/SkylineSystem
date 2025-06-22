@@ -83,7 +83,7 @@ void __init x86_64_init(void){
 
     ext4_file f;
     int r;
-    size_t* a;
+    size_t a;
     r = ext4_fopen(&f,"/mp/test.txt", "wb+");
     if (r != EOK) {
 		kinfoln("ext4_fopen ERROR = %d\n", r);
@@ -92,7 +92,7 @@ void __init x86_64_init(void){
     test_lwext4_dir_ls("/mp/");
     char nbuf[13] = "Hello World";
     size_t strs = strlen(nbuf);
-    r = ext4_fwrite(&f,nbuf,strs,a);
+    r = ext4_fwrite(&f,nbuf,strs,&a);
     kinfoln("a:%d",a); 
     kinfoln("r:%d",r);
     r = ext4_fclose(&f);
@@ -106,7 +106,7 @@ void __init x86_64_init(void){
     
     kinfoln("%s",nbuf);
     _memset(nbuf,0,13);
-    r = ext4_fread(&f2,nbuf,strs,a);
+    r = ext4_fread(&f2,nbuf,strs,&a);
     kinfoln("r:%d",r);
     kinfoln("nbuf:%s",nbuf);
     r = ext4_fclose(&f2);

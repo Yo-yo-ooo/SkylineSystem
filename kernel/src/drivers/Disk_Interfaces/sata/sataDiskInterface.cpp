@@ -7,7 +7,9 @@
 #include <drivers/ahci/ahci.h>
 #include <drivers/vsdev/vsdev.h>
 
-    
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
+
 uint32_t SataDiskInterface::GetMaxSectorCount()
 {
     return Port->GetMaxSectorCount();
@@ -338,3 +340,5 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
     RemoveFromStack();
     return true;
 }
+
+#pragma GCC pop_options
