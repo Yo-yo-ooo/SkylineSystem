@@ -64,6 +64,7 @@
 #include <stdbool.h>
 #include "../../../drivers/vsdev/vsdev.h"
 
+/*
 int blockdev_open(struct ext4_blockdev *bdev);
 int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 			 uint32_t blk_cnt);
@@ -72,7 +73,7 @@ int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 int blockdev_close(struct ext4_blockdev *bdev);
 int blockdev_lock(struct ext4_blockdev *bdev);
 int blockdev_unlock(struct ext4_blockdev *bdev);
-
+*/
 extern VsDevInfo ThisInfo; // Do Not Use It!!!!
 
 /**@brief   File blockdev get.*/

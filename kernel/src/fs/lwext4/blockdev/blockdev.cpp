@@ -75,22 +75,9 @@ from the VsDev "namespace".
 VsDevInfo ThisInfo;
 
 /******************************************************************************/
-uint8_t blockdev_ph_bbuf[(PAGE_SIZE)]; 
-struct ext4_blockdev_iface blockdev_iface = { 
-    .open = blockdev_open, 
-    .bread = blockdev_bread, 
-    .bwrite = blockdev_bwrite, 
-    .close = blockdev_close, 
-    .lock = NULL, 
-    .unlock = NULL, 
-    .ph_bsize = 512, 
-    .ph_bcnt = 0, 
-    .ph_bbuf = blockdev_ph_bbuf,}; 
-struct ext4_blockdev blockdev = { 
-    .bdif = &blockdev_iface, 
-    .part_offset = 0, .part_size = (0) * (512), };
+
 /******************************************************************************/
-int blockdev_open(struct ext4_blockdev *bdev)
+static int blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
@@ -103,7 +90,7 @@ int blockdev_open(struct ext4_blockdev *bdev)
 
 /******************************************************************************/
 
-int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
+static int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 			 uint32_t blk_cnt)
 {
 	/*blockdev_bread: skeleton*/
@@ -121,7 +108,7 @@ int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 
 
 /******************************************************************************/
-int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
+static int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 			  uint64_t blk_id, uint32_t blk_cnt)
 {
 	/*blockdev_bwrite: skeleton*/
@@ -133,26 +120,39 @@ int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 	return EIO;
 }
 /******************************************************************************/
-int blockdev_close(struct ext4_blockdev *bdev)
+static int blockdev_close(struct ext4_blockdev *bdev)
 {
 	/*blockdev_close: skeleton*/
 	return EOK;
 }
 
-int blockdev_lock(struct ext4_blockdev *bdev)
+static int blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
     
 	return EOK;
 }
 
-int blockdev_unlock(struct ext4_blockdev *bdev)
+static int blockdev_unlock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_unlock: skeleton*/
 
 	return EOK;
 }
-
+static uint8_t blockdev_ph_bbuf[(PAGE_SIZE)]; 
+static struct ext4_blockdev_iface blockdev_iface = { 
+    .open = blockdev_open, 
+    .bread = blockdev_bread, 
+    .bwrite = blockdev_bwrite, 
+    .close = blockdev_close, 
+    .lock = NULL, 
+    .unlock = NULL, 
+    .ph_bsize = 512, 
+    .ph_bcnt = 0, 
+    .ph_bbuf = blockdev_ph_bbuf,}; 
+static struct ext4_blockdev blockdev = { 
+    .bdif = &blockdev_iface, 
+    .part_offset = 0, .part_size = (0) * (512), };
 /******************************************************************************/
 struct ext4_blockdev *ext4_blockdev_get(u32 which)
 {
