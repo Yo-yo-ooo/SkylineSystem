@@ -414,7 +414,7 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 		}
 	}
 
-    //kinfoln("HIT!(0)");
+    debugpln("HIT!(0)");
 	if (!bd){
         kinfoln("NO BD");
         return ENODEV;
@@ -436,19 +436,19 @@ int ext4_mount(const char *dev_name, const char *mount_point,
 	if (!mp)
 		return ENOMEM;
 
-    //kinfoln("HIT!(1)");
+    debugpln("HIT!(1)");
 	r = ext4_block_init(bd);
 	if (r != EOK)
 		return r;
     
-    //kinfoln("HIT!(2)");
+    debugpln("HIT!(2)");
 	r = ext4_fs_init(&mp->fs, bd, read_only);
 	if (r != EOK) {
 		ext4_block_fini(bd);
 		return r;
 	}
 
-    //kinfoln("HIT!(3)");
+    debugpln("HIT!(3)");
 	bsize = ext4_sb_get_block_size(&mp->fs.sb);
 	ext4_block_set_lb_size(bd, bsize);
 	bc = &mp->bc;
@@ -3286,7 +3286,7 @@ Ext4_Kernel_INIT
 */
 
 bool ext4_kernel_init(const char* devname,const char* mpname){
-    uint32_t r = ext4_device_register(ext4_blockdev_get(0), devname);
+    uint32_t r = ext4_device_register(ext4_blockdev_get(devname), devname);
 	if (r != EOK) {
 		kerror("ext4_device_register: rc = %d\n", r);
 	}

@@ -94,13 +94,13 @@ static int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id
 			 uint32_t blk_cnt)
 {
 	/*blockdev_bread: skeleton*/
-    //kinfoln("blockdev_bread: HIT!");
+    debugpln("blockdev_bread: HIT!");
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    //kinfoln("blk_id: %d,blk_cnt: %d",blk_id,blk_cnt);
+    debugpln("blk_id: %d,blk_cnt: %d",blk_id,blk_cnt);
     if(ThisInfo.ops.Read(ThisInfo.classp, blk_id,blk_cnt, buf) == VsDev::RW_OK){
         return EOK;
     }else{
-        //kinfoln("blockdev_bread HIT ERROR RETURN!");
+        debugpln("blockdev_bread HIT ERROR RETURN!");
         return EIO;
     }
 	return EIO;
@@ -158,6 +158,17 @@ struct ext4_blockdev *ext4_blockdev_get(u32 which)
 {
     ThisInfo = VsDev::GetSDEV(which);
     blockdev.block_reg_idx = which;
+	return &blockdev;
+}
+
+struct ext4_blockdev *ext4_blockdev_get(const char* mname)
+{
+    for(uint32_t i = 0;i < VsDev::vsdev_list_idx;i++){
+        if(strcmp(VsDev::DevList[i].Name,mname) == 0){
+            ThisInfo = VsDev::DevList[i];
+            blockdev.block_reg_idx = i;
+        }
+    }
 	return &blockdev;
 }
 /******************************************************************************/

@@ -73,20 +73,20 @@ u8 SataDiskInterface::FRegVsDEV_Rb(uint64_t address, uint64_t count, void* buffe
 bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
 {
     AddToStack();
-    //kinfoln("(SataDiskInterface::Read)HIT");
+    debugpln("(SataDiskInterface::Read)HIT");
     //osData.mainTerminalWindow->Log("This Interface: 0x{}", ConvertHexToString((uint64_t)this), Colors.yellow);
     uint8_t* buf = (uint8_t*)buffer;
     int sectorCountDiv8 = ((sectorCount) / 8);
-    //kinfoln("(SataDiskInterface::Read)HIT 2");
+    debugpln("(SataDiskInterface::Read)HIT 2");
     for (int sect = 0; sect < sectorCountDiv8; sect++)
     {
         _memset(Port->buffer, 0, 0x1000);
-        //kinfoln("(SataDiskInterface::Read)HIT 3");
+        debugpln("(SataDiskInterface::Read)HIT 3");
         if (!Port->Read(sector, 8, Port->buffer))
         {
             _memcpy(Port->buffer, buf, 0x1000);
             RemoveFromStack();
-            //kinfoln("(SataDiskInterface::Read)HIT ERROR 1");
+            debugpln("(SataDiskInterface::Read)HIT ERROR 1");
             return false;
         }
         _memcpy(Port->buffer, buf, 0x1000);
@@ -99,13 +99,13 @@ bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer
     {
         RemoveFromStack();
         _memcpy(Port->buffer, buf, ((sectorCount % 8) << 9));
-        //kinfoln("(SataDiskInterface::Read)HIT ERROR 2");
+        debugpln("(SataDiskInterface::Read)HIT ERROR 2");
         return false;
     }
     _memcpy(Port->buffer, buf, ((sectorCount % 8) << 9));
 
     RemoveFromStack();
-    //kinfoln("(SataDiskInterface::Read)HIT OK!");
+    debugpln("(SataDiskInterface::Read)HIT OK!");
     return true;
 }
 

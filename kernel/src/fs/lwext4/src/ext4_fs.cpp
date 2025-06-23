@@ -83,19 +83,19 @@ int ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev,
 	fs->read_only = read_only;
 
 	r = ext4_sb_read(fs->bdev, &fs->sb);
-    //kinfoln("HIT!(2.5)");
+    debugpln("HIT!(2.5)");
 	if (r != EOK){
         kinfo("Hit!(ext4_sb_read)");
 		return r;
     }
-    //kinfoln("Hit!(ext4_sb_read)");
+    debugpln("Hit!(ext4_sb_read)");
 	if (!ext4_sb_check(&fs->sb))
 		return ENOTSUP;
-    //kinfoln("Hit!(ext4_sb_read)2");
+    debugpln("Hit!(ext4_sb_read)2");
 	bsize = ext4_sb_get_block_size(&fs->sb);
 	if (bsize > EXT4_MAX_BLOCK_SIZE)
 		return ENXIO;
-    //kinfoln("Hit!(ext4_sb_read)3");
+    debugpln("Hit!(ext4_sb_read)3");
 	r = ext4_fs_check_features(fs, &read_only);
 	if (r != EOK)
 		return r;
@@ -115,14 +115,14 @@ int ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev,
 		fs->inode_block_limits[i] = fs->inode_block_limits[i - 1] +
 					    fs->inode_blocks_per_level[i];
 	}
-    //kinfoln("Hit!(ext4_sb_read)4");
+    debugpln("Hit!(ext4_sb_read)4");
 	/*Validate FS*/
 	tmp = ext4_get16(&fs->sb, state);
 	if (tmp & EXT4_SUPERBLOCK_STATE_ERROR_FS)
 		ext4_dbg(DEBUG_FS, DBG_WARN
 				"last umount error: superblock fs_error flag\n");
 
-    //kinfoln("Hit!(ext4_sb_read)5");
+    debugpln("Hit!(ext4_sb_read)5");
 	if (!fs->read_only) {
 		/* Mark system as mounted */
 		ext4_set16(&fs->sb, state, EXT4_SUPERBLOCK_STATE_ERROR_FS);
