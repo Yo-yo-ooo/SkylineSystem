@@ -113,7 +113,7 @@ static int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 {
 	/*blockdev_bwrite: skeleton*/
     ThisInfo = VsDev::GetSDEV(bdev->block_reg_idx);
-    if(ThisInfo.ops.Write(ThisInfo.classp,bdev->lg_bcnt, blk_cnt, buf) == VsDev::RW_OK)
+    if(ThisInfo.ops.Write(ThisInfo.classp,blk_id, blk_cnt, buf) == VsDev::RW_OK)
         return EOK;
     else
         return EIO;

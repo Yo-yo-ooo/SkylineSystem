@@ -82,6 +82,6 @@ void __init x86_64_init(void){
 	test_lwext4_dir_ls("/mp/");
 
     uint8_t buf[12] = "Hello WORLD";
-    if(test_lwext4_file_test(buf,strlen(buf),1) == true)
+    if(test_lwext4_file_test(buf,strlen(buf),2) == true)
         kpok("YESSSSSSSSSSSSSSSSS\n");
 }

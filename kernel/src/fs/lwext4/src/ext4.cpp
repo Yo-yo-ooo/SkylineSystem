@@ -1729,12 +1729,17 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
     struct ext4_inode_ref ref;
 
     ext4_assert(file && file->mp);
+    //PIHIT(1);
 
-    if (file->flags & O_WRONLY)
+    if (file->flags & O_WRONLY){
+        //HITERR(1);
         return EPERM;
+    }
 
-    if (!size)
+    if (!size){
+        //HITERR(2);
         return EOK;
+    }
 
     EXT4_MP_LOCK(file->mp);
 
@@ -1744,9 +1749,11 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
     if (rcnt)
         *rcnt = 0;
 
+    //PIHIT(2);
     r = ext4_fs_get_inode_ref(fs, file->inode, &ref);
     if (r != EOK) {
         EXT4_MP_UNLOCK(file->mp);
+        //HITERR(3);
         return r;
     }
 
@@ -1762,6 +1769,7 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
     unalg = (file->fpos) % block_size;
 
     /*If the size of symlink is smaller than 60 bytes*/
+    //PIHIT(3);
     bool softlink;
     softlink = ext4_inode_is_type(sb, ref.inode, EXT4_INODE_MODE_SOFTLINK);
     if (softlink && file->fsize < sizeof(ref.inode->blocks)
@@ -1779,27 +1787,31 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
         }
 
         r = EOK;
+        //PHIT_OK(1);
         goto Finish;
     }
-
+    //PIHIT(4);
     if (unalg) {
         size_t len =  size;
         if (size > (block_size - unalg))
             len = block_size - unalg;
 
         r = ext4_fs_get_inode_dblk_idx(&ref, iblock_idx, &fblock, true);
-        if (r != EOK)
+        if (r != EOK){
+            //HITERR(4);
             goto Finish;
-
+        }
         /* Do we get an unwritten range? */
         if (fblock != 0) {
             uint64_t off = fblock * block_size + unalg;
             r = ext4_block_readbytes(file->mp->fs.bdev, off, u8_buf, len);
-            if (r != EOK)
+            if (r != EOK){
+                //PHIT_OK(2);
                 goto Finish;
-
+            }
         } else {
             /* Yes, we do. */
+            kinfoln("HIT CLEAR u8_buf");
             _memset(u8_buf, 0, len);
         }
 
@@ -1812,15 +1824,17 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
 
         iblock_idx++;
     }
-
+    //PIHIT(5);
     fblock_start = 0;
     fblock_count = 0;
     while (size >= block_size) {
         while (iblock_idx < iblock_last) {
             r = ext4_fs_get_inode_dblk_idx(&ref, iblock_idx,
                                &fblock, true);
-            if (r != EOK)
+            if (r != EOK){
+                //HITERR(5);
                 goto Finish;
+            }
 
             iblock_idx++;
 
@@ -1835,9 +1849,10 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
 
         r = ext4_blocks_get_direct(file->mp->fs.bdev, u8_buf, fblock_start,
                        fblock_count);
-        if (r != EOK)
+        if (r != EOK){
+            //HITERR(6);
             goto Finish;
-
+        }
         size -= block_size * fblock_count;
         u8_buf += block_size * fblock_count;
         file->fpos += block_size * fblock_count;
@@ -1848,24 +1863,28 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
         fblock_start = fblock;
         fblock_count = 1;
     }
-
+    //PIHIT(6);
     if (size) {
         uint64_t off;
         r = ext4_fs_get_inode_dblk_idx(&ref, iblock_idx, &fblock, true);
-        if (r != EOK)
+        if (r != EOK){
+            //HITERR(7);
             goto Finish;
+        }
 
         off = fblock * block_size;
         r = ext4_block_readbytes(file->mp->fs.bdev, off, u8_buf, size);
-        if (r != EOK)
+        if (r != EOK){
+            //HITERR(8);
             goto Finish;
+        }
 
         file->fpos += size;
 
         if (rcnt)
             *rcnt += size;
     }
-
+    //PIHIT(7);
 Finish:
     ext4_fs_put_inode_ref(&ref);
     EXT4_MP_UNLOCK(file->mp);
@@ -3401,16 +3420,6 @@ int ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c)
 	return 0;
 }
 
-/*
-Problem Here?:
-    1.SATA READ/WRITE ----[OK]
-    2.AHCI R/W -----------[OK]
-    3.ext4_fread ---------[ER]
-      |
-      |
-      +----->Return Val:0 != 48(i % 10 + '0')
-    IDK Why?
-*/
 bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count)
 {
     int r;
@@ -3476,7 +3485,7 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
     }
 
     if (i != rw_count) {
-        kprintf("  file_test: rw_count = %" PRIu32 "\n", i);
+        kprintf("  file_test: i(%" PRIu32 ") != rw_count \n", i);
         return false;
     }
 

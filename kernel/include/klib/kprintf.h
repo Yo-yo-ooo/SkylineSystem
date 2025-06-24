@@ -120,6 +120,9 @@ int vprintf_(const char* format, va_list va);
  */
 int fctprintf(void (*out)(char character, void* arg), void* arg, const char* format, ...);
 
+#define PIHIT(hit_num) kinfoln("HIT %d",hit_num)
+#define PHIT_OK(ok_number) kpok("%s: HIT OK %d\n",__PRETTY_FUNCTION__,ok_number)
+#define HITERR(err_num) kerror("HIT %d\n",err_num)
 
 #ifdef __cplusplus
 }
