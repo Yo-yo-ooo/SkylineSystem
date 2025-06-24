@@ -3401,7 +3401,16 @@ int ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c)
 	return 0;
 }
 
-
+/*
+Problem Here?:
+    1.SATA READ/WRITE ----[OK]
+    2.AHCI R/W -----------[OK]
+    3.ext4_fread ---------[ER]
+      |
+      |
+      +----->Return Val:0 != 48(i % 10 + '0')
+    IDK Why?
+*/
 bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count)
 {
     int r;
@@ -3429,11 +3438,13 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
            rw_count);
     for (i = 0; i < rw_count; ++i) {
 
+        kwarn(" i % 10 + '0':%d\n", i % 10 + '0');
+        //kprintf("size:%d",size);
         _memset(rw_buff, i % 10 + '0', rw_size);
 
         r = ext4_fwrite(&f, rw_buff, rw_size, &size);
-        kprintf("r:%d",r);
-        kprintf("size:%d",size);
+        kprintf("r:%d\n",r);
+        kprintf("size:%d\n",size);
 
         if ((r != EOK) || (size != rw_size))
             break;
@@ -3459,7 +3470,7 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
 
         if ((r != EOK) || (size != rw_size))
             break;
-
+        kinfo("%s\n",rw_buff);
         if (ext4_verify_buf(rw_buff, rw_size, i % 10 + '0'))
             break;
     }

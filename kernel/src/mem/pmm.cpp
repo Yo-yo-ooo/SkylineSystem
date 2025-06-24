@@ -92,9 +92,9 @@ void* Alloc(usize n) {
         pmm_last_page = 0;
         first = PMM::FindPages(n);
         if (first == 0) {
-        kprintf("    PMM::Alloc(): Couldn't allocate %lu pages: Not enough memory.\n", n);
-        unlock(&pmm_lock);
-        return NULL;
+            kprintf("    PMM::Alloc(): Couldn't allocate %lu pages: Not enough memory.\n", n);
+            unlock(&pmm_lock);
+            return NULL;
         }
     }
     unlock(&pmm_lock);

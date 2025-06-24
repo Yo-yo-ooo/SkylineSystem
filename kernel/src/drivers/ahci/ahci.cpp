@@ -194,6 +194,7 @@ namespace AHCI
         cmdHeader->commandFISLenght = sizeof(FIS_REG_H2D) / sizeof(uint32_t); // command FIS size
         cmdHeader->write = 0;
         cmdHeader->prdtLength = ((sectorCount) / 16) + 1;
+        //cmdHeader->prdtLength = (uint16_t)(sectorCount / 16);
 
         HBACommandTable* commandTable = (HBACommandTable*)((uint64_t)cmdHeader->commandTableBaseAddress);
         _memset(commandTable, 0, sizeof(HBACommandTable) + (cmdHeader->prdtLength - 1) * sizeof(HBAPRDTEntry));
@@ -212,7 +213,7 @@ namespace AHCI
         commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
         commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
         commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1; // 512 bytes per sector
-        debugpln("Writing %s Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)));
+        debugpln("Reading %s Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)));
         commandTable->prdtEntry[i].interruptOnCompletion = 1;
         
         FIS_REG_H2D* cmdFIS = (FIS_REG_H2D*)(&commandTable->commandFIS);
@@ -267,6 +268,9 @@ namespace AHCI
             kinfoln("HIT hbaPort->interruptStatus & HBA_PxIS_TFES RETURN 2");
             return false;
         }
+        
+        if(buffer == nullptr)
+            kwarn("Port::Read buffer is null!");
 
         return true;
     }
@@ -304,7 +308,7 @@ namespace AHCI
         commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
         commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
         commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1; // 512 bytes per sector
-        //osData.debugTerminalWindow->Log("Writing {} Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)), Colors.bgreen);
+        debugpln("Writing %s Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)));
         commandTable->prdtEntry[i].interruptOnCompletion = 1;
         
         FIS_REG_H2D* cmdFIS = (FIS_REG_H2D*)(&commandTable->commandFIS);
@@ -354,6 +358,9 @@ namespace AHCI
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
                 return false;
+
+        if(buffer == nullptr)
+            kwarn("Port::Write buffer is null!");
 
         return true;
     }
