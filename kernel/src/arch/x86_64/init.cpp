@@ -81,40 +81,7 @@ void __init x86_64_init(void){
 
 	test_lwext4_dir_ls("/mp/");
 
-    ext4_file f;
-    int r;
-    size_t a;
-    ext4_cache_write_back("/mp/test.txt",1);
-    r = ext4_fopen(&f,"/mp/test.txt", "wb+");
-    if (r != EOK) {
-		kinfoln("ext4_fopen ERROR = %d\n", r);
-		return false;
-	}
-    test_lwext4_dir_ls("/mp/");
-    char nbuf[13] = "Hello World";
-    size_t strs = strlen(nbuf);
-    r = ext4_fwrite(&f,nbuf,strs,&a);
-    
-    kinfoln("a:%d",a); 
-    kinfoln("r:%d",r);
-    
-    r = ext4_fclose(&f);
-    ext4_cache_write_back("/mp/test.txt",0);
-   
-    ext4_file f2;
-    r = ext4_fopen(&f2, "/mp/test.txt", "r");
-	if (r != EOK) {
-		kinfoln("ext4_fopen ERROR = %d\n", r);
-		return false;
-	}
-    
-    kinfoln("%s",nbuf);
-    _memset(nbuf,0,13);
-    a = 0;
-    ext4_fseek(&f2,0,SEEK_SET);
-    r = ext4_fread(&f2,nbuf,strs,&a);
-    kinfoln("r:%d",r);
-    kinfoln("nbuf:%s",nbuf);
-    r = ext4_fclose(&f2);
-    
+    uint8_t buf[12] = "Hello WORLD";
+    if(test_lwext4_file_test(buf,strlen(buf),0) == true)
+        kpok("YESSSSSSSSSSSSSSSSS\n");
 }

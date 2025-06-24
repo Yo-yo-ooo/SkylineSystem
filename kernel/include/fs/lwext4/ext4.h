@@ -618,6 +618,7 @@ char * ext4_entry_to_str(uint8_t type);
 bool test_lwext4_dir_test(int len);
 void test_lwext4_dir_ls(char *path);
 int ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c);
+bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count);
 
 #endif /* EXT4_H_ */
 
