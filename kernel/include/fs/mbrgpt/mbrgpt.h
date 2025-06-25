@@ -54,3 +54,5 @@ PACK(typedef struct gpt_pte{
 })GPT_PTE;
 
 #define GPT_PARTITION_TABLE_OFFSET 1024
+
+uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart);
