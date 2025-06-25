@@ -270,7 +270,9 @@ int _memcmp(const void *s1, const void *s2, size_t n);
 #define SS(fs)	((fs)->ssize)	/* Variable sector size */
 #endif
 
+#ifdef __x86_64__
 #include <arch/x86_64/rtc/rtc.h>
+
 DWORD get_fattime (void)
 {
     return (DWORD)(RTC::Year - 80) << 25 |
@@ -280,6 +282,8 @@ DWORD get_fattime (void)
            (DWORD)RTC::Minute << 5 |
            (DWORD)RTC::Second >> 1;
 }
+#endif
+
 
 /* Timestamp */
 #if FF_FS_NORTC == 1
