@@ -179,4 +179,8 @@ namespace Schedule{
 
         return t;
     }
+
+    thread* ProcAddELFThread(process* proc, char* path){
+        thread* t = Schedule::ProcAddThread(proc,nullptr,false);
+    }
 }
