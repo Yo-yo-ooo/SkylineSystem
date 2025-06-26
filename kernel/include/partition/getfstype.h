@@ -1,0 +1,8 @@
+#include <partition/mbrgpt.h>
+
+#define PARTITION_TYPE_UNKNOWN 0
+#define PARTITION_TYPE_EXT4  1
+#define PARTITION_TYPE_FAT32 2
+#define PARTITION_TYPE_FAT16 3
+#define PARTITION_TYPE_FAT12 4
+

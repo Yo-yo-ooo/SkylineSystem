@@ -1,4 +1,4 @@
-#include <fs/mbrgpt/mbrgpt.h>
+#include <partition/mbrgpt.h>
 #include <drivers/vsdev/vsdev.h>
 #include <mem/heap.h>
 
