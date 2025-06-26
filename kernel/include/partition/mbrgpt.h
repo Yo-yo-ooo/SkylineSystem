@@ -34,7 +34,7 @@ PACK(typedef struct gpt_header{
     uint64_t HeadBackupsLocation;   //LBA
     uint64_t PartitionStart;        //LBA
     uint64_t PartitionEnd;          //LBA
-    char SectorGUID[16];
+    __uint128_t SectorGUID;
     uint64_t HeadStart;             //LBA
     uint32_t NumberOfPTE;           //Number of partition table entries
     uint32_t TNOFBPPTE;             //The number of bytes per partition table entry
@@ -45,8 +45,8 @@ PACK(typedef struct gpt_header{
 #define GPT_HEADER_NUMBER_OF_PTE_OFFSET 80
 
 PACK(typedef struct gpt_pte{
-    char PartitionTypeGUID[16];
-    char PartitionGUID[16];
+    __uint128_t PartitionTypeGUID;
+    __uint128_t PartitionGUID;
     uint64_t PartitionStart;        //LBA
     uint64_t PartitionEnd;          //LBA
     uint64_t PartitionAttr;
