@@ -21,4 +21,4 @@ typedef struct FS_TYPE{
     uint8_t ErrorCode;
 };
 
-FS_TYPE IdentifyFSType(uint32_t DriverID,uint32_t PartitionID);
+FS_TYPE IdentifyFSType(uint32_t DriverID,uint8_t PartitionID);

@@ -18,7 +18,7 @@ uint8_t IdentifyMBR(uint32_t DriverID){
     return 4;
 }
 
-uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart){
+uint8_t GetPartitionStart(uint32_t DriverID,uint8_t PartitionID,uint64_t PartitionStart){
     if(DriverID > VsDev::vsdev_list_idx)
         return 1; //DriverID ERR
     
@@ -42,6 +42,7 @@ uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t Partit
                 128,&gptpte) == false)
                 return 5;
         PartitionStart = gptpte.PartitionStart;
+        return 0;
     }else{
 
         if(PartitionID > MBR_PARTITION_MAX)

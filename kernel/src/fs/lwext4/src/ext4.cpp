@@ -66,6 +66,7 @@
 #include <klib/cstr.h>
 #include <klib/klib.h>
 #include <mem/heap.h>
+#include <partition/mbrgpt.h>
 
 //UNSAFE INCLUDE
 #include <arch/x86_64/rtc/rtc.h>
@@ -3491,4 +3492,22 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
 
     r = ext4_fclose(&f);
     return true;
+}
+
+bool IdentifyEXT4(uint32_t DriverID,uint8_t PartitionID){
+    uint64_t PStart;
+    if(GetPartitionStart(DriverID,PartitionID,PStart)){
+        return false;
+    }else{
+        struct ext4_sblock sb;
+        if(VsDev::DevList[DriverID].ops.ReadBytes(
+            VsDev::DevList[DriverID].classp,
+            PStart + EXT4_SUPERBLOCK_OFFSET,
+            EXT4_SUPERBLOCK_SIZE,&sb) == false)
+            return false;
+        else if (!ext4_sb_check(&sb))
+            return false;
+        else
+            return true;
+    }
 }
