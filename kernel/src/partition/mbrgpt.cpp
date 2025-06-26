@@ -2,12 +2,28 @@
 #include <drivers/vsdev/vsdev.h>
 #include <mem/heap.h>
 
+uint8_t IdentifyMBR(uint32_t DriverID){
+    if(DriverID > VsDev::vsdev_list_idx)
+        return 1; //DriverID ERR
+    
+    VsDevList ThisInfo = VsDev::DevList[DriverID];
+    MBR_DPT dpt; 
+    if(ThisInfo.ops.ReadBytes(ThisInfo.classp,MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
+        return 2;
+    if(dpt.PartitionTypeIndicator == 0xEE){//GPT
+        return 3;
+    }else{
+        return 0;
+    }
+    return 4;
+}
+
 uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart){
     if(DriverID > VsDev::vsdev_list_idx)
         return 1; //DriverID ERR
     
     VsDevList ThisInfo = VsDev::DevList[DriverID];
-    MBR_DPT dpt; //512 is MBR Size
+    MBR_DPT dpt; 
     uint32_t buffer;
     if(ThisInfo.ops.ReadBytes(ThisInfo.classp,MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
         return 2;
@@ -39,7 +55,7 @@ uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t Partit
         */
         MBR_DPT buffer2;
         ThisInfo.ops.ReadBytes(ThisInfo.classp,
-            MBR_PARTITION_TABLE_OFFSET + PartitionID,
+            MBR_PARTITION_TABLE_OFFSET + PartitionID * 16,
             16,&buffer2);
         
         //CHS To LBA : easy to R/W 
