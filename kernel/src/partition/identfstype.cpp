@@ -5,17 +5,18 @@
 
 FS_TYPE IdentifyFSType(uint32_t DriverID,uint8_t PartitionID){
     uint64_t *PartitionStart;
-    uint8_t PartitionCount;
+    uint32_t PartitionCount;
     if(IdentifyMBR(DriverID) == 0){
         uint8_t i = 0;
         uint32_t SectorsInPartition;
-        for(i;i < 4;i++)
+        for(i;i < 4;i++){
             if(VsDev::DevList[DriverID].ops.ReadBytes(VsDev::DevList[DriverID].classp,
                 MBR_PARTITION_TABLE_OFFSET + i * 16 + 12,
-                16,&SectorsInPartition) == false)
+                4,&SectorsInPartition) == false)
                 return {PARTITION_TYPE_UNKNOWN,1};
-            else if(SectorsInPartition == 0)
+            if(SectorsInPartition == 0)
                 break;
+        }
         PartitionStart = (uint64_t*)kmalloc(i * sizeof(uint64_t));
         for(uint8_t j = 0;j < i;j++)
             if(GetPartitionStart(DriverID,PartitionID,PartitionStart[j]) != 0)

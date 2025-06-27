@@ -373,6 +373,14 @@ namespace AHCI
         return cap;
     }
 
+    uint16_t Port::GetSectorSize()
+    {
+        SATA_Ident test = Identifydrive();
+        //uint32_t cap = (((uint32_t)test.cur_capacity1) << 16) + test.cur_capacity0;
+        uint16_t cap = test.sector_bytes;
+        return cap;
+    }
+
 
     AHCIDriver::AHCIDriver (PCI::PCIDeviceHeader* PCIBaseAddr)
     {

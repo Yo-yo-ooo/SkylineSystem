@@ -10,11 +10,12 @@
 
 /*
 ErrorCode:
-0: [MBR/GPT] All is OK!
-1: [MBR] Can't MBR Partitions Count 
-2: [MBR] Can't Get Partition Start ADDR
-3: [GPT] Can't Get GPT Partitions Count 
-4: [GPT] Can't Get Partition Start ADDR
+0: [MBR/GPT]    All is OK!
+1: [MBR]        Can't MBR Partitions Count 
+2: [MBR]        Can't Get Partition Start ADDR
+3: [GPT]        Can't Get GPT Partitions Count 
+4: [GPT]        Can't Get Partition Start ADDR
+5: [FS]         Read Partition Start Addr ERROR
 */
 typedef struct FS_TYPE{           
     uint8_t TypeID;     

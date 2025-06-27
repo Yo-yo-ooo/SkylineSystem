@@ -212,3 +212,38 @@ void *_EXT4_T_memcpy(void *__restrict__ dest, const void *__restrict__ src, size
 	for (; n; n--) *d++ = *s++;
 	return dest;
 }
+
+uint16_t kld_16 (const uint8_t* ptr)	/*	 Load a 2-byte little-endian word */
+{
+	uint16_t rv;
+
+	rv = ptr[1];
+	rv = rv << 8 | ptr[0];
+	return rv;
+}
+
+uint32_t kld_32 (const uint8_t* ptr)	/* Load a 4-byte little-endian word */
+{
+	uint32_t rv;
+
+	rv = ptr[3];
+	rv = rv << 8 | ptr[2];
+	rv = rv << 8 | ptr[1];
+	rv = rv << 8 | ptr[0];
+	return rv;
+}
+
+uint64_t kld_64 (const uint8_t* ptr)	/* Load an 8-byte little-endian word */
+{
+	uint64_t rv;
+
+	rv = ptr[7];
+	rv = rv << 8 | ptr[6];
+	rv = rv << 8 | ptr[5];
+	rv = rv << 8 | ptr[4];
+	rv = rv << 8 | ptr[3];
+	rv = rv << 8 | ptr[2];
+	rv = rv << 8 | ptr[1];
+	rv = rv << 8 | ptr[0];
+	return rv;
+}

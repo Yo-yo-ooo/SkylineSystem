@@ -626,4 +626,4 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
  * @}
  */
 
- 
+bool IdentifyEXT4(uint32_t DriverID,uint8_t PartitionID);
