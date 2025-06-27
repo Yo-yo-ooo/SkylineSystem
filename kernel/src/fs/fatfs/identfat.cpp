@@ -39,14 +39,14 @@
 uint8_t IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     uint64_t nclst;
     uint64_t PStart;
-    uint8_t buffer[512];
+    uint8_t buffer[36];
     uint32_t fasize,tsect,sysect;
     uint16_t nrsv;
     if(GetPartitionStart(DriverID,PartitionID,PStart) != 0){
         return 1;
     }elif(VsDev::DevList[DriverID].ops.ReadBytes(
             VsDev::DevList[DriverID].classp,
-            PStart,512,buffer) == false){
+            PStart,36,buffer) == false){
             return 2;
     }else{
         fasize = kld_16(buffer + BPB_FATSz16);		/* Number of sectors per FAT */
