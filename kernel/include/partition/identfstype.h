@@ -7,6 +7,7 @@
 #define PARTITION_TYPE_FAT32        4
 #define PARTITION_TYPE_FAT16        5
 #define PARTITION_TYPE_FAT12        6
+#define PARTITION_TYPE_EXFAT        7
 
 /*
 ErrorCode:
