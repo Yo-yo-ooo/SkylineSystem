@@ -1,5 +1,5 @@
 #include <arch/x86_64/allin.h>
-
+#include <elf/elf.h>
 
 
 namespace Schedule{
@@ -185,7 +185,7 @@ namespace Schedule{
         vfs_node* node = vfs_open(proc->current_dir, path);
         u8* buffer = (u8*)kmalloc(node->size);
         vfs_read(node, buffer, node->size);
-        //t->ctx.rip = elf_load(buffer, t->pm);
+        t->ctx.rip = _x86_64_ELF_Load(buffer, t->pm);
         return t;
     }
 }

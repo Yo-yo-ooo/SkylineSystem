@@ -3,6 +3,9 @@
 #ifndef _KLIB_TYPES_H_
 #define _KLIB_TYPES_H_
 
+#include <stdint.h>
+#include <stddef.h>
+
 typedef uint64_t u64;
 typedef uint32_t u32;
 typedef uint16_t u16;

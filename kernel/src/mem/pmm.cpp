@@ -1,6 +1,7 @@
 #include <mem/pmm.h>
 
 #include <limine.h>
+#include <klib/klib.h>
 
 u8* pmm_bitmap = NULL;
 u64 pmm_free_pages = 0;

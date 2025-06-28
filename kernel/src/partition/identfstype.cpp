@@ -45,5 +45,6 @@ FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
     elif(IdentifyFat(DriverID,PartitionID).ErrorCode != 0 &&
         IdentifyFat(DriverID,PartitionID).TypeID != PARTITION_TYPE_UNKNOWN)
         return IdentifyFat(DriverID,PartitionID).TypeID;
-    
+    else
+        return PARTITION_TYPE_UNKNOWN;
 }

@@ -85,10 +85,7 @@ namespace Elf64
 
 	// ELF File Header - ELF-64 Object File Format 1.5d2 p. 3
 	PACK(typedef struct elf64_ehdr{
-		union {
-			unsigned char c[EI_NIDENT];
-			uint32_t i;
-		} e_ident;
+		unsigned char e_ident[EI_NIDENT];
 
 		Elf64_Half e_type;
 		Elf64_Half e_machine;
@@ -184,4 +181,11 @@ namespace Elf64
         void* offset;
         bool works;
     };
+
+
 }
+
+#ifdef __x86_64__
+    #include <arch/x86_64/vmm/vmm.h>
+    uint64_t _x86_64_ELF_Load(uint8_t *img,pagemap *pm);
+#endif

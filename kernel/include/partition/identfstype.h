@@ -25,7 +25,7 @@ ErrorCode:
 7: [FS]         Check FS Feature ERROR
 */
 typedef struct FS_TYPE_{           
-    uint8_t TypeID;     
+    uint8_t TypeID;     //See Line 5 ~ Line 12
     uint8_t ErrorCode;
 }FS_TYPE;
 
