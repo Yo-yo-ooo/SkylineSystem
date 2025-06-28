@@ -3,7 +3,11 @@
 #include <mem/heap.h>
 #include <drivers/vsdev/vsdev.h>
 
-FS_TYPE IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
+#include <fs/fatfs/identfat.h>
+#include <fs/lwext4/ext4.h>
+
+FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
+    /*
     uint64_t *PartitionStart;
     uint32_t PartitionCount;
     if(IdentifyMBR(DriverID) == 0){
@@ -33,6 +37,13 @@ FS_TYPE IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
             if(GetPartitionStart(DriverID,PartitionID,PartitionStart[k]) != 0)
                 return {PARTITION_TYPE_UNKNOWN,4};
     }
-
+                */
+    
+    if(IdentifyExtx(DriverID,PartitionID).ErrorCode != 0 &&
+        IdentifyExtx(DriverID,PartitionID).TypeID != PARTITION_TYPE_UNKNOWN)
+        return IdentifyExtx(DriverID,PartitionID).TypeID;
+    elif(IdentifyFat(DriverID,PartitionID).ErrorCode != 0 &&
+        IdentifyFat(DriverID,PartitionID).TypeID != PARTITION_TYPE_UNKNOWN)
+        return IdentifyFat(DriverID,PartitionID).TypeID;
     
 }

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <partition/mbrgpt.h>
 
 #define PARTITION_TYPE_UNKNOWN      0
@@ -9,6 +11,8 @@
 #define PARTITION_TYPE_FAT12        6
 #define PARTITION_TYPE_EXFAT        7
 
+typedef uint8_t FS_TYPE_ID;
+
 /*
 ErrorCode:
 0: [MBR/GPT]    All is OK!
@@ -17,10 +21,12 @@ ErrorCode:
 3: [GPT]        Can't Get GPT Partitions Count 
 4: [GPT]        Can't Get Partition Start ADDR
 5: [FS]         Read Partition Start Addr ERROR
+6: [FS]         Read Partition Base INFO ERROR
+7: [FS]         Check FS Feature ERROR
 */
-typedef struct FS_TYPE{           
+typedef struct FS_TYPE_{           
     uint8_t TypeID;     
     uint8_t ErrorCode;
-};
+}FS_TYPE;
 
-FS_TYPE IdentifyFSType(uint32_t DriverID,uint32_t PartitionID);
+FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID);

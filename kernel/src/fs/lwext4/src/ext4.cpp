@@ -66,8 +66,6 @@
 #include <klib/cstr.h>
 #include <klib/klib.h>
 #include <mem/heap.h>
-#include <partition/mbrgpt.h>
-#include <partition/identfstype.h>
 
 //UNSAFE INCLUDE
 #include <arch/x86_64/rtc/rtc.h>
@@ -3495,35 +3493,35 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
     return true;
 }
 
-uint8_t IdentifyExtx(uint32_t DriverID,uint32_t PartitionID){
+FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID){
     uint64_t PStart;
     if(GetPartitionStart(DriverID,PartitionID,PStart)){
-        return 255;
+        return {PARTITION_TYPE_UNKNOWN,5};
     }else{
         struct ext4_sblock sb;
         if(VsDev::DevList[DriverID].ops.ReadBytes(
             VsDev::DevList[DriverID].classp,
             PStart + EXT4_SUPERBLOCK_OFFSET,
             EXT4_SUPERBLOCK_SIZE,&sb) == false)
-            return 255;
+            return {PARTITION_TYPE_UNKNOWN,6};
         else{
             if(ext4_get16(&sb,magic) != EXT4_SUPERBLOCK_MAGIC)
-                return PARTITION_TYPE_UNKNOWN;
+                return {PARTITION_TYPE_UNKNOWN,7};
             if (ext4_get32(&sb, inodes_count) == 0)
-                return PARTITION_TYPE_UNKNOWN;
+                return {PARTITION_TYPE_UNKNOWN,7};
             if (ext4_get32(&sb, blocks_per_group) == 0)
-                return PARTITION_TYPE_UNKNOWN;
+                return {PARTITION_TYPE_UNKNOWN,7};
             if (ext4_get32(&sb, inodes_per_group) == 0)
-                return PARTITION_TYPE_UNKNOWN;
+                return {PARTITION_TYPE_UNKNOWN,7};
             
             
             if((ext4_get32(&sb,features_compatible) & EXT3_FEATURE_COMPAT_HAS_JOURNAL) &&
                 (ext4_get32(&sb,features_incompatible) & EXT4_FEATURE_INCOMPAT_EXTENTS))
-                return PARTITION_TYPE_EXT3;
+                return {PARTITION_TYPE_EXT3,0};
             elif(ext4_get32(&sb,features_compatible) & EXT3_FEATURE_COMPAT_HAS_JOURNAL)
-                return PARTITION_TYPE_EXT4;
+                return {PARTITION_TYPE_EXT4,0};
             else
-                return PARTITION_TYPE_EXT2;
+                return {PARTITION_TYPE_EXT2,0};
         }
     }
 }

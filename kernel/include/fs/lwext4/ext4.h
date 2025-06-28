@@ -50,6 +50,9 @@
 #include <fs/lwext4/ext4_oflags.h>
 #include <fs/lwext4/ext4_debug.h>
 
+#include <partition/mbrgpt.h>
+#include <partition/identfstype.h>
+
 /********************************OS LOCK INFERFACE***************************/
 
 /**@brief   OS dependent lock interface.*/
@@ -620,7 +623,7 @@ void test_lwext4_dir_ls(char *path);
 int ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c);
 bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count);
 
-uint8_t IdentifyExtx(uint32_t DriverID,uint32_t PartitionID);
+FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID);
 
 #endif /* EXT4_H_ */
 
