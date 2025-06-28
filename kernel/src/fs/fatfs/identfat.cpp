@@ -89,7 +89,7 @@ uint8_t IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     Some Partition may not write "EXFAT   " 
     in (BootSecotr + 3) ~ (BootSecotr + 11)
     so it's unsafe*/
-    }elif(strcmp(FSName,"EXFAT   ")){
+    }elif(strcmp(FSName,"EXFAT   ") == 0){
             return PARTITION_TYPE_EXFAT;
     }else{
         if(VsDev::DevList[DriverID].ops.ReadBytes(
