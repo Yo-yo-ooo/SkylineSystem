@@ -84,18 +84,18 @@ uint8_t IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     }elif(VsDev::DevList[DriverID].ops.ReadBytes(
             VsDev::DevList[DriverID].classp,
             PStart + 3,8,FSName) == false){
-            return 2;
+            return 255;
     /*A simple check of exfat 
     Some Partition may not write "EXFAT   " 
-    in (BootSecotr + 3) ~ (BootSecotr + 11)
+    in [(BootSecotr + 3) ~ (BootSecotr + 11)] FileSystemName
     so it's unsafe*/
     }elif(strcmp(FSName,"EXFAT   ") == 0){
             return PARTITION_TYPE_EXFAT;
     }else{
         if(VsDev::DevList[DriverID].ops.ReadBytes(
             VsDev::DevList[DriverID].classp,
-            PStart,buffer,FSName) == false)
-            return 4;
+            PStart,36,buffer) == false)
+            return 255;
 
 //check_eexfat: /*Check FS type except ExFat*/
         fasize = kld_16(buffer + BPB_FATSz16);		/* Number of sectors per FAT */

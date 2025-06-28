@@ -3,7 +3,7 @@
 #include <mem/heap.h>
 #include <drivers/vsdev/vsdev.h>
 
-FS_TYPE IdentifyFSType(uint32_t DriverID,uint8_t PartitionID){
+FS_TYPE IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
     uint64_t *PartitionStart;
     uint32_t PartitionCount;
     if(IdentifyMBR(DriverID) == 0){

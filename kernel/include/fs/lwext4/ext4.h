@@ -620,10 +620,11 @@ void test_lwext4_dir_ls(char *path);
 int ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c);
 bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count);
 
+uint8_t IdentifyExtx(uint32_t DriverID,uint32_t PartitionID);
+
 #endif /* EXT4_H_ */
 
 /**
  * @}
  */
 
-bool IdentifyEXT4(uint32_t DriverID,uint8_t PartitionID);

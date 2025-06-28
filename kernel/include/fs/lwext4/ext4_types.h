@@ -832,6 +832,9 @@ struct jbd_sb {
 
 #endif
 
+#define EXT4_FEATURE_INCOMPAT_EXTENTS   0x40
+#define EXT3_FEATURE_COMPAT_HAS_JOURNAL 0x4
+
 
 #endif /* EXT4_TYPES_H_ */
 
