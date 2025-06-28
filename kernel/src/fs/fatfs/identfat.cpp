@@ -75,58 +75,58 @@ static uint64_t _InFile_clst2sect (	/* !=0:Sector number, 0:Failed (invalid clus
 uint8_t IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     uint64_t nclst;
     uint64_t PStart;
-    uint8_t buffer[512];
+    uint8_t buffer[36];
+    char FSName[8];
     uint32_t fasize,tsect,sysect;
     uint16_t nrsv;
     if(GetPartitionStart(DriverID,PartitionID,PStart) != 0){
         return 1;
     }elif(VsDev::DevList[DriverID].ops.ReadBytes(
             VsDev::DevList[DriverID].classp,
-            PStart,512,buffer) == false){
+            PStart + 3,8,FSName) == false){
             return 2;
-    }else{ 
-        /*
-        A simple check of exfat 
-        Some Partition may not write "EXFAT   " 
-        in (BootSecotr + 3) ~ (BootSecotr + 11)
-        so it's unsafe
-        */
-        if(buffer + 4 == 'E' && buffer + 5 == 'X' &&
-           buffer + 6 == 'F' && buffer + 7 == 'A' &&
-           buffer + 8 == 'T' && buffer + 9 == ' ' &&
-           buffer + 10 == ' ' && buffer + 11 == ' ')
+    /*A simple check of exfat 
+    Some Partition may not write "EXFAT   " 
+    in (BootSecotr + 3) ~ (BootSecotr + 11)
+    so it's unsafe*/
+    }elif(strcmp(FSName,"EXFAT   ")){
             return PARTITION_TYPE_EXFAT;
-        else
-            goto check_eexfat;
-    }
-check_eexfat: /*Check FS type except ExFat*/
-    fasize = kld_16(buffer + BPB_FATSz16);		/* Number of sectors per FAT */
-    if (fasize == 0) fasize = kld_32(buffer + BPB_FATSz32);
+    }else{
+        if(VsDev::DevList[DriverID].ops.ReadBytes(
+            VsDev::DevList[DriverID].classp,
+            PStart,buffer,FSName) == false)
+            return 4;
+
+//check_eexfat: /*Check FS type except ExFat*/
+        fasize = kld_16(buffer + BPB_FATSz16);		/* Number of sectors per FAT */
+        if (fasize == 0) fasize = kld_32(buffer + BPB_FATSz32);
 
 #define fs_n_fats  buffer[BPB_NumFATs]			/* Number of FATs */
-    if (fs_n_fats != 1 && fs_n_fats != 2) return 3;	/* (Must be 1 or 2) */
-    fasize *= fs_n_fats;							/* Number of sectors for FAT area */
+        if (fs_n_fats != 1 && fs_n_fats != 2) return PARTITION_TYPE_UNKNOWN;	/* (Must be 1 or 2) */
+        fasize *= fs_n_fats;							/* Number of sectors for FAT area */
 #undef fs_n_fats
 
 #define	fs_csize  buffer[BPB_SecPerClus]			/* Cluster size */
-    if (fs_csize == 0 || (fs_csize & (fs_csize - 1))) return 3;	/* (Must be power of 2) */
+        if (fs_csize == 0 || (fs_csize & (fs_csize - 1))) return PARTITION_TYPE_UNKNOWN;	/* (Must be power of 2) */
 
 #define	fs_n_rootdir  kld_16(buffer + BPB_RootEntCnt)	/* Number of root directory entries */
-    if (fs_n_rootdir % (512 / SZDIRE)) return 3;	/* (Must be sector aligned) */
+        if (fs_n_rootdir % (512 / SZDIRE)) return PARTITION_TYPE_UNKNOWN;	/* (Must be sector aligned) */
 
-    tsect = kld_16(buffer + BPB_TotSec16);			/* Number of sectors on the volume */
-    if (tsect == 0) tsect = kld_32(buffer + BPB_TotSec32);
+        tsect = kld_16(buffer + BPB_TotSec16);			/* Number of sectors on the volume */
+        if (tsect == 0) tsect = kld_32(buffer + BPB_TotSec32);
 
-    nrsv = kld_16(buffer + BPB_RsvdSecCnt);			/* Number of reserved sectors */
-    if (nrsv == 0) return 3;			/* (Must not be 0) */
+        nrsv = kld_16(buffer + BPB_RsvdSecCnt);			/* Number of reserved sectors */
+        if (nrsv == 0) return PARTITION_TYPE_UNKNOWN;			/* (Must not be 0) */
 
-    /* Determine the FAT sub type */
-    sysect = nrsv + fasize + fs_n_rootdir / (512 / SZDIRE);	/* RSV + FAT + DIR */
-    if (tsect < sysect) return 3;	/* (Invalid volume size) */
-    nclst = (tsect - sysect) / fs_csize;			/* Number of clusters */
-    if (nclst == 0) return 3;		/* (Invalid volume size) */
-    if (nclst <= MAX_FAT32) return PARTITION_TYPE_FAT32;
-    if (nclst <= MAX_FAT16) return PARTITION_TYPE_FAT16;
-    if (nclst <= MAX_FAT12) return PARTITION_TYPE_FAT12;
-    return 3; 
+        /* Determine the FAT sub type */
+        sysect = nrsv + fasize + fs_n_rootdir / (512 / SZDIRE);	/* RSV + FAT + DIR */
+        if (tsect < sysect) return PARTITION_TYPE_UNKNOWN;	/* (Invalid volume size) */
+        nclst = (tsect - sysect) / fs_csize;			/* Number of clusters */
+        if (nclst == 0) return PARTITION_TYPE_UNKNOWN;		/* (Invalid volume size) */
+        uint8_t FST = PARTITION_TYPE_UNKNOWN;
+        if (nclst <= MAX_FAT32) FST = PARTITION_TYPE_FAT32;
+        if (nclst <= MAX_FAT16) FST = PARTITION_TYPE_FAT16;
+        if (nclst <= MAX_FAT12) FST = PARTITION_TYPE_FAT12;
+        return FST;
+    }
 }
