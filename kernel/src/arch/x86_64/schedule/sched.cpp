@@ -181,11 +181,6 @@ namespace Schedule{
     }
 
     thread* ProcAddELFThread(process* proc, char* path){
-        thread* t = Schedule::ProcAddThread(proc,nullptr,false);
-        vfs_node* node = vfs_open(proc->current_dir, path);
-        u8* buffer = (u8*)kmalloc(node->size);
-        vfs_read(node, buffer, node->size);
-        t->ctx.rip = _x86_64_ELF_Load(buffer, t->pm);
-        return t;
+        return nullptr;
     }
 }

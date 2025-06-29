@@ -12,7 +12,7 @@ u8 keyboard_state = 0; // 0 = nothing, 1 = pressed 2 = released
 
 fifo *keyboard_fifo;
 
-vfs_node *kb_node = NULL;
+//vfs_node *kb_node = NULL;
 
 atomic_lock kb_lock;
 
@@ -110,13 +110,13 @@ void keyboard_handler(registers *regs)
     LAPIC::EOI();
 }
 
-i32 keyboard_read(struct vfs_node *vnode, u8 *buffer, u32 count)
+/*i32 keyboard_read(struct vfs_node *vnode, u8 *buffer, u32 count)
 {
     (void)vnode;
     (void)count;
     FIFO::Pop(keyboard_fifo, buffer);
     return sizeof(keyboard_event);
-}
+}*/
 
 void keyboard_init()
 {
@@ -145,6 +145,8 @@ void keyboard_init()
     }
 
     keyboard_fifo = FIFO::Create(256, sizeof(keyboard_event));
+    
+    /*
     kb_node = (vfs_node *)kmalloc(sizeof(vfs_node));
     kb_node->name = (char *)kmalloc(9);
     __memcpy(kb_node->name, "keyboard", 9);
@@ -156,6 +158,7 @@ void keyboard_init()
     kb_node->size = 1;
     kb_node->type = VFS_DEVICE;
     //Dev::Add(kb_node);
+    */
 
     irq_register(1, keyboard_handler);
     inb(0x60);

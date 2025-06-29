@@ -64,8 +64,8 @@ typedef struct process {
 
     u8 type; // Idle, Kernel or User?
 
-    vfs_node* current_dir;
-    file_descriptor fds[256];
+    vfs_tnode_t* current_dir;
+    vfs_node_desc_t fds[256];
     u16 fd_idx;
 
     atomic_lock lock;
