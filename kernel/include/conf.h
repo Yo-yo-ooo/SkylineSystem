@@ -10,4 +10,5 @@
 #define VFS_MAX_NAME_LEN    256
 #define VFS_BLOCK_SIZE      512
 
-//#define _SYS_DEBUG_
+//#define _SYS_DEBUG_OUT
+#define _SYS_DEBUG

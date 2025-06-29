@@ -373,3 +373,27 @@ uint32_t strlen(const char* str) {
     }
     return i;
 }
+
+int32_t atoi(char *str) {
+    int32_t result = 0;
+    int32_t neg_multiplier = 1;
+
+    // Scrub leading whitespace
+    while (*str && (
+            (*str == ' ') ||
+            (*str == '\t'))) 
+        str++;
+
+    // Check for negative
+    if (*str && *str == '-') {
+        neg_multiplier = -1;
+        str++;
+    }
+
+    // Do number
+    for (; *str && isdigit(*str); str++) {
+        result = (result * 10) + (*str - '0');
+    }
+
+    return result * neg_multiplier;
+}

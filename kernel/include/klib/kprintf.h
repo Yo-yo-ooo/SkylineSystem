@@ -78,7 +78,7 @@ int kinfo(const char* format, ...);
 int kwarn(const char* format, ...);
 int kerror(const char* format, ...);
 
-#ifdef _SYS_DEBUG_
+#ifdef _SYS_DEBUG_OUT
 int debugpln(const char* format, ...);
 #else 
 #define debugpln

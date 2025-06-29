@@ -38,3 +38,4 @@ int strncmp(const char* a, const char* b, size_t n);
 char *strncpy(char *dest, const char *src, size_t n);
 char* strcat(char* dest, const char* source);
 uint32_t strlen(const char* str);
+int32_t atoi(char *str);

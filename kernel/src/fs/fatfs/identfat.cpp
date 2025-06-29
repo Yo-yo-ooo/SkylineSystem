@@ -70,17 +70,21 @@ static uint64_t _InFile_clst2sect (	/* !=0:Sector number, 0:Failed (invalid clus
 	return fs_database + (uint64_t)fs_csize * clst;	/* Start sector number of the cluster */
 }
 
-FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
+FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool IsDebug){
     uint64_t nclst;
     uint64_t PStart;
     uint8_t buffer[36];
     char FSName[8];
     uint32_t fasize,tsect,sysect;
     uint16_t nrsv;
-    Dev::SetSDev(DriverID);
-    if(GetPartitionStart(DriverID,PartitionID,PStart) != 0){
-        return {PARTITION_TYPE_UNKNOWN,5};
-    }elif(Dev::ReadBytes(PStart + 3,8,FSName) == false){
+    if(IsDebug == true)
+        PStart = 0;
+    else{
+        Dev::SetSDev(DriverID);
+        if(GetPartitionStart(DriverID,PartitionID,PStart) != 0)
+            return {PARTITION_TYPE_UNKNOWN,5};
+    }
+    if(Dev::ReadBytes(PStart + 3,8,FSName) == false){
             return {PARTITION_TYPE_UNKNOWN,6};
     /*A simple check of exfat 
     Some Partition may not write "EXFAT   " 

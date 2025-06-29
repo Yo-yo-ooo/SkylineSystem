@@ -6,6 +6,8 @@
 #include <fs/fatfs/identfat.h>
 #include <fs/lwext4/ext4.h>
 
+#include <conf.h>
+
 FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
     /*
     uint64_t *PartitionStart;
@@ -42,9 +44,15 @@ FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
     if(IdentifyExtx(DriverID,PartitionID).ErrorCode != 0 &&
         IdentifyExtx(DriverID,PartitionID).TypeID != PARTITION_TYPE_UNKNOWN)
         return IdentifyExtx(DriverID,PartitionID).TypeID;
-    elif(IdentifyFat(DriverID,PartitionID).ErrorCode != 0 &&
-        IdentifyFat(DriverID,PartitionID).TypeID != PARTITION_TYPE_UNKNOWN)
-        return IdentifyFat(DriverID,PartitionID).TypeID;
+#ifdef _SYS_DEBUG
+    elif(IdentifyFat(DriverID,PartitionID,true).ErrorCode != 0 &&
+        IdentifyFat(DriverID,PartitionID,true).TypeID != PARTITION_TYPE_UNKNOWN)
+        return IdentifyFat(DriverID,PartitionID,true).TypeID;
+#else
+    elif(IdentifyFat(DriverID,PartitionID,false).ErrorCode != 0 &&
+        IdentifyFat(DriverID,PartitionID,false).TypeID != PARTITION_TYPE_UNKNOWN)
+        return IdentifyFat(DriverID,PartitionID,false).TypeID;
+#endif
     else
         return PARTITION_TYPE_UNKNOWN;
 }

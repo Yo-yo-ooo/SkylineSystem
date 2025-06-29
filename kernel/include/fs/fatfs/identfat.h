@@ -9,6 +9,6 @@
 #include <partition/mbrgpt.h>
 #include <partition/identfstype.h>
 
-FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID);
+FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool IsDebug);
 
 #endif

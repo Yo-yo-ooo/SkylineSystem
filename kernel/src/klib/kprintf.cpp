@@ -909,7 +909,7 @@ int kinfoln(const char* format, ...)
 #endif
 }
 
-#ifdef _SYS_DEBUG_
+#ifdef _SYS_DEBUG_OUT
 int debugpln(const char* format, ...){
 #if PRINT_INFORMATION_ == 1
     kprintf("[\033[38;2;0;255;255mINFO\033[0m] ");
