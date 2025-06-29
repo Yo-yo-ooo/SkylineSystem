@@ -252,6 +252,16 @@ namespace Dev{
             return false;
         }
     }
+
+
+    vfs_node* FindDir(vfs_node* vnode,char *path){
+        for(uint32_t i = 0;i < vsdev_list_idx;i++){
+            if(!strcmp(DevList_[i].Name,path)){
+                vfs_node *p;
+                //p->read = DevList_[i].ops.Read;
+            }
+        }
+    }
 }
 
 #pragma GCC pop_options

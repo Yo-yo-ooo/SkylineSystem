@@ -77,11 +77,10 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     char FSName[8];
     uint32_t fasize,tsect,sysect;
     uint16_t nrsv;
+    Dev::SetSDev(DriverID);
     if(GetPartitionStart(DriverID,PartitionID,PStart) != 0){
         return {PARTITION_TYPE_UNKNOWN,5};
-    }elif(Dev::DevList_[DriverID].ops.ReadBytes(
-            Dev::DevList_[DriverID].classp,
-            PStart + 3,8,FSName) == false){
+    }elif(Dev::ReadBytes(PStart + 3,8,FSName) == false){
             return {PARTITION_TYPE_UNKNOWN,6};
     /*A simple check of exfat 
     Some Partition may not write "EXFAT   " 
@@ -90,9 +89,7 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     }elif(strcmp(FSName,"EXFAT   ") == 0){
             return {PARTITION_TYPE_EXFAT,0};
     }else{
-        if(Dev::DevList_[DriverID].ops.ReadBytes(
-            Dev::DevList_[DriverID].classp,
-            PStart,36,buffer) == false)
+        if(Dev::ReadBytes(PStart,36,buffer) == false)
             return {PARTITION_TYPE_UNKNOWN,6};
 
 //check_eexfat: /*Check FS type except ExFat*/

@@ -35,10 +35,10 @@ typedef struct vfs_node {
     u64(*poll)(struct vfs_node* vnode);
 } vfs_node;
 
-typedef struct {
+typedef struct vfs_DIR{
     vfs_node* node;
     u32 current_index;
-} DIR; // For syscalls
+} vfs_DIR; // For syscalls
 
 typedef struct {
     vfs_node* vnode;

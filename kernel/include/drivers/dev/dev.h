@@ -6,6 +6,8 @@
 #include <klib/klib.h>
 #include <conf.h>
 
+#include <fs/vfs.h>
+
 typedef enum VsDevType
 {
     SATA = 0,
@@ -24,6 +26,7 @@ typedef struct DevOPS{ //存储器抽象层
     u8 (*ReadBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     u8 (*WriteBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     uint32_t (*GetMaxSectorCount)(void*);
+
 }DevOPS;
 
 typedef struct DevList{
@@ -63,6 +66,8 @@ namespace Dev
     u8 Write(uint64_t lba, uint32_t SectorCount, void* Buffer);
     u8 ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
     u8 WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
+
+    vfs_node* FindDir(vfs_node* vnode,char *path);
 };
 
 

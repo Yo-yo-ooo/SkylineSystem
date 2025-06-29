@@ -8,7 +8,8 @@ uint8_t IdentifyMBR(uint32_t DriverID){
     
     DevList ThisInfo = Dev::DevList_[DriverID];
     MBR_DPT dpt; 
-    if(ThisInfo.ops.ReadBytes(ThisInfo.classp,MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
+    Dev::SetSDev(DriverID);
+    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
         return 2;
     if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
         return 3;
@@ -25,20 +26,18 @@ uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t Partit
     DevList ThisInfo = Dev::DevList_[DriverID];
     MBR_DPT dpt; 
     uint32_t buffer;
-    if(ThisInfo.ops.ReadBytes(ThisInfo.classp,MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
+    Dev::SetSDev(DriverID);
+    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
         return 2;
         //80
-    if(ThisInfo.ops.ReadBytes(ThisInfo.classp,
-        MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET,4,&buffer) == false)
+    if(Dev::ReadBytes(MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET,4,&buffer) == false)
         return 3;
 
     if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
         if(PartitionID > buffer)
             return 4;
         GPT_PTE gptpte;
-        if(
-            ThisInfo.ops.ReadBytes(ThisInfo.classp,
-                GPT_PARTITION_TABLE_OFFSET + PartitionID * 128,
+        if(Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + PartitionID * 128,
                 128,&gptpte) == false)
                 return 5;
         PartitionStart = gptpte.PartitionStart;
@@ -55,8 +54,8 @@ uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t Partit
         __memcpy(member, table_start + number * member_sz, member_sz);
         */
         MBR_DPT buffer2;
-        if(ThisInfo.ops.ReadBytes(ThisInfo.classp,
-            MBR_PARTITION_TABLE_OFFSET + PartitionID * 16,
+        //Dev::SetSDev(DriverID);
+        if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + PartitionID * 16,
             16,&buffer2) == false)
             return 7;
         
