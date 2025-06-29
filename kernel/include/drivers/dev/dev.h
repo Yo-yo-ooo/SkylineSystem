@@ -16,7 +16,7 @@ typedef enum VsDevType
     NSDEV //Not Storage Device
 }VsDevType;
 
-typedef struct SALOPS{ //存储器抽象层
+typedef struct DevOPS{ //存储器抽象层
     u8 (*Read)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
     u8 (*Write)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
 
@@ -24,12 +24,12 @@ typedef struct SALOPS{ //存储器抽象层
     u8 (*ReadBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     u8 (*WriteBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     uint32_t (*GetMaxSectorCount)(void*);
-}SALOPS;
+}DevOPS;
 
-typedef struct VsDevList{
+typedef struct DevList{
     atomic_lock lock;
     VsDevType type;
-    SALOPS ops;
+    DevOPS ops;
     char* Name;
     u64 MaxSectorCount;    //按照SectorSize计
     u64 SectorSize;
@@ -37,13 +37,13 @@ typedef struct VsDevList{
     void* classp; //class pointer
 }VDL;
 
-typedef struct VsDevList VsDevInfo;
+typedef struct DevList VsDevInfo;
 
 
 namespace Dev
 {
 
-    extern VsDevList DevList[MAX_VSDEV_COUNT];
+    extern VDL DevList_[MAX_VSDEV_COUNT];
     extern uint32_t vsdev_list_idx;
 
     constexpr u8 RW_OK = 1;
@@ -52,7 +52,7 @@ namespace Dev
     void Init();
 
     char* TypeToString(VsDevType type);
-    void AddStorageDevice(VsDevType type,SALOPS ops,
+    void AddStorageDevice(VsDevType type,DevOPS ops,
         u32 SectorCount = 0,void* Class = nullptr);
     /*获取存储器的相关信息*/
     VsDevInfo GetSDEV(u32 idx);

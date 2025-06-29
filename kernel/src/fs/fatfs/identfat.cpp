@@ -79,8 +79,8 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     uint16_t nrsv;
     if(GetPartitionStart(DriverID,PartitionID,PStart) != 0){
         return {PARTITION_TYPE_UNKNOWN,5};
-    }elif(Dev::DevList[DriverID].ops.ReadBytes(
-            Dev::DevList[DriverID].classp,
+    }elif(Dev::DevList_[DriverID].ops.ReadBytes(
+            Dev::DevList_[DriverID].classp,
             PStart + 3,8,FSName) == false){
             return {PARTITION_TYPE_UNKNOWN,6};
     /*A simple check of exfat 
@@ -90,8 +90,8 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     }elif(strcmp(FSName,"EXFAT   ") == 0){
             return {PARTITION_TYPE_EXFAT,0};
     }else{
-        if(Dev::DevList[DriverID].ops.ReadBytes(
-            Dev::DevList[DriverID].classp,
+        if(Dev::DevList_[DriverID].ops.ReadBytes(
+            Dev::DevList_[DriverID].classp,
             PStart,36,buffer) == false)
             return {PARTITION_TYPE_UNKNOWN,6};
 

@@ -30,8 +30,8 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
     RemoveFromStack();
 
     AddToStack();
-    SALOPS ops;
-    _memset(&ops, 0, sizeof(SALOPS));
+    DevOPS ops;
+    _memset(&ops, 0, sizeof(DevOPS));
     ops.Read = CFCast<decltype(ops.Read)>(&SataDiskInterface::FRegVsDEV_R);
     ops.Write = CFCast<decltype(ops.Write)>(&SataDiskInterface::FRegVsDEV_W);
     ops.ReadBytes = CFCast<decltype(ops.ReadBytes)>(&SataDiskInterface::FRegVsDEV_Rb);

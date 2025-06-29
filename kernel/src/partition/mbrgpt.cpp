@@ -6,7 +6,7 @@ uint8_t IdentifyMBR(uint32_t DriverID){
     if(DriverID > Dev::vsdev_list_idx)
         return 1; //DriverID ERR
     
-    VsDevList ThisInfo = Dev::DevList[DriverID];
+    DevList ThisInfo = Dev::DevList_[DriverID];
     MBR_DPT dpt; 
     if(ThisInfo.ops.ReadBytes(ThisInfo.classp,MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
         return 2;
@@ -22,7 +22,7 @@ uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t Partit
     if(DriverID > Dev::vsdev_list_idx)
         return 1; //DriverID ERR
     
-    VsDevList ThisInfo = Dev::DevList[DriverID];
+    DevList ThisInfo = Dev::DevList_[DriverID];
     MBR_DPT dpt; 
     uint32_t buffer;
     if(ThisInfo.ops.ReadBytes(ThisInfo.classp,MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)

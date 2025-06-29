@@ -164,8 +164,8 @@ struct ext4_blockdev *ext4_blockdev_get(u32 which)
 struct ext4_blockdev *ext4_blockdev_get(const char* mname)
 {
     for(uint32_t i = 0;i < Dev::vsdev_list_idx;i++){
-        if(strcmp(Dev::DevList[i].Name,mname) == 0){
-            ThisInfo = Dev::DevList[i];
+        if(strcmp(Dev::DevList_[i].Name,mname) == 0){
+            ThisInfo = Dev::DevList_[i];
             blockdev.block_reg_idx = i;
         }
     }
