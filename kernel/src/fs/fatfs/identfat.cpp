@@ -1,6 +1,6 @@
 #include <fs/fatfs/ff.h>
 #include <klib/klib.h>
-#include <drivers/vsdev/vsdev.h>
+#include <drivers/dev/dev.h>
 #include <fs/fatfs/identfat.h>
 
 #undef MAX_FAT12
@@ -79,8 +79,8 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     uint16_t nrsv;
     if(GetPartitionStart(DriverID,PartitionID,PStart) != 0){
         return {PARTITION_TYPE_UNKNOWN,5};
-    }elif(VsDev::DevList[DriverID].ops.ReadBytes(
-            VsDev::DevList[DriverID].classp,
+    }elif(Dev::DevList[DriverID].ops.ReadBytes(
+            Dev::DevList[DriverID].classp,
             PStart + 3,8,FSName) == false){
             return {PARTITION_TYPE_UNKNOWN,6};
     /*A simple check of exfat 
@@ -90,8 +90,8 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID){
     }elif(strcmp(FSName,"EXFAT   ") == 0){
             return {PARTITION_TYPE_EXFAT,0};
     }else{
-        if(VsDev::DevList[DriverID].ops.ReadBytes(
-            VsDev::DevList[DriverID].classp,
+        if(Dev::DevList[DriverID].ops.ReadBytes(
+            Dev::DevList[DriverID].classp,
             PStart,36,buffer) == false)
             return {PARTITION_TYPE_UNKNOWN,6};
 

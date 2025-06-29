@@ -12,7 +12,7 @@
 #include <fs/fatfs/ffconf.h>		/* Declarations of disk functions */
 #include <drivers/Disk_Interfaces/ram/ramDiskInterface.h>
 #include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
-#include <drivers/vsdev/vsdev.h>
+#include <drivers/dev/dev.h>
 /* Definitions of physical drive number for each drive */
 #define DEV_RAM		0	/* Example: Map Ramdisk to physical drive 0 */
 #define DEV_MMC		1	/* Example: Map MMC/SD card to physical drive 1 */
@@ -87,11 +87,11 @@ DRESULT disk_read (
 	DRESULT res;
 	int result;
 
-    if(pdrv > VsDev::vsdev_list_idx)
+    if(pdrv > Dev::vsdev_list_idx)
         return RES_ERROR;
 
-	VsDev::SetSDev(pdrv);
-    if(VsDev::Read(sector, count, buff) == VsDev::RW_OK)
+	Dev::SetSDev(pdrv);
+    if(Dev::Read(sector, count, buff) == Dev::RW_OK)
         return RES_OK;
     else
         return RES_ERROR;
@@ -115,11 +115,11 @@ DRESULT disk_write (
 	DRESULT res;
 	int result;
 
-    if(pdrv > VsDev::vsdev_list_idx)
+    if(pdrv > Dev::vsdev_list_idx)
         return RES_ERROR;
 
-	VsDev::SetSDev(pdrv);
-    if(VsDev::Write(sector, count, buff) == VsDev::RW_OK)
+	Dev::SetSDev(pdrv);
+    if(Dev::Write(sector, count, buff) == Dev::RW_OK)
         return RES_OK;
     else
         return RES_ERROR;
@@ -141,7 +141,7 @@ DRESULT disk_ioctl (
 	DRESULT res;
 	int result;
 
-	if(pdrv > VsDev::vsdev_list_idx)
+	if(pdrv > Dev::vsdev_list_idx)
         return RES_ERROR;
 
 	return RES_OK;

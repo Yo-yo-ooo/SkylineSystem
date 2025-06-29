@@ -3499,8 +3499,8 @@ FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID){
         return {PARTITION_TYPE_UNKNOWN,5};
     }else{
         struct ext4_sblock sb;
-        if(VsDev::DevList[DriverID].ops.ReadBytes(
-            VsDev::DevList[DriverID].classp,
+        if(Dev::DevList[DriverID].ops.ReadBytes(
+            Dev::DevList[DriverID].classp,
             PStart + EXT4_SUPERBLOCK_OFFSET,
             EXT4_SUPERBLOCK_SIZE,&sb) == false)
             return {PARTITION_TYPE_UNKNOWN,6};

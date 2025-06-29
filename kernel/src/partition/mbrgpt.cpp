@@ -1,12 +1,12 @@
 #include <partition/mbrgpt.h>
-#include <drivers/vsdev/vsdev.h>
+#include <drivers/dev/dev.h>
 #include <mem/heap.h>
 
 uint8_t IdentifyMBR(uint32_t DriverID){
-    if(DriverID > VsDev::vsdev_list_idx)
+    if(DriverID > Dev::vsdev_list_idx)
         return 1; //DriverID ERR
     
-    VsDevList ThisInfo = VsDev::DevList[DriverID];
+    VsDevList ThisInfo = Dev::DevList[DriverID];
     MBR_DPT dpt; 
     if(ThisInfo.ops.ReadBytes(ThisInfo.classp,MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
         return 2;
@@ -19,10 +19,10 @@ uint8_t IdentifyMBR(uint32_t DriverID){
 }
 
 uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart){
-    if(DriverID > VsDev::vsdev_list_idx)
+    if(DriverID > Dev::vsdev_list_idx)
         return 1; //DriverID ERR
     
-    VsDevList ThisInfo = VsDev::DevList[DriverID];
+    VsDevList ThisInfo = Dev::DevList[DriverID];
     MBR_DPT dpt; 
     uint32_t buffer;
     if(ThisInfo.ops.ReadBytes(ThisInfo.classp,MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)

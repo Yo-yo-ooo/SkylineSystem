@@ -1,7 +1,7 @@
 #include <arch/x86_64/allin.h>
 #include <drivers/keyboard/x86/keyboard.h>
 #include <drivers/keyboard/x86/keyboard_map.h>
-#include <drivers/dev/dev.h>
+//#include <drivers/dev/dev.h>
 
 bool keyboard_pressed = false;
 
@@ -155,7 +155,7 @@ void keyboard_init()
     kb_node->finddir = 0;
     kb_node->size = 1;
     kb_node->type = VFS_DEVICE;
-    Dev::Add(kb_node);
+    //Dev::Add(kb_node);
 
     irq_register(1, keyboard_handler);
     inb(0x60);

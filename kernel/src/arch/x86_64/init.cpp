@@ -3,9 +3,9 @@
 #include <drivers/ahci/ahci.h>
 #include <drivers/ata/ata.h>
 #include <drivers/keyboard/x86/keyboard.h>
-#include <drivers/vsdev/vsdev.h>
-#include <fs/vfs.h>
 #include <drivers/dev/dev.h>
+#include <fs/vfs.h>
+//#include <drivers/dev/dev.h>
 #include <fs/lwext4/ext4.h>
 #include <fs/lwext4/blockdev/blockdev.h>
 
@@ -67,14 +67,14 @@ void __init x86_64_init(void){
     Schedule::Init();
     user_init();
     LAPIC::CalibrateTimer();
-    InitFunc("VsDev",VsDev::Init());
+    InitFunc("VsDev",Dev::Init());
     //InitFunc("ATA",ATA::Init());
     if(ACPI::mcfg == NULL)
         PCI::DoPCIWithoutMCFG();
     InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));
     InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
 
-    InitFunc("Dev",Dev::Init());
+    //InitFunc("Dev",Dev::Init());
     InitFunc("KEYBOARD(x86)",keyboard_init());
 
     if(!ext4_kernel_init("sata0","/mp/")){hcf();}

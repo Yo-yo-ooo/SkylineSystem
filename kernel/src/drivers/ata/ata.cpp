@@ -1,5 +1,5 @@
 #include <drivers/ata/ata.h>
-#include <drivers/vsdev/vsdev.h>
+#include <drivers/dev/dev.h>
 
 u16 ata_base = 0;
 u8 ata_type = 0;
@@ -81,16 +81,16 @@ u8 Read(u32 lba, u8* buffer, u32 sector_count) {
 
 u8 FRegVsDEV_R(uint64_t lba, uint32_t SectorCount, void* Buffer){
     if(ATA::Read(lba,Buffer, SectorCount) == ATA_OKAY)
-        return VsDev::RW_OK;
+        return Dev::RW_OK;
     else 
-        return VsDev::RW_ERROR;
+        return Dev::RW_ERROR;
 }
 
 u8 FRegVsDEV_W(uint64_t lba, uint32_t SectorCount, void* Buffer){
     if(ATA::Write(lba, Buffer,SectorCount) == ATA_OKAY)
-        return VsDev::RW_OK;
+        return Dev::RW_OK;
     else 
-        return VsDev::RW_ERROR;
+        return Dev::RW_ERROR;
 }
 
 u8 Write(u32 lba, u8* buffer, u32 sector_count) {
@@ -129,7 +129,7 @@ u8 Init() {
     ops.ReadBytes = nullptr;
     ops.WriteBytes = nullptr;
     ops.GetMaxSectorCount = nullptr;
-    VsDev::AddStorageDevice(VsDevType::IDE, ops);
+    Dev::AddStorageDevice(VsDevType::IDE, ops);
     return ata_status;
 }
 }

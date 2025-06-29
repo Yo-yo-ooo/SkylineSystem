@@ -1,7 +1,7 @@
 #include <partition/identfstype.h>
 #include <limits.h>
 #include <mem/heap.h>
-#include <drivers/vsdev/vsdev.h>
+#include <drivers/dev/dev.h>
 
 #include <fs/fatfs/identfat.h>
 #include <fs/lwext4/ext4.h>
@@ -14,7 +14,7 @@ FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
         uint8_t i = 0;
         uint32_t SectorsInPartition;
         for(i;i < 4;i++){
-            if(VsDev::DevList[DriverID].ops.ReadBytes(VsDev::DevList[DriverID].classp,
+            if(Dev::DevList[DriverID].ops.ReadBytes(Dev::DevList[DriverID].classp,
                 MBR_PARTITION_TABLE_OFFSET + i * 16 + 12,
                 4,&SectorsInPartition) == false)
                 return {PARTITION_TYPE_UNKNOWN,1};
@@ -28,7 +28,7 @@ FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
         PartitionCount = i;
     }else{
         //uint32_t PartitionCount;
-        if(VsDev::DevList[DriverID].ops.ReadBytes(VsDev::DevList[DriverID].classp,
+        if(Dev::DevList[DriverID].ops.ReadBytes(Dev::DevList[DriverID].classp,
         MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET,4,&PartitionCount) == false)
             return {PARTITION_TYPE_UNKNOWN,3};
         PartitionStart = (uint64_t*)kmalloc(PartitionCount * sizeof(uint64_t));

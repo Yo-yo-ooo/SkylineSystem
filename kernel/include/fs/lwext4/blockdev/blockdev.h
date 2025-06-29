@@ -62,7 +62,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "../../../drivers/vsdev/vsdev.h"
+#include <drivers/dev/dev.h>
 
 /*
 int blockdev_open(struct ext4_blockdev *bdev);

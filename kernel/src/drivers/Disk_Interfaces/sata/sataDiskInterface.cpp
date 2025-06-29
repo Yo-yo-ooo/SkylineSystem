@@ -5,7 +5,7 @@
 #include <arch/x86_64/allin.h>
 #endif
 #include <drivers/ahci/ahci.h>
-#include <drivers/vsdev/vsdev.h>
+#include <drivers/dev/dev.h>
 
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
@@ -37,37 +37,37 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
     ops.ReadBytes = CFCast<decltype(ops.ReadBytes)>(&SataDiskInterface::FRegVsDEV_Rb);
     ops.WriteBytes = CFCast<decltype(ops.WriteBytes)>(&SataDiskInterface::FRegVsDEV_Wb);
     ops.GetMaxSectorCount = CFCast<decltype(ops.GetMaxSectorCount)>(&SataDiskInterface::GetMaxSectorCount);
-    VsDev::AddStorageDevice(VsDevType::SATA, ops,SectorCount,this);
+    Dev::AddStorageDevice(VsDevType::SATA, ops,SectorCount,this);
     RemoveFromStack();
 
 }
 
 u8 SataDiskInterface::FRegVsDEV_R(uint64_t lba, uint32_t SectorCount, void* Buffer){
     if(Read(lba, SectorCount, Buffer) == true)
-        return VsDev::RW_OK;
+        return Dev::RW_OK;
     else 
-        return VsDev::RW_ERROR;
+        return Dev::RW_ERROR;
 }
 
 u8 SataDiskInterface::FRegVsDEV_W(uint64_t lba, uint32_t SectorCount, void* Buffer){
     if(Write(lba, SectorCount, Buffer) == true)
-        return VsDev::RW_OK;
+        return Dev::RW_OK;
     else 
-        return VsDev::RW_ERROR;
+        return Dev::RW_ERROR;
 }
 
 u8 SataDiskInterface::FRegVsDEV_Wb(uint64_t address, uint64_t count, void* buffer){
     if(WriteBytes(address, count, buffer) == true)
-        return VsDev::RW_OK;
+        return Dev::RW_OK;
     else 
-        return VsDev::RW_ERROR;
+        return Dev::RW_ERROR;
 }
 
 u8 SataDiskInterface::FRegVsDEV_Rb(uint64_t address, uint64_t count, void* buffer){
     if(ReadBytes(address, count, buffer) == true)
-        return VsDev::RW_OK;
+        return Dev::RW_OK;
     else 
-        return VsDev::RW_ERROR;
+        return Dev::RW_ERROR;
 }
 
 bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
