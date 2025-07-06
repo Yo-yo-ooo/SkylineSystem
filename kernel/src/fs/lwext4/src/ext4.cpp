@@ -3428,9 +3428,9 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
 
     ext4_file f;
 
-    kprintf("file_test:\n");
-    kprintf("  rw size: %" PRIu32 "\n", rw_size);
-    kprintf("  rw count: %" PRIu32 "\n", rw_count);
+    debugpln("file_test:\n");
+    debugpln("  rw size: %" PRIu32 "\n", rw_size);
+    debugpln("  rw count: %" PRIu32 "\n", rw_count);
 
     /*Add hello world file.*/
     r = ext4_fopen(&f, "/mp/hello.txt", "wb");
@@ -3439,28 +3439,28 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
 
     r = ext4_fopen(&f, "/mp/test1", "wb");
     if (r != EOK) {
-        kprintf("ext4_fopen ERROR = %d\n", r);
+        kerror("ext4_fopen ERROR = %d\n", r);
         return false;
     }
 
-    kprintf("ext4_write: %" PRIu32 " * %" PRIu32 " ...\n", rw_size,
+    debugpln("ext4_write: %" PRIu32 " * %" PRIu32 " ...\n", rw_size,
            rw_count);
     for (i = 0; i < rw_count; ++i) {
 
-        kwarn(" i % 10 + '0':%d\n", i % 10 + '0');
+        debugpln(" i % 10 + '0':%d\n", i % 10 + '0');
         //kprintf("size:%d",size);
         _memset(rw_buff, i % 10 + '0', rw_size);
 
         r = ext4_fwrite(&f, rw_buff, rw_size, &size);
-        kprintf("r:%d\n",r);
-        kprintf("size:%d\n",size);
+        debugpln("r:%d\n",r);
+        debugpln("size:%d\n",size);
 
         if ((r != EOK) || (size != rw_size))
             break;
     }
 
     if (i != rw_count) {
-        kprintf("  file_test: rw_count = %" PRIu32 "\n", i);
+        kerror("  file_test: rw_count = %" PRIu32 "\n", i);
         return false;
     }
 
@@ -3468,24 +3468,24 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
 
     r = ext4_fopen(&f, "/mp/test1", "r+");
     if (r != EOK) {
-        kprintf("ext4_fopen ERROR = %d\n", r);
+        kerror("ext4_fopen ERROR = %d\n", r);
         return false;
     }
 
-    kprintf("ext4_read: %" PRIu32 " * %" PRIu32 " ...\n", rw_size, rw_count);
+    debugpln("ext4_read: %" PRIu32 " * %" PRIu32 " ...\n", rw_size, rw_count);
 
     for (i = 0; i < rw_count; ++i) {
         r = ext4_fread(&f, rw_buff, rw_size, &size);
 
         if ((r != EOK) || (size != rw_size))
             break;
-        kinfo("%s\n",rw_buff);
+        //kinfo("%s\n",rw_buff);
         if (ext4_verify_buf(rw_buff, rw_size, i % 10 + '0'))
             break;
     }
 
     if (i != rw_count) {
-        kprintf("  file_test: i(%" PRIu32 ") != rw_count \n", i);
+        kerror("  file_test: i(%" PRIu32 ") != rw_count \n", i);
         return false;
     }
 

@@ -2,7 +2,7 @@
 
 ## Features(x86_64)
 
-![SkylineSystem](image.png)
+![SkylineSystemImage](image.png)
 
 * Devices
   * AHCI

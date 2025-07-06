@@ -83,5 +83,5 @@ void __init x86_64_init(void){
 
     uint8_t buf[12] = "Hello WORLD";
     if(test_lwext4_file_test(buf,strlen(buf),2) == true)
-        kpok("YESSSSSSSSSSSSSSSSS\n");
+        kpok("[Ext4 Test?]YESSSSSSSSSSSSSSSSS\n");
 }
