@@ -2,6 +2,8 @@
 
 ## Features(x86_64)
 
+![SkylineSystem](image.png)
+
 * Devices
   * AHCI
   * IDE
@@ -17,6 +19,15 @@
 * Disk Interfaces
   * Sata
   * Ram
+
+* File Systems Support
+  * Fat12
+  * Fat16
+  * Fat32
+  * Exfat
+  * ext2/3/4
+
+* Dynamic File System Type Check(get_fs_type!)
 
 Many more in future
 
