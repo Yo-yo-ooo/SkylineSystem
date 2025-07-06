@@ -3493,11 +3493,16 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
     return true;
 }
 
-FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID){
+FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool IsDebug){
     uint64_t PStart;
+    if(IsDebug == true){
+        PStart = 0;
+        goto Identify;
+    }
     if(GetPartitionStart(DriverID,PartitionID,PStart)){
         return {PARTITION_TYPE_UNKNOWN,5};
     }else{
+Identify:
         struct ext4_sblock sb;
         Dev::SetSDev(DriverID);
         if(Dev::ReadBytes(

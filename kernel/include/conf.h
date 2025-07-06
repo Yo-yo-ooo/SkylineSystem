@@ -11,4 +11,13 @@
 #define VFS_BLOCK_SIZE      512
 
 //#define _SYS_DEBUG_OUT
-#define _SYS_DEBUG
+
+//That means Just Have One File System Partition
+//and Partition start address is 0x0(Not have MBR or GPT)
+#define USE_VIRT_IMAGE
+
+#ifdef USE_VIRT_IMAGE
+#define ENABLE_VIRT_IMAGE true
+#else
+#define ENABLE_VIRT_IMAGE false
+#endif

@@ -3,6 +3,8 @@
 #include <klib/klib.h>
 #include <klib/time.h>
 
+//From HanOS
+
 struct vfs_inode_t;
 struct vfs_tnode_t;
 

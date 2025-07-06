@@ -27,3 +27,4 @@ Many more in future
 * [MicroOS](https://github.com/Glowman554/MicroOS)
 * [ZanOS](https://github.com/asterd-og/ZanOS/)
 * [MaslOS-2](https://github.com/marceldobehere/MaslOS-2/)
+* [HanOS](https://github.com/jjwang/HanOS/)

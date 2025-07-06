@@ -28,6 +28,9 @@
 #endif
 
 int _memcmp(const void *s1, const void *s2, size_t n);
+
+
+
 /*--------------------------------------------------------------------------
 
    Module Private Definitions
