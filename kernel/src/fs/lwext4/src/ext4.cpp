@@ -3493,9 +3493,9 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
     return true;
 }
 
-FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool IsDebug){
+FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image){
     uint64_t PStart;
-    if(IsDebug == true){
+    if(Use_Virt_Image == true){
         PStart = 0;
         goto Identify;
     }

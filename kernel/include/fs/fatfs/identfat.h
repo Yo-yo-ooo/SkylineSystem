@@ -19,6 +19,6 @@ typedef struct FatFsDesc{
     uint64_t Size;
 }FF_DESC;
 
-FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool IsDebug);
+FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image);
 
 #endif

@@ -52,15 +52,31 @@ FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
 }
 
 FF_DESC *fs_desc;
+uint8_t ff_count;
 
 bool FSAllIdentify(){
-    uint8_t ff_count;
+#ifdef USE_VIRT_IMAGE
+        fs_desc = (FF_DESC*)kmalloc(1 * sizeof(FF_DESC));
+        ff_count = 1;
+        fs_desc[0].FSType = IdentifyFSType(0,0);
+        fs_desc[0].DriverID = 0;
+        fs_desc[0].PartitionID = 0;
+        fs_desc[0].Prdv = 0;
+        fs_desc[0].PStart = 0;
+        for(uint32_t i = 0;i < Dev::vsdev_list_idx;i++){
+            if(Dev::DevList_[i].type != VsDevType::NSDEV
+            &&  Dev::DevList_[i].type != VsDevType::Undefined){
+                fs_desc[0].PEnd = Dev::DevList_[i].ops.GetMaxSectorCount(Dev::DevList_[i].classp) * 512;
+            }
+        }
+        fs_desc[0].Size = fs_desc[0].PEnd;
+#else
     fs_desc = (FF_DESC*)kmalloc(10 * sizeof(FF_DESC));
 
     for(uint32_t i = 0;i < Dev::vsdev_list_idx;i++){
         if(Dev::DevList_[i].type != VsDevType::NSDEV
         &&  Dev::DevList_[i].type != VsDevType::Undefined){
-            
+
             for(uint8_t j = 0;j < GetPartitionCount(i);j++){
                 uint8_t type = IdentifyFSType(i,j);
                 /*
@@ -89,9 +105,30 @@ bool FSAllIdentify(){
 
                 ff_count++;
             }
+
         }
+    }
+#endif
+    return true;
+}
+
+
+void FSPrintDesc(){
+    //uint8_t ff_count;
+
+    for(uint32_t i = 0;i < ff_count;i++){
+#define _IDENTIFY_KILN(info) kinfoln("%d",info);
+        _IDENTIFY_KILN(fs_desc[i].FSType)
+        _IDENTIFY_KILN(fs_desc[i].DriverID) 
+        _IDENTIFY_KILN(fs_desc[i].PartitionID )
+        _IDENTIFY_KILN(fs_desc[i].Prdv)
+        _IDENTIFY_KILN(fs_desc[i].PStart)
+        _IDENTIFY_KILN(fs_desc[i].PEnd)
+        _IDENTIFY_KILN(fs_desc[i].Size )
+#undef _IDENTIFY_KILN
     }
     return true;
 }
+
 
 //shutdown func:kfree(fs_desc);

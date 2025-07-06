@@ -30,3 +30,6 @@ typedef struct FS_TYPE_{
 }FS_TYPE;
 
 FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID);
+
+bool FSAllIdentify();
+void FSPrintDesc();
