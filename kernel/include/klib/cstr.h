@@ -30,7 +30,7 @@ unsigned long ConvertStringToLongHex(const char* data);
 
 char* StrCombine(const char* a, const char* b);
 
-int strcmp(const char *cs, const char *ct);
+uint8_t strcmp(const char *cs, const char *ct);
 char *strtok(char *str, const char *delim);
 char* strchr(char* str, int c);
 char *strcpy(char *strDest, const char *strSrc);

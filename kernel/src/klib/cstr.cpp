@@ -284,7 +284,7 @@ int64_t to_int(const char *string)
     return number;
 }
 
-int strcmp(const char *cs, const char *ct)
+uint8_t strcmp(const char *cs, const char *ct)
 {
     unsigned char c1, c2;
 
@@ -366,12 +366,9 @@ char *strncpy(char *dest, const char *src, size_t n) {
 }
 
 uint32_t strlen(const char* str) {
-    uint32_t i = 0;
-    while (*str != '\0') {
-        i++;
-        str++;
-    }
-    return i;
+   const char* eos = str;
+   while(*eos++);
+   return (eos - str - 1);
 }
 
 int32_t atoi(char *str) {
