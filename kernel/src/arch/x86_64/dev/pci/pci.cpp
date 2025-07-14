@@ -256,6 +256,13 @@ namespace PCI
         
     }
 
+    PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass){
+        for (u8 i = 0; i < PCI_LIST_MAX; i++)
+            if(pciDevices[i]->Class = Class 
+            && pciDevices[i]->SubClass == SubClass)
+                return pciDevices[i];
+    }
+
 
     IOAddress get_address(PCIDeviceHeader* hdr, uint8_t field)
     {
