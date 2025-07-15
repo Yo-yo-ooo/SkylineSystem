@@ -1,5 +1,5 @@
 #pragma once
-
+#ifdef __x86_64__
 #include <klib/klib.h>
 
 constexpr u8 kb_map_keys[] = {
@@ -116,3 +116,6 @@ constexpr u8 kb_map_keys_caps[] = {
     0,
     0,
     0};
+#else
+
+#endif

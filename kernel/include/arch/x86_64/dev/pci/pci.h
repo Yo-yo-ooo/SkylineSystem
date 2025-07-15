@@ -2,10 +2,11 @@
 #include <acpi/acpi.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <pdef.h>
 
 namespace PCI
 {
-    struct PCIDeviceHeader
+    PACK(typedef struct PCIDeviceHeader
     {
         uint16_t Vendor_ID;
         uint16_t Device_ID;
@@ -19,9 +20,9 @@ namespace PCI
         uint8_t LatencyTimer;
         uint8_t HeaderType;
         uint8_t BIST;
-    };
+    })PCIDeviceHeader;
 
-    struct PCIHeader0 {
+    PACK(typedef struct PCIHeader0 {
         PCIDeviceHeader Header;
         uint32_t BAR0;
         uint32_t BAR1;
@@ -41,7 +42,7 @@ namespace PCI
         uint8_t InterruptPin;
         uint8_t MinGrant;
         uint8_t MaxLatency;
-    };
+    })PCIHeader0;
 
     #define PCI_CONF_VENDOR		0X0 // Vendor ID
     #define PCI_CONF_DEVICE		0X2 // Device ID

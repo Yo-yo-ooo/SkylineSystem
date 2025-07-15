@@ -1,3 +1,5 @@
+#ifdef __x86_64__
+
 #include <drivers/ata/ata.h>
 #include <drivers/dev/dev.h>
 
@@ -133,3 +135,7 @@ u8 Init() {
     return ata_status;
 }
 }
+#else
+
+
+#endif

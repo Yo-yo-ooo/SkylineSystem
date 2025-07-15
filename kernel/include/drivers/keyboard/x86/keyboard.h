@@ -5,7 +5,7 @@
 
 #if !defined(__x86_64__)
 #error "Panic (/kernel/src/drivers/keyboard/x86): This keyboard driver is only for x86_64!"
-#endif
+#else
 
 #define EV_KEY 0x1
 
@@ -19,3 +19,5 @@ typedef struct
 } keyboard_event;
 
 void keyboard_init();
+
+#endif

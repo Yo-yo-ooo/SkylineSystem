@@ -3,6 +3,7 @@
 #ifndef _ATA_H
 #define _ATA_H
 
+#ifdef __x86_64__
 #include <klib/kio.h>
 #include <klib/klib.h>
 #include <acpi/acpi.h>
@@ -39,5 +40,8 @@ namespace ATA{
     u8 Read(u32 lba, u8* buffer, u32 sector_count);
     u8 Write(u32 lba, u8* buffer, u32 sector_count);
 }
+#else
+
+#endif
 
 #endif
