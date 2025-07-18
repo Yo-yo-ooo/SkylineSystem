@@ -54,6 +54,13 @@ typedef struct stackframe {
     u64 rip;
 }__attribute__((packed)) stackframe;
 
+
+typedef struct IRQDesc {
+	u32 CpuId, VecId;
+	u64 Param;
+	void (*handler)(registers *r);
+} IRQDesc;
+
 void idt_init();
 void idt_reinit();
 void idt_set_entry(u8 vec, void* isr, u8 type, u8 dpl);

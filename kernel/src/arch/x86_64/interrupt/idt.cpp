@@ -2,12 +2,14 @@
 #include <print/e9print.h>
 #include <arch/x86_64/ioapic/ioapic.h>
 #include <arch/x86_64/smp/smp.h>
+#include <arch/x86_64/lapic/lapic.h>
 
 __attribute__((aligned(0x10))) static idt_entry idt_entries[256];
 static idtr idt;
 extern void* idt_int_table[];
 
-void* irq_handlers[256] = {};
+//void* irq_handlers[256] = {};
+IRQDesc irqe[256] = {0};
 
 static const char* isr_errors[32] = {
     "Division by zero",
@@ -66,11 +68,15 @@ void idt_reinit() {
 void irq_register(u8 vec, void* handler) {
     if (vec < 15)
         IOAPIC::RedirectIRQ(bsp_lapic_id, vec + 32, vec, false);
-    irq_handlers[vec] = handler;
+    //irq_handlers[vec] = handler;
+    irqe[vec].handler = handler;
+    irqe[vec].CpuId = LAPIC::GetID();
+    irqe[vec].VecId = vec;
 }
 
 void irq_unregister(u8 vec) {
-    irq_handlers[vec] = NULL;
+    //irq_handlers[vec] = NULL;
+    irqe[vec].handler = NULL;
 }
 
 void backtrace() {
@@ -95,7 +101,8 @@ void idt_set_entry(u8 vec, void* isr, u8 type, u8 dpl) {
 
 extern "C" void irq_handler(registers* r) {
     void(*handler)(registers*);
-    handler = (void(*)(registers*))irq_handlers[r->int_no - 32];
+    //handler = (void(*)(registers*))irq_handlers[r->int_no - 32];
+    handler = (void(*)(registers*))(irqe[r->int_no - 32].handler);
 
     if (handler != NULL)
         handler(r);

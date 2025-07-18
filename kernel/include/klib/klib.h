@@ -84,4 +84,16 @@ uint64_t kld_64 (const uint8_t* ptr);
 
 void qsort(void *base, size_t num, size_t width, int32_t (*sort)(const void *e1, const void *e2));
 
+#define max(a, b) ({ \
+    __typeof__(a) ta = (a); \
+    __typeof__(b) tb = (b); \
+    ta < tb ? tb : ta; \
+})
+
+#define min(a, b) ({ \
+    __typeof__(a) ta = (a); \
+    __typeof__(b) tb = (b); \
+    ta > tb ? tb : ta; \
+})
+
 #endif

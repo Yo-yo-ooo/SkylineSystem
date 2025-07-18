@@ -80,7 +80,7 @@ uptr GetAllocationPAddr(heap* h, uptr ptr) {
     heap_block* block = (heap_block*)(ptr - sizeof(heap_block));
     if (block->magic != HEAP_MAGIC)
         return 0;
-    return vmm_get_region_paddr(h->pm, (ptr - sizeof(heap_block)));
+    return VMM::GetRegionPAddr(h->pm, (ptr - sizeof(heap_block)));
 }
 
 void Clone(heap* h, heap* clone) {

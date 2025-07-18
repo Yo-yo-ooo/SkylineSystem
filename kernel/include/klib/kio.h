@@ -330,6 +330,16 @@ static inline uint64_t rdtsc(void) {
     ); \
 } while (0)
 
+static inline void bit_set1(uint64_t *addr, uint64_t index) { 
+	__asm__ volatile (
+		"btsq %1, %0		\n\t"
+		: "+m"(*addr)
+		: "r"(index)
+		: "memory");
+}
+
+#define mfence() __asm__ volatile ("mfence 	\n\t" : : : "memory")
+
 #elif defined (__aarch64__)
 
 #define read_ttbr_el1(num)                                   \

@@ -8,7 +8,7 @@ if not exist %SourceFile% (
     echo %SourceFile% is exist, Stop create disk.img
 )
 
-qemu-system-%1 -machine q35 -cpu qemu64 ^
+qemu-system-%1 -machine q35 -cpu qemu64,+x2apic ^
 -cdrom SkylineSystem-%1.iso -m 2G -smp 4 ^
 -serial stdio -net nic -device AC97 ^
 -drive file=%SourceFile%,if=none,id=sata1 ^

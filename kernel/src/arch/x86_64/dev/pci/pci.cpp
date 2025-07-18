@@ -473,4 +473,43 @@ namespace PCI
         else if (type.type == PCI_BAR_TYPE_ENUM::IO)
             outl(type.io_address + field, value);
     }
+
+    PCI::PCICapHdr *GetNxtCap(PCIHeader0 *cfg, PCI::PCICapHdr *cur) {
+        if (cur) return cur->NextPTR ? (PCI::PCICapHdr *)((u64)cfg + cur->NextPTR) : NULL;
+        return (PCI::PCICapHdr *)((u64)cfg + cfg->CapabilitiesPtr);
+    }
+
+    PCI::PCI_MSIX_TABLE *GetMSIXTbl(PCI::PCI_MSIX_CAP *cap, PCIHeader0 *cfg) {
+        uint32_t temp;
+        //if(PCI_MSIX_CAP_BIR(cap) == 0)temp = cfg->BAR0;
+        switch (PCI_MSIX_CAP_BIR(cap))
+        {
+        case 0:temp = cfg->BAR0;break;
+        case 1:temp = cfg->BAR1;break;
+        case 2:temp = cfg->BAR2;break;
+        case 3:temp = cfg->BAR3;break;
+        case 4:temp = cfg->BAR4;break;
+        case 5:temp = cfg->BAR5;break;
+        default:
+            break;
+        }
+        return (PCI::pci_get_bar(cfg,temp).mem_address + PCI_MSIX_CAP_TableOff(cap));
+    }
+
+    void MSI_CAP_SetVecNum(PCI::PCI_MSI_CAP *cap, u64 vecNum) {
+        // set log2(vecNum) to msgCtrl
+        u32 n = 1;
+        __asm__ volatile (
+            "bsfl %1, %%eax				\n\t"
+            "movl $0xffffffff, %%edx	\n\t"
+            "cmove %%edx, %%eax			\n\t"
+            "addl $1, %%eax				\n\t"
+            "movl %%eax, %0				\n\t"
+            : "=m"(n)
+            : "m"(vecNum)
+            : "memory", "rax", "rdx"
+        );
+        //return n;
+        cap->Cap32.MsgCtrl = (cap->Cap32.MsgCtrl & ~(0x7u << 4)) | ((n - 1) << 4);
+    }
 }

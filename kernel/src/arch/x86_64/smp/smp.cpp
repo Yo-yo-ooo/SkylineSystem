@@ -74,4 +74,6 @@ void smp_init() {
     
     while (smp_cpu_started < smp_cpu_count - 1)
         __asm__ volatile ("nop");
+
+    
 }

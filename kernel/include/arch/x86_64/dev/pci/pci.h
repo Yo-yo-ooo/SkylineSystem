@@ -4,6 +4,17 @@
 #include <stddef.h>
 #include <pdef.h>
 
+#define CAPHDR_CAPID_MSI     0x05
+#define CAPHDR_CAPID_MSIX    0x11
+
+#define PCI_MSI_CAP_IS64(cap) (((cap)->Cap32.MsgCtrl >> 7) & 0x1)
+
+#define PCI_MSIX_CAP_VecNum(cap) (((cap)->MsgCtrl & ((1u << 11) - 1)) + 1)
+#define PCI_MSIX_CAP_BIR(cap) ((cap)->DW1 & 0x7)
+#define PCI_MSIX_CAP_TableOff(cap) ((cap)->DW1 & ~0x7u)
+#define PCI_MSIX_CAP_PendingBir(cap) ((cap)->DW2 & 0x7)
+#define PCI_MSIX_CAP_PendingTblOff(cap) ((cap)->DW2 & ~0x7u)
+
 namespace PCI
 {
     PACK(typedef struct PCIDeviceHeader
@@ -43,6 +54,50 @@ namespace PCI
         uint8_t MinGrant;
         uint8_t MaxLatency;
     })PCIHeader0;
+
+    PACK(typedef struct PCICapHdr{
+        uint8_t CapID;
+        uint8_t NextPTR;
+    })PCICapHdr;
+
+
+
+    PACK(typedef struct MSI_CAP64 {
+        PCI::PCICapHdr Header;
+        uint16_t MsgCtrl;
+        uint64_t MsgAddr;
+        uint16_t MsgData;
+        uint16_t RSVD;
+        uint32_t MSK;
+        uint32_t Pending;
+    } ) MSI_CAP64;
+
+    PACK(typedef struct MSI_CAP32 {
+        PCI::PCICapHdr Header;
+        uint16_t MsgCtrl;
+        uint32_t MsgAddr;
+        uint16_t MsgData;
+        uint32_t MSK;
+        uint32_t Pending;
+    }) MSI_CAP32;
+
+    PACK(typedef union PCI_MSI_CAP {
+        PCI::MSI_CAP64 Cap64;
+        PCI::MSI_CAP32 Cap32;
+    } ) PCI_MSI_CAP;
+
+    PACK(typedef struct PCI_MSIX_CAP {
+        PCI::PCICapHdr Header;
+        uint16_t MsgCtrl;
+        uint32_t DW1;
+        uint32_t DW2;
+    }) PCI_MSIX_CAP;
+
+    PACK(typedef struct PCI_MSIX_TABLE {
+        uint64_t msgAddr;
+        uint32_t msgData;
+        uint32_t vecCtrl;
+    } ) PCI_MSIX_TABLE;
 
     #define PCI_CONF_VENDOR		0X0 // Vendor ID
     #define PCI_CONF_DEVICE		0X2 // Device ID
@@ -226,4 +281,19 @@ namespace PCI
 	void write_byte(uint64_t address, PCI_BAR_TYPE type, uint16_t field, uint8_t value);
 	void write_word(uint64_t address, PCI_BAR_TYPE type, uint16_t field, uint16_t value);
 	void write_dword(uint64_t address, PCI_BAR_TYPE type, uint16_t field, uint32_t value);
+
+    PCI::PCICapHdr *GetNxtCap(PCIHeader0 *cfg, PCI::PCICapHdr *cur);
+    PCI::PCI_MSIX_TABLE *GetMSIXTbl(PCI::PCI_MSIX_CAP *cap, PCIHeader0 *cfg);
+    void MSI_CAP_SetVecNum(PCI::PCI_MSI_CAP *cap, u64 vecNum);
+
+    namespace MSIX
+    {
+        void SetMsgAddr(uint64_t *msgAddr, uint32_t cpuId, uint32_t redirect, uint32_t destMode); 
+    } // namespace MSIX
+    
+    namespace MSI
+    {
+        void SetMsgAddr(PCI::PCI_MSI_CAP *cap, uint32_t cpuId, uint32_t redirect, uint32_t destMode);
+    } // namespace MSI
+    bool SetMsi(PCI::PCI_MSI_CAP *cap, IRQDesc *desc, uint64_t intrNum);
 }
