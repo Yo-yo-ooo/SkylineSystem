@@ -40,11 +40,11 @@ FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
                 return {PARTITION_TYPE_UNKNOWN,4};
     }
                 */
-    if(IdentifyExtx(DriverID,PartitionID,ENABLE_VIRT_IMAGE).ErrorCode != 0 &&
+    if(IdentifyExtx(DriverID,PartitionID,ENABLE_VIRT_IMAGE).ErrorCode == 0 &&
         IdentifyExtx(DriverID,PartitionID,ENABLE_VIRT_IMAGE).TypeID != PARTITION_TYPE_UNKNOWN)
         return IdentifyExtx(DriverID,PartitionID,ENABLE_VIRT_IMAGE).TypeID;
 
-    elif(IdentifyFat(DriverID,PartitionID,ENABLE_VIRT_IMAGE).ErrorCode != 0 &&
+    elif(IdentifyFat(DriverID,PartitionID,ENABLE_VIRT_IMAGE).ErrorCode == 0 &&
         IdentifyFat(DriverID,PartitionID,ENABLE_VIRT_IMAGE).TypeID != PARTITION_TYPE_UNKNOWN)
         return IdentifyFat(DriverID,PartitionID,ENABLE_VIRT_IMAGE).TypeID;
     else
