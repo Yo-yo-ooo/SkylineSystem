@@ -53,7 +53,7 @@ void idt_init() {
 
     idt = (idtr){
         .size   = (uint16_t)sizeof(idt_entry) * 256 - 1,
-        .offset = (uint64_t)idt_entries
+        .offset = (uint64_t)&idt_entries
     };
 
     __asm__ volatile ("lidt %0" : : "m"(idt) : "memory");

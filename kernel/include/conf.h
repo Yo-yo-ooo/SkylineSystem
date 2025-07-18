@@ -21,3 +21,5 @@
 #else
 #define ENABLE_VIRT_IMAGE false
 #endif
+
+#define USE_TEST_x2Apic 0
