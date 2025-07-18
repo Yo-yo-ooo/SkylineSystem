@@ -3522,9 +3522,9 @@ Identify:
             
             if((ext4_get32(&sb,features_compatible) & EXT3_FEATURE_COMPAT_HAS_JOURNAL) &&
                 (ext4_get32(&sb,features_incompatible) & EXT4_FEATURE_INCOMPAT_EXTENTS))
-                return {PARTITION_TYPE_EXT3,0};
-            elif(ext4_get32(&sb,features_compatible) & EXT3_FEATURE_COMPAT_HAS_JOURNAL)
                 return {PARTITION_TYPE_EXT4,0};
+            elif(ext4_get32(&sb,features_compatible) & EXT3_FEATURE_COMPAT_HAS_JOURNAL)
+                return {PARTITION_TYPE_EXT3,0};
             else
                 return {PARTITION_TYPE_EXT2,0};
         }
