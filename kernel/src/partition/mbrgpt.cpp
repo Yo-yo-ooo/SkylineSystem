@@ -9,7 +9,7 @@ uint8_t IdentifyMBR(uint32_t DriverID){
     DevList ThisInfo = Dev::DevList_[DriverID];
     MBR_DPT dpt; 
     Dev::SetSDev(DriverID);
-    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
+    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == Dev::RW_ERROR)
         return 2;
     if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
         return 3;
@@ -18,6 +18,48 @@ uint8_t IdentifyMBR(uint32_t DriverID){
     }
     return 4;
 }
+
+uint8_t GetPartitionSize(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionSize){
+    if(DriverID > Dev::vsdev_list_idx)
+        return 1; //DriverID ERR
+    
+    DevList ThisInfo = Dev::DevList_[DriverID];
+    MBR_DPT dpt; 
+    uint32_t buffer;
+    Dev::SetSDev(DriverID);
+    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
+        return 2;
+        //80
+
+    if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
+        if(Dev::ReadBytes(MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET,4,&buffer) == Dev::RW_ERROR)
+            return 3;
+        if(PartitionID > buffer)
+            return 4;
+        GPT_PTE gptpte;
+        if(Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + PartitionID * 128,
+                128,&gptpte) == Dev::RW_ERROR)
+                return 5;
+        PartitionSize = gptpte.PartitionEnd - gptpte.PartitionStart;
+        return 0;
+    }else{
+
+        if(PartitionID > MBR_PARTITION_MAX)
+            return 6; //PartitionID ERR
+        
+        MBR_DPT buffer2;
+        //Dev::SetSDev(DriverID);
+        if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + PartitionID * 16,
+            16,&buffer2) == Dev::RW_ERROR)
+            return 7;
+        
+        //CHS To LBA : easy to R/W 
+        PartitionSize = buffer2.SectorsInPartition;
+        return 0;
+    }
+    return 0;
+}
+
 
 uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart){
     if(DriverID > Dev::vsdev_list_idx)

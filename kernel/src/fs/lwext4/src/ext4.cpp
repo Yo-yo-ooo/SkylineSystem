@@ -3309,7 +3309,7 @@ Ext4_Kernel_INIT
 */
 
 bool ext4_kernel_init(const char* devname,const char* mpname){
-    uint32_t r = ext4_device_register(ext4_blockdev_get(devname), devname);
+    uint32_t r = ext4_device_register(ext4_blockdev_get(devname,0), devname);
 	if (r != EOK) {
 		kerror("ext4_device_register: rc = %d\n", r);
 	}

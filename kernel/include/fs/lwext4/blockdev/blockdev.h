@@ -77,8 +77,8 @@ int blockdev_unlock(struct ext4_blockdev *bdev);
 extern VsDevInfo ThisInfo; // Do Not Use It!!!!
 
 /**@brief   File blockdev get.*/
-struct ext4_blockdev *ext4_blockdev_get(u32 which);
-struct ext4_blockdev *ext4_blockdev_get(const char* mname);
+struct ext4_blockdev *ext4_blockdev_get(u32 which,u8 wpart);
+struct ext4_blockdev *ext4_blockdev_get(const char* mname,u8 wpart);
 
 extern struct ext4_blockdev blockdev;
 

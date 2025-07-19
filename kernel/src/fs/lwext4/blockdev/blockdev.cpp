@@ -63,6 +63,8 @@
 #include <stddef.h>
 #include <fs/lwext4/blockdev/blockdev.h>
 
+#include <partition/mbrgpt.h>
+#include <partition/mgr.h>
 /*
 In SkylineSystem We use dynamic device change, 
 so we need to get the device info
@@ -94,10 +96,15 @@ static int32_t blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t bl
 			 uint32_t blk_cnt)
 {
 	/*blockdev_bread: skeleton*/
-    debugpln("blockdev_bread: HIT!");
-    ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
-    debugpln("blk_id: %d,blk_cnt: %d",blk_id,blk_cnt);
-    if(ThisInfo.ops.Read(ThisInfo.classp, blk_id,blk_cnt, buf) == Dev::RW_OK){
+    //debugpln("blockdev_bread: HIT!");
+    //ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
+    //debugpln("blk_id: %d,blk_cnt: %d",blk_id,blk_cnt);
+#ifdef USE_VIRT_IMAGE
+    PartitionManager::SetCurPartition(bdev->block_reg_idx,0);
+#else
+    PartitionManager::SetCurPartition(bdev->block_reg_idx,bdev->wpart);
+#endif
+    if(PartitionManager::Read(blk_id,blk_cnt, buf) == Dev::RW_OK){
         return EOK;
     }else{
         debugpln("blockdev_bread HIT ERROR RETURN!");
@@ -112,8 +119,13 @@ static int32_t blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 			  uint64_t blk_id, uint32_t blk_cnt)
 {
 	/*blockdev_bwrite: skeleton*/
-    ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
-    if(ThisInfo.ops.Write(ThisInfo.classp,blk_id, blk_cnt, buf) == Dev::RW_OK)
+    //ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
+#ifdef USE_VIRT_IMAGE
+    PartitionManager::SetCurPartition(bdev->block_reg_idx,0);
+#else
+    PartitionManager::SetCurPartition(bdev->block_reg_idx,bdev->wpart);
+#endif
+    if(PartitionManager::Write(blk_id, blk_cnt, buf) == Dev::RW_OK)
         return EOK;
     else
         return EIO;
@@ -154,19 +166,22 @@ static struct ext4_blockdev blockdev = {
     .bdif = &blockdev_iface, 
     .part_offset = 0, .part_size = (0) * (512), };
 /******************************************************************************/
-struct ext4_blockdev *ext4_blockdev_get(u32 which)
+struct ext4_blockdev *ext4_blockdev_get(u32 which,u8 wpart)
 {
     ThisInfo = Dev::GetSDEV(which);
     blockdev.block_reg_idx = which;
+    blockdev.wpart = wpart;
 	return &blockdev;
 }
 
-struct ext4_blockdev *ext4_blockdev_get(const char* mname)
+struct ext4_blockdev *ext4_blockdev_get(const char* mname,u8 wpart)
 {
     for(uint32_t i = 0;i < Dev::vsdev_list_idx;i++){
         if(strcmp(Dev::DevList_[i].Name,mname) == 0){
             ThisInfo = Dev::DevList_[i];
             blockdev.block_reg_idx = i;
+            blockdev.wpart = wpart;
+            break;
         }
     }
 	return &blockdev;

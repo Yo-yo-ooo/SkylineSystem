@@ -128,6 +128,8 @@ struct ext4_blockdev {
 
     /**@brief   BLOCK REG IDX */
     uint32_t block_reg_idx;
+    /**@brief which partition? */
+    uint8_t wpart;
 
 	void *journal;
 };
