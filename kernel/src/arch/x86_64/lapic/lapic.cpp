@@ -73,15 +73,15 @@ namespace LAPIC{
     }
 
     void CalibrateTimer() {
-        //LAPIC::StopTimer();
-        LAPIC::Write(LAPIC_TIMER_DIV, 0x3);
+        LAPIC::StopTimer();
+        LAPIC::Write(LAPIC_TIMER_DIV, 0);
+        LAPIC::Write(LAPIC_TIMER_LVT, (1 << 16) | 0xff);
         LAPIC::Write(LAPIC_TIMER_INITCNT, 0xFFFFFFFF);
-        //LAPIC::Write(LAPIC_TIMER_LVT, (1 << 16) | 0xff);
         PIT::Sleep(1); // 1 ms
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
-        //u32 ticks = ;
-        this_cpu()->lapic_ticks = 0xFFFFFFFF - LAPIC::Read(LAPIC_TIMER_CURCNT);
-        //LAPIC::StopTimer();
+        u32 ticks = 0xFFFFFFFF - LAPIC::Read(LAPIC_TIMER_CURCNT);
+        this_cpu()->lapic_ticks = ticks;
+        LAPIC::StopTimer();
     }
 
     void IPI(u32 id, u8 dat) {

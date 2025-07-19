@@ -36,6 +36,18 @@ Many more in future
 * [MaslOS](https://github.com/marceldobehere/MaslOS)
 * [VisualOS](https://github.com/nothotscott/VisualOS)
 * [MicroOS](https://github.com/Glowman554/MicroOS)
-* [ZanOS](https://github.com/asterd-og/ZanOS/)
+* [LanOS](https://github.com/asterd-og/LanOS/)
 * [MaslOS-2](https://github.com/marceldobehere/MaslOS-2/)
 * [HanOS](https://github.com/jjwang/HanOS/)
+
+## Unfinished features
+
+* PCI MSI/MSIX
+* NVME
+* VFS
+* File System Interface(FSI)
+
+## Contributors
+* [Yo-yo-ooo](https://github.com/Yo-yo-ooo/)
+* [marceldobehere](https://github.com/marceldobehere)
+* [Astrido(Not join)](https://github.com/asterd-og/)
