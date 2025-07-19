@@ -76,35 +76,35 @@ static osMutexId Mutex[FF_VOLUMES + 1];	/* Table of mutex ID */
 /  fails with FR_INT_ERR.
 */
 
-int ff_mutex_create (	/* Returns 1:Function succeeded or 0:Could not create the mutex */
-	int vol				/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
+int32_t ff_mutex_create (	/* Returns 1:Function succeeded or 0:Could not create the mutex */
+	int32_t vol				/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
 )
 {
 #if OS_TYPE == 0	/* Win32 */
 	Mutex[vol] = CreateMutex(NULL, FALSE, NULL);
-	return (int)(Mutex[vol] != INVALID_HANDLE_VALUE);
+	return (int32_t)(Mutex[vol] != INVALID_HANDLE_VALUE);
 
 #elif OS_TYPE == 1	/* uITRON */
 	T_CMTX cmtx = {TA_TPRI,1};
 
 	Mutex[vol] = acre_mtx(&cmtx);
-	return (int)(Mutex[vol] > 0);
+	return (int32_t)(Mutex[vol] > 0);
 
 #elif OS_TYPE == 2	/* uC/OS-II */
 	OS_ERR err;
 
 	Mutex[vol] = OSMutexCreate(0, &err);
-	return (int)(err == OS_NO_ERR);
+	return (int32_t)(err == OS_NO_ERR);
 
 #elif OS_TYPE == 3	/* FreeRTOS */
 	Mutex[vol] = xSemaphoreCreateMutex();
-	return (int)(Mutex[vol] != NULL);
+	return (int32_t)(Mutex[vol] != NULL);
 
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 	osMutexDef(cmsis_os_mutex);
 
 	Mutex[vol] = osMutexCreate(osMutex(cmsis_os_mutex));
-	return (int)(Mutex[vol] != NULL);
+	return (int32_t)(Mutex[vol] != NULL);
 
 #endif
 }
@@ -118,7 +118,7 @@ int ff_mutex_create (	/* Returns 1:Function succeeded or 0:Could not create the 
 */
 
 void ff_mutex_delete (	/* Returns 1:Function succeeded or 0:Could not delete due to an error */
-	int vol				/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
+	int32_t vol				/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
 )
 {
 #if OS_TYPE == 0	/* Win32 */
@@ -149,27 +149,27 @@ void ff_mutex_delete (	/* Returns 1:Function succeeded or 0:Could not delete due
 /  When a 0 is returned, the file function fails with FR_TIMEOUT.
 */
 
-int ff_mutex_take (	/* Returns 1:Succeeded or 0:Timeout */
-	int vol			/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
+int32_t ff_mutex_take (	/* Returns 1:Succeeded or 0:Timeout */
+	int32_t vol			/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
 )
 {
 #if OS_TYPE == 0	/* Win32 */
-	return (int)(WaitForSingleObject(Mutex[vol], FF_FS_TIMEOUT) == WAIT_OBJECT_0);
+	return (int32_t)(WaitForSingleObject(Mutex[vol], FF_FS_TIMEOUT) == WAIT_OBJECT_0);
 
 #elif OS_TYPE == 1	/* uITRON */
-	return (int)(tloc_mtx(Mutex[vol], FF_FS_TIMEOUT) == E_OK);
+	return (int32_t)(tloc_mtx(Mutex[vol], FF_FS_TIMEOUT) == E_OK);
 
 #elif OS_TYPE == 2	/* uC/OS-II */
 	OS_ERR err;
 
 	OSMutexPend(Mutex[vol], FF_FS_TIMEOUT, &err));
-	return (int)(err == OS_NO_ERR);
+	return (int32_t)(err == OS_NO_ERR);
 
 #elif OS_TYPE == 3	/* FreeRTOS */
-	return (int)(xSemaphoreTake(Mutex[vol], FF_FS_TIMEOUT) == pdTRUE);
+	return (int32_t)(xSemaphoreTake(Mutex[vol], FF_FS_TIMEOUT) == pdTRUE);
 
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
-	return (int)(osMutexWait(Mutex[vol], FF_FS_TIMEOUT) == osOK);
+	return (int32_t)(osMutexWait(Mutex[vol], FF_FS_TIMEOUT) == osOK);
 
 #endif
 }
@@ -183,7 +183,7 @@ int ff_mutex_take (	/* Returns 1:Succeeded or 0:Timeout */
 */
 
 void ff_mutex_give (
-	int vol			/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
+	int32_t vol			/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
 )
 {
 #if OS_TYPE == 0	/* Win32 */

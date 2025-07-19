@@ -184,8 +184,8 @@ static void ext2_tea(uint32_t hash[4], uint32_t data[8])
 	uint32_t tea_delta = 0x9E3779B9;
 	uint32_t sum;
 	uint32_t x = hash[0], y = hash[1];
-	int n = 16;
-	int i = 1;
+	int32_t n = 16;
+	int32_t i = 1;
 
 	while (n-- > 0) {
 		sum = i * tea_delta;
@@ -198,19 +198,19 @@ static void ext2_tea(uint32_t hash[4], uint32_t data[8])
 	hash[1] += y;
 }
 
-static uint32_t ext2_legacy_hash(const char *name, int len, int unsigned_char)
+static uint32_t ext2_legacy_hash(const char *name, int32_t len, int32_t unsigned_char)
 {
 	uint32_t h0, h1 = 0x12A3FE2D, h2 = 0x37ABE8F9;
 	uint32_t multi = 0x6D22F5;
 	const unsigned char *uname = (const unsigned char *)name;
 	const signed char *sname = (const signed char *)name;
-	int val, i;
+	int32_t val, i;
 
 	for (i = 0; i < len; i++) {
 		if (unsigned_char)
-			val = (unsigned int)*uname++;
+			val = (uint32_t)*uname++;
 		else
-			val = (int)*sname++;
+			val = (int32_t)*sname++;
 
 		h0 = h2 + (h1 ^ (val * multi));
 		if (h0 & 0x80000000)
@@ -223,12 +223,12 @@ static uint32_t ext2_legacy_hash(const char *name, int len, int unsigned_char)
 }
 
 static void ext2_prep_hashbuf(const char *src, uint32_t slen, uint32_t *dst,
-			      int dlen, int unsigned_char)
+			      int32_t dlen, int32_t unsigned_char)
 {
 	uint32_t padding = slen | (slen << 8) | (slen << 16) | (slen << 24);
 	uint32_t buf_val;
-	int len, i;
-	int buf_byte;
+	int32_t len, i;
+	int32_t buf_byte;
 	const unsigned char *ubuf = (const unsigned char *)src;
 	const signed char *sbuf = (const signed char *)src;
 
@@ -241,9 +241,9 @@ static void ext2_prep_hashbuf(const char *src, uint32_t slen, uint32_t *dst,
 
 	for (i = 0; i < len; i++) {
 		if (unsigned_char)
-			buf_byte = (unsigned int)ubuf[i];
+			buf_byte = (uint32_t)ubuf[i];
 		else
-			buf_byte = (int)sbuf[i];
+			buf_byte = (int32_t)sbuf[i];
 
 		if ((i % 4) == 0)
 			buf_val = padding;
@@ -269,14 +269,14 @@ static void ext2_prep_hashbuf(const char *src, uint32_t slen, uint32_t *dst,
 	}
 }
 
-int ext2_htree_hash(const char *name, int len, const uint32_t *hash_seed,
-		    int hash_version, uint32_t *hash_major,
+int32_t ext2_htree_hash(const char *name, int32_t len, const uint32_t *hash_seed,
+		    int32_t hash_version, uint32_t *hash_major,
 		    uint32_t *hash_minor)
 {
 	uint32_t hash[4];
 	uint32_t data[8];
 	uint32_t major = 0, minor = 0;
-	int unsigned_char = 0;
+	int32_t unsigned_char = 0;
 
 	if (!name || !hash_major)
 		return (-1);

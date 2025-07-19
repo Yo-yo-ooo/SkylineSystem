@@ -107,7 +107,7 @@ void ext4_balloc_set_bitmap_csum(struct ext4_sblock *sb,
 				 struct ext4_bgroup *bg,
 				 void *bitmap __unused)
 {
-	int desc_size = ext4_sb_get_desc_size(sb);
+	int32_t desc_size = ext4_sb_get_desc_size(sb);
 	uint32_t checksum = ext4_balloc_bitmap_csum(sb, bitmap);
 	uint16_t lo_checksum = to_le16(checksum & 0xFFFF),
 		 hi_checksum = to_le16(checksum >> 16);
@@ -128,7 +128,7 @@ ext4_balloc_verify_bitmap_csum(struct ext4_sblock *sb,
 			       struct ext4_bgroup *bg,
 			       void *bitmap __unused)
 {
-	int desc_size = ext4_sb_get_desc_size(sb);
+	int32_t desc_size = ext4_sb_get_desc_size(sb);
 	uint32_t checksum = ext4_balloc_bitmap_csum(sb, bitmap);
 	uint16_t lo_checksum = to_le16(checksum & 0xFFFF),
 		 hi_checksum = to_le16(checksum >> 16);
@@ -149,7 +149,7 @@ ext4_balloc_verify_bitmap_csum(struct ext4_sblock *sb,
 #define ext4_balloc_verify_bitmap_csum(...) true
 #endif
 
-int ext4_balloc_free_block(struct ext4_inode_ref *inode_ref, ext4_fsblk_t baddr)
+int32_t ext4_balloc_free_block(struct ext4_inode_ref *inode_ref, ext4_fsblk_t baddr)
 {
 	struct ext4_fs *fs = inode_ref->fs;
 	struct ext4_sblock *sb = &fs->sb;
@@ -159,7 +159,7 @@ int ext4_balloc_free_block(struct ext4_inode_ref *inode_ref, ext4_fsblk_t baddr)
 
 	/* Load block group reference */
 	struct ext4_block_group_ref bg_ref;
-	int rc = ext4_fs_get_block_group_ref(fs, bg_id, &bg_ref);
+	int32_t rc = ext4_fs_get_block_group_ref(fs, bg_id, &bg_ref);
 	if (rc != EOK)
 		return rc;
 
@@ -230,10 +230,10 @@ int ext4_balloc_free_block(struct ext4_inode_ref *inode_ref, ext4_fsblk_t baddr)
 	return rc;
 }
 
-int ext4_balloc_free_blocks(struct ext4_inode_ref *inode_ref,
+int32_t ext4_balloc_free_blocks(struct ext4_inode_ref *inode_ref,
 			    ext4_fsblk_t first, uint32_t count)
 {
-	int rc = EOK;
+	int32_t rc = EOK;
 	uint32_t blk_cnt = count;
 	ext4_fsblk_t start_block = first;
 	struct ext4_fs *fs = inode_ref->fs;
@@ -349,7 +349,7 @@ int ext4_balloc_free_blocks(struct ext4_inode_ref *inode_ref,
 	return rc;
 }
 
-int ext4_balloc_alloc_block(struct ext4_inode_ref *inode_ref,
+int32_t ext4_balloc_alloc_block(struct ext4_inode_ref *inode_ref,
 			    ext4_fsblk_t goal,
 			    ext4_fsblk_t *fblock)
 {
@@ -357,7 +357,7 @@ int ext4_balloc_alloc_block(struct ext4_inode_ref *inode_ref,
 	ext4_fsblk_t bmp_blk_adr;
 	uint32_t rel_blk_idx = 0;
 	uint64_t free_blocks;
-	int r;
+	int32_t r;
 	struct ext4_sblock *sb = &inode_ref->fs->sb;
 
 	/* Load block group number for goal and relative index */
@@ -598,10 +598,10 @@ success:
 	return r;
 }
 
-int ext4_balloc_try_alloc_block(struct ext4_inode_ref *inode_ref,
+int32_t ext4_balloc_try_alloc_block(struct ext4_inode_ref *inode_ref,
 				ext4_fsblk_t baddr, bool *free)
 {
-	int rc;
+	int32_t rc;
 
 	struct ext4_fs *fs = inode_ref->fs;
 	struct ext4_sblock *sb = &fs->sb;

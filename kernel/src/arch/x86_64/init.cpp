@@ -22,7 +22,7 @@ void __init x86_64_init(void){
     InitFunc("VMM",VMM::Init());
 
     MStackData::stackPointer = 0;
-    for (int i = 0; i < 1000; i++)
+    for (int32_t i = 0; i < 1000; i++)
         MStackData::stackArr[i] = MStack();
     MStackData::BenchmarkEnabled = false;
 

@@ -19,16 +19,16 @@ char* strcat(char* dest, const char* source){
 
 char* StrCombine(const char* a, const char* b)
 {
-    int lenA = strlen(a);
-    int lenB = strlen(b);
+    int32_t lenA = strlen(a);
+    int32_t lenB = strlen(b);
     
-    int totalLen = lenA + lenB;
+    int32_t totalLen = lenA + lenB;
     char* tempStr = (char*) kmalloc(totalLen + 1);
     tempStr[totalLen] = 0;
 
-    for (int i = 0; i < lenA; i++)
+    for (int32_t i = 0; i < lenA; i++)
         tempStr[i] = a[i];
-    for (int i = 0; i < lenB; i++)
+    for (int32_t i = 0; i < lenB; i++)
         tempStr[i + lenA] = b[i];
 
     return tempStr;
@@ -94,7 +94,7 @@ const char *to_string(int64_t value)
     return intTo_stringOutput;
 }
 
-const char *to_string(int value)
+const char *to_string(int32_t value)
 {
     return to_string((int64_t)value);
 }
@@ -137,12 +137,12 @@ __ffunc const char *to_string(double value, uint8_t places)
 
         double temp = 1;
 
-        for (int i = 0; i < places; i++)
+        for (int32_t i = 0; i < places; i++)
             temp *= 10;
 
         uint64_t value3 = (uint64_t)((value - ((uint64_t)value)) * temp);
 
-        for (int i = 0; i < places; i++)
+        for (int32_t i = 0; i < places; i++)
         {
             uint8_t remainder = value3 % 10;
             value3 /= 10;
@@ -184,14 +184,14 @@ const char *to_string(bool value)
         return "false";
 }
 
-__ffunc unsigned int ConvertStringToHex(const char *data)
+__ffunc uint32_t ConvertStringToHex(const char *data)
 {
-    unsigned int hex = 0;
+    uint32_t hex = 0;
 
-    for (unsigned int i = 0; i < 6;)
+    for (uint32_t i = 0; i < 6;)
     {
         unsigned char temp = 0;
-        for (unsigned int i2 = 16; i2 != 0; i2 /= 16)
+        for (uint32_t i2 = 16; i2 != 0; i2 /= 16)
         {
             if (data[i] >= '0' && data[i] <= '9')
                 temp += (data[i] - '0') * i2;
@@ -212,7 +212,7 @@ unsigned long ConvertStringToLongHex(const char *data)
 {
     unsigned long hex = 0;
 
-    for (unsigned int i = 0; i < 16; i++)
+    for (uint32_t i = 0; i < 16; i++)
     {
         if (data[i] == 0)
             break;
@@ -331,7 +331,7 @@ char *strtok(char *str, const char *delim)
 }
 
 
-char* strchr(char* str, int c) {
+char* strchr(char* str, int32_t c) {
 	for (; *str != 0; ++str) {
 		if (*str == c) {
 			return str;
@@ -348,7 +348,7 @@ char *strcpy(char *strDest, const char *strSrc){
     return address ;
 }
 
-int strncmp(const char* a, const char* b, size_t n) {
+int32_t strncmp(const char* a, const char* b, size_t n) {
     while (true) {
         unsigned char ac = n ? *a : '\0', bc = n ? *b : '\0';
         if (ac == '\0' || bc == '\0' || ac != bc) {

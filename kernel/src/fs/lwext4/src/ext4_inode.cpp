@@ -234,7 +234,7 @@ uint64_t ext4_inode_get_blocks_count(struct ext4_sblock *sb,
 	return cnt;
 }
 
-int ext4_inode_set_blocks_count(struct ext4_sblock *sb,
+int32_t ext4_inode_set_blocks_count(struct ext4_sblock *sb,
 				struct ext4_inode *inode, uint64_t count)
 {
 	/* 32-bit maximum */

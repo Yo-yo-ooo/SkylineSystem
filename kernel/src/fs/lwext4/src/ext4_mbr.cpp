@@ -89,9 +89,9 @@ struct ext4_mbr {
 
 #pragma pack(pop)
 
-int ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs)
+int32_t ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs)
 {
-	int r;
+	int32_t r;
 	size_t i;
 
 	ext4_dbg(DEBUG_MBR, DBG_INFO "ext4_mbr_scan\n");
@@ -126,7 +126,7 @@ int ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs)
 	ext4_dbg(DEBUG_MBR | DEBUG_NOPREFIX, "\n\n");
 	for (i = 0; i < 4; ++i) {
 		const struct ext4_part_entry *pe = &mbr->part_entry[i];
-		ext4_dbg(DEBUG_MBR, "mbr_part: %d\n", (int)i);
+		ext4_dbg(DEBUG_MBR, "mbr_part: %d\n", (int32_t)i);
 		ext4_dbg(DEBUG_MBR, "\tstatus: 0x%x\n", pe->status);
 		ext4_dbg(DEBUG_MBR, "\ttype 0x%x:\n", pe->type);
 		ext4_dbg(DEBUG_MBR, "\tfirst_lba: 0x%"PRIx32"\n", pe->first_lba);
@@ -150,9 +150,9 @@ int ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs)
 	return r;
 }
 
-int ext4_mbr_write(struct ext4_blockdev *parent, struct ext4_mbr_parts *parts, uint32_t disk_id)
+int32_t ext4_mbr_write(struct ext4_blockdev *parent, struct ext4_mbr_parts *parts, uint32_t disk_id)
 {
-	int r;
+	int32_t r;
 	uint64_t disk_size;
 	uint32_t division_sum = parts->division[0] + parts->division[1] +
 				parts->division[2] + parts->division[3];
@@ -184,7 +184,7 @@ int ext4_mbr_write(struct ext4_blockdev *parent, struct ext4_mbr_parts *parts, u
 	mbr->disk_id = disk_id;
 
 	uint32_t cyl_it = 0;
-	for (int i = 0; i < 4; ++i) {
+	for (int32_t i = 0; i < 4; ++i) {
 		uint32_t cyl_part = cyl_count * parts->division[i] / 100;
 		if (!cyl_part)
 			continue;

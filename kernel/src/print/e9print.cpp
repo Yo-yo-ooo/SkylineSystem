@@ -28,7 +28,7 @@ void e9_puts(const char *msg) {
 }
 
 static void e9_printhex(size_t num) {
-    int i;
+    int32_t i;
     char buf[17];
 
     if (!num) {
@@ -49,7 +49,7 @@ static void e9_printhex(size_t num) {
 }
 
 static void e9_printdec(size_t num) {
-    int i;
+    int32_t i;
     char buf[21] = {0};
 
     if (!num) {

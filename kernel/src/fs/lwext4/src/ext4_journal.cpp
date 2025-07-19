@@ -126,7 +126,7 @@ trans_id_diff(uint32_t x, uint32_t y)
 	return diff;
 }
 
-static int
+static int32_t
 jbd_revoke_entry_cmp(struct revoke_entry *a, struct revoke_entry *b)
 {
 	if (a->block > b->block)
@@ -136,7 +136,7 @@ jbd_revoke_entry_cmp(struct revoke_entry *a, struct revoke_entry *b)
 	return 0;
 }
 
-static int
+static int32_t
 jbd_block_rec_cmp(struct jbd_block_rec *a, struct jbd_block_rec *b)
 {
 	if (a->lba > b->lba)
@@ -146,7 +146,7 @@ jbd_block_rec_cmp(struct jbd_block_rec *a, struct jbd_block_rec *b)
 	return 0;
 }
 
-static int
+static int32_t
 jbd_revoke_rec_cmp(struct jbd_revoke_rec *a, struct jbd_revoke_rec *b)
 {
 	if (a->lba > b->lba)
@@ -166,7 +166,7 @@ RB_GENERATE_INTERNAL(jbd_revoke_tree, jbd_revoke_rec, revoke_node,
 #define jbd_alloc_revoke_entry() ext4_calloc(1, sizeof(struct revoke_entry))
 #define jbd_free_revoke_entry(addr) ext4_free(addr)
 
-static int jbd_has_csum(struct jbd_sb *jbd_sb)
+static int32_t jbd_has_csum(struct jbd_sb *jbd_sb)
 {
 	if (JBD_HAS_INCOMPAT_FEATURE(jbd_sb, JBD_FEATURE_INCOMPAT_CSUM_V2))
 		return 2;
@@ -371,7 +371,7 @@ static uint32_t jbd_block_csum(struct jbd_fs *jbd_fs, const void *buf,
 static void jbd_block_tag_csum_set(struct jbd_fs *jbd_fs, void *__tag,
 				   uint32_t checksum)
 {
-	int ver = jbd_has_csum(&jbd_fs->sb);
+	int32_t ver = jbd_has_csum(&jbd_fs->sb);
 	if (!ver)
 		return;
 
@@ -388,9 +388,9 @@ static void jbd_block_tag_csum_set(struct jbd_fs *jbd_fs, void *__tag,
  * @param  jbd_fs jbd filesystem
  * @param  s jbd superblock
  * @return standard error code*/
-static int jbd_sb_write(struct jbd_fs *jbd_fs, struct jbd_sb *s)
+static int32_t jbd_sb_write(struct jbd_fs *jbd_fs, struct jbd_sb *s)
 {
-	int rc;
+	int32_t rc;
 	struct ext4_fs *fs = jbd_fs->inode_ref.fs;
 	uint64_t offset;
 	ext4_fsblk_t fblock;
@@ -408,9 +408,9 @@ static int jbd_sb_write(struct jbd_fs *jbd_fs, struct jbd_sb *s)
  * @param  jbd_fs jbd filesystem
  * @param  s jbd superblock
  * @return standard error code*/
-static int jbd_sb_read(struct jbd_fs *jbd_fs, struct jbd_sb *s)
+static int32_t jbd_sb_read(struct jbd_fs *jbd_fs, struct jbd_sb *s)
 {
-	int rc;
+	int32_t rc;
 	struct ext4_fs *fs = jbd_fs->inode_ref.fs;
 	uint64_t offset;
 	ext4_fsblk_t fblock;
@@ -442,9 +442,9 @@ static bool jbd_verify_sb(struct jbd_sb *sb)
 /**@brief  Write back dirty jbd superblock to disk.
  * @param  jbd_fs jbd filesystem
  * @return standard error code*/
-static int jbd_write_sb(struct jbd_fs *jbd_fs)
+static int32_t jbd_write_sb(struct jbd_fs *jbd_fs)
 {
-	int rc = EOK;
+	int32_t rc = EOK;
 	if (jbd_fs->dirty) {
 		rc = jbd_sb_write(jbd_fs, &jbd_fs->sb);
 		if (rc != EOK)
@@ -459,10 +459,10 @@ static int jbd_write_sb(struct jbd_fs *jbd_fs)
  * @param  fs Filesystem to load journal of
  * @param  jbd_fs jbd filesystem
  * @return standard error code*/
-int jbd_get_fs(struct ext4_fs *fs,
+int32_t jbd_get_fs(struct ext4_fs *fs,
 	       struct jbd_fs *jbd_fs)
 {
-	int rc;
+	int32_t rc;
 	uint32_t journal_ino;
 
 	_memset(jbd_fs, 0, sizeof(struct jbd_fs));
@@ -500,9 +500,9 @@ Error:
 /**@brief  Put reference of jbd filesystem.
  * @param  jbd_fs jbd filesystem
  * @return standard error code*/
-int jbd_put_fs(struct jbd_fs *jbd_fs)
+int32_t jbd_put_fs(struct jbd_fs *jbd_fs)
 {
-	int rc = EOK;
+	int32_t rc = EOK;
 	rc = jbd_write_sb(jbd_fs);
 
 	ext4_fs_put_inode_ref(&jbd_fs->inode_ref);
@@ -514,11 +514,11 @@ int jbd_put_fs(struct jbd_fs *jbd_fs)
  * @param  iblock block index
  * @param  fblock logical block address
  * @return standard error code*/
-int jbd_inode_bmap(struct jbd_fs *jbd_fs,
+int32_t jbd_inode_bmap(struct jbd_fs *jbd_fs,
 		   ext4_lblk_t iblock,
 		   ext4_fsblk_t *fblock)
 {
-	int rc = ext4_fs_get_inode_dblk_idx(
+	int32_t rc = ext4_fs_get_inode_dblk_idx(
 			&jbd_fs->inode_ref,
 			iblock,
 			fblock,
@@ -531,12 +531,12 @@ int jbd_inode_bmap(struct jbd_fs *jbd_fs,
  * @param   block block descriptor
  * @param   fblock jbd logical block address
  * @return  standard error code*/
-static int jbd_block_get(struct jbd_fs *jbd_fs,
+static int32_t jbd_block_get(struct jbd_fs *jbd_fs,
 		  struct ext4_block *block,
 		  ext4_fsblk_t fblock)
 {
 	/* TODO: journal device. */
-	int rc;
+	int32_t rc;
 	struct ext4_blockdev *bdev = jbd_fs->bdev;
 	ext4_lblk_t iblock = (ext4_lblk_t)fblock;
 
@@ -566,12 +566,12 @@ static int jbd_block_get(struct jbd_fs *jbd_fs,
  * @param   block block descriptor
  * @param   fblock jbd logical block address
  * @return  standard error code*/
-static int jbd_block_get_noread(struct jbd_fs *jbd_fs,
+static int32_t jbd_block_get_noread(struct jbd_fs *jbd_fs,
 			 struct ext4_block *block,
 			 ext4_fsblk_t fblock)
 {
 	/* TODO: journal device. */
-	int rc;
+	int32_t rc;
 	struct ext4_blockdev *bdev = jbd_fs->bdev;
 	ext4_lblk_t iblock = (ext4_lblk_t)fblock;
 	rc = jbd_inode_bmap(jbd_fs, iblock,
@@ -590,7 +590,7 @@ static int jbd_block_get_noread(struct jbd_fs *jbd_fs,
  * @param   jbd_fs jbd filesystem
  * @param   block block descriptor
  * @return  standard error code*/
-static int jbd_block_set(struct jbd_fs *jbd_fs,
+static int32_t jbd_block_set(struct jbd_fs *jbd_fs,
 		  struct ext4_block *block)
 {
 	struct ext4_blockdev *bdev = jbd_fs->bdev;
@@ -601,9 +601,9 @@ static int jbd_block_set(struct jbd_fs *jbd_fs,
  *         block tag size, not including UUID part.
  * @param  jbd_fs jbd filesystem
  * @return tag size in bytes*/
-static int jbd_tag_bytes(struct jbd_fs *jbd_fs)
+static int32_t jbd_tag_bytes(struct jbd_fs *jbd_fs)
 {
-	int size;
+	int32_t size;
 
 	/* It is very easy to deal with the case which
 	 * JBD_FEATURE_INCOMPAT_CSUM_V3 is enabled.*/
@@ -631,7 +631,7 @@ static int jbd_tag_bytes(struct jbd_fs *jbd_fs)
 /**@brief  Tag information. */
 struct tag_info {
 	/**@brief  Tag size in bytes, including UUID part.*/
-	int tag_bytes;
+	int32_t tag_bytes;
 
 	/**@brief  block number stored in this tag.*/
 	ext4_fsblk_t block;
@@ -659,10 +659,10 @@ struct tag_info {
  * @param  remain_buf_size size in buffer containing the block tag
  * @param  tag_info information of this tag.
  * @return  EOK when succeed, otherwise return EINVAL.*/
-static int
+static int32_t
 jbd_extract_block_tag(struct jbd_fs *jbd_fs,
 		      void *__tag,
-		      int tag_bytes,
+		      int32_t tag_bytes,
 		      int32_t remain_buf_size,
 		      struct tag_info *tag_info)
 {
@@ -736,14 +736,14 @@ jbd_extract_block_tag(struct jbd_fs *jbd_fs,
  * @param  remain_buf_size size in buffer containing the block tag
  * @param  tag_info information of this tag.
  * @return  EOK when succeed, otherwise return EINVAL.*/
-static int
+static int32_t
 jbd_write_block_tag(struct jbd_fs *jbd_fs,
 		    void *__tag,
 		    int32_t remain_buf_size,
 		    struct tag_info *tag_info)
 {
 	char *uuid_start;
-	int tag_bytes = jbd_tag_bytes(jbd_fs);
+	int32_t tag_bytes = jbd_tag_bytes(jbd_fs);
 
 	tag_info->tag_bytes = tag_bytes;
 
@@ -834,7 +834,7 @@ jbd_iterate_block_table(struct jbd_fs *jbd_fs,
 			void *arg)
 {
 	char *tag_start, *tag_ptr;
-	int tag_bytes = jbd_tag_bytes(jbd_fs);
+	int32_t tag_bytes = jbd_tag_bytes(jbd_fs);
 	tag_start = __tag_start;
 	tag_ptr = tag_start;
 
@@ -847,7 +847,7 @@ jbd_iterate_block_table(struct jbd_fs *jbd_fs,
 
 	while (tag_tbl_size) {
 		struct tag_info tag_info;
-		int rc = jbd_extract_block_tag(jbd_fs,
+		int32_t rc = jbd_extract_block_tag(jbd_fs,
 				      tag_ptr,
 				      tag_bytes,
 				      tag_tbl_size,
@@ -896,7 +896,7 @@ static void jbd_replay_block_tags(struct jbd_fs *jbd_fs,
 				  struct tag_info *tag_info,
 				  void *__arg)
 {
-	int r;
+	int32_t r;
 	struct replay_arg *arg = __arg;
 	struct recover_info *info = arg->info;
 	uint32_t *this_block = arg->this_block;
@@ -1074,11 +1074,11 @@ static void jbd_replay_descriptor_block(struct jbd_fs *jbd_fs,
  * @param  info  journal replay info
  * @param  action action needed to be taken
  * @return standard error code*/
-static int jbd_iterate_log(struct jbd_fs *jbd_fs,
+static int32_t jbd_iterate_log(struct jbd_fs *jbd_fs,
 			   struct recover_info *info,
-			   int action)
+			   int32_t action)
 {
-	int r = EOK;
+	int32_t r = EOK;
 	bool log_end = false;
 	struct jbd_sb *sb = &jbd_fs->sb;
 	uint32_t start_trans_id, this_trans_id;
@@ -1227,9 +1227,9 @@ static int jbd_iterate_log(struct jbd_fs *jbd_fs,
 /**@brief  Replay journal.
  * @param  jbd_fs jbd filesystem
  * @return standard error code*/
-int jbd_recover(struct jbd_fs *jbd_fs)
+int32_t jbd_recover(struct jbd_fs *jbd_fs)
 {
-	int r;
+	int32_t r;
 	struct recover_info info;
 	struct jbd_sb *sb = &jbd_fs->sb;
 	if (!sb->start)
@@ -1280,10 +1280,10 @@ static void jbd_journal_write_sb(struct jbd_journal *journal)
  * @param  jbd_fs jbd filesystem
  * @param  journal current journal session
  * @return standard error code*/
-int jbd_journal_start(struct jbd_fs *jbd_fs,
+int32_t jbd_journal_start(struct jbd_fs *jbd_fs,
 		      struct jbd_journal *journal)
 {
-	int r;
+	int32_t r;
 	uint32_t features_incompatible =
 			ext4_get32(&jbd_fs->inode_ref.fs->sb,
 				   features_incompatible);
@@ -1323,7 +1323,7 @@ int jbd_journal_start(struct jbd_fs *jbd_fs,
 
 static void jbd_trans_end_write(struct ext4_bcache *bc __unused,
 			  struct ext4_buf *buf __unused,
-			  int res,
+			  int32_t res,
 			  void *arg);
 
 /*
@@ -1345,7 +1345,7 @@ static void jbd_journal_flush_trans(struct jbd_trans *trans)
 					   jbd_buf->block_rec->lba);
 		if (!(buf && ext4_bcache_test_flag(buf, BC_UPTODATE) &&
 		      jbd_buf->block_rec->trans == trans)) {
-			int r;
+			int32_t r;
 			struct ext4_block jbd_block = EXT4_BLOCK_ZERO();
 			r = jbd_block_get(journal->jbd_fs,
 						&jbd_block,
@@ -1429,9 +1429,9 @@ jbd_journal_purge_cp_trans(struct jbd_journal *journal,
 /**@brief  Stop accessing the journal.
  * @param  journal current journal session
  * @return standard error code*/
-int jbd_journal_stop(struct jbd_journal *journal)
+int32_t jbd_journal_stop(struct jbd_journal *journal)
 {
-	int r;
+	int32_t r;
 	struct jbd_fs *jbd_fs = journal->jbd_fs;
 	uint32_t features_incompatible;
 
@@ -1571,7 +1571,7 @@ jbd_trans_finish_callback(struct jbd_journal *journal,
 				jbd_buf_dirty);
 		if (jbd_buf) {
 			if (!revoke) {
-				int r;
+				int32_t r;
 				r = ext4_block_get_noread(fs->bdev,
 							&block,
 							block_rec->lba);
@@ -1624,7 +1624,7 @@ jbd_trans_remove_block_rec(struct jbd_journal *journal,
  * @param  trans transaction
  * @param  block block descriptor
  * @return standard error code*/
-int jbd_trans_set_block_dirty(struct jbd_trans *trans,
+int32_t jbd_trans_set_block_dirty(struct jbd_trans *trans,
 			      struct ext4_block *block)
 {
 	struct jbd_buf *jbd_buf;
@@ -1682,7 +1682,7 @@ int jbd_trans_set_block_dirty(struct jbd_trans *trans,
  * @param  trans transaction
  * @param  lba logical block address
  * @return standard error code*/
-int jbd_trans_revoke_block(struct jbd_trans *trans,
+int32_t jbd_trans_revoke_block(struct jbd_trans *trans,
 			   ext4_fsblk_t lba)
 {
 	struct jbd_revoke_rec tmp_rec = {
@@ -1709,7 +1709,7 @@ int jbd_trans_revoke_block(struct jbd_trans *trans,
  * @param  trans transaction
  * @param  lba logical block address
  * @return standard error code*/
-int jbd_trans_try_revoke_block(struct jbd_trans *trans,
+int32_t jbd_trans_try_revoke_block(struct jbd_trans *trans,
 			       ext4_fsblk_t lba)
 {
 	struct jbd_journal *journal = trans->journal;
@@ -1782,9 +1782,9 @@ void jbd_journal_free_trans(struct jbd_journal *journal,
 /**@brief  Write commit block for a transaction
  * @param  trans transaction
  * @return standard error code*/
-static int jbd_trans_write_commit_block(struct jbd_trans *trans)
+static int32_t jbd_trans_write_commit_block(struct jbd_trans *trans)
 {
-	int rc;
+	int32_t rc;
 	struct ext4_block block;
 	struct jbd_commit_header *header;
 	uint32_t commit_iblock;
@@ -1818,10 +1818,10 @@ static int jbd_trans_write_commit_block(struct jbd_trans *trans)
  * @param  journal current journal session
  * @param  trans transaction
  * @return standard error code*/
-static int jbd_journal_prepare(struct jbd_journal *journal,
+static int32_t jbd_journal_prepare(struct jbd_journal *journal,
 			       struct jbd_trans *trans)
 {
-	int rc = EOK, i = 0;
+	int32_t rc = EOK, i = 0;
 	struct ext4_block desc_block = EXT4_BLOCK_ZERO(),
 			  data_block = EXT4_BLOCK_ZERO();
 	int32_t tag_tbl_size = 0;
@@ -2010,11 +2010,11 @@ again:
  * @param  journal current journal session
  * @param  trans transaction
  * @return standard error code*/
-static int
+static int32_t
 jbd_journal_prepare_revoke(struct jbd_journal *journal,
 			   struct jbd_trans *trans)
 {
-	int rc = EOK, i = 0;
+	int32_t rc = EOK, i = 0;
 	struct ext4_block desc_block = EXT4_BLOCK_ZERO();
 	int32_t tag_tbl_size = 0;
 	uint32_t desc_iblock = 0;
@@ -2115,7 +2115,7 @@ void jbd_journal_cp_trans(struct jbd_journal *journal, struct jbd_trans *trans)
  *         all the contents in a transaction reach the disk.*/
 static void jbd_trans_end_write(struct ext4_bcache *bc __unused,
 			  struct ext4_buf *buf,
-			  int res,
+			  int32_t res,
 			  void *arg)
 {
 	struct jbd_buf *jbd_buf = arg;
@@ -2171,10 +2171,10 @@ static void jbd_trans_end_write(struct ext4_bcache *bc __unused,
  * @param  journal current journal session
  * @param  trans transaction
  * @return standard error code*/
-static int __jbd_journal_commit_trans(struct jbd_journal *journal,
+static int32_t __jbd_journal_commit_trans(struct jbd_journal *journal,
 				      struct jbd_trans *trans)
 {
-	int rc = EOK;
+	int32_t rc = EOK;
 	uint32_t last = journal->last;
 	struct jbd_revoke_rec *rec, *tmp;
 
@@ -2294,10 +2294,10 @@ jbd_journal_new_trans(struct jbd_journal *journal)
  * @param  journal current journal session
  * @param  trans transaction
  * @return standard error code*/
-int jbd_journal_commit_trans(struct jbd_journal *journal,
+int32_t jbd_journal_commit_trans(struct jbd_journal *journal,
 			     struct jbd_trans *trans)
 {
-	int r = EOK;
+	int32_t r = EOK;
 	r = __jbd_journal_commit_trans(journal, trans);
 	return r;
 }

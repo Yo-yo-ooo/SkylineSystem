@@ -1,6 +1,6 @@
 #include <arch/x86_64/allin.h>
 
-MStack::MStack(const char* name, const char* filename, int line, int layer, uint64_t time, bool close)
+MStack::MStack(const char* name, const char* filename, int32_t line, int32_t layer, uint64_t time, bool close)
 {
     this->name = name;
     this->filename = filename;
@@ -10,7 +10,7 @@ MStack::MStack(const char* name, const char* filename, int line, int layer, uint
     this->close = close;
 }
 
-MStack::MStack(const char* name, const char* filename, int line)
+MStack::MStack(const char* name, const char* filename, int32_t line)
 {
     this->name = name;
     this->filename = filename;
@@ -37,11 +37,11 @@ MStack::MStack()
 
 static bool StrEquals(const char* a, const char* b)
 {
-    int diff = strlen(a) - strlen(b);
+    int32_t diff = strlen(a) - strlen(b);
     if (diff != 0)
         return false;
 
-    int index = 0;
+    int32_t index = 0;
     while (!(a[index] == 0 && b[index] == 0))
     {
         if (a[index] != b[index])

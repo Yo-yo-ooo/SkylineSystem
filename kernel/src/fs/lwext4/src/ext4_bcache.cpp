@@ -65,7 +65,7 @@
 #include <klib/klib.h>
 #include <mem/heap.h>
 
-static int ext4_bcache_lba_compare(struct ext4_buf *a, struct ext4_buf *b)
+static int32_t ext4_bcache_lba_compare(struct ext4_buf *a, struct ext4_buf *b)
 {
 	 if (a->lba > b->lba)
 		 return 1;
@@ -74,7 +74,7 @@ static int ext4_bcache_lba_compare(struct ext4_buf *a, struct ext4_buf *b)
 	 return 0;
 }
 
-static int ext4_bcache_lru_compare(struct ext4_buf *a, struct ext4_buf *b)
+static int32_t ext4_bcache_lru_compare(struct ext4_buf *a, struct ext4_buf *b)
 {
 	if (a->lru_id > b->lru_id)
 		return 1;
@@ -88,7 +88,7 @@ RB_GENERATE_INTERNAL(ext4_buf_lba, ext4_buf, lba_node,
 RB_GENERATE_INTERNAL(ext4_buf_lru, ext4_buf, lru_node,
 		     ext4_bcache_lru_compare, static inline)
 
-int ext4_bcache_init_dynamic(struct ext4_bcache *bc, uint32_t cnt,
+int32_t ext4_bcache_init_dynamic(struct ext4_bcache *bc, uint32_t cnt,
 			     uint32_t itemsize)
 {
 	ext4_assert(bc && cnt && itemsize);
@@ -112,7 +112,7 @@ void ext4_bcache_cleanup(struct ext4_bcache *bc)
 	}
 }
 
-int ext4_bcache_fini_dynamic(struct ext4_bcache *bc)
+int32_t ext4_bcache_fini_dynamic(struct ext4_bcache *bc)
 {
 	_memset(bc, 0, sizeof(struct ext4_bcache));
 	return EOK;
@@ -252,7 +252,7 @@ ext4_bcache_find_get(struct ext4_bcache *bc, struct ext4_block *b,
 	return buf;
 }
 
-int ext4_bcache_alloc(struct ext4_bcache *bc, struct ext4_block *b,
+int32_t ext4_bcache_alloc(struct ext4_bcache *bc, struct ext4_block *b,
 		      bool *is_new)
 {
 	/* Try to search the buffer with exaxt LBA. */
@@ -288,7 +288,7 @@ int ext4_bcache_alloc(struct ext4_bcache *bc, struct ext4_block *b,
 	return EOK;
 }
 
-int ext4_bcache_free(struct ext4_bcache *bc, struct ext4_block *b)
+int32_t ext4_bcache_free(struct ext4_bcache *bc, struct ext4_block *b)
 {
 	struct ext4_buf *buf = b->buf;
 

@@ -70,7 +70,7 @@ void keyboard_handle_key(u8 key)
 
 void keyboard_wait_write()
 {
-    for (int i = 0; i < 10000; i++)
+    for (int32_t i = 0; i < 10000; i++)
     {
         if (!(inb(0x64) & 0x02))
         {
@@ -79,9 +79,9 @@ void keyboard_wait_write()
     }
 }
 
-int keyboard_wait_read()
+int32_t keyboard_wait_read()
 {
-    for (int i = 0; i < 10000; i++)
+    for (int32_t i = 0; i < 10000; i++)
     {
         if ((inb(0x64) & 0x01) == 1)
         {

@@ -35,7 +35,7 @@ namespace AHCI
         
         HBACommandHeader* cmdHeader = (HBACommandHeader*)((uint64_t)hbaPort->commandListBase + ((uint64_t)hbaPort->commandListBaseUpper << 32));
 
-        for (int i = 0; i < 32; i++)
+        for (int32_t i = 0; i < 32; i++)
         {
             cmdHeader[i].prdtLength = 8;
 
@@ -161,11 +161,11 @@ namespace AHCI
         return test;
     }
 
-    int Port::FindCommandSlot()
+    int32_t Port::FindCommandSlot()
     {
         uint32_t cmdSlots = 32;
         uint32_t slots = (hbaPort->sataControl | hbaPort->commandIssue);
-        for (int i = 0; i < cmdSlots; i++)
+        for (int32_t i = 0; i < cmdSlots; i++)
         {
             if ((slots & 1) == 0)
                 return i;
@@ -183,7 +183,7 @@ namespace AHCI
         uint32_t sectorCountCopy = sectorCount;
         
         hbaPort->interruptStatus = (uint32_t)-1;
-        int slot = FindCommandSlot();
+        int32_t slot = FindCommandSlot();
         if (slot == -1)
             return false;
         
@@ -199,7 +199,7 @@ namespace AHCI
         HBACommandTable* commandTable = (HBACommandTable*)((uint64_t)cmdHeader->commandTableBaseAddress);
         _memset(commandTable, 0, sizeof(HBACommandTable) + (cmdHeader->prdtLength - 1) * sizeof(HBAPRDTEntry));
 
-        int i = 0;
+        int32_t i = 0;
         for (i = 0; i < cmdHeader->prdtLength - 1; i++)
         {
             commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
@@ -281,7 +281,7 @@ namespace AHCI
         uint32_t sectorCountCopy = sectorCount;
         
         hbaPort->interruptStatus = (uint32_t)-1;
-        int slot = FindCommandSlot();
+        int32_t slot = FindCommandSlot();
         if (slot == -1)
             return false;
 
@@ -294,7 +294,7 @@ namespace AHCI
         HBACommandTable* commandTable = (HBACommandTable*)((uint64_t)cmdHeader->commandTableBaseAddress);
         _memset(commandTable, 0, sizeof(HBACommandTable) + (cmdHeader->prdtLength - 1) * sizeof(HBAPRDTEntry));
 
-        int i = 0;
+        int32_t i = 0;
         for (i = 0; i < cmdHeader->prdtLength - 1; i++)
         {
             commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
@@ -396,7 +396,7 @@ namespace AHCI
 
         kinfoln("Checking %d Ports:", PortCount);
 
-        for (int i = 0; i < PortCount; i++)
+        for (int32_t i = 0; i < PortCount; i++)
         {
             Port* port = Ports[i];
             PortType portType = port->portType;
@@ -435,7 +435,7 @@ namespace AHCI
             kinfo("AHCI: Probing ports via ABAR 0x%016lx, value 0x%04X\n", (uint64_t)ABAR, ABAR->portsImplemented);
 	    else
 		    kinfo("AHCI: Port not implemented, skipping probing\n");
-        for (int i = 0; i < 32; i++)
+        for (int32_t i = 0; i < 32; i++)
         {
             if (portsImplemented & (1 << i))
             {

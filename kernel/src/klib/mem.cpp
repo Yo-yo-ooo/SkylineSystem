@@ -56,7 +56,7 @@ void _memmove(void* src, void* dest, uint64_t size) {
 	}
 }
 
-int _memcmp(const void* buffer1,const void* buffer2,size_t  count)
+int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
 {
     const u8 *p1 = (const u8 *)buffer1;
     const u8 *p2 = (const u8 *)buffer2;

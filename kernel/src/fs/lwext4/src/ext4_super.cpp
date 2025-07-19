@@ -137,14 +137,14 @@ static void ext4_sb_set_csum(struct ext4_sblock *s)
 	s->checksum = to_le32(ext4_sb_csum(s));
 }
 
-int ext4_sb_write(struct ext4_blockdev *bdev, struct ext4_sblock *s)
+int32_t ext4_sb_write(struct ext4_blockdev *bdev, struct ext4_sblock *s)
 {
 	ext4_sb_set_csum(s);
 	return ext4_block_writebytes(bdev, EXT4_SUPERBLOCK_OFFSET, s,
 				     EXT4_SUPERBLOCK_SIZE);
 }
 
-int ext4_sb_read(struct ext4_blockdev *bdev, struct ext4_sblock *s)
+int32_t ext4_sb_read(struct ext4_blockdev *bdev, struct ext4_sblock *s)
 {
 	return ext4_block_readbytes(bdev, EXT4_SUPERBLOCK_OFFSET, s,
 				    EXT4_SUPERBLOCK_SIZE);
@@ -185,7 +185,7 @@ bool ext4_sb_check(struct ext4_sblock *s)
 	return true;
 }
 
-static inline int is_power_of(uint32_t a, uint32_t b)
+static inline int32_t is_power_of(uint32_t a, uint32_t b)
 {
 	while (1) {
 		if (a < b)

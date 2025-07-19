@@ -129,7 +129,7 @@ static uint32_t ext4_ialloc_bitmap_csum(struct ext4_sblock *sb,	void *bitmap)
 void ext4_ialloc_set_bitmap_csum(struct ext4_sblock *sb, struct ext4_bgroup *bg,
 				 void *bitmap __unused)
 {
-	int desc_size = ext4_sb_get_desc_size(sb);
+	int32_t desc_size = ext4_sb_get_desc_size(sb);
 	uint32_t csum = ext4_ialloc_bitmap_csum(sb, bitmap);
 	uint16_t lo_csum = to_le16(csum & 0xFFFF),
 		 hi_csum = to_le16(csum >> 16);
@@ -150,7 +150,7 @@ ext4_ialloc_verify_bitmap_csum(struct ext4_sblock *sb, struct ext4_bgroup *bg,
 			       void *bitmap __unused)
 {
 
-	int desc_size = ext4_sb_get_desc_size(sb);
+	int32_t desc_size = ext4_sb_get_desc_size(sb);
 	uint32_t csum = ext4_ialloc_bitmap_csum(sb, bitmap);
 	uint16_t lo_csum = to_le16(csum & 0xFFFF),
 		 hi_csum = to_le16(csum >> 16);
@@ -171,7 +171,7 @@ ext4_ialloc_verify_bitmap_csum(struct ext4_sblock *sb, struct ext4_bgroup *bg,
 #define ext4_ialloc_verify_bitmap_csum(...) true
 #endif
 
-int ext4_ialloc_free_inode(struct ext4_fs *fs, uint32_t index, bool is_dir)
+int32_t ext4_ialloc_free_inode(struct ext4_fs *fs, uint32_t index, bool is_dir)
 {
 	struct ext4_sblock *sb = &fs->sb;
 
@@ -179,7 +179,7 @@ int ext4_ialloc_free_inode(struct ext4_fs *fs, uint32_t index, bool is_dir)
 	uint32_t block_group = ext4_ialloc_get_bgid_of_inode(sb, index);
 
 	struct ext4_block_group_ref bg_ref;
-	int rc = ext4_fs_get_block_group_ref(fs, block_group, &bg_ref);
+	int32_t rc = ext4_fs_get_block_group_ref(fs, block_group, &bg_ref);
 	if (rc != EOK)
 		return rc;
 
@@ -242,7 +242,7 @@ int ext4_ialloc_free_inode(struct ext4_fs *fs, uint32_t index, bool is_dir)
 	return EOK;
 }
 
-int ext4_ialloc_alloc_inode(struct ext4_fs *fs, uint32_t *idx, bool is_dir)
+int32_t ext4_ialloc_alloc_inode(struct ext4_fs *fs, uint32_t *idx, bool is_dir)
 {
 	struct ext4_sblock *sb = &fs->sb;
 
@@ -265,7 +265,7 @@ int ext4_ialloc_alloc_inode(struct ext4_fs *fs, uint32_t *idx, bool is_dir)
 
 		/* Load block group to check */
 		struct ext4_block_group_ref bg_ref;
-		int rc = ext4_fs_get_block_group_ref(fs, bgid, &bg_ref);
+		int32_t rc = ext4_fs_get_block_group_ref(fs, bgid, &bg_ref);
 		if (rc != EOK)
 			return rc;
 

@@ -3,10 +3,10 @@
 void PrintMStackTrace(MStack stack[], int64_t size)
 {
 #if RECORD_STACK_TRACE  
-    int count = 0;
-    for (int i = 0; i < size; i++)
+    int32_t count = 0;
+    for (int32_t i = 0; i < size; i++)
     {
-        int index = (size - i) - 1;
+        int32_t index = (size - i) - 1;
         if (stack[index].line != -1)
             count++;
     }
@@ -17,9 +17,9 @@ void PrintMStackTrace(MStack stack[], int64_t size)
     {
         if (size > 50)
             size = 50;
-        for (int i = 0; i < size; i++)
+        for (int32_t i = 0; i < size; i++)
         {
-            int index = (size - i) - 1;
+            int32_t index = (size - i) - 1;
             if (stack[index].line != -1)
             {
                 printf_("> At \"{}\"\n", stack[index].name);
@@ -32,9 +32,9 @@ void PrintMStackTrace(MStack stack[], int64_t size)
     {
         if (size > 50)
             size = 50;
-        for (int i = 0; i < size; i++)
+        for (int32_t i = 0; i < size; i++)
         {
-            int index = i;
+            int32_t index = i;
             if (stack[index].line != -1)
             {
                 printf_("> At \"{}\"\n", stack[index].name);
@@ -67,7 +67,7 @@ namespace MStackData
     int64_t BenchmarkStackPointer2 = 0;
     int64_t BenchmarkStackPointerSave = 0;
     bool BenchmarkEnabled = false;
-    int BenchmarkMode = 0;
+    int32_t BenchmarkMode = 0;
 };
 
 void _AddTheBenchmark(MStack thing)
@@ -178,17 +178,17 @@ void RemoveTheLastElementFromTheMStack()
 }
 
 
-void SaveBenchmarkStack(int mode)
+void SaveBenchmarkStack(int32_t mode)
 {
     if (mode == 0)
     {
-        for (int i = 0; i < MStackData::BenchmarkStackPointer1; i++)
+        for (int32_t i = 0; i < MStackData::BenchmarkStackPointer1; i++)
             MStackData::BenchmarkStackArrSave[i] = MStackData::BenchmarkStackArr1[i];
         MStackData::BenchmarkStackPointerSave = MStackData::BenchmarkStackPointer1;
     }
     else
     {
-        for (int i = 0; i < MStackData::BenchmarkStackPointer2; i++)
+        for (int32_t i = 0; i < MStackData::BenchmarkStackPointer2; i++)
             MStackData::BenchmarkStackArrSave[i] = MStackData::BenchmarkStackArr2[i];
         MStackData::BenchmarkStackPointerSave = MStackData::BenchmarkStackPointer2;
     }

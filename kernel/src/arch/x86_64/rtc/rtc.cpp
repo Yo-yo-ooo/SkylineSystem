@@ -13,9 +13,9 @@ namespace RTC
     unsigned char hour;
     unsigned char day;
     unsigned char month;
-    unsigned int year;
+    uint32_t year;
 
-    int CURRENT_YEAR = 0;
+    int32_t CURRENT_YEAR = 0;
     void InitRTC()
     {
         CURRENT_YEAR = to_int(CURRENT_YEAR_STR);
@@ -35,7 +35,7 @@ namespace RTC
         Year = CURRENT_YEAR;
     }
 
-    int century_register = 0x00;                                // Set by ACPI table parsing code if possible
+    int32_t century_register = 0x00;                                // Set by ACPI table parsing code if possible
     
 
     
@@ -46,12 +46,12 @@ namespace RTC
         cmos_data    = 0x71
     };
     
-    int get_update_in_progress_flag() {
+    int32_t get_update_in_progress_flag() {
         outb(cmos_address, 0x0A);
         return (inb(cmos_data) & 0x80);
     }
     
-    unsigned char get_RTC_register(int reg) {
+    unsigned char get_RTC_register(int32_t reg) {
         outb(cmos_address, reg);
         return inb(cmos_data);
     }
@@ -140,7 +140,7 @@ namespace RTC
 
 
 
-    int Second, Minute, Hour, Day, Month, Year;
+    int32_t Second, Minute, Hour, Day, Month, Year;
     unsigned long LastUpdateTime = 0;
 
     void UpdateTimeIfNeeded()
@@ -159,7 +159,7 @@ namespace RTC
         else
             read_rtc();
 
-        //int offset = 2;
+        //int32_t offset = 2;
 
         Second = second;
         Minute = minute;

@@ -82,9 +82,9 @@ struct fs_aux_info {
 	uint32_t blocks_per_tind;
 };
 
-static inline int log_2(int j)
+static inline int32_t log_2(int32_t j)
 {
-	int i;
+	int32_t i;
 
 	for (i = 0; j > 0; i++)
 		j >>= 1;
@@ -92,7 +92,7 @@ static inline int log_2(int j)
 	return i - 1;
 }
 
-static int sb2info(struct ext4_sblock *sb, struct ext4_mkfs_info *info)
+static int32_t sb2info(struct ext4_sblock *sb, struct ext4_mkfs_info *info)
 {
         if (to_le16(sb->magic) != EXT4_SUPERBLOCK_MAGIC)
                 return EINVAL;
@@ -159,7 +159,7 @@ static bool has_superblock(struct ext4_mkfs_info *info, uint32_t bgid)
 	return ext4_sb_sparse(bgid);
 }
 
-static int create_fs_aux_info(struct fs_aux_info *aux_info,
+static int32_t create_fs_aux_info(struct fs_aux_info *aux_info,
 			      struct ext4_mkfs_info *info)
 {
 	aux_info->first_data_block = (info->block_size > 1024) ? 0 : 1;
@@ -312,12 +312,12 @@ static void fill_sb(struct fs_aux_info *aux_info, struct ext4_mkfs_info *info)
 }
 
 
-static int write_bgroup_block(struct ext4_blockdev *bd,
+static int32_t write_bgroup_block(struct ext4_blockdev *bd,
 			      struct fs_aux_info *aux_info,
 			      struct ext4_mkfs_info *info,
 			      uint32_t blk)
 {
-	int r = EOK;
+	int32_t r = EOK;
 	uint32_t j;
 	struct ext4_block b;
 
@@ -351,10 +351,10 @@ static int write_bgroup_block(struct ext4_blockdev *bd,
 	return r;
 }
 
-static int write_bgroups(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
+static int32_t write_bgroups(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
 			 struct ext4_mkfs_info *info)
 {
-	int r = EOK;
+	int32_t r = EOK;
 
 	struct ext4_block b;
 	struct ext4_bgroup *bg_desc;
@@ -448,12 +448,12 @@ static int write_bgroups(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
 	return r;
 }
 
-static int write_sblocks(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
+static int32_t write_sblocks(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
 			  struct ext4_mkfs_info *info)
 {
 	uint64_t offset;
 	uint32_t i;
-	int r;
+	int32_t r;
 
 	/* write out the backup superblocks */
 	for (i = 1; i < aux_info->groups; i++) {
@@ -476,9 +476,9 @@ static int write_sblocks(struct ext4_blockdev *bd, struct fs_aux_info *aux_info,
 }
 
 
-int ext4_mkfs_read_info(struct ext4_blockdev *bd, struct ext4_mkfs_info *info)
+int32_t ext4_mkfs_read_info(struct ext4_blockdev *bd, struct ext4_mkfs_info *info)
 {
-	int r;
+	int32_t r;
 	struct ext4_sblock *sb = NULL;
 	r = ext4_block_init(bd);
 	if (r != EOK)
@@ -502,9 +502,9 @@ Finish:
 	return r;
 }
 
-static int mkfs_init(struct ext4_blockdev *bd, struct ext4_mkfs_info *info)
+static int32_t mkfs_init(struct ext4_blockdev *bd, struct ext4_mkfs_info *info)
 {
-	int r;
+	int32_t r;
 	struct fs_aux_info aux_info;
 	_memset(&aux_info, 0, sizeof(struct fs_aux_info));
 
@@ -527,9 +527,9 @@ static int mkfs_init(struct ext4_blockdev *bd, struct ext4_mkfs_info *info)
 	return r;
 }
 
-static int init_bgs(struct ext4_fs *fs)
+static int32_t init_bgs(struct ext4_fs *fs)
 {
-	int r = EOK;
+	int32_t r = EOK;
 	struct ext4_block_group_ref ref;
 	uint32_t i;
 	uint32_t bg_count = ext4_block_group_cnt(&fs->sb);
@@ -545,13 +545,13 @@ static int init_bgs(struct ext4_fs *fs)
 	return r;
 }
 
-static int alloc_inodes(struct ext4_fs *fs)
+static int32_t alloc_inodes(struct ext4_fs *fs)
 {
-	int r = EOK;
-	int i;
+	int32_t r = EOK;
+	int32_t i;
 	struct ext4_inode_ref inode_ref;
 	for (i = 1; i < 12; ++i) {
-		int filetype = EXT4_DE_REG_FILE;
+		int32_t filetype = EXT4_DE_REG_FILE;
 
 		switch (i) {
 		case EXT4_ROOT_INO:
@@ -581,9 +581,9 @@ static int alloc_inodes(struct ext4_fs *fs)
 	return r;
 }
 
-static int create_dirs(struct ext4_fs *fs)
+static int32_t create_dirs(struct ext4_fs *fs)
 {
-	int r = EOK;
+	int32_t r = EOK;
 	struct ext4_inode_ref root;
 	struct ext4_inode_ref child;
 
@@ -648,10 +648,10 @@ static int create_dirs(struct ext4_fs *fs)
 	return r;
 }
 
-static int create_journal_inode(struct ext4_fs *fs,
+static int32_t create_journal_inode(struct ext4_fs *fs,
 				struct ext4_mkfs_info *info)
 {
-	int ret;
+	int32_t ret;
 	struct ext4_inode_ref inode_ref;
 	uint64_t blocks_count;
 
@@ -712,10 +712,10 @@ static int create_journal_inode(struct ext4_fs *fs,
 	return ret;
 }
 
-int ext4_mkfs(struct ext4_fs *fs, struct ext4_blockdev *bd,
-	      struct ext4_mkfs_info *info, int fs_type)
+int32_t ext4_mkfs(struct ext4_fs *fs, struct ext4_blockdev *bd,
+	      struct ext4_mkfs_info *info, int32_t fs_type)
 {
-	int r;
+	int32_t r;
 
 	r = ext4_block_init(bd);
 	if (r != EOK)

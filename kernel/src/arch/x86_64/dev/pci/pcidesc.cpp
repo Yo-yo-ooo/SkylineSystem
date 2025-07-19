@@ -53,27 +53,27 @@ namespace PCI {
 
 
 
-    const int intelDeviceCount = 4;
+    const int32_t intelDeviceCount = 4;
     const DeviceEntry intelDevices[] = {
         {0x29C0, "Express DRAM Controller"},
         {0x2918, "LPC Interface Controller"},
         {0x2922, "6 Port SATA Controller"},
         {0x2930, "SMBus Controller"}
     };
-    const int amdDeviceCount = 0;
+    const int32_t amdDeviceCount = 0;
     const DeviceEntry amdDevices[] = {
         {0x0000, "Test"}
     };
-    const int nvidiaDeviceCount = 0;
+    const int32_t nvidiaDeviceCount = 0;
     const DeviceEntry nvidiaDevices[] = {
         {0x0000, "Test"}
     };
-    const int qemuDeviceCount = 0;
+    const int32_t qemuDeviceCount = 0;
     const DeviceEntry qemuDevices[] = {
         {0x0000, "Test"}
     };
 
-    const int implementedVendorCount = 4;
+    const int32_t implementedVendorCount = 4;
     const VendorEntry implementedVendors[] {
         {0x8086, "Intel Corp", intelDeviceCount, intelDevices},
         {0x1022, "AMD Corp", amdDeviceCount, amdDevices},
@@ -92,7 +92,7 @@ namespace PCI {
 
 
 
-    const int _IdeControllerProgIFCount = 8;
+    const int32_t _IdeControllerProgIFCount = 8;
     const ProgIFEntry _IdeControllerProgIFs[] {
         {0x0, "ISA Compatibility mode-only controller"},
         {0x5, "PCI native mode-only controller"},
@@ -104,56 +104,56 @@ namespace PCI {
         {0x8F, "PCI native mode controller, supports both channels switched to ISA compatibility mode, supports bus mastering"},
     };
 
-    const int _AtaControllerProgIFCount = 2;
+    const int32_t _AtaControllerProgIFCount = 2;
     const ProgIFEntry _AtaControllerProgIFs[] {
         {0x20, "Single DMA"},
         {0x30, "Chained DMA"},
     };
 
-    const int _SerialAtaControllerProgIFCount = 3;
+    const int32_t _SerialAtaControllerProgIFCount = 3;
     const ProgIFEntry _SerialAtaControllerProgIFs[] {
         {0x0, "Vendor Specific Interface"},
         {0x1, "AHCI 1.0"},
         {0x2, "Serial Storage Bus"},
     };
 
-    const int _SerialAttachedScsiControllerProgIFCount = 2;
+    const int32_t _SerialAttachedScsiControllerProgIFCount = 2;
     const ProgIFEntry _SerialAttachedScsiControllerProgIFs[] {
         {0x0, "SAS"},
         {0x1, "Serial Storage Bus"},
     };
 
-    const int _NonVolatileMemoryControllerProgIFCount = 2;
+    const int32_t _NonVolatileMemoryControllerProgIFCount = 2;
     const ProgIFEntry _NonVolatileMemoryControllerProgIFs[] {
         {0x1, "NVMHCI"},
         {0x2, "NVM Express"},
     };
 
-    const int _VgaCompatibleControllerProgIFCount = 2;
+    const int32_t _VgaCompatibleControllerProgIFCount = 2;
     const ProgIFEntry _VgaCompatibleControllerProgIFs[] {
         {0x0, "VGA Controller"},
         {0x1, "8514-Compatible Controller"},
     };
 
-    const int _PciToPciBridgeProgIFCount = 2;
+    const int32_t _PciToPciBridgeProgIFCount = 2;
     const ProgIFEntry _PciToPciBridgeProgIFs[] {
         {0x0, "Normal Decode"},
         {0x1, "Subtractive Decode"},
     };
 
-    const int _RacewayBridgeProgIFCount = 2;
+    const int32_t _RacewayBridgeProgIFCount = 2;
     const ProgIFEntry _RacewayBridgeProgIFs[] {
         {0x0, "Transparent Mode"},
         {0x1, "Endpoint Mode"},
     };
 
-    const int _PciToPciBridge2ProgIFCount = 2;
+    const int32_t _PciToPciBridge2ProgIFCount = 2;
     const ProgIFEntry _PciToPciBridge2ProgIFs[] {
         {0x40, "Semi-Transparent, Primary bus towards host CPU"},
         {0x80, "Semi-Transparent, Secondary bus towards host CPU"},
     };
 
-    const int _SerialControllerProgIFCount = 7;
+    const int32_t _SerialControllerProgIFCount = 7;
     const ProgIFEntry _SerialControllerProgIFs[] {
         {0x0, "8250-Compatible (Generic XT)"},
         {0x1, "16450-Compatible"},
@@ -164,7 +164,7 @@ namespace PCI {
         {0x6, "16950-Compatible"},
     };
 
-    const int _ParallelControllerProgIFCount = 5;
+    const int32_t _ParallelControllerProgIFCount = 5;
     const ProgIFEntry _ParallelControllerProgIFs[] {
         {0x0, "Standard Parallel Port"},
         {0x1, "Bi-Directional Parallel Port"},
@@ -173,7 +173,7 @@ namespace PCI {
         {0xFE, "IEEE 1284 Target Device"},
     };
 
-    const int _ModemProgIFCount = 5;
+    const int32_t _ModemProgIFCount = 5;
     const ProgIFEntry _ModemProgIFs[] {
         {0x0, "Generic Modem"},
         {0x1, "Hayes 16450-Compatible Interface"},
@@ -182,7 +182,7 @@ namespace PCI {
         {0x4, "Hayes 16750-Compatible Interface"},
     };
 
-    const int _PicProgIFCount = 5;
+    const int32_t _PicProgIFCount = 5;
     const ProgIFEntry _PicProgIFs[] {
         {0x0, "Generic 8259-Compatible"},
         {0x1, "ISA-Compatible"},
@@ -191,14 +191,14 @@ namespace PCI {
         {0x20, "I/O(x) APIC Interrupt Controller"},
     };
 
-    const int _DmaControllerProgIFCount = 3;
+    const int32_t _DmaControllerProgIFCount = 3;
     const ProgIFEntry _DmaControllerProgIFs[] {
         {0x00, "Generic 8237-Compatible"},
         {0x01, "ISA-Compatible"},
         {0x02, "EISA-Compatible"},
     };
 
-    const int _TimerProgIFCount = 4;
+    const int32_t _TimerProgIFCount = 4;
     const ProgIFEntry _TimerProgIFs[] {
         {0x00, "Generic 8254-Compatible"},
         {0x01, "ISA-Compatible"},
@@ -206,25 +206,25 @@ namespace PCI {
         {0x03, "HPET"},
     };
 
-    const int _RtcControllerProgIFCount = 2;
+    const int32_t _RtcControllerProgIFCount = 2;
     const ProgIFEntry _RtcControllerProgIFs[] {
         {0x0, "Generic RTC"},
         {0x1, "ISA-Compatible"},
     };
 
-    const int _GameportControllerProgIFCount = 2;
+    const int32_t _GameportControllerProgIFCount = 2;
     const ProgIFEntry _GameportControllerProgIFs[] {
         {0x0, "Generic"},
         {0x10, "Extended"},
     };
 
-    const int _FirewireIeee1394ControllerProgIFCount = 2;
+    const int32_t _FirewireIeee1394ControllerProgIFCount = 2;
     const ProgIFEntry _FirewireIeee1394ControllerProgIFs[] {
         {0x0, "Generic"},
         {0x10, "OHCI"},
     };
 
-    const int _UsbControllerProgIFCount = 6;
+    const int32_t _UsbControllerProgIFCount = 6;
     const ProgIFEntry _UsbControllerProgIFs[] {
         {0x0, "UHCI Controller"},
         {0x10, "OHCI Controller"},
@@ -234,20 +234,20 @@ namespace PCI {
         {0xFE, "USB Device (Not a host controller)"},
     };
 
-    const int _IpmiInterfaceProgIFCount = 3;
+    const int32_t _IpmiInterfaceProgIFCount = 3;
     const ProgIFEntry _IpmiInterfaceProgIFs[] {
         {0x0, "SMIC"},
         {0x1, "Keyboard Controller Style"},
         {0x2, "Block Transfer"},
     };
 
-    const int _UnclassifiedSubclassCount = 2;
+    const int32_t _UnclassifiedSubclassCount = 2;
     const SubclassEntry _UnclassifiedSubclasses[] {
         {0x0, "Non-VGA-Compatible Unclassified Device", 0, 0},
         {0x1, "VGA-Compatible Unclassified Device", 0, 0},
     };
 
-    const int _MassStorageControllerSubclassCount = 10;
+    const int32_t _MassStorageControllerSubclassCount = 10;
     const SubclassEntry _MassStorageControllerSubclasses[] {
         {0x0, "SCSI Bus Controller", 0, 0},
         {0x1, "IDE Controller", _IdeControllerProgIFCount, _IdeControllerProgIFs},
@@ -261,7 +261,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _NetworkControllerSubclassCount = 10;
+    const int32_t _NetworkControllerSubclassCount = 10;
     const SubclassEntry _NetworkControllerSubclasses[] {
         {0x0, "Ethernet Controller", 0, 0},
         {0x1, "Token Ring Controller", 0, 0},
@@ -275,7 +275,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _DisplayControllerSubclassCount = 4;
+    const int32_t _DisplayControllerSubclassCount = 4;
     const SubclassEntry _DisplayControllerSubclasses[] {
         {0x0, "VGA Compatible Controller", _VgaCompatibleControllerProgIFCount, _VgaCompatibleControllerProgIFs},
         {0x1, "XGA Controller", 0, 0},
@@ -283,7 +283,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _MultimediaControllerSubclassCount = 5;
+    const int32_t _MultimediaControllerSubclassCount = 5;
     const SubclassEntry _MultimediaControllerSubclasses[] {
         {0x0, "Multimedia Video Controller", 0, 0}, 
         {0x1, "Multimedia Audio Controller", 0, 0},
@@ -292,14 +292,14 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _MemoryControllerSubclassCount = 3;
+    const int32_t _MemoryControllerSubclassCount = 3;
     const SubclassEntry _MemoryControllerSubclasses[] {
         {0x0, "RAM Controller", 0, 0},
         {0x1, "Flash Controller", 0, 0},
         {0x80, "Other", 0, 0},
     };
 
-    const int _BridgeSubclassCount = 12;
+    const int32_t _BridgeSubclassCount = 12;
     const SubclassEntry _BridgeSubclasses[] {
         {0x0, "Host Bridge", 0, 0},
         {0x1, "ISA Bridge", 0, 0},
@@ -315,7 +315,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _SimpleCommunicationControllerSubclassCount = 7;
+    const int32_t _SimpleCommunicationControllerSubclassCount = 7;
     const SubclassEntry _SimpleCommunicationControllerSubclasses[] {
         {0x0, "Serial Controller", _SerialControllerProgIFCount, _SerialControllerProgIFs},
         {0x1, "Parallel Controller", _ParallelControllerProgIFCount, _ParallelControllerProgIFs},
@@ -326,7 +326,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _BaseSystemPeripheralSubclassCount = 8;
+    const int32_t _BaseSystemPeripheralSubclassCount = 8;
     const SubclassEntry _BaseSystemPeripheralSubclasses[] {
         {0x0, "PIC", _PicProgIFCount, _PicProgIFs},
         {0x01, "DMA Controller", _DmaControllerProgIFCount, _DmaControllerProgIFs},
@@ -338,7 +338,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _InputDeviceControllerSubclassCount = 6;
+    const int32_t _InputDeviceControllerSubclassCount = 6;
     const SubclassEntry _InputDeviceControllerSubclasses[] {
         {0x0, "Keyboard Controller", 0, 0},
         {0x1, "Digitizer Pen", 0, 0},
@@ -348,13 +348,13 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _DockingStationSubclassCount = 2;
+    const int32_t _DockingStationSubclassCount = 2;
     const SubclassEntry _DockingStationSubclasses[] {
         {0x0, "Generic", 0, 0},
         {0x80, "Other", 0, 0},
     };
 
-    const int _ProcessorSubclassCount = 9;
+    const int32_t _ProcessorSubclassCount = 9;
     const SubclassEntry _ProcessorSubclasses[] {
         {0x0, "386", 0, 0},
         {0x1, "486", 0, 0},
@@ -367,7 +367,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _SerialBusControllerSubclassCount = 11;
+    const int32_t _SerialBusControllerSubclassCount = 11;
     const SubclassEntry _SerialBusControllerSubclasses[] {
         {0x0, "FireWire (IEEE 1394) Controller", _FirewireIeee1394ControllerProgIFCount, _FirewireIeee1394ControllerProgIFs},
         {0x1, "ACCESS Bus Controller", 0, 0},
@@ -382,7 +382,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _WirelessControllerSubclassCount = 8;
+    const int32_t _WirelessControllerSubclassCount = 8;
     const SubclassEntry _WirelessControllerSubclasses[] {
         {0x0, "iRDA Compatible Controller", 0, 0},
         {0x1, "Consumer IR Controller", 0, 0},
@@ -394,12 +394,12 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int _IntelligentControllerSubclassCount = 1;
+    const int32_t _IntelligentControllerSubclassCount = 1;
     const SubclassEntry _IntelligentControllerSubclasses[] {
         {0x0, "I20", 0, 0},
     };
 
-    const int _SatelliteCommunicationControllerSubclassCount = 4;
+    const int32_t _SatelliteCommunicationControllerSubclassCount = 4;
     const SubclassEntry _SatelliteCommunicationControllerSubclasses[] {
         {0x1, "Satellite TV Controller", 0, 0},
         {0x2, "Satellite Audio Controller", 0, 0},
@@ -407,14 +407,14 @@ namespace PCI {
         {0x4, "Satellite Data Controller", 0, 0},
     };
 
-    const int _EncryptionControllerSubclassCount = 3;
+    const int32_t _EncryptionControllerSubclassCount = 3;
     const SubclassEntry _EncryptionControllerSubclasses[] {
         {0x0, "Network and Computing Encrpytion/Decryption", 0, 0},
         {0x10, "Entertainment Encryption/Decryption", 0, 0},
         {0x80, "Other", 0, 0},
     };
 
-    const int _SignalProcessingControllerSubclassCount = 5;
+    const int32_t _SignalProcessingControllerSubclassCount = 5;
     const SubclassEntry _SignalProcessingControllerSubclasses[] {
         {0x0, "DPIO Modules", 0, 0},
         {0x1, "Performance Counters", 0, 0},
@@ -423,7 +423,7 @@ namespace PCI {
         {0x80, "Other", 0, 0},
     };
 
-    const int implementedClassCount = 24;
+    const int32_t implementedClassCount = 24;
     const ClassEntry implementedClasses[] {
         {0x0, "Unclassified", _UnclassifiedSubclassCount, _UnclassifiedSubclasses},
         {0x1, "Mass Storage Controller", _MassStorageControllerSubclassCount, _MassStorageControllerSubclasses},
@@ -492,7 +492,7 @@ namespace PCI {
 
     const VendorEntry* GetVendorEntry(uint16_t vendorID)
     {
-        for (int i = 0; i < implementedVendorCount; i++)
+        for (int32_t i = 0; i < implementedVendorCount; i++)
             if (implementedVendors[i].id == vendorID)
                 return &implementedVendors[i];
 
@@ -501,7 +501,7 @@ namespace PCI {
 
     const DeviceEntry* GetDeviceEntry(const VendorEntry* vendor, uint16_t deviceID)
     {
-        for (int i = 0; i < vendor->deviceCount; i++)
+        for (int32_t i = 0; i < vendor->deviceCount; i++)
             if (vendor->devices[i].id == deviceID)
                 return &vendor->devices[i];
 
@@ -510,7 +510,7 @@ namespace PCI {
 
     const ClassEntry* GetClassEntry(uint8_t classID)
     {
-        for (int i = 0; i < implementedClassCount; i++)
+        for (int32_t i = 0; i < implementedClassCount; i++)
             if (implementedClasses[i].id == classID)
                 return &implementedClasses[i];
 
@@ -519,7 +519,7 @@ namespace PCI {
 
     const SubclassEntry* GetSubclassEntry(const ClassEntry* classEntry, uint16_t subclassID)
     {
-        for (int i = 0; i < classEntry->subclassCount; i++)
+        for (int32_t i = 0; i < classEntry->subclassCount; i++)
             if (classEntry->subclasses[i].id == subclassID)
                 return &classEntry->subclasses[i];
 
@@ -528,7 +528,7 @@ namespace PCI {
 
     const ProgIFEntry* GetProgIFEntry(const SubclassEntry* subclassEntry, uint16_t progIFID)
     {
-        for (int i = 0; i < subclassEntry->subProgIFCount; i++)
+        for (int32_t i = 0; i < subclassEntry->subProgIFCount; i++)
             if (subclassEntry->subProgIFs[i].id == progIFID)
                 return &subclassEntry->subProgIFs[i];
 

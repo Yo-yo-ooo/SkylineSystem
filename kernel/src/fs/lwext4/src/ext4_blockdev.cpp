@@ -70,7 +70,7 @@ static void ext4_bdif_lock(struct ext4_blockdev *bdev)
 	if (!bdev->bdif->lock)
 		return;
 
-	int r = bdev->bdif->lock(bdev);
+	int32_t r = bdev->bdif->lock(bdev);
 	ext4_assert(r == EOK);
 }
 
@@ -79,34 +79,34 @@ static void ext4_bdif_unlock(struct ext4_blockdev *bdev)
 	if (!bdev->bdif->unlock)
 		return;
 
-	int r = bdev->bdif->unlock(bdev);
+	int32_t r = bdev->bdif->unlock(bdev);
 	ext4_assert(r == EOK);
 }
 
-static int ext4_bdif_bread(struct ext4_blockdev *bdev, void *buf,
+static int32_t ext4_bdif_bread(struct ext4_blockdev *bdev, void *buf,
 			   uint64_t blk_id, uint32_t blk_cnt)
 {
 	ext4_bdif_lock(bdev);
     debugpln("ext4_bdif_bread: HIT!");
-	int r = bdev->bdif->bread(bdev, buf, blk_id, blk_cnt);
+	int32_t r = bdev->bdif->bread(bdev, buf, blk_id, blk_cnt);
 	bdev->bdif->bread_ctr++;
 	ext4_bdif_unlock(bdev);
 	return r;
 }
 
-static int ext4_bdif_bwrite(struct ext4_blockdev *bdev, const void *buf,
+static int32_t ext4_bdif_bwrite(struct ext4_blockdev *bdev, const void *buf,
 			    uint64_t blk_id, uint32_t blk_cnt)
 {
 	ext4_bdif_lock(bdev);
-	int r = bdev->bdif->bwrite(bdev, buf, blk_id, blk_cnt);
+	int32_t r = bdev->bdif->bwrite(bdev, buf, blk_id, blk_cnt);
 	bdev->bdif->bwrite_ctr++;
 	ext4_bdif_unlock(bdev);
 	return r;
 }
 
-int ext4_block_init(struct ext4_blockdev *bdev)
+int32_t ext4_block_init(struct ext4_blockdev *bdev)
 {
-	int rc;
+	int32_t rc;
 	ext4_assert(bdev);
 	ext4_assert(bdev->bdif);
 	ext4_assert(bdev->bdif->open &&
@@ -128,7 +128,7 @@ int ext4_block_init(struct ext4_blockdev *bdev)
 	return EOK;
 }
 
-int ext4_block_bind_bcache(struct ext4_blockdev *bdev, struct ext4_bcache *bc)
+int32_t ext4_block_bind_bcache(struct ext4_blockdev *bdev, struct ext4_bcache *bc)
 {
 	ext4_assert(bdev && bc);
 	bdev->bc = bc;
@@ -145,7 +145,7 @@ void ext4_block_set_lb_size(struct ext4_blockdev *bdev, uint32_t lb_bsize)
 	bdev->lg_bcnt = bdev->part_size / lb_bsize;
 }
 
-int ext4_block_fini(struct ext4_blockdev *bdev)
+int32_t ext4_block_fini(struct ext4_blockdev *bdev)
 {
 	ext4_assert(bdev);
 
@@ -160,9 +160,9 @@ int ext4_block_fini(struct ext4_blockdev *bdev)
 	return bdev->bdif->close(bdev);
 }
 
-int ext4_block_flush_buf(struct ext4_blockdev *bdev, struct ext4_buf *buf)
+int32_t ext4_block_flush_buf(struct ext4_blockdev *bdev, struct ext4_buf *buf)
 {
-	int r;
+	int32_t r;
 	struct ext4_bcache *bc = bdev->bc;
 
 	if (ext4_bcache_test_flag(buf, BC_DIRTY) &&
@@ -189,9 +189,9 @@ int ext4_block_flush_buf(struct ext4_blockdev *bdev, struct ext4_buf *buf)
 	return EOK;
 }
 
-int ext4_block_flush_lba(struct ext4_blockdev *bdev, uint64_t lba)
+int32_t ext4_block_flush_lba(struct ext4_blockdev *bdev, uint64_t lba)
 {
-	int r = EOK;
+	int32_t r = EOK;
 	struct ext4_buf *buf;
 	struct ext4_block b;
 	buf = ext4_bcache_find_get(bdev->bc, &b, lba);
@@ -202,9 +202,9 @@ int ext4_block_flush_lba(struct ext4_blockdev *bdev, uint64_t lba)
 	return r;
 }
 
-int ext4_block_cache_shake(struct ext4_blockdev *bdev)
+int32_t ext4_block_cache_shake(struct ext4_blockdev *bdev)
 {
-	int r = EOK;
+	int32_t r = EOK;
 	struct ext4_buf *buf;
 	if (bdev->bc->dont_shake)
 		return EOK;
@@ -229,11 +229,11 @@ int ext4_block_cache_shake(struct ext4_blockdev *bdev)
 	return r;
 }
 
-int ext4_block_get_noread(struct ext4_blockdev *bdev, struct ext4_block *b,
+int32_t ext4_block_get_noread(struct ext4_blockdev *bdev, struct ext4_block *b,
 			  uint64_t lba)
 {
 	bool is_new;
-	int r;
+	int32_t r;
 
 	ext4_assert(bdev && b);
 
@@ -260,10 +260,10 @@ int ext4_block_get_noread(struct ext4_blockdev *bdev, struct ext4_block *b,
 	return EOK;
 }
 
-int ext4_block_get(struct ext4_blockdev *bdev, struct ext4_block *b,
+int32_t ext4_block_get(struct ext4_blockdev *bdev, struct ext4_block *b,
 		   uint64_t lba)
 {
-	int r = ext4_block_get_noread(bdev, b, lba);
+	int32_t r = ext4_block_get_noread(bdev, b, lba);
 	if (r != EOK)
 		return r;
 
@@ -286,7 +286,7 @@ int ext4_block_get(struct ext4_blockdev *bdev, struct ext4_block *b,
 	return EOK;
 }
 
-int ext4_block_set(struct ext4_blockdev *bdev, struct ext4_block *b)
+int32_t ext4_block_set(struct ext4_blockdev *bdev, struct ext4_block *b)
 {
 	ext4_assert(bdev && b);
 	ext4_assert(b->buf);
@@ -297,7 +297,7 @@ int ext4_block_set(struct ext4_blockdev *bdev, struct ext4_block *b)
 	return ext4_bcache_free(bdev->bc, b);
 }
 
-int ext4_blocks_get_direct(struct ext4_blockdev *bdev, void *buf, uint64_t lba,
+int32_t ext4_blocks_get_direct(struct ext4_blockdev *bdev, void *buf, uint64_t lba,
 			   uint32_t cnt)
 {
 	uint64_t pba;
@@ -311,7 +311,7 @@ int ext4_blocks_get_direct(struct ext4_blockdev *bdev, void *buf, uint64_t lba,
 	return ext4_bdif_bread(bdev, buf, pba, pb_cnt * cnt);
 }
 
-int ext4_blocks_set_direct(struct ext4_blockdev *bdev, const void *buf,
+int32_t ext4_blocks_set_direct(struct ext4_blockdev *bdev, const void *buf,
 			   uint64_t lba, uint32_t cnt)
 {
 	uint64_t pba;
@@ -325,13 +325,13 @@ int ext4_blocks_set_direct(struct ext4_blockdev *bdev, const void *buf,
 	return ext4_bdif_bwrite(bdev, buf, pba, pb_cnt * cnt);
 }
 
-int ext4_block_writebytes(struct ext4_blockdev *bdev, uint64_t off,
+int32_t ext4_block_writebytes(struct ext4_blockdev *bdev, uint64_t off,
 			  const void *buf, uint32_t len)
 {
 	uint64_t block_idx;
 	uint32_t blen;
 	uint32_t unalg;
-	int r = EOK;
+	int32_t r = EOK;
 
 	const uint8_t *p = (void *)buf;
 
@@ -395,13 +395,13 @@ int ext4_block_writebytes(struct ext4_blockdev *bdev, uint64_t off,
 	return r;
 }
 
-int ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf,
+int32_t ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf,
 			 uint32_t len)
 {
 	uint64_t block_idx;
 	uint32_t blen;
 	uint32_t unalg;
-	int r = EOK;
+	int32_t r = EOK;
 
 	uint8_t *p = (void *)buf;
 
@@ -466,10 +466,10 @@ int ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf,
 	return r;
 }
 
-int ext4_block_cache_flush(struct ext4_blockdev *bdev)
+int32_t ext4_block_cache_flush(struct ext4_blockdev *bdev)
 {
 	while (!SLIST_EMPTY(&bdev->bc->dirty_list)) {
-		int r;
+		int32_t r;
 		struct ext4_buf *buf = SLIST_FIRST(&bdev->bc->dirty_list);
 		ext4_assert(buf);
 		r = ext4_block_flush_buf(bdev, buf);
@@ -480,7 +480,7 @@ int ext4_block_cache_flush(struct ext4_blockdev *bdev)
 	return EOK;
 }
 
-int ext4_block_cache_write_back(struct ext4_blockdev *bdev, uint8_t on_off)
+int32_t ext4_block_cache_write_back(struct ext4_blockdev *bdev, uint8_t on_off)
 {
 	if (on_off)
 		bdev->cache_write_back++;

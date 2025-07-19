@@ -42,7 +42,7 @@ DSTATUS disk_initialize (
 )
 {
 	DSTATUS stat;
-	int result;
+	int32_t result;
 /*
 	switch (pdrv) {
 	case DEV_RAM :
@@ -85,7 +85,7 @@ DRESULT disk_read (
 )
 {
 	DRESULT res;
-	int result;
+	int32_t result;
 
     if(pdrv > Dev::vsdev_list_idx)
         return RES_ERROR;
@@ -113,7 +113,7 @@ DRESULT disk_write (
 )
 {
 	DRESULT res;
-	int result;
+	int32_t result;
 
     if(pdrv > Dev::vsdev_list_idx)
         return RES_ERROR;
@@ -139,7 +139,7 @@ DRESULT disk_ioctl (
 )
 {
 	DRESULT res;
-	int result;
+	int32_t result;
 
 	if(pdrv > Dev::vsdev_list_idx)
         return RES_ERROR;

@@ -76,9 +76,9 @@ bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer
     debugpln("(SataDiskInterface::Read)HIT");
     //osData.mainTerminalWindow->Log("This Interface: 0x{}", ConvertHexToString((uint64_t)this), Colors.yellow);
     uint8_t* buf = (uint8_t*)buffer;
-    int sectorCountDiv8 = ((sectorCount) / 8);
+    int32_t sectorCountDiv8 = ((sectorCount) / 8);
     debugpln("(SataDiskInterface::Read)HIT 2");
-    for (int sect = 0; sect < sectorCountDiv8; sect++)
+    for (int32_t sect = 0; sect < sectorCountDiv8; sect++)
     {
         _memset(Port->buffer, 0, 0x1000);
         debugpln("(SataDiskInterface::Read)HIT 3");
@@ -113,8 +113,8 @@ bool SataDiskInterface::Write(uint64_t sector, uint32_t sectorCount, void* buffe
 {
     AddToStack();
     uint8_t* buf = (uint8_t*)buffer;
-    int sectorCountDiv8 = ((sectorCount) / 8);
-    for (int sect = 0; sect < sectorCountDiv8; sect++)
+    int32_t sectorCountDiv8 = ((sectorCount) / 8);
+    for (int32_t sect = 0; sect < sectorCountDiv8; sect++)
     {
         _memset(Port->buffer, 0, 0x1000);
         _memcpy(buf, Port->buffer, 0x1000);
@@ -286,16 +286,16 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
             //GlobalRenderer->Println("blehus:  {}", to_string(blehus), Colors.yellow);
 
             // GlobalRenderer->Println("BUFF (1):");
-            // for (int i = 0; i < 512; i++)
-            //     GlobalRenderer->Print("{} ", to_string((int)buffer2[i]), Colors.yellow);
+            // for (int32_t i = 0; i < 512; i++)
+            //     GlobalRenderer->Print("{} ", to_string((int32_t)buffer2[i]), Colors.yellow);
             // GlobalRenderer->Println("");
 
             for (int64_t i = 0; i < specialCount; i++)
                 buffer2[i] = ((uint8_t*)buffer)[i + blehus];
 
             // GlobalRenderer->Println("BUFF (2):");
-            // for (int i = 0; i < 512; i++)
-            //     GlobalRenderer->Print("{} ", to_string((int)buffer2[i]), Colors.yellow);
+            // for (int32_t i = 0; i < 512; i++)
+            //     GlobalRenderer->Print("{} ", to_string((int32_t)buffer2[i]), Colors.yellow);
             // GlobalRenderer->Println("");
 
             //while (true);

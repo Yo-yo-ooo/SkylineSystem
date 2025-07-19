@@ -13,7 +13,7 @@ void MADT_Init() {
     acpi_madt* madt = (acpi_madt*)ACPI::FindTable(ACPI::rootThing,"APIC",ACPI::ACPI_DIV);
 
     u64 off = 0;
-    int current_idx = 0;
+    int32_t current_idx = 0;
     madt_ioapic_len = 0;
     madt_iso_len = 0;
 

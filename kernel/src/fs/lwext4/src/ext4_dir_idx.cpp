@@ -213,7 +213,7 @@ struct ext4_dx_sort_entry {
 	void *dentry;
 };
 
-static int ext4_dir_dx_hash_string(struct ext4_hash_info *hinfo, int len,
+static int32_t ext4_dir_dx_hash_string(struct ext4_hash_info *hinfo, int32_t len,
 				   const char *name)
 {
 	return ext2_htree_hash(name, len, hinfo->seed, hinfo->hash_version,
@@ -222,12 +222,12 @@ static int ext4_dir_dx_hash_string(struct ext4_hash_info *hinfo, int len,
 
 #if CONFIG_META_CSUM_ENABLE
 static uint32_t ext4_dir_dx_checksum(struct ext4_inode_ref *inode_ref, void *de,
-				     int count_offset, int count,
+				     int32_t count_offset, int32_t count,
 				     struct ext4_dir_idx_tail *t)
 {
 	uint32_t orig_cum, csum = 0;
 	struct ext4_sblock *sb = &inode_ref->fs->sb;
-	int sz;
+	int32_t sz;
 
 	/* Compute the checksum only if the filesystem supports it */
 	if (ext4_sb_feature_ro_com(sb, EXT4_FRO_COM_METADATA_CSUM)) {
@@ -255,14 +255,14 @@ static uint32_t ext4_dir_dx_checksum(struct ext4_inode_ref *inode_ref, void *de,
 
 static struct ext4_dir_idx_climit *
 ext4_dir_dx_get_climit(struct ext4_inode_ref *inode_ref,
-			   struct ext4_dir_en *dirent, int *offset)
+			   struct ext4_dir_en *dirent, int32_t *offset)
 {
 	struct ext4_dir_en *dp;
 	struct ext4_dir_idx_root *root;
 	struct ext4_sblock *sb = &inode_ref->fs->sb;
 	uint32_t block_size = ext4_sb_get_block_size(sb);
 	uint16_t entry_len = ext4_dir_en_get_entry_len(dirent);
-	int count_offset;
+	int32_t count_offset;
 
 
 	if (entry_len == 12) {
@@ -295,7 +295,7 @@ static bool ext4_dir_dx_csum_verify(struct ext4_inode_ref *inode_ref,
 {
 	struct ext4_sblock *sb = &inode_ref->fs->sb;
 	uint32_t block_size = ext4_sb_get_block_size(sb);
-	int coff, limit, cnt;
+	int32_t coff, limit, cnt;
 
 	if (ext4_sb_feature_ro_com(sb, EXT4_FRO_COM_METADATA_CSUM)) {
 		struct ext4_dir_idx_climit *climit;
@@ -326,7 +326,7 @@ static bool ext4_dir_dx_csum_verify(struct ext4_inode_ref *inode_ref,
 static void ext4_dir_set_dx_csum(struct ext4_inode_ref *inode_ref,
 				 struct ext4_dir_en *dirent)
 {
-	int coff, limit, count;
+	int32_t coff, limit, count;
 	struct ext4_sblock *sb = &inode_ref->fs->sb;
 	uint32_t block_size = ext4_sb_get_block_size(sb);
 
@@ -358,7 +358,7 @@ static void ext4_dir_set_dx_csum(struct ext4_inode_ref *inode_ref,
 
 /****************************************************************************/
 
-int ext4_dir_dx_init(struct ext4_inode_ref *dir, struct ext4_inode_ref *parent)
+int32_t ext4_dir_dx_init(struct ext4_inode_ref *dir, struct ext4_inode_ref *parent)
 {
 	/* Load block 0, where will be index root located */
 	ext4_fsblk_t fblock;
@@ -371,7 +371,7 @@ int ext4_dir_dx_init(struct ext4_inode_ref *dir, struct ext4_inode_ref *parent)
 	uint32_t block_size = ext4_sb_get_block_size(&dir->fs->sb);
 	struct ext4_block block;
 
-	int rc;
+	int32_t rc;
 
 	if (!need_append)
 		rc = ext4_fs_init_inode_dblk_idx(dir, iblock, &fblock);
@@ -483,7 +483,7 @@ int ext4_dir_dx_init(struct ext4_inode_ref *dir, struct ext4_inode_ref *parent)
  * @param name       Name to be computed hash value from
  * @return Standard error code
  */
-static int ext4_dir_hinfo_init(struct ext4_hash_info *hinfo,
+static int32_t ext4_dir_hinfo_init(struct ext4_hash_info *hinfo,
 			       struct ext4_block *root_block,
 			       struct ext4_sblock *sb, size_t name_len,
 			       const char *name)
@@ -544,7 +544,7 @@ static int ext4_dir_hinfo_init(struct ext4_hash_info *hinfo,
  * @param dx_blocks  Array with the whole path from root to leaf
  * @return Standard error code
  */
-static int ext4_dir_dx_get_leaf(struct ext4_hash_info *hinfo,
+static int32_t ext4_dir_dx_get_leaf(struct ext4_hash_info *hinfo,
 				struct ext4_inode_ref *inode_ref,
 				struct ext4_block *root_block,
 				struct ext4_dir_idx_block **dx_block,
@@ -561,7 +561,7 @@ static int ext4_dir_dx_get_leaf(struct ext4_hash_info *hinfo,
 	uint16_t limit;
 	uint16_t entry_space;
 	uint8_t ind_level;
-	int r;
+	int32_t r;
 
 	struct ext4_dir_idx_block *tmp_dx_blk = dx_blocks;
 	struct ext4_block *tmp_blk = root_block;
@@ -654,12 +654,12 @@ static int ext4_dir_dx_get_leaf(struct ext4_hash_info *hinfo,
  * @param dx_blocks Array with path from root to leaf node
  * @return Standard Error code
  */
-static int ext4_dir_dx_next_block(struct ext4_inode_ref *inode_ref,
+static int32_t ext4_dir_dx_next_block(struct ext4_inode_ref *inode_ref,
 				  uint32_t hash,
 				  struct ext4_dir_idx_block *dx_block,
 				  struct ext4_dir_idx_block *dx_blocks)
 {
-	int r;
+	int32_t r;
 	uint32_t num_handles = 0;
 	ext4_fsblk_t blk_adr;
 	struct ext4_dir_idx_block *p = dx_block;
@@ -723,14 +723,14 @@ static int ext4_dir_dx_next_block(struct ext4_inode_ref *inode_ref,
 	return ENOENT;
 }
 
-int ext4_dir_dx_find_entry(struct ext4_dir_search_result *result,
+int32_t ext4_dir_dx_find_entry(struct ext4_dir_search_result *result,
 			   struct ext4_inode_ref *inode_ref, size_t name_len,
 			   const char *name)
 {
 	/* Load direct block 0 (index root) */
 	ext4_fsblk_t root_block_addr;
-	int rc2;
-	int rc;
+	int32_t rc2;
+	int32_t rc;
 	rc = ext4_fs_get_inode_dblk_idx(inode_ref,  0, &root_block_addr, false);
 	if (rc != EOK)
 		return rc;
@@ -850,7 +850,7 @@ cleanup:
  * @return Classic compare result
  *         (0: equal, -1: arg1 < arg2, 1: arg1 > arg2)
  */
-static int ext4_dir_dx_entry_comparator(const void *arg1, const void *arg2)
+static int32_t ext4_dir_dx_entry_comparator(const void *arg1, const void *arg2)
 {
 	struct ext4_dx_sort_entry *entry1 = (void *)arg1;
 	struct ext4_dx_sort_entry *entry2 = (void *)arg2;
@@ -902,13 +902,13 @@ ext4_dir_dx_insert_entry(struct ext4_inode_ref *inode_ref __unused,
  * @param index_block    Block where index entries are located
  * @param new_data_block Output value for newly allocated data block
  */
-static int ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
+static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 				  struct ext4_hash_info *hinfo,
 				  struct ext4_block *old_data_block,
 				  struct ext4_dir_idx_block *index_block,
 				  struct ext4_block *new_data_block)
 {
-	int rc = EOK;
+	int32_t rc = EOK;
 	struct ext4_sblock *sb = &inode_ref->fs->sb;
 	uint32_t block_size = ext4_sb_get_block_size(&inode_ref->fs->sb);
 
@@ -1083,7 +1083,7 @@ static int ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
  * @param dxb  Leaf block to be split if needed
  * @return Error code
  */
-static int
+static int32_t
 ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 			struct ext4_dir_idx_block *dx_blks,
 			struct ext4_dir_idx_block *dxb,
@@ -1091,7 +1091,7 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 {
 	struct ext4_sblock *sb = &ino_ref->fs->sb;
 	struct ext4_dir_idx_entry *e;
-	int r;
+	int32_t r;
 
 	uint32_t block_size = ext4_sb_get_block_size(&ino_ref->fs->sb);
 	uint32_t entry_space = block_size - sizeof(struct ext4_fake_dir_entry);
@@ -1240,11 +1240,11 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 	return EOK;
 }
 
-int ext4_dir_dx_add_entry(struct ext4_inode_ref *parent,
+int32_t ext4_dir_dx_add_entry(struct ext4_inode_ref *parent,
 			  struct ext4_inode_ref *child, const char *name, uint32_t name_len)
 {
-	int rc2 = EOK;
-	int r;
+	int32_t rc2 = EOK;
+	int32_t r;
 	/* Get direct block 0 (index root) */
 	ext4_fsblk_t rblock_addr;
 	r =  ext4_fs_get_inode_dblk_idx(parent, 0, &rblock_addr, false);
@@ -1379,12 +1379,12 @@ release_index:
 	return rc2;
 }
 
-int ext4_dir_dx_reset_parent_inode(struct ext4_inode_ref *dir,
+int32_t ext4_dir_dx_reset_parent_inode(struct ext4_inode_ref *dir,
                                    uint32_t parent_inode)
 {
 	/* Load block 0, where will be index root located */
 	ext4_fsblk_t fblock;
-	int rc = ext4_fs_get_inode_dblk_idx(dir, 0, &fblock, false);
+	int32_t rc = ext4_fs_get_inode_dblk_idx(dir, 0, &fblock, false);
 	if (rc != EOK)
 		return rc;
 

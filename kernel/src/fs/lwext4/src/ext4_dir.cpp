@@ -94,7 +94,7 @@ ext4_dir_get_tail(struct ext4_inode_ref *inode_ref,
 
 #if CONFIG_META_CSUM_ENABLE
 static uint32_t ext4_dir_csum(struct ext4_inode_ref *inode_ref,
-			      struct ext4_dir_en *dirent, int size)
+			      struct ext4_dir_en *dirent, int32_t size)
 {
 	uint32_t csum;
 	struct ext4_sblock *sb = &inode_ref->fs->sb;
@@ -172,7 +172,7 @@ void ext4_dir_set_csum(struct ext4_inode_ref *inode_ref,
  * @param block_size Size of data block
  * @return Error code
  */
-static int ext4_dir_iterator_set(struct ext4_dir_iter *it,
+static int32_t ext4_dir_iterator_set(struct ext4_dir_iter *it,
 				 uint32_t block_size)
 {
 	uint32_t off_in_block = it->curr_off % block_size;
@@ -211,13 +211,13 @@ static int ext4_dir_iterator_set(struct ext4_dir_iter *it,
  * @param pos Position of the next entry
  * @return Error code
  */
-static int ext4_dir_iterator_seek(struct ext4_dir_iter *it, uint64_t pos)
+static int32_t ext4_dir_iterator_seek(struct ext4_dir_iter *it, uint64_t pos)
 {
 	struct ext4_sblock *sb = &it->inode_ref->fs->sb;
 	struct ext4_inode *inode = it->inode_ref->inode;
 	struct ext4_blockdev *bdev = it->inode_ref->fs->bdev;
 	uint64_t size = ext4_inode_get_size(sb, inode);
-	int r;
+	int32_t r;
 
 	/* The iterator is not valid until we seek to the desired position */
 	it->curr = NULL;
@@ -272,7 +272,7 @@ static int ext4_dir_iterator_seek(struct ext4_dir_iter *it, uint64_t pos)
 	return ext4_dir_iterator_set(it, block_size);
 }
 
-int ext4_dir_iterator_init(struct ext4_dir_iter *it,
+int32_t ext4_dir_iterator_init(struct ext4_dir_iter *it,
 			   struct ext4_inode_ref *inode_ref, uint64_t pos)
 {
 	it->inode_ref = inode_ref;
@@ -283,9 +283,9 @@ int ext4_dir_iterator_init(struct ext4_dir_iter *it,
 	return ext4_dir_iterator_seek(it, pos);
 }
 
-int ext4_dir_iterator_next(struct ext4_dir_iter *it)
+int32_t ext4_dir_iterator_next(struct ext4_dir_iter *it)
 {
-	int r = EOK;
+	int32_t r = EOK;
 	uint16_t skip;
 
 	while (r == EOK) {
@@ -302,7 +302,7 @@ int ext4_dir_iterator_next(struct ext4_dir_iter *it)
 	return r;
 }
 
-int ext4_dir_iterator_fini(struct ext4_dir_iter *it)
+int32_t ext4_dir_iterator_fini(struct ext4_dir_iter *it)
 {
 	it->curr = 0;
 
@@ -356,10 +356,10 @@ void ext4_dir_write_entry(struct ext4_sblock *sb, struct ext4_dir_en *en,
 	__memcpy(en->name, name, name_len);
 }
 
-int ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,
+int32_t ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,
 		       uint32_t name_len, struct ext4_inode_ref *child)
 {
-	int r;
+	int32_t r;
 	struct ext4_fs *fs = parent->fs;
 	struct ext4_sblock *sb = &parent->fs->sb;
 
@@ -461,11 +461,11 @@ int ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,
 	return r;
 }
 
-int ext4_dir_find_entry(struct ext4_dir_search_result *result,
+int32_t ext4_dir_find_entry(struct ext4_dir_search_result *result,
 			struct ext4_inode_ref *parent, const char *name,
 			uint32_t name_len)
 {
-	int r;
+	int32_t r;
 	struct ext4_sblock *sb = &parent->fs->sb;
 
 	/* Entry clear */
@@ -540,7 +540,7 @@ int ext4_dir_find_entry(struct ext4_dir_search_result *result,
 	return ENOENT;
 }
 
-int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
+int32_t ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
 			  uint32_t name_len)
 {
 	struct ext4_sblock *sb = &parent->fs->sb;
@@ -550,7 +550,7 @@ int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
 
 	/* Try to find entry */
 	struct ext4_dir_search_result result;
-	int rc = ext4_dir_find_entry(&result, parent, name, name_len);
+	int32_t rc = ext4_dir_find_entry(&result, parent, name, name_len);
 	if (rc != EOK)
 		return rc;
 
@@ -593,7 +593,7 @@ int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
 	return ext4_dir_destroy_result(parent, &result);
 }
 
-int ext4_dir_try_insert_entry(struct ext4_sblock *sb,
+int32_t ext4_dir_try_insert_entry(struct ext4_sblock *sb,
 			      struct ext4_inode_ref *inode_ref,
 			      struct ext4_block *dst_blk,
 			      struct ext4_inode_ref *child, const char *name,
@@ -667,7 +667,7 @@ int ext4_dir_try_insert_entry(struct ext4_sblock *sb,
 	return ENOSPC;
 }
 
-int ext4_dir_find_in_block(struct ext4_block *block, struct ext4_sblock *sb,
+int32_t ext4_dir_find_in_block(struct ext4_block *block, struct ext4_sblock *sb,
 			   size_t name_len, const char *name,
 			   struct ext4_dir_en **res_entry)
 {
@@ -710,7 +710,7 @@ int ext4_dir_find_in_block(struct ext4_block *block, struct ext4_sblock *sb,
 	return ENOENT;
 }
 
-int ext4_dir_destroy_result(struct ext4_inode_ref *parent,
+int32_t ext4_dir_destroy_result(struct ext4_inode_ref *parent,
 			    struct ext4_dir_search_result *result)
 {
 	if (result->block.lb_id)

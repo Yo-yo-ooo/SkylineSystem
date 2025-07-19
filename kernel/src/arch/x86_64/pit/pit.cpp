@@ -1,7 +1,7 @@
 #include <arch/x86_64/allin.h>
 namespace PIT
 {
-    int roughCount = (BaseFrequency/200) / 2;
+    int32_t roughCount = (BaseFrequency/200) / 2;
     uint64_t TicksSinceBoot = 0;
     uint64_t MicroSecondOffset = 0;
 
@@ -12,7 +12,7 @@ namespace PIT
     bool Inited = false;
 
     uint64_t freq = GetFrequency();
-    int FreqAdder = 1;
+    int32_t FreqAdder = 1;
 
     void InitPIT()
     {
@@ -79,7 +79,7 @@ namespace PIT
     }
 
     
-    int tempus = 0;
+    int32_t tempus = 0;
     void Tick()
     {
         TicksSinceBoot++;

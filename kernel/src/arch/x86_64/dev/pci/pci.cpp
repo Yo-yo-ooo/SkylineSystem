@@ -28,7 +28,7 @@ namespace PCI
             for (Equipment = 0; Equipment < 32; Equipment++) {
                 for (F = 0; F < 8; F++) {
                     //pci_config0(BUS,F,Equipment,0);
-                    unsigned int cmd = 0;
+                    uint32_t cmd = 0;
                     cmd = 0x80000000 + (uint32_t) 0 + ((uint32_t) F << 8) +
                         ((uint32_t) Equipment << 11) + ((uint32_t) BUS << 16);
                     // cmd = cmd | 0x01;
@@ -80,7 +80,7 @@ namespace PCI
     void EnumeratePCI(ACPI::MCFGHeader* mcfg)
     {
         AddToStack();
-        int entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
+        int32_t entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
         RemoveFromStack();
         
         AddToStack();
@@ -88,7 +88,7 @@ namespace PCI
         _memset(pciDevices, 0, sizeof(PCI::PCIDeviceHeader) * 128);
         pciDeviceidx = 0;
 
-        for (int t = 0; t < entries; t++)
+        for (int32_t t = 0; t < entries; t++)
         {
             ACPI::DeviceConfig* newDeviceConfig = (ACPI::DeviceConfig*)((uint64_t)mcfg + sizeof(ACPI::MCFGHeader) + sizeof(ACPI::DeviceConfig) * t);
             for (uint64_t bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++)
@@ -369,7 +369,7 @@ namespace PCI
         io_write_dword(addr, offset, data);
     }
 
-    PCI_BAR_TYPE pci_get_bar(uint32_t* bar0, int bar_num, uint64_t addr)
+    PCI_BAR_TYPE pci_get_bar(uint32_t* bar0, int32_t bar_num, uint64_t addr)
     {
         PCI_BAR_TYPE bar;
         bar.io_address = 0;
@@ -418,7 +418,7 @@ namespace PCI
         return bar;
     }
 
-    PCI_BAR_TYPE pci_get_bar(PCIHeader0* addr, int bar_num)
+    PCI_BAR_TYPE pci_get_bar(PCIHeader0* addr, int32_t bar_num)
     {
         return pci_get_bar(&(addr->BAR0), bar_num, (uint64_t)addr);
     }

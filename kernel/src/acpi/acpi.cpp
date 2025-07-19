@@ -5,25 +5,25 @@
 
 namespace ACPI{
     ACPI::MCFGHeader* mcfg = NULL;
-    int ACPI_DIV = 0;
+    int32_t ACPI_DIV = 0;
     ACPI::SDTHeader* rootThing = NULL;
 
-    void* FindTable(SDTHeader* sdtHeader, const char* signature, int div)
+    void* FindTable(SDTHeader* sdtHeader, const char* signature, int32_t div)
     {
         AddToStack();
         SDTHeader* xsdt = sdtHeader;
-        int entries = (xsdt->Length - sizeof(ACPI::SDTHeader)) / div;
+        int32_t entries = (xsdt->Length - sizeof(ACPI::SDTHeader)) / div;
         //osData.debugTerminalWindow->Log("Entry count: {}", to_string(entries));
 
         //osData.debugTerminalWindow->renderer->Print("> ");
-        for (int t = 0; t < entries; t++)
+        for (int32_t t = 0; t < entries; t++)
         {
             uint64_t bleh1 = *(uint64_t*)((uint64_t)xsdt + sizeof(ACPI::SDTHeader) + (t * div));
             if (div == 4)
                 bleh1 &= 0x00000000FFFFFFFF;
             ACPI::SDTHeader* newSDTHeader = (ACPI::SDTHeader*)(bleh1);
             
-            for (int i = 0; i < 4; i++)
+            for (int32_t i = 0; i < 4; i++)
             {
                 if (newSDTHeader->Signature[i] != signature[i])
                 {
@@ -56,7 +56,7 @@ namespace ACPI{
 
         AddToStack();   
         
-        int div = 1;
+        int32_t div = 1;
 
         if (rsdp->firstPart.Revision == 0)
         {
@@ -95,13 +95,13 @@ namespace ACPI{
 
         
         AddToStack();
-        int entries = (rootThing->Length - sizeof(ACPI::SDTHeader)) / div;
+        int32_t entries = (rootThing->Length - sizeof(ACPI::SDTHeader)) / div;
         debugpln("Entry count: %d", entries);
         RemoveFromStack();
 
         AddToStack();
         debugpln("> ");
-        for (int t = 0; t < entries; t++)
+        for (int32_t t = 0; t < entries; t++)
         {
             uint64_t bleh1 = *(uint64_t*)((uint64_t)rootThing + sizeof(ACPI::SDTHeader) + (t * div));
             if (div == 4)
@@ -111,7 +111,7 @@ namespace ACPI{
             char bruh[2];
             bruh[1] = 0;
 
-            for (int i = 0; i < 4; i++)
+            for (int32_t i = 0; i < 4; i++)
             {
                 bruh[0] = newSDTHeader->Signature[i];
                 debugpln("%d",bruh);

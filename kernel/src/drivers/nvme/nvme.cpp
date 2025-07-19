@@ -197,14 +197,14 @@ bool NVME::InitIntr() {
 	if (this->flags & NVME_FLAG_MISIX) {
 		kinfo("[NVME: %p]: use msix\n", (uint64_t)this);
 		
-		int vecNum = PCI_MSIX_CAP_VecNum(this->MSIX);
+		int32_t vecNum = PCI_MSIX_CAP_VecNum(this->MSIX);
 		vecNum = this->INTRNUM = min(vecNum, this->INTRNUM);
 
 		PCI::PCI_MSIX_TABLE *tbl = PCI::GetMSIXTbl(this->MSIX, this->phdr);
 
 		kinfo("[NVME: %p]: msixtbl:%p vecNum:%d msgCtrl:%#010x\n", host, tbl, vecNum, this->MSIX->MsgCtrl);
 
-		for (int i = 0; i < this->INTRNUM; i++)
+		for (int32_t i = 0; i < this->INTRNUM; i++)
 			hw_pci_initIntr(this->intr + i, hw_nvme_msiHandler, (u64)host | i, "nvme msix");
 		if (hw_pci_allocMsix(this->MSIX, this->phdr, this->intr, this->INTRNUM) == false) {
 			kerror("[NVME: %p]: failed to allocate msix interrupt\n", (uint64_t)this);
@@ -213,13 +213,13 @@ bool NVME::InitIntr() {
 	} else {
 		kinfo("[NVME: %p]: use msi\n", (uint64_t)this);
 
-		int vecNum = PCI_MSIX_CAP_VecNum(this->MSI);
+		int32_t vecNum = PCI_MSIX_CAP_VecNum(this->MSI);
 		this->INTRNUM = vecNum = min(vecNum, this->INTRNUM);
 
 		kinfo("[NVME: %p]: msi: %s vecNum:%d mgsCtrl:%#010x\n", 
 				host, hw_pci_MsiCap_is64(this->MSI) ? "64B" : "32B", vecNum, *hw_pci_MsiCap_msgCtrl(this->MSI));
 
-		for (int i = 0; i < vecNum; i++)
+		for (int32_t i = 0; i < vecNum; i++)
 			hw_pci_initIntr(this->intr + i, hw_nvme_msiHandler, (u64)host | i, "nvme msi");
 		if (hw_pci_allocMsi(this->MSI, this->intr, this->INTRNUM) == false) {
 			kerror("hw: nvme: host %p failed to set msi interrupt\n", (uint64_t)this);
@@ -231,7 +231,7 @@ bool NVME::InitIntr() {
 	kinfo("[NVME: %p]: msi/msix set\n", (uint64_t)this);
 
 	// enable msi/msix
-	int res;
+	int32_t res;
 	if (this->flags & NVME_FLAG_MISIX) 
 		res = hw_pci_enableMsixAll(this->MSIX, this->phdr, this->intr, this->INTRNUM);
 	else

@@ -41,7 +41,7 @@ void *memcpy_flanterm(void *d, const void *s, size_t n) {
     return d;
 }
 
-void *memset_flanterm(void *s, int c, size_t n) {
+void *memset_flanterm(void *s, int32_t c, size_t n) {
     uint8_t *p = (uint8_t *)s;
 
     for (size_t i = 0; i < n; i++) {
@@ -634,14 +634,14 @@ static void flanterm_fb_set_cursor_pos(struct flanterm_context *_ctx, size_t x, 
     struct flanterm_fb_context *ctx = (void *)_ctx;
 
     if (x >= _ctx->cols) {
-        if ((int)x < 0) {
+        if ((int32_t)x < 0) {
             x = 0;
         } else {
             x = _ctx->cols - 1;
         }
     }
     if (y >= _ctx->rows) {
-        if ((int)y < 0) {
+        if ((int32_t)y < 0) {
             y = 0;
         } else {
             y = _ctx->rows - 1;

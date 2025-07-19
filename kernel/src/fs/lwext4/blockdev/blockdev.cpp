@@ -77,7 +77,7 @@ VsDevInfo ThisInfo;
 /******************************************************************************/
 
 /******************************************************************************/
-static int blockdev_open(struct ext4_blockdev *bdev)
+static int32_t blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
     ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
@@ -90,7 +90,7 @@ static int blockdev_open(struct ext4_blockdev *bdev)
 
 /******************************************************************************/
 
-static int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
+static int32_t blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id,
 			 uint32_t blk_cnt)
 {
 	/*blockdev_bread: skeleton*/
@@ -108,7 +108,7 @@ static int blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t blk_id
 
 
 /******************************************************************************/
-static int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
+static int32_t blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 			  uint64_t blk_id, uint32_t blk_cnt)
 {
 	/*blockdev_bwrite: skeleton*/
@@ -120,20 +120,20 @@ static int blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 	return EIO;
 }
 /******************************************************************************/
-static int blockdev_close(struct ext4_blockdev *bdev)
+static int32_t blockdev_close(struct ext4_blockdev *bdev)
 {
 	/*blockdev_close: skeleton*/
 	return EOK;
 }
 
-static int blockdev_lock(struct ext4_blockdev *bdev)
+static int32_t blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
     
 	return EOK;
 }
 
-static int blockdev_unlock(struct ext4_blockdev *bdev)
+static int32_t blockdev_unlock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_unlock: skeleton*/
 

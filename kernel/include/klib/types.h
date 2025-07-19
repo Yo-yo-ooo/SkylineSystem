@@ -22,7 +22,17 @@ typedef i64 isize;
 typedef uintptr_t uptr;
 typedef intptr_t iptr;
 
-typedef char symbol[];
+#define atomic_uint8_t  _Atomic  uint8_t
+#define atomic_uint16_t _Atomic uint16_t
+#define atomic_uint32_t _Atomic uint32_t
+#define atomic_uint64_t _Atomic uint64_t
+
+#define atomic_int8_t  _Atomic  int8_t
+#define atomic_int16_t _Atomic int16_t
+#define atomic_int32_t _Atomic int32_t
+#define atomic_int64_t _Atomic int64_t
+
+typedef int8_t symbol[];
 
 typedef struct atomic_lock_t{
     uint32_t locked;

@@ -66,9 +66,9 @@
 #include <klib/klib.h>
 #include <mem/heap.h>
 
-int ext4_trans_set_block_dirty(struct ext4_buf *buf)
+int32_t ext4_trans_set_block_dirty(struct ext4_buf *buf)
 {
-	int r = EOK;
+	int32_t r = EOK;
 #if CONFIG_JOURNALING_ENABLE
 	struct ext4_fs *fs = buf->bc->bdev->fs;
 	struct ext4_block block;
@@ -85,32 +85,32 @@ int ext4_trans_set_block_dirty(struct ext4_buf *buf)
 	return r;
 }
 
-int ext4_trans_block_get_noread(struct ext4_blockdev *bdev,
+int32_t ext4_trans_block_get_noread(struct ext4_blockdev *bdev,
 			  struct ext4_block *b,
 			  uint64_t lba)
 {
-	int r = ext4_block_get_noread(bdev, b, lba);
+	int32_t r = ext4_block_get_noread(bdev, b, lba);
 	if (r != EOK)
 		return r;
 
 	return r;
 }
 
-int ext4_trans_block_get(struct ext4_blockdev *bdev,
+int32_t ext4_trans_block_get(struct ext4_blockdev *bdev,
 		   struct ext4_block *b,
 		   uint64_t lba)
 {
-	int r = ext4_block_get(bdev, b, lba);
+	int32_t r = ext4_block_get(bdev, b, lba);
 	if (r != EOK)
 		return r;
 
 	return r;
 }
 
-int ext4_trans_try_revoke_block(struct ext4_blockdev *bdev __unused,
+int32_t ext4_trans_try_revoke_block(struct ext4_blockdev *bdev __unused,
 			        uint64_t lba __unused)
 {
-	int r = EOK;
+	int32_t r = EOK;
 #if CONFIG_JOURNALING_ENABLE
 	struct ext4_fs *fs = bdev->fs;
 	if (fs->jbd_journal && fs->curr_trans) {

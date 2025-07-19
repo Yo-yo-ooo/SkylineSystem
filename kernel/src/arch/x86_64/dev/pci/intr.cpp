@@ -37,7 +37,7 @@ namespace PCI
     }
 /*
     void GetIntrGate(IRQDesc *desc, u64 intrNum) {
-        for (int i = 0; i < intrNum; i++) {
+        for (int32_t i = 0; i < intrNum; i++) {
             hal_intr_setIntrGate(smp_cpu_list[desc[i].CpuId]., desc[i].VecId, 0, hal_hw_pci_intrLst[desc[i].vecId - 0x40]);
         }
     }
@@ -53,7 +53,7 @@ namespace PCI
     bool SetMsix(PCI::PCI_MSIX_CAP *cap, PCI::PCIHeader0 *cfg, IRQDesc *desc, uint64_t intrNum) {
         PCI::PCI_MSIX_TABLE *tbl = PCI::GetMSIXTbl(cap, cfg);
         VMM::Map((tbl));
-        for (int i = 0; i < intrNum; i++) {
+        for (int32_t i = 0; i < intrNum; i++) {
             PCI::MSIX::SetMsgAddr(&tbl[i].msgAddr, desc[i].CpuId, 0, APIC_DestMode_Physical);
             PCI::SetMsgData32(&tbl[i].msgData, desc[i].VecId, APIC_DeliveryMode_Fixed, APIC_Level_Deassert, APIC_TriggerMode_Edge);
         }

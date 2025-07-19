@@ -9,13 +9,13 @@
 
 namespace Serial
 {
-    int SerialPort = 0x3F8;          // COM1
+    int32_t SerialPort = 0x3F8;          // COM1
     uint64_t pciCard = 0;
     PCI::PCI_BAR_TYPE pciType;
-    int serialPciOffset = 0;
+    int32_t serialPciOffset = 0;
     bool SerialWorks = false;
     //SerialManager::GenericPacket* currentSerialReadPacket = NULL;
-    int currentSerialReadPacketIndex = 0;
+    int32_t currentSerialReadPacketIndex = 0;
 
     bool Init()
     {
@@ -127,12 +127,12 @@ namespace Serial
             io_wait(100);
         }
         
-        for (int i = 0; i < 5000 && Sinb(5) & 1 == 1; i++)
+        for (int32_t i = 0; i < 5000 && Sinb(5) & 1 == 1; i++)
             Sinb(0);
         
         Soutb(4, 0x1E);    // Set in loopback mode, test the serial chip
         
-        for (int i = 0; i < 5000 && Sinb(5) & 1 == 1; i++)
+        for (int32_t i = 0; i < 5000 && Sinb(5) & 1 == 1; i++)
             Sinb(0);
         
         Soutb(0, 0xAE);    // Test serial chip (send byte 0xAE and check if serial returns same byte)
@@ -260,7 +260,7 @@ namespace Serial
         if (!SerialWorks || chrs == 0)
             return;
 
-        unsigned int index = 0;
+        uint32_t index = 0;
         while (chrs[index] != 0)
         {
             if (chrs[index] == '\n')
@@ -347,11 +347,11 @@ namespace Serial
         Writeln();
     }
 
-    void PrintVal(int val, int CharCount)
+    void PrintVal(int32_t val, int32_t CharCount)
     {
         const char* str = to_string(val);
-        int len = strlen(str);
-        for (int i = 0; i < CharCount - len; i++)
+        int32_t len = strlen(str);
+        for (int32_t i = 0; i < CharCount - len; i++)
             Write('0');
         Write(str);
     }
@@ -364,10 +364,10 @@ namespace Serial
             return;
         }
 
-        int s = PIT::TimeSinceBootMS() / 1000;
-        int minutes = s / 60;
-        int seconds = s % 60;
-        int ms = PIT::TimeSinceBootMS() % 1000;
+        int32_t s = PIT::TimeSinceBootMS() / 1000;
+        int32_t minutes = s / 60;
+        int32_t seconds = s % 60;
+        int32_t ms = PIT::TimeSinceBootMS() % 1000;
 
         Write("[");
         PrintVal(minutes, 2);
@@ -412,8 +412,8 @@ namespace Serial
 
     // %s -> string
     // %c -> char
-    // %d/i -> int (32 bit)
-    // %D/I -> int (64 bit)
+    // %d/i -> int32_t (32 bit)
+    // %D/I -> int32_t (64 bit)
     // %x -> hex (32 bit)
     // %X -> hex (64 bit)
     // %b -> byte
@@ -424,9 +424,9 @@ namespace Serial
 
     __ffunc void _Writef(const char* str, va_list arg)
     {
-        int len = strlen(str);
+        int32_t len = strlen(str);
 
-        for (int i = 0; i < len; i++)
+        for (int32_t i = 0; i < len; i++)
         {
             if (str[i] == '%' && i + 1 < len)
             {
@@ -441,12 +441,12 @@ namespace Serial
                 }
                 else if (str[i] == 'c')
                 {
-                    char argChar = va_arg(arg, int);
+                    char argChar = va_arg(arg, int32_t);
                     Write(argChar);
                 }
                 else if (str[i] == 'd' || str[i + 1] == 'i')
                 {
-                    int argInt = va_arg(arg, int);
+                    int32_t argInt = va_arg(arg, int32_t);
                     Write(to_string(argInt));
                 }
                 else if (str[i] == 'D' || str[i + 1] == 'I')
@@ -466,12 +466,12 @@ namespace Serial
                 }
                 else if (str[i] == 'b')
                 {
-                    uint8_t argInt = (uint8_t)va_arg(arg, int);
+                    uint8_t argInt = (uint8_t)va_arg(arg, int32_t);
                     Write(to_string(argInt));
                 }
                 else if (str[i] == 'B')
                 {
-                    bool argInt = (bool)va_arg(arg, int);
+                    bool argInt = (bool)va_arg(arg, int32_t);
                     Write(to_string(argInt));
                 }
                 else if (str[i] == 'f')
