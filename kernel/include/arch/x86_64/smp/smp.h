@@ -13,6 +13,8 @@ extern u64 smp_cpu_count;
 
 typedef struct cpu_info{
     u64 lapic_id;
+    u64 lapic_ticks;
+
     pagemap* pm;
 
     list* proc_list;

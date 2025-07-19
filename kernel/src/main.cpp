@@ -194,7 +194,7 @@ extern "C" void kmain(void) {
     if(rsdp_request.response == NULL){
         kerror("ACPI::Init(): RSDP request is NULL.\n");
     }
-    RSDP_ADDR = rsdp_request.response->address;
+    RSDP_ADDR = (rsdp_request.response->address);
 
     if(smp_request.response == NULL){
         kerror("SMP::Init(): SMP request is NULL.\n");

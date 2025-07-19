@@ -72,6 +72,7 @@
 namespace LAPIC{
 
     extern u64 apic_ticks;
+    extern bool x2apic;
 
     void Init();
 

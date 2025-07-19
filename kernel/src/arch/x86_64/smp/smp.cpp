@@ -37,11 +37,13 @@ void smp_init_cpu(struct limine_smp_info* smp_info) {
 
     vmm_switch_pm(vmm_kernel_pm);
 
+    LAPIC::Init();
+    LAPIC::CalibrateTimer();
+
     sse_enable();
     fpu_init();
 
-    LAPIC::Init();
-    LAPIC::CalibrateTimer();
+    
     user_init();
     Schedule::Init();
 
@@ -50,7 +52,7 @@ void smp_init_cpu(struct limine_smp_info* smp_info) {
 
     unlock(&smp_lock);
 
-    LAPIC::IPI(smp_info->lapic_id, 0x80);
+    //LAPIC::IPI(smp_info->lapic_id, 0x80);
 
     while (true) {hcf();}
 }
