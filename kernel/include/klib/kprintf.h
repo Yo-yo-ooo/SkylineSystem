@@ -72,11 +72,17 @@ int printf_(const char* format, ...);
  */
 #define sprintf sprintf_
 int sprintf_(char* buffer, const char* format, ...);
-int kinfoln(const char* format, ...);
-int kpok(const char* format, ...);
-int kinfo(const char* format, ...);
-int kwarn(const char* format, ...);
-int kerror(const char* format, ...);
+
+#define kpokln(...) printf_("[\033[38;2;0;255;0m OK \033[0m] " __VA_ARGS__);printf_("\n")
+#define kinfoln(...) printf_("[\033[38;2;0;255;255mINFO\033[0m] " __VA_ARGS__ );printf_("\n")
+#define kwarnln(...) printf_("[\033[38;2;255;255;0mWARN\033[0m] " __VA_ARGS__);printf_("\n")
+#define kerrorln(...) printf_("[\033[38;2;255;0;0mKERR\033[0m] " __VA_ARGS__);printf_("\n")
+
+#define kpok(...) printf_("[\033[38;2;0;255;0m OK \033[0m] " __VA_ARGS__)
+#define kinfo(...) printf_("[\033[38;2;0;255;255mINFO\033[0m] " __VA_ARGS__)
+#define kwarn(...) printf_("[\033[38;2;255;255;0mWARN\033[0m] " __VA_ARGS__)
+#define kerror(...) printf_("[\033[38;2;255;0;0mKERR\033[0m] " __VA_ARGS__)
+
 
 #ifdef _SYS_DEBUG_OUT
 int debugpln(const char* format, ...);

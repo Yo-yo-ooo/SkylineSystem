@@ -14,13 +14,13 @@ fifo *keyboard_fifo;
 
 //vfs_node *kb_node = NULL;
 
-atomic_lock kb_lock;
+atomic_lock_t kb_lock;
 
 ;
 
 void keyboard_handle_key(u8 key)
 {
-    lock(&kb_lock);
+    atomic_lock(&kb_lock);
 
     switch (key)
     {
@@ -65,7 +65,7 @@ void keyboard_handle_key(u8 key)
         FIFO::Push(keyboard_fifo, &ev);
         break;
     }
-    unlock(&kb_lock);
+    atomic_unlock(&kb_lock);
 }
 
 void keyboard_wait_write()

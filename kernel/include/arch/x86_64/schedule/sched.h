@@ -68,7 +68,7 @@ typedef struct process {
     vfs_node_desc_t fds[256];
     u16 fd_idx;
 
-    atomic_lock lock;
+    atomic_lock_t lock;
 
     char* name;
 
@@ -82,7 +82,7 @@ typedef struct process {
 
 namespace Schedule{
     extern u64 sched_pid;
-    extern atomic_lock sched_lock;
+    extern atomic_lock_t sched_lock;
     extern list* sched_sleep_list;
 
     void Init();

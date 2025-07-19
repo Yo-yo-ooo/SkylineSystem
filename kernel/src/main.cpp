@@ -214,7 +214,11 @@ extern "C" void kmain(void) {
     
     // We're done, just hang...
     kpok("Kernel started.\n");
-    for(;;);
+    ft_ctx->clear(ft_ctx, true);    
+    kinfoln("Now Kernel is started");
+    kinfoln("You can press any key,your press key will display on the srceen");
+
+    hcf();
 }
 
 

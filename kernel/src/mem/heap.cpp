@@ -24,7 +24,7 @@ heap* Create(pagemap* pm) {
 }
 
 void* Alloc(heap* h, u64 size) {
-    lock(&h->hl);
+    atomic_lock(&h->hl);
     u64 pages = DIV_ROUND_UP(sizeof(heap_block) + size, PAGE_SIZE);
     u8* buf = (h == kernel_heap ?
                 HIGHER_HALF(PMM::Alloc(pages)) :
@@ -37,16 +37,16 @@ void* Alloc(heap* h, u64 size) {
     block->next = h->block_head;
     h->block_head->prev->next = block;
     h->block_head->prev = block;
-    unlock(&h->hl);
+    atomic_unlock(&h->hl);
     return buf + sizeof(heap_block);
 }
 
 void Free(heap* h, void* ptr) {
-    lock(&h->hl);
+    atomic_lock(&h->hl);
     heap_block* block = (heap_block*)(ptr - sizeof(heap_block));
     if (block->magic != HEAP_MAGIC) {
         kprintf("Heap::Free(): Invalid magic at pointer %lx.\n", ptr);
-        unlock(&h->hl);
+        atomic_unlock(&h->hl);
         return;
     }
     block->prev->next = block->next;
@@ -59,7 +59,7 @@ void Free(heap* h, void* ptr) {
     } else {
         VMM::Free(this_cpu()->pm, buf, pages);
     }
-    unlock(&h->hl);
+    atomic_unlock(&h->hl);
 }
 
 void* Realloc(heap* h, void* ptr, u64 size) {

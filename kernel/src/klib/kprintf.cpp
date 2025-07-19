@@ -38,6 +38,8 @@
 #include <klib/klib.h>
 #include <print/e9print.h>
 
+//SPINLOCK_NEW_LOCK(pflock);
+
 
 void _putchar(char character){
     e9_putc(character);
@@ -870,92 +872,13 @@ static int __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t maxle
 
 int printf_(const char* format, ...)
 {
+    //Spinlock::Lock(&pflock);
     va_list va;
     va_start(va, format);
     char buffer[1];
     const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
     va_end(va);
-    return ret;
-}
-
-int kinfo(const char* format, ...)
-{
-#if PRINT_INFORMATION_ == 1
-    kprintf("[\033[38;2;0;255;255mINFO\033[0m] ");
-    va_list va;
-    va_start(va, format);
-    char buffer[1];
-    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
-    va_end(va);
-    return ret;
-#else
-    return 0;
-#endif
-}
-
-int kinfoln(const char* format, ...)
-{
-#if PRINT_INFORMATION_ == 1
-    kprintf("[\033[38;2;0;255;255mINFO\033[0m] ");
-    va_list va;
-    va_start(va, format);
-    char buffer[1];
-    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
-    va_end(va);
-    kprintf("\n");
-    return ret;
-#else
-    return 0;
-#endif
-}
-
-#ifdef _SYS_DEBUG_OUT
-int debugpln(const char* format, ...){
-#if PRINT_INFORMATION_ == 1
-    kprintf("[\033[38;2;0;255;255mINFO\033[0m] ");
-    va_list va;
-    va_start(va, format);
-    char buffer[1];
-    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
-    va_end(va);
-    kprintf("\n");
-    return ret;
-#else
-    return 0;
-#endif
-}
-#endif
-
-int kpok(const char* format, ...)
-{
-    kprintf("[\033[38;2;0;255;0m OK \033[0m] ");
-    va_list va;
-    va_start(va, format);
-    char buffer[1];
-    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
-    va_end(va);
-    return ret;
-}
-
-int kwarn(const char* format, ...)
-{
-    kprintf("[\033[38;2;255;255;0mWARN\033[0m] ");
-    va_list va;
-    va_start(va, format);
-    char buffer[1];
-    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
-    va_end(va);
-    return ret;
-}
-
-int kerror(const char* format, ...)
-{
-    kprintf("[\033[38;2;255;0;0mERR!\033[0m] ");
-    va_list va;
-    va_start(va, format);
-    char buffer[1];
-    const int ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
-    va_end(va);
+    //Spinlock::Free(&pflock);
     return ret;
 }
 

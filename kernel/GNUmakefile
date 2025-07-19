@@ -219,18 +219,18 @@ bin-$(KARCH)/$(OUTPUT): GNUmakefile linker-$(KARCH).ld $(OBJ)
 
 # Compilation rules for *.c files.
 obj-$(KARCH)/%.c.o: src/%.c GNUmakefile
-	@echo CC $<
+	@echo C $<
 	@mkdir -p "$$(dirname $@)"
 	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
 obj-$(KARCH)/%.S.o: src/%.S GNUmakefile
-	@echo AS $<
+	@echo GAS $<
 	@mkdir -p "$$(dirname $@)"
 	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 obj-$(KARCH)/%.cpp.o: src/%.cpp GNUmakefile
-	@echo CXX $<
+	@echo C++ $<
 	@mkdir -p "$$(dirname $@)"
 	@$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 

@@ -24,8 +24,8 @@ typedef intptr_t iptr;
 
 typedef char symbol[];
 
-typedef struct atomic_lock{
-    bool locked;
-} atomic_lock;
+typedef struct atomic_lock_t{
+    uint32_t locked;
+} atomic_lock_t;
 
 #endif

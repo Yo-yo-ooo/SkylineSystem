@@ -8,8 +8,8 @@
 
 #define SCHED_STACK_SIZE (4 * PAGE_SIZE)
 
-struct atomic_lock;
-typedef struct atomic_lock atomic_lock;
+struct atomic_lock_t;
+typedef struct atomic_lock_t atomic_lock_t;
 typedef struct list_item {
     void* val;
     struct list_item* next;
@@ -17,7 +17,7 @@ typedef struct list_item {
 } list_item;
 
 typedef struct list {
-    atomic_lock lock;
+    atomic_lock_t lock;
     u64 count;
     list_item* head;
     list_item* iterator;

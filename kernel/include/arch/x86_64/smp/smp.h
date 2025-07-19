@@ -26,7 +26,7 @@ typedef struct cpu_info{
 
     struct process* idle_proc;
 
-    atomic_lock sched_lock;
+    atomic_lock_t sched_lock;
 
     bool scheduled_threads;
     bool scheduled_children;

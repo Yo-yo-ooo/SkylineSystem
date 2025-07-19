@@ -39,7 +39,7 @@ void hcf(void) {
 
 
 
-void lock(atomic_lock* l) {
+void atomic_lock(atomic_lock_t* l) {
     while (__atomic_test_and_set(&l->locked, __ATOMIC_ACQUIRE)) {
 #if defined(__x86_64__)
         __asm__ volatile("pause");
@@ -49,7 +49,7 @@ void lock(atomic_lock* l) {
     }
 }
 
-void unlock(atomic_lock* l) {
+void atomic_unlock(atomic_lock_t* l) {
     __atomic_clear(&l->locked, __ATOMIC_RELEASE);
 }
 

@@ -30,7 +30,7 @@ typedef struct DevOPS{ //存储器抽象层
 }DevOPS;
 
 typedef struct DevList{
-    atomic_lock lock;
+    atomic_lock_t lock;
     VsDevType type;
     DevOPS ops;
     char* Name;

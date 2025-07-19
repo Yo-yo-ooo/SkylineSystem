@@ -1,6 +1,9 @@
 #include <arch/x86_64/allin.h>
 #include <limine.h>
 
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
+
 extern struct limine_smp_response* smp_response;
 
 u64 smp_cpu_started = 0;
@@ -14,10 +17,10 @@ cpu_info* this_cpu() {
     return smp_cpu_list[LAPIC::GetID()];
 }
 
-atomic_lock smp_lock;
+atomic_lock_t smp_lock = {0};
 
 void smp_init_cpu(struct limine_smp_info* smp_info) {
-    lock(&smp_lock);
+    atomic_lock(&smp_lock);
 
     gdt_init();
     idt_reinit();
@@ -50,7 +53,7 @@ void smp_init_cpu(struct limine_smp_info* smp_info) {
     kinfo("   smp_init_cpu(): CPU %ld started.\n", smp_info->lapic_id);
     smp_cpu_started++;
 
-    unlock(&smp_lock);
+    atomic_unlock(&smp_lock);
 
     LAPIC::IPI(smp_info->lapic_id, 0x80);
 
@@ -79,3 +82,5 @@ void smp_init() {
 
     
 }
+
+#pragma GCC pop_options

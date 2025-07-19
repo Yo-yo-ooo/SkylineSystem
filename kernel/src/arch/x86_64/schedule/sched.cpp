@@ -5,24 +5,24 @@
 namespace Schedule{
 
     u64 sched_pid = 0;
-    atomic_lock sched_lock;
+    atomic_lock_t sched_lock;
     list* sched_sleep_list = NULL;
 
 
     process* GetNextProc(cpu_info* c) {
-        lock(&c->sched_lock);
+        atomic_lock(&c->sched_lock);
         struct process* proc;
         while (true) {
             proc = (struct process*)List::Iterate(c->proc_list, true);
             if (proc->threads->count > 0)
                 break;
         }
-        unlock(&c->sched_lock);
+        atomic_unlock(&c->sched_lock);
         return proc;
     }
 
     thread* GetNextThread(process* proc) {
-        lock(&proc->lock);
+        atomic_lock(&proc->lock);
         struct thread* t;
         while (true) {
             t = (struct thread*)List::Iterate(proc->threads, false);
@@ -34,7 +34,7 @@ namespace Schedule{
             break;
             }
         }
-        unlock(&proc->lock);
+        atomic_unlock(&proc->lock);
         return t;
     }
 
@@ -121,9 +121,9 @@ namespace Schedule{
 
         
 
-        lock(&c->sched_lock);
+        atomic_lock(&c->sched_lock);
         List::Add(c->proc_list, proc);
-        unlock(&c->sched_lock);
+        atomic_unlock(&c->sched_lock);
 
         kinfo("New proc %lu created.\n", proc->pid);
         return proc;
@@ -173,9 +173,9 @@ namespace Schedule{
         t->idx = proc->threads->count;
         t->parent = proc;
 
-        lock(&proc->lock);
+        atomic_lock(&proc->lock);
         List::Add(proc->threads, t);
-        unlock(&proc->lock);
+        atomic_unlock(&proc->lock);
 
         return t;
     }
