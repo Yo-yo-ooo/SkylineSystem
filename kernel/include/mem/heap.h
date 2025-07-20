@@ -11,8 +11,6 @@ struct vma_region;
 typedef struct vma_region vma_region;
 struct pagemap;
 typedef struct pagemap pagemap;
-struct atomic_lock_t;
-typedef struct atomic_lock_t atomic_lock_t;
 typedef struct heap_block {
     struct heap_block* next;
     struct heap_block* prev;
@@ -22,7 +20,7 @@ typedef struct heap_block {
 } heap_block;
 
 typedef struct {
-    atomic_lock_t hl;
+    spinlock_t hl;
     heap_block* block_head;
     pagemap* pm;
 } heap;

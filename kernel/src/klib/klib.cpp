@@ -39,8 +39,8 @@ void hcf(void) {
 
 
 
-void atomic_lock(atomic_lock_t* l) {
-    while (__atomic_test_and_set(&l->locked, __ATOMIC_ACQUIRE)) {
+void spinlock_lock(spinlock_t* l) {
+    while (__sync_lock_test_and_set(l, 1)){
 #if defined(__x86_64__)
         __asm__ volatile("pause");
 #else
@@ -49,8 +49,8 @@ void atomic_lock(atomic_lock_t* l) {
     }
 }
 
-void atomic_unlock(atomic_lock_t* l) {
-    __atomic_clear(&l->locked, __ATOMIC_RELEASE);
+void spinlock_unlock(spinlock_t* l) {
+    __sync_lock_release(l);
 }
 
 void *__memcpy(void *__restrict__ d, const void *__restrict__ s, size_t n) { 

@@ -97,7 +97,7 @@ struct vfs_inode_t {
     tm_t tm;
     vfs_fsinfo_t *fs;
     void *ident;
-    atomic_lock_t ilock;
+    spinlock_t ilock;
     vfs_tnode_t *mountpoint;
     struct {                                                          
         uint64_t len;                                                 

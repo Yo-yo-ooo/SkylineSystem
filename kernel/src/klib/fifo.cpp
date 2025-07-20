@@ -19,23 +19,23 @@ namespace FIFO
 
     void Push(fifo *f, void *val)
     {
-        atomic_lock(&f->lock);
+        spinlock_lock(&f->lock);
         if (f->count == f->cap)
         {
-            atomic_unlock(&f->lock);
+            spinlock_unlock(&f->lock);
             return;
         }
         __memcpy(f->data + (f->count * f->item_size), val, f->item_size);
         f->count++;
-        atomic_unlock(&f->lock);
+        spinlock_unlock(&f->lock);
     }
 
     void Pop(fifo *f, void *buffer)
     {
-        atomic_lock(&f->lock);
+        spinlock_lock(&f->lock);
         if (f->count == 0)
         {
-            atomic_unlock(&f->lock);
+            spinlock_unlock(&f->lock);
             _memset(buffer, 0, f->item_size);
             return;
         }
@@ -47,7 +47,7 @@ namespace FIFO
             f->count = 0;
             _memset(f->data, 0, f->item_size * f->cap);
         }
-        atomic_unlock(&f->lock);
+        spinlock_unlock(&f->lock);
     }
 
     void Get(fifo *f, void *buffer)

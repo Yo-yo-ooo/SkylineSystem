@@ -9,7 +9,7 @@
 #include <klib/klib.h>
 
 typedef struct {
-    atomic_lock_t lock;
+    spinlock_t lock;
     u64 cap;
     void** data;
     u64 item_size;

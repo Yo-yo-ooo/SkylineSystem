@@ -29,7 +29,7 @@ namespace Dev{
 
     void AddStorageDevice(VsDevType type, DevOPS ops,u32 SectorCount = 0,void* Class = nullptr)
     {
-        atomic_lock(&DevList_->lock);
+        spinlock_lock(&DevList_->lock);
         DevList_[vsdev_list_idx].Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)vsdev_list_idx)) + 1);
         char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)vsdev_list_idx));
         DevList_[vsdev_list_idx].Name = temp_str;
@@ -52,7 +52,7 @@ namespace Dev{
         kfree(temp_str);
         debugpln("[AddStorageDevice]END");
         
-        atomic_unlock(&DevList_->lock);
+        spinlock_unlock(&DevList_->lock);
     }
 
     u32 GetSDEVTCount(VsDevType type){

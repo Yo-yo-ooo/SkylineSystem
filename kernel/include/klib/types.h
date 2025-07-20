@@ -34,8 +34,6 @@ typedef intptr_t iptr;
 
 typedef int8_t symbol[];
 
-typedef struct atomic_lock_t{
-    uint32_t locked;
-} atomic_lock_t;
+typedef uint32_t spinlock_t;
 
 #endif

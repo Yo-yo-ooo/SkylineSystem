@@ -8,7 +8,7 @@ u64 pmm_free_pages = 0;
 u64 pmm_used_pages = 0;
 u64 pmm_total_pages = 0;
 u64 pmm_last_page = 0;
-atomic_lock_t pmm_lock;
+spinlock_t pmm_lock = 0;
 
 __attribute__((used, section(".requests")))
 static volatile struct limine_memmap_request memmap_request = {
@@ -87,28 +87,28 @@ u64 FindPages(usize n) {
 }
 
 void* Alloc(usize n) {
-    atomic_lock(&pmm_lock);
+    spinlock_lock(&pmm_lock);
     u64 first = PMM::FindPages(n);
     if (first == 0) {
         pmm_last_page = 0;
         first = PMM::FindPages(n);
         if (first == 0) {
             kprintf("    PMM::Alloc(): Couldn't allocate %lu pages: Not enough memory.\n", n);
-            atomic_unlock(&pmm_lock);
+            spinlock_unlock(&pmm_lock);
             return NULL;
         }
     }
-    atomic_unlock(&pmm_lock);
+    spinlock_unlock(&pmm_lock);
     u64 addr = first * PAGE_SIZE;
     return (void*)(addr);
 }
 
 void Free(void* ptr, usize n) {
-    atomic_lock(&pmm_lock);
+    spinlock_lock(&pmm_lock);
     u64 idx = (u64)ptr / PAGE_SIZE;
     for (u64 i = 0; i < n; i++)
         bitmap_clear(pmm_bitmap, idx + i);
-    atomic_unlock(&pmm_lock);
+    spinlock_unlock(&pmm_lock);
 }
 
 }

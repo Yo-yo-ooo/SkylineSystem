@@ -17,10 +17,10 @@ cpu_info* this_cpu() {
     return smp_cpu_list[LAPIC::GetID()];
 }
 
-atomic_lock_t smp_lock = {0};
+spinlock_t smp_lock = 0;
 
 void smp_init_cpu(struct limine_smp_info* smp_info) {
-    atomic_lock(&smp_lock);
+    spinlock_lock(&smp_lock);
 
     gdt_init();
     idt_reinit();
@@ -53,7 +53,7 @@ void smp_init_cpu(struct limine_smp_info* smp_info) {
     kinfo("   smp_init_cpu(): CPU %ld started.\n", smp_info->lapic_id);
     smp_cpu_started++;
 
-    atomic_unlock(&smp_lock);
+    spinlock_unlock(&smp_lock);
 
     LAPIC::IPI(smp_info->lapic_id, 0x80);
 

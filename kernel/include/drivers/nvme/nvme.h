@@ -94,7 +94,7 @@ public:
 
         u16 Ident;
 
-        atomic_lock_t Lock;
+        spinlock_t Lock;
         
         NVME::SubQueEntry *Entries;
         NVME::CmplQue *Trg;

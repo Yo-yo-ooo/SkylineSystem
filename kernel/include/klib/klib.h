@@ -55,8 +55,8 @@ void bitmap_set(u8* bitmap, u64 bit);
 void bitmap_clear(u8* bitmap, u64 bit);
 bool bitmap_get(u8* bitmap, u64 bit);
 
-void atomic_lock(atomic_lock_t* l);
-void atomic_unlock(atomic_lock_t* l);
+void spinlock_lock(spinlock_t* l);
+void spinlock_unlock(spinlock_t* l);
 
 //class func pointer -> func pointer
 template <typename T>

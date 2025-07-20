@@ -136,7 +136,7 @@ NVME::SubQue *NVME::AllocSubQue(uint32_t iden, uint32_t size, NVME::CmplQue *trg
 
 	que->Trg = trg;
 
-	que->Lock.locked = false;
+	//que->Lock.locked = false;
 	return que;
 }
 
