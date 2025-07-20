@@ -51,4 +51,5 @@ Many more in future
 
 * [Yo-yo-ooo](https://github.com/Yo-yo-ooo/)
 * [marceldobehere](https://github.com/marceldobehere)
-* [Astrido(Not join)](https://github.com/asterd-og/)
+
+[//]: (https://github.com/asterd-og/)
