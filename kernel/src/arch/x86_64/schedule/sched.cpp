@@ -53,6 +53,7 @@ namespace Schedule{
         LAPIC::StopTimer();
 
         cpu_info* c = this_cpu();
+        spinlock_lock(&c->sched_lock);
 
         if (c->thread) {
             thread* t = c->thread;
@@ -79,6 +80,8 @@ namespace Schedule{
         write_kernel_gs((u64)c->thread);
 
         __asm__ volatile ("fxrstor %0" : : "m"(c->thread->fxsave));
+
+        spinlock_unlock(&c->sched_lock);
 
         LAPIC::EOI();
         LAPIC::Oneshot(0x80, 5);
