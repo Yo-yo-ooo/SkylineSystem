@@ -1,7 +1,7 @@
 #include <arch/x86_64/allin.h>
 #include <drivers/keyboard/x86/keyboard.h>
+#include <flanterm/flanterm.h>
 #include <drivers/keyboard/x86/keyboard_map.h>
-//#include <drivers/dev/dev.h>
 
 bool keyboard_pressed = false;
 
@@ -12,11 +12,7 @@ u8 keyboard_state = 0; // 0 = nothing, 1 = pressed 2 = released
 
 fifo *keyboard_fifo;
 
-//vfs_node *kb_node = NULL;
-
 spinlock_t kb_lock = 0;
-
-;
 
 void keyboard_handle_key(u8 key)
 {
@@ -37,9 +33,9 @@ void keyboard_handle_key(u8 key)
         // Caps
         keyboard_caps = !keyboard_caps;
         keyboard_state = (keyboard_state == 0 ? 1 : 2);
-        kprintf("   ");
+        //kprintf("   ");
         break;
-    default:
+    default:{
         // Letter
         if (!(key & 0x80))
         {
@@ -64,7 +60,7 @@ void keyboard_handle_key(u8 key)
             kprintf("%c", keyboard_char);
         FIFO::Push(keyboard_fifo, &ev);
         break;
-    }
+    }}
     spinlock_unlock(&kb_lock);
 }
 
