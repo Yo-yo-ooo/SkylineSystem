@@ -94,8 +94,8 @@ bool bitmap_get(u8* bitmap, u64 bit) {
 
 void *_EXT4_T_memcpy(void *__restrict__ dest, const void *__restrict__ src, size_t n)
 {
-	unsigned char *d = dest;
-	const unsigned char *s = src;
+	uint8_t *d = dest;
+	const uint8_t *s = src;
 
 #ifdef __GNUC__
 

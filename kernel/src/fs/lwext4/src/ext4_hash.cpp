@@ -202,7 +202,7 @@ static uint32_t ext2_legacy_hash(const char *name, int32_t len, int32_t unsigned
 {
 	uint32_t h0, h1 = 0x12A3FE2D, h2 = 0x37ABE8F9;
 	uint32_t multi = 0x6D22F5;
-	const unsigned char *uname = (const unsigned char *)name;
+	const uint8_t *uname = (const uint8_t *)name;
 	const signed char *sname = (const signed char *)name;
 	int32_t val, i;
 
@@ -229,7 +229,7 @@ static void ext2_prep_hashbuf(const char *src, uint32_t slen, uint32_t *dst,
 	uint32_t buf_val;
 	int32_t len, i;
 	int32_t buf_byte;
-	const unsigned char *ubuf = (const unsigned char *)src;
+	const uint8_t *ubuf = (const uint8_t *)src;
 	const signed char *sbuf = (const signed char *)src;
 
 	if (slen > (uint32_t)dlen)

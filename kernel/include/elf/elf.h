@@ -85,7 +85,7 @@ namespace Elf64
 
 	// ELF File Header - ELF-64 Object File Format 1.5d2 p. 3
 	PACK(typedef struct elf64_ehdr{
-		unsigned char e_ident[EI_NIDENT];
+		uint8_t e_ident[EI_NIDENT];
 
 		Elf64_Half e_type;
 		Elf64_Half e_machine;

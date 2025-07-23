@@ -17,9 +17,9 @@
 #define _X    0x40    /* hex digit */
 #define _SP    0x80    /* hard space (0x20) */
 
-extern const unsigned char _ctype[];
+extern const uint8_t _ctype[];
 
-#define __ismask(x) (_ctype[(int32_t)(unsigned char)(x)])
+#define __ismask(x) (_ctype[(int32_t)(uint8_t)(x)])
 
 #define isalnum(c)    ((__ismask(c)&(_U|_L|_D)) != 0)
 #define isalpha(c)    ((__ismask(c)&(_U|_L)) != 0)
@@ -34,17 +34,17 @@ extern const unsigned char _ctype[];
 #define isupper(c)    ((__ismask(c)&(_U)) != 0)
 #define isxdigit(c)    ((__ismask(c)&(_D|_X)) != 0)
 
-#define isascii(c) (((unsigned char)(c))<=0x7f)
-#define toascii(c) (((unsigned char)(c))&0x7f)
+#define isascii(c) (((uint8_t)(c))<=0x7f)
+#define toascii(c) (((uint8_t)(c))&0x7f)
 
-static inline unsigned char __tolower(unsigned char c)
+static inline uint8_t __tolower(uint8_t c)
 {
     if (isupper(c))
         c -= 'A'-'a';
     return c;
 }
 
-static inline unsigned char __toupper(unsigned char c)
+static inline uint8_t __toupper(uint8_t c)
 {
     if (islower(c))
         c -= 'a'-'A';

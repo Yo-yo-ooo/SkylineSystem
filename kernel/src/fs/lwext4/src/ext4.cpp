@@ -3409,7 +3409,7 @@ void test_lwext4_dir_ls(char *path){
 	ext4_dir_close(&d);
 }
 
-int32_t ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c)
+int32_t ext4_verify_buf(const uint8_t *b, size_t len, uint8_t c)
 {
 	size_t i;
 	for (i = 0; i < len; ++i) {

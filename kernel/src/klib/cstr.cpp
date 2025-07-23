@@ -190,7 +190,7 @@ __ffunc uint32_t ConvertStringToHex(const char *data)
 
     for (uint32_t i = 0; i < 6;)
     {
-        unsigned char temp = 0;
+        uint8_t temp = 0;
         for (uint32_t i2 = 16; i2 != 0; i2 /= 16)
         {
             if (data[i] >= '0' && data[i] <= '9')
@@ -216,7 +216,7 @@ unsigned long ConvertStringToLongHex(const char *data)
     {
         if (data[i] == 0)
             break;
-        unsigned char temp = 0;
+        uint8_t temp = 0;
         {
             if (data[i] >= '0' && data[i] <= '9')
                 temp += (data[i] - '0');
@@ -286,7 +286,7 @@ int64_t to_int(const char *string)
 
 uint8_t strcmp(const char *cs, const char *ct)
 {
-    unsigned char c1, c2;
+    uint8_t c1, c2;
 
     while (1)
     {
@@ -350,7 +350,7 @@ char *strcpy(char *strDest, const char *strSrc){
 
 int32_t strncmp(const char* a, const char* b, size_t n) {
     while (true) {
-        unsigned char ac = n ? *a : '\0', bc = n ? *b : '\0';
+        uint8_t ac = n ? *a : '\0', bc = n ? *b : '\0';
         if (ac == '\0' || bc == '\0' || ac != bc) {
             return (ac > bc) - (ac < bc);
         }

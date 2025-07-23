@@ -8,11 +8,11 @@
 namespace RTC
 {
 
-    unsigned char second;
-    unsigned char minute;
-    unsigned char hour;
-    unsigned char day;
-    unsigned char month;
+    uint8_t second;
+    uint8_t minute;
+    uint8_t hour;
+    uint8_t day;
+    uint8_t month;
     uint32_t year;
 
     int32_t CURRENT_YEAR = 0;
@@ -51,22 +51,22 @@ namespace RTC
         return (inb(cmos_data) & 0x80);
     }
     
-    unsigned char get_RTC_register(int32_t reg) {
+    uint8_t get_RTC_register(int32_t reg) {
         outb(cmos_address, reg);
         return inb(cmos_data);
     }
     
     void read_rtc() 
     {
-        unsigned char century;
-        unsigned char last_second;
-        unsigned char last_minute;
-        unsigned char last_hour;
-        unsigned char last_day;
-        unsigned char last_month;
-        unsigned char last_year;
-        unsigned char last_century;
-        unsigned char registerB;
+        uint8_t century;
+        uint8_t last_second;
+        uint8_t last_minute;
+        uint8_t last_hour;
+        uint8_t last_day;
+        uint8_t last_month;
+        uint8_t last_year;
+        uint8_t last_century;
+        uint8_t registerB;
 
         // Note: This uses the "read registers until you get the same values twice in a row" technique
         //       to avoid getting dodgy/inconsistent values due to RTC updates

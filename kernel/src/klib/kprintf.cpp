@@ -758,7 +758,7 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
             idx = _ntoa_long(out, buffer, idx, maxlen, va_arg(va, unsigned long), false, base, precision, width, flags);
           }
           else {
-            const uint32_t value = (flags & FLAGS_CHAR) ? (unsigned char)va_arg(va, uint32_t) : (flags & FLAGS_SHORT) ? (unsigned short int32_t)va_arg(va, uint32_t) : va_arg(va, uint32_t);
+            const uint32_t value = (flags & FLAGS_CHAR) ? (uint8_t)va_arg(va, uint32_t) : (flags & FLAGS_SHORT) ? (unsigned short int32_t)va_arg(va, uint32_t) : va_arg(va, uint32_t);
             idx = _ntoa_long(out, buffer, idx, maxlen, value, false, base, precision, width, flags);
           }
         }

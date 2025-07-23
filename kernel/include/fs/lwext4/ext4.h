@@ -620,7 +620,7 @@ bool ext4_kernel_init(const char* devname,const char* mpname);
 char * ext4_entry_to_str(uint8_t type);
 bool test_lwext4_dir_test(int32_t len);
 void test_lwext4_dir_ls(char *path);
-int32_t ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c);
+int32_t ext4_verify_buf(const uint8_t *b, size_t len, uint8_t c);
 bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count);
 
 FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image);

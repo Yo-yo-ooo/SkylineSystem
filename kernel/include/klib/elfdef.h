@@ -87,7 +87,7 @@ namespace Elf
 	struct __attribute__((packed)) Elf64_Ehdr 
     {
 		union {
-			unsigned char c[EI_NIDENT];
+			uint8_t c[EI_NIDENT];
 			uint32_t i;
 		} e_ident;
 
