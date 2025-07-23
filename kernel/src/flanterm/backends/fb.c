@@ -29,6 +29,7 @@
 
 #include <flanterm/flanterm.h>
 #include <flanterm/backends/fb.h>
+#include <conf.h>
 
 void *memcpy_flanterm(void *d, const void *s, size_t n) {
     uint8_t *pdest = (uint8_t *)d;
@@ -981,11 +982,12 @@ struct flanterm_context *flanterm_fb_init(
         ctx->ansi_bright_colours[7] = convert_colour(_ctx, 0x00ffffff); // grey
     }
 
-    if (default_bg != NULL) {
+    /* if (default_bg != NULL) {
         ctx->default_bg = convert_colour(_ctx, *default_bg);
     } else {
         ctx->default_bg = 0x00000000; // background (black)
-    }
+    } */
+   ctx->default_bg = BACKGROUND_COLOR_DEFAULT;
 
     if (default_fg != NULL) {
         ctx->default_fg = convert_colour(_ctx, *default_fg);

@@ -9,6 +9,7 @@
 #include "klib/klib.h"
 #include "mem/pmm.h"
 #include "klib/renderer/fb.h"
+#include <klib/renderer/rnd.h>
 
 #if defined (__x86_64__)
 extern void __init x86_64_init(void);
