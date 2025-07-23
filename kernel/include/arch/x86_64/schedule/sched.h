@@ -21,7 +21,7 @@ enum {
   SCHED_USER
 };
 
-typedef void(*signal_handler)(int);
+typedef void(*signal_handler)(int32_t);
 
 struct process;
 struct registers__;

@@ -64,7 +64,7 @@ struct ext4_dir_idx_block {
  * @param parent Pointer to parent directory i-node
  * @return Error code
  */
-int ext4_dir_dx_init(struct ext4_inode_ref *dir,
+int32_t ext4_dir_dx_init(struct ext4_inode_ref *dir,
 		     struct ext4_inode_ref *parent);
 
 /**@brief Try to find directory entry using directory index.
@@ -75,7 +75,7 @@ int ext4_dir_dx_init(struct ext4_inode_ref *dir,
  * @param name      Name to be found
  * @return Error code
  */
-int ext4_dir_dx_find_entry(struct ext4_dir_search_result *result,
+int32_t ext4_dir_dx_find_entry(struct ext4_dir_search_result *result,
 			   struct ext4_inode_ref *inode_ref, size_t name_len,
 			   const char *name);
 
@@ -85,7 +85,7 @@ int ext4_dir_dx_find_entry(struct ext4_dir_search_result *result,
  * @param name   Name of new directory entry
  * @return Error code
  */
-int ext4_dir_dx_add_entry(struct ext4_inode_ref *parent,
+int32_t ext4_dir_dx_add_entry(struct ext4_inode_ref *parent,
 			  struct ext4_inode_ref *child, const char *name, uint32_t name_len);
 
 /**@brief Add new entry to indexed directory
@@ -93,7 +93,7 @@ int ext4_dir_dx_add_entry(struct ext4_inode_ref *parent,
  * @param parent_inode  parent inode index
  * @return Error code
  */
-int ext4_dir_dx_reset_parent_inode(struct ext4_inode_ref *dir,
+int32_t ext4_dir_dx_reset_parent_inode(struct ext4_inode_ref *dir,
                                    uint32_t parent_inode);
 
 

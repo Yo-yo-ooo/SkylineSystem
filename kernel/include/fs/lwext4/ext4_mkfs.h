@@ -66,10 +66,10 @@ struct ext4_mkfs_info {
 };
 
 
-int ext4_mkfs_read_info(struct ext4_blockdev *bd, struct ext4_mkfs_info *info);
+int32_t ext4_mkfs_read_info(struct ext4_blockdev *bd, struct ext4_mkfs_info *info);
 
-int ext4_mkfs(struct ext4_fs *fs, struct ext4_blockdev *bd,
-	      struct ext4_mkfs_info *info, int fs_type);
+int32_t ext4_mkfs(struct ext4_fs *fs, struct ext4_blockdev *bd,
+	      struct ext4_mkfs_info *info, int32_t fs_type);
 
 
 

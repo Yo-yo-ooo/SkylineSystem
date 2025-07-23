@@ -6,7 +6,7 @@ namespace RTC
 {
     void InitRTC();
 
-    extern int Second, Minute, Hour, Day, Month, Year;
+    extern int32_t Second, Minute, Hour, Day, Month, Year;
     extern unsigned long LastUpdateTime;
 
     void read_rtc();

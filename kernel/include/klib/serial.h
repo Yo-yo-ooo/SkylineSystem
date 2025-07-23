@@ -5,7 +5,7 @@
 
 namespace Serial
 {
-    extern int SerialPort;
+    extern int32_t SerialPort;
     extern uint64_t pciCard;
     extern bool SerialWorks;
     bool Init();

@@ -411,7 +411,7 @@ static inline void inval_icache_pou(uintptr_t start, uintptr_t end) {
     asm volatile ("dsb sy\n\tisb");
 }
 
-static inline int current_el(void) {
+static inline int32_t current_el(void) {
     uint64_t v;
 
     asm volatile ("mrs %0, currentel" : "=r"(v));

@@ -47,7 +47,7 @@ else {Panic(#CONDITION);}
 void _memcpy(void* src, void* dest, uint64_t size);
 void _memset(void* dest, uint8_t value, uint64_t size);
 void _memmove(void* src, void* dest, uint64_t size);
-int _memcmp(const void* buffer1,const void* buffer2,size_t  count);
+int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count);
 void *__memcpy(void *__restrict__ d, const void *__restrict__ s, size_t n);
 void *_EXT4_T_memcpy(void *__restrict__ dest,   const void * __restrict__ src, size_t n);
 

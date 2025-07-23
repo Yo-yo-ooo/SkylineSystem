@@ -115,7 +115,7 @@ typedef struct ext4_dir {
  * @param   dev_name Block device name.
  *
  * @return  Standard error code.*/
-int ext4_device_register(struct ext4_blockdev *bd,
+int32_t ext4_device_register(struct ext4_blockdev *bd,
 			 const char *dev_name);
 
 /**@brief   Un-register block device.
@@ -123,12 +123,12 @@ int ext4_device_register(struct ext4_blockdev *bd,
  * @param   dev_name Block device name.
  *
  * @return  Standard error code.*/
-int ext4_device_unregister(const char *dev_name);
+int32_t ext4_device_unregister(const char *dev_name);
 
 /**@brief   Un-register all block devices.
  *
  * @return  Standard error code.*/
-int ext4_device_unregister_all(void);
+int32_t ext4_device_unregister_all(void);
 
 /**@brief   Mount a block device with EXT4 partition to the mount point.
  *
@@ -140,7 +140,7 @@ int ext4_device_unregister_all(void);
  * @param   read_only mount as read-only mode.
  *
  * @return Standard error code */
-int ext4_mount(const char *dev_name,
+int32_t ext4_mount(const char *dev_name,
 	       const char *mount_point,
 	       bool read_only);
 
@@ -149,7 +149,7 @@ int ext4_mount(const char *dev_name,
  * @param   mount_point Mount point.
  *
  * @return  Standard error code */
-int ext4_umount(const char *mount_point);
+int32_t ext4_umount(const char *mount_point);
 
 /**@brief   Starts journaling. Journaling start/stop functions are transparent
  *          and might be used on filesystems without journaling support.
@@ -164,7 +164,7 @@ int ext4_umount(const char *mount_point);
  * @param   mount_point Mount point.
  *
  * @return  Standard error code. */
-int ext4_journal_start(const char *mount_point);
+int32_t ext4_journal_start(const char *mount_point);
 
 /**@brief   Stops journaling. Journaling start/stop functions are transparent
  *          and might be used on filesystems without journaling support.
@@ -172,7 +172,7 @@ int ext4_journal_start(const char *mount_point);
  * @param   mount_point Mount point name.
  *
  * @return  Standard error code. */
-int ext4_journal_stop(const char *mount_point);
+int32_t ext4_journal_stop(const char *mount_point);
 
 /**@brief   Journal recovery.
  * @warning Must be called after @ref ext4_mount.
@@ -180,7 +180,7 @@ int ext4_journal_stop(const char *mount_point);
  * @param   mount_point Mount point.
  *
  * @return Standard error code. */
-int ext4_recover(const char *mount_point);
+int32_t ext4_recover(const char *mount_point);
 
 /**@brief   Some of the filesystem stats. */
 struct ext4_mount_stats {
@@ -203,7 +203,7 @@ struct ext4_mount_stats {
  * @param   stats Filesystem stats.
  *
  * @return Standard error code. */
-int ext4_mount_point_stats(const char *mount_point,
+int32_t ext4_mount_point_stats(const char *mount_point,
 			   struct ext4_mount_stats *stats);
 
 /**@brief   Setup OS lock routines.
@@ -212,7 +212,7 @@ int ext4_mount_point_stats(const char *mount_point,
  * @param   locks  Lock and unlock functions
  *
  * @return Standard error code. */
-int ext4_mount_setup_locks(const char *mount_point,
+int32_t ext4_mount_setup_locks(const char *mount_point,
 			   const struct ext4_lock *locks);
 
 /**@brief   Acquire the filesystem superblock pointer of a mp.
@@ -221,7 +221,7 @@ int ext4_mount_setup_locks(const char *mount_point,
  * @param   sb Superblock handle
  *
  * @return Standard error code. */
-int ext4_get_sblock(const char *mount_point, struct ext4_sblock **sb);
+int32_t ext4_get_sblock(const char *mount_point, struct ext4_sblock **sb);
 
 /**@brief   Enable/disable write back cache mode.
  * @warning Default model of cache is write trough. It means that when You do:
@@ -258,7 +258,7 @@ int ext4_get_sblock(const char *mount_point, struct ext4_sblock **sb);
  * @param   on Enable/disable cache writeback mode.
  *
  * @return Standard error code. */
-int ext4_cache_write_back(const char *path, bool on);
+int32_t ext4_cache_write_back(const char *path, bool on);
 
 
 /**@brief   Force cache flush.
@@ -266,7 +266,7 @@ int ext4_cache_write_back(const char *path, bool on);
  * @param   path Mount point.
  *
  * @return  Standard error code. */
-int ext4_cache_flush(const char *path);
+int32_t ext4_cache_flush(const char *path);
 
 /********************************FILE OPERATIONS*****************************/
 
@@ -275,7 +275,7 @@ int ext4_cache_flush(const char *path);
  * @param   path Path to file.
  *
  * @return  Standard error code. */
-int ext4_fremove(const char *path);
+int32_t ext4_fremove(const char *path);
 
 /**@brief   Create a hardlink for a file.
  *
@@ -283,13 +283,13 @@ int ext4_fremove(const char *path);
  * @param   hardlink_path Path of hardlink.
  *
  * @return  Standard error code. */
-int ext4_flink(const char *path, const char *hardlink_path);
+int32_t ext4_flink(const char *path, const char *hardlink_path);
 
 /**@brief Rename file.
  * @param path Source.
  * @param new_path Destination.
  * @return  Standard error code. */
-int ext4_frename(const char *path, const char *new_path);
+int32_t ext4_frename(const char *path, const char *new_path);
 
 /**@brief   File open function.
  *
@@ -311,7 +311,7 @@ int ext4_frename(const char *path, const char *new_path);
  *  |---------------------------------------------------------------|
  *
  * @return  Standard error code.*/
-int ext4_fopen(ext4_file *file, const char *path, const char *flags);
+int32_t ext4_fopen(ext4_file *file, const char *path, const char *flags);
 
 /**@brief   Alternate file open function.
  *
@@ -320,14 +320,14 @@ int ext4_fopen(ext4_file *file, const char *path, const char *flags);
  * @param   flags File open flags.
  *
  * @return  Standard error code.*/
-int ext4_fopen2(ext4_file *file, const char *path, int flags);
+int32_t ext4_fopen2(ext4_file *file, const char *path, int32_t flags);
 
 /**@brief   File close function.
  *
  * @param   file File handle.
  *
  * @return  Standard error code.*/
-int ext4_fclose(ext4_file *file);
+int32_t ext4_fclose(ext4_file *file);
 
 
 /**@brief   File truncate function.
@@ -336,7 +336,7 @@ int ext4_fclose(ext4_file *file);
  * @param   size New file size.
  *
  * @return  Standard error code.*/
-int ext4_ftruncate(ext4_file *file, uint64_t size);
+int32_t ext4_ftruncate(ext4_file *file, uint64_t size);
 
 /**@brief   Read data from file.
  *
@@ -346,7 +346,7 @@ int ext4_ftruncate(ext4_file *file, uint64_t size);
  * @param   rcnt Bytes read (NULL allowed).
  *
  * @return  Standard error code.*/
-int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt);
+int32_t ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt);
 
 /**@brief   Write data to file.
  *
@@ -356,7 +356,7 @@ int ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt);
  * @param   wcnt Bytes written (NULL allowed).
  *
  * @return  Standard error code.*/
-int ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt);
+int32_t ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt);
 
 /**@brief   File seek operation.
  *
@@ -368,7 +368,7 @@ int ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt);
  *              @ref SEEK_END
  *
  * @return  Standard error code.*/
-int ext4_fseek(ext4_file *file, int64_t offset, uint32_t origin);
+int32_t ext4_fseek(ext4_file *file, int64_t offset, uint32_t origin);
 
 /**@brief   Get file position.
  *
@@ -392,7 +392,7 @@ uint64_t ext4_fsize(ext4_file *file);
  * @param inode   Inode internals.
  *
  * @return  Standard error code.*/
-int ext4_raw_inode_fill(const char *path, uint32_t *ret_ino,
+int32_t ext4_raw_inode_fill(const char *path, uint32_t *ret_ino,
 			struct ext4_inode *inode);
 
 /**@brief Check if inode exists.
@@ -409,7 +409,7 @@ int ext4_raw_inode_fill(const char *path, uint32_t *ret_ino,
  *                @ref EXT4_DE_SYMLINK
  *
  * @return  Standard error code.*/
-int ext4_inode_exist(const char *path, int type);
+int32_t ext4_inode_exist(const char *path, int32_t type);
 
 /**@brief Change file/directory/link mode bits.
  *
@@ -417,7 +417,7 @@ int ext4_inode_exist(const char *path, int type);
  * @param mode New mode bits (for example 0777).
  *
  * @return  Standard error code.*/
-int ext4_mode_set(const char *path, uint32_t mode);
+int32_t ext4_mode_set(const char *path, uint32_t mode);
 
 
 /**@brief Get file/directory/link mode bits.
@@ -426,7 +426,7 @@ int ext4_mode_set(const char *path, uint32_t mode);
  * @param mode New mode bits (for example 0777).
  *
  * @return  Standard error code.*/
-int ext4_mode_get(const char *path, uint32_t *mode);
+int32_t ext4_mode_get(const char *path, uint32_t *mode);
 
 /**@brief Change file owner and group.
  *
@@ -435,7 +435,7 @@ int ext4_mode_get(const char *path, uint32_t *mode);
  * @param gid  Group id.
  *
  * @return  Standard error code.*/
-int ext4_owner_set(const char *path, uint32_t uid, uint32_t gid);
+int32_t ext4_owner_set(const char *path, uint32_t uid, uint32_t gid);
 
 /**@brief Get file/directory/link owner and group.
  *
@@ -444,7 +444,7 @@ int ext4_owner_set(const char *path, uint32_t uid, uint32_t gid);
  * @param gid  Group id.
  *
  * @return  Standard error code.*/
-int ext4_owner_get(const char *path, uint32_t *uid, uint32_t *gid);
+int32_t ext4_owner_get(const char *path, uint32_t *uid, uint32_t *gid);
 
 /**@brief Set file/directory/link access time.
  *
@@ -452,7 +452,7 @@ int ext4_owner_get(const char *path, uint32_t *uid, uint32_t *gid);
  * @param atime Access timestamp.
  *
  * @return  Standard error code.*/
-int ext4_atime_set(const char *path, uint32_t atime);
+int32_t ext4_atime_set(const char *path, uint32_t atime);
 
 /**@brief Set file/directory/link modify time.
  *
@@ -460,7 +460,7 @@ int ext4_atime_set(const char *path, uint32_t atime);
  * @param mtime Modify timestamp.
  *
  * @return  Standard error code.*/
-int ext4_mtime_set(const char *path, uint32_t mtime);
+int32_t ext4_mtime_set(const char *path, uint32_t mtime);
 
 /**@brief Set file/directory/link change time.
  *
@@ -468,7 +468,7 @@ int ext4_mtime_set(const char *path, uint32_t mtime);
  * @param ctime Change timestamp.
  *
  * @return  Standard error code.*/
-int ext4_ctime_set(const char *path, uint32_t ctime);
+int32_t ext4_ctime_set(const char *path, uint32_t ctime);
 
 /**@brief Get file/directory/link access time.
  *
@@ -476,7 +476,7 @@ int ext4_ctime_set(const char *path, uint32_t ctime);
  * @param atime Access timestamp.
  *
  * @return  Standard error code.*/
-int ext4_atime_get(const char *path, uint32_t *atime);
+int32_t ext4_atime_get(const char *path, uint32_t *atime);
 
 /**@brief Get file/directory/link modify time.
  *
@@ -484,7 +484,7 @@ int ext4_atime_get(const char *path, uint32_t *atime);
  * @param mtime Modify timestamp.
  *
  * @return  Standard error code.*/
-int ext4_mtime_get(const char *path, uint32_t *mtime);
+int32_t ext4_mtime_get(const char *path, uint32_t *mtime);
 
 /**@brief Get file/directory/link change time.
  *
@@ -492,7 +492,7 @@ int ext4_mtime_get(const char *path, uint32_t *mtime);
  * @param ctime Change timestamp.
  *
  * @return  standard error code*/
-int ext4_ctime_get(const char *path, uint32_t *ctime);
+int32_t ext4_ctime_get(const char *path, uint32_t *ctime);
 
 /**@brief Create symbolic link.
  *
@@ -500,7 +500,7 @@ int ext4_ctime_get(const char *path, uint32_t *ctime);
  * @param path   Source entry path.
  *
  * @return  Standard error code.*/
-int ext4_fsymlink(const char *target, const char *path);
+int32_t ext4_fsymlink(const char *target, const char *path);
 
 /**@brief Create special file.
  * @param path     Path to new special file.
@@ -509,7 +509,7 @@ int ext4_fsymlink(const char *target, const char *path);
  * @param dev      If filetype is char device or block device,
  * 	           the device number will become the payload in the inode.
  * @return  Standard error code.*/
-int ext4_mknod(const char *path, int filetype, uint32_t dev);
+int32_t ext4_mknod(const char *path, int32_t filetype, uint32_t dev);
 
 /**@brief Read symbolic link payload.
  *
@@ -519,7 +519,7 @@ int ext4_mknod(const char *path, int filetype, uint32_t dev);
  * @param rcnt    Bytes read.
  *
  * @return  Standard error code.*/
-int ext4_readlink(const char *path, char *buf, size_t bufsize, size_t *rcnt);
+int32_t ext4_readlink(const char *path, char *buf, size_t bufsize, size_t *rcnt);
 
 /**@brief Set extended attribute.
  *
@@ -530,7 +530,7 @@ int ext4_readlink(const char *path, char *buf, size_t bufsize, size_t *rcnt);
  * @param data_size Size of data to add.
  *
  * @return  Standard error code.*/
-int ext4_setxattr(const char *path, const char *name, size_t name_len,
+int32_t ext4_setxattr(const char *path, const char *name, size_t name_len,
 		  const void *data, size_t data_size);
 
 /**@brief Get extended attribute.
@@ -542,7 +542,7 @@ int ext4_setxattr(const char *path, const char *name, size_t name_len,
  * @param buf_size Size of data to get.
  *
  * @return  Standard error code.*/
-int ext4_getxattr(const char *path, const char *name, size_t name_len,
+int32_t ext4_getxattr(const char *path, const char *name, size_t name_len,
 		  void *buf, size_t buf_size, size_t *data_size);
 
 /**@brief List extended attributes.
@@ -553,7 +553,7 @@ int ext4_getxattr(const char *path, const char *name, size_t name_len,
  * @param ret_size Used bytes of @list.
  *
  * @return  Standard error code.*/
-int ext4_listxattr(const char *path, char *list, size_t size, size_t *ret_size);
+int32_t ext4_listxattr(const char *path, char *list, size_t size, size_t *ret_size);
 
 /**@brief Remove extended attribute.
  *
@@ -562,7 +562,7 @@ int ext4_listxattr(const char *path, char *list, size_t size, size_t *ret_size);
  * @param name_len Length of @name in bytes.
  *
  * @return  Standard error code.*/
-int ext4_removexattr(const char *path, const char *name, size_t name_len);
+int32_t ext4_removexattr(const char *path, const char *name, size_t name_len);
 
 
 /*********************************DIRECTORY OPERATION***********************/
@@ -572,7 +572,7 @@ int ext4_removexattr(const char *path, const char *name, size_t name_len);
  * @param   path Directory path to remove
  *
  * @return  Standard error code.*/
-int ext4_dir_rm(const char *path);
+int32_t ext4_dir_rm(const char *path);
 
 /**@brief Rename/move directory.
  *
@@ -580,14 +580,14 @@ int ext4_dir_rm(const char *path);
  * @param new_path Destination path.
  *
  * @return  Standard error code. */
-int ext4_dir_mv(const char *path, const char *new_path);
+int32_t ext4_dir_mv(const char *path, const char *new_path);
 
 /**@brief   Create new directory.
  *
  * @param   path Directory name.
  *
  * @return  Standard error code.*/
-int ext4_dir_mk(const char *path);
+int32_t ext4_dir_mk(const char *path);
 
 /**@brief   Directory open.
  *
@@ -595,14 +595,14 @@ int ext4_dir_mk(const char *path);
  * @param   path Directory path.
  *
  * @return  Standard error code.*/
-int ext4_dir_open(ext4_dir *dir, const char *path);
+int32_t ext4_dir_open(ext4_dir *dir, const char *path);
 
 /**@brief   Directory close.
  *
  * @param   dir directory handle.
  *
  * @return  Standard error code.*/
-int ext4_dir_close(ext4_dir *dir);
+int32_t ext4_dir_close(ext4_dir *dir);
 
 /**@brief   Return next directory entry.
  *
@@ -618,9 +618,9 @@ void ext4_dir_entry_rewind(ext4_dir *dir);
 
 bool ext4_kernel_init(const char* devname,const char* mpname);
 char * ext4_entry_to_str(uint8_t type);
-bool test_lwext4_dir_test(int len);
+bool test_lwext4_dir_test(int32_t len);
 void test_lwext4_dir_ls(char *path);
-int ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c);
+int32_t ext4_verify_buf(const unsigned char *b, size_t len, unsigned char c);
 bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count);
 
 FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image);

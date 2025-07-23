@@ -25,7 +25,7 @@ namespace MStackData
     extern int64_t BenchmarkStackPointer2;
     extern int64_t BenchmarkStackPointerSave;
     extern bool BenchmarkEnabled;
-    extern int BenchmarkMode;
+    extern int32_t BenchmarkMode;
 }
 
 // void AddToTheMStack(MStack thing);
@@ -69,7 +69,7 @@ void RemoveTheLastElementFromTheMStack();
 
 //#include "../../kernelStuff/stuff/stackmacro.h"
 
-void SaveBenchmarkStack(int mode);
+void SaveBenchmarkStack(int32_t mode);
 
 
 

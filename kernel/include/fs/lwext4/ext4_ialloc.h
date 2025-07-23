@@ -60,7 +60,7 @@ void ext4_ialloc_set_bitmap_csum(struct ext4_sblock *sb, struct ext4_bgroup *bg,
  * @param index  Index of i-node to be release
  * @param is_dir Flag us for information whether i-node is directory or not
  */
-int ext4_ialloc_free_inode(struct ext4_fs *fs, uint32_t index, bool is_dir);
+int32_t ext4_ialloc_free_inode(struct ext4_fs *fs, uint32_t index, bool is_dir);
 
 /**@brief I-node allocation algorithm.
  * This is more simple algorithm, than Orlov allocator used
@@ -70,7 +70,7 @@ int ext4_ialloc_free_inode(struct ext4_fs *fs, uint32_t index, bool is_dir);
  * @param is_dir Flag if allocated i-node will be file or directory
  * @return Error code
  */
-int ext4_ialloc_alloc_inode(struct ext4_fs *fs, uint32_t *index, bool is_dir);
+int32_t ext4_ialloc_alloc_inode(struct ext4_fs *fs, uint32_t *index, bool is_dir);
 
 
 

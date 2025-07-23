@@ -175,7 +175,7 @@ uint64_t ext4_inode_get_blocks_count(struct ext4_sblock *sb,
  * @param cnt Number of 512-bytes blocks
  * @return Error code
  */
-int ext4_inode_set_blocks_count(struct ext4_sblock *sb,
+int32_t ext4_inode_set_blocks_count(struct ext4_sblock *sb,
 				struct ext4_inode *inode, uint64_t cnt);
 
 /**@brief Get flags (features) of i-node.

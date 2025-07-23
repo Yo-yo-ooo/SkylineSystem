@@ -79,7 +79,7 @@ typedef struct vfs_fsinfo_t {
 } vfs_fsinfo_t;
 
 struct vfs_tnode_t {
-    char name[VFS_MAX_NAME_LEN];
+    char path[VFS_MAX_NAME_LEN];
     vfs_stat_t st;
     vfs_inode_t *inode;
     vfs_inode_t *parent;
@@ -97,7 +97,7 @@ struct vfs_inode_t {
     tm_t tm;
     vfs_fsinfo_t *fs;
     void *ident;
-    spinlock_t ilock;
+    spinlock_t lock;
     vfs_tnode_t *mountpoint;
     struct {                                                          
         uint64_t len;                                                 
@@ -117,3 +117,11 @@ typedef struct {
 } vfs_node_desc_t;
 
 typedef vfs_tnode_t vfs_node;
+
+namespace VFS{
+    vfs_inode_t *AllocInode(vfs_node_type_t type, uint32_t perms,
+                             uint32_t uid, vfs_fsinfo_t * fs,
+                             vfs_tnode_t * mountpoint);
+    
+    void FreeNodes(vfs_tnode_t * tnode);
+}

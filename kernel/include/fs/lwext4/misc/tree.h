@@ -120,7 +120,7 @@ struct {								\
 
 #define SPLAY_PROTOTYPE(name, type, field, cmp)				\
 void name##_SPLAY(struct name *, struct type *);			\
-void name##_SPLAY_MINMAX(struct name *, int);				\
+void name##_SPLAY_MINMAX(struct name *, int32_t);				\
 struct type *name##_SPLAY_INSERT(struct name *, struct type *);		\
 struct type *name##_SPLAY_REMOVE(struct name *, struct type *);		\
 									\
@@ -151,7 +151,7 @@ name##_SPLAY_NEXT(struct name *head, struct type *elm)			\
 }									\
 									\
 static __inline struct type *						\
-name##_SPLAY_MIN_MAX(struct name *head, int val)			\
+name##_SPLAY_MIN_MAX(struct name *head, int32_t val)			\
 {									\
 	name##_SPLAY_MINMAX(head, val);					\
         return (SPLAY_ROOT(head));					\
@@ -167,7 +167,7 @@ name##_SPLAY_INSERT(struct name *head, struct type *elm)		\
     if (SPLAY_EMPTY(head)) {						\
 	    SPLAY_LEFT(elm, field) = SPLAY_RIGHT(elm, field) = NULL;	\
     } else {								\
-	    int __comp;							\
+	    int32_t __comp;							\
 	    name##_SPLAY(head, elm);					\
 	    __comp = (cmp)(elm, (head)->sph_root);			\
 	    if(__comp < 0) {						\
@@ -210,7 +210,7 @@ void									\
 name##_SPLAY(struct name *head, struct type *elm)			\
 {									\
 	struct type __node, *__left, *__right, *__tmp;			\
-	int __comp;							\
+	int32_t __comp;							\
 \
 	SPLAY_LEFT(&__node, field) = SPLAY_RIGHT(&__node, field) = NULL;\
 	__left = __right = &__node;					\
@@ -244,7 +244,7 @@ name##_SPLAY(struct name *head, struct type *elm)			\
 /* Splay with either the minimum or the maximum element			\
  * Used to find minimum or maximum element in tree.			\
  */									\
-void name##_SPLAY_MINMAX(struct name *head, int __comp) \
+void name##_SPLAY_MINMAX(struct name *head, int32_t __comp) \
 {									\
 	struct type __node, *__left, *__right, *__tmp;			\
 \
@@ -314,7 +314,7 @@ struct {								\
 	struct type *rbe_left;		/* left element */		\
 	struct type *rbe_right;		/* right element */		\
 	struct type *rbe_parent;	/* parent element */		\
-	int rbe_color;			/* node color */		\
+	int32_t rbe_color;			/* node color */		\
 }
 
 #define RB_LEFT(elm, field)		(elm)->field.rbe_left
@@ -411,7 +411,7 @@ struct {								\
 #define RB_PROTOTYPE_PREV(name, type, attr)				\
 	attr struct type *name##_RB_PREV(struct type *)
 #define RB_PROTOTYPE_MINMAX(name, type, attr)				\
-	attr struct type *name##_RB_MINMAX(struct name *, int)
+	attr struct type *name##_RB_MINMAX(struct name *, int32_t)
 
 /* Main rb operation.
  * Moves node close to the key of elm to top
@@ -560,7 +560,7 @@ attr struct type *							\
 name##_RB_REMOVE(struct name *head, struct type *elm)			\
 {									\
 	struct type *child, *parent, *old = elm;			\
-	int color;							\
+	int32_t color;							\
 	if (RB_LEFT(elm, field) == NULL)				\
 		child = RB_RIGHT(elm, field);				\
 	else if (RB_RIGHT(elm, field) == NULL)				\
@@ -630,7 +630,7 @@ name##_RB_INSERT(struct name *head, struct type *elm)			\
 {									\
 	struct type *tmp;						\
 	struct type *parent = NULL;					\
-	int comp = 0;							\
+	int32_t comp = 0;							\
 	tmp = RB_ROOT(head);						\
 	while (tmp) {							\
 		parent = tmp;						\
@@ -661,7 +661,7 @@ attr struct type *							\
 name##_RB_FIND(struct name *head, struct type *elm)			\
 {									\
 	struct type *tmp = RB_ROOT(head);				\
-	int comp;							\
+	int32_t comp;							\
 	while (tmp) {							\
 		comp = cmp(elm, tmp);					\
 		if (comp < 0)						\
@@ -681,7 +681,7 @@ name##_RB_NFIND(struct name *head, struct type *elm)			\
 {									\
 	struct type *tmp = RB_ROOT(head);				\
 	struct type *res = NULL;					\
-	int comp;							\
+	int32_t comp;							\
 	while (tmp) {							\
 		comp = cmp(elm, tmp);					\
 		if (comp < 0) {						\
@@ -744,7 +744,7 @@ name##_RB_PREV(struct type *elm)					\
 
 #define RB_GENERATE_MINMAX(name, type, field, attr)			\
 attr struct type *							\
-name##_RB_MINMAX(struct name *head, int val)				\
+name##_RB_MINMAX(struct name *head, int32_t val)				\
 {									\
 	struct type *tmp = RB_ROOT(head);				\
 	struct type *parent = NULL;					\

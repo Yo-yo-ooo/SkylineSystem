@@ -271,8 +271,8 @@ namespace PCI
     };
 
     void pci_read_bar(uint32_t* mask, uint64_t addr, uint32_t offset);
-    PCI_BAR_TYPE pci_get_bar(uint32_t* bar0, int bar_num, uint64_t addr);
-    PCI_BAR_TYPE pci_get_bar(PCIHeader0* addr, int bar_num);
+    PCI_BAR_TYPE pci_get_bar(uint32_t* bar0, int32_t bar_num, uint64_t addr);
+    PCI_BAR_TYPE pci_get_bar(PCIHeader0* addr, int32_t bar_num);
 
     uint8_t read_byte(uint64_t address, PCI_BAR_TYPE type, uint8_t field);
 	uint16_t read_word(uint64_t address, PCI_BAR_TYPE type, uint8_t field);

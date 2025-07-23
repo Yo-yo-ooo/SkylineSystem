@@ -35,7 +35,7 @@ namespace AHCI
         uint16_t   cur_heads;   /* logical heads word 55*/
         uint16_t   cur_sectors;   /* logical sectors per track */
         uint16_t   cur_capacity0;   /* logical total sectors on drive */
-        uint16_t   cur_capacity1;   /*  (2 words, misaligned int)     */
+        uint16_t   cur_capacity1;   /*  (2 words, misaligned int32_t)     */
         uint8_t   multsect;   /* current multiple sector count */
         uint8_t   multsect_valid;   /* when (bit0==1) multsect is ok */
         uint32_t   lba_capacity;   /* total number of sectors */

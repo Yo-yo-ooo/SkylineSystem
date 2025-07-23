@@ -66,7 +66,7 @@ struct ext4_bcache;
 /**@brief   Single block descriptor*/
 struct ext4_buf {
 	/**@brief   Flags*/
-	int flags;
+	int32_t flags;
 
 	/**@brief   Logical block address*/
 	uint64_t lba;
@@ -105,7 +105,7 @@ struct ext4_buf {
 	 * @param   arg argument passed to this routine*/
 	void (*end_write)(struct ext4_bcache *bc,
 			  struct ext4_buf *buf,
-			  int res,
+			  int32_t res,
 			  void *arg);
 
 	/**@brief   argument passed to end_write() callback.*/
@@ -217,7 +217,7 @@ ext4_bcache_remove_dirty_node(struct ext4_bcache *bc, struct ext4_buf *buf) {
  * @param   cnt items count in block cache
  * @param   itemsize single item size (in bytes)
  * @return  standard error code*/
-int ext4_bcache_init_dynamic(struct ext4_bcache *bc, uint32_t cnt,
+int32_t ext4_bcache_init_dynamic(struct ext4_bcache *bc, uint32_t cnt,
 			     uint32_t itemsize);
 
 /**@brief   Do cleanup works on block cache.
@@ -227,7 +227,7 @@ void ext4_bcache_cleanup(struct ext4_bcache *bc);
 /**@brief   Dynamic de-initialization of block cache.
  * @param   bc block cache descriptor
  * @return  standard error code*/
-int ext4_bcache_fini_dynamic(struct ext4_bcache *bc);
+int32_t ext4_bcache_fini_dynamic(struct ext4_bcache *bc);
 
 /**@brief   Get a buffer with the lowest LRU counter in bcache.
  * @param   bc block cache descriptor
@@ -271,14 +271,14 @@ ext4_bcache_find_get(struct ext4_bcache *bc, struct ext4_block *b,
  * @param   b block to alloc
  * @param   is_new block is new (needs to be read)
  * @return  standard error code*/
-int ext4_bcache_alloc(struct ext4_bcache *bc, struct ext4_block *b,
+int32_t ext4_bcache_alloc(struct ext4_bcache *bc, struct ext4_block *b,
 		      bool *is_new);
 
 /**@brief   Free block from cache memory (decrement reference counter).
  * @param   bc block cache descriptor
  * @param   b block to free
  * @return  standard error code*/
-int ext4_bcache_free(struct ext4_bcache *bc, struct ext4_block *b);
+int32_t ext4_bcache_free(struct ext4_bcache *bc, struct ext4_block *b);
 
 /**@brief   Return a full status of block cache.
  * @param   bc block cache descriptor

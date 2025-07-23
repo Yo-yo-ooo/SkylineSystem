@@ -44,7 +44,7 @@
 /**@brief   Mark a buffer dirty and add it to the current transaction.
  * @param   buf buffer
  * @return  standard error code*/
-int ext4_trans_set_block_dirty(struct ext4_buf *buf);
+int32_t ext4_trans_set_block_dirty(struct ext4_buf *buf);
 
 /**@brief   Block get function (through cache, don't read).
  *          jbd_trans_get_access would be called in order to
@@ -53,7 +53,7 @@ int ext4_trans_set_block_dirty(struct ext4_buf *buf);
  * @param   b block descriptor
  * @param   lba logical block address
  * @return  standard error code*/
-int ext4_trans_block_get_noread(struct ext4_blockdev *bdev,
+int32_t ext4_trans_block_get_noread(struct ext4_blockdev *bdev,
 			  struct ext4_block *b,
 			  uint64_t lba);
 
@@ -64,7 +64,7 @@ int ext4_trans_block_get_noread(struct ext4_blockdev *bdev,
  * @param   b block descriptor
  * @param   lba logical block address
  * @return  standard error code*/
-int ext4_trans_block_get(struct ext4_blockdev *bdev,
+int32_t ext4_trans_block_get(struct ext4_blockdev *bdev,
 		   struct ext4_block *b,
 		   uint64_t lba);
 
@@ -72,7 +72,7 @@ int ext4_trans_block_get(struct ext4_blockdev *bdev,
  * @param  bdev block device descriptor
  * @param  lba logical block address
  * @return standard error code*/
-int ext4_trans_try_revoke_block(struct ext4_blockdev *bdev,
+int32_t ext4_trans_try_revoke_block(struct ext4_blockdev *bdev,
 			       uint64_t lba);
 
 

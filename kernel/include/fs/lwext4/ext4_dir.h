@@ -189,21 +189,21 @@ bool ext4_dir_csum_verify(struct ext4_inode_ref *inode_ref,
  * @param pos       Position to start reading entries from
  * @return Error code
  */
-int ext4_dir_iterator_init(struct ext4_dir_iter *it,
+int32_t ext4_dir_iterator_init(struct ext4_dir_iter *it,
 			   struct ext4_inode_ref *inode_ref, uint64_t pos);
 
 /**@brief Jump to the next valid entry
  * @param it Initialized iterator
  * @return Error code
  */
-int ext4_dir_iterator_next(struct ext4_dir_iter *it);
+int32_t ext4_dir_iterator_next(struct ext4_dir_iter *it);
 
 /**@brief Uninitialize directory iterator.
  *        Release all allocated structures.
  * @param it Iterator to be finished
  * @return Error code
  */
-int ext4_dir_iterator_fini(struct ext4_dir_iter *it);
+int32_t ext4_dir_iterator_fini(struct ext4_dir_iter *it);
 
 /**@brief Write directory entry to concrete data block.
  * @param sb        Superblock
@@ -223,7 +223,7 @@ void ext4_dir_write_entry(struct ext4_sblock *sb, struct ext4_dir_en *en,
  * @param child  I-node to be referenced from new entry
  * @return Error code
  */
-int ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,
+int32_t ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,
 		       uint32_t name_len, struct ext4_inode_ref *child);
 
 /**@brief Find directory entry with passed name.
@@ -233,7 +233,7 @@ int ext4_dir_add_entry(struct ext4_inode_ref *parent, const char *name,
  * @param name_len  Name length
  * @return Error code
  */
-int ext4_dir_find_entry(struct ext4_dir_search_result *result,
+int32_t ext4_dir_find_entry(struct ext4_dir_search_result *result,
 			struct ext4_inode_ref *parent, const char *name,
 			uint32_t name_len);
 
@@ -243,7 +243,7 @@ int ext4_dir_find_entry(struct ext4_dir_search_result *result,
  * @param name_len  Name length
  * @return Error code
  */
-int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
+int32_t ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
 			  uint32_t name_len);
 
 /**@brief Try to insert entry to concrete data block.
@@ -255,7 +255,7 @@ int ext4_dir_remove_entry(struct ext4_inode_ref *parent, const char *name,
  * @param name_len     Length of the new entry name
  * @return Error code
  */
-int ext4_dir_try_insert_entry(struct ext4_sblock *sb,
+int32_t ext4_dir_try_insert_entry(struct ext4_sblock *sb,
 			      struct ext4_inode_ref *inode_ref,
 			      struct ext4_block *dst_blk,
 			      struct ext4_inode_ref *child, const char *name,
@@ -269,7 +269,7 @@ int ext4_dir_try_insert_entry(struct ext4_sblock *sb,
  * @param res_entry Output pointer to found entry, NULL if not found
  * @return Error code
  */
-int ext4_dir_find_in_block(struct ext4_block *block, struct ext4_sblock *sb,
+int32_t ext4_dir_find_in_block(struct ext4_block *block, struct ext4_sblock *sb,
 			   size_t name_len, const char *name,
 			   struct ext4_dir_en **res_entry);
 
@@ -279,7 +279,7 @@ int ext4_dir_find_in_block(struct ext4_block *block, struct ext4_sblock *sb,
  * @return Error code
  *
  */
-int ext4_dir_destroy_result(struct ext4_inode_ref *parent,
+int32_t ext4_dir_destroy_result(struct ext4_inode_ref *parent,
 			    struct ext4_dir_search_result *result);
 
 void ext4_dir_set_csum(struct ext4_inode_ref *inode_ref,

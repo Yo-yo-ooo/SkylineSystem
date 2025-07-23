@@ -78,11 +78,11 @@ struct jbd_trans {
 	uint32_t trans_id;
 
 	uint32_t start_iblock;
-	int alloc_blocks;
-	int data_cnt;
+	int32_t alloc_blocks;
+	int32_t data_cnt;
 	uint32_t data_csum;
-	int written_cnt;
-	int error;
+	int32_t written_cnt;
+	int32_t error;
 
 	struct jbd_journal *journal;
 
@@ -108,28 +108,28 @@ struct jbd_journal {
 	struct jbd_fs *jbd_fs;
 };
 
-int jbd_get_fs(struct ext4_fs *fs,
+int32_t jbd_get_fs(struct ext4_fs *fs,
 	       struct jbd_fs *jbd_fs);
-int jbd_put_fs(struct jbd_fs *jbd_fs);
-int jbd_inode_bmap(struct jbd_fs *jbd_fs,
+int32_t jbd_put_fs(struct jbd_fs *jbd_fs);
+int32_t jbd_inode_bmap(struct jbd_fs *jbd_fs,
 		   ext4_lblk_t iblock,
 		   ext4_fsblk_t *fblock);
-int jbd_recover(struct jbd_fs *jbd_fs);
-int jbd_journal_start(struct jbd_fs *jbd_fs,
+int32_t jbd_recover(struct jbd_fs *jbd_fs);
+int32_t jbd_journal_start(struct jbd_fs *jbd_fs,
 		      struct jbd_journal *journal);
-int jbd_journal_stop(struct jbd_journal *journal);
+int32_t jbd_journal_stop(struct jbd_journal *journal);
 struct jbd_trans *
 jbd_journal_new_trans(struct jbd_journal *journal);
-int jbd_trans_set_block_dirty(struct jbd_trans *trans,
+int32_t jbd_trans_set_block_dirty(struct jbd_trans *trans,
 			      struct ext4_block *block);
-int jbd_trans_revoke_block(struct jbd_trans *trans,
+int32_t jbd_trans_revoke_block(struct jbd_trans *trans,
 			   ext4_fsblk_t lba);
-int jbd_trans_try_revoke_block(struct jbd_trans *trans,
+int32_t jbd_trans_try_revoke_block(struct jbd_trans *trans,
 			       ext4_fsblk_t lba);
 void jbd_journal_free_trans(struct jbd_journal *journal,
 			    struct jbd_trans *trans,
 			    bool abort);
-int jbd_journal_commit_trans(struct jbd_journal *journal,
+int32_t jbd_journal_commit_trans(struct jbd_journal *journal,
 			     struct jbd_trans *trans);
 void
 jbd_journal_purge_cp_trans(struct jbd_journal *journal,

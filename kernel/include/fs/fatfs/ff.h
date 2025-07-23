@@ -334,14 +334,14 @@ FRESULT f_mount (FATFS* fs, const TCHAR* path, BYTE opt);			/* Mount/Unmount a l
 FRESULT f_mkfs (const TCHAR* path, const MKFS_PARM* opt, void* work, UINT len);	/* Create a FAT volume */
 FRESULT f_fdisk (BYTE pdrv, const LBA_t ptbl[], void* work);		/* Divide a physical drive into some partitions */
 FRESULT f_setcp (WORD cp);											/* Set current code page */
-int f_putc (TCHAR c, FIL* fp);										/* Put a character to the file */
-int f_puts (const TCHAR* str, FIL* cp);								/* Put a string to the file */
-int f_printf (FIL* fp, const TCHAR* str, ...);						/* Put a formatted string to the file */
-TCHAR* f_gets (TCHAR* buff, int len, FIL* fp);						/* Get a string from the file */
+int32_t f_putc (TCHAR c, FIL* fp);										/* Put a character to the file */
+int32_t f_puts (const TCHAR* str, FIL* cp);								/* Put a string to the file */
+int32_t f_printf (FIL* fp, const TCHAR* str, ...);						/* Put a formatted string to the file */
+TCHAR* f_gets (TCHAR* buff, int32_t len, FIL* fp);						/* Get a string from the file */
 
 /* Some API fucntions are implemented as macro */
 
-#define f_eof(fp) ((int)((fp)->fptr == (fp)->obj.objsize))
+#define f_eof(fp) ((int32_t)((fp)->fptr == (fp)->obj.objsize))
 #define f_error(fp) ((fp)->err)
 #define f_tell(fp) ((fp)->fptr)
 #define f_size(fp) ((fp)->obj.objsize)
@@ -379,10 +379,10 @@ void* ff_memalloc (UINT msize);		/* Allocate memory block */
 void ff_memfree (void* mblock);		/* Free memory block */
 #endif
 #if FF_FS_REENTRANT		/* Sync functions */
-int ff_mutex_create (int vol);		/* Create a sync object */
-void ff_mutex_delete (int vol);		/* Delete a sync object */
-int ff_mutex_take (int vol);		/* Lock sync object */
-void ff_mutex_give (int vol);		/* Unlock sync object */
+int32_t ff_mutex_create (int32_t vol);		/* Create a sync object */
+void ff_mutex_delete (int32_t vol);		/* Delete a sync object */
+int32_t ff_mutex_take (int32_t vol);		/* Lock sync object */
+void ff_mutex_give (int32_t vol);		/* Unlock sync object */
 #endif
 
 

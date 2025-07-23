@@ -59,8 +59,8 @@ struct ext4_hash_info {
  * @param   hash_minor output value
  * @param   hash_major output value
  * @return  standard error code*/
-int ext2_htree_hash(const char *name, int len, const uint32_t *hash_seed,
-		    int hash_version, uint32_t *hash_major,
+int32_t ext2_htree_hash(const char *name, int32_t len, const uint32_t *hash_seed,
+		    int32_t hash_version, uint32_t *hash_major,
 		    uint32_t *hash_minor);
 
 

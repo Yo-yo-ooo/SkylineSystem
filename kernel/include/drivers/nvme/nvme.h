@@ -81,7 +81,7 @@ public:
 
     typedef struct Request {
         //task_Request req;
-        int inputSz;
+        int32_t inputSz;
         NVME::CmplQueEntry res;
         NVME::SubQueEntry input[0];
     } Request;

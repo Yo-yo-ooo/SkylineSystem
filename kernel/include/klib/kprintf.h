@@ -34,6 +34,7 @@
 
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include <conf.h>
 //#define PRINTF_DISABLE_SUPPORT_FLOAT
@@ -60,7 +61,7 @@ void _putchar(char character);
  * \return The number of characters that are written into the array, not counting the terminating null character
  */
 #define kprintf printf_
-int printf_(const char* format, ...);
+int32_t printf_(const char* format, ...);
 #define _printf printf_
 
 /**
@@ -71,7 +72,7 @@ int printf_(const char* format, ...);
  * \return The number of characters that are WRITTEN into the buffer, not counting the terminating null character
  */
 #define sprintf sprintf_
-int sprintf_(char* buffer, const char* format, ...);
+int32_t sprintf_(char* buffer, const char* format, ...);
 
 #define kpokln(...) printf_("[\033[38;2;0;255;0m OK \033[0m] " __VA_ARGS__);printf_("\n")
 #define kinfoln(...) printf_("[\033[38;2;0;255;255mINFO\033[0m] " __VA_ARGS__ );printf_("\n")
@@ -85,7 +86,7 @@ int sprintf_(char* buffer, const char* format, ...);
 
 
 #ifdef _SYS_DEBUG_OUT
-int debugpln(const char* format, ...);
+int32_t debugpln(const char* format, ...);
 #else 
 #define debugpln
 #endif
@@ -102,8 +103,8 @@ int debugpln(const char* format, ...);
  */
 #define snprintf  snprintf_
 #define vsnprintf vsnprintf_
-int  snprintf_(char* buffer, size_t count, const char* format, ...);
-int vsnprintf_(char* buffer, size_t count, const char* format, va_list va);
+int32_t  snprintf_(char* buffer, size_t count, const char* format, ...);
+int32_t vsnprintf_(char* buffer, size_t count, const char* format, va_list va);
 
 
 /**
@@ -113,7 +114,7 @@ int vsnprintf_(char* buffer, size_t count, const char* format, va_list va);
  * \return The number of characters that are WRITTEN into the buffer, not counting the terminating null character
  */
 #define vprintf vprintf_
-int vprintf_(const char* format, va_list va);
+int32_t vprintf_(const char* format, va_list va);
 
 
 /**
@@ -124,7 +125,7 @@ int vprintf_(const char* format, va_list va);
  * \param format A string that specifies the format of the output
  * \return The number of characters that are sent to the output function, not counting the terminating null character
  */
-int fctprintf(void (*out)(char character, void* arg), void* arg, const char* format, ...);
+int32_t fctprintf(void (*out)(char character, void* arg), void* arg, const char* format, ...);
 
 #define PIHIT(hit_num) kinfoln("HIT %d",hit_num)
 #define PHIT_OK(ok_number) kpok("%s: HIT OK %d\n",__PRETTY_FUNCTION__,ok_number)

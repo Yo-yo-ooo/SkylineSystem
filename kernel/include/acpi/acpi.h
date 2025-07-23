@@ -60,8 +60,8 @@ namespace ACPI{
 
     extern ACPI::MCFGHeader* mcfg;
     extern ACPI::SDTHeader* rootThing;
-    extern int ACPI_DIV;
+    extern int32_t ACPI_DIV;
 
     u64 Init(void *addr);
-    void* FindTable(SDTHeader* sdtHeader, const char* signature, int div);
+    void* FindTable(SDTHeader* sdtHeader, const char* signature, int32_t div);
 }

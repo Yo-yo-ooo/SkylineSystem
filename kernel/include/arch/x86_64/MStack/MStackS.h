@@ -7,16 +7,16 @@ struct MStack
 {
     const char* name;
     const char* filename;
-    int line;
+    int32_t line;
 
-    int layer;
+    int32_t layer;
     uint64_t time;
     bool close;
 
-    MStack(const char* name, const char* filename, int line, int layer, uint64_t time, bool close)
+    MStack(const char* name, const char* filename, int32_t line, int32_t layer, uint64_t time, bool close)
     ;
 
-    MStack(const char* name, const char* filename, int line)
+    MStack(const char* name, const char* filename, int32_t line)
     ;
 
     MStack(const char* name, const char* filename)
