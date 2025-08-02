@@ -6,8 +6,23 @@ void _memcpy_128(void* src, void* dest, int64_t size)
 	auto _src = (__uint128_t*)src;
 	auto _dest = (__uint128_t*)dest;
 	size >>= 4; // size /= 16
-	while (size--)
-		*(_dest++) = *(_src++);
+    size_t leftover = size & 0x7;
+    size = (size + 7) >> 3;
+    if (!size)
+        return;
+    switch (leftover) {
+        case 0: do { *_dest++ = *_src++;
+        case 7:      *_dest++ = *_src++;
+        case 6:      *_dest++ = *_src++;
+        case 5:      *_dest++ = *_src++;
+        case 4:      *_dest++ = *_src++;
+        case 3:      *_dest++ = *_src++;
+        case 2:      *_dest++ = *_src++;
+        case 1:      *_dest++ = *_src++;
+        } while (--size > 0);
+    }
+	/* while (size--)
+		*(_dest++) = *(_src++); */
 }
 
 void _memcpy(void* src, void* dest, uint64_t size)
@@ -69,8 +84,21 @@ void _memset_128(void* dest, uint8_t value, int64_t size)
 	val |= val << 64;
 
 	size >>= 4; // size /= 16
-	while (size--)
-		*(_dest++) = val;
+	/* while (size--)
+		*(_dest++) = val; */
+    size_t leftover = size & 0x7;
+    size = (size + 7) >> 3;
+    switch (leftover) {
+        case 0: do { *(_dest++) = val;
+        case 7:      *(_dest++) = val;
+        case 6:      *(_dest++) = val;
+        case 5:      *(_dest++) = val;
+        case 4:      *(_dest++) = val;
+        case 3:      *(_dest++) = val;
+        case 2:      *(_dest++) = val;
+        case 1:      *(_dest++) = val;
+                } while (--size > 0);
+    }
 }
 
 void _memset(void* dest, uint8_t value, uint64_t size)
@@ -121,16 +149,40 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 void _memmove(void* src, void* dest, uint64_t size) {
 	char* d = (char*) dest;
 	char* s = (char*) src;
+    size_t leftover = size & 0x7;
+    size = (size + 7) >> 3;
 	if(d < s) {
-		while(size--) {
+		/* while(size--) {
 			*d++ = *s++;
-		}
+		} */
+        switch (leftover) {
+        case 0: do { *d++ = *s++;
+        case 7:      *d++ = *s++;
+        case 6:      *d++ = *s++;
+        case 5:      *d++ = *s++;
+        case 4:      *d++ = *s++;
+        case 3:      *d++ = *s++;
+        case 2:      *d++ = *s++;
+        case 1:      *d++ = *s++;
+            } while (--size > 0);
+        }
 	} else {
 		d += size;
 		s += size;
-		while(size--) {
+		/* while(size--) {
 			*--d = *--s;
-		}
+		} */
+        switch (leftover) {
+        case 0: do { *--d = *--s;
+        case 7:      *--d = *--s;
+        case 6:      *--d = *--s;
+        case 5:      *--d = *--s;
+        case 4:      *--d = *--s;
+        case 3:      *--d = *--s;
+        case 2:      *--d = *--s;
+        case 1:      *--d = *--s;
+            } while (--size > 0);
+        }
 	}
 }
 
@@ -140,7 +192,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
     const u8 *p2 = (const u8 *)buffer2;
     for (size_t i = 0; i < count; i++) {
         if (p1[i] != p2[i]) {
-        return p1[i] < p2[i] ? -1 : 1;
+            return p1[i] < p2[i] ? -1 : 1;
         }
     }
 
