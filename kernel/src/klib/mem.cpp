@@ -23,25 +23,37 @@ void _memcpy(void* src, void* dest, uint64_t size)
 		size = size & 0xF;
 	}
 
-    /* const char* _src  = (const char*)src;
-    char* _dest = (char*)dest;
+    const char* _src  = (const char*)src;
+    /* char* _dest = (char*)dest;
     while (size--)
         *(_dest++) = *(_src++); */
-    char *d   = (char*) dest;
-    char *s   = (char*) src;
-    uint64_t n = (size+7) / 8;
-    switch(size%8){
-    case 0:  do {  *d++ = *s++;
-    case 7:    *d++ = *s++;
-    case 6:    *d++ = *s++;
-    case 5:    *d++ = *s++;
-    case 4:    *d++ = *s++;
-    case 3:    *d++ = *s++;
-    case 2:    *d++ = *s++;
-    case 1:    *d++ = *s++;
-            } while(--n>0);
+    
+    uint8_t* p = static_cast<uint8_t*>(dest);
+    //uint8_t x = value & 0xff;
+    //size_t sz = static_cast<size_t>(n);
+    size_t leftover = size & 0x7;
+
+    /* Catch the pathological case of 0. */
+    if (!size)
+        return;
+
+    /* To understand what's going on here, take a look at the original
+     * bytewise_memset and consider unrolling the loop. For this situation
+     * we'll unroll the loop 8 times (assuming a 32-bit architecture). Choosing
+     * the level to which to unroll the loop can be a fine art...
+     */
+    size = (size + 7) >> 3;
+    switch (leftover) {
+        case 0: do { *p++ = *_src++;
+        case 7:      *p++ = *_src++;
+        case 6:      *p++ = *_src++;
+        case 5:      *p++ = *_src++;
+        case 4:      *p++ = *_src++;
+        case 3:      *p++ = *_src++;
+        case 2:      *p++ = *_src++;
+        case 1:      *p++ = *_src++;
+                } while (--size > 0);
     }
-    return ;
 }
 
 void _memset_128(void* dest, uint8_t value, int64_t size)
