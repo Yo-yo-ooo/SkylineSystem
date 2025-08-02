@@ -81,6 +81,7 @@ override KCPPFLAGS := \
 	-isystem freestnd-c-hdrs/$(KARCH)/include \
 	-I$(SS_BUILD_DIR)/kernel/include \
 	-Icc-runtime -Lcc-runtime \
+	-Ifakestdlib \
     $(KCPPFLAGS) \
     -MMD \
     -MP

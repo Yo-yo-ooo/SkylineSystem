@@ -10,9 +10,11 @@
 #include "mem/pmm.h"
 #include "klib/renderer/fb.h"
 #include <klib/renderer/rnd.h>
+#include <klib/sysflag.h>
 
 #if defined (__x86_64__)
 extern void __init x86_64_init(void);
+struct x86_64_sysflag sysflag_g = {0};
 #endif
 // Set the base revision to 2, this is recommended as this is the latest
 // base revision described by the Limine boot protocol specification.
@@ -215,7 +217,7 @@ extern "C" void kmain(void) {
     
     // We're done, just hang...
     kpok("Kernel started.\n");
-    ft_ctx->clear(ft_ctx, true);    
+    //ft_ctx->clear(ft_ctx, true);    
     kinfoln("Now Kernel is started");
     kinfoln("You can press any key,your press key will display on the srceen");
 
@@ -237,12 +239,33 @@ void *memcpy(void *dest, const void *src, size_t n) {
 }
 
 void *memset(void *s, int32_t c, size_t n) {
-    uint8_t *p = static_cast<uint8_t *>(s);
+    uint8_t* p = static_cast<uint8_t*>(s);
+    int32_t c_ = static_cast<int32_t>(c);
+    uint8_t x = c_ & 0xff;
+    size_t sz = static_cast<size_t>(n);
+    size_t leftover = sz & 0x7;
 
-    for (size_t i = 0; i < n; i++) {
-        p[i] = static_cast<uint8_t>(c);
+    /* Catch the pathological case of 0. */
+    if (!sz)
+        return s;
+
+    /* To understand what's going on here, take a look at the original
+     * bytewise_memset and consider unrolling the loop. For this situation
+     * we'll unroll the loop 8 times (assuming a 32-bit architecture). Choosing
+     * the level to which to unroll the loop can be a fine art...
+     */
+    sz = (sz + 7) >> 3;
+    switch (leftover) {
+        case 0: do { *p++ = x;
+        case 7:      *p++ = x;
+        case 6:      *p++ = x;
+        case 5:      *p++ = x;
+        case 4:      *p++ = x;
+        case 3:      *p++ = x;
+        case 2:      *p++ = x;
+        case 1:      *p++ = x;
+                } while (--sz > 0);
     }
-
     return s;
 }
 

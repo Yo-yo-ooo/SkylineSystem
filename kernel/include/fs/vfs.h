@@ -55,13 +55,14 @@ typedef struct {
 /* Details about FS format */
 typedef struct vfs_fsinfo_t {
     char name[16];              /* File system name */
-    bool istemp;                /* For ramfs, it is true; for fat32 etc., it is false */
+
+    /* bool istemp;                // For ramfs, it is true; for fat32 etc., it is false 
      //vec_struct(void *) filelist;
     struct {                                                          
         uint64_t len;                                                 
         uint64_t capacity;                                            
         void**    data;                                                
-    }filelist;
+    }filelist; */
 
     vfs_inode_t *(*mount)(vfs_inode_t * device);
     vfs_tnode_t *(*open)(vfs_inode_t * this_inode, const char *path);
@@ -91,12 +92,14 @@ struct vfs_inode_t {
     uint64_t size;              /* File size */
     uint32_t perms;             /* File permission, modified by chmod */
     uint32_t uid;               /* User id */
-    uint32_t refcount;          /* Reference count, used by symlink */
-    uint32_t readcount;
-    uint32_t writecount;
+    uint32_t refcount;          // Reference count, used by symlink 
+    
+    /*uint32_t readcount;
+    uint32_t writecount;*/
+    void* ident;
+
     tm_t tm;
     vfs_fsinfo_t *fs;
-    void *ident;
     spinlock_t lock;
     vfs_tnode_t *mountpoint;
     struct {                                                          
@@ -115,6 +118,7 @@ typedef struct {
     vfs_tnode_t *curr_dir_ent;
     uint64_t curr_dir_idx;
 } vfs_node_desc_t;
+
 
 typedef vfs_tnode_t vfs_node;
 

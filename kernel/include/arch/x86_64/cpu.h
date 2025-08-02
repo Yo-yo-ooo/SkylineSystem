@@ -4,6 +4,7 @@
 
 #include <klib/klib.h>
 #include <klib/kio.h>
+#include <klib/sysflag.h>
 
 #define IA32_GS_MSR 0xC0000101
 #define IA32_GS_KERNEL_MSR 0xC0000102
@@ -49,4 +50,6 @@ inline void sse_enable() {
     __asm__ volatile("mov %%cr4, %0" :"=r"(cr4) : : "memory");
     cr4 |= (u64)3 << 9;
     __asm__ volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
+
+    sysflag_g.SSEEnabled = 1;
 }

@@ -67,6 +67,34 @@ static inline uint64_t get_rflags() {
     return rflags;
 }
 
+static inline void set_rflags(uint64_t rf) {
+    //uint64_t rflags;
+    __asm__ volatile (
+            "push %0\n"
+            "popfq \n"
+            : "=r"(rf)
+            :
+            : "memory"
+            );
+    //return rflags;
+}
+
+static inline void xsetbv(uint32_t index, uint64_t value)
+{
+	uint32_t eax = value;
+	uint32_t edx = value >> 32;
+
+	asm volatile("xsetbv" :: "a" (eax), "d" (edx), "c" (index));
+}
+
+static inline uint64_t xgetbv(uint32_t index)
+{
+	uint32_t eax, edx;
+
+	asm volatile("xgetbv" : "=a" (eax), "=d" (edx) : "c" (index));
+	return eax + ((uint64_t)edx << 32);
+}
+
 static inline void mmio_write32(uint32_t *addr, uint32_t data) {
     *(volatile uint32_t *) addr = data;
 }
