@@ -9,6 +9,10 @@
 #include <fs/lwext4/ext4.h>
 #include <fs/lwext4/blockdev/blockdev.h>
 
+#include <klib/x86/enable.h>
+#include <klib/x86/memcpy.h>
+
+
 #define InitFunc(name,func) kinfo("INIT %s...\n",name);func;kpok("%s INIT!\n",name)
 
 void __init x86_64_init(void){
@@ -26,7 +30,13 @@ void __init x86_64_init(void){
         MStackData::stackArr[i] = MStack();
     MStackData::BenchmarkEnabled = false;
 
+    //InitFunc("XSTATE",xstate_enable());
+
     InitFunc("SSE",sse_enable());
+
+    //InitFunc("AVX",avx_enable());
+    //InitFunc("AVX512",avx512_enable());
+
     InitFunc("PIT",PIT::InitPIT());
     InitFunc("RTC",RTC::InitRTC());
 

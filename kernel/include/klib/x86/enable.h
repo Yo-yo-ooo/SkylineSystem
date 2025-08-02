@@ -8,8 +8,12 @@
 
 #ifdef __x86_64__
 
-uint32_t avx_enable(void);
-uint32_t avx512_enable(void);
+
+int32_t xstate_enable(void);
+int32_t avx_enable(void);
+int32_t avx512_enable(void);
+
+
 
 #else
 #error "You include x86_64 ARCH file,but your ARCH not x86_64"

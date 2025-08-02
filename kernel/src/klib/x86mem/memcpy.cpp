@@ -1,1 +1,1 @@
-#include <klib/x86mem/x86mem.h>
+#include <klib/x86/x86mem.h>

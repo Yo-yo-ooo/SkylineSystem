@@ -67,16 +67,36 @@ static inline uint64_t get_rflags() {
     return rflags;
 }
 
-static inline void set_rflags(uint64_t rf) {
-    //uint64_t rflags;
+static inline void set_rflags(uint64_t rflags){
     __asm__ volatile (
             "push %0\n"
-            "popfq \n"
-            : "=r"(rf)
-            :
-            : "memory"
-            );
-    //return rflags;
+            "popfq\n" : : "r"(rflags) : "memory");
+}
+
+static inline void xsaves(uint8_t* ptr, uint64_t mask)
+{
+	uint32_t eax = mask;
+	uint32_t edx = mask >> 32;
+
+	asm volatile("xsave %0" : "=m"(*ptr) : "a" (eax), "d" (edx));
+}
+
+static inline void xrstors(uint8_t* ptr, uint64_t mask)
+{
+	uint32_t eax = mask;
+	uint32_t edx = mask >> 32;
+
+	asm volatile("xrstor %0" :: "m"(*ptr), "a" (eax), "d" (edx));
+}
+
+
+static inline void set_cr4(uint64_t cr4){
+    __asm__ volatile("mov %0,%%cr4" : :"r"(cr4) : "memory");
+}
+static inline uint64_t get_cr4(void){
+    uint64_t cr4;
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4) : : "memory");
+    return cr4;
 }
 
 static inline void xsetbv(uint32_t index, uint64_t value)

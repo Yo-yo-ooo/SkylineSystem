@@ -21,6 +21,10 @@ enum {
   SCHED_USER
 };
 
+
+#define SCHED_VEC 48
+
+
 typedef void(*signal_handler)(int32_t);
 
 struct process;

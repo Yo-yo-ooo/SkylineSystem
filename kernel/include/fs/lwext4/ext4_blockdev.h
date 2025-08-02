@@ -130,6 +130,8 @@ struct ext4_blockdev {
     uint32_t block_reg_idx;
     /**@brief which partition? */
     uint8_t wpart;
+    /**@brief  lock*/
+    spinlock_t lock;
 
 	void *journal;
 };

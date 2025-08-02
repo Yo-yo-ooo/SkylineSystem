@@ -141,13 +141,21 @@ static int32_t blockdev_close(struct ext4_blockdev *bdev)
 static int32_t blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
-    
+    while (__sync_lock_test_and_set(&bdev->lock, 1)){
+#if defined(__x86_64__)
+        __asm__ volatile("pause");
+#else
+        ;
+#endif
+    }
 	return EOK;
 }
 
 static int32_t blockdev_unlock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_unlock: skeleton*/
+    
+    __sync_lock_release(&bdev->lock);
 
 	return EOK;
 }
