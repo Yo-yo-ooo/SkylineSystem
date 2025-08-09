@@ -19,14 +19,13 @@ namespace PIT
         TicksSinceBoot = 0;
         SetDivisor(NonMusicDiv /*65535*/);
         freq = GetFrequency();
-        irq_register(0, PIT::Handler);
+        //irq_register(0, PIT::Handler);
+        idt_install_irq(0,PIT::Handler);
         //Inited = true;
     }
 
     void Handler(registers *r){
         Tick();
-        if (Schedule::sched_sleep_list != NULL)
-            asm volatile("nop");
         
         LAPIC::EOI();
     }

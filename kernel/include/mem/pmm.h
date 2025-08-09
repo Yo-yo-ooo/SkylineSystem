@@ -3,9 +3,21 @@
 #include <klib/types.h>
 
 namespace PMM{
-    void Init();
 
-    u64 FindPages(usize n);
-    void* Alloc(usize n);
+    extern volatile uint8_t *bitmap;
+    extern volatile uint64_t bitmap_size;
+    extern volatile uint64_t bitmap_last_free;
+
+    extern volatile uint64_t pmm_bitmap_start;
+    extern volatile uint64_t pmm_bitmap_size;
+    extern volatile uint64_t pmm_bitmap_pages;
+    void bitmap_clear_(uint64_t bit);
+    void bitmap_set_(uint64_t bit);
+    bool bitmap_test_(uint64_t bit);
+
+    void Init();
+    
+    void *Request();
+    uint64_t Request_();
     void Free(void* ptr, usize n);
 }

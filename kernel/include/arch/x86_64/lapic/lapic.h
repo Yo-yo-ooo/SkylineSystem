@@ -84,6 +84,9 @@ namespace LAPIC{
     void StopTimer();
     void Oneshot(u8 vec, u64 ms);
     void CalibrateTimer();
+    uint64_t InitTimer();
 
     void IPI(u32 id, u8 dat);
+    void IPIAll(uint32_t lapic_id, uint32_t vector);
+    void IPIOthers(uint32_t lapic_id, uint32_t vector);
 }

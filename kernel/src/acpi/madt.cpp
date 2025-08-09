@@ -1,43 +1,39 @@
 #include <acpi/madt.h>
 #include <acpi/acpi.h>
 
-madt_ioapic* madt_ioapic_list[128] = {0};
-madt_iso* madt_iso_list[128] = {0};
-
-u32 madt_ioapic_len = 0;
-u32 madt_iso_len = 0;
-
-u64* lapic_addr = NULL;
+volatile madt_ioapic_t *madt_ioapic = nullptr;
+volatile madt_iso_t *madt_iso_list[16] = {0};
+volatile uint64_t madt_apic_address = 0;
 
 void MADT_Init() {
-    acpi_madt* madt = (acpi_madt*)ACPI::FindTable(ACPI::rootThing,"APIC",ACPI::ACPI_DIV);
+    //acpi_madt* madt = (acpi_madt*)ACPI::FindTable(ACPI::rootThing,"APIC",ACPI::ACPI_DIV);
 
-    u64 off = 0;
-    int32_t current_idx = 0;
-    madt_ioapic_len = 0;
-    madt_iso_len = 0;
-
-    while (true) {
-        if (off > madt->len - sizeof(madt))
-        break;
-        
-        madt_entry* entry = (madt_entry*)(madt->table + off);
-
-        switch (entry->type) {
-        case 0:
-            current_idx++;
-            break;
-        case 1:
-            madt_ioapic_list[madt_ioapic_len++] = (madt_ioapic*)entry;
-            break;
-        case 2:
-            madt_iso_list[madt_iso_len++] = (madt_iso*)entry;
-            break;
-        case 5:
-            lapic_addr = (u64*)((madt_lapic_addr*)entry)->phys_lapic;
-            break;
+    _memset(madt_iso_list, 0, 16 * sizeof(madt_iso_t));
+    madt_t *madt = (madt_t*)ACPI::FindTable(ACPI::rootThing,"APIC",ACPI::ACPI_DIV);
+    ASSERT(PHYSICAL(madt));
+    kpok("Found MADT.\n");
+    madt_apic_address = madt->lapic_address;
+    uint64_t offset = 0;
+    while (offset < madt->header.Length - sizeof(madt_t)) {
+        madt_entry_t *entry = (madt_entry_t*)(madt->table + offset);
+        if (entry->type == 1) {
+            if (madt_ioapic)
+                kwarn("More than 1 I/O APICs found.\n");
+            else
+                madt_ioapic = (madt_ioapic_t*)entry->data;
+        } else if (entry->type == 2) {
+            madt_iso_t *iso = (madt_iso_t*)entry->data;
+            if (madt_iso_list[iso->irq])
+                kwarn("Found ISO for (already found) IRQ #%d.\n", iso->irq);
+            else {
+                kpok("Found ISO for IRQ %d.\n", iso->irq);
+                madt_iso_list[iso->irq] = iso;
+            }
+        } else if (entry->type == 5) {
+            kinfo("Found APIC Address Override.\n");
+            madt_lapic_ovr_t *lapic_ovr = (madt_lapic_ovr_t*)entry->data;
+            madt_apic_address = lapic_ovr->lapic_addr;
         }
-
-        off += entry->len;
+        offset += entry->len;
     }
 }

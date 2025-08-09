@@ -17,6 +17,6 @@ namespace Renderer
             for (int64_t x = 0; x < Fb->Width; x++)
                 *((uint32_t*)(fbBase + 4 * (x + pxlsPerScanline * y))) = col;
 
-        ft_ctx->clear(ft_ctx, true);       
+        //ft_ctx->clear(ft_ctx, true);       
     }
 }

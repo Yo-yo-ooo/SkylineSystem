@@ -26,11 +26,11 @@ extern uint64_t RSDP_ADDR;
 
 #define DIV_ROUND_UP(x, y) (x + (y - 1)) / y
 #define ALIGN_UP(x, y)     DIV_ROUND_UP(x, y) * y
-#define ALIGN_DOWN(x, y)   (x / y) * y
+#define ALIGN_DOWN(x, y)   ((x / y) * y)
 
-#define HIGHER_HALF(ptr)   ((void*)((u64)ptr) + hhdm_offset)
+#define HIGHER_HALF(x)   (typeof(x))((uint64_t)x + hhdm_offset)
 #define VIRTUAL(ptr)       HIGHER_HALF(ptr)
-#define PHYSICAL(ptr)      ((void*)((u64)ptr) - hhdm_offset)
+#define PHYSICAL(x)      (typeof(x))((uint64_t)x - hhdm_offset)
 
 void Panic(const char* message);
 void Panic(bool halt, const char* message);
@@ -70,8 +70,6 @@ T CFCast(auto F)
 #define __init
 #ifdef __x86_64__
 #define __ffunc __attribute__((target("sse2")))
-#include <arch/x86_64/MStack/MStackM.h>
-#include <arch/x86_64/MStack/MStackS.h>
 #else
 #define __ffunc
 #endif

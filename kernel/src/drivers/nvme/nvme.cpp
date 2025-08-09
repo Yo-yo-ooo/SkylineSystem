@@ -4,6 +4,8 @@
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/smp/smp.h>
 
+#if 0
+
 #define ReadReg64(off)      this->ReadReg(off)
 #define WriteReg64(off,v)   this->WriteReg(off,v)
 
@@ -244,3 +246,5 @@ bool NVME::InitIntr() {
     */
 	return true;
 }
+
+#endif

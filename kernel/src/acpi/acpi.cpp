@@ -1,16 +1,31 @@
 #include <acpi/acpi.h>
-#include "../limine.h"
-
-
+#include <limine.h>
 
 namespace ACPI{
-    ACPI::MCFGHeader* mcfg = NULL;
+    ACPI::MCFGHeader* mcfg = nullptr;
     int32_t ACPI_DIV = 0;
-    ACPI::SDTHeader* rootThing = NULL;
+    ACPI::SDTHeader* rootThing = nullptr;
+    volatile bool UseXSDT = false;
+
+    void* FindTable(const char* signature){
+        return ACPI::FindTable(ACPI::rootThing,signature,ACPI::ACPI_DIV);
+    }
 
     void* FindTable(SDTHeader* sdtHeader, const char* signature, int32_t div)
     {
-        AddToStack();
+        
+        /* ACPI::SDT *sdt = (uint64_t)rootThing;
+        //uint32_t entry_size = 4;
+        uint32_t entries = (sdtHeader->Length - sizeof(SDTHeader)) / div;
+        for (uint32_t i = 0; i < entries; i++) {
+            uint64_t address = 0;
+            if (UseXSDT) address = *((uint64_t*)sdt->table + i);
+            else address = *((uint32_t*)sdt->table + i);
+            SDTHeader *header = HIGHER_HALF((SDTHeader*)address);
+            if (!_memcmp(header->Signature, signature, 4))
+                return (void*)header;
+        } */
+
         SDTHeader* xsdt = sdtHeader;
         int32_t entries = (xsdt->Length - sizeof(ACPI::SDTHeader)) / div;
         //osData.debugTerminalWindow->Log("Entry count: {}", to_string(entries));
@@ -32,29 +47,31 @@ namespace ACPI{
                 
                 if (i == 3)
                 {
-                    RemoveFromStack();
-                    return newSDTHeader;
+                    
+                    kinfo("FIND TABLE!\n");
+                    return (void*)newSDTHeader;
                 }
             }
 
             //osData.debugTerminalWindow->renderer->Print(" ");
         }
-        //osData.debugTerminalWindow->renderer->Println();
-        RemoveFromStack();
-        return NULL;
+        //osData.debugTerminalWindow->renderer->Println(); 
+
+        
+        return nullptr;
     }
 
     u64 Init(void *addr) {
-        AddToStack();
+        
 
-        AddToStack();
+        
         kinfoln("Preparing ACPI...");
         kinfoln("RSDP Addr: %X", (uint64_t)addr);
-        RemoveFromStack();
+        
 
         ACPI::RSDP2 *rsdp = (ACPI::RSDP2*)(addr);
 
-        AddToStack();   
+           
         
         int32_t div = 1;
 
@@ -65,12 +82,10 @@ namespace ACPI{
             kinfoln("RSDT Header Addr: %X", (uint64_t)rootThing);
             div = 4;
 
-            if (rootThing == NULL)
-            {
+            if (rootThing == NULL){
                 Panic("RSDT Header is at NULL!", true);
             }
-            else
-            {
+            else{
                 //GlobalRenderer->Clear(Colors.black);
                 kinfoln("> Testing ACPI Loader...");
 
@@ -78,28 +93,28 @@ namespace ACPI{
                 //while (true);
             }
         }
-        else
-        {
+        else{
             kinfoln("ACPI Version: 2");
             rootThing = (ACPI::SDTHeader*)HIGHER_HALF(rsdp->XSDTAddress);
 
             kinfoln("XSDT Header Addr: %X", (uint64_t)rootThing);
             div = 8;
+            UseXSDT = true;
 
             if (rootThing == NULL)
             {
                 Panic("XSDT Header is at NULL!", true);
             }
         }
-        RemoveFromStack();
+        
 
         
-        AddToStack();
+        
         int32_t entries = (rootThing->Length - sizeof(ACPI::SDTHeader)) / div;
         debugpln("Entry count: %d", entries);
-        RemoveFromStack();
+        
 
-        AddToStack();
+        
         debugpln("> ");
         for (int32_t t = 0; t < entries; t++)
         {
@@ -120,24 +135,25 @@ namespace ACPI{
             debugpln(" ");
         }
         debugpln("");
-        RemoveFromStack();
+        
 
-        AddToStack();
+        
         ACPI::mcfg = (ACPI::MCFGHeader*)ACPI::FindTable(rootThing, (char*)"MCFG", div);
+        //ASSERT(!PHYSICAL(ACPI::mcfg));
         ACPI_DIV = div;
+        kinfoln("ACPI_DIV: %d",div);
 
         kinfoln("MCFG Header Addr: %X", (uint64_t)ACPI::mcfg);
-        RemoveFromStack();
+        
 
         if (ACPI::mcfg == NULL)
         {
-            RemoveFromStack();
+            
+            Panic("ACPI::mcfg == NULL");
             return;
         }
     
-        RemoveFromStack();
-
-        //PrintMsgEndLayer("ACPI");
+        
         return 1;
     }
 }

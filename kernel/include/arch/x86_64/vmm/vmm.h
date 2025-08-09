@@ -3,107 +3,89 @@
 #ifndef _VMM_H_
 #define _VMM_H_
 
-#include "../../../klib/klib.h"
-#include "../interrupt/idt.h"
+#include <stdint.h>
+#include <stddef.h>
+#include <arch/x86_64/interrupt/idt.h>
 
-#define PTE_PRESENT (u64)1
-#define PTE_WRITABLE (u64)2
-#define PTE_USER (u64)4
-#define PTE_NX (1ull << 63)
+#define MM_READ 1
+#define MM_WRITE 2
+#define MM_USER 4
+#define MM_NX (1ull << 63)
 
-#define PTE_ADDR_MASK 0x000ffffffffff000
-#define PTE_GET_ADDR(VALUE) ((VALUE) & PTE_ADDR_MASK)
-#define PTE_GETES(VALUE) ((VALUE) & ~PTE_ADDR_MASK)
+#define PML4E(x) ((x >> 39) & 0x1ff)
+#define PDPTE(x) ((x >> 30) & 0x1ff)
+#define PDE(x) ((x >> 21) & 0x1ff)
+#define PTE(x) ((x >> 12) & 0x1ff)
 
-struct registers__;
-typedef struct registers__ registers;
+#define PTE_MASK(x) (typeof(x))((uint64_t)x & 0x000ffffffffff000)
+#define PTE_FLAGS(x) (typeof(x))((uint64_t)x & 0xfff0000000000fff)
 
+#define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
 
+typedef struct vma_region_t {
+    uint64_t start;
+    uint64_t page_count;
+    uint64_t flags;
+    struct vma_region_t *next;
+    struct vma_region_t *prev;
+} vma_region_t;
 
-typedef struct vma_region {
-    uptr vaddr;
-    uptr end;
+typedef struct vm_mapping_t {
+    uint64_t start;
+    uint64_t page_count;
+    uint64_t flags;
+    struct vm_mapping_t *next;
+    struct vm_mapping_t *prev;
+} vm_mapping_t;
 
-    u64 pages;
-    u64 flags;
+typedef struct {
+    uint64_t *pml4;
+    vm_mapping_t *vm_mappings;
+    int vma_lock;
+    vma_region_t *vma_head;
+} pagemap_t;
 
-    uptr paddr;
-
-    u64 ref_count;
-
-    struct vma_region* next;
-    struct vma_region* prev;
-} vma_region;
-
-typedef struct pagemap{
-    uptr* top_lvl;
-    vma_region* vma_head;
-} pagemap;
-
-extern pagemap* vmm_kernel_pm;
-
-extern symbol text_start_ld;
-extern symbol text_end_ld;
-
-extern symbol rodata_start_ld;
-extern symbol rodata_end_ld;
-
-extern symbol data_start_ld;
-extern symbol data_end_ld;
-
-
+extern volatile pagemap_t *kernel_pagemap;
 
 namespace VMM{
-    void Init();
-    vma_region* CreateRegion(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
-    vma_region* GetRegion(pagemap* pm, uptr vaddr);
-    vma_region* FindRange(pagemap* pm, uptr vaddr);
-    void DeleteRegion(vma_region* region);
-    uptr* GetNextlvl(uptr* lvl, uptr entry, u64 flags, bool alloc);
-    pagemap* NewPM();
-    void DestroyPM(pagemap* pm);
-    void SwitchPM(pagemap* pm);
-    void SwitchPMNocpu(pagemap* pm);
-
-    void Map(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
-    void Map(uptr vaddr, uptr paddr);
-    void Map(uptr pvaddr);
     
-    void MapUser(pagemap* pm, uptr vaddr, uptr paddr, u64 flags);
-    void MapRange(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
-    void MapUserRange(pagemap* pm, uptr vaddr, uptr paddr, u64 pages, u64 flags);
-    void UnmapRange(pagemap* pm, uptr vaddr, u64 pages);
-    void* Alloc(pagemap* pm, u64 pages, u64 flags);
-    void Free(pagemap* pm, void* ptr, u64 pages);
-    uptr GetRegionPAddr(pagemap* pm, uptr ptr);
-    uptr GetPage(pagemap* pm, uptr vaddr);
-    bool HandlePF(registers* r);
-    pagemap* Clone(pagemap* pm);
-}
 
-#define vmm_init VMM::Init
-#define vmm_create_region VMM::CreateRegion
-#define vmm_get_region VMM::GetRegion
-#define vmm_find_range VMM::FindRange
-#define vmm_delete_region VMM::DeleteRegion
-#define vmm_get_next_lvl VMM::GetNextlvl
-#define vmm_new_pm VMM::NewPM
-#define vmm_destroy_pm VMM::DestroyPM
-#define vmm_switch_pm VMM::SwitchPM
-#define vmm_switch_pm_nocpu VMM::SwitchPMNocpu
-#define vmm_map VMM::Map
-#define vmm_unmap VMM::Unmap
-#define vmm_map_user VMM::MapUser
-#define vmm_map_range VMM::MapRange
-#define vmm_map_user_range VMM::MapUserRange
-#define vmm_unmap_range VMM::UnmapRange
-#define vmm_alloc VMM::Alloc
-#define vmm_free VMM::Free
-#define vmm_get_region_paddr VMM::GetRegionPAddr
-#define vmm_get_page VMM::GetPage
-#define vmm_handle_pf VMM::HandlePF
-#define vmm_clone VMM::Clone
-#define vmm_invlpg_range(vaddr,pages) VMM::INVLPGRange(vaddr,pages)
-#define vmm_insert_after VMM::InsertAfter
+    namespace Useless
+    {
+        uint64_t *NewLevel(uint64_t *level, uint64_t entry);
+        uint64_t GetPhysicsFlags(pagemap_t *pagemap, uint64_t vaddr);
+    } // namespace Useless
+
+    extern "C" void Init();
+    
+    void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
+    void Map(uint64_t vaddr, uint64_t paddr);
+
+    void Unmap(pagemap_t *pagemap, uint64_t vaddr);
+    uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr);
+    void MapRange(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags, uint64_t count);
+    pagemap_t *SwitchPageMap(pagemap_t *pagemap);
+    pagemap_t *NewPM();
+
+    namespace VMA{
+        void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count);
+        vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
+        vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags);
+        void RemoveRegion(vma_region_t *region);
+    }
+
+    vm_mapping_t *NewMapping(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
+    void RemoveMapping(vm_mapping_t *mapping);
+
+    void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user);
+    void Free(pagemap_t *pagemap, void *ptr);
+
+    pagemap_t *Fork(pagemap_t *parent);
+    void CleanPM(pagemap_t *pagemap);
+    void DestroyPM(pagemap_t *pagemap);
+
+    uint8_t HandlePF(context_t *ctx);
+
+}
 
 #endif

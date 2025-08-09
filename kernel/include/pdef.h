@@ -1,7 +1,7 @@
 #pragma once
 
 #ifdef __GNUC__
-#define PACK( __Declaration__ ) __Declaration__ __attribute__((__packed__))
+#define PACK( __Declaration__ ) __Declaration__ __attribute__((packed))
 #endif
 
 #ifdef _MSC_VER

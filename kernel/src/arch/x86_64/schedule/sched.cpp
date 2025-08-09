@@ -1,189 +1,509 @@
 #include <arch/x86_64/allin.h>
 #include <elf/elf.h>
+#include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/interrupt/idt.h>
+#include <arch/x86_64/smp/smp.h>
+#include <arch/x86_64/schedule/syscall.h>
+#include <arch/x86_64/vmm/vmm.h>
 
+static volatile uint64_t sched_tid = 0;
+
+static void sched_idle(){
+    while (true)
+    {
+        /* code */
+        Schedule::Yield();
+    }
+    
+}
+
+static cpu_t *get_lw_cpu() {
+    cpu_t *cpu = NULL;
+    for (int i = 0; i < smp_last_cpu; i++) {
+        if (smp_cpu_list[i] == NULL || i == smp_bsp_cpu) continue;
+        if (!cpu) {
+            cpu = smp_cpu_list[i];
+            continue;
+        }
+        if (smp_cpu_list[i]->thread_count < cpu->thread_count)
+            cpu = smp_cpu_list[i];
+    }
+    return cpu;
+}
 
 namespace Schedule{
 
-    u64 sched_pid = 0;
-    spinlock_t sched_lock = 0;
-    list* sched_sleep_list = NULL;
+    uint64_t sched_pid = 0;
+    proc_t *sched_proclist[256] = { 0 };
 
+    namespace Useless{
 
-    process* GetNextProc(cpu_info* c) {
-        spinlock_lock(&c->sched_lock);
-        struct process* proc;
-        while (true) {
-            proc = (struct process*)List::Iterate(c->proc_list, true);
-            if (proc->threads->count > 0)
-                break;
-        }
-        spinlock_unlock(&c->sched_lock);
-        return proc;
-    }
+        
 
-    thread* GetNextThread(process* proc) {
-        spinlock_lock(&proc->lock);
-        struct thread* t;
-        while (true) {
-            t = (struct thread*)List::Iterate(proc->threads, false);
-            if (t == NULL) {
-                get_cpu(proc->cpu)->scheduled_threads = true;
-                break;
+        void ProcessAddThread(proc_t *parent, thread_t *thread) {
+            if (!parent->threads) {
+                parent->threads = thread;
+                thread->next = thread;
+                thread->prev = thread;
+                return;
             }
-            if (t->state == SCHED_RUNNING) {
-            break;
-            }
+            thread->next = parent->threads;
+            thread->prev = parent->threads->prev;
+            parent->threads->prev->next = thread;
+            parent->threads->prev = thread;
         }
-        spinlock_unlock(&proc->lock);
-        return t;
+
+        void AddThread(cpu_t *cpu, thread_t *thread) {
+            cpu->thread_count++;
+            thread_queue_t *queue = &cpu->thread_queues[thread->priority];
+            if (!queue->head) {
+                thread->list_next = thread;
+                thread->list_prev = thread;
+                queue->head = thread;
+                queue->current = thread;
+                return;
+            }
+
+            thread->list_next = queue->head;
+            thread->list_prev = queue->head->list_prev;
+            queue->head->list_prev->list_next = thread;
+            queue->head->list_prev = thread;
+        }
+
+        uint8_t Demote(cpu_t *cpu, thread_t *thread) {
+            if (thread->priority == THREAD_QUEUE_CNT - 1)
+                return 1;
+            kinfo("Demoted thread %d to queue %d.\n", thread->id, thread->priority);
+            thread_queue_t *old_queue = &cpu->thread_queues[thread->priority];
+            thread->priority++;
+            thread_queue_t *new_queue = &cpu->thread_queues[thread->priority];
+            if (thread->list_next == thread) {
+                old_queue->head = NULL;
+                old_queue->current = NULL;
+            } else {
+                if (old_queue->head == thread)
+                    old_queue->head = thread->list_next;
+                if (old_queue->current == thread)
+                    old_queue->current = thread->list_next;
+                thread->list_next->list_prev = thread->list_prev;
+                thread->list_prev->list_next = thread->list_next;
+            }
+            Schedule::Useless::AddThread(cpu, thread);
+            return 0;
+        }
+
+        thread_t *Pick(cpu_t *cpu) {
+            for (uint32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
+                thread_queue_t *queue = &cpu->thread_queues[i];
+                if (!queue->head)
+                    continue;
+                thread_t *start = queue->head;
+                thread_t *thread = queue->current;
+                thread_t *next;
+                bool found = false;
+                do {
+                    next = thread->list_next;
+                    if (!(thread->state == THREAD_RUNNING)) {
+                        thread = next;
+                        continue;
+                    }
+                    if (!(thread->flags & TFLAGS_PREEMPTED)) {
+                        thread->preempt_count = 0;
+                        found = true;
+                        break;
+                    }
+                    thread->preempt_count++;
+                    if (thread->preempt_count == SCHED_PREEMPTION_MAX) {
+                        int ret = Schedule::Useless::Demote(cpu, thread);
+                        thread->preempt_count = 0;
+                        thread->flags &= ~TFLAGS_PREEMPTED;
+                        if (ret == 1) {
+                            i = 0;
+                            break;
+                        }
+                    } else {
+                        found = true;
+                        break;
+                    }
+                    thread = next;
+                } while (thread != queue->head);
+                if (found) {
+                    queue->current = thread->next;
+                    thread->flags &= ~TFLAGS_PREEMPTED;
+                    return thread;
+                }
+            }
+            return NULL;
+        }
+
+extern "C"{
+         void Switch(context_t *ctx) {
+            LAPIC::StopTimer();
+            cpu_t *cpu = this_cpu();
+            spinlock_lock(&cpu->sched_lock);
+            if (cpu->current_thread) {
+                thread_t *thread = cpu->current_thread;
+                thread->fs = rdmsr(FS_BASE);
+                thread->ctx = *ctx;
+                __asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area));
+            }
+            thread_t *next_thread = Schedule::Useless::Pick(cpu);
+            cpu->current_thread = next_thread;
+            *ctx = next_thread->ctx;
+            VMM::SwitchPageMap(next_thread->pagemap);
+            wrmsr(FS_BASE, next_thread->fs);
+            wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
+            __asm__ volatile ("fxrstor (%0)" : : "r"(next_thread->fx_area));
+            spinlock_unlock(&cpu->sched_lock);
+            // An ideal thread wouldn't need the timer to preempt.
+            LAPIC::Oneshot(SCHED_VEC, cpu->thread_queues[next_thread->priority].quantum);
+            LAPIC::EOI();
+        }
+
+
+        void Preempt(context_t *ctx) {
+            Schedule::this_thread()->flags |= TFLAGS_PREEMPTED;
+            Schedule::this_thread()->preempt_count++;
+            Schedule::Useless::Switch(ctx);
+        }
+}
     }
 
     void Init(){
-        if (!sched_sleep_list)
-            sched_sleep_list = List::Create();
-        cpu_info* cpu = this_cpu();
-        cpu->idle_proc = Schedule::NewProc("Idle", SCHED_IDLE, cpu->lapic_id, false);
-        Schedule::ProcAddThread(cpu->idle_proc, (void*)hcf, false);
-        cpu->proc_idx = -1;
-        cpu->thread = NULL;
-        cpu->proc = NULL;
+        idt_install_irq(16, (void*)Schedule::Useless::Preempt);
+        idt_install_irq(17, (void*)Schedule::Useless::Switch);
+        idt_set_ist(SCHED_VEC, 1);
+        idt_set_ist(SCHED_VEC+1, 1);
+    }
+    void Install(){
+        for (uint32_t i = 0; i <= smp_last_cpu; i++) {
+            cpu_t *cpu = smp_cpu_list[i];
+            if (!cpu || cpu->id == smp_bsp_cpu)
+                continue;
+            proc_t *proc = Schedule::NewProcess(false);
+            thread_t *thread = Schedule::NewKernelThread(proc, cpu->id, THREAD_QUEUE_CNT - 1, sched_idle);
+        }
     }
 
-    void Schedule(registers* r){
-        LAPIC::StopTimer();
-
-        cpu_info* c = this_cpu();
-        spinlock_lock(&c->sched_lock);
-
-        if (c->thread) {
-            thread* t = c->thread;
-            t->ctx = *r;
-            t->pm = c->pm;
-            t->gs = read_kernel_gs();
-            __asm__ volatile ("fxsave %0" : : "m"(t->fxsave));
-        } else {
-            c->proc = GetNextProc(c);
-        }
-
-        // Find a suitable thread
-        thread* next_thread = GetNextThread(c->proc);
-        while (c->scheduled_threads) {
-            c->proc = GetNextProc(c);
-            next_thread = GetNextThread(c->proc);
-            c->scheduled_threads = false;
-        }
-
-        c->thread = next_thread;
-
-        *r = c->thread->ctx;
-        VMM::SwitchPM(c->thread->pm);
-        write_kernel_gs((u64)c->thread);
-
-        __asm__ volatile ("fxrstor %0" : : "m"(c->thread->fxsave));
-
-        spinlock_unlock(&c->sched_lock);
-
-        LAPIC::EOI();
-        LAPIC::Oneshot(0x80, 5);
-    }
-
-    process* NewProc(char* name, u8 type, u64 cpu, bool child) {
-        cpu_info* c = get_cpu(cpu);
-        if (!c) return NULL;
-
-        process* proc = (process*)kmalloc(sizeof(process));
-        if (!proc) {
-            return NULL;
-        }
-        _memset(proc, 0, sizeof(proc));
-
-        proc->cpu = cpu;
-
-        proc->pm = (child ? NULL : vmm_new_pm());
-
-        proc->type = type;
-
-        //proc->current_dir = vfs_root;
-        //proc->fds[0] = fd_open(kb_node, FS_READ, 0);
-        //proc->fds[1] = fd_open(tty_node, FS_WRITE, 1);
-        //proc->fds[2] = fd_open(tty_node, FS_WRITE, 2);
-        //kinfo("New proc step 1 done.\n");
-
-        proc->threads = List::Create();
-
-        proc->name = (char*)kmalloc((u64)strlen(name));
-        
-        __memcpy(proc->name, name, (size_t)strlen(name));
-        //kinfo("New proc step 2 done.\n");
-
-        proc->tidx = -1;
-        proc->scheduled = false;
-
-        proc->idx = c->proc_list->count;
-        proc->pid = sched_pid++; // TODO: hash this
-
-        
-
-        spinlock_lock(&c->sched_lock);
-        List::Add(c->proc_list, proc);
-        spinlock_unlock(&c->sched_lock);
-
-        kinfo("New proc %lu created.\n", proc->pid);
+    proc_t *NewProcess(bool user){
+        proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
+        proc->id = sched_pid++;
+        //proc->cwd = root_node;
+        proc->threads = NULL;
+        proc->parent = NULL;
+        proc->children = proc->sibling = NULL;
+        proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
+        _memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
+        _memset(proc->fd_table, 0, 256 * 8);
+        /* proc->fd_table[0] = fd_open("/dev/pts0", O_RDONLY); */
+        /* proc->fd_table[1] = fd_open("/dev/pts0", O_WRONLY); */
+        /* proc->fd_table[2] = fd_open("/dev/pts0", O_WRONLY); */
+        /* proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY); */
+        /* proc->fd_count = 4; */
+        sched_proclist[proc->id] = proc;
         return proc;
     }
 
-    thread* ProcAddThread(process* proc, void* entry, bool fork) {
-        thread* t = (thread*)kmalloc(sizeof(thread));
-        if (!t) return NULL;
-        _memset(t, 0, sizeof(thread));
-
-        t->pm = proc->pm;
-        t->heap_area = Heap::Create(proc->pm);
-
-        char* kstack = (char*)kmalloc(SCHED_STACK_SIZE);
-        char* stack = NULL;
-
-        if (proc->type == SCHED_USER && !fork) {
-            pagemap* pm = this_cpu()->pm;
-            vmm_switch_pm(t->pm);
-            stack = (char*)Heap::Alloc(t->heap_area, SCHED_STACK_SIZE);
-            _memset(stack, 0, SCHED_STACK_SIZE);
-            vmm_switch_pm(pm);
-        } else if (!fork) {
-            stack = (char*)kmalloc(SCHED_STACK_SIZE);
-            _memset(stack, 0, SCHED_STACK_SIZE);
+    void PrepareUserStack(thread_t *thread, int argc, char *argv[], char *envp[]){
+        // Copy the arguments and envp into kernel memory
+        char **kernel_argv = (char**)kmalloc(argc * 8);
+        for (int i = 0; i < argc; i++) {
+            int size = strlen(argv[i]) + 1;
+            kernel_argv[i] = (char*)kmalloc(size);
+            __memcpy(kernel_argv[i], argv[i], size);
         }
 
-        t->stack_base = (u64)(stack + SCHED_STACK_SIZE);
-        t->kernel_stack = (u64)(kstack + SCHED_STACK_SIZE);
+        int envc = 0;
+        while (envp[envc++]);
+        envc -= 1;
 
-        t->stack_bottom = (u64)stack;
-        t->kstack_bottom = (u64)kstack;
+        char **kernel_envp = (char**)kmalloc(envc * 8);
+        for (int i = 0; i < envc; i++) {
+            int size = strlen(envp[i]) + 1;
+            kernel_envp[i] = (char*)kmalloc(size);
+            __memcpy(kernel_envp[i], envp[i], size);
+        }
 
-        __asm__ volatile ("fxsave %0" : : "m"(t->fxsave));
+        // Copy the arguments to the thread stack.
+        uint64_t thread_argv[argc];
+        uint64_t stack_top = thread->ctx.rsp;
+        uint64_t offset = 0;
+        if ((argc + envc) % 2 == 0) offset = 8;
+        pagemap_t *restore = VMM::SwitchPageMap(thread->pagemap);
+        for (int i = 0; i < argc; i++) {
+            int size = strlen(kernel_argv[i]) + 1;
+            offset += ALIGN_UP(size, 16); // Keep aligned to 16 bytes (ABI requirement)
+            thread_argv[i] = stack_top - offset;
+            __memcpy((void*)(stack_top - offset), kernel_argv[i], size);
+        }
 
-        t->gs = 0;
+        // Copy the environment variables to the thread stack.
+        uint64_t thread_envp[envc];
+        for (int i = 0; i < envc; i++) {
+            int size = strlen(kernel_envp[i]) + 1;
+            offset += ALIGN_UP(size, 16);
+            thread_envp[i] = stack_top - offset;
+            __memcpy((void*)(stack_top - offset), kernel_envp[i], size);
+        }
 
-        t->ctx.rip = (u64)entry;
-        t->ctx.rsp = (u64)t->stack_base;
-        t->ctx.cs  = (proc->type == SCHED_USER ? 0x43 : 0x28);
-        t->ctx.ss  = (proc->type == SCHED_USER ? 0x3B : 0x30);
-        t->ctx.rflags = 0x202;
+        // Set up argv and argc
+        offset += 8;
+        *(uint64_t*)(stack_top - offset) = 0; // envp[envc] = NULL
 
-        t->sleeping_time = 0;
+        for (int i = envc - 1; i >= 0; i--) {
+            offset += 8;
+            *(uint64_t*)(stack_top - offset) = thread_envp[i];
+        }
 
-        t->state = (fork ? SCHED_BLOCKED : SCHED_RUNNING);
-        t->idx = proc->threads->count;
-        t->parent = proc;
+        offset += 8;
+        *(uint64_t*)(stack_top - offset) = 0; // argv[argc] = NULL
 
-        spinlock_lock(&proc->lock);
-        List::Add(proc->threads, t);
-        spinlock_unlock(&proc->lock);
+        for (int i = argc - 1; i >= 0; i--) {
+            offset += 8;
+            *(uint64_t*)(stack_top - offset) = thread_argv[i];
+        }
 
-        return t;
+        offset += 8;
+        *(uint64_t*)(stack_top - offset) = argc;
+
+        VMM::SwitchPageMap(restore);
+
+        thread->ctx.rsp = stack_top - offset;
+
+        for (int i = 0; i < argc; i++)
+            kfree(kernel_argv[i]);
+        kfree(kernel_argv);
+        for (int i = 0; i < envc; i++)
+            kfree(kernel_envp[i]);
+        kfree(kernel_envp);
     }
 
-    thread* ProcAddELFThread(process* proc, char* path){
-        return nullptr;
+
+    thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int priority, void *entry){
+        thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+        thread->id = sched_tid++;
+        thread->cpu_num = cpu_num;
+        thread->parent = parent;
+        thread->pagemap = parent->pagemap;
+        thread->flags = 0;
+        thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
+        Schedule::Useless::ProcessAddThread(parent, thread);
+        thread->sig_deliver = 0;
+        thread->sig_mask = 0;
+
+        // Fx area
+        thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);
+        _memset(thread->fx_area, 0, 512);
+        *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
+        *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
+
+        // Stack (4 KB)
+        uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+        _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
+
+        thread->kernel_stack = kernel_stack;
+        thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
+        thread->stack = kernel_stack;
+
+        thread->ctx.rip = (uint64_t)entry;
+        thread->ctx.cs = 0x08;
+        thread->ctx.ss = 0x10;
+        thread->ctx.rflags = 0x202;
+        thread->ctx.rsp = thread->kernel_rsp;
+        thread->thread_stack = thread->ctx.rsp;
+        thread->fs = 0;
+
+        thread->state = THREAD_RUNNING;
+        get_cpu(cpu_num)->has_runnable_thread = true;
+
+        Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+
+        return thread;
+    }
+
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int priority, vfs_inode_t *node, int argc, char *argv[], char *envp[]){
+        thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+        thread->id = sched_tid++;
+        thread->cpu_num = cpu_num;
+        thread->parent = parent;
+        thread->pagemap = parent->pagemap;
+        thread->flags = 0;
+        thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
+
+        Schedule::Useless::ProcessAddThread(parent, thread);
+
+        thread->sig_deliver = 0;
+        thread->sig_mask = 0;
+
+        // Load ELF
+        /* uint8_t *buffer = (uint8_t*)kmalloc(node->size);
+        vfs_read(node, buffer, 0, node->size);
+        thread->ctx.rip = elf_load(buffer, thread->pagemap); */
+
+        // Fx area
+        thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);
+        _memset(thread->fx_area, 0, 512);
+        *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
+        *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
+
+        // Kernel stack (16 KB)
+        uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+        _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
+
+        thread->kernel_stack = kernel_stack;
+        thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
+
+        // Thread stack (32 KB)
+        uint64_t thread_stack = (uint64_t)VMM::Alloc(thread->pagemap, 8, true);
+        uint64_t thread_stack_top = thread_stack + 8 * PAGE_SIZE;
+        thread->stack = thread_stack;
+
+        // Sig stack (4 KB)
+        uint64_t sig_stack = (uint64_t)VMM::Alloc(thread->pagemap, 1, true);
+        thread->sig_stack = sig_stack;
+
+        // Set up the rest of the registers
+        thread->ctx.cs = 0x23;
+        thread->ctx.ss = 0x1b;
+        thread->ctx.rflags = 0x202;
+
+        // Set up stack (argc, argv, env)
+        thread->ctx.rsp = thread_stack_top;
+        Schedule::PrepareUserStack(thread, argc, argv, envp);
+        thread->thread_stack = thread->ctx.rsp;
+
+        thread->fs = 0;
+
+        thread->state = THREAD_RUNNING;
+        get_cpu(cpu_num)->has_runnable_thread = true;
+
+        Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+
+        return thread;
+    }
+
+    thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame){
+        thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+        cpu_t *cpu = get_lw_cpu();
+        spinlock_lock(&cpu->sched_lock);
+        thread->id = sched_tid++;
+        thread->cpu_num = cpu->id;
+        thread->parent = proc;
+        thread->pagemap = proc->pagemap;
+        thread->flags = 0;
+        thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);
+        __memcpy(thread->fx_area, parent->fx_area, 512);
+
+        Schedule::Useless::ProcessAddThread(proc, thread);
+
+        thread->sig_deliver = 0;
+        thread->sig_mask = parent->sig_mask;
+
+        // Set up RIP
+        uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+        __memcpy((void*)kernel_stack, (void*)parent->kernel_stack, 4 * PAGE_SIZE);
+
+        thread->kernel_stack = kernel_stack;
+        thread->kernel_rsp = kernel_stack + 4 * PAGE_SIZE;
+
+        thread->stack = parent->stack;
+
+        // Sig stack (4 KB)
+        thread->sig_stack = parent->sig_stack;
+
+        typedef struct syscall_frame_t syscall_frame_t;
+        syscall_frame_t *f = (syscall_frame_t*)frame;
+
+        // Set up the rest of the registers
+        __memcpy(&thread->ctx, f, sizeof(context_t));
+        thread->ctx.rsp = parent->thread_stack;
+        thread->ctx.cs = 0x23;
+        thread->ctx.ss = 0x1b;
+        thread->ctx.rflags = f->r11;
+        thread->ctx.rax = 0;
+        thread->ctx.rip = f->rcx;
+
+        // Set up stack (argc, argv, env)
+        thread->thread_stack = parent->thread_stack;
+
+        thread->fs = rdmsr(FS_BASE);
+
+        thread->state = THREAD_RUNNING;
+        cpu->has_runnable_thread = true;
+        
+        Schedule::Useless::AddThread(cpu, thread);
+        spinlock_unlock(&cpu->sched_lock);
+
+        return thread;
+    }
+
+    proc_t *ForkProcess(){
+        proc_t *parent = Schedule::this_proc();
+        proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
+        proc->id = sched_pid++;
+        proc->cwd = parent->cwd;
+        proc->threads = NULL;
+        proc->parent = parent;
+        proc->sibling = NULL;
+        if (!parent->children) parent->children = proc;
+        else {
+            proc_t *last_sibling = parent->children;
+            while (last_sibling->sibling != NULL)
+                last_sibling = last_sibling->sibling;
+            last_sibling->sibling = proc;
+            proc->sibling = NULL;
+        }
+        proc->pagemap = VMM::Fork(parent->pagemap);
+        __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
+        __memcpy(proc->fd_table, parent->fd_table, 256 * 8);
+        proc->fd_count = parent->fd_count;
+        sched_proclist[proc->id] = proc;
+        return proc;
+    }
+
+    thread_t *this_thread(){
+        if (!this_cpu()) return NULL;
+        return this_cpu()->current_thread;
+    }
+
+    proc_t *this_proc(){
+        return this_cpu()->current_thread->parent;
+    }
+    void Exit(int code){
+        LAPIC::StopTimer();
+        thread_t *thread = Schedule::this_thread();
+        thread->state = THREAD_ZOMBIE;
+        thread->exit_code = code;
+        // Wake up any threads waiting on this process
+        proc_t *parent = Schedule::this_proc()->parent;
+        if (!parent) {
+            Schedule::Yield();
+            return;
+        }
+        thread_t *child = parent->threads;
+        do {
+            child->sig_deliver |= 1 << 17;
+            child->waiting_status = code | (thread->id << 32);
+            child = child->next;
+        } while (child != parent->threads);
+        Schedule::Yield();
+    }
+
+    void Yield(){
+        LAPIC::StopTimer();
+        Schedule::this_thread()->flags &= ~TFLAGS_PREEMPTED;
+        Schedule::this_thread()->preempt_count = 0;
+        LAPIC::IPI(this_cpu()->id, SCHED_VEC+1);
+    }
+
+    void PAUSE(){
+        LAPIC::StopTimer();
+    }
+    void Resume(){
+        if (Schedule::this_thread()) {
+            Schedule::this_thread()->flags &= ~TFLAGS_PREEMPTED;
+            Schedule::this_thread()->preempt_count = 0;
+        }
+        LAPIC::IPI(this_cpu()->id, SCHED_VEC+1);
     }
 }

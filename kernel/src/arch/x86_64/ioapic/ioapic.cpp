@@ -1,105 +1,61 @@
 #include <arch/x86_64/allin.h>
+#include <arch/x86_64/ioapic/ioapic.h>
+
+#define REDTBL(n) (0x10 + 2 * n)
+
+
+#define IOAPIC_REGSEL 0x0
+#define IOAPIC_IOWIN  0x10
+
+#define IOAPIC_ID     0x0
+#define IOAPIC_VER    0x01
+#define IOAPIC_ARB    0x02
+
 namespace IOAPIC{
-    u64 Init(){
-        madt_ioapic* ioapic = madt_ioapic_list[0];
-  
-        u32 val = IOAPIC::Read(ioapic, IOAPIC_VER);
-        u32 count = ((val >> 16) & 0xFF);
+    volatile uint64_t ioapic_address = NULL;
 
-        if ((IOAPIC::Read(ioapic, 0) >> 24) != ioapic->apic_id) {
-            kinfo("   IOAPIC::Init(): Not setting it up from the MP.\n");
-            return 0;
+    void Init(){
+        ioapic_address = HIGHER_HALF((uint64_t)madt_ioapic->ioapic_addr);
+        ASSERT(PHYSICAL(ioapic_address));
+        kinfoln("HIT!");
+        uint32_t value = IOAPIC::Read(IOAPIC_VER);
+        uint32_t count = ((value >> 16) & 0xFF) + 1;
+        kinfoln("HIT!2");
+        kinfoln("IOAPIC COUNT:%d",count);
+        for (uint32_t i = 0; i < count; i++) {
+            uint32_t low = IOAPIC::Read(REDTBL(i));
+            IOAPIC::Write(REDTBL(i),low | (1 << 16));
         }
+        //for(;;){kinfoln("HIT 3");}
+    }
+    void Write(uint8_t reg, uint32_t data) {
+        *(volatile uint32_t*)ioapic_address = reg;
+        *(volatile uint32_t*)(ioapic_address + 0x10) = data;
+    }
 
-        for (u8 i = 0; i <= count; ++i) {
-            IOAPIC::Write(ioapic, IOAPIC_REDTBL+2*i, 0x00010000 | (32 + i));
-            IOAPIC::Write(ioapic, IOAPIC_REDTBL+2*i+1, 0); // redir cpu
+    uint32_t Read(uint8_t reg) {
+        *(volatile uint32_t*)ioapic_address = reg;
+        return *(volatile uint32_t*)(ioapic_address + 0x10);
+    }
+
+    void RemapGSI(uint32_t lapic_id, uint32_t gsi, uint8_t vec, uint32_t flags) {
+        uint64_t value = vec;
+        value |= flags;
+        value |= (uint64_t)lapic_id << 56;
+        IOAPIC::Write(REDTBL(gsi), (uint32_t)value);
+        IOAPIC::Write(REDTBL(gsi)+1, (uint32_t)(value >> 32));
+    }
+
+    void RemapIRQ(uint32_t lapic_id, uint8_t irq, uint8_t vec, bool masked) {
+        madt_iso_t *iso = madt_iso_list[irq];
+        if (!iso) {
+            IOAPIC::RemapGSI(lapic_id, irq, vec, (masked ? 1 << 16 : 0));
+            return;
         }
-        
-        kinfo("   IOAPIC::Init(): IO/APIC Initialised.\n");
-
-        return 1;
-        // We disable all entries by default
-    }
-    void Write(madt_ioapic* ioapic, u8 reg, u32 val) {
-        *((volatile u32*)(HIGHER_HALF(ioapic->apic_addr) + IOAPIC_REGSEL)) = reg;
-        *((volatile u32*)(HIGHER_HALF(ioapic->apic_addr) + IOAPIC_IOWIN)) = val;
-    }
-
-    u32 Read(madt_ioapic* ioapic, u8 reg) {
-        *((volatile u32*)(HIGHER_HALF(ioapic->apic_addr) + IOAPIC_REGSEL)) = reg;
-        return *((volatile u32*)(HIGHER_HALF(ioapic->apic_addr) + IOAPIC_IOWIN));
-    }
-
-    void SetEntry(madt_ioapic* ioapic, u8 idx, u64 data) {
-        IOAPIC::Write(ioapic, (u8)(IOAPIC_REDTBL + idx * 2), (u32)data);
-        IOAPIC::Write(ioapic, (u8)(IOAPIC_REDTBL + idx * 2 + 1), (u32)(data >> 32));
-    }
-
-    u64 GSICount(madt_ioapic* ioapic) {
-        return (IOAPIC::Read(ioapic, 1) & 0xff0000) >> 16;
-    }
-
-    madt_ioapic* GetGSI(u32 gsi) {
-        for (u64 i = 0; i < madt_ioapic_len; i++) {
-            madt_ioapic* ioapic = madt_ioapic_list[i];
-            if (ioapic->gsi_base <= gsi && ioapic->gsi_base + GSICount(ioapic) > gsi)
-                return ioapic;
-        }
-        return NULL;
-    }
-
-    void RedirectGSI(u32 lapic_id, u8 vec, u32 gsi, u16 flags, bool mask) {
-        madt_ioapic* ioapic = IOAPIC::GetGSI(gsi);
-
-        u64 redirect = vec;
-
-        if ((flags & (1 << 1)) != 0) {
-            redirect |= (1 << 13);
-        }
-
-        if ((flags & (1 << 3)) != 0) {
-            redirect |= (1 << 15);
-        }
-
-        if (mask) redirect |= (1 << 16);
-        else redirect &= ~(1 << 16);
-
-        redirect |= (uint64_t)lapic_id << 56;
-
-        u32 redir_table = (gsi - ioapic->gsi_base) * 2 + 16;
-        IOAPIC::Write(ioapic, redir_table, (u32)redirect);
-        IOAPIC::Write(ioapic, redir_table + 1, (u32)(redirect >> 32));
-    }
-
-    void RedirectIRQ(u32 lapic_id, u8 vec, u8 irq, bool mask) {
-        u8 idx = 0;
-        madt_iso* iso = NULL;
-
-        while (idx < madt_iso_len) {
-            iso = madt_iso_list[idx];
-            if (iso->irq_src == irq) {
-                IOAPIC::RedirectGSI(lapic_id, vec, iso->gsi, iso->flags, mask);
-                return;
-            }
-            idx++;
-        }
-
-        IOAPIC::RedirectGSI(lapic_id, vec, irq, 0, mask);
-    }
-
-    u32 GetRedirectIRQ(u8 irq) {
-        u8 idx = 0;
-        madt_iso* iso;
-
-        while (idx < madt_iso_len) {
-            iso = madt_iso_list[idx];
-            if (iso->irq_src == irq) {
-                return iso->gsi;
-            }
-            idx++;
-        }
-
-        return irq;
+        uint32_t flags = 0;
+        if (iso->flags & (1 << 1)) flags |= 1 << 13;
+        if (iso->flags & (1 << 3)) flags |= 1 << 15;
+        if (masked) flags |= (1 << 16);
+        IOAPIC::RemapGSI(lapic_id, iso->gsi, vec, flags);
     }
 }

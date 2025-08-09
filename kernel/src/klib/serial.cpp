@@ -19,7 +19,7 @@ namespace Serial
 
     bool Init()
     {
-        AddToStack();
+        
 
         if (pciCard != 0)
         {
@@ -147,7 +147,7 @@ namespace Serial
             //     else
             //         osData.debugTerminalWindow->Log("Serial Port NO WORK :(!");
             // }
-            RemoveFromStack();
+            
             SerialWorks = false;
             return false;
         }
@@ -166,7 +166,7 @@ namespace Serial
 
         io_wait(100);
         Soutb(4, 0x0F);
-        RemoveFromStack();
+        
         SerialWorks = true;
         //currentSerialReadPacket = NULL;
         currentSerialReadPacketIndex = 0;

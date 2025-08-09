@@ -17,19 +17,19 @@ uint32_t SataDiskInterface::GetMaxSectorCount()
 
 SataDiskInterface::SataDiskInterface(AHCI::Port* port)
 {
-    AddToStack();
+    
     if(port == nullptr)
         return;
     this->Port = port;
-    this->Port->buffer = (uint8_t*)PMM::Alloc(1); // 4096 Bytes
+    this->Port->buffer = (uint8_t*)PMM::Request(); // 4096 Bytes
     VMM::Map(this->Port->buffer, this->Port->buffer);
-    RemoveFromStack();
+    
 
-    AddToStack();
+    
     SectorCount = GetMaxSectorCount();
-    RemoveFromStack();
+    
 
-    AddToStack();
+    
     DevOPS ops;
     _memset(&ops, 0, sizeof(DevOPS));
     ops.Read = CFCast<decltype(ops.Read)>(&SataDiskInterface::FRegVsDEV_R);
@@ -38,7 +38,7 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
     ops.WriteBytes = CFCast<decltype(ops.WriteBytes)>(&SataDiskInterface::FRegVsDEV_Wb);
     ops.GetMaxSectorCount = CFCast<decltype(ops.GetMaxSectorCount)>(&SataDiskInterface::GetMaxSectorCount);
     Dev::AddStorageDevice(VsDevType::SATA, ops,SectorCount,this);
-    RemoveFromStack();
+    
 
 }
 
@@ -72,7 +72,7 @@ u8 SataDiskInterface::FRegVsDEV_Rb(uint64_t address, uint64_t count, void* buffe
 
 bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
 {
-    AddToStack();
+    
     debugpln("(SataDiskInterface::Read)HIT");
     //osData.mainTerminalWindow->Log("This Interface: 0x{}", ConvertHexToString((uint64_t)this), Colors.yellow);
     uint8_t* buf = (uint8_t*)buffer;
@@ -85,7 +85,7 @@ bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer
         if (!Port->Read(sector, 8, Port->buffer))
         {
             _memcpy(Port->buffer, buf, 0x1000);
-            RemoveFromStack();
+            
             debugpln("(SataDiskInterface::Read)HIT ERROR 1");
             return false;
         }
@@ -97,21 +97,21 @@ bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer
     _memset(Port->buffer, 0, ((sectorCount % 8) << 9));
     if (!Port->Read(sector, sectorCount % 8, Port->buffer))
     {
-        RemoveFromStack();
+        
         _memcpy(Port->buffer, buf, ((sectorCount % 8) << 9));
         debugpln("(SataDiskInterface::Read)HIT ERROR 2");
         return false;
     }
     _memcpy(Port->buffer, buf, ((sectorCount % 8) << 9));
 
-    RemoveFromStack();
+    
     debugpln("(SataDiskInterface::Read)HIT OK!");
     return true;
 }
 
 bool SataDiskInterface::Write(uint64_t sector, uint32_t sectorCount, void* buffer)
 {
-    AddToStack();
+    
     uint8_t* buf = (uint8_t*)buffer;
     int32_t sectorCountDiv8 = ((sectorCount) / 8);
     for (int32_t sect = 0; sect < sectorCountDiv8; sect++)
@@ -120,7 +120,7 @@ bool SataDiskInterface::Write(uint64_t sector, uint32_t sectorCount, void* buffe
         _memcpy(buf, Port->buffer, 0x1000);
         if (!Port->Write(sector, 8, Port->buffer))
         {
-            RemoveFromStack();
+            
             return false;
         }
         buf += 0x1000;
@@ -131,11 +131,11 @@ bool SataDiskInterface::Write(uint64_t sector, uint32_t sectorCount, void* buffe
     _memcpy(buf, Port->buffer, ((sectorCount % 8) << 9));
     if (!Port->Write(sector, sectorCount % 8, Port->buffer))
     {
-        RemoveFromStack();
+        
         return false;
     }
     
-    RemoveFromStack();
+    
     return true;
 }
 
@@ -146,7 +146,7 @@ bool SataDiskInterface::ReadBytes(uint64_t address, uint64_t count, void* buffer
         return true;
     if (address + count > SectorCount * 512)
         return false;
-    AddToStack();
+    
     uint32_t tempSectorCount = ((((address + count) + 511) / 512) - (address / 512));
     uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);//"Malloc for Read Buffer"
     _memset(buffer2, 0, tempSectorCount * 512);
@@ -158,7 +158,7 @@ bool SataDiskInterface::ReadBytes(uint64_t address, uint64_t count, void* buffer
             ((uint8_t*)buffer)[i] = buffer2[i + offset];
 
         kfree(buffer2);
-        RemoveFromStack();
+        
         return false;
     }
 
@@ -167,7 +167,7 @@ bool SataDiskInterface::ReadBytes(uint64_t address, uint64_t count, void* buffer
         ((uint8_t*)buffer)[i] = buffer2[i + offset];
             
     kfree(buffer2);
-    RemoveFromStack();
+    
     return true;
 }
 
@@ -179,7 +179,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
         return true;
     if (address + count > SectorCount * 512)
         return false;
-    AddToStack();
+    
     uint32_t tempSectorCount = ((((address + count) + 511) / 512) - (address / 512));
     uint8_t* buffer2 = (uint8_t*)kmalloc(512); //Malloc for Write Buffer
     //window->Log("Writing Bytes...");
@@ -192,7 +192,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
         if (!Read((address / 512), 1, buffer2))
         {
             kfree(buffer2);
-            RemoveFromStack();
+            
             return false;
         }
 
@@ -203,7 +203,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
         if (!Write((address / 512), 1, buffer2))
         {
             kfree(buffer2);
-            RemoveFromStack();
+            
             return false;
         }
         
@@ -226,7 +226,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
             if (!Read((address / 512), 1, buffer2))
             {
                 kfree(buffer2);
-                RemoveFromStack();
+                
                 return false;
             }
 
@@ -248,7 +248,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
             if (!Write((address / 512), 1, buffer2))
             {
                 kfree(buffer2);
-                RemoveFromStack();
+                
                 return false;
             }
             
@@ -263,7 +263,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
             if (!Read(((address + count) / 512), 1, buffer2))
             {
                 kfree(buffer2);
-                RemoveFromStack();
+                
                 return false;
             }
 
@@ -303,7 +303,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
             if (!Write(((address + count) / 512), 1, buffer2))
             {
                 kfree(buffer2);
-                RemoveFromStack();
+                
                 return false;
             }
             
@@ -324,7 +324,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
                 if (!Write(newSectorStartId, newSectorCount, (void*)((uint64_t)buffer + addrOffset)))
                 {
                     kfree(buffer2);
-                    RemoveFromStack();
+                    
                     return false;
                 }
             }
@@ -337,7 +337,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
 
 
     // free(buffer2);
-    RemoveFromStack();
+    
     return true;
 }
 

@@ -7,6 +7,7 @@
 
 #if defined( __x86_64__)
 
+#if 0
 
 #include <x86intrin.h>
 
@@ -1126,7 +1127,7 @@ static void* memcpy_fast_avx(void *destination, const void *source, size_t size)
 	return destination;
 }
 
-
+#endif
 
 #else
 #error "You include x86_64 ARCH file,but your ARCH not x86_64"

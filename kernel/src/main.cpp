@@ -3,12 +3,12 @@
 #include <stdbool.h>
 #include <limine.h>
 
-#include "print/e9print.h"
-#include "flanterm/flanterm.h"
-#include "flanterm/backends/fb.h"
-#include "klib/klib.h"
-#include "mem/pmm.h"
-#include "klib/renderer/fb.h"
+#include <print/e9print.h>
+#include <flanterm/flanterm.h>
+#include <flanterm/backends/fb.h>
+#include <klib/klib.h>
+#include <mem/pmm.h>
+#include <klib/renderer/fb.h>
 #include <klib/renderer/rnd.h>
 #include <klib/sysflag.h>
 
@@ -20,55 +20,55 @@ struct x86_64_sysflag sysflag_g = {0};
 // base revision described by the Limine boot protocol specification.
 // See specification for further info.
 
-__attribute__((used, section(".requests")))
-static volatile LIMINE_BASE_REVISION(2);
+__attribute__((used, section(".limine_requests")))
+static volatile LIMINE_BASE_REVISION(3);
+
+#if LIMINE_API_REVISION < 3
+#error "UNSUPPORT LOW LEVEL LIMINE API REVISION"
+#endif
 
 // The Limine requests can be placed anywhere, but it is important that
 // the compiler does not optimise them away, so, usually, they should
 // be made volatile or equivalent, _and_ they should be accessed at least
 // once or marked as used with the "used" attribute as done here.
 
-__attribute__((used, section(".requests")))
+__attribute__((used, section(".limine_requests")))
 static volatile struct limine_framebuffer_request framebuffer_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST,
     .revision = 0
 };
 
-__attribute__((used, section(".requests")))
+__attribute__((used, section(".limine_requests")))
 static volatile struct limine_rsdp_request rsdp_request = {
   .id = LIMINE_RSDP_REQUEST,
   .revision = 0
 };
 
-__attribute__((used, section(".requests")))
+__attribute__((used, section(".limine_requests")))
 static volatile struct limine_hhdm_request hhdm_request = {
     .id = LIMINE_HHDM_REQUEST,
     .revision = 0
 };
 
-__attribute__((used, section(".requests")))
+__attribute__((used, section(".limine_requests")))
 static volatile struct limine_paging_mode_request paging_mode_request = {
     .id = LIMINE_PAGING_MODE_REQUEST,
     .revision = 0
 };
 
-__attribute__((used, section(".requests")))
-static volatile struct limine_boot_time_request boot_time_request = {
-    .id = LIMINE_BOOT_TIME_REQUEST,
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_date_at_boot_request boot_time_request = {
+    .id = LIMINE_DATE_AT_BOOT_REQUEST,
     .revision = 0
 };
 
-__attribute__((used, section(".requests")))
+__attribute__((used, section(".limine_requests")))
 static volatile struct limine_module_request module_request = {
     .id = LIMINE_MODULE_REQUEST,
     .revision = 0
 };
 
-__attribute__((used, section(".requests")))
-static volatile struct limine_smp_request smp_request = {
-  .id = LIMINE_SMP_REQUEST,
-  .revision = 0
-};
+
 
 
 // Finally, define the start and end markers for the Limine requests.
@@ -127,13 +127,17 @@ limine_file* getFile(const char* name)
 
 struct flanterm_context* ft_ctx = NULL;
 
+void FT_Clear(){
+    flanterm_clear(ft_ctx);
+}
+
 uint64_t hhdm_offset = 0;
 uint64_t paging_mode = 0;
 uint64_t RSDP_ADDR = 0;
 uint32_t bsp_lapic_id = 0;
 uint64_t smp_cpu_count = 0;
-struct limine_smp_response* smp_response;
-struct limine_framebuffer *fb;
+
+volatile struct limine_framebuffer *fb;
 Framebuffer FB;
 Framebuffer *Fb;
 // The following will be our kernel's entry point.
@@ -161,6 +165,9 @@ extern "C" void kmain(void) {
 
     Fb = &FB;
 
+    uint32_t default_bg = 0xFF000000;
+    uint32_t default_fg = 0xFFFFFFFF;
+
     ft_ctx = flanterm_fb_init(
         NULL,
         NULL,
@@ -170,7 +177,7 @@ extern "C" void kmain(void) {
         fb->blue_mask_size, fb->blue_mask_shift,
         NULL,
         NULL, NULL,
-        NULL, NULL,
+        &default_bg, &default_fg,
         NULL, NULL,
         NULL, 0, 0, 1,
         0, 0,
@@ -199,17 +206,10 @@ extern "C" void kmain(void) {
     }
     RSDP_ADDR = (rsdp_request.response->address);
 
-    if(smp_request.response == NULL){
-        kerror("SMP::Init(): SMP request is NULL.\n");
-    }
 
-    smp_response  = smp_request.response;
-
-    bsp_lapic_id = smp_response->bsp_lapic_id;
-    smp_cpu_count = smp_response->cpu_count;
 
     kinfo("Starting kernel...\n");
-    kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->boot_time);
+    kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->timestamp);
 
 #ifdef __x86_64__
     x86_64_init();

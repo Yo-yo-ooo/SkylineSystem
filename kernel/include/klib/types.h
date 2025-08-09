@@ -34,6 +34,6 @@ typedef intptr_t iptr;
 
 typedef int8_t symbol[];
 
-typedef uint32_t spinlock_t;
+typedef int32_t spinlock_t;
 
 #endif

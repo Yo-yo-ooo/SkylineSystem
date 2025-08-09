@@ -9,10 +9,10 @@ ENTRY(kmain)
 /* process. */
 PHDRS
 {
-    requests PT_LOAD;
-    text     PT_LOAD;
-    rodata   PT_LOAD;
-    data     PT_LOAD;
+    limine_requests PT_LOAD;
+    text            PT_LOAD;
+    rodata          PT_LOAD;
+    data            PT_LOAD;
 }
 
 SECTIONS
@@ -23,41 +23,43 @@ SECTIONS
     /* that is the beginning of the region. */
     . = 0xffffffff80000000;
 
-    
+    ld_limine_start = .;
 
     /* Define a section to contain the Limine requests and assign it to its own PHDR */
-    .requests : {
-        KEEP(*(.requests_start_marker))
-        KEEP(*(.requests))
-        KEEP(*(.requests_end_marker))
-    } :requests
+    .limine_requests : {
+        KEEP(*(.limine_requests_start))
+        KEEP(*(.limine_requests))
+        KEEP(*(.limine_requests_end))
+    } :limine_requests
+
+    ld_limine_end = .;
 
     /* Move to the next memory page for .text */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    text_start_ld = .;
+    ld_text_start = .;
 
     .text : {
         *(.text .text.*)
     } :text
 
-    text_end_ld = .;
+    ld_text_end = .;
 
     /* Move to the next memory page for .rodata */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    rodata_start_ld = .;
+    ld_rodata_start = .;
 
     .rodata : {
         *(.rodata .rodata.*)
     } :rodata
 
-    rodata_end_ld = .;
+    ld_rodata_end = .;
 
     /* Move to the next memory page for .data */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    data_start_ld = .;
+    ld_data_start = .;
 
     .data : {
         *(.data .data.*)
@@ -72,7 +74,7 @@ SECTIONS
         *(COMMON)
     } :data
 
-    data_end_ld = .;
+    ld_data_end = .;
 
     /* Discard .note.* and .eh_frame* since they may cause issues on some hosts. */
     /DISCARD/ : {

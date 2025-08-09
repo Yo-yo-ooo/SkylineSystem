@@ -1,8 +1,17 @@
 #pragma once
 
-#define PRINT_INFORMATION_ 1
+//ABOUT ARCH
+#ifdef __x86_64__
 
 #define PCI_LIST_MAX 128
+#define MAX_CPU 128
+
+#endif
+
+/*-------------------------------------------------*/
+
+//COMMON CONFIG
+#define PRINT_INFORMATION_ 1
 
 #define MAX_VSDEV_COUNT 256
 
@@ -23,6 +32,7 @@
 #endif
 
 #define USE_TEST_x2Apic 0
+
 
 #define BACKGROUND_COLOR_AUTHOR_LIKE 0x292D3E
 #define BACKGROUND_COLOR_DEFAULT 0x00000000

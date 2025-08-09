@@ -1,86 +1,105 @@
 #include <arch/x86_64/allin.h>
 #include <limine.h>
+#include <arch/x86_64/smp/smp.h>
+#include <arch/x86_64/interrupt/gdt.h>
+#include <arch/x86_64/vmm/vmm.h>
 
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 
-extern struct limine_smp_response* smp_response;
 
-u64 smp_cpu_started = 0;
-cpu_info* smp_cpu_list[128];
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_mp_request limine_mp = {
+    .id = LIMINE_MP_REQUEST,
+    .revision = 0
+};
 
-cpu_info* get_cpu(u64 lapic_id) {
-    return smp_cpu_list[lapic_id];
+cpu_t *smp_cpu_list[MAX_CPU];
+volatile spinlock_t smp_lock = 0;
+uint64_t started_count = 0;
+volatile bool smp_started = false;
+int smp_last_cpu = 0;
+uint32_t smp_bsp_cpu;
+
+void smp_setup_kstack(cpu_t *cpu) {
+    void *stack = (void*)VMM::Alloc(kernel_pagemap, 8, true);
+    TSS::SetIST(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
+    TSS::SetRSP(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
 }
 
-cpu_info* this_cpu() {
+void smp_setup_thread_queue(cpu_t *cpu) {
+    _memset(cpu->thread_queues, 0, THREAD_QUEUE_CNT * sizeof(thread_queue_t));
+    uint64_t quantum = 5;
+    for (int i = 0; i < THREAD_QUEUE_CNT; i++) {
+        cpu->thread_queues[i].quantum = quantum;
+        quantum += 5;
+    }
+}
+
+void smp_cpu_init(struct limine_mp_info *mp_info) {
+    VMM::SwitchPageMap(kernel_pagemap);
+    spinlock_lock(&smp_lock);
+    GDT::Init(mp_info->lapic_id);
+    idt_reinit();
+    cpu_t *cpu = smp_cpu_list[mp_info->lapic_id];
+    cpu->id = mp_info->lapic_id;
+    LAPIC::Init();
+    cpu->lapic_ticks = LAPIC::InitTimer();
+    cpu->pagemap = kernel_pagemap;
+    cpu->thread_count = 0;
+    cpu->sched_lock = 0;
+    cpu->has_runnable_thread = false;
+    user_init();
+    smp_setup_thread_queue(cpu);
+    smp_setup_kstack(cpu);
+    sse_enable();
+    kpok("Initialized CPU %d.\n", mp_info->lapic_id);
+    started_count++;
+    if (mp_info->lapic_id > smp_last_cpu) smp_last_cpu = mp_info->lapic_id;
+    spinlock_unlock(&smp_lock);
+    while (1)
+        __asm__ volatile ("hlt");
+}
+
+void smp_init() {
+    struct limine_mp_response *mp_response = limine_mp.response;
+    if (mp_response->cpu_count > MAX_CPU) {
+        kerror("The system has more CPUs (%d) than allowed. Change MAX_CPU on smp.h\n", mp_response->cpu_count);
+        ASSERT(0);
+    }
+    cpu_t *bsp_cpu = (cpu_t*)kmalloc(sizeof(cpu_t));
+    bsp_cpu->id = mp_response->bsp_lapic_id;
+    bsp_cpu->pagemap = kernel_pagemap;
+    bsp_cpu->lapic_ticks = LAPIC::InitTimer();
+    bsp_cpu->thread_count = 0;
+    bsp_cpu->sched_lock = 0;
+    bsp_cpu->has_runnable_thread = false;
+    smp_cpu_list[bsp_cpu->id] = bsp_cpu;
+    smp_bsp_cpu = bsp_cpu->id;
+    smp_setup_thread_queue(bsp_cpu);
+    smp_setup_kstack(bsp_cpu);
+    sse_enable();
+    kinfo("Detected %zu CPUs.\n", mp_response->cpu_count);
+    for (uint64_t i = 0; i < mp_response->cpu_count; i++) {
+        struct limine_mp_info *mp_info = mp_response->cpus[i];
+        if (i == bsp_cpu->id)
+            continue;
+        smp_cpu_list[mp_info->lapic_id] = (cpu_t*)kmalloc(sizeof(cpu_t));
+        mp_info->goto_address = smp_cpu_init;
+        mp_info->extra_argument = (uint64_t)mp_info;
+    }
+    while (started_count < mp_response->cpu_count - 1)
+        __asm__ volatile ("pause");
+    smp_started = true;
+    kpok("SMP Initialised.\n");
+}
+
+cpu_t *this_cpu() {
+    if (!smp_started) return NULL;
     return smp_cpu_list[LAPIC::GetID()];
 }
 
-spinlock_t smp_lock = 0;
-
-void smp_init_cpu(struct limine_smp_info* smp_info) {
-    spinlock_lock(&smp_lock);
-
-    gdt_init();
-    idt_reinit();
-    vmm_switch_pm_nocpu(vmm_kernel_pm);
-
-    void* stack = HIGHER_HALF(PMM::Alloc(3)) + (3 * PAGE_SIZE);
-    tss_list[smp_info->lapic_id].rsp[0] = (u64)stack;
-    
-    cpu_info* c = (cpu_info*)kmalloc(sizeof(cpu_info));
-    _memset(c, 0, sizeof(cpu_info));
-    c->lapic_id = smp_info->lapic_id;
-    c->pm = vmm_kernel_pm;
-
-    c->proc_list = List::Create();
-
-    smp_cpu_list[smp_info->lapic_id] = c;
-
-    vmm_switch_pm(vmm_kernel_pm);
-
-    LAPIC::Init();
-    LAPIC::CalibrateTimer();
-
-    sse_enable();
-    fpu_init();
-
-    
-    user_init();
-    Schedule::Init();
-
-    kinfo("   smp_init_cpu(): CPU %ld started.\n", smp_info->lapic_id);
-    smp_cpu_started++;
-
-    spinlock_unlock(&smp_lock);
-
-    LAPIC::IPI(smp_info->lapic_id, 0x80);
-
-    while (true) {hcf();}
+cpu_t *get_cpu(uint32_t id) {
+    return smp_cpu_list[id];
 }
-
-bool smp_started = false;
-
-void smp_init() {
-    kinfo("    smp_init(): bsp_lapic_id: %d.\n", bsp_lapic_id);
-
-    cpu_info* c = (cpu_info*)kmalloc(sizeof(cpu_info));
-    _memset(c, 0, sizeof(cpu_info));
-    c->pm = vmm_kernel_pm;
-    c->proc_list = List::Create();
-
-    smp_cpu_list[0] = c;
-    vmm_switch_pm(vmm_kernel_pm);
-
-    for (u64 i = 0; i < smp_cpu_count; i++)
-        if (smp_response->cpus[i]->lapic_id != bsp_lapic_id)
-        smp_response->cpus[i]->goto_address = smp_init_cpu;
-    
-    while (smp_cpu_started < smp_cpu_count - 1)
-        __asm__ volatile ("nop");
-
-    
-}
-
 #pragma GCC pop_options

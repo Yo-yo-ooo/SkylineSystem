@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 void Panic(const char* message){
-    e9_print("Panic!");
+    kerrorln("Panic!");
     e9_printf(message);
     hcf();
 }

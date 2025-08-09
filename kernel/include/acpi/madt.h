@@ -1,65 +1,49 @@
 #pragma once
 
 #include <klib/klib.h>
+#include <pdef.h>
+#include <acpi/acpi.h>
 
-typedef struct ACPI_MADT{
-    char sign[4];
-    u32 len;
-    u8 revision;
-    u8 checksum;
-    char oem_id[6];
-    char oem_table_id[8];
-    u32 oem_revision;
-    u32 creator_id;
-    u32 creator_revision;
-
-    /* MADT Specs */
-    u32 lapic_address;
-    u32 flags;
-
+PACK(typedef struct madt_t{
+    ACPI::SDTHeader header;
+    uint32_t lapic_address;
+    uint32_t flags;
     char table[];
-} acpi_madt;
+}) madt_t;
 
-typedef struct MADT_Entry{
-    u8 type;
-    u8 len;
-} madt_entry;
+PACK(typedef struct madt_entry_t{
+    uint8_t type;
+    uint8_t len;
+    char data[];
+}) madt_entry_t;
 
-typedef struct MADT_CPU_LAPIC{
-    madt_entry un;
-    u8 cpu_id;
-    u8 apic_id;
-    u32 flags;
-} madt_cpu_lapic;
+PACK(typedef struct madt_lapic_t{
+    uint8_t acpi_cpu_id;
+    uint8_t apic_id;
+    uint32_t flags;
+}) madt_lapic_t;
 
-typedef struct MADT_IOAPIC{
-    madt_entry un;
-    u8 apic_id;
-    u8 resv;
-    u32 apic_addr;
-    u32 gsi_base;
-} madt_ioapic;
+PACK(typedef struct madt_ioapic_t{
+    uint8_t ioapic_id;
+    uint8_t resv;
+    uint32_t ioapic_addr;
+    uint32_t gsi_base;
+}) madt_ioapic_t;
 
-typedef struct MADT_ISO{
-    madt_entry un;
-    u8 bus_src;
-    u8 irq_src;
-    u32 gsi;
-    u16 flags;
-} madt_iso;
+PACK(typedef struct madt_iso_t{
+    uint8_t bus;
+    uint8_t irq;
+    uint32_t gsi;
+    uint16_t flags;
+}) madt_iso_t;
 
-typedef struct MADT_LAPIC_ADDR{
-    madt_entry un;
-    u16 resv;
-    u64 phys_lapic;
-} madt_lapic_addr;
+PACK(typedef struct madt_lapic_ovr_t{
+    uint16_t resv;
+    uint64_t lapic_addr;
+}) madt_lapic_ovr_t;
 
-extern madt_ioapic* madt_ioapic_list[128];
-extern madt_iso* madt_iso_list[128];
-
-extern u32 madt_ioapic_len;
-extern u32 madt_iso_len;
-
-extern u64* lapic_addr;
+extern volatile madt_ioapic_t *madt_ioapic;
+extern volatile madt_iso_t *madt_iso_list[16];
+extern volatile uint64_t madt_apic_address;
 
 void MADT_Init();

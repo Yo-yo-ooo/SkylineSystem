@@ -33,7 +33,7 @@ $(call USER_VARIABLE,KCC,cc)
 $(call USER_VARIABLE,KLD,ld)
 
 # User controllable C flags.
-$(call USER_VARIABLE,KCFLAGS,-g -O2 -pipe)
+$(call USER_VARIABLE,KCFLAGS,-g -pipe)
 
 # User controllable C preprocessor flags. We set none by default.
 $(call USER_VARIABLE,KCPPFLAGS,)
@@ -72,6 +72,8 @@ override KCFLAGS += \
     -fno-PIC \
     -ffunction-sections \
     -fdata-sections \
+	-O0 \
+	-DLIMINE_API_REVISION=3 \
 	-fpermissive \
 	-Wno-error=deprecated \
 
@@ -82,6 +84,7 @@ override KCPPFLAGS := \
 	-I$(SS_BUILD_DIR)/kernel/include \
 	-Icc-runtime -Lcc-runtime \
 	-Ifakestdlib \
+	-DLIMINE_API_REVISION=3 \
     $(KCPPFLAGS) \
     -MMD \
     -MP

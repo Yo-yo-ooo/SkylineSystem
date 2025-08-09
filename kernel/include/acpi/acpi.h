@@ -43,11 +43,7 @@ namespace ACPI{
         uint32_t CreatorRevision;
     } __attribute__((packed));
 
-    struct MCFGHeader
-    {
-        SDTHeader Header;
-        uint64_t Reserved;
-    } __attribute__((packed));
+    
 
     struct DeviceConfig
     {
@@ -58,10 +54,24 @@ namespace ACPI{
         uint32_t Reserved;
     } __attribute__((packed));
 
+    struct MCFGHeader
+    {
+        SDTHeader Header;
+        uint64_t Reserved;
+        DeviceConfig ENTRIES[];
+    } __attribute__((packed));
+
+    typedef struct SDT{
+        ACPI::SDTHeader header;
+        char table[];
+    } __attribute__((packed)) SDT;
+
     extern ACPI::MCFGHeader* mcfg;
     extern ACPI::SDTHeader* rootThing;
     extern int32_t ACPI_DIV;
+    extern volatile bool UseXSDT;
 
     u64 Init(void *addr);
     void* FindTable(SDTHeader* sdtHeader, const char* signature, int32_t div);
+    void* FindTable(const char* signature);
 }

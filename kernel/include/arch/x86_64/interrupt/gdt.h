@@ -1,38 +1,45 @@
 #pragma once
 
 #include <klib/klib.h>
+#include <pdef.h>
 
-typedef struct tss_entry_{
-    u16 length;
-    u16 base;
-    u8  base1;
-    u8  flags;
-    u8  flags1;
-    u8  base2;
-    u32 base3;
-    u32 resv;
-} __attribute__((packed)) tss_entry;
+PACK(typedef struct {
+    uint16_t len;
+    uint16_t base;
+    uint8_t base1;
+    uint8_t flags;
+    uint8_t flags1;
+    uint8_t base2;
+    uint32_t base3;
+    uint32_t resv;
+}) tss_entry_t;
 
-typedef struct gdt_table_{
-    u64 gdt_entries[9];
-    struct tss_entry_ tss_entry;
-} __attribute__((packed)) gdt_table;
+PACK(typedef struct {
+    uint32_t resv;
+    uint64_t rsp[3];
+    uint64_t resv1;
+    uint64_t ist[7];
+    uint64_t resv2;
+    uint16_t resv3;
+    uint16_t iopb;
+}) tss_desc_t;
 
-typedef struct gdtr_{
-    u16 size;
-    u64 address;
-} __attribute__((packed)) gdtr;
+PACK(typedef struct {
+    uint64_t entries[5];
+    tss_entry_t tss_entry;
+}) gdt_table_t;
 
-typedef struct tssr_{
-    u32 resv;
-    u64 rsp[3];
-    u64 resv1;
-    u64 ist[7];
-    u64 resv2;
-    u16 resv3;
-    u16 iopb;
-} __attribute__((packed)) tssr; // Per CPU
+PACK(typedef struct {
+    uint16_t size;
+    uint64_t address;
+}) gdt_desc_t;
 
-void gdt_init();
+namespace GDT{
+    void Init(uint32_t cpu_num);
+}
+//void gdt_init(uint32_t cpu_num);
 
-extern tssr tss_list[256];
+namespace TSS{
+    void SetRSP(uint32_t cpu_num, int rsp, void *stack);
+    void SetIST(uint32_t cpu_num, int ist, void *stack); 
+}

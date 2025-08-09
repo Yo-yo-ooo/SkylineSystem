@@ -21,13 +21,13 @@ namespace AHCI
     {
         StopCMD();
 
-        void* newBase = PMM::Alloc(1);
+        void* newBase = PMM::Request();
         VMM::Map(newBase, newBase);
         hbaPort->commandListBase = (uint32_t)(uint64_t)newBase;
         hbaPort->commandListBaseUpper = (uint32_t)((uint64_t)newBase >> 32);
         _memset((void*)(uint64_t)hbaPort->commandListBase, 0, 1024);
 
-        void* fisBase = PMM::Alloc(1);
+        void* fisBase = PMM::Request();
         VMM::Map(fisBase, fisBase);
         hbaPort->fisBaseAddress = (uint32_t)(uint64_t)fisBase;
         hbaPort->fisBaseAddressUpper = (uint32_t)((uint64_t)fisBase >> 32);
@@ -39,7 +39,7 @@ namespace AHCI
         {
             cmdHeader[i].prdtLength = 8;
 
-            void* cmdTableAddress = PMM::Alloc(1);
+            void* cmdTableAddress = PMM::Request();
             VMM::Map(cmdTableAddress, cmdTableAddress);
             uint64_t address = (uint64_t)cmdTableAddress + (i << 8);
             cmdHeader[i].commandTableBaseAddress = (uint32_t)(uint64_t)address;
@@ -75,7 +75,7 @@ namespace AHCI
 
     SATA_Ident Port::Identifydrive()
     {
-        AddToStack();
+        
         /***Make the Command Header***/
         HBACommandHeader* cmdhead=(HBACommandHeader*)(uint64_t)hbaPort->commandListBase;//kmalloc(sizeof(HBA_CMD_HEADER));
         //port->clb = (DWORD)cmdhead;
@@ -86,44 +86,44 @@ namespace AHCI
         cmdhead->prdtLength = 1;
         //cmdhead->prefetchable = 1; //p
         cmdhead->clearBusy = 1;
-        RemoveFromStack();
+        
 
-        AddToStack();
+        
         cmdhead->commandFISLenght = sizeof(FIS_REG_H2D) / sizeof(uint32_t); // command FIS size
         cmdhead->prdtLength = 1;
-        RemoveFromStack();
+        
 
-        AddToStack();
+        
         /***Make the Command Table***/
-        HBACommandTable* cmdtbl = (HBACommandTable*)((uint64_t)cmdhead->commandTableBaseAddress);//(HBACommandTable*)PMM::Alloc(1);// kmalloc(sizeof(HBA_CMD_TBL));
+        HBACommandTable* cmdtbl = (HBACommandTable*)((uint64_t)cmdhead->commandTableBaseAddress);//(HBACommandTable*)PMM::Request();// kmalloc(sizeof(HBA_CMD_TBL));
         //cmdhead->commandTableBaseAddress = (uint32_t)(uint64_t)cmdtbl;
-        RemoveFromStack();
+        
 
-        AddToStack();
+        
         //_memset((void*)cmdtbl, 0, sizeof(HBACommandTable));
-        RemoveFromStack();
+        
 
-        AddToStack();
+        
         if (cmdtbl == NULL || cmdtbl->prdtEntry == NULL)
         {
             SATA_Ident test;
-            RemoveFromStack();
+            
             return test;
         }
-        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)PMM::Alloc(1);
+        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)PMM::Request();
         //_memset((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress , 0, 0x1000);
         //VMM::Map((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress, (void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress);
-        RemoveFromStack();
+        
 
-        AddToStack();
+        
         cmdtbl->prdtEntry[0].byteCount = 0x200 - 1;
         cmdtbl->prdtEntry[0].interruptOnCompletion = 1;   // interrupt when identify complete
         uint32_t data_base = cmdtbl->prdtEntry[0].dataBaseAddress;
         //_memset((void*)(uint64_t)data_base, 0, 4096);
-        RemoveFromStack();
+        
 
 
-        AddToStack();
+        
         /***Make the IDENTIFY DEVICE h2d FIS***/
         FIS_REG_H2D* cmdfis = (FIS_REG_H2D*)(uint64_t)cmdtbl->commandFIS;
         //printf("cmdfis %x ",cmdfis);
@@ -131,9 +131,9 @@ namespace AHCI
         cmdfis->fisType = FIS_TYPE_REG_H2D;
         cmdfis->commandControl = 1;
         cmdfis->command = ATA_CMD_IDENTIFY;
-        RemoveFromStack();
+        
 
-        AddToStack();
+        
         /***Send the Command***/
         hbaPort->commandIssue = 1;
 
@@ -145,18 +145,18 @@ namespace AHCI
             if(hbaPort->commandIssue == 0)
                 break;
         }
-        RemoveFromStack();
+        
         //if (PIT::TimeSinceBootMS() >= s)
         //    GlobalRenderer->Clear(Colors.red);
 
-        AddToStack();
+        
         uint32_t* baddr = (uint32_t*)(uint64_t)data_base;
         SATA_Ident test = *((SATA_Ident*)baddr);
 
         //GlobalAllocator->FreePage((void*)(uint64_t)data_base);
         PMM::Free((void*)(uint64_t)data_base, 1);
         //GlobalAllocator->FreePage((void*)(uint64_t)cmdtbl);
-        RemoveFromStack();
+        
 
         return test;
     }
@@ -390,7 +390,9 @@ namespace AHCI
 
         ABAR = (HBAMemory*)(uint64_t)((PCI::PCIHeader0*)(uint64_t)pciBaseAddress)->BAR5;
         VMM::Map(ABAR, ABAR);
+        kinfoln("AHCI HIT 1!");
         ABAR->globalHostControl |= 0x80000000;
+        kinfoln("AHCI HIT 1-1!");
 
         ProbePorts();
 
@@ -430,7 +432,7 @@ namespace AHCI
         uint32_t portsImplemented = ABAR->portsImplemented;
 
         PortCount = 0;
-
+        kinfoln("AHCI HIT 2!");
         if (portsImplemented > 0)
             kinfo("AHCI: Probing ports via ABAR 0x%016lx, value 0x%04X\n", (uint64_t)ABAR, ABAR->portsImplemented);
 	    else

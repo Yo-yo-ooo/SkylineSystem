@@ -156,6 +156,7 @@ void keyboard_init()
     //Dev::Add(kb_node);
     */
 
-    irq_register(1, keyboard_handler);
+    //irq_register(1, keyboard_handler);
+    idt_install_irq(1,keyboard_handler);
     inb(0x60);
 }

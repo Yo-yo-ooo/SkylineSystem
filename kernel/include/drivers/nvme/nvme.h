@@ -8,6 +8,9 @@
 #include <pdef.h>
 /**/
 #ifdef __x86_64__
+
+#if 0
+
 #include <arch/x86_64/dev/pci/pci.h>
 #include <klib/klib.h>
 #include <arch/x86_64/interrupt/idt.h>
@@ -139,6 +142,8 @@ private:
     bool InitQue(); // Just for NVME::NVME(*p)
     bool InitIntr();
 };
+#endif
+
 #endif
 
 #endif

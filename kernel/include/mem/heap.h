@@ -6,41 +6,39 @@
 #endif
 
 #define HEAP_MAGIC 0xdeadbeef
+#define SLAB_MAGIC (uint32_t)0xdeadbeef
 
-struct vma_region;
-typedef struct vma_region vma_region;
-struct pagemap;
-typedef struct pagemap pagemap;
-typedef struct heap_block {
-    struct heap_block* next;
-    struct heap_block* prev;
-    u8 state;
-    u32 magic;
-    u64 size;
-} heap_block;
+typedef struct slab_cache_t {
+    void *slabs;
+    uint64_t obj_size;
+    uint64_t free_idx;
+    bool used;
+    struct slab_cache_t *empty_cache;
+} slab_cache_t;
 
-typedef struct {
-    spinlock_t hl;
-    heap_block* block_head;
-    pagemap* pm;
-} heap;
+PACK(typedef struct slab_obj_t{
+    bool used;
+    slab_cache_t *cache;
+    uint32_t magic;
+}) slab_obj_t;
 
-namespace Heap {
-    //Initialize the kernel heap not the user heap
+PACK(typedef struct slab_page_t{
+    uint32_t magic;
+    uint64_t page_count;
+}) slab_page_t;
+
+
+
+namespace SLAB{
     void Init();
+    void *Alloc(size_t size);
+    void *Realloc(void *ptr, size_t size);
+    void Free(void *ptr);
 
-    heap* Create(pagemap* pm);
-    void Destroy(heap* h);
-    void Clone(heap* h, heap* clone);
-
-    uptr GetAllocationPAddr(heap* h, uptr ptr);
-
-    void* Alloc(heap* h, u64 size);
-    void Free(heap* h, void* ptr);
-    void* Realloc(heap* h,void* ptr, u64 size);
+    slab_cache_t *GetCache(size_t size);
+    slab_cache_t *cache_get_empty(slab_cache_t *cache);
+    int64_t FindFree(slab_cache_t *cache);
 }
-
-extern heap* kernel_heap;
 
 void* kmalloc(u64 size);
 void kfree(void* ptr);

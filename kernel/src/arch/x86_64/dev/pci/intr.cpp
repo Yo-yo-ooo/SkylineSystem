@@ -2,6 +2,8 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/interrupt/idt.h>
+
+#if 0
 u16 *hw_pci_MsiCap_msgData(PCI::PCI_MSI_CAP *cap) {
     return PCI_MSI_CAP_IS64(cap) ? &cap->Cap64.MsgData : &cap->Cap32.MsgData;
 }
@@ -62,3 +64,4 @@ namespace PCI
         
     } // namespace pci
 }
+#endif

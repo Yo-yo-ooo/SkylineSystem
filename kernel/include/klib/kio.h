@@ -199,6 +199,16 @@ static inline uint32_t ind(uint16_t port) {
 #define inl ind
 #define outl outd
 
+#define IA32_EFER  0xC0000080
+#define IA32_STAR  0xC0000081
+#define IA32_LSTAR 0xC0000082
+#define IA32_CSTAR 0xC0000083
+#define IA32_FMASK 0xC0000084
+
+#define FS_BASE 0xC0000100
+#define GS_BASE 0xC0000102
+#define KERNEL_GS_BASE 0xC0000102
+
 inline void io_wait()
 {
     inb(0x80);

@@ -97,7 +97,7 @@ namespace Dev{
                     return true;
                 if (address + Count > DevList_[ThisDev].MaxSectorCount * 512)
                     return false;
-                AddToStack();
+                
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));
                 uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);//"Malloc for Read Buffer"
                 _memset(buffer2, 0, tempSectorCount * 512);
@@ -109,7 +109,7 @@ namespace Dev{
                         ((uint8_t*)Buffer)[i] = buffer2[i + offset];
 
                     kfree(buffer2);
-                    RemoveFromStack();
+                    
                     return false;
                 }
 
@@ -118,7 +118,7 @@ namespace Dev{
                     ((uint8_t*)Buffer)[i] = buffer2[i + offset];
                         
                 kfree(buffer2);
-                RemoveFromStack();
+                
                 return true;
             }
         }else{
@@ -135,7 +135,7 @@ namespace Dev{
                     return true;
                 if (address + Count > DevList_[ThisDev].MaxSectorCount * 512)
                     return false;
-                AddToStack();
+                
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));
                 uint8_t* buffer2 = (uint8_t*)kmalloc(512); //Malloc for Write Buffer
                 //window->Log("Writing Bytes...");
@@ -148,7 +148,7 @@ namespace Dev{
                     if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
                     {
                         kfree(buffer2);
-                        RemoveFromStack();
+                        
                         return false;
                     }
 
@@ -159,7 +159,7 @@ namespace Dev{
                     if (!DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
                     {
                         kfree(buffer2);
-                        RemoveFromStack();
+                        
                         return false;
                     }
                     
@@ -182,7 +182,7 @@ namespace Dev{
                         if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
                         {
                             kfree(buffer2);
-                            RemoveFromStack();
+                            
                             return false;
                         }
 
@@ -198,7 +198,7 @@ namespace Dev{
                         if (!DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
                         {
                             kfree(buffer2);
-                            RemoveFromStack();
+                            
                             return false;
                         }
                     }
@@ -207,7 +207,7 @@ namespace Dev{
                         if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,((address + Count) / 512), 1, buffer2))
                         {
                             kfree(buffer2);
-                            RemoveFromStack();
+                            
                             return false;
                         }
 
@@ -222,7 +222,7 @@ namespace Dev{
                         if (!DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,((address + Count) / 512), 1, buffer2))
                         {
                             kfree(buffer2);
-                            RemoveFromStack();
+                            
                             return false;
                         }
                     }
@@ -235,7 +235,7 @@ namespace Dev{
                             if (!DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset)))
                             {
                                 kfree(buffer2);
-                                RemoveFromStack();
+                                
                                 return false;
                             }
                         }
@@ -245,7 +245,7 @@ namespace Dev{
                     
                 }
                 kfree(buffer2);
-                RemoveFromStack();
+                
                 return true;
             }
         }else{

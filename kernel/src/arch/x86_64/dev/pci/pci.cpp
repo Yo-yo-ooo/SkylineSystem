@@ -79,98 +79,105 @@ namespace PCI
 
     void EnumeratePCI(ACPI::MCFGHeader* mcfg)
     {
-        AddToStack();
-        int32_t entries = (mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
-        RemoveFromStack();
+        //kinfoln("PCI HIT! 1");
         
-        AddToStack();
+        uint32_t entries = (ACPI::mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
 
-        _memset(pciDevices, 0, sizeof(PCI::PCIDeviceHeader) * 128);
+        //kinfoln("PCI HIT! 2");
+
+        //_memset(pciDevices, 0, sizeof(PCI::PCIDeviceHeader) * 128);
+        for(uint8_t i = 0;i < 128;i++)
+            pciDevices[i] = nullptr;
         pciDeviceidx = 0;
 
-        for (int32_t t = 0; t < entries; t++)
+        //kinfoln("PCI HIT! 3");
+        //kinfoln("ENTRIES: %d",entries);
+
+        for (uint32_t t = 0; t < entries; t++)
         {
-            ACPI::DeviceConfig* newDeviceConfig = (ACPI::DeviceConfig*)((uint64_t)mcfg + sizeof(ACPI::MCFGHeader) + sizeof(ACPI::DeviceConfig) * t);
-            for (uint64_t bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++)
-                EnumerateBus(newDeviceConfig->BaseAddress, bus);
+            //kinfoln("PCI HIT %d",t);
+            ACPI::DeviceConfig* newDeviceConfig = (ACPI::DeviceConfig*)((uint64_t)ACPI::mcfg + sizeof(ACPI::MCFGHeader) + sizeof(ACPI::DeviceConfig) * t);
+            //kinfoln("PCI HIT! 4");
+            for (uint8_t bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++)
+                EnumerateBus((newDeviceConfig->BaseAddress), bus);
         }
-        RemoveFromStack();
+        
     }
 
     void EnumerateBus(uint64_t baseAddress, uint64_t bus)
     {
-        AddToStack();
+        
         uint64_t offset = bus << 20;
         uint64_t busAddress = baseAddress + offset;
-        RemoveFromStack();
 
-        AddToStack();
-        if (busAddress == 0)
-        {
-            RemoveFromStack();
-            return;
-        }
-
-        VMM::Map((void*)busAddress, (void*)busAddress);
         
-        PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)busAddress;
+        if (busAddress == 0){return;}
 
-        if (pciDeviceHeader ->Device_ID == 0x0000) {RemoveFromStack(); return;}
-        if (pciDeviceHeader ->Device_ID == 0xFFFF) {RemoveFromStack(); return;}
+        VMM::Map((void*)(busAddress), (void*)(busAddress));
+        //kinfoln("PCI HIT! 5");
+        
+        PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)HIGHER_HALF(busAddress);
 
-        for (uint64_t device = 0; device < 32; device++)
+        if (pciDeviceHeader ->Device_ID == 0x0000) { return;}
+        if (pciDeviceHeader ->Device_ID == 0xFFFF) { return;}
+
+        //kinfoln("PCI HIT! 5-1");
+
+        for (uint8_t device = 0; device < 32; device++)
         {
             EnumerateDevice(busAddress, device);
         }
-        RemoveFromStack();
+        
     }
 
     void EnumerateDevice(uint64_t busAddress, uint64_t device) // Slot
     {
-        AddToStack();
+        
         uint64_t offset = device << 15;
 
         uint64_t deviceAddress = busAddress + offset;
 
         if (deviceAddress == 0)
         {
-            RemoveFromStack();
+            
             return;
         }
 
-        VMM::Map((void*)deviceAddress, (void*)deviceAddress);
+        VMM::Map((void*)(deviceAddress), (void*)(deviceAddress));
+        //kinfoln("PCI HIT! 6");
         
-        PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)deviceAddress;
+        PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)HIGHER_HALF(deviceAddress);
 
-        if (pciDeviceHeader ->Device_ID == 0x0000) {RemoveFromStack(); return;}
-        if (pciDeviceHeader ->Device_ID == 0xFFFF) {RemoveFromStack(); return;}
+        if (pciDeviceHeader ->Device_ID == 0x0000) { return;}
+        if (pciDeviceHeader ->Device_ID == 0xFFFF) { return;}
 
-        for (uint64_t function = 0; function < 8; function++)
+        for (uint8_t function = 0; function < 8; function++)
         {
             EnumerateFunction(deviceAddress, function);
         }
-        RemoveFromStack();
+        
     }
 
     void EnumerateFunction(uint64_t deviceAddress, uint64_t function)
     {
-        AddToStack();
+        
         uint64_t offset = function << 12;
 
         uint64_t functionAddress = deviceAddress + offset;
 
         if (functionAddress == 0)
         {
-            RemoveFromStack();
+            
             return;
         }
 
-        VMM::Map((void*)functionAddress, (void*)functionAddress);
+        VMM::Map((void*)(functionAddress), (void*)(functionAddress));
+        //kinfoln("PCI HIT! 7");
         
-        PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)functionAddress;
+        PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)HIGHER_HALF(functionAddress);
 
-        if (pciDeviceHeader ->Device_ID == 0x0000) {RemoveFromStack(); return;}
-        if (pciDeviceHeader ->Device_ID == 0xFFFF) {RemoveFromStack(); return;}
+        if (pciDeviceHeader ->Device_ID == 0x0000) { return;}
+        if (pciDeviceHeader ->Device_ID == 0xFFFF) { return;}
 
         //BasicRenderer* renderer = osData.debugTerminalWindow->renderer;
         kprintf("%s"," > ");
@@ -244,7 +251,7 @@ namespace PCI
         pciDevices[pciDeviceidx] = pciDeviceHeader;
         pciDeviceidx++;
 
-        RemoveFromStack();
+        
     }
 
     PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass,u8 ProgIF){

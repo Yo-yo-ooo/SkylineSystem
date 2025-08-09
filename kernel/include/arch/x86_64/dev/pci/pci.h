@@ -286,6 +286,7 @@ namespace PCI
     PCI::PCI_MSIX_TABLE *GetMSIXTbl(PCI::PCI_MSIX_CAP *cap, PCIHeader0 *cfg);
     void MSI_CAP_SetVecNum(PCI::PCI_MSI_CAP *cap, u64 vecNum);
 
+    #if 0
     namespace MSIX
     {
         void SetMsgAddr(uint64_t *msgAddr, uint32_t cpuId, uint32_t redirect, uint32_t destMode); 
@@ -296,4 +297,5 @@ namespace PCI
         void SetMsgAddr(PCI::PCI_MSI_CAP *cap, uint32_t cpuId, uint32_t redirect, uint32_t destMode);
     } // namespace MSI
     bool SetMsi(PCI::PCI_MSI_CAP *cap, IRQDesc *desc, uint64_t intrNum);
+    #endif
 }

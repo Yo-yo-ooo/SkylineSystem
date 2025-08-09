@@ -15,13 +15,14 @@
 
 
 namespace IOAPIC{
-    u64 Init();
+    extern volatile uint64_t ioapic_address;
 
-    void Write(madt_ioapic* ioapic, u8 reg, u32 val);
-    u32 Read(madt_ioapic* ioapic, u8 reg);
+    void Init();
 
-    void SetEntry(madt_ioapic* ioapic, u8 idx, u64 data);
+    uint32_t Read(uint8_t reg);
 
-    void RedirectIRQ(u32 lapic_id, u8 vec, u8 irq, bool mask);
-    u32 GetRedirectIRQ(u8 irq);
+    void Write(uint8_t reg, uint32_t data);
+
+    void RemapGSI(uint32_t lapic_id, uint32_t gsi, uint8_t vec, uint32_t flags);
+    void RemapIRQ(uint32_t lapic_id, uint8_t irq, uint8_t vec, bool masked);
 }

@@ -1,28 +1,35 @@
-#include <arch/x86_64/schedule/sched.h>
-#include <arch/x86_64/smp/smp.h>
+//#include <arch/x86_64/smp/smp.h>
 #include <klib/klib.h>
 #include <arch/x86_64/schedule/syscall.h>
+#include <klib/kio.h>
+#include <errno.h>
 
 u64 syscall_rsvd(syscall_args a) {return 0;}
 
-void* syscall_table[] = {
+void* syscall_handler_table[] = {
     syscall_rsvd, // 0
 };
 
 
-extern "C" void syscall_handle(registers* r) {
-    if (syscall_table[r->rax] != NULL) {
-        syscall_args args;
-        args.arg1 = (void*)r->rdi;
-        args.arg2 = (void*)r->rsi;
-        args.arg3 = (void*)r->rdx;
-        args.arg4 = (void*)r->r10;
-        args.arg5 = (void*)r->r8;
-        args.arg6 = (void*)r->r9;
-        args.r = r;
-        u64(*func)(syscall_args) = syscall_table[r->rax];
-        u64 res = func(args);
-        r->rax = res;
+extern "C" void syscall_handler(syscall_frame_t *frame) {
+    if (frame->rax > sizeof(syscall_handler_table) / sizeof(uint64_t) || !syscall_handler_table[frame->rax]) {
+        kerror("Unhandled syscall %d.\n", frame->rax);
+        frame->rax = -ENOSYS;
+        return;
+    }
+    switch (frame->rax) {
+        case 15: // sigreturn
+            //sys_sigreturn(frame);
+            break;
+        case 57: // fork
+            //frame->rax = sys_fork(frame);
+            break;
+        default: {
+            uint64_t(*handler)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) =
+                syscall_handler_table[frame->rax];
+            frame->rax = handler(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
+            break;
+        }
     }
 }
 

@@ -1,101 +1,120 @@
 #pragma once
 
 #include <klib/klib.h>
-#include <arch/x86_64/vmm/vmm.h>
-#include <mem/heap.h>
+
+//#include <mem/heap.h>
 #include <fs/vfs.h>
+
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
 
-enum {
-  SCHED_STARTING,
-  SCHED_RUNNING,
-  SCHED_SLEEPING,
-  SCHED_BLOCKED,
-  SCHED_DEAD
-};
-
-enum {
-  SCHED_IDLE,
-  SCHED_KERNEL,
-  SCHED_USER
-};
-
-
 #define SCHED_VEC 48
 
+#define THREAD_ZOMBIE 0
+#define THREAD_RUNNING 1
+#define THREAD_BLOCKED 2
+#define THREAD_SLEEPING 3
 
-typedef void(*signal_handler)(int32_t);
+#define TFLAGS_WAITING4 1
+#define TFLAGS_PREEMPTED 2
 
-struct process;
-struct registers__;
-typedef struct registers__ registers;
+#define SCHED_PREEMPTION_MAX 16
 
-struct cpu_info;
-typedef struct cpu_info cpu_info;
+typedef struct proc_t proc_t;
 
-typedef struct thread{
-    u64 stack_base;   // gs:0
-    u64 kernel_stack; // gs:8
+typedef struct {
+    vfs_inode_t *node;
+    size_t off;
+    int32_t flags;
+} fd_t;
 
-    u64 stack_bottom;
-    u64 kstack_bottom;
+typedef struct {
+    unsigned long sig[1024 / 64];
+} sigset_t;
 
-    struct process* parent;
-    u64 idx; // idx in proc thread list
+typedef struct {
+    void *handler;
+    unsigned long sa_flags;
+    void (*sa_restorer)(void);
+    sigset_t sa_mask;
+} sigaction_t;
 
-    u64 gs;
+typedef struct thread_t {
+    uint64_t thread_stack; // GS+0
+    uint64_t kernel_rsp;   // GS+8
 
-    registers ctx;
+    uint64_t id;
+    uint32_t cpu_num;
+    uint32_t priority;
+    uint32_t preempt_count;
+    uint64_t kernel_stack;
+    int state;
+    uint64_t stack;
+    context_t ctx;
+    uint64_t fs;
+    bool user;
+    uint64_t sig_deliver;
+    uint64_t sig_mask;
+    context_t sig_ctx;
+    uint64_t sig_stack;
+    uint64_t sig_fs;
+    pagemap_t *pagemap;
+    uint64_t exit_code;
+    uint64_t flags;
+    uint64_t waiting_status;
+    char *fx_area;
+    struct thread_t *next;
+    struct thread_t *prev;
+    struct thread_t *list_next; // In the cpu thread list
+    struct thread_t *list_prev;
+    struct proc_t *parent;
+} thread_t;
 
-    u64 sleeping_time;
-
-    u8 state;
-    char fxsave[512] __attribute__((aligned(16)));
-
-    pagemap* pm;
-    heap* heap_area;
-
-    signal_handler sigs[32];
-} thread;
-
-typedef struct process {
-    u64 pid;
-    u64 cpu;
-    u64 idx; // index inside the cpu proc list
-
-    pagemap* pm;
-
-    u8 type; // Idle, Kernel or User?
-
-    vfs_tnode_t* current_dir;
-    vfs_node_desc_t fds[256];
-    u16 fd_idx;
-
-    spinlock_t lock;
-
-    char* name;
-
-    list* threads;  // thread
-
-    struct process* parent;
-
-    u64 tidx; // thread index
-    bool scheduled;
-} process;
+typedef struct proc_t {
+    uint64_t id;
+    sigaction_t sig_handlers[64];
+    vfs_inode_t *cwd;
+    thread_t *threads;
+    pagemap_t *pagemap;
+    struct proc_t *parent; // In case of fork
+    struct proc_t *children;
+    struct proc_t *sibling;
+    fd_t *fd_table[256];
+    int fd_count;
+} proc_t;
 
 namespace Schedule{
-    extern u64 sched_pid;
-    extern spinlock_t sched_lock;
-    extern list* sched_sleep_list;
+    extern uint64_t sched_pid;
+    extern proc_t *sched_proclist[256];
+
+    
+
+    namespace Useless{
+        extern "C"{
+            void Switch(context_t *ctx);
+            void Preempt(context_t *ctx);
+        }
+
+        void ProcessAddThread(proc_t *parent, thread_t *thread);
+        
+        void AddThread(cpu_t *cpu, thread_t *thread);
+
+        uint8_t Demote(cpu_t *cpu, thread_t *thread);
+    }
 
     void Init();
+    void Install();
 
-    void Schedule(registers* r);
-
-    thread* GetNextThread(process* proc);
-    process* GetNextProc(cpu_info* c);
-
-    process* NewProc(char* name, u8 type, u64 cpu, bool child);
-    thread* ProcAddThread(process* proc, void* entry, bool fork);
+    proc_t *NewProcess(bool user);
+    void PrepareUserStack(thread_t *thread, int argc, char *argv[], char *envp[]);
+    thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int priority, void *entry);
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int priority, vfs_inode_t *node, int argc, char *argv[], char *envp[]);
+    thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame);
+    proc_t *ForkProcess();
+    thread_t *this_thread();
+    proc_t *this_proc();
+    void Exit(int code);
+    void Yield();
+    void PAUSE();
+    void Resume();
 }

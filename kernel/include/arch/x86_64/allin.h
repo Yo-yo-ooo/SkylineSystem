@@ -15,8 +15,9 @@
 #include <arch/x86_64/ioapic/ioapic.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/pit/pit.h>
+/* 
 #include <arch/x86_64/MStack/MStackM.h>
-#include <arch/x86_64/MStack/MStackS.h>
+#include <arch/x86_64/MStack/MStackS.h> */
 #include <arch/x86_64/rtc/rtc.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/schedule/syscall.h>

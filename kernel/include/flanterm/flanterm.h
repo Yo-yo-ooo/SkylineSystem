@@ -1,4 +1,4 @@
-/* Copyright (C) 2022-2024 mintsuki and contributors.
+/* Copyright (C) 2022-2025 mintsuki and contributors.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -26,15 +26,13 @@
 #ifndef FLANTERM_H
 #define FLANTERM_H 1
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
-#define FLANTERM_MAX_ESC_VALUES 16
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define FLANTERM_CB_DEC 10
 #define FLANTERM_CB_BELL 20
@@ -54,81 +52,29 @@ extern "C" {
 #define FLANTERM_OOB_OUTPUT_ONOCR (1 << 6)
 #define FLANTERM_OOB_OUTPUT_OPOST (1 << 7)
 
-struct flanterm_context {
-    /* internal use */
+#ifdef FLANTERM_IN_FLANTERM
 
-    size_t tab_size;
-    bool autoflush;
-    bool cursor_enabled;
-    bool scroll_enabled;
-    bool control_sequence;
-    bool escape;
-    bool osc;
-    bool osc_escape;
-    bool rrr;
-    bool discard_next;
-    bool bold;
-    bool bg_bold;
-    bool reverse_video;
-    bool dec_private;
-    bool insert_mode;
-    uint64_t code_point;
-    size_t unicode_remaining;
-    uint8_t g_select;
-    uint8_t charsets[2];
-    size_t current_charset;
-    size_t escape_offset;
-    size_t esc_values_i;
-    size_t saved_cursor_x;
-    size_t saved_cursor_y;
-    size_t current_primary;
-    size_t current_bg;
-    size_t scroll_top_margin;
-    size_t scroll_bottom_margin;
-    uint32_t esc_values[FLANTERM_MAX_ESC_VALUES];
-    uint64_t oob_output;
-    bool saved_state_bold;
-    bool saved_state_bg_bold;
-    bool saved_state_reverse_video;
-    size_t saved_state_current_charset;
-    size_t saved_state_current_primary;
-    size_t saved_state_current_bg;
+#include <flanterm/flanterm_private.h>
 
-    /* to be set by backend */
+#else
 
-    size_t rows, cols;
+struct flanterm_context;
 
-    void (*raw_putchar)(struct flanterm_context *, uint8_t c);
-    void (*clear)(struct flanterm_context *, bool move);
-    void (*set_cursor_pos)(struct flanterm_context *, size_t x, size_t y);
-    void (*get_cursor_pos)(struct flanterm_context *, size_t *x, size_t *y);
-    void (*set_text_fg)(struct flanterm_context *, size_t fg);
-    void (*set_text_bg)(struct flanterm_context *, size_t bg);
-    void (*set_text_fg_bright)(struct flanterm_context *, size_t fg);
-    void (*set_text_bg_bright)(struct flanterm_context *, size_t bg);
-    void (*set_text_fg_rgb)(struct flanterm_context *, uint32_t fg);
-    void (*set_text_bg_rgb)(struct flanterm_context *, uint32_t bg);
-    void (*set_text_fg_default)(struct flanterm_context *);
-    void (*set_text_bg_default)(struct flanterm_context *);
-    void (*set_text_fg_default_bright)(struct flanterm_context *);
-    void (*set_text_bg_default_bright)(struct flanterm_context *);
-    void (*move_character)(struct flanterm_context *, size_t new_x, size_t new_y, size_t old_x, size_t old_y);
-    void (*scroll)(struct flanterm_context *);
-    void (*revscroll)(struct flanterm_context *);
-    void (*swap_palette)(struct flanterm_context *);
-    void (*save_state)(struct flanterm_context *);
-    void (*restore_state)(struct flanterm_context *);
-    void (*double_buffer_flush)(struct flanterm_context *);
-    void (*full_refresh)(struct flanterm_context *);
-    void (*deinit)(struct flanterm_context *, void (*)(void *, size_t));
+#endif
 
-    /* to be set by client */
-
-    void (*callback)(struct flanterm_context *, uint64_t, uint64_t, uint64_t, uint64_t);
-};
-
-void flanterm_context_reinit(struct flanterm_context *ctx);
 void flanterm_write(struct flanterm_context *ctx, const char *buf, size_t count);
+void flanterm_flush(struct flanterm_context *ctx);
+void flanterm_full_refresh(struct flanterm_context *ctx);
+void flanterm_deinit(struct flanterm_context *ctx, void (*_free)(void *ptr, size_t size));
+
+void flanterm_get_dimensions(struct flanterm_context *ctx, size_t *cols, size_t *rows);
+void flanterm_set_autoflush(struct flanterm_context *ctx, bool state);
+void flanterm_set_callback(struct flanterm_context *ctx, void (*callback)(struct flanterm_context *, uint64_t, uint64_t, uint64_t, uint64_t));
+uint64_t flanterm_get_oob_output(struct flanterm_context *ctx);
+void flanterm_set_oob_output(struct flanterm_context *ctx, uint64_t oob_output);
+
+
+void flanterm_clear(struct flanterm_context *ctx);
 
 #ifdef __cplusplus
 }

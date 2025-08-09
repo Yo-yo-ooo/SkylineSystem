@@ -185,7 +185,3 @@ namespace Elf64
 
 }
 
-#ifdef __x86_64__
-    #include <arch/x86_64/vmm/vmm.h>
-    uint64_t _x86_64_ELF_Load(uint8_t *img,pagemap *pm);
-#endif

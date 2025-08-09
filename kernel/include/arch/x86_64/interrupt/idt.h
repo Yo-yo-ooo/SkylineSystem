@@ -3,69 +3,61 @@
 #ifndef _X86_64_IDT_H
 #define _X86_64_IDT_H
 
-#include <klib/klib.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <pdef.h>
 
-typedef struct {
-    u16 low;
-    u16 cs;
-    u8  ist;
-    u8  type : 5;
-    u8  dpl : 2;
-    u8  p : 1;
-    u16 mid;
-    u32 high;
-    u32 resv;
-} __attribute__((packed)) idt_entry;
+typedef struct context_t{
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t r11;
+    uint64_t r10;
+    uint64_t r9;
+    uint64_t r8;
+    uint64_t rdi;
+    uint64_t rsi;
+    uint64_t rbp;
+    uint64_t rbx;
+    uint64_t rdx;
+    uint64_t rcx;
+    uint64_t rax;
+    uint64_t int_no;
+    uint64_t error_code;
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
+} context_t;
 
-typedef struct {
-    u16 size;
-    u64 offset;
-} __attribute__((packed)) idtr;
+typedef context_t registers;
 
+typedef struct stackframe_t {
+    struct stackframe_t *rbp;
+    uint64_t rip;
+} stackframe_t;
 
+PACK(typedef struct idt_entry_t{
+    uint16_t offset_low;
+    uint16_t selector;
+    uint8_t ist;
+    uint8_t flags;
+    uint16_t offset_mid;
+    uint32_t offset_high;
+    uint32_t resv;
+}) idt_entry_t;
 
-typedef struct registers__{
-    u64 r15;
-    u64 r14;
-    u64 r13;
-    u64 r12;
-    u64 r11;
-    u64 r10;
-    u64 r9;
-    u64 r8;
-    u64 rdi;
-    u64 rsi;
-    u64 rbp;
-    u64 rbx;
-    u64 rdx;
-    u64 rcx;
-    u64 rax;
-    u64 int_no;
-    u64 err_code;
-    u64 rip;
-    u64 cs;
-    u64 rflags;
-    u64 rsp;
-    u64 ss;
-} __attribute__((packed)) registers;
-
-typedef struct stackframe {
-    struct stackframe* rbp;
-    u64 rip;
-}__attribute__((packed)) stackframe;
-
-
-typedef struct IRQDesc {
-	u32 CpuId, VecId;
-	u64 Param;
-	void (*handler)(registers *r);
-} IRQDesc;
+PACK(typedef struct idt_desc_t{
+    uint16_t size;
+    uint64_t address;
+}) idt_desc_t;
 
 void idt_init();
 void idt_reinit();
-void idt_set_entry(u8 vec, void* isr, u8 type, u8 dpl);
+void idt_set_ist(uint16_t vector, uint8_t ist);
+extern "C" void idt_install_irq(uint8_t irq, void *handler);
 
-void irq_register(u8 vec, void* handler);
-void irq_unregister(u8 vec);
 
 #endif

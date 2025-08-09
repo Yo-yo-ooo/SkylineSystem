@@ -4,39 +4,41 @@
 #define _SMP_H_
 
 #include <klib/klib.h>
-#include <arch/x86_64/schedule/sched.h>
-#include <arch/x86_64/vmm/vmm.h>
-#include <arch/x86_64/cpu.h>
+//#include <arch/x86_64/schedule/sched.h>
 
-extern u32 bsp_lapic_id;
-extern u64 smp_cpu_count;
+//#include <arch/x86_64/cpu.h>
 
-typedef struct cpu_info{
-    u64 lapic_id;
-    u64 lapic_ticks;
+#define MAX_CPU 128
+#define THREAD_QUEUE_CNT 16
 
-    pagemap* pm;
+typedef struct thread_t thread_t;
 
-    list* proc_list;
+typedef struct thread_queue_t{
+    thread_t *head;
+    thread_t *current;
+    uint64_t count;
+    uint64_t quantum;
+} thread_queue_t;
 
-    struct process* proc;
-    struct thread* thread;
+typedef struct cpu_t{
+    uint32_t id;
+    uint64_t lapic_ticks;
+    pagemap_t *pagemap;
+    thread_queue_t thread_queues[THREAD_QUEUE_CNT];
+    thread_t *current_thread;
+    uint64_t thread_count;
+    int sched_lock;
+    bool has_runnable_thread;
+} cpu_t;
 
-    u64 proc_idx;
+extern uint32_t smp_bsp_cpu;
 
-    struct process* idle_proc;
-
-    spinlock_t sched_lock;
-
-    bool scheduled_threads;
-    bool scheduled_children;
-} cpu_info;
-
-cpu_info* this_cpu();
-cpu_info* get_cpu(u64 lapic_id);
-extern u64 smp_cpu_started;
-extern cpu_info* smp_cpu_list[128];
+extern int smp_last_cpu;
+extern cpu_t *smp_cpu_list[MAX_CPU];
+extern volatile bool smp_started;
 
 void smp_init();
+cpu_t *this_cpu();
+cpu_t *get_cpu(uint32_t id);
 
 #endif

@@ -1,6 +1,6 @@
 #include <elf/elf.h>
 
-#ifdef __x86_64__
+/* #ifdef __x86_64__
 #include <klib/klib.h>
 #include <mem/pmm.h>
 #include <arch/x86_64/smp/smp.h>
@@ -34,4 +34,4 @@ uint64_t _x86_64_ELF_Load(uint8_t *img,pagemap *pm){
     }
     return hdr->e_entry;
 }
-#endif
+#endif */
