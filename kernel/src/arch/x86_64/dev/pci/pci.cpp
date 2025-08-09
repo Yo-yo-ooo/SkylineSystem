@@ -8,9 +8,10 @@
 #include <acpi/acpi.h>
 #include <arch/x86_64/vmm/vmm.h>
 #include <conf.h>
+#include <klib/klib.h>
 
-PCI::PCIDeviceHeader *pciDevices[128];
-u8 pciDeviceidx;
+PCI::PCIDeviceHeader pciDevices[PCI_DEVICE_MAX] = {0};
+u8 pciDeviceidx = 0;
 namespace PCI
 {
 
@@ -65,7 +66,7 @@ namespace PCI
                             kwarn("PCI:add device full %d", pciDeviceidx);
                             return;
                         }
-                        pciDevices[pciDeviceidx++] = device;
+                        //pciDevices[pciDeviceidx++] = device;
 
                         if(device->Class == 0x060400 || (device->Class & 0xFFFF00) == 0x060400){
                             return;
@@ -79,16 +80,16 @@ namespace PCI
 
     void EnumeratePCI(ACPI::MCFGHeader* mcfg)
     {
-        //kinfoln("PCI HIT! 1");
         
         uint32_t entries = (ACPI::mcfg->Header.Length - sizeof(ACPI::MCFGHeader)) / sizeof(ACPI::DeviceConfig);
 
         //kinfoln("PCI HIT! 2");
 
         //_memset(pciDevices, 0, sizeof(PCI::PCIDeviceHeader) * 128);
-        for(uint8_t i = 0;i < 128;i++)
-            pciDevices[i] = nullptr;
+        for(uint8_t i = 0;i < PCI_LIST_MAX;i++)
+            pciDevices[i] = {0}; 
         pciDeviceidx = 0;
+        
 
         //kinfoln("PCI HIT! 3");
         //kinfoln("ENTRIES: %d",entries);
@@ -101,7 +102,6 @@ namespace PCI
             for (uint8_t bus = newDeviceConfig->StartBus; bus < newDeviceConfig->EndBus; bus++)
                 EnumerateBus((newDeviceConfig->BaseAddress), bus);
         }
-        
     }
 
     void EnumerateBus(uint64_t baseAddress, uint64_t bus)
@@ -248,26 +248,52 @@ namespace PCI
         }
         kprintf("\n");
 
-        pciDevices[pciDeviceidx] = pciDeviceHeader;
+        pciDevices[pciDeviceidx].BIST = pciDeviceHeader->BIST;
+        pciDevices[pciDeviceidx].CacheLineSize = pciDeviceHeader->CacheLineSize;
+        pciDevices[pciDeviceidx].Class = pciDeviceHeader->Class;
+        pciDevices[pciDeviceidx].Command = pciDeviceHeader->Command;
+        pciDevices[pciDeviceidx].Device_ID = pciDeviceHeader->Device_ID;
+        pciDevices[pciDeviceidx].HeaderType = pciDeviceHeader->HeaderType;
+        pciDevices[pciDeviceidx].LatencyTimer = pciDeviceHeader->LatencyTimer;
+        pciDevices[pciDeviceidx].Prog_IF = pciDeviceHeader->Prog_IF;
+        pciDevices[pciDeviceidx].Revision_ID = pciDeviceHeader->Revision_ID;
+        pciDevices[pciDeviceidx].Status = pciDeviceHeader->Status;
+        pciDevices[pciDeviceidx].SubClass = pciDeviceHeader->SubClass;
+        pciDevices[pciDeviceidx].Vendor_ID = pciDeviceHeader->Vendor_ID;
+
+        kinfoln("   PCI DEV HEADER TYPE:%d",pciDeviceHeader->HeaderType);
+        kinfoln("   PCI DEV LATENCY TIMER:%d",pciDeviceHeader->LatencyTimer);
+        kinfoln("   PCI DEV RIVISION ID:%d",pciDeviceHeader->Revision_ID);
+        kinfoln("   PCI DEV CACHE LINE SIZE:%d",pciDeviceHeader->CacheLineSize);
+        kinfoln("   PCI DEV BIST:%d",pciDeviceHeader->BIST);
+        kinfoln("   PCI DEV STATUS:%d",pciDeviceHeader->Status);
+        kinfoln("   PCI DEV CLASS ID:%d",pciDeviceHeader->Class);
+        kinfoln("   PCI DEV SUBCLASS ID:%d",pciDeviceHeader->SubClass);
+        kinfoln("   PCI DEV VENDOR ID:%d",pciDeviceHeader->Vendor_ID);
+        kinfoln("   PCI DEV DEVICE ID:%d",pciDeviceHeader->Device_ID);
+        kinfoln("   PCI DEV PROG IF:%d",pciDeviceHeader->Prog_IF);
+        kinfoln("   pciDeviceidx %d",pciDeviceidx);
         pciDeviceidx++;
 
-        
+        return;
     }
 
     PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass,u8 ProgIF){
-        for (u8 i = 0; i < PCI_LIST_MAX; i++)
-            if(pciDevices[i]->Class = Class 
-            && pciDevices[i]->SubClass == SubClass
-            && pciDevices[i]->Prog_IF == ProgIF)
-                return pciDevices[i];
-        
+        for (u8 i = 0; i < PCI_LIST_MAX; i++){
+            if(pciDevices[i].Class = Class 
+                && pciDevices[i].SubClass == SubClass 
+                && pciDevices[i].Prog_IF == ProgIF){
+                return &pciDevices[i];
+            }
+        }
     }
 
     PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass){
-        for (u8 i = 0; i < PCI_LIST_MAX; i++)
-            if(pciDevices[i]->Class = Class 
-            && pciDevices[i]->SubClass == SubClass)
-                return pciDevices[i];
+        for (u8 i = 0; i < PCI_LIST_MAX; i++){
+            if(pciDevices[i].Class = Class 
+            && pciDevices[i].SubClass == SubClass)
+                return &pciDevices[i];
+        }
     }
 
 

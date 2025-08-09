@@ -138,10 +138,6 @@ extern "C" void idt_exception_handler(context_t *ctx) {
         kerror("    0x%p\n", stack->rip);
         stack = stack->rbp;
     }
-
-    kerrorln("END NOW DO HLT!<-+");
-    kerrorln("     WHILE |     |");
-    kerrorln("           +-----+");
     // TODO: Dump registers.
     asm volatile("cli");
     hcf();
