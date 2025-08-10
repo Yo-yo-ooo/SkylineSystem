@@ -21,8 +21,8 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
     if(port == nullptr)
         return;
     this->Port = port;
-    this->Port->buffer = (uint8_t*)PMM::Request(); // 4096 Bytes
-    VMM::Map(this->Port->buffer, this->Port->buffer);
+    this->Port->buffer = (uint8_t*)HIGHER_HALF(PMM::Request()); // 4096 Bytes
+    //VMM::Map(this->Port->buffer, this->Port->buffer);
     
 
     
@@ -31,7 +31,10 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
 
     
     DevOPS ops;
-    _memset(&ops, 0, sizeof(DevOPS));
+    ops.GetMaxSectorCount = nullptr;
+    ops.Read              = nullptr;ops.ReadBytes  = nullptr;
+    ops.Write             = nullptr;ops.WriteBytes = nullptr;
+    //_memset(&ops, 0, sizeof(DevOPS));
     ops.Read = CFCast<decltype(ops.Read)>(&SataDiskInterface::FRegVsDEV_R);
     ops.Write = CFCast<decltype(ops.Write)>(&SataDiskInterface::FRegVsDEV_W);
     ops.ReadBytes = CFCast<decltype(ops.ReadBytes)>(&SataDiskInterface::FRegVsDEV_Rb);

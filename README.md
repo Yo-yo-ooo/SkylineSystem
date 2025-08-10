@@ -1,7 +1,7 @@
 # SkylineSystem
 
 ## FIX!!!!
-Sorry I'm fixing AHCI error please turn to the 
+Sorry I'm fixing SATA error please turn to the 
 [Last commit before refactoring](https://github.com/Yo-yo-ooo/SkylineSystem/tree/6c32a9771da9b50cdf02d42a81d3c82924b359cb)
 
 ## Features(x86_64)

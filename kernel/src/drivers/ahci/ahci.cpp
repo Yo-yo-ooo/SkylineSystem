@@ -21,14 +21,14 @@ namespace AHCI
     {
         StopCMD();
 
-        void* newBase = PMM::Request();
-        VMM::Map(newBase, newBase);
+        void* newBase = (PMM::Request());
+        //VMM::Map(newBase, newBase);
         hbaPort->commandListBase = (uint32_t)(uint64_t)newBase;
         hbaPort->commandListBaseUpper = (uint32_t)((uint64_t)newBase >> 32);
         _memset((void*)(uint64_t)hbaPort->commandListBase, 0, 1024);
 
-        void* fisBase = PMM::Request();
-        VMM::Map(fisBase, fisBase);
+        void* fisBase = (PMM::Request());
+        //VMM::Map(fisBase, fisBase);
         hbaPort->fisBaseAddress = (uint32_t)(uint64_t)fisBase;
         hbaPort->fisBaseAddressUpper = (uint32_t)((uint64_t)fisBase >> 32);
         _memset(fisBase, 0, 256);
@@ -39,8 +39,8 @@ namespace AHCI
         {
             cmdHeader[i].prdtLength = 8;
 
-            void* cmdTableAddress = PMM::Request();
-            VMM::Map(cmdTableAddress, cmdTableAddress);
+            void* cmdTableAddress = (PMM::Request());
+            //VMM::Map(cmdTableAddress, cmdTableAddress);
             uint64_t address = (uint64_t)cmdTableAddress + (i << 8);
             cmdHeader[i].commandTableBaseAddress = (uint32_t)(uint64_t)address;
             cmdHeader[i].commandTableBaseAddressUpper = (uint32_t)((uint64_t)address >> 32);
@@ -104,13 +104,13 @@ namespace AHCI
         
 
         
-        if (cmdtbl == NULL || cmdtbl->prdtEntry == NULL)
+        if (cmdtbl == nullptr || cmdtbl->prdtEntry == nullptr)
         {
             SATA_Ident test;
             
             return test;
         }
-        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)PMM::Request();
+        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)HIGHER_HALF(PMM::Request());
         //_memset((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress , 0, 0x1000);
         //VMM::Map((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress, (void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress);
         
@@ -388,10 +388,7 @@ namespace AHCI
         kinfoln("> AHCIDriver has been created! (PCI: 0x%p)", (uint64_t)pciBaseAddress);
 
         ABAR = (HBAMemory*)(((uint64_t)((PCI::PCIHeader0*)(uint64_t)pciBaseAddress)->BAR5)  + hhdm_offset);
-        //VMM::Map(ABAR, ABAR);
-        kinfoln("AHCI HIT 1!");
         ABAR->globalHostControl |= 0x80000000;
-        kinfoln("AHCI HIT 1-1!");
 
         ProbePorts();
 
@@ -405,11 +402,9 @@ namespace AHCI
             port->Configure();
 
             if (portType == PortType::SATA){
+                kinfoln("HIT SATA!");
                 SataDiskInterface* sataDiskInterface = new SataDiskInterface(port);
-            }/* else if (portType == PortType::SATAPI)
-                kprintf("* SATAPI drive\n");
-            else{;/*DO NOTHING*/
-                //kprintf("* Not interested\n"); */
+            }
             
         }
     }
@@ -430,7 +425,6 @@ namespace AHCI
         uint32_t portsImplemented = ABAR->portsImplemented;
 
         PortCount = 0;
-        kinfoln("AHCI HIT 2!");
         if (portsImplemented > 0)
             kinfo("AHCI: Probing ports via ABAR 0x%016lx, value 0x%04X\n", (uint64_t)ABAR, ABAR->portsImplemented);
 	    else
