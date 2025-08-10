@@ -457,7 +457,7 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
 	ext4_block_set_lb_size(bd, bsize);
 	bc = &mp->bc;
 
-    //kinfo("[MNT STEP] 2\n");
+    debugpln("[MNT STEP] 2\n");
     //hcf();
 	r = ext4_bcache_init_dynamic(bc, CONFIG_BLOCK_DEV_CACHE_SIZE, bsize);
 	if (r != EOK) {
@@ -468,7 +468,7 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
 	if (bsize != bc->itemsize)
 		return ENOTSUP;
 
-    kinfo("[MNT STEP] 3\n");
+    debugpln("[MNT STEP] 3\n");
     //hcf();
 	/*Bind block cache to block device*/
 	r = ext4_block_bind_bcache(bd, bc);
