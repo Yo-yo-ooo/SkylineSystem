@@ -21,7 +21,7 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
     if(port == nullptr)
         return;
     this->Port = port;
-    this->Port->buffer = (uint8_t*)HIGHER_HALF(PMM::Request()); // 4096 Bytes
+    this->Port->buffer = (uint8_t*)(PMM::Request()); // 4096 Bytes
     //VMM::Map(this->Port->buffer, this->Port->buffer);
     
 
