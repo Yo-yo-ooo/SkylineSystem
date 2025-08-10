@@ -10,7 +10,7 @@
 #include <conf.h>
 #include <klib/klib.h>
 
-PCI::PCIDeviceHeader pciDevices[PCI_DEVICE_MAX] = {0};
+PCI::PCIDeviceHeader* pciDevices[PCI_DEVICE_MAX] = {0};
 u8 pciDeviceidx = 0;
 namespace PCI
 {
@@ -248,7 +248,7 @@ namespace PCI
         }
         kprintf("\n");
 
-        pciDevices[pciDeviceidx].BIST = pciDeviceHeader->BIST;
+        /* pciDevices[pciDeviceidx].BIST = pciDeviceHeader->BIST;
         pciDevices[pciDeviceidx].CacheLineSize = pciDeviceHeader->CacheLineSize;
         pciDevices[pciDeviceidx].Class = pciDeviceHeader->Class;
         pciDevices[pciDeviceidx].Command = pciDeviceHeader->Command;
@@ -259,19 +259,23 @@ namespace PCI
         pciDevices[pciDeviceidx].Revision_ID = pciDeviceHeader->Revision_ID;
         pciDevices[pciDeviceidx].Status = pciDeviceHeader->Status;
         pciDevices[pciDeviceidx].SubClass = pciDeviceHeader->SubClass;
-        pciDevices[pciDeviceidx].Vendor_ID = pciDeviceHeader->Vendor_ID;
+        pciDevices[pciDeviceidx].Vendor_ID = pciDeviceHeader->Vendor_ID; */
+        pciDevices[pciDeviceidx] = pciDeviceHeader;
 
-        kinfoln("   PCI DEV HEADER TYPE:%d",pciDeviceHeader->HeaderType);
-        kinfoln("   PCI DEV LATENCY TIMER:%d",pciDeviceHeader->LatencyTimer);
-        kinfoln("   PCI DEV RIVISION ID:%d",pciDeviceHeader->Revision_ID);
-        kinfoln("   PCI DEV CACHE LINE SIZE:%d",pciDeviceHeader->CacheLineSize);
-        kinfoln("   PCI DEV BIST:%d",pciDeviceHeader->BIST);
-        kinfoln("   PCI DEV STATUS:%d",pciDeviceHeader->Status);
-        kinfoln("   PCI DEV CLASS ID:%d",pciDeviceHeader->Class);
-        kinfoln("   PCI DEV SUBCLASS ID:%d",pciDeviceHeader->SubClass);
-        kinfoln("   PCI DEV VENDOR ID:%d",pciDeviceHeader->Vendor_ID);
-        kinfoln("   PCI DEV DEVICE ID:%d",pciDeviceHeader->Device_ID);
-        kinfoln("   PCI DEV PROG IF:%d",pciDeviceHeader->Prog_IF);
+        kinfoln("   PCI DEV DESC BASE ADDR:0x%p",(uint64_t)pciDeviceHeader);
+        kinfoln("   PCI DEV HEADER TYPE:%d",pciDevices[pciDeviceidx]->HeaderType);
+        kinfoln("   PCI DEV LATENCY TIMER:%d",pciDevices[pciDeviceidx]->LatencyTimer);
+        kinfoln("   PCI DEV RIVISION ID:%d",pciDevices[pciDeviceidx]->Revision_ID);
+        kinfoln("   PCI DEV CACHE LINE SIZE:%d",pciDevices[pciDeviceidx]->CacheLineSize);
+        kinfoln("   PCI DEV BIST:%d",pciDevices[pciDeviceidx]->BIST);
+        kinfoln("   PCI DEV STATUS:%d",pciDevices[pciDeviceidx]->Status);
+        kinfoln("   PCI DEV CLASS ID:%d",pciDevices[pciDeviceidx]->Class);
+        kinfoln("   PCI DEV SUBCLASS ID:%d",pciDevices[pciDeviceidx]->SubClass);
+        kinfoln("   PCI DEV VENDOR ID:%d",pciDevices[pciDeviceidx]->Vendor_ID);
+        kinfoln("   PCI DEV DEVICE ID:%d",pciDevices[pciDeviceidx]->Device_ID);
+        kinfoln("   PCI DEV PROG IF:%d",pciDevices[pciDeviceidx]->Prog_IF);
+
+        
         kinfoln("   pciDeviceidx %d",pciDeviceidx);
         pciDeviceidx++;
 
@@ -280,19 +284,19 @@ namespace PCI
 
     PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass,u8 ProgIF){
         for (u8 i = 0; i < PCI_LIST_MAX; i++){
-            if(pciDevices[i].Class = Class 
-                && pciDevices[i].SubClass == SubClass 
-                && pciDevices[i].Prog_IF == ProgIF){
-                return &pciDevices[i];
+            if(pciDevices[i]->Class == Class 
+                && pciDevices[i]->SubClass == SubClass 
+                && pciDevices[i]->Prog_IF == ProgIF){
+                return pciDevices[i];
             }
         }
     }
 
     PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass){
         for (u8 i = 0; i < PCI_LIST_MAX; i++){
-            if(pciDevices[i].Class = Class 
-            && pciDevices[i].SubClass == SubClass)
-                return &pciDevices[i];
+            if(pciDevices[i]->Class == Class 
+            && pciDevices[i]->SubClass == SubClass)
+                return pciDevices[i];
         }
     }
 

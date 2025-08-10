@@ -382,13 +382,12 @@ namespace AHCI
     }
 
 
-    AHCIDriver::AHCIDriver (PCI::PCIDeviceHeader* PCIBaseAddr)
-    {
+    AHCIDriver::AHCIDriver (PCI::PCIDeviceHeader* PCIBaseAddr){
         PCI::PCIDeviceHeader* pciBaseAddress = PCIBaseAddr;
         this->PCIBaseAddress = pciBaseAddress;
-        kinfoln("> AHCIDriver has been created! (PCI: %X)", (uint64_t)pciBaseAddress);
+        kinfoln("> AHCIDriver has been created! (PCI: 0x%p)", (uint64_t)pciBaseAddress);
 
-        ABAR = (HBAMemory*)(((uint64_t)((PCI::PCIHeader0*)(uint64_t)pciBaseAddress)->BAR5) + hhdm_offset);
+        ABAR = (HBAMemory*)(((uint64_t)((PCI::PCIHeader0*)(uint64_t)pciBaseAddress)->BAR5)  + hhdm_offset);
         //VMM::Map(ABAR, ABAR);
         kinfoln("AHCI HIT 1!");
         ABAR->globalHostControl |= 0x80000000;
@@ -406,12 +405,11 @@ namespace AHCI
             port->Configure();
 
             if (portType == PortType::SATA){
-                kprintf("* SATA drive\n");
                 SataDiskInterface* sataDiskInterface = new SataDiskInterface(port);
-            }else if (portType == PortType::SATAPI)
+            }/* else if (portType == PortType::SATAPI)
                 kprintf("* SATAPI drive\n");
-            else{;/*DO NOTHING*/}
-                //kprintf("* Not interested\n");
+            else{;/*DO NOTHING*/
+                //kprintf("* Not interested\n"); */
             
         }
     }
@@ -447,8 +445,8 @@ namespace AHCI
                     kprintf("\033[38;2;255;165;0m* SATA drive\033[0m\n");
                 else if (portType == PortType::SATAPI)
                     kprintf("\033[38;2;255;165;0m* SATAPI drive\033[0m\n");
-                else{;/*DO NOTHING*/}
-                    //kprintf("\033[38;2;255;165;0m* Not interested\033[0m\n");
+                else
+                    kprintf("\033[38;2;255;165;0m* Not interested\033[0m\n");
 
                 if (portType == PortType::SATA || portType == PortType::SATAPI)
                 {
@@ -467,8 +465,8 @@ namespace AHCI
     {
         uint32_t sataStatus = port->sataStatus;
 
-        uint8_t interfacePowerManagement = (sataStatus >> 8) & 0b1111;
-        uint8_t deviceDetection = sataStatus & 0b1111;
+        uint8_t interfacePowerManagement = (sataStatus >> 8) & 0b111;
+        uint8_t deviceDetection = sataStatus & 0b111;
 
         if (deviceDetection != HBA_PORT_DEV_PRESENT)
             return PortType::None;
