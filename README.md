@@ -10,10 +10,10 @@ Make sure you have install these software linux
 * make
 
 Run with this command in the project root dir
+
 ```bash
 make cm
 ```
-
 
 ## Features(x86_64)
 
