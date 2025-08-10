@@ -1,5 +1,20 @@
 # SkylineSystem
 
+## How to build
+
+Make sure you have install these software linux
+
+* gcc (VER > 10)
+* binutil
+* xorriso
+* make
+
+Run with this command in the project root dir
+```bash
+make cm
+```
+
+
 ## Features(x86_64)
 
 ![SkylineSystemImage](image.png)
