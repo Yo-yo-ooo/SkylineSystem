@@ -154,7 +154,7 @@ namespace AHCI
         SATA_Ident test = *((SATA_Ident*)baddr);
 
         //GlobalAllocator->FreePage((void*)(uint64_t)data_base);
-        PMM::Free((void*)(uint64_t)data_base, 1);
+        PMM::Free((void*)(uint64_t)data_base);
         //GlobalAllocator->FreePage((void*)(uint64_t)cmdtbl);
         
 
@@ -402,7 +402,7 @@ namespace AHCI
             port->Configure();
 
             if (portType == PortType::SATA){
-                kinfoln("HIT SATA!");
+                kprintf("\033[38;2;255;165;0m* SATA drive\033[0m\n");
                 SataDiskInterface* sataDiskInterface = new SataDiskInterface(port);
             }
             

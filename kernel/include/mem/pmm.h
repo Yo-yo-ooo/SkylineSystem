@@ -19,5 +19,5 @@ namespace PMM{
     
     void *Request();
     uint64_t Request_();
-    void Free(void* ptr, usize n);
+    void Free(void *ptr);
 }

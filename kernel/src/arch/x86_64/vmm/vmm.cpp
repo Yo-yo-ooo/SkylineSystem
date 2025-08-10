@@ -259,7 +259,7 @@ namespace VMM{
         void RemoveRegion(vma_region_t *region) {
             region->next->prev = region->prev;
             region->prev->next = region->next;
-            PMM::Free(PHYSICAL((void*)region),PAGE_SIZE);
+            PMM::Free(PHYSICAL((void*)region));
         }
     } // namespace VMA
     
@@ -284,7 +284,7 @@ namespace VMM{
     void RemoveMapping(vm_mapping_t *mapping){
         mapping->next->prev = mapping->prev;
         mapping->prev->next = mapping->next;
-        PMM::Free(PHYSICAL((void*)mapping),PAGE_SIZE);
+        PMM::Free(PHYSICAL((void*)mapping));
     }
 
     void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user){
@@ -308,7 +308,7 @@ namespace VMM{
             if (region->start == (uint64_t)ptr) {
                 for (uint64_t i = 0; i < region->page_count; i++) {
                     uint64_t phys_addr = VMM::GetPhysics(pagemap, (uint64_t)region->start + (i * PAGE_SIZE));
-                    PMM::Free((void*)phys_addr,PAGE_SIZE);
+                    PMM::Free((void*)phys_addr);
                     VMM::Unmap(pagemap, region->start + (i * PAGE_SIZE));
                     mmu_invlpg(region->start + i * PAGE_SIZE);
                 }
@@ -362,13 +362,13 @@ namespace VMM{
             next_region = region->next;
             for (uint64_t i = 0; i < region->page_count; i++) {
                 uint64_t phys_addr = VMM::GetPhysics(pagemap, (uint64_t)region->start + (i * PAGE_SIZE));
-                PMM::Free((void*)phys_addr,PAGE_SIZE);
+                PMM::Free((void*)phys_addr);
                 VMM::Unmap(pagemap, region->start + (i * PAGE_SIZE));
             }
             VMM::VMA::RemoveRegion(region);
         }
         // Remove vma head
-        PMM::Free(PHYSICAL(pagemap->vma_head),PAGE_SIZE);
+        PMM::Free(PHYSICAL(pagemap->vma_head));
         pagemap->vma_head = nullptr;
         // Clean mappings
         vm_mapping_t *mapping = pagemap->vm_mappings->next;
@@ -390,8 +390,8 @@ namespace VMM{
     }
     void DestroyPM(pagemap_t *pagemap){
         VMM::CleanPM(pagemap);
-        PMM::Free(PHYSICAL(pagemap->pml4),PAGE_SIZE);
-        PMM::Free(PHYSICAL(pagemap),PAGE_SIZE);
+        PMM::Free(PHYSICAL(pagemap->pml4));
+        PMM::Free(PHYSICAL(pagemap));
     }
 
     uint8_t HandlePF(context_t *ctx){

@@ -262,6 +262,7 @@ namespace PCI
         pciDevices[pciDeviceidx].Vendor_ID = pciDeviceHeader->Vendor_ID; */
         pciDevices[pciDeviceidx] = pciDeviceHeader;
 
+#if PCI_PRINT_HEADER_INFORMATION == 1
         kinfoln("   PCI DEV DESC BASE ADDR:0x%p",(uint64_t)pciDeviceHeader);
         kinfoln("   PCI DEV HEADER TYPE:%d",pciDevices[pciDeviceidx]->HeaderType);
         kinfoln("   PCI DEV LATENCY TIMER:%d",pciDevices[pciDeviceidx]->LatencyTimer);
@@ -274,9 +275,9 @@ namespace PCI
         kinfoln("   PCI DEV VENDOR ID:%d",pciDevices[pciDeviceidx]->Vendor_ID);
         kinfoln("   PCI DEV DEVICE ID:%d",pciDevices[pciDeviceidx]->Device_ID);
         kinfoln("   PCI DEV PROG IF:%d",pciDevices[pciDeviceidx]->Prog_IF);
-
-        
         kinfoln("   pciDeviceidx %d",pciDeviceidx);
+#endif
+        
         pciDeviceidx++;
 
         return;
