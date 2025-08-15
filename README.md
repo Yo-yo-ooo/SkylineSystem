@@ -60,7 +60,6 @@ Many more in future
 * PCI MSI/MSIX
 * NVME
 * VFS
-* File System Interface(FSI)
 
 ## Contributors
 

@@ -42,6 +42,7 @@ public:
     PACK(typedef struct SubQueEntry{
         uint8_t OPCode;
         uint8_t Attr;
+        uint16_t CommandIdent;
 
         uint32_t NspIdent;
 
@@ -82,12 +83,12 @@ public:
         CmplQueEntry *Entries;
     } CmplQue;
 
-    typedef struct Request {
+    typedef struct NVMERequest {
         //task_Request req;
         int32_t inputSz;
         NVME::CmplQueEntry res;
         NVME::SubQueEntry input[0];
-    } Request;
+    } NVMERequest;
 
     typedef struct SubQue {
         u16 Size, Load;
@@ -102,14 +103,22 @@ public:
         NVME::SubQueEntry *Entries;
         NVME::CmplQue *Trg;
 
-        NVME::Request *Req[0];
+        NVME::NVMERequest *Req[0];
     } SubQue;
 
 
     NVME(PCI::PCIHeader0 *header);
 
+    void Request(NVME::SubQue *subQue, NVME::NVMERequest *req);
+    
+    NVME::NVMERequest *MakeReq(int32_t InputSize);
+    bool TryInsertRequest(NVME::SubQue *subQue, NVME::NVMERequest *req);
+
+    bool RegisterQue();
     NVME::SubQue *AllocSubQue(u32 iden, u32 size, NVME::CmplQue *trg);
+    bool CreateSubQue(NVME::NVMERequest *req, NVME::SubQue *subQue);
     NVME::CmplQue *AllocCmplQue(u32 iden, u32 size);
+    bool CreateCmplQue(NVME::NVMERequest *req, NVME::CmplQue *cmplQue);
 
     uint32_t ReadReg(uint32_t offset);
     void WriteReg(uint32_t offset, uint32_t value);
@@ -131,7 +140,7 @@ protected:
     PCI::PCI_MSIX_CAP *MSIX;
 
 
-	IRQDesc *intr;
+	//IRQDesc *intr;
 
     
 

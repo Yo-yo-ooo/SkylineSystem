@@ -86,8 +86,7 @@ void idt_set_ist(uint16_t vector, uint8_t ist) {
 
 extern "C" void idt_install_irq(uint8_t irq, void *handler) {
     handlers[irq] = handler;
-    if (irq < 16)
-    {IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
+    if (irq < 16){IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
     // Right now we just map
     // every interrupt to MP.
 }
