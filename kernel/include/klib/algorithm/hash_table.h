@@ -102,9 +102,7 @@ typedef enum {
 /// @param max_load_factor The ratio of collisions:table_size before an autoresize is triggered
 ///        for example: if max_load_factor = 0.1, the table will resize if the number
 ///        of collisions increases beyond 1/10th of the size of the table
-void ht_init(hash_table *table, ht_flags flags, double max_load_factor
-        , HashFunc *for_x86_32, HashFunc *for_x86_128, HashFunc *for_x64_128
-        );
+void ht_init(hash_table *table, ht_flags flags, double max_load_factor);
 
 /// @brief Destroys the hash_table struct and frees all relevant memory.
 /// @param table A pointer to the hash table.

@@ -384,9 +384,7 @@ void he_set_value(int flags, hash_entry *entry, void *value, size_t value_size);
 // HashTable functions
 //-----------------------------------
 
-void ht_init(hash_table *table, ht_flags flags, double max_load_factor
-        , HashFunc *for_x86_32, HashFunc *for_x86_128, HashFunc *for_x64_128
-        )
+void ht_init(hash_table *table, ht_flags flags, double max_load_factor)
 {
 
     table->hashfunc_x86_32  = MurmurHash3_x86_32;
@@ -457,7 +455,7 @@ void ht_insert(hash_table *table, void *key, size_t key_size, void *value,
 
 // this was separated out of the regular ht_insert
 // for ease of copying hash entries around
-void  ht_insert_he(hash_table *table, hash_entry *entry)  __attribute__((target("sse2"))){
+__ffunc void ht_insert_he(hash_table *table, hash_entry *entry) {
     hash_entry *tmp;
     unsigned int index;
 
@@ -645,9 +643,7 @@ void ht_clear(hash_table *table)
 {
     ht_destroy(table);
 
-    ht_init(table, table->flags, table->max_load_factor
-    , table->hashfunc_x86_32, table->hashfunc_x86_128, table->hashfunc_x64_128
-    );
+    ht_init(table, table->flags, table->max_load_factor);
 }
 
 unsigned int ht_index(hash_table *table, void *key, size_t key_size)
