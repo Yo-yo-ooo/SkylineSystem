@@ -731,7 +731,7 @@ hash_entry *he_create(int flags, void *key, size_t key_size, void *value,
             kfree(entry);
             return NULL;
         }
-        _memcpy(entry->key, key, key_size);
+        __memcpy(entry->key, key, key_size);
     }
 
     entry->value_size = value_size;
@@ -746,7 +746,7 @@ hash_entry *he_create(int flags, void *key, size_t key_size, void *value,
             kfree(entry);
             return NULL;
         }
-        _memcpy(entry->value, value, value_size);
+        __memcpy(entry->value, value, value_size);
     }
 
     entry->next = NULL;
@@ -785,7 +785,7 @@ void he_set_value(int flags, hash_entry *entry, void *value, size_t value_size)
             kerror("(HashTable)Failed to set entry value\n");
             return;
         }
-        _memcpy(entry->value, value, value_size);
+        __memcpy(entry->value, value, value_size);
     } else {
         entry->value = value;
     }
