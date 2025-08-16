@@ -23,7 +23,7 @@
 typedef struct proc_t proc_t;
 
 typedef struct {
-    vfs_inode_t *node;
+    //vfs_inode_t *node;
     size_t off;
     int32_t flags;
 } fd_t;
@@ -73,7 +73,7 @@ typedef struct thread_t {
 typedef struct proc_t {
     uint64_t id;
     sigaction_t sig_handlers[64];
-    vfs_inode_t *cwd;
+    //vfs_inode_t *cwd;
     thread_t *threads;
     pagemap_t *pagemap;
     struct proc_t *parent; // In case of fork
@@ -108,7 +108,7 @@ namespace Schedule{
     proc_t *NewProcess(bool user);
     void PrepareUserStack(thread_t *thread, int argc, char *argv[], char *envp[]);
     thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int priority, void *entry);
-    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int priority, vfs_inode_t *node, int argc, char *argv[], char *envp[]);
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int priority, void *vfs_inode, int argc, char *argv[], char *envp[]);
     thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame);
     proc_t *ForkProcess();
     thread_t *this_thread();

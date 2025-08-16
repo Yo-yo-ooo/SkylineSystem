@@ -67,7 +67,6 @@ namespace Dev
     u8 ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
     u8 WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
 
-    vfs_node* FindDir(vfs_node* vnode,char *path);
 };
 
 

@@ -31,6 +31,7 @@ extern uint64_t RSDP_ADDR;
 #define HIGHER_HALF(x)   (typeof(x))((uint64_t)x + hhdm_offset)
 #define VIRTUAL(ptr)       HIGHER_HALF(ptr)
 #define PHYSICAL(x)      (typeof(x))((uint64_t)x - hhdm_offset)
+#define FORCE_INLINE inline __attribute__((always_inline))
 
 void Panic(const char* message);
 void Panic(bool halt, const char* message);
@@ -40,9 +41,7 @@ void hcf(void);
 
 
 #define ASSERT(CONDITION) \
-if (CONDITION){} \
-/* 符号#让编译器将宏的参数转化为字符串字面量 */ \
-else {Panic(#CONDITION);}
+if (CONDITION){}else {Panic(#CONDITION);}
 
 void _memcpy(void* src, void* dest, uint64_t size);
 void _memset(void* dest, uint8_t value, uint64_t size);

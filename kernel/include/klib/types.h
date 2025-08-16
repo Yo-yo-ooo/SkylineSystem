@@ -36,4 +36,12 @@ typedef int8_t symbol[];
 
 typedef int32_t spinlock_t;
 
+#if __BITS_PER_LONG != 64
+typedef int ssize_t;
+#else
+typedef long ssize_t;
+#endif
+
+#define _unused
+
 #endif

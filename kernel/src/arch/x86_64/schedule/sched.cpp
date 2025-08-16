@@ -321,7 +321,7 @@ extern "C"{
         return thread;
     }
 
-    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int priority, vfs_inode_t *node, int argc, char *argv[], char *envp[]){
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int priority, void *vfs_inode, int argc, char *argv[], char *envp[]){
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         thread->id = sched_tid++;
         thread->cpu_num = cpu_num;
@@ -441,7 +441,7 @@ extern "C"{
         proc_t *parent = Schedule::this_proc();
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         proc->id = sched_pid++;
-        proc->cwd = parent->cwd;
+        //proc->cwd = parent->cwd;
         proc->threads = NULL;
         proc->parent = parent;
         proc->sibling = NULL;
