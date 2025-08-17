@@ -116,6 +116,12 @@ void ht_destroy(hash_table *table);
 /// @param value_size The size of the value in bytes.
 void ht_insert(hash_table *table, void *key, size_t key_size, void *value, size_t value_size);
 
+/// @brief Inserts the {key: value} pair into the hash table, makes copies of both key and value.
+/// @param table A pointer to the hash table.
+/// @param key A pointer to the key.
+/// @param value A pointer to the value.
+void ht_insert(hash_table *table, void *key, void *value);
+
 /// @brief Inserts an existing hash entry into the hash table.
 /// @param table A pointer to the hash table.
 /// @param entry A pointer to the hash entry.
@@ -144,6 +150,12 @@ void ht_remove(hash_table *table, void *key, size_t key_size);
 /// @param key_size The size of the key in bytes.
 /// @returns 1 if the key is in the table, 0 otherwise
 int ht_contains(hash_table *table, void *key, size_t key_size);
+
+/// @brief Used to see if the hash table contains a key-value pair.
+/// @param table A pointer to the hash table.
+/// @param key A pointer to the key.
+/// @returns 1 if the key is in the table, 0 otherwise
+int ht_contains(hash_table *table, void *key);
 
 /// @brief Returns the number of entries in the hash table.
 /// @param table A pointer to the table.

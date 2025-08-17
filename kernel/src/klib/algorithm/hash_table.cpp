@@ -453,6 +453,10 @@ void ht_insert(hash_table *table, void *key, size_t key_size, void *value,
     ht_insert_he(table, entry);
 }
 
+void ht_insert(hash_table *table, void *key, void *value){
+    ht_insert(table,key,SLAB::GetSize(key,true),value,SLAB::GetSize(value,true));
+}
+
 // this was separated out of the regular ht_insert
 // for ease of copying hash entries around
 __ffunc void ht_insert_he(hash_table *table, hash_entry *entry) {
@@ -591,6 +595,10 @@ int ht_contains(hash_table *table, void *key, size_t key_size)
     }
 
     return 0;
+}
+
+int ht_contains(hash_table *table, void *key){
+    return ht_contains(table,key,SLAB::GetSize(key));
 }
 
 unsigned int ht_size(hash_table *table)

@@ -114,7 +114,7 @@ namespace SLAB{
             if (obj->magic != SLAB_MAGIC) {
                 kerror("Critical SLAB error: Trying to reallocate invalid ptr.\n");
                 ASSERT(0);
-                return NULL;
+                return nullptr;
             }
             old_size = obj->cache->obj_size;
             dbg = (uint64_t)obj;
@@ -145,6 +145,27 @@ namespace SLAB{
             return;
         }
         VMM::Free(kernel_pagemap, page);
+        spinlock_unlock(&heap_lock);
+    }
+
+    uint64_t GetSize(void* ptr,bool ERO = false){
+        spinlock_lock(&heap_lock);
+        slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
+        if (page->magic != SLAB_MAGIC) {
+            slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
+            if (obj->magic != SLAB_MAGIC) {
+                if(ERO == false){
+                    kerror("Critical SLAB error: Trying to get size of ptr.\n");
+                    return UINT64_MAX;
+                }else{
+                    return 1;
+                }
+            }
+            spinlock_unlock(&heap_lock);
+            return obj->cache->obj_size;
+        }else{
+            return page->page_count * PAGE_SIZE - sizeof(slab_page_t);
+        }
         spinlock_unlock(&heap_lock);
     }
 }

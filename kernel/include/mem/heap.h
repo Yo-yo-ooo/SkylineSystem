@@ -35,6 +35,8 @@ namespace SLAB{
     void *Realloc(void *ptr, size_t size);
     void Free(void *ptr);
 
+    uint64_t GetSize(void* ptr,bool ERO = false);
+
     slab_cache_t *GetCache(size_t size);
     slab_cache_t *cache_get_empty(slab_cache_t *cache);
     int64_t FindFree(slab_cache_t *cache);

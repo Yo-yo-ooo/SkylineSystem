@@ -441,7 +441,7 @@ extern "C"{
         proc_t *parent = Schedule::this_proc();
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         proc->id = sched_pid++;
-        //proc->cwd = parent->cwd;
+        proc->cwd = parent->cwd;
         proc->threads = NULL;
         proc->parent = parent;
         proc->sibling = NULL;
