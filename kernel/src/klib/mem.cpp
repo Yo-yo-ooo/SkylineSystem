@@ -1,7 +1,7 @@
 #include <klib/klib.h>
 
 #pragma GCC push_options
-#pragma GCC optimize ("O2")
+#pragma GCC optimize ("Ofast")
 
 void _memcpy_128(void* src, void* dest, int64_t size)
 {

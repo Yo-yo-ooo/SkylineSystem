@@ -67,7 +67,6 @@ typedef struct VFSFile{
     uint32_t FileMode;
     loff_t   FilePosition;
     uint32_t FileFlags;
-    
 };
 
 typedef struct VFSInode{
@@ -78,15 +77,12 @@ typedef struct VFSInode{
     uint32_t WriteCount;
 
     char *Link;
-    uint32_t LengthOfLink;
     VFSMount *Mount;
-
     hash_table HashTbl;
 }VFSInode;
 
 typedef struct VFSDirEntry{
     char *Name; 
-
     hash_table HashTbl;
 }VFSDirEntry;
 

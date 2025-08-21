@@ -71,58 +71,43 @@ namespace PMM{
         // TODO: Handle when we can't find a free bit after bitmap_last_free
         // (reiterate through the bitmap, and if we dont find ANY frees, we panic.)
         uint64_t bit = bitmap_last_free;
-        //kinfoln("HIT!0");
         while (bit < pmm_bitmap_pages && PMM::bitmap_test_(bit))
             bit++;
-        //kinfoln("HIT!1");
         if (bit >= pmm_bitmap_pages) {
             bit = 0;
-            //kinfoln("HIT!2");
             while (bit < bitmap_last_free && PMM::bitmap_test_(bit))
                 bit++;
-            //kinfoln("HIT!3");
             if (bit == bitmap_last_free) {
                 kerror("PMM Out of memory!\n");
-                return NULL;
+                return nullptr;
             }
         }
-        //kinfoln("HIT!4");
         PMM::bitmap_set_(bit);
-        //kinfoln("HIT!5");
         bitmap_last_free = bit;
-        //kinfoln("unHIGHER_HALFed %p",(bit * PAGE_SIZE));
-        //kinfoln("HIGHER_HALFed %p",HIGHER_HALF(bit * PAGE_SIZE));
         return (void*)(bit * PAGE_SIZE);
     }
 
-
-    uint64_t Request_() {
-        // TODO: Handle when we can't find a free bit after bitmap_last_free
-        // (reiterate through the bitmap, and if we dont find ANY frees, we panic.)
-        uint64_t bit = bitmap_last_free;
-        kinfoln("HIT!0");
-        while (bit < pmm_bitmap_pages && PMM::bitmap_test_(bit))
-            bit++;
-        kinfoln("HIT!1");
-        if (bit >= pmm_bitmap_pages) {
-            bit = 0;
-            kinfoln("HIT!2");
-            while (bit < bitmap_last_free && PMM::bitmap_test_(bit))
+    void* Request(uint64_t n){
+        uint64_t bit;
+        for(uint64_t j = 0;j < n;++j){
+            bit = bitmap_last_free;
+            while (bit < pmm_bitmap_pages && PMM::bitmap_test_(bit))
                 bit++;
-            kinfoln("HIT!3");
-            if (bit == bitmap_last_free) {
-                kerror("PMM Out of memory!\n");
-                return NULL;
+            if (bit >= pmm_bitmap_pages) {
+                bit = 0;
+                while (bit < bitmap_last_free && PMM::bitmap_test_(bit))
+                    bit++;
+                if (bit == bitmap_last_free) {
+                    kerror("PMM Out of memory!\n");
+                    return nullptr;
+                }
             }
+            PMM::bitmap_set_(bit);
+            bitmap_last_free = bit;
         }
-        kinfoln("HIT!4");
-        PMM::bitmap_set_(bit);
-        kinfoln("HIT!5");
-        bitmap_last_free = bit;
-        kinfoln("unHIGHER_HALFed %p",(bit * PAGE_SIZE));
-        kinfoln("HIGHER_HALFed %p",HIGHER_HALF(bit * PAGE_SIZE));
-        return (uint64_t)(bit * PAGE_SIZE);
+        return (void*)(bit * n * PAGE_SIZE);
     }
+
 
     void Free(void *ptr) {
         uint64_t bit = (uint64_t)ptr / PAGE_SIZE;

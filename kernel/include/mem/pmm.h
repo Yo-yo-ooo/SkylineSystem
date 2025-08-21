@@ -18,6 +18,6 @@ namespace PMM{
     void Init();
     
     void *Request();
-    uint64_t Request_();
+    void* Request(uint64_t n);
     void Free(void *ptr);
 }

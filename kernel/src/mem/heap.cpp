@@ -157,9 +157,7 @@ namespace SLAB{
                 if(ERO == false){
                     kerror("Critical SLAB error: Trying to get size of ptr.\n");
                     return UINT64_MAX;
-                }else{
-                    return 1;
-                }
+                }else{return 1;}
             }
             spinlock_unlock(&heap_lock);
             return obj->cache->obj_size;
