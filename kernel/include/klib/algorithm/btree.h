@@ -16,6 +16,7 @@ public:
         bool IsLeaf;
         BTreeNode **Child;
         KeyValue *Keys;
+        void** Data;
     }BTreeNode;
 
     typedef struct BTreeStruct{
@@ -153,7 +154,20 @@ public:
         }
     }
 
-    void BNodeDeleteKey(BTree *Tree, BTreeNode *Node, KeyValue Key){
+    BTreeNode* Find(BTreeStruct *Tree,KeyValue Key){
+        BTreeNode *Root = Tree->Root;
+        if(Root->IsLeaf != false){
+            
+        }else{
+            for(uint64_t i = 0;i < Root->KeyNum;i++){
+                if(Root->Keys[i] == Key)
+                    return Root;
+            }
+        }
+        return nullptr;
+    }
+
+    void BNodeDeleteKey(BTreeStruct *Tree, BTreeNode *Node, KeyValue Key){
         if (Node == nullptr)
             return;
 
@@ -197,7 +211,7 @@ public:
 
             BTreeNode *Child = Node->Child[Index];
             if (Child == nullptr) {
-                kerror("(BTree)Cannot find Key : %d\n", Key);
+                kerror("(BTree 0x%p)Cannot find Key : %d\n", (uint64_t)this,Key);
                 return;
             }
 
@@ -268,6 +282,10 @@ public:
             this->BNodeDeleteKey(Tree,Tree->Root,Key);
     }
 
+    void DeleteKey(KeyValue Key){
+        this->DeleteKey(this->PBTree,Key);
+    }
+
     void PrintTree(BTreeStruct *Tree, BTreeNode *Node, uint64_t Layer){
         BTreeNode *Ptr = Node;
         if(Ptr){
@@ -283,6 +301,8 @@ public:
         }else
             kerror("(BTree: 0x%p) Is empty",(uint64_t)this);
     }
+private:
+    BTreeStruct *PBTree;
 }
 
 
