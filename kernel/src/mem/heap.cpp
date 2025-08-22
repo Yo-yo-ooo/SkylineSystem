@@ -190,8 +190,7 @@ void *kcalloc(size_t numitems, size_t size)
     if(knew)
     {
         s = align4(numitems * size) >> 2;
-        for(i = 0; i < s; ++i)
-            knew[i] = 0;
+        _memset(knew,0,s);
     }
     return knew;
 }
