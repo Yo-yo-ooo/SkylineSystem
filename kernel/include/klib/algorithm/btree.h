@@ -1,6 +1,6 @@
 #pragma once
-#ifndef _FILE_TREE_
-#define _FILE_TREE_
+#ifndef _B_TREE_
+#define _B_TREE_
 
 #include <stdint.h>
 #include <stddef.h>
@@ -155,15 +155,25 @@ public:
     }
 
     BTreeNode* Find(BTreeStruct *Tree,KeyValue Key){
-        BTreeNode *Root = Tree->Root;
-        if(Root->IsLeaf != false){
-            
-        }else{
-            for(uint64_t i = 0;i < Root->KeyNum;i++){
-                if(Root->Keys[i] == Key)
-                    return Root;
+        BTreeNode *Ptr = Tree->Root;
+Again:
+        if(Ptr->IsLeaf != false){
+            uint64_t Index = 0;
+            while (Index < Ptr->KeyNum && Key > Ptr->Keys[Index])    
+                Index++;
+            if(Ptr->Keys[Index] != Key && Ptr->Child[Index]->KeyNum >= Tree->Dgree){
+                    Ptr = Ptr->Child[Index];
+                    goto Again;
+            }else if(Ptr->Keys[Index] != Key && Ptr->Child[Index + 1]->KeyNum >= Tree->Dgree){
+                Ptr = Ptr->Child[Index + 1];
+                goto Again;
+            }else if(Ptr->Keys[Index] == Key){
+                return Ptr;
             }
-        }
+        }else
+            for(uint64_t i = 0;i < Ptr->KeyNum;i++)
+                if(Ptr->Keys[i] == Key)
+                    return Ptr;
         return nullptr;
     }
 
@@ -196,7 +206,7 @@ public:
                 BTreeNode * Left = Node->Child[Index];
                 Node->Keys[Index] = Left->Keys[Left->KeyNum - 1];
 
-                this->BNodeDeleteKey(Tree, Left, Left->Keys[Left->KeyNum - 1]);  /   / 递归删除子节点中用来覆盖上层节点的关键字
+                this->BNodeDeleteKey(Tree, Left, Left->Keys[Left->KeyNum - 1]);  // 递归删除子节点中用来覆盖上层节点的关键字
             } else if (Node->Child[Index + 1]->KeyNum >= Tree->Dgree) {    // 借   用左子节点的关键字进行覆盖
                 BTreeNode *Right = Node->Child[Index + 1];
                 Node->Keys[Index] = Right->Keys[0];
@@ -282,9 +292,6 @@ public:
             this->BNodeDeleteKey(Tree,Tree->Root,Key);
     }
 
-    void DeleteKey(KeyValue Key){
-        this->DeleteKey(this->PBTree,Key);
-    }
 
     void PrintTree(BTreeStruct *Tree, BTreeNode *Node, uint64_t Layer){
         BTreeNode *Ptr = Node;
@@ -301,9 +308,17 @@ public:
         }else
             kerror("(BTree: 0x%p) Is empty",(uint64_t)this);
     }
+
+    void InsertKey(KeyValue Key){this->InsertKey(this->PBTree,Key);}
+    void DeleteKey(KeyValue Key){this->DeleteKey(this->PBTree,Key);}
+    void PrintTree(BTreeNode *Node, uint64_t Layer){this->PrintTree(this->PBTree,Node,Layer);}
+    BTreeNode* Find(KeyValue Key){this->Find(this->PBTree,Key);}
+    void CreateTree(uint64_t Dgree, bool _NOTHIING_)
+    {(void)_NOTHIING_;this->PBTree = this->CreateTree(Dgree);}
+
 private:
     BTreeStruct *PBTree;
-}
+};
 
 
 #endif

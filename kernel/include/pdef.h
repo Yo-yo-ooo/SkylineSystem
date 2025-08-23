@@ -15,3 +15,5 @@
 
 #define SET0_BIT(value,bit) ((value)&=~(1<<(bit))) //把某个位置0
 #define SET1_BIT(value,bit) ((value)|= (1<<(bit))) //把某个位置1
+
+#define IGNORE_VALUE(VALUE) (void)VALUE
