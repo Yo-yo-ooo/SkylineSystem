@@ -16,7 +16,6 @@ public:
         bool IsLeaf;
         BTreeNode **Child;
         KeyValue *Keys;
-        void** Data;
     }BTreeNode;
 
     typedef struct BTreeStruct{
