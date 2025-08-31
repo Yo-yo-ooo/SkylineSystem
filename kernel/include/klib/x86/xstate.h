@@ -22,8 +22,8 @@ struct xstate_buffer {
     uint8_t buffer[0];
 };
 
-void xsave(int what, struct xstate_buffer* to);
-void xrstor(int what, struct xstate_buffer* from);
+void xsave(int32_t what, struct xstate_buffer* to);
+void xrstor(int32_t what, struct xstate_buffer* from);
 
 #else
 #error "You include x86_64 ARCH file,but your ARCH not x86_64"

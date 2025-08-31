@@ -50,7 +50,7 @@
 #include <flanterm/flanterm.h>
 #include <flanterm/backends/fb.h>
 
-void *memset(void *, int, size_t);
+void *memset(void *, int32_t, size_t);
 void *memcpy(void *, const void *, size_t);
 
 #ifndef FLANTERM_FB_DISABLE_BUMP_ALLOC
@@ -682,14 +682,14 @@ static void flanterm_fb_set_cursor_pos(struct flanterm_context *_ctx, size_t x, 
     struct flanterm_fb_context *ctx = (void *)_ctx;
 
     if (x >= _ctx->cols) {
-        if ((int)x < 0) {
+        if ((int32_t)x < 0) {
             x = 0;
         } else {
             x = _ctx->cols - 1;
         }
     }
     if (y >= _ctx->rows) {
-        if ((int)y < 0) {
+        if ((int32_t)y < 0) {
             y = 0;
         } else {
             y = _ctx->rows - 1;

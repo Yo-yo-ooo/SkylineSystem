@@ -14,7 +14,7 @@ static uint64_t xstate_support_mask;
 #define CR4_OSXSAVE (1 << 18) // cr4
 
 
-static uint64_t xsave_bitmask(int what) {
+static uint64_t xsave_bitmask(int32_t what) {
     uint64_t bitmask = 0;
     if(what & XSAVE_X87)
         bitmask &= 0x01;
@@ -28,13 +28,13 @@ static uint64_t xsave_bitmask(int what) {
     return bitmask & xstate_support_mask;
 }
 
-void xsave(int what, struct xstate_buffer* to) {
+void xsave(int32_t what, struct xstate_buffer* to) {
     uint64_t mask = xsave_bitmask(what);
     xsaves((uint8_t*)to->begin, mask);
 }
 
 
-void xrstor(int what, struct xstate_buffer* from) {
+void xrstor(int32_t what, struct xstate_buffer* from) {
     uint64_t mask = xsave_bitmask(what);
     xsaves((uint8_t*)from->begin, mask);
 }

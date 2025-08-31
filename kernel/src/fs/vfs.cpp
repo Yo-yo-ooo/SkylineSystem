@@ -10,7 +10,7 @@ namespace VFS{
         root_node = (vnode_t*)kmalloc(sizeof(vnode_t));
         _memset(root_node, 0, sizeof(vnode_t));
         root_node->Name[0] = '/';
-        //int err = ext2_mount(root_node, ahci_ports[0]); // TODO: Actually find a valid EXT2 port.
+        //int32_t err = ext2_mount(root_node, ahci_ports[0]); // TODO: Actually find a valid EXT2 port.
         /* if (!err)
             kpok("Mounted disk0 to /.\n");
         else

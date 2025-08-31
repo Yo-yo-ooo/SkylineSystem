@@ -3,6 +3,7 @@
 #include <arch/x86_64/schedule/syscall.h>
 #include <klib/kio.h>
 #include <errno.h>
+#include <arch/x86_64/schedule/sched.h>
 
 u64 syscall_rsvd(syscall_args a) {return 0;}
 
@@ -23,6 +24,9 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
             break;
         case 57: // fork
             frame->rax = sys_fork(frame);
+            break;
+        case 60:
+            Schedule::Exit(frame->rdi);
             break;
         default: {
             uint64_t(*handler)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) =

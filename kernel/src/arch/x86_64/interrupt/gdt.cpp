@@ -38,11 +38,11 @@ namespace GDT{
 }
 
 namespace TSS{
-    void SetRSP(uint32_t cpu_num, int rsp, void *stack) {
+    void SetRSP(uint32_t cpu_num, int32_t rsp, void *stack) {
         tss_desc[cpu_num].rsp[rsp] = (uint64_t)stack;
     }
 
-    void SetIST(uint32_t cpu_num, int ist, void *stack) {
+    void SetIST(uint32_t cpu_num, int32_t ist, void *stack) {
         tss_desc[cpu_num].ist[ist] = (uint64_t)stack;
     }
 }

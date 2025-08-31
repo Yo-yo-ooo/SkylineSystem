@@ -41,7 +41,7 @@ typedef struct vm_mapping_t {
 typedef struct {
     uint64_t *pml4;
     vm_mapping_t *vm_mappings;
-    int vma_lock;
+    int32_t vma_lock;
     vma_region_t *vma_head;
 } pagemap_t;
 

@@ -48,7 +48,7 @@ typedef struct thread_t {
     uint32_t priority;
     uint32_t preempt_count;
     uint64_t kernel_stack;
-    int state;
+    int32_t state;
     uint64_t stack;
     context_t ctx;
     uint64_t fs;
@@ -80,7 +80,7 @@ typedef struct proc_t {
     struct proc_t *children;
     struct proc_t *sibling;
     fd_t *fd_table[256];
-    int fd_count;
+    int32_t fd_count;
 } proc_t;
 
 namespace Schedule{
@@ -106,14 +106,14 @@ namespace Schedule{
     void Install();
 
     proc_t *NewProcess(bool user);
-    void PrepareUserStack(thread_t *thread, int argc, char *argv[], char *envp[]);
-    thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int priority, void *entry);
-    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int priority, void *vfs_inode, int argc, char *argv[], char *envp[]);
+    void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]);
+    thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry);
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *vfs_inode, int32_t argc, char *argv[], char *envp[]);
     thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame);
     proc_t *ForkProcess();
     thread_t *this_thread();
     proc_t *this_proc();
-    void Exit(int code);
+    void Exit(int32_t code);
     void Yield();
     void PAUSE();
     void Resume();

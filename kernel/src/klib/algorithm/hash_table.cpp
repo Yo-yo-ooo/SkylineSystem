@@ -48,17 +48,17 @@ FORCE_INLINE uint64_t fmix64(uint64_t k)
 
 //-----------------------------------------------------------------------------
 
-void MurmurHash3_x86_32(const void *key, int len, uint32_t seed, void *out )
+void MurmurHash3_x86_32(const void *key, int32_t len, uint32_t seed, void *out )
 {
     const uint8_t * data = (const uint8_t*)key;
-    const int nblocks = len / 4;
+    const int32_t nblocks = len / 4;
 
     uint32_t h1 = seed;
 
     uint32_t c1 = 0xcc9e2d51;
     uint32_t c2 = 0x1b873593;
 
-    int i;
+    int32_t i;
 
     //----------
     // body
@@ -103,11 +103,11 @@ void MurmurHash3_x86_32(const void *key, int len, uint32_t seed, void *out )
 
 //-----------------------------------------------------------------------------
 
-void MurmurHash3_x86_128(const void *key, const int len, uint32_t seed,
+void MurmurHash3_x86_128(const void *key, const int32_t len, uint32_t seed,
         void *out)
 {
     const uint8_t * data = (const uint8_t*)key;
-    const int nblocks = len / 16;
+    const int32_t nblocks = len / 16;
 
     uint32_t h1 = seed;
     uint32_t h2 = seed;
@@ -119,7 +119,7 @@ void MurmurHash3_x86_128(const void *key, const int len, uint32_t seed,
     uint32_t c3 = 0x38b34ae5;
     uint32_t c4 = 0xa1e38b93;
 
-    int i;
+    int32_t i;
 
     //----------
     // body
@@ -251,11 +251,11 @@ void MurmurHash3_x86_128(const void *key, const int len, uint32_t seed,
 
 //-----------------------------------------------------------------------------
 
-void MurmurHash3_x64_128(const void *key, const int len, const uint32_t seed,
+void MurmurHash3_x64_128(const void *key, const int32_t len, const uint32_t seed,
        void *out)
 {
     const uint8_t * data = (const uint8_t*)key;
-    const int nblocks = len / 16;
+    const int32_t nblocks = len / 16;
 
     uint64_t h1 = seed;
     uint64_t h2 = seed;
@@ -263,7 +263,7 @@ void MurmurHash3_x64_128(const void *key, const int len, const uint32_t seed,
     uint64_t c1 = BIG_CONSTANT(0x87c37b91114253d5);
     uint64_t c2 = BIG_CONSTANT(0x4cf5ad432745937f);
 
-    int i;
+    int32_t i;
 
     //----------
     // body
@@ -358,27 +358,27 @@ void MurmurHash3_x64_128(const void *key, const int len, const uint32_t seed,
 /// @param value A pointer to the value.
 /// @param value_size The size of the value in bytes.
 /// @returns A pointer to the hash entry.
-hash_entry *he_create(int flags, void *key, size_t key_size, void *value,
+hash_entry *he_create(int32_t flags, void *key, size_t key_size, void *value,
         size_t value_size);
 
 /// @brief Destroys the hash entry and frees all associated memory.
 /// @param flags The hash table flags.
 /// @param hash_entry A pointer to the hash entry.
-void he_destroy(int flags, hash_entry *entry);
+void he_destroy(int32_t flags, hash_entry *entry);
 
 /// @brief Compare two hash entries.
 /// @param e1 A pointer to the first entry.
 /// @param e2 A pointer to the second entry.
 /// @returns 1 if both the keys and the values of e1 and e2 match, 0 otherwise.
 ///          This is a "deep" compare, rather than just comparing pointers.
-int he_key_compare(hash_entry *e1, hash_entry *e2);
+int32_t he_key_compare(hash_entry *e1, hash_entry *e2);
 
 /// @brief Sets the value on an existing hash entry.
 /// @param flags The hashtable flags.
 /// @param entry A pointer to the hash entry.
 /// @param value A pointer to the new value.
 /// @param value_size The size of the new value in bytes.
-void he_set_value(int flags, hash_entry *entry, void *value, size_t value_size);
+void he_set_value(int32_t flags, hash_entry *entry, void *value, size_t value_size);
 
 //-----------------------------------
 // HashTable functions
@@ -404,7 +404,7 @@ void ht_init(hash_table *table, ht_flags flags, double max_load_factor)
     table->max_load_factor      = max_load_factor;
     table->current_load_factor  = 0.0;
 
-    unsigned int i;
+    uint32_t i;
     for(i = 0; i < table->array_size; i++)
     {
         table->array[i] = NULL;
@@ -415,7 +415,7 @@ void ht_init(hash_table *table, ht_flags flags, double max_load_factor)
 
 void ht_destroy(hash_table *table)
 {
-    unsigned int i;
+    uint32_t i;
     hash_entry *entry;
     hash_entry *tmp;
 
@@ -461,7 +461,7 @@ void ht_insert(hash_table *table, void *key, void *value){
 // for ease of copying hash entries around
 __ffunc void ht_insert_he(hash_table *table, hash_entry *entry) {
     hash_entry *tmp;
-    unsigned int index;
+    uint32_t index;
 
     entry->next = NULL;
     index = ht_index(table, entry->key, entry->key_size);
@@ -514,7 +514,7 @@ __ffunc void ht_insert_he(hash_table *table, hash_entry *entry) {
 
 void* ht_get(hash_table *table, void *key, size_t key_size, size_t *value_size)
 {
-    unsigned int index  = ht_index(table, key, key_size);
+    uint32_t index  = ht_index(table, key, key_size);
     hash_entry *entry   = table->array[index];
     hash_entry tmp;
     tmp.key             = key;
@@ -542,7 +542,7 @@ void* ht_get(hash_table *table, void *key, size_t key_size, size_t *value_size)
 
 void ht_remove(hash_table *table, void *key, size_t key_size)
 {
-    unsigned int index  = ht_index(table, key, key_size);
+    uint32_t index  = ht_index(table, key, key_size);
     hash_entry *entry   = table->array[index];
     hash_entry *prev    = NULL;
     hash_entry tmp;
@@ -577,9 +577,9 @@ void ht_remove(hash_table *table, void *key, size_t key_size)
     }
 }
 
-int ht_contains(hash_table *table, void *key, size_t key_size)
+int32_t ht_contains(hash_table *table, void *key, size_t key_size)
 {
-    unsigned int index  = ht_index(table, key, key_size);
+    uint32_t index  = ht_index(table, key, key_size);
     hash_entry *entry   = table->array[index];
     hash_entry tmp;
     tmp.key             = key;
@@ -597,16 +597,16 @@ int ht_contains(hash_table *table, void *key, size_t key_size)
     return 0;
 }
 
-int ht_contains(hash_table *table, void *key){
+int32_t ht_contains(hash_table *table, void *key){
     return ht_contains(table,key,SLAB::GetSize(key));
 }
 
-unsigned int ht_size(hash_table *table)
+uint32_t ht_size(hash_table *table)
 {
     return table->key_count;
 }
 
-void** ht_keys(hash_table *table, unsigned int *key_count)
+void** ht_keys(hash_table *table, uint32_t *key_count)
 {
     void **ret;
 
@@ -622,7 +622,7 @@ void** ht_keys(hash_table *table, unsigned int *key_count)
     }
     *key_count = 0;
 
-    unsigned int i;
+    uint32_t i;
     hash_entry *tmp;
 
     // loop over all of the chains, walk the chains,
@@ -654,7 +654,7 @@ void ht_clear(hash_table *table)
     ht_init(table, table->flags, table->max_load_factor);
 }
 
-unsigned int ht_index(hash_table *table, void *key, size_t key_size)
+uint32_t ht_index(hash_table *table, void *key, size_t key_size)
 {
     uint32_t index;
     // 32 bits of murmur seems to fare pretty well
@@ -664,7 +664,7 @@ unsigned int ht_index(hash_table *table, void *key, size_t key_size)
 }
 
 // new_size can be smaller than current size (downsizing allowed)
-void ht_resize(hash_table *table, unsigned int new_size)
+void ht_resize(hash_table *table, uint32_t new_size)
 {
     hash_table new_table;
 
@@ -679,7 +679,7 @@ void ht_resize(hash_table *table, unsigned int new_size)
     new_table.flags = table->flags;
     new_table.max_load_factor = table->max_load_factor;
 
-    unsigned int i;
+    uint32_t i;
     for(i = 0; i < new_table.array_size; i++)
     {
         new_table.array[i] = NULL;
@@ -719,7 +719,7 @@ void ht_set_seed(uint32_t seed){
 // hash_entry functions
 //---------------------------------
 
-hash_entry *he_create(int flags, void *key, size_t key_size, void *value,
+hash_entry *he_create(int32_t flags, void *key, size_t key_size, void *value,
         size_t value_size)
 {
     hash_entry *entry = kmalloc(sizeof(*entry));
@@ -762,7 +762,7 @@ hash_entry *he_create(int flags, void *key, size_t key_size, void *value,
     return entry;
 }
 
-void he_destroy(int flags, hash_entry *entry)
+void he_destroy(int32_t flags, hash_entry *entry)
 {
     if (!(flags & HT_KEY_CONST))
         kfree(entry->key);
@@ -771,7 +771,7 @@ void he_destroy(int flags, hash_entry *entry)
     kfree(entry);
 }
 
-int he_key_compare(hash_entry *e1, hash_entry *e2)
+int32_t he_key_compare(hash_entry *e1, hash_entry *e2)
 {
     char *k1 = e1->key;
     char *k2 = e2->key;
@@ -782,7 +782,7 @@ int he_key_compare(hash_entry *e1, hash_entry *e2)
     return (_memcmp(k1,k2,e1->key_size) == 0);
 }
 
-void he_set_value(int flags, hash_entry *entry, void *value, size_t value_size)
+void he_set_value(int32_t flags, hash_entry *entry, void *value, size_t value_size)
 {
     if (!(flags & HT_VALUE_CONST)) {
         if(entry->value)

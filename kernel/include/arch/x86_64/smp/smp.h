@@ -27,13 +27,13 @@ typedef struct cpu_t{
     thread_queue_t thread_queues[THREAD_QUEUE_CNT];
     thread_t *current_thread;
     uint64_t thread_count;
-    int sched_lock;
+    int32_t sched_lock;
     bool has_runnable_thread;
 } cpu_t;
 
 extern uint32_t smp_bsp_cpu;
 
-extern int smp_last_cpu;
+extern int32_t smp_last_cpu;
 extern cpu_t *smp_cpu_list[MAX_CPU];
 extern volatile bool smp_started;
 

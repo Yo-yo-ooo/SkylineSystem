@@ -9,7 +9,7 @@
 typedef struct {
     void *owner;
     queue_t *queue;
-    int lock;
+    int32_t lock;
 } mutex_t;
 
 namespace Mutex{

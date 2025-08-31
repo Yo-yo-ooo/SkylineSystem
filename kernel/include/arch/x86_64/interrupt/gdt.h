@@ -40,6 +40,6 @@ namespace GDT{
 //void gdt_init(uint32_t cpu_num);
 
 namespace TSS{
-    void SetRSP(uint32_t cpu_num, int rsp, void *stack);
-    void SetIST(uint32_t cpu_num, int ist, void *stack); 
+    void SetRSP(uint32_t cpu_num, int32_t rsp, void *stack);
+    void SetIST(uint32_t cpu_num, int32_t ist, void *stack); 
 }

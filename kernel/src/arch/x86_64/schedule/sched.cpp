@@ -19,7 +19,7 @@ static void sched_idle(){
 
 static cpu_t *get_lw_cpu() {
     cpu_t *cpu = NULL;
-    for (int i = 0; i < smp_last_cpu; i++) {
+    for (int32_t i = 0; i < smp_last_cpu; i++) {
         if (smp_cpu_list[i] == NULL || i == smp_bsp_cpu) continue;
         if (!cpu) {
             cpu = smp_cpu_list[i];
@@ -114,7 +114,7 @@ namespace Schedule{
                     }
                     thread->preempt_count++;
                     if (thread->preempt_count == SCHED_PREEMPTION_MAX) {
-                        int ret = Schedule::Useless::Demote(cpu, thread);
+                        int32_t ret = Schedule::Useless::Demote(cpu, thread);
                         thread->preempt_count = 0;
                         thread->flags &= ~TFLAGS_PREEMPTED;
                         if (ret == 1) {
@@ -204,22 +204,22 @@ extern "C"{
         return proc;
     }
 
-    void PrepareUserStack(thread_t *thread, int argc, char *argv[], char *envp[]){
+    void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]){
         // Copy the arguments and envp into kernel memory
         char **kernel_argv = (char**)kmalloc(argc * 8);
-        for (int i = 0; i < argc; i++) {
-            int size = strlen(argv[i]) + 1;
+        for (int32_t i = 0; i < argc; i++) {
+            int32_t size = strlen(argv[i]) + 1;
             kernel_argv[i] = (char*)kmalloc(size);
             __memcpy(kernel_argv[i], argv[i], size);
         }
 
-        int envc = 0;
+        int32_t envc = 0;
         while (envp[envc++]);
         envc -= 1;
 
         char **kernel_envp = (char**)kmalloc(envc * 8);
-        for (int i = 0; i < envc; i++) {
-            int size = strlen(envp[i]) + 1;
+        for (int32_t i = 0; i < envc; i++) {
+            int32_t size = strlen(envp[i]) + 1;
             kernel_envp[i] = (char*)kmalloc(size);
             __memcpy(kernel_envp[i], envp[i], size);
         }
@@ -230,8 +230,8 @@ extern "C"{
         uint64_t offset = 0;
         if ((argc + envc) % 2 == 0) offset = 8;
         pagemap_t *restore = VMM::SwitchPageMap(thread->pagemap);
-        for (int i = 0; i < argc; i++) {
-            int size = strlen(kernel_argv[i]) + 1;
+        for (int32_t i = 0; i < argc; i++) {
+            int32_t size = strlen(kernel_argv[i]) + 1;
             offset += ALIGN_UP(size, 16); // Keep aligned to 16 bytes (ABI requirement)
             thread_argv[i] = stack_top - offset;
             __memcpy((void*)(stack_top - offset), kernel_argv[i], size);
@@ -239,8 +239,8 @@ extern "C"{
 
         // Copy the environment variables to the thread stack.
         uint64_t thread_envp[envc];
-        for (int i = 0; i < envc; i++) {
-            int size = strlen(kernel_envp[i]) + 1;
+        for (int32_t i = 0; i < envc; i++) {
+            int32_t size = strlen(kernel_envp[i]) + 1;
             offset += ALIGN_UP(size, 16);
             thread_envp[i] = stack_top - offset;
             __memcpy((void*)(stack_top - offset), kernel_envp[i], size);
@@ -250,7 +250,7 @@ extern "C"{
         offset += 8;
         *(uint64_t*)(stack_top - offset) = 0; // envp[envc] = NULL
 
-        for (int i = envc - 1; i >= 0; i--) {
+        for (int32_t i = envc - 1; i >= 0; i--) {
             offset += 8;
             *(uint64_t*)(stack_top - offset) = thread_envp[i];
         }
@@ -258,7 +258,7 @@ extern "C"{
         offset += 8;
         *(uint64_t*)(stack_top - offset) = 0; // argv[argc] = NULL
 
-        for (int i = argc - 1; i >= 0; i--) {
+        for (int32_t i = argc - 1; i >= 0; i--) {
             offset += 8;
             *(uint64_t*)(stack_top - offset) = thread_argv[i];
         }
@@ -270,16 +270,16 @@ extern "C"{
 
         thread->ctx.rsp = stack_top - offset;
 
-        for (int i = 0; i < argc; i++)
+        for (int32_t i = 0; i < argc; i++)
             kfree(kernel_argv[i]);
         kfree(kernel_argv);
-        for (int i = 0; i < envc; i++)
+        for (int32_t i = 0; i < envc; i++)
             kfree(kernel_envp[i]);
         kfree(kernel_envp);
     }
 
 
-    thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int priority, void *entry){
+    thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry){
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         thread->id = sched_tid++;
         thread->cpu_num = cpu_num;
@@ -321,7 +321,7 @@ extern "C"{
         return thread;
     }
 
-    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int priority, void *vfs_inode, int argc, char *argv[], char *envp[]){
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *vfs_inode, int32_t argc, char *argv[], char *envp[]){
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         thread->id = sched_tid++;
         thread->cpu_num = cpu_num;
@@ -469,7 +469,7 @@ extern "C"{
     proc_t *this_proc(){
         return this_cpu()->current_thread->parent;
     }
-    void Exit(int code){
+    void Exit(int32_t code){
         LAPIC::StopTimer();
         thread_t *thread = Schedule::this_thread();
         thread->state = THREAD_ZOMBIE;

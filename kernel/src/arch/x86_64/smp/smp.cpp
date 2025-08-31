@@ -18,7 +18,7 @@ cpu_t *smp_cpu_list[MAX_CPU];
 volatile spinlock_t smp_lock = 0;
 uint64_t started_count = 0;
 volatile bool smp_started = false;
-int smp_last_cpu = 0;
+int32_t smp_last_cpu = 0;
 uint32_t smp_bsp_cpu;
 
 void smp_setup_kstack(cpu_t *cpu) {
@@ -30,7 +30,7 @@ void smp_setup_kstack(cpu_t *cpu) {
 void smp_setup_thread_queue(cpu_t *cpu) {
     _memset(cpu->thread_queues, 0, THREAD_QUEUE_CNT * sizeof(thread_queue_t));
     uint64_t quantum = 5;
-    for (int i = 0; i < THREAD_QUEUE_CNT; i++) {
+    for (int32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
         cpu->thread_queues[i].quantum = quantum;
         quantum += 5;
     }

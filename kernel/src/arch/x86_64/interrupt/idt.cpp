@@ -133,7 +133,7 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     stackframe_t *stack;
     __asm__ volatile ("movq %%rbp, %0" : "=r"(stack));
     kerror("Stack trace:\n");
-    for (int i = 0; i < 5 && stack; i++) {
+    for (int32_t i = 0; i < 5 && stack; i++) {
         kerror("    0x%p\n", stack->rip);
         stack = stack->rbp;
     }

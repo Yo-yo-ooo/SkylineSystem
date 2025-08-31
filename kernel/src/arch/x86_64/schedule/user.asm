@@ -70,7 +70,7 @@ syscall_entry:
 
 
 
-sched_sighandle: ; (int, void*)
+sched_sighandle: ; (int32_t, void*)
     mov ax, cs
     and ax, 3
     cmp ax, 0

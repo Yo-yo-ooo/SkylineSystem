@@ -94,7 +94,7 @@ NVME::NVME(PCI::PCIHeader0 *header){
 
     this->WriteReg(NVME_CTRLREG_CC,this->ReadReg(NVME_CTRLREG_CC) | 1);
 
-    int timeout = 500 * ((cap >> 24) & 0xff);
+    int32_t timeout = 500 * ((cap >> 24) & 0xff);
 	while (timeout > 30) {
 		if ((~this->ReadReg(NVME_CTRLREG_CSTS) & 1) || (~this->ReadReg(NVME_CTRLREG_CC) & 1)) {
 			timeout--;
@@ -164,7 +164,7 @@ bool NVME::TryInsertRequest(NVME::SubQue *subQue, NVME::NVMERequest *req) {
 	}
 	subQue->Load += req->inputSz;
 	// set identifier of each input to the idx in queue
-	for (int i = 0; i < req->inputSz; i++) {
+	for (int32_t i = 0; i < req->inputSz; i++) {
 		req->input[i].CommandIdent = subQue->Tail;
 		subQue->Req[subQue->Tail] = req;
 		__memcpy(&req->input[i], subQue->Entries + subQue->Tail, sizeof(NVME::SubQueEntry));
@@ -224,7 +224,7 @@ bool NVME::InitNsp(hw_nvme_Host *host) {
 
 	printk(screen_log, "(NVME %p): nsp num:%d\n", host, host->devNum);
 
-	for (int i = 0; i < host->devNum; i++) {
+	for (int32_t i = 0; i < host->devNum; i++) {
 		hw_nvme_initReq_identify(req, hw_nvme_Request_Identify_type_Nsp, nspLst[i], nsp);
 
 		hw_nvme_request(host, host->subQue[0], req);

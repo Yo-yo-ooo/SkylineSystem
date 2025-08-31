@@ -33,7 +33,7 @@ namespace SLAB{
     void Init() {
         uint64_t last_size = 8;
         uint64_t size = 0;
-        for (int i = 0; i < 8; i++) {
+        for (int32_t i = 0; i < 8; i++) {
             size = last_size * 2;
             last_size = size;
             caches[i] = slab_create_cache(size);

@@ -39,7 +39,7 @@ typedef int32_t spinlock_t;
 typedef uint64_t loff_t;
 
 #if __BITS_PER_LONG != 64
-typedef int ssize_t;
+typedef int32_t ssize_t;
 #else
 typedef long ssize_t;
 #endif
