@@ -7,7 +7,7 @@
 u64 syscall_rsvd(syscall_args a) {return 0;}
 
 void* syscall_handler_table[] = {
-    syscall_rsvd, // 0
+    syscall_rsvd,
 };
 
 
@@ -22,7 +22,7 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
             //sys_sigreturn(frame);
             break;
         case 57: // fork
-            //frame->rax = sys_fork(frame);
+            frame->rax = sys_fork(frame);
             break;
         default: {
             uint64_t(*handler)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t) =

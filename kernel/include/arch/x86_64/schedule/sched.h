@@ -23,7 +23,7 @@
 typedef struct proc_t proc_t;
 
 typedef struct {
-    VFSInode *node;
+    vnode_t *node;
     size_t off;
     int32_t flags;
 } fd_t;
@@ -73,7 +73,7 @@ typedef struct thread_t {
 typedef struct proc_t {
     uint64_t id;
     sigaction_t sig_handlers[64];
-    VFSInode *cwd;
+    vnode_t *cwd;
     thread_t *threads;
     pagemap_t *pagemap;
     struct proc_t *parent; // In case of fork

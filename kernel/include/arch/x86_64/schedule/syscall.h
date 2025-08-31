@@ -45,6 +45,8 @@ typedef struct syscall_frame_t{
     uint64_t kernel_stack;
 } syscall_frame_t;
 
+uint64_t sys_fork(syscall_frame_t *frame);
+
 #define IA32_EFER  0xC0000080
 #define IA32_STAR  0xC0000081
 #define IA32_LSTAR 0xC0000082
