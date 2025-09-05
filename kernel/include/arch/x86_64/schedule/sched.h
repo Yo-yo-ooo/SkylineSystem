@@ -68,6 +68,7 @@ typedef struct thread_t {
     struct thread_t *list_next; // In the cpu thread list
     struct thread_t *list_prev;
     struct proc_t *parent;
+    uint64_t sleeping_time;
 } thread_t;
 
 typedef struct proc_t {

@@ -4,7 +4,7 @@
 #include <klib/time.h>
 
 #include <klib/algorithm/hash_table.h>
-#include <drivers/dev/dev.h>
+
 #include <klib/mutex/mutex.h>
 
 PACK(typedef struct VFSTimeDesc{
@@ -30,6 +30,7 @@ PACK(typedef struct VFSTimeDesc{
 typedef struct vnode_t {
     uint8_t Type;
     uint32_t Size;
+    uint32_t DEVIDX;
     uint32_t Inode;
     char Name[256];
     int32_t RefCount;

@@ -5,7 +5,6 @@
 
 #include <klib/klib.h>
 #include <conf.h>
-
 #include <fs/vfs.h>
 
 typedef enum VsDevType
@@ -66,6 +65,10 @@ namespace Dev
     u8 Write(uint64_t lba, uint32_t SectorCount, void* Buffer);
     u8 ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
     u8 WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
+
+    void LookUp(vnode_t *node, const char *name);
+    size_t special_read(struct vnode_t *Node, uint8_t *buffer, size_t off, size_t len);
+    size_t special_write(struct vnode_t *Node, uint8_t *buffer, size_t off, size_t len);
 
 };
 

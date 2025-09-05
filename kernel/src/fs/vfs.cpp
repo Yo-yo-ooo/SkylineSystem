@@ -2,9 +2,9 @@
 #include <fs/vfs.h>
 #include <mem/heap.h>
 #include <klib/errno.h>
-
+#include <drivers/dev/dev.h>
 namespace VFS{
-    vnode_t *root_node = NULL;
+    vnode_t *root_node = nullptr;
 
    void Init() {
         root_node = (vnode_t*)kmalloc(sizeof(vnode_t));
@@ -39,21 +39,21 @@ namespace VFS{
         char *new_path = kmalloc(strlen(Path) + 1);
         __memcpy(new_path, Path, strlen(Path) + 1);
         char *token = strtok(new_path + (Path[0] == '/' ? 1 : 0), "/");
-        while (token != NULL) {
+        while (token != nullptr) {
             if (!strcmp(token, ".")) {
-                token = strtok(NULL, "/");
+                token = strtok(nullptr, "/");
                 continue;
             } else if (!strcmp(token, "..")) {
                 current = current->Parent;
-                token = strtok(NULL, "/");
+                token = strtok(nullptr, "/");
                 continue;
             }
             current = VFS::lookup(current, token);
             if (!current) {
                 kfree(new_path);
-                return NULL;
+                return nullptr;
             }
-            token = strtok(NULL, "/");
+            token = strtok(nullptr, "/");
         }
         current->RefCount++;
         kfree(new_path);
@@ -88,7 +88,7 @@ namespace VFS{
     vnode_t *lookup(vnode_t *Node, const char *name) {
         if (Node->lookup)
             return Node->lookup(Node, name);
-        return NULL;
+        return nullptr;
     }
 
     int32_t ioctl(vnode_t *Node, uint64_t Request, void *Arg) {

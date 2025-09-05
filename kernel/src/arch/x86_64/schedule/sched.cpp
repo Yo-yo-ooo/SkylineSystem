@@ -18,7 +18,7 @@ static void sched_idle(){
 }
 
 static cpu_t *get_lw_cpu() {
-    cpu_t *cpu = NULL;
+    cpu_t *cpu = nullptr;
     for (int32_t i = 0; i < smp_last_cpu; i++) {
         if (smp_cpu_list[i] == NULL || i == smp_bsp_cpu) continue;
         if (!cpu) {
@@ -78,8 +78,8 @@ namespace Schedule{
             thread->priority++;
             thread_queue_t *new_queue = &cpu->thread_queues[thread->priority];
             if (thread->list_next == thread) {
-                old_queue->head = NULL;
-                old_queue->current = NULL;
+                old_queue->head = nullptr;
+                old_queue->current = nullptr;
             } else {
                 if (old_queue->head == thread)
                     old_queue->head = thread->list_next;
@@ -133,7 +133,7 @@ namespace Schedule{
                     return thread;
                 }
             }
-            return NULL;
+            return nullptr;
         }
 
 extern "C"{
@@ -188,10 +188,10 @@ extern "C"{
     proc_t *NewProcess(bool user){
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         proc->id = sched_pid++;
-        //proc->cwd = root_node;
-        proc->threads = NULL;
-        proc->parent = NULL;
-        proc->children = proc->sibling = NULL;
+        proc->cwd = VFS::root_node;
+        proc->threads = nullptr;
+        proc->parent = nullptr;
+        proc->children = proc->sibling = nullptr;
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         _memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
         _memset(proc->fd_table, 0, 256 * 8);
@@ -248,7 +248,7 @@ extern "C"{
 
         // Set up argv and argc
         offset += 8;
-        *(uint64_t*)(stack_top - offset) = 0; // envp[envc] = NULL
+        *(uint64_t*)(stack_top - offset) = 0; // envp[envc] = nullptr
 
         for (int32_t i = envc - 1; i >= 0; i--) {
             offset += 8;
@@ -256,7 +256,7 @@ extern "C"{
         }
 
         offset += 8;
-        *(uint64_t*)(stack_top - offset) = 0; // argv[argc] = NULL
+        *(uint64_t*)(stack_top - offset) = 0; // argv[argc] = nullptr
 
         for (int32_t i = argc - 1; i >= 0; i--) {
             offset += 8;
@@ -442,16 +442,16 @@ extern "C"{
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         proc->id = sched_pid++;
         proc->cwd = parent->cwd;
-        proc->threads = NULL;
+        proc->threads = nullptr;
         proc->parent = parent;
-        proc->sibling = NULL;
+        proc->sibling = nullptr;
         if (!parent->children) parent->children = proc;
         else {
             proc_t *last_sibling = parent->children;
-            while (last_sibling->sibling != NULL)
+            while (last_sibling->sibling != nullptr)
                 last_sibling = last_sibling->sibling;
             last_sibling->sibling = proc;
-            proc->sibling = NULL;
+            proc->sibling = nullptr;
         }
         proc->pagemap = VMM::Fork(parent->pagemap);
         __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
@@ -462,7 +462,7 @@ extern "C"{
     }
 
     thread_t *this_thread(){
-        if (!this_cpu()) return NULL;
+        if (!this_cpu()) return nullptr;
         return this_cpu()->current_thread;
     }
 
@@ -486,6 +486,13 @@ extern "C"{
             child->waiting_status = code | (thread->id << 32);
             child = child->next;
         } while (child != parent->threads);
+        Schedule::Yield();
+    }
+
+    void Sleep(uint64_t ms){
+        LAPIC::StopTimer();
+        Schedule::this_thread()->state = THREAD_SLEEPING;
+        Schedule::this_thread()->sleeping_time = ms;
         Schedule::Yield();
     }
 

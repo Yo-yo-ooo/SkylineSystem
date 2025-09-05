@@ -58,15 +58,7 @@ void __init x86_64_init(void){
         hcf();
     }
     kpok("FPU INIT!\n");
-    
-    /* kinfo("REGIST SCHEDULE...\n");
-    irq_register(0x80 - 32, Schedule::Schedule);
-    kpok("SCHEDULE REGISTED!\n"); */
-    
-
-    /* Schedule::Init();
-    user_init(); */
-    //LAPIC::CalibrateTimer();
+    InitFunc("VFS",VFS::Init());
     InitFunc("VsDev",Dev::Init());
     //InitFunc("ATA",ATA::Init());
     if(ACPI::mcfg == NULL){PCI::DoPCIWithoutMCFG();}
