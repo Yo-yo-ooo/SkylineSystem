@@ -173,7 +173,7 @@ extern "C"{
         idt_install_irq(16, (void*)Schedule::Useless::Preempt);
         idt_install_irq(17, (void*)Schedule::Useless::Switch);
         idt_set_ist(SCHED_VEC, 1);
-        idt_set_ist(SCHED_VEC+1, 1);
+        idt_set_ist(SCHED_VEC + 1, 1);
     }
     void Install(){
         for (uint32_t i = 0; i <= smp_last_cpu; i++) {
@@ -500,7 +500,7 @@ extern "C"{
         LAPIC::StopTimer();
         Schedule::this_thread()->flags &= ~TFLAGS_PREEMPTED;
         Schedule::this_thread()->preempt_count = 0;
-        LAPIC::IPI(this_cpu()->id, SCHED_VEC+1);
+        LAPIC::IPI(this_cpu()->id, SCHED_VEC + 1);
     }
 
     void PAUSE(){

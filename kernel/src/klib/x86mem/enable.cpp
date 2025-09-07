@@ -3,7 +3,7 @@
 #include <klib/x86/enable.h>
 #include <klib/x86/xstate.h>
 
-#if 0
+
 
 uint8_t BYTE_ALIGNMENT = 0x0F;
 static volatile uint64_t xcr0;
@@ -42,6 +42,7 @@ void xrstor(int32_t what, struct xstate_buffer* from) {
 int32_t xstate_enable(void) {
     spinlock_lock(&x86_avx_enable_lock);
     uint64_t rf = get_rflags();
+    asm("cli");
     volatile uint64_t cr4 = get_cr4();
     kinfoln("Hello");
     cr4 = cr4 | CR4_OSXSAVE | CR4_OSXMMEXCPT;
@@ -55,39 +56,27 @@ int32_t xstate_enable(void) {
 }
 
 int32_t avx_enable(void) {
+    uint64_t rf = get_rflags();
+    //asm("cli");
+
     xcr0 = 0x007; // x87, sse, avx
-
-
     xsetbv(0, xcr0);
 
-
-    sysflag_g.AVXEnabled = 1;
-    BYTE_ALIGNMENT = 0x1F;
-
-
+    set_rflags(rf);
     return 0;
 }
 
 int32_t avx512_enable(void) {
     uint64_t rf = get_rflags();
+    //asm("cli");
 
     xcr0 = 0x0e7; // x87, sse, avx, avx512
-
-    asm("cli");
-
     xsetbv(0, xcr0);
 
-    if(xgetbv(0) == xcr0) return 1;
+    ASSERT(xgetbv(0) == xcr0);
 
 
     set_rflags(rf);
-
-    sysflag_g.AVX512Enabled = 1;
-    BYTE_ALIGNMENT = 0x3F;
-
-    asm("sti");
-
     return 0;
 }
 
-#endif

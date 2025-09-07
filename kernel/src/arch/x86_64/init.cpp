@@ -5,7 +5,7 @@
 #include <drivers/keyboard/x86/keyboard.h>
 #include <drivers/dev/dev.h>
 #include <fs/vfs.h>
-//#include <drivers/dev/dev.h>
+#include <fs/lwext4/ctvfs.h>
 #include <fs/lwext4/ext4.h>
 #include <fs/lwext4/blockdev/blockdev.h>
 
@@ -42,12 +42,6 @@ void __init x86_64_init(void){
     kinfoln("ENABLED ICMR!");
     InitFunc("LAPIC",LAPIC::Init());
     InitFunc("IOAPIC",IOAPIC::Init());
-
-    //InitFunc("SSE",sse_enable());
-
-    //InitFunc("AVX",avx_enable());
-    //InitFunc("AVX512",avx512_enable());
-
     InitFunc("PIT",PIT::InitPIT());
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
@@ -58,6 +52,11 @@ void __init x86_64_init(void){
         hcf();
     }
     kpok("FPU INIT!\n");
+    //InitFunc("XSTATE",xstate_enable());
+    InitFunc("SSE",sse_enable());
+    //InitFunc("AVX",avx_enable());
+    //InitFunc("AVX512",avx512_enable());
+
     InitFunc("VFS",VFS::Init());
     InitFunc("VsDev",Dev::Init());
     //InitFunc("ATA",ATA::Init());
@@ -65,19 +64,20 @@ void __init x86_64_init(void){
     else{InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));}
     InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
 
-    //InitFunc("Dev",Dev::Init());
     InitFunc("KEYBOARD(x86)",keyboard_init());
 
-    if(!ext4_kernel_init("sata0","/mp/")){hcf();}
+    EXT4_VFS::Init("sata0","/mp/",0);
+
+    /* if(!ext4_kernel_init("sata0","/mp/")){hcf();}*/
 
 	test_lwext4_dir_ls("/mp/");
 
-    uint8_t buf[12] = "Hello WORLD";
+    /*uint8_t buf[12] = "Hello WORLD";
     if(test_lwext4_file_test(buf,strlen(buf),2) == true)
         kprintf("[Ext4 Test?]YESSSSSSSSSSSSSSSSS\n");
 
     if(FSAllIdentify() == false)
         kerror("False!");
     kinfoln("I");
-    FSPrintDesc();
+    FSPrintDesc(); */
 }

@@ -69,6 +69,8 @@ struct ext4_lock {
 
 /**@brief   File descriptor. */
 typedef struct ext4_file {
+    /*@brief  PATH PTR ADDRESS*/
+    uint64_t PATH_ADDR;
 
 	/**@brief   Mount point handle.*/
 	struct ext4_mountpoint *mp;
