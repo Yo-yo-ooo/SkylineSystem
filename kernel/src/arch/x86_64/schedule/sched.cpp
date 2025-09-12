@@ -188,13 +188,13 @@ extern "C"{
     proc_t *NewProcess(bool user){
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         proc->id = sched_pid++;
-        proc->cwd = VFS::root_node;
+        //proc->cwd = VFS::root_node;
         proc->threads = nullptr;
         proc->parent = nullptr;
         proc->children = proc->sibling = nullptr;
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         _memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
-        _memset(proc->fd_table, 0, 256 * 8);
+        //_memset(proc->fd_table, 0, 256 * 8);
         /* proc->fd_table[0] = fd_open("/dev/pts0", O_RDONLY); */
         /* proc->fd_table[1] = fd_open("/dev/pts0", O_WRONLY); */
         /* proc->fd_table[2] = fd_open("/dev/pts0", O_WRONLY); */
@@ -441,7 +441,7 @@ extern "C"{
         proc_t *parent = Schedule::this_proc();
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         proc->id = sched_pid++;
-        proc->cwd = parent->cwd;
+        //proc->cwd = parent->cwd;
         proc->threads = nullptr;
         proc->parent = parent;
         proc->sibling = nullptr;
@@ -455,7 +455,7 @@ extern "C"{
         }
         proc->pagemap = VMM::Fork(parent->pagemap);
         __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
-        __memcpy(proc->fd_table, parent->fd_table, 256 * 8);
+        //__memcpy(proc->fd_table, parent->fd_table, 256 * 8);
         proc->fd_count = parent->fd_count;
         sched_proclist[proc->id] = proc;
         return proc;

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <klib/klib.h>
-#include <fs/vfs.h>
 
 #if !defined(__x86_64__)
 #error "Panic (/kernel/src/drivers/keyboard/x86): This keyboard driver is only for x86_64!"

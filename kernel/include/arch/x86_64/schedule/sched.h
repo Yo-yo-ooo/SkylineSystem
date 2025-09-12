@@ -2,9 +2,6 @@
 
 #include <klib/klib.h>
 
-//#include <mem/heap.h>
-#include <fs/vfs.h>
-
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
 
@@ -21,12 +18,6 @@
 #define SCHED_PREEMPTION_MAX 16
 
 typedef struct proc_t proc_t;
-
-typedef struct {
-    vnode_t *node;
-    size_t off;
-    int32_t flags;
-} fd_t;
 
 typedef struct {
     unsigned long sig[1024 / 64];
@@ -74,13 +65,13 @@ typedef struct thread_t {
 typedef struct proc_t {
     uint64_t id;
     sigaction_t sig_handlers[64];
-    vnode_t *cwd;
+    //vnode_t *cwd;
     thread_t *threads;
     pagemap_t *pagemap;
     struct proc_t *parent; // In case of fork
     struct proc_t *children;
     struct proc_t *sibling;
-    fd_t *fd_table[256];
+    //fd_t *fd_table[256];
     int32_t fd_count;
 } proc_t;
 

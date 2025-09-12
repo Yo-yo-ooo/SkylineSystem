@@ -2,7 +2,6 @@
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 
-static vnode_t *dev_node = nullptr;
 namespace Dev{
     VDL DevList_[MAX_VSDEV_COUNT] = {0};
     uint32_t vsdev_list_idx = 0;
@@ -10,30 +9,11 @@ namespace Dev{
 
     u32 ThisDev = 0;
 
-    void LookUp(vnode_t *node, const char *name){
-        vnode_t *current = node->Child;
-        while (current) {
-            if (!strcmp(current->Name, name))
-                break;
-            current = current->Next;
-            if (!current)
-                return nullptr;
-        }
-        return current;
-    }
 
     void Init(){
         vsdev_list_idx = 0;
         ThisDev = 0;
-        _memset(&ThisDev,0,sizeof(VsDevInfo));
-        dev_node = (vnode_t*)kmalloc(sizeof(vnode_t));
-        _memset(dev_node, 0, sizeof(vnode_t));
-        dev_node->Type = FS_DIR;
-        dev_node->Size = 4096;
-        dev_node->Inode = 0;
-        __memcpy(dev_node->Name, "dev", 4);
-        dev_node->lookup = Dev::LookUp;
-        VFS::AddNode(VFS::root_node, dev_node);
+        //_memset(&ThisDev,0,sizeof(VsDevInfo));
     }
 
     char* TypeToString(VsDevType type){
@@ -76,31 +56,12 @@ namespace Dev{
         DevList_[vsdev_list_idx].MaxSectorCount = SectorCount;
         vsdev_list_idx++;
         kfree(temp_str);
-        vnode_t *temp_node = (vnode_t*)kmalloc(sizeof(vnode_t));
-        _memset(temp_node, 0, sizeof(vnode_t));
-        //__memcpy(temp_node->name,DevList_[vsdev_list_idx].Name , 6);
-        temp_node->Type = FS_DIR;
-        temp_node->Size = 4096;
-        temp_node->Inode = 0;
-        temp_node->lookup = Dev::LookUp;
-        temp_node->read = Dev::special_read;
-        temp_node->write = Dev::special_write;
-        temp_node->Mutex = Mutex::Create();
-        __memcpy(temp_node->Name, DevList_[vsdev_list_idx].Name, strlen(DevList_[vsdev_list_idx].Name) + 1);
-        VFS::AddNode(dev_node, temp_node);
         debugpln("[AddStorageDevice]END");
         
         spinlock_unlock(&DevList_->lock);
     }
 
-    size_t special_read(struct vnode_t *Node, uint8_t *buffer, size_t off, size_t len){
-        Dev::SetSDev(Node->DEVIDX);
-        return Dev::ReadBytes(off,len,buffer);
-    }   
-    size_t special_write(struct vnode_t *Node, uint8_t *buffer, size_t off, size_t len){
-        Dev::SetSDev(Node->DEVIDX);
-        return Dev::WriteBytes(off,len,buffer);
-    }
+
 #pragma GCC pop_options
 
     u32 GetSDEVTCount(VsDevType type){
