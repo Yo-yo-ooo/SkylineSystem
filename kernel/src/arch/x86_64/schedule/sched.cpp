@@ -7,14 +7,10 @@
 #include <arch/x86_64/vmm/vmm.h>
 
 static volatile uint64_t sched_tid = 0;
-
-static void sched_idle(){
+extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap);
+void sched_idle(){
     while (true)
-    {
-        /* code */
-        Schedule::Yield();
-    }
-    
+    {Schedule::Yield();}
 }
 
 static cpu_t *get_lw_cpu() {
@@ -194,12 +190,12 @@ extern "C"{
         proc->children = proc->sibling = nullptr;
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         _memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
-        //_memset(proc->fd_table, 0, 256 * 8);
+        _memset(proc->fd_table, 0, 256 * 8);
         /* proc->fd_table[0] = fd_open("/dev/pts0", O_RDONLY); */
         /* proc->fd_table[1] = fd_open("/dev/pts0", O_WRONLY); */
         /* proc->fd_table[2] = fd_open("/dev/pts0", O_WRONLY); */
         /* proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY); */
-        /* proc->fd_count = 4; */
+        proc->fd_count = 4;
         sched_proclist[proc->id] = proc;
         return proc;
     }
@@ -321,7 +317,7 @@ extern "C"{
         return thread;
     }
 
-    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *vfs_inode, int32_t argc, char *argv[], char *envp[]){
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]){
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         thread->id = sched_tid++;
         thread->cpu_num = cpu_num;
@@ -336,9 +332,14 @@ extern "C"{
         thread->sig_mask = 0;
 
         // Load ELF
-        /* uint8_t *buffer = (uint8_t*)kmalloc(node->size);
-        vfs_read(node, buffer, 0, node->size);
-        thread->ctx.rip = elf_load(buffer, thread->pagemap); */
+        static ext4_file f;
+        ext4_fopen(&f,Path,"r");
+        kinfoln("%d",f.fsize);
+        uint8_t *buffer = (uint8_t*)kmalloc(ext4_fsize(&f));
+        ext4_fread(&f,buffer,ext4_fsize(&f),NULL);
+        thread->ctx.rip = elf_load(buffer, thread->pagemap); 
+        
+        ext4_fclose(&f);
 
         // Fx area
         thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);
@@ -455,7 +456,7 @@ extern "C"{
         }
         proc->pagemap = VMM::Fork(parent->pagemap);
         __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
-        //__memcpy(proc->fd_table, parent->fd_table, 256 * 8);
+        __memcpy(proc->fd_table, parent->fd_table, 256 * 8);
         proc->fd_count = parent->fd_count;
         sched_proclist[proc->id] = proc;
         return proc;

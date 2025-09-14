@@ -69,6 +69,7 @@ T CFCast(auto F)
 #define __init
 #ifdef __x86_64__
 #define __ffunc __attribute__((target("sse2")))
+#define _intr __attribute__((interrupt))
 #else
 #define __ffunc
 #endif

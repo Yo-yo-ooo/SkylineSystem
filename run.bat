@@ -4,8 +4,11 @@ SET SourceFile=disk.img
 
 if not exist %SourceFile% (
     qemu-img create %SourceFile% 1000M -f qcow2
+    qemu-img resize %SourceFile% 1G
+    wsl -e mkfs.ext4 %SourceFile%
+    wsl -e e2cp -p test %SourceFile%:/
 ) else (
-    echo %SourceFile% is exist, Stop create disk.img
+    echo %SourceFile% is exist, Stop create %SourceFile%
 )
 
 qemu-system-%1 -machine q35 -cpu qemu64,+x2apic,+avx ^

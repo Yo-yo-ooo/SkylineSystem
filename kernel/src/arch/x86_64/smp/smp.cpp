@@ -49,7 +49,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     cpu->thread_count = 0;
     cpu->sched_lock = 0;
     cpu->has_runnable_thread = false;
-    user_init();
+    syscall_init();
     smp_setup_thread_queue(cpu);
     smp_setup_kstack(cpu);
     sse_enable();
@@ -57,7 +57,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     started_count++;
     if (mp_info->lapic_id > smp_last_cpu) smp_last_cpu = mp_info->lapic_id;
     spinlock_unlock(&smp_lock);
-    while (1)
+    while (true)
         __asm__ volatile ("hlt");
 }
 

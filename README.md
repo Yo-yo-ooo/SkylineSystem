@@ -8,11 +8,16 @@ Make sure you have install these software linux
 * binutil
 * xorriso
 * make
+* e2cp
 
 Run with this command in the project root dir
 
 ```bash
 make cm
+
+# Next build test app and copy to img
+./build.sh
+
 ```
 
 ## Features(x86_64)

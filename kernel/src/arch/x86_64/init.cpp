@@ -66,7 +66,7 @@ void __init x86_64_init(void){
 
 
 
-     if(!ext4_kernel_init("sata0","/mp/")){hcf();}
+    if(!ext4_kernel_init("sata0","/mp/")){hcf();}
 
 	test_lwext4_dir_ls("/mp/");
 
@@ -78,4 +78,12 @@ void __init x86_64_init(void){
         kerror("False!");
     kinfoln("I");
     FSPrintDesc(); 
+
+    Schedule::Install();
+
+    proc_t *proc = Schedule::NewProcess(true);
+    
+    thread_t *thread = Schedule::NewThread(proc, 1, 0, 
+        "/mp/test", 1, (char*[]){"test"}, (char*[]){nullptr});
+    
 }

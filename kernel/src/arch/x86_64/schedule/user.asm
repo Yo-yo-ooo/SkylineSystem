@@ -2,8 +2,6 @@
 [section .text]
 [global syscall_entry]
 [extern syscall_handler]
-[global sched_sighandle]
-[global sched_sighandle_end]
 
 syscall_entry:
     ; Currently running on user gs, switch to the kernel gs
@@ -68,20 +66,3 @@ syscall_entry:
     swapgs ; swap again, now kernel stack is the kernel gs again
     o64 sysret
 
-
-
-sched_sighandle: ; (int32_t, void*)
-    mov ax, cs
-    and ax, 3
-    cmp ax, 0
-    je .sighandle_sys ; if (!(cs & 3)) sched_sighandle_sys()
-    jmp .sighandle_call
-.sighandle_sys:
-    ; It got interrupted mid-syscall, let's swapgs
-    swapgs
-.sighandle_call:
-    call rsi ; sa_handler, sig number is in rdi already
-    ret ; Calls sa_restorer (it was pushed onto the stack)
-
-sched_sighandle_end:
-    ; Label for the kernel to know the size of sched_sighandle

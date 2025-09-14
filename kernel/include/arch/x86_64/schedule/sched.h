@@ -18,6 +18,7 @@
 #define SCHED_PREEMPTION_MAX 16
 
 typedef struct proc_t proc_t;
+#include <fs/fd.h>
 
 typedef struct {
     unsigned long sig[1024 / 64];
@@ -71,7 +72,7 @@ typedef struct proc_t {
     struct proc_t *parent; // In case of fork
     struct proc_t *children;
     struct proc_t *sibling;
-    //fd_t *fd_table[256];
+    fd_t *fd_table[256];
     int32_t fd_count;
 } proc_t;
 
@@ -100,7 +101,7 @@ namespace Schedule{
     proc_t *NewProcess(bool user);
     void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]);
     thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry);
-    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *vfs_inode, int32_t argc, char *argv[], char *envp[]);
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]);
     thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame);
     proc_t *ForkProcess();
     thread_t *this_thread();
