@@ -171,6 +171,7 @@ extern "C"{
         idt_set_ist(SCHED_VEC, 1);
         idt_set_ist(SCHED_VEC + 1, 1);
     }
+    
     void Install(){
         for (uint32_t i = 0; i <= smp_last_cpu; i++) {
             cpu_t *cpu = smp_cpu_list[i];
@@ -338,7 +339,6 @@ extern "C"{
         uint8_t *buffer = (uint8_t*)kmalloc(ext4_fsize(&f));
         ext4_fread(&f,buffer,ext4_fsize(&f),NULL);
         thread->ctx.rip = elf_load(buffer, thread->pagemap); 
-        
         ext4_fclose(&f);
 
         // Fx area
@@ -379,6 +379,7 @@ extern "C"{
         get_cpu(cpu_num)->has_runnable_thread = true;
 
         Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+        kpokln("Add Thread!");
 
         return thread;
     }
@@ -512,6 +513,6 @@ extern "C"{
             Schedule::this_thread()->flags &= ~TFLAGS_PREEMPTED;
             Schedule::this_thread()->preempt_count = 0;
         }
-        LAPIC::IPI(this_cpu()->id, SCHED_VEC+1);
+        LAPIC::IPI(this_cpu()->id, SCHED_VEC + 1);
     }
 }

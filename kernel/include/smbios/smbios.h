@@ -4,17 +4,17 @@
 #define _SMBIOS_H_
 
 #include <klib/types.h>
-
+#include <klib/klib.h>
 #include <stdint.h>
 
 namespace SMBIOS
 {
 
-    typedef struct SHeader {
+    PACK(typedef struct SHeader {
         uint8_t type;
         uint8_t length;
         uint16_t handle;
-    }Header __attribute__((packed));
+    })Header;
     /*32-bit Entry Point Structure Format
     Offset	Name	                        Size
     0x00	Anchor String	                4 BYTEs
@@ -31,7 +31,7 @@ namespace SMBIOS
     0x18	Structure Table Address	        DWORD
     0x1C	Number of Structures	        WORD
     0x1E	BCD Revision	                BYTE*/
-    typedef struct ENTRY_POINT_32
+    PACK(typedef struct ENTRY_POINT_32
     {
         uint8_t Anchor_String[4];
         uint8_t Checksum;
@@ -47,7 +47,7 @@ namespace SMBIOS
         uint32_t TableAddress;
         uint16_t NumberOfStructures;
         uint8_t BCDRevision;
-    }EntryPoint32 __attribute__((packed));
+    })EntryPoint32;
 
     /*64-bit Entry Point Structure Format
     Offset	Name	                        Size

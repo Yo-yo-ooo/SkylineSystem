@@ -73,6 +73,7 @@ override KCFLAGS += \
     -ffunction-sections \
     -fdata-sections \
 	-O0 \
+	-g3 \
 	-DLIMINE_API_REVISION=3 \
 	-fpermissive \
 	-Wno-error=deprecated \

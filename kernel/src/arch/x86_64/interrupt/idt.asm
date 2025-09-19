@@ -76,7 +76,7 @@ isr_err_stub i
 %assign i i+1
 %endrep
 
-section .data
+[section .data]
 
 idt_int_table:
     %assign i 0

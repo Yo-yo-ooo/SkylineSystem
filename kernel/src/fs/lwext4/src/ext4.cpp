@@ -3530,3 +3530,20 @@ Identify:
         }
     }
 }
+
+void ext4_fs_test_all(){
+
+    if(!ext4_kernel_init("sata0","/mp/")){hcf();}
+
+    test_lwext4_dir_ls("/mp/");
+
+    uint8_t buf[12] = "Hello WORLD";
+    if(test_lwext4_file_test(buf,strlen(buf),2) == true)
+        kprintf("[Ext4 Test?]YESSSSSSSSSSSSSSSSS\n");
+
+    if(FSAllIdentify() == false)
+        kerror("False!");
+    kinfoln("I");
+    FSPrintDesc(); 
+
+}

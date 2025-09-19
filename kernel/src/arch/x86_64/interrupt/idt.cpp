@@ -84,7 +84,8 @@ void idt_set_ist(uint16_t vector, uint8_t ist) {
     idt_entries[vector].ist = ist;
 }
 
-extern "C" void idt_install_irq(uint8_t irq, void *handler) {
+void idt_install_irq(uint8_t irq, void *handler) {
+    kpokln("IRQ %d Installed",irq);
     handlers[irq] = handler;
     if (irq < 16){IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
     // Right now we just map
@@ -94,8 +95,7 @@ extern "C" void idt_install_irq(uint8_t irq, void *handler) {
 extern "C" void idt_irq_handler(context_t *ctx) {
     void (*handler)(context_t*) = handlers[ctx->int_no - 32];
     if (!handler) {
-        kerror("Uncaught IRQ #%d.\n", ctx->int_no - 32);
-        ASSERT(0);
+        kerror("(PANIC)Uncaught IRQ #%d.\n", ctx->int_no - 32);
     }
     handler(ctx);
 }
@@ -122,7 +122,7 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     kerror("Kernel exception caught: %s.\n", isr_errors[ctx->int_no]);
     kerror("Kernel crash on core %d at 0x%p.\n", smp_started ? this_cpu()->id : 0,
         ctx->rip);
-    kerrorln("REGISTERS DATA(QWORD U64 UINT64_T u64 uint64_t|64bits data):");
+    kerrorln("REGISTERS DATA(64bits data):");
     kerrorln("RAX: 0x%p  RBX: 0x%p RCX: 0x%p RDX: 0x%p.",ctx->rax,ctx->rbx,ctx->rcx,ctx->rdx);
     kerrorln("RBP: 0x%p  RDI: 0x%p RSI: 0x%p RSP: 0x%p.",ctx->rbp,ctx->rdi,ctx->rsi,ctx->rsp);
     kerrorln("RFLAGS: 0x%p",ctx->rflags);

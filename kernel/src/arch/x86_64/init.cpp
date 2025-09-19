@@ -16,7 +16,7 @@
 #define PIC2_DATA 0xA1
 
 
-#define InitFunc(name,func) kinfo("Initialise %s...\n",name);func;kpok("%s Initialised!\n",name)
+#define InitFunc(name,func) /* kinfo("Initialise %s...\n",name); */func;kpok("%s Initialised!\n",name)
 
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
@@ -44,7 +44,7 @@ void __init x86_64_init(void){
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
     
-    kinfo("INIT FPU...\n");
+/*     kinfo("INIT FPU...\n"); */
     if (fpu_init()){
         kerror("FPU INIT FAILED: x86_64 CPU doesn't support FPU.\n");
         hcf();
@@ -54,6 +54,8 @@ void __init x86_64_init(void){
     InitFunc("SSE",sse_enable());
     //InitFunc("AVX",avx_enable());
     //InitFunc("AVX512",avx512_enable());
+    InitFunc("Schedule",Schedule::Init());
+    InitFunc("Syscall",syscall_init());
 
     
     InitFunc("VsDev",Dev::Init());
@@ -64,26 +66,12 @@ void __init x86_64_init(void){
 
     InitFunc("KEYBOARD(x86)",keyboard_init());
 
-
-
-    if(!ext4_kernel_init("sata0","/mp/")){hcf();}
-
-	test_lwext4_dir_ls("/mp/");
-
-    uint8_t buf[12] = "Hello WORLD";
-    if(test_lwext4_file_test(buf,strlen(buf),2) == true)
-        kprintf("[Ext4 Test?]YESSSSSSSSSSSSSSSSS\n");
-
-    if(FSAllIdentify() == false)
-        kerror("False!");
-    kinfoln("I");
-    FSPrintDesc(); 
-
     Schedule::Install();
 
     proc_t *proc = Schedule::NewProcess(true);
     
     thread_t *thread = Schedule::NewThread(proc, 1, 0, 
-        "/mp/test", 1, (char*[]){"test"}, (char*[]){nullptr});
-    
+        "/mp/test", 1, (char*[]){"test"}, (char*[]){nullptr}); 
+
+    LAPIC::IPIOthers(0, SCHED_VEC);
 }

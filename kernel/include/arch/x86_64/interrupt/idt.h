@@ -57,7 +57,7 @@ PACK(typedef struct idt_desc_t{
 void idt_init();
 void idt_reinit();
 void idt_set_ist(uint16_t vector, uint8_t ist);
-extern "C" void idt_install_irq(uint8_t irq, void *handler);
+void idt_install_irq(uint8_t irq, void *handler);
 
 
 #endif
