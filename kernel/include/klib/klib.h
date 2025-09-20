@@ -19,8 +19,8 @@
 #include <klib/serial.h>
 #include <klib/ctype.h>
 
-extern uint64_t hhdm_offset;
-extern uint64_t RSDP_ADDR;
+extern volatile uint64_t hhdm_offset;
+extern volatile uint64_t RSDP_ADDR;
 
 #define PAGE_SIZE 4096
 

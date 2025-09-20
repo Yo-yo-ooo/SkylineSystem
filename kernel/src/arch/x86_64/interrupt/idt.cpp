@@ -84,7 +84,7 @@ void idt_set_ist(uint16_t vector, uint8_t ist) {
     idt_entries[vector].ist = ist;
 }
 
-void idt_install_irq(uint8_t irq, void *handler) {
+extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
     kpokln("IRQ %d Installed",irq);
     handlers[irq] = handler;
     if (irq < 16){IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
@@ -113,7 +113,6 @@ extern "C" void idt_exception_handler(context_t *ctx) {
             return;
         }
     }
-    FT_Clear();
     if(ctx->int_no == 14){
         uint64_t cr2 = 0;
         __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));

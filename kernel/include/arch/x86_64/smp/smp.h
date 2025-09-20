@@ -35,7 +35,7 @@ extern uint32_t smp_bsp_cpu;
 
 extern int32_t smp_last_cpu;
 extern cpu_t *smp_cpu_list[MAX_CPU];
-extern volatile bool smp_started;
+extern bool smp_started;
 
 void smp_init();
 cpu_t *this_cpu();

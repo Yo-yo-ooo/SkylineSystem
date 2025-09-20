@@ -131,11 +131,11 @@ void FT_Clear(){
     flanterm_clear(ft_ctx);
 }
 
-uint64_t hhdm_offset = 0;
-uint64_t paging_mode = 0;
-uint64_t RSDP_ADDR = 0;
-uint32_t bsp_lapic_id = 0;
-uint64_t smp_cpu_count = 0;
+volatile uint64_t hhdm_offset = 0;
+volatile uint64_t paging_mode = 0;
+volatile uint64_t RSDP_ADDR = 0;
+volatile uint32_t bsp_lapic_id = 0;
+volatile uint64_t smp_cpu_count = 0;
 
 volatile struct limine_framebuffer *fb;
 Framebuffer FB;

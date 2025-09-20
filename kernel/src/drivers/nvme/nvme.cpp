@@ -319,7 +319,7 @@ NVME::CmplQue *NVME::AllocCmplQue(uint32_t iden, uint32_t size) {
 }
 
 bool NVME::InitIntr() {
-    /*
+
 	this->MSI = NULL;
 	this->flags &= ~NVME_FLAG_MISIX;
 
@@ -400,7 +400,7 @@ bool NVME::InitIntr() {
 		return false;
 	}
 	kinfo("[NVME: %p]: enable msi/msix\n", (uint64_t)this);
-    */
+    
 	return true;
 }
 

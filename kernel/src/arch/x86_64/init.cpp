@@ -22,6 +22,7 @@ void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
     WELCOME_X86_64
     kinfo("INIT x86_64 ARCH\n");
+    kinfoln("HHDM OFFSET:0x%X",hhdm_offset);
 
     InitFunc("GDT",GDT::Init(0));
     InitFunc("IDT",idt_init());
@@ -66,6 +67,8 @@ void __init x86_64_init(void){
 
     InitFunc("KEYBOARD(x86)",keyboard_init());
 
+    if(!ext4_kernel_init("sata0","/mp/")){hcf();}
+
     Schedule::Install();
 
     proc_t *proc = Schedule::NewProcess(true);
@@ -74,4 +77,5 @@ void __init x86_64_init(void){
         "/mp/test", 1, (char*[]){"test"}, (char*[]){nullptr}); 
 
     LAPIC::IPIOthers(0, SCHED_VEC);
+
 }

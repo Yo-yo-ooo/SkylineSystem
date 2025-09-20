@@ -35,7 +35,7 @@ extern char ld_rodata_end[];
 extern char ld_data_start[];
 extern char ld_data_end[];
 
-extern volatile bool smp_started;
+extern bool smp_started;
 
 //extern u64 pmm_last_page;
 
@@ -105,7 +105,7 @@ namespace VMM{
         _memset(kernel_pagemap->pml4, 0, PAGE_SIZE);
 
         uint64_t first_free_addr = pmm_memmap->entries[0]->base + PMM::pmm_bitmap_pages * PAGE_SIZE;
-        VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(first_free_addr), 1);
+        VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(0x100000000000), 1);
 
         uint64_t executable_vaddr = executable_address->virtual_base;
         uint64_t executable_paddr = executable_address->physical_base;
@@ -202,6 +202,8 @@ namespace VMM{
             old_pagemap = this_cpu()->pagemap;
             this_cpu()->pagemap = pagemap;
         }
+        kinfoln("0x%X",hhdm_offset);
+        kinfoln("0x%X",pagemap->pml4);
         __asm__ volatile ("mov %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->pml4)) : "memory");
         return old_pagemap;
     }

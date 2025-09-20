@@ -17,7 +17,7 @@ static volatile struct limine_mp_request limine_mp = {
 cpu_t *smp_cpu_list[MAX_CPU];
 volatile spinlock_t smp_lock = 0;
 uint64_t started_count = 0;
-volatile bool smp_started = false;
+bool smp_started = false;
 int32_t smp_last_cpu = 0;
 uint32_t smp_bsp_cpu;
 
