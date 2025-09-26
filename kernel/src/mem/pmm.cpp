@@ -28,8 +28,13 @@ namespace PMM{
         uint64_t page_count = 0;
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            if (entry->length % PAGE_SIZE != 0)
-                kwarn("Memory map entry length is NOT divisible by the page size. Memory issues MAY arise.\n");
+            if (entry->length % PAGE_SIZE != 0){
+                kinfoln("ENTRY LENGTH: %d",entry->length);
+                kwarn("Memory map entry length is NOT divisible by the page size. \n");
+                kwarn("This will not count in page_count");
+                kwarn("Do Next Search entry->length % PAGE_SIZE = 0\n");
+                continue;
+            }
             page_count += entry->length;
         }
         page_count /= PAGE_SIZE;
