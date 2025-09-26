@@ -103,6 +103,7 @@ extern "C" void idt_irq_handler(context_t *ctx) {
 extern struct flanterm_context* ft_ctx;
 
 extern "C" void idt_exception_handler(context_t *ctx) {
+    uint64_t cr0,cr2,cr3,cr4;
     if (ctx->int_no >= 32)
         return idt_irq_handler(ctx);
     if (ctx->int_no == 14) {
@@ -114,19 +115,23 @@ extern "C" void idt_exception_handler(context_t *ctx) {
         }
     }
     if(ctx->int_no == 14){
-        uint64_t cr2 = 0;
         __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
         kerror("Page fault on 0x%p, Should NOT continue.\n", cr2);
     }
+    __asm__ volatile ("movq %%cr3, %0" : "=r"(cr3));
+    __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
+    __asm__ volatile ("movq %%cr0, %0" : "=r"(cr0));
+    __asm__ volatile ("movq %%cr4, %0" : "=r"(cr4));
     kerror("Kernel exception caught: %s.\n", isr_errors[ctx->int_no]);
     kerror("Kernel crash on core %d at 0x%p.\n", smp_started ? this_cpu()->id : 0,
         ctx->rip);
     kerrorln("REGISTERS DATA(64bits data):");
     kerrorln("RAX: 0x%p  RBX: 0x%p RCX: 0x%p RDX: 0x%p.",ctx->rax,ctx->rbx,ctx->rcx,ctx->rdx);
     kerrorln("RBP: 0x%p  RDI: 0x%p RSI: 0x%p RSP: 0x%p.",ctx->rbp,ctx->rdi,ctx->rsi,ctx->rsp);
+    kerrorln("CR0: 0x%p  CR4: 0x%p CR3: 0x%p CR2: 0x%p",cr0,cr4,cr3,cr2);
     kerrorln("RFLAGS: 0x%p",ctx->rflags);
+    kerrorln("CS: 0x%x SS: 0x%x", ctx->cs, ctx->ss);
     
-    kerror("CS: 0x%x SS: 0x%x\n", ctx->cs, ctx->ss);
     if (smp_started && this_cpu()->current_thread)
         kinfo("On thread %d\n", this_cpu()->current_thread->id);
     stackframe_t *stack;

@@ -204,7 +204,7 @@ namespace VMM{
         }
         kinfoln("0x%X",hhdm_offset);
         kinfoln("0x%X",pagemap->pml4);
-        __asm__ volatile ("mov %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->pml4)) : "memory");
+        __asm__ volatile ("movq %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->pml4)) : "memory");
         return old_pagemap;
     }
 

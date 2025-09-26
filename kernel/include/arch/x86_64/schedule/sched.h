@@ -83,10 +83,8 @@ namespace Schedule{
     
 
     namespace Useless{
-        extern "C"{
-            void Switch(context_t *ctx);
-            void Preempt(context_t *ctx);
-        }
+        void Switch(context_t *ctx);
+        void Preempt(context_t *ctx);
 
         void ProcessAddThread(proc_t *parent, thread_t *thread);
         

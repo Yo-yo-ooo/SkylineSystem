@@ -132,7 +132,6 @@ namespace Schedule{
             return nullptr;
         }
 
-extern "C"{
         void Switch(context_t *ctx) {
             kinfoln("HIT SWITCH!");
             LAPIC::StopTimer();
@@ -143,20 +142,21 @@ extern "C"{
                 thread_t *thread = cpu->current_thread;
                 thread->fs = rdmsr(FS_BASE);
                 thread->ctx = *ctx;
-                __asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area));
+                __asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
             }
             kinfoln("HIT SWITCH!-3");
             thread_t *next_thread = Schedule::Useless::Pick(cpu);
             cpu->current_thread = next_thread;
             *ctx = next_thread->ctx;
             kinfoln("HIT SWITCH!-3-1");
+            
             if(next_thread->pagemap == nullptr)
                 kerrorln("NEXT SWITCH THREAD: %d PAGEMAP IS NULL",next_thread->id);
             VMM::SwitchPageMap(next_thread->pagemap);
             kinfoln("HIT SWITCH!-4");
             wrmsr(FS_BASE, next_thread->fs);
             wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
-            __asm__ volatile ("fxrstor (%0)" : : "r"(next_thread->fx_area));
+            __asm__ volatile ("fxrstor (%0)" : : "r"(next_thread->fx_area) : "memory");
             spinlock_unlock(&cpu->sched_lock);
             kinfoln("HIT SWITCH!-5");
             // An ideal thread wouldn't need the timer to preempt.
@@ -170,7 +170,6 @@ extern "C"{
             Schedule::this_thread()->preempt_count++;
             Schedule::Useless::Switch(ctx);
         }
-}
     }
 
     void Init(){

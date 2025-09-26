@@ -18,4 +18,4 @@ qemu-system-%1 -machine q35 -cpu qemu64,+x2apic,+avx ^
 -device ahci,id=ahci1 ^
 -device ide-hd,drive=sata1,bus=ahci1.0 ^
 -no-reboot --no-shutdown ^
--gdb tcp::26000 
+-gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait

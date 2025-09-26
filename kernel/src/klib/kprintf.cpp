@@ -38,7 +38,7 @@
 #include <klib/klib.h>
 #include <print/e9print.h>
 
-//SPINLOCK_NEW_LOCK(pflock);
+static volatile spinlock_t ptf_lock = 0;
 
 
 void _putchar(char character){
@@ -872,13 +872,13 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
 
 int32_t printf_(const char* format, ...)
 {
-    //Spinlock::Lock(&pflock);
+    spinlock_lock(&ptf_lock);
     va_list va;
     va_start(va, format);
     char buffer[1];
     const int32_t ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
     va_end(va);
-    //Spinlock::Free(&pflock);
+    spinlock_unlock(&ptf_lock);
     return ret;
 }
 

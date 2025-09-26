@@ -16,18 +16,22 @@ void execve_cleanup(int argc, int envc, char **argv, char **envp) {
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     Elf64::Elf64_Ehdr *hdr = (Elf64::Elf64_Ehdr*)data;
 
-    if (hdr->e_ident[0] != 0x7f || 
-        hdr->e_ident[1] != 'E' || 
-        hdr->e_ident[2] != 'L' || 
-        hdr->e_ident[3] != 'F'){
+    if (hdr->e_ident.c[0] != 0x7f || 
+        hdr->e_ident.c[1] != 'E' || 
+        hdr->e_ident.c[2] != 'L' || 
+        hdr->e_ident.c[3] != 'F'){
         kerrorln("LOAD FILE NOT ELF!");
         return 0;
     }
 
     if (hdr->e_type != 2){
         kinfoln("ELF TYPE %d",hdr->e_type);
-        kerrorln("LOAD ELF FILE TYPE NOT SUPPORT!");
+        kerrorln("ELF> LOAD ELF FILE TYPE NOT SUPPORT!");
         return 0;
+    }
+
+    if(hdr->e_ident.c[Elf64::EI_CLASS] != Elf64::ELFCLASS64){
+        kerrorln("ELF> FILE NOT 64 BIT!");
     }
 
     Elf64::Elf64_Phdr *phdrs = (Elf64::Elf64_Phdr*)(data + hdr->e_phoff);
@@ -149,7 +153,7 @@ uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_
     thread->fs = 0;
     VMM::SwitchPageMap(new_pagemap);
     __asm__ volatile ("swapgs");
-    this_cpu()->current_thread = NULL;
+    this_cpu()->current_thread = nullptr;
     Schedule::Resume();
     return 0;
 }
