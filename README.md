@@ -12,7 +12,8 @@ Make sure you have install these software linux
 
 Run with this command in the project root dir
 
-!!! warn "Be sure to modify the commands commented in build.sh!"
+[!WARNING]
+Be sure to modify the commands commented in build.sh!
 
 ```bash
 make cm
