@@ -5,7 +5,7 @@
 
 ## How to build
 
-Make sure you have install these software linux
+Make sure you have install these software in linux
 
 * gcc (VER > 10)
 * binutil
