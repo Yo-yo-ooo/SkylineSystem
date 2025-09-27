@@ -1,7 +1,7 @@
 # SkylineSystem
 
 > [!DANGER]
-> Don't run it in real machine(because it's now in test)
+> Don't run it in real machine because it's now in test
 
 ## How to build
 
