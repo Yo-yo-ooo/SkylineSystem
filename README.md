@@ -1,5 +1,8 @@
 # SkylineSystem
 
+> [!DANGER]
+> Don't run it in real machine(because it's now in test)
+
 ## How to build
 
 Make sure you have install these software linux
