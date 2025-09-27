@@ -15,7 +15,7 @@ Make sure you have install these software in linux
 
 Run with this command in the project root dir
 
-> [!WARNING]
+> [!IMPORTANT]
 > Be sure to modify the commands commented in build.sh!
 
 ```bash
