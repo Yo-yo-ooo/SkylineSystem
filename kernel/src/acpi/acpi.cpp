@@ -144,14 +144,6 @@ namespace ACPI{
         kinfoln("ACPI_DIV: %d",div);
 
         kinfoln("MCFG Header Addr: %X", (uint64_t)ACPI::mcfg);
-        
-
-        if (ACPI::mcfg == NULL)
-        {
-            
-            Panic("ACPI::mcfg == NULL");
-            return;
-        }
     
         
         return 1;

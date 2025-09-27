@@ -12,6 +12,7 @@ static volatile struct limine_memmap_request memmap_request = {
     .revision = 0
 };
 
+volatile spinlock_t pmm_lock = 0;
 volatile struct limine_memmap_response* pmm_memmap = nullptr;
 
 namespace PMM{
@@ -31,7 +32,7 @@ namespace PMM{
             if (entry->length % PAGE_SIZE != 0){
                 kinfoln("ENTRY LENGTH: %d",entry->length);
                 kwarn("Memory map entry length is NOT divisible by the page size. \n");
-                kwarn("This will not count in page_count");
+                kwarn("This will not count in page_count\n");
                 kwarn("Do Next Search entry->length % PAGE_SIZE = 0\n");
                 continue;
             }
@@ -73,6 +74,7 @@ namespace PMM{
     }
 
     void *Request() {
+        spinlock_lock(&pmm_lock);
         // TODO: Handle when we can't find a free bit after bitmap_last_free
         // (reiterate through the bitmap, and if we dont find ANY frees, we panic.)
         uint64_t bit = bitmap_last_free;
@@ -84,11 +86,13 @@ namespace PMM{
                 bit++;
             if (bit == bitmap_last_free) {
                 kerror("PMM Out of memory!\n");
+                spinlock_unlock(&pmm_lock);
                 return nullptr;
             }
         }
         PMM::bitmap_set_(bit);
         bitmap_last_free = bit;
+        spinlock_unlock(&pmm_lock);
         return (void*)(bit * PAGE_SIZE);
     }
 

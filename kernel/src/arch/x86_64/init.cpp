@@ -45,7 +45,7 @@ void __init x86_64_init(void){
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
     
-/*     kinfo("INIT FPU...\n"); */
+    
     if (fpu_init()){
         kerror("FPU INIT FAILED: x86_64 CPU doesn't support FPU.\n");
         hcf();
