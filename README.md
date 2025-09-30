@@ -15,12 +15,15 @@ Make sure you have install these software in linux
 
 Run with this command in the project root dir
 
-> [!IMPORTANT]
-> Be sure to modify the commands commented in build.sh!
-
+> [!TIP]
+> You can build this project with these commands:
 ```bash
-make cm
+cd kernel && ./get-deps
+cd .. && make cm
 
+qemu-img create disk.img 1000M -f qcow2
+qemu-img resize disk.img 1G
+mkfs.ext4 -O ^has_journal,extent,huge_file,flex_bg,metadata_csum,64bit,dir_nlink,extra_isize disk.img
 # Next build test app and copy to img
 # Be sure to modify the commands commented in build.sh!
 ./build.sh
@@ -28,7 +31,7 @@ make cm
 ```
 
 > [!TIP]
-> You can run qemu with these commands
+> You can run qemu with these commands:
 ```bash
 # just run x86_64 qemu example command
 qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx \
