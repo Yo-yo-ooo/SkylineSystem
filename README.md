@@ -77,9 +77,9 @@ Many more in future
 * [MaslOS](https://github.com/marceldobehere/MaslOS)
 * [VisualOS](https://github.com/nothotscott/VisualOS)
 * [MicroOS](https://github.com/Glowman554/MicroOS)
-* [LanOS](https://github.com/asterd-og/LanOS/)
 * [MaslOS-2](https://github.com/marceldobehere/MaslOS-2/)
 * [HanOS](https://github.com/jjwang/HanOS/)
+* [SAF](https://github.com/chocabloc/saf)
 
 ## Unfinished features
 

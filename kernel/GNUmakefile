@@ -63,7 +63,6 @@ override KCXX_IS_CLANG := $(shell ! $(CXX) --version 2>/dev/null | grep 'clang' 
 override KCFLAGS += \
 	-w \
 	-I$(SS_BUILD_DIR)/kernel/include \
-	-Icc-runtime -Lcc-runtime \
     -nostdinc \
     -ffreestanding \
     -fno-stack-protector \
@@ -83,7 +82,6 @@ override KCPPFLAGS := \
     -I src \
 	-isystem freestnd-c-hdrs/$(KARCH)/include \
 	-I$(SS_BUILD_DIR)/kernel/include \
-	-Icc-runtime -Lcc-runtime \
 	-Ifakestdlib \
 	-DLIMINE_API_REVISION=3 \
     $(KCPPFLAGS) \
@@ -198,6 +196,7 @@ override CFILES := $(shell cd src && find -L * -type f -path './arch' -prune -o 
 override ASFILES := $(shell cd src && find -L * -type f -path './arch' -prune -o -name '*.S' | LC_ALL=C sort)
 override CPPFILES := $(shell cd src && find -L * -type f -path './arch' -prune -o -name '*.cpp' | LC_ALL=C sort)
 CFILES += $(shell cd src && find -L arch/$(KARCH) -type f -name '*.c' | LC_ALL=C sort)
+CFILES += $(shell cd cc-runtime && find -L src -type f -name '*.c' | LC_ALL=C sort)
 ASFILES += $(shell cd src && find -L arch/$(KARCH) -type f -name '*.S' | LC_ALL=C sort)
 CPPFILES += $(shell cd src && find -L arch/$(KARCH) -type f -name '*.cpp' | LC_ALL=C sort)
 

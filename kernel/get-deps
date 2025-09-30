@@ -65,18 +65,15 @@ download_by_hash() {
 }
 
 clone_repo_commit \
-    https://github.com/osdev0/freestnd-c-hdrs.git \
+    https://codeberg.org/OSDev/freestnd-c-hdrs.git \
     freestnd-c-hdrs 
     
 
 clone_repo_commit \
-    https://github.com/osdev0/freestnd-cxx-hdrs.git \
+    https://codeberg.org/OSDev/freestnd-cxx-hdrs.git \
     freestnd-cxx-hdrs 
     
 clone_repo_commit \
-    https://github.com/osdev0/cc-runtime.git \
+    https://codeberg.org/OSDev/cc-runtime.git \
     cc-runtime
 
-cd cc-runtime
-make -f cc-runtime.mk
-cd ..

@@ -407,7 +407,7 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
 		return EINVAL;
 
 	if (mount_point[mp_len - 1] != '/')
-		return ENOTSUP;
+		return ENOTSUP; // return 95;
 
 	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
 		if (!strcmp(dev_name, s_bdevices[i].name)) {
