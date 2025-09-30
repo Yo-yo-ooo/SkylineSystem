@@ -31,7 +31,7 @@ mkfs.ext4 -O ^has_journal,extent,huge_file,flex_bg,metadata_csum,64bit,dir_nlink
 ```
 
 > [!TIP]
-> **You can run qemu with these commands:**
+>** You can run qemu with these commands:**
 ```bash
 # just run x86_64 qemu example command
 qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx \
