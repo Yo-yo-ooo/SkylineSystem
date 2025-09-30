@@ -7,13 +7,11 @@
 
 > [!IMPORTANT]
 > Make sure you have install these software in linux
-
 > * gcc (VER > 10)
 > * binutil
 > * xorriso
 > * make
 > * e2cp
-
 > Run with this command in the project root dir
 
 > [!TIP]
