@@ -16,7 +16,7 @@ Make sure you have install these software in linux
 Run with this command in the project root dir
 
 > [!TIP]
-> You can build this project with these commands:
+> **You can build this project with these commands:**
 ```bash
 cd kernel && ./get-deps
 cd .. && make cm
@@ -96,3 +96,7 @@ Many more in future
 * [marceldobehere](https://github.com/marceldobehere)
 
 [//]: (https://github.com/asterd-og/)
+
+## Connect
+
+**You can conect with e-mail <1218849168@qq.com>** 
