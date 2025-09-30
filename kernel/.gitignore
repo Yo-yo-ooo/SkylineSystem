@@ -1,3 +1,9 @@
 /src/limine.h
 /bin-*
 /obj-*
+/compile_commands.json
+/.cache
+/.deps-obtained
+/freestnd-c-hdrs
+/freestnd-cxx-hdrs
+/cc-runtime
