@@ -33,7 +33,7 @@ namespace PCI
                     cmd = 0x80000000 + (uint32_t) 0 + ((uint32_t) F << 8) +
                         ((uint32_t) Equipment << 11) + ((uint32_t) BUS << 16);
                     // cmd = cmd | 0x01;
-                    __asm__ volatile("outl %0, %1" : : "a"(PCI_COMMAND_PORT), "Nd"(cmd));
+                    __asm__ volatile("outl %0, %w1" : : "a"(PCI_COMMAND_PORT), "Nd"(cmd));
                     if(io_in32(PCI_DATA_PORT) != 0xFFFFFFFF){
                         PCI_NUM++;
                         //load_pci_device(BUS,Equipment,F);

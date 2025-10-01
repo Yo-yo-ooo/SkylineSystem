@@ -11,11 +11,12 @@ if not exist %SourceFile% (
     echo %SourceFile% is exist, Stop create %SourceFile%
 )
 
+
 qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx ^
--cdrom SkylineSystem-x86_64.iso -m 2G -smp 1 ^
+-cdrom SkylineSystem-x86_64.iso -m 2G -smp 4 ^
 -serial stdio -net nic -device AC97 ^
 -drive file=%SourceFile%,if=none,id=sata1 ^
 -device ahci,id=ahci1 ^
 -device ide-hd,drive=sata1,bus=ahci1.0 ^
 -no-reboot --no-shutdown ^
--gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait
+-gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait -S

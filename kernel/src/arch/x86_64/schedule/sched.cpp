@@ -146,6 +146,8 @@ namespace Schedule{
             }
             kinfoln("HIT SWITCH FXSAVE THREAD FX AREA");
             thread_t *next_thread = Schedule::Useless::Pick(cpu);
+            kinfoln("NEXT THREAD User: %d",next_thread->user);
+            kinfoln("NEXT THREAD ID: %d",next_thread->id);
             cpu->current_thread = next_thread;
             *ctx = next_thread->ctx;
             kinfoln("HIT SWITCH PICK");
@@ -159,12 +161,13 @@ namespace Schedule{
             __asm__ volatile ("fxrstor (%0)" : : "r"(next_thread->fx_area) : "memory");
             
             kinfoln("HIT SWITCH FXROSTOR");
+            spinlock_unlock(&cpu->sched_lock);
             // An ideal thread wouldn't need the timer to preempt.
             kinfoln("cpu->thread_queues[next_thread->priority].quantum : %X",
                 cpu->thread_queues[next_thread->priority].quantum);
             LAPIC::Oneshot(SCHED_VEC, cpu->thread_queues[next_thread->priority].quantum);
             kinfoln("OK on SWITCH!");
-            spinlock_unlock(&cpu->sched_lock);
+            
             LAPIC::EOI();
         }
 
