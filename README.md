@@ -46,7 +46,7 @@
 
 > [!TIP]
 > **You can debug with gdb**
-> >[!IMPORTANT]
+> > [!IMPORTANT]
 > > DO NOT CLOSE QEMU!
 > ```bash
 > #first run qemu
