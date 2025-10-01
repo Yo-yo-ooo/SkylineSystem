@@ -262,6 +262,7 @@ distclean:
 cm:
 	make clean 
 	make -j$(shell nproc)
+	cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
 
 cmr:
 	make clean 
