@@ -46,8 +46,10 @@
 
 > [!TIP]
 > **You can debaug with gdb**
+
 > [!IMPORTANT]
 > DO NOT CLOSE QEMU!
+
 > [!TIP]
 > ```bash
 > #first run qemu
