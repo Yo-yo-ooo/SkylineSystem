@@ -45,8 +45,6 @@ qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx \
 
 ## Features(x86_64)
 
-![SkylineSystemImage](image.png)
-
 * Devices
   * AHCI
   * IDE
