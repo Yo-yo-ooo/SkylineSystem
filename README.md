@@ -45,9 +45,10 @@
 > ```
 
 > [!TIP]
-> **You can debug with gdb**
-> > [!IMPORTANT]
-> > DO NOT CLOSE QEMU!
+> **You can debaug with gdb**
+> [!IMPORTANT]
+> DO NOT CLOSE QEMU!
+> [!TIP]
 > ```bash
 > #first run qemu
 > # just run x86_64 qemu example command
