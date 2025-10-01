@@ -11,7 +11,8 @@
 > * binutil
 > * xorriso
 > * make
-> * e2cp
+> * 
+>
 > Run with this command in the project root dir
 
 > [!TIP]
