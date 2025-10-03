@@ -1,0 +1,2 @@
+OBJDIR = ./object
+BINDIR = ./bin

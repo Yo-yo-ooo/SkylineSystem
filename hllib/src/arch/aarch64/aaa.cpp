@@ -1,0 +1,3 @@
+static char a[]{
+    "aaa"
+};

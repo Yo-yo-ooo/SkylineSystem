@@ -192,13 +192,12 @@ override KLDFLAGS += \
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
 # object and header dependency file names.
-override CFILES := $(shell cd src && find -L * -type f -path './arch' -prune -o -name '*.c' -print | LC_ALL=C sort)
-override ASFILES := $(shell cd src && find -L * -type f -path './arch' -prune -o -name '*.S' | LC_ALL=C sort)
-override CPPFILES := $(shell cd src && find -L * -type f -path './arch' -prune -o -name '*.cpp' | LC_ALL=C sort)
-CFILES += $(shell cd src && find -L arch/$(KARCH) -type f -name '*.c' | LC_ALL=C sort)
-CFILES += $(shell cd cc-runtime && find -L src -type f -name '*.c' | LC_ALL=C sort)
-ASFILES += $(shell cd src && find -L arch/$(KARCH) -type f -name '*.S' | LC_ALL=C sort)
-CPPFILES += $(shell cd src && find -L arch/$(KARCH) -type f -name '*.cpp' | LC_ALL=C sort)
+CFILES := $(shell cd src && find . -not -path "./arch/*" -name "*.c" | LC_ALL=C sort)
+ASFILES := $(shell cd src && find . -not -path "./arch/*" -name "*.S" | LC_ALL=C sort)
+CPPFILES := $(shell cd src && find . -not -path "./arch/*" -name "*.cpp" | LC_ALL=C sort)
+CFILES += $(shell cd src && find arch/$(KARCH) -type f -name '*.c' | LC_ALL=C sort)
+ASFILES += $(shell cd src && find arch/$(KARCH) -type f -name '*.S' | LC_ALL=C sort)
+CPPFILES += $(shell cd src && find arch/$(KARCH) -type f -name '*.cpp' | LC_ALL=C sort)
 
 ifeq ($(KARCH),x86_64)
 override NASMFILES := $(shell cd src && find -L * -type f -name '*.asm' | LC_ALL=C sort)

@@ -214,12 +214,6 @@ extern "C" void kmain(void) {
 #ifdef __x86_64__
     x86_64_init();
 #endif
-    
-    // We're done, just hang...
-    kpok("Kernel started.\n");
-    //ft_ctx->clear(ft_ctx, true);    
-    kinfoln("Now Kernel is started");
-    kinfoln("You can press any key,your press key will display on the srceen");
 
     hcf();
 }
