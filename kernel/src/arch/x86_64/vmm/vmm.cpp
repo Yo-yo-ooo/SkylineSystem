@@ -197,14 +197,14 @@ namespace VMM{
             VMM::Map(pagemap, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
     }
     pagemap_t *SwitchPageMap(pagemap_t *pagemap){
+        asm volatile("cli");
         pagemap_t *old_pagemap = nullptr;
         if (smp_started) {
             old_pagemap = this_cpu()->pagemap;
             this_cpu()->pagemap = pagemap;
         }
-        kinfoln("0x%X",hhdm_offset);
-        kinfoln("0x%X",pagemap->pml4);
         __asm__ volatile ("movq %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->pml4)) : "memory");
+        asm volatile("sti");
         return old_pagemap;
     }
 

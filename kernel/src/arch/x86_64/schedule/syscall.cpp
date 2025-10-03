@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <arch/x86_64/schedule/sched.h>
 
-extern "C" void _intr syscall_handler(syscall_frame_t *frame) {
+extern "C" void syscall_handler(syscall_frame_t *frame) {
     kinfoln("HIT SYSCALL!");
     switch (frame->rax) {
         case 1: 

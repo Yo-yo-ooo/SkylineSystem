@@ -19,6 +19,7 @@
 > **You can build this project with these commands:**
 > ```bash
 > cd kernel && ./get-deps
+> #If can't run get-deps script, you can run "chmod +x kernel/get-deps"
 > cd .. && make cm
 > 
 > qemu-img create disk.img 1000M -f qcow2

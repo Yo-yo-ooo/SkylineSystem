@@ -46,6 +46,7 @@ void* kmalloc(u64 size);
 void kfree(void* ptr);
 void* krealloc(void* ptr, u64 size);
 void *kcalloc(size_t numitems, size_t size);
+uint64_t GetPtrPointAreaSize(void *ptr);
 
 inline void operator delete(void* p) {kfree(p);}
 

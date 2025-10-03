@@ -180,6 +180,10 @@ void* krealloc(void* ptr, u64 size) {
     return SLAB::Realloc(ptr,size);
 }
 
+uint64_t GetPtrPointAreaSize(void *ptr){
+    return SLAB::GetSize(ptr);
+}
+
 
 #define align4(x) (((((x)-1)>>2)<<2)+4)
 void *kcalloc(size_t numitems, size_t size)

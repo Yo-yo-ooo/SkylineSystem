@@ -1,3 +1,5 @@
+#!/bin/bash
+
 #qemu-img create disk.img 1000M -f qcow2
 #qemu-img resize disk.img 1G
 

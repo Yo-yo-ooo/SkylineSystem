@@ -28,11 +28,11 @@ void Panic(const char* message,bool halt){
 void hcf(void) {
     for (;;) {
 #ifdef __x86_64__
-        asm ("hlt");
+        asm volatile("hlt");
 #elif defined (__aarch64__) || defined (__riscv)
-        asm ("wfi");
+        asm volatile("wfi");
 #elif defined (__loongarch64)
-        asm ("idle 0");
+        asm volatile("idle 0");
 #endif
     }
 }

@@ -1,4 +1,6 @@
-int main(){    
-    while(1){asm volatile("hlt");}
-    return 0;
+int main(){
+    asm volatile("movq  $1, %rax\n\t"
+                 "syscall"
+                 );
+    while(1);
 }
