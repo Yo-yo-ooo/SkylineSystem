@@ -1,15 +1,21 @@
-include ../def.mk
+OBJDIR = ./object
+BINDIR = ./bin
 
+include ../../gdef.mk
 
 CFILES += $(shell  find -L * -type f -name '*.c' | LC_ALL=C sort)
 ASFILES += $(shell  find -L * -type f -name '*.S' | LC_ALL=C sort)
 CPPFILES += $(shell  find -L * -type f -name '*.cpp' | LC_ALL=C sort)
 
+LD = ld
+CC = gcc
+CXX = g++
 
 LDFLAGS   = --gc-sections  -entry=main -static -nostdlib \
     -m elf_x86_64 -unresolved-symbols=ignore-all 
 
-CFLAGS    = -I../../hllib/include \
+CFLAGS    = -I../../hllib/include -I. -nostdinc\
+	-I../../hllib/include/arch/$(BUILD_ARCH) \
 	-ffreestanding -fshort-wchar -mno-red-zone \
  	-fno-omit-frame-pointer -fno-exceptions -ffunction-sections -fdata-sections -O2 -m64
 
@@ -28,16 +34,18 @@ $(BINDIR)/desktop.elf: GNUmakefile $(OBJ)
 $(OBJDIR)/%.c.o: ./%.c GNUmakefile
 	@echo C $<
 	@mkdir -p "$$(dirname $@)"
-	@$(KCC) $(CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
 $(OBJDIR)/%.S.o: ./%.S GNUmakefile
 	@echo GAS $<
 	@mkdir -p "$$(dirname $@)"
-	@$(KCC) $(ASFILES)  -c $< -o $@
+	@$(CC) $(ASFILES)  -c $< -o $@
 
 $(OBJDIR)/%.cpp.o: ./%.cpp GNUmakefile
 	@echo C++ $<
 	@mkdir -p "$$(dirname $@)"
-	@$(KCXX) $(CPPFLAGS)  -c $< -o $@
+	@$(CXX) $(CPPFLAGS)  -c $< -o $@
 
+clean:
+	rm -rf $(OBJDIR) $(BINDIR)

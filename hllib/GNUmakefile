@@ -1,4 +1,6 @@
-LIB_BUILD_ARCH = x86_64
+include ../gdef.mk
+
+LIB_BUILD_ARCH = $(BUILD_ARCH)
 
 CFILES := $(shell cd src && find . -not -path "./arch/*" -name "*.c" | LC_ALL=C sort)
 ASFILES := $(shell cd src && find . -not -path "./arch/*" -name "*.S" | LC_ALL=C sort)

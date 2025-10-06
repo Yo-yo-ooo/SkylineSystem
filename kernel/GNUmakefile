@@ -10,7 +10,8 @@ override OUTPUT := kernel
 override USER_VARIABLE = $(if $(filter $(origin $(1)),default undefined),$(eval override $(1) := $(2)))
 
 # Target architecture to build for. Default to x86_64.
-$(call USER_VARIABLE,KARCH,x86_64)
+include ../gdef.mk
+KARCH = $(BUILD_ARCH)
 
 # Destination directory on install (should always be empty by default).
 $(call USER_VARIABLE,DESTDIR,)
