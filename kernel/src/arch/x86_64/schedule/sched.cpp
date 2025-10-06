@@ -69,7 +69,7 @@ namespace Schedule{
         uint8_t Demote(cpu_t *cpu, thread_t *thread) {
             if (thread->priority == THREAD_QUEUE_CNT - 1)
                 return 1;
-            kinfo("Demoted thread %d to queue %d.\n", thread->id, thread->priority);
+            Serial::Writelnf("[<!Schedule::Uselsee::Demote!>]\n Demoted thread %d to queue %d.\n", thread->id, thread->priority);
             thread_queue_t *old_queue = &cpu->thread_queues[thread->priority];
             thread->priority++;
             thread_queue_t *new_queue = &cpu->thread_queues[thread->priority];

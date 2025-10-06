@@ -11,6 +11,9 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
         case 1: 
             kinfoln("Hello In USER!!!");
             break;
+        case 2:
+            frame->rax = sys_write(frame->rdi, (void*)frame->rsi, frame->rdx);
+            break;
         case 15: // sigreturn
             //sys_sigreturn(frame);
             break;

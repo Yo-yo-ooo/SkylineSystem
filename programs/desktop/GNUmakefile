@@ -11,13 +11,13 @@ LD = ld
 CC = gcc
 CXX = g++
 
-LDFLAGS   = --gc-sections  -entry=main -static -nostdlib \
+LDFLAGS  = --gc-sections  -entry=main -static -nostdlib \
     -m elf_x86_64 -unresolved-symbols=ignore-all 
 
-CFLAGS    = -I../../hllib/include -I. -nostdinc\
+CFLAGS    = -I../../hllib/include -I. -nostdinc -L../../hllib/bin-$(BUILD_ARCH) -lhllib\
 	-I../../hllib/include/arch/$(BUILD_ARCH) \
 	-ffreestanding -fshort-wchar -mno-red-zone \
- 	-fno-omit-frame-pointer -fno-exceptions -ffunction-sections -fdata-sections -O2 -m64
+ 	-fno-omit-frame-pointer -fno-exceptions -ffunction-sections -fdata-sections -O0 -m64
 
 CPPFLAGS  = $(CFLAGS) -std=gnu++20 -fno-threadsafe-statics
 
@@ -29,6 +29,7 @@ all: $(BINDIR)/desktop.elf
 $(BINDIR)/desktop.elf: GNUmakefile $(OBJ)
 	@mkdir -p "$$(dirname $@)"
 	@$(LD) $(LDFLAGS) -o $@ $(OBJ)
+	cp -f $@ ../bin/
 
 # Compilation rules for *.c files.
 $(OBJDIR)/%.c.o: ./%.c GNUmakefile

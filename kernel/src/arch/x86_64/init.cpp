@@ -74,11 +74,8 @@ void __init x86_64_init(void){
     proc_t *proc = Schedule::NewProcess(true);
 
     
-    thread_t *thread = Schedule::NewThread(proc, 0, 0, 
-        "/mp/test", 1, (char*[]){"test"}, (char*[]){nullptr}); 
-
-    thread_t *thread_cput = Schedule::NewThread(proc, 1, 0, 
-        "/mp/test", 1, (char*[]){"test"}, (char*[]){nullptr}); 
+    thread_t *desktop = Schedule::NewThread(proc, 0, 0, 
+        "/mp/bin/desktop.elf", 1, (char*[]){"Desktop Main Thread"}, (char*[]){nullptr}); 
 
     LAPIC::IPIOthers(0, SCHED_VEC);
 }

@@ -3,6 +3,8 @@
 MAKEFLAGS += -rR
 .SUFFIXES:
 
+include ./gdef.mk
+
 # Convenience macro to reliably declare user overridable variables.
 override USER_VARIABLE = $(if $(filter $(origin $(1)),default undefined),$(eval override $(1) := $(2)))
 
@@ -263,8 +265,15 @@ cm:
 	make clean 
 	make -j$(shell nproc)
 	cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
+	qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
+	qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
+	mkfs.ext4 \
+	-O ^has_journal,extent,huge_file,flex_bg,64bit,dir_nlink,extra_isize \
+	./$(PROGRAM_IMAGE_NAME).img
+	make -C hllib
+	make -C programs
+	
 
 cmr:
-	make clean 
-	make -j$(shell nproc)
+	make cm
 	make run
