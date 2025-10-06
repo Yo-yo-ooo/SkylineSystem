@@ -263,6 +263,8 @@ distclean:
 
 cm:
 	make clean 
+	make -C hllib clean
+	make -C programs clean
 	make -j$(shell nproc)
 	cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
 	qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2

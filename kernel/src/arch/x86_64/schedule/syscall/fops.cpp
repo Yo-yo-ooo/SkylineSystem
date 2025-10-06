@@ -19,7 +19,7 @@ uint64_t sys_write(uint32_t fd_idx, void *buf, size_t count) {
     if (!fd)
         return -EBADF;
     if(fd_idx == 1){
-        kprintf("%.*s",(int)count,(char*)buf);
+        Serial::Writelnf("%s",(char*)buf);
         return count;
     }else if(fd_idx == 2){
         return count;
