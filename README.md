@@ -22,8 +22,6 @@
 > #If can't run get-deps script, you can run "chmod +x kernel/get-deps"
 > cd .. && make cm
 > ```
-
-> [!TIP]
 > **You can run qemu with these commands:**
 > ```bash
 > # just run x86_64 qemu example command
@@ -36,14 +34,7 @@
 > -no-reboot --no-shutdown \
 > -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait
 > ```
-
-> [!TIP]
 > **You can debaug with gdb**
-
-> [!IMPORTANT]
-> DO NOT CLOSE QEMU!
-
-> [!TIP]
 > ```bash
 > #first run qemu
 > # just run x86_64 qemu example command
