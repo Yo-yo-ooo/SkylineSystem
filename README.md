@@ -62,6 +62,7 @@
 > #and enter these command in gdb
 > target remote :26000
 > file kernel
+> #do like you what you want to do than
 > ```
 
 ## Features(x86_64)
