@@ -133,7 +133,7 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     kerrorln("CS: 0x%x SS: 0x%x", ctx->cs, ctx->ss);
     
     if (smp_started && this_cpu()->current_thread)
-        kinfo("On thread %d\n", this_cpu()->current_thread->id);
+        kerrorln("On thread %d", this_cpu()->current_thread->id);
     stackframe_t *stack;
     __asm__ volatile ("movq %%rbp, %0" : "=r"(stack));
     kerror("Stack trace:\n");
@@ -141,7 +141,6 @@ extern "C" void idt_exception_handler(context_t *ctx) {
         kerror("    0x%p\n", stack->rip);
         stack = stack->rbp;
     }
-    // TODO: Dump registers.
     asm volatile("cli");
     hcf();
 }

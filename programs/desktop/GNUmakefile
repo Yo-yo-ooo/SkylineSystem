@@ -10,6 +10,7 @@ CPPFILES += $(shell  find -L * -type f -name '*.cpp' | LC_ALL=C sort)
 LD = ld
 CC = gcc
 CXX = g++
+AS = as
 
 LDFLAGS  = --gc-sections  -entry=main -static -nostdlib \
     -m elf_x86_64 -unresolved-symbols=ignore-all 

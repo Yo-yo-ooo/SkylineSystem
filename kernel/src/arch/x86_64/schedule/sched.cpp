@@ -134,6 +134,7 @@ namespace Schedule{
         }
 
         void Switch(context_t *ctx) {
+            asm volatile("cli");
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             spinlock_lock(&cpu->sched_lock);
@@ -147,8 +148,6 @@ namespace Schedule{
             cpu->current_thread = next_thread;
             *ctx = next_thread->ctx;
             
-            if(next_thread->pagemap == nullptr)
-                Serial::Writelnf("NEXT SWITCH THREAD: %d PAGEMAP IS NULL",next_thread->id);
             VMM::SwitchPageMap(next_thread->pagemap);
             wrmsr(FS_BASE, next_thread->fs);
             wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
@@ -157,7 +156,7 @@ namespace Schedule{
             spinlock_unlock(&cpu->sched_lock);
             // An ideal thread wouldn't need the timer to preempt.
             LAPIC::Oneshot(SCHED_VEC, cpu->thread_queues[next_thread->priority].quantum);
-            
+            asm volatile("sti");
             LAPIC::EOI();
         }
 
