@@ -42,6 +42,11 @@ $(OBJDIR)/%.S.o: ./%.S GNUmakefile
 	@mkdir -p "$$(dirname $@)"
 	$(AS) -o $@ $<
 
+$(OBJDIR)/%.s.o: ./%.s GNUmakefile
+	@echo GAS $<
+	@mkdir -p "$$(dirname $@)"
+	$(AS) -o $@ $<
+
 $(OBJDIR)/%.cpp.o: ./%.cpp GNUmakefile
 	@echo C++ $<
 	@mkdir -p "$$(dirname $@)"
