@@ -18,7 +18,7 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
     switch (frame->rax) {
         case 1: 
             dump_REG(frame);
-            kinfoln("Hello In USER!!!");
+            frame->rax = sys_write(frame->rdi, (void*)frame->rsi, frame->rdx);
             break;
         case 2:
             dump_REG(frame);

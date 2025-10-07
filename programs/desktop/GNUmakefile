@@ -1,5 +1,5 @@
-OBJDIR = ./object
-BINDIR = ./bin
+OBJDIR = ../object
+BINDIR = ../bin
 
 include ../../gdef.mk
 
@@ -29,7 +29,6 @@ all: $(BINDIR)/desktop.elf
 $(BINDIR)/desktop.elf: GNUmakefile $(OBJ)
 	@mkdir -p "$$(dirname $@)"
 	@$(LD) $(LDFLAGS) -o $@ $(OBJ)
-	cp -f $@ ../bin/
 
 # Compilation rules for *.c files.
 $(OBJDIR)/%.c.o: ./%.c GNUmakefile
@@ -41,7 +40,7 @@ $(OBJDIR)/%.c.o: ./%.c GNUmakefile
 $(OBJDIR)/%.S.o: ./%.S GNUmakefile
 	@echo GAS $<
 	@mkdir -p "$$(dirname $@)"
-	@$(CC) $(ASFILES)  -c $< -o $@
+	$(AS) -o $@ $<
 
 $(OBJDIR)/%.cpp.o: ./%.cpp GNUmakefile
 	@echo C++ $<
