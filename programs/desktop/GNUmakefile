@@ -28,30 +28,30 @@ override OBJ := $(addprefix $(OBJDIR)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(CP
 all: $(BINDIR)/desktop.elf
 
 $(BINDIR)/desktop.elf: GNUmakefile $(OBJ)
-	@mkdir -p "$$(dirname $@)"
-	@$(LD) $(LDFLAGS) -o $@ $(OBJ)
+	mkdir -p "$$(dirname $@)"
+	$(LD) $(LDFLAGS) -o $@ $(OBJ)
 
 # Compilation rules for *.c files.
 $(OBJDIR)/%.c.o: ./%.c GNUmakefile
 	@echo C $<
-	@mkdir -p "$$(dirname $@)"
-	@$(CC) $(CFLAGS) -c $< -o $@
+	mkdir -p "$$(dirname $@)"
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
 $(OBJDIR)/%.S.o: ./%.S GNUmakefile
 	@echo GAS $<
-	@mkdir -p "$$(dirname $@)"
+	mkdir -p "$$(dirname $@)"
 	$(AS) -o $@ $<
 
 $(OBJDIR)/%.s.o: ./%.s GNUmakefile
-	@echo GAS $<
-	@mkdir -p "$$(dirname $@)"
+	echo GAS $<
+	mkdir -p "$$(dirname $@)"
 	$(AS) -o $@ $<
 
 $(OBJDIR)/%.cpp.o: ./%.cpp GNUmakefile
-	@echo C++ $<
-	@mkdir -p "$$(dirname $@)"
-	@$(CXX) $(CPPFLAGS)  -c $< -o $@
+	echo C++ $<
+	mkdir -p "$$(dirname $@)"
+	$(CXX) $(CPPFLAGS)  -c $< -o $@
 
 clean:
 	rm -rf $(OBJDIR) $(BINDIR)

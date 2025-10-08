@@ -16,17 +16,25 @@ uint64_t sys_read(uint32_t fd_idx, void *buf, size_t count) {
 
 uint64_t sys_write(uint32_t fd_idx, void *buf, size_t count) {
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
-    if (!fd)
-        return -EBADF;
     if(fd_idx == 1){
-        kinfoln("HIT!");
-        Serial::Writelnf("%s",(char*)buf);
+        kinfo();
+        for(size_t i = 0;i < count;i++){
+            kprintf("%c",*((char*)buf + i));
+        }
+        kprintf("\n");
         return count;
     }else if(fd_idx == 2){
         return count;
     }else if(fd_idx == 0){
-        return -EBADF;
+        printf_("[\033[38;2;255;0;0mERR FORM USER %d\033[0m]",Schedule::this_proc());
+        for(size_t i = 0;i < count;i++){
+            kprintf("%c",*((char*)buf + i));
+        }
+        kprintf("\n");
+        return count;
     }
+    if (!fd)
+        return -EBADF;
     ext4_fwrite(&fd->f,buf,count,NULL);
     fd->off += count;
     return count;

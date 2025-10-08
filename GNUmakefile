@@ -275,6 +275,9 @@ cm:
 	make -C hllib
 	make -C programs
 	
+cmk:
+	make clean
+	make -j$(shell nproc)
 
 cmr:
 	make cm

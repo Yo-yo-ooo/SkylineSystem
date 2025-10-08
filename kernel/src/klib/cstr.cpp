@@ -365,7 +365,7 @@ char *strncpy(char *dest, const char *src, size_t n) {
     return tmp;
 }
 
-uint32_t strlen(const char* str) {
+size_t strlen(const char* str) {
    const char* eos = str;
    while(*eos++);
    return (eos - str - 1);

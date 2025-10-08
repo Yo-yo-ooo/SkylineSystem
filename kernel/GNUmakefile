@@ -90,7 +90,7 @@ override KCPPFLAGS := \
     -MP
 
 KCC += -std=gnu17
-KCXX += -isystem freestnd-cxx-hdrs/$(KARCH)/include -std=gnu++17
+KCXX += -isystem freestnd-cxx-hdrs/$(KARCH)/include -std=gnu++20
 
 ifeq ($(KARCH),x86_64)
     # Internal nasm flags that should not be changed by the user.

@@ -13,6 +13,8 @@ void execve_cleanup(int argc, int envc, char **argv, char **envp) {
     kfree(envp);
 }
 
+extern uint64_t sys_open(const char *path, int flags, unsigned int mode);
+
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     Elf64::Elf64_Ehdr *hdr = (Elf64::Elf64_Ehdr*)data;
 
