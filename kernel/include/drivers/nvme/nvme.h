@@ -9,12 +9,14 @@
 /**/
 #ifdef __x86_64__
 
-#if 0
 
 #include <arch/x86_64/dev/pci/pci.h>
 #include <klib/klib.h>
 #include <arch/x86_64/interrupt/idt.h>
 
+#define REQ_IDENTIFY_TYPE_NSP		0x0
+#define REQ_IDENTIFY_TYPE_CTRL		0x1
+#define REQ_IDENTIFY_TYPE_NSPLST	0x2
 //nvme controller register offset
 #define NVME_CTRLREG_CAP            0x0
 #define NVME_CTRLREG_VS             0x8
@@ -35,10 +37,108 @@
 #define NVME_SubQueSz	(4096 / sizeof(NVME::SubQueEntry))
 #define NVME_CmplQueSz	(4096 / sizeof(NVME::CmplQueEntry))
 
-
+namespace INFile_NVME{
+PACK(typedef struct _lbaformat_t_{
+            // metadata size 
+            uint16_t metaSz;
+            // lba data size
+            uint8_t lbaDtSz;
+            // relative performance
+            uint8_t rp : 2;
+            uint32_t reserved : 6;
+}) _lbaformat_t_;
+}
 class NVME{
 
 public:
+    PACK(typedef struct hw_nvme_Nsp {
+        uint64_t nspSz;
+        uint64_t nspCap;
+        uint64_t nspUtil;
+        uint8_t nspFeature;
+        uint8_t numOfLbaFormat;
+        // formatted lba size
+        uint8_t formattedLbaSz;
+        // metadata capabilities
+        uint8_t metaCap;
+        // end-to-end data protection capabilites
+        uint8_t dtProtectCap;
+        // end-to-end data protection tp settings
+        uint8_t dtProtectTpSet;
+
+        // unecessary properties
+        // namespace multi-path i/o and namespace sharing capabilities
+        uint8_t nmic;
+        // reservation capability
+        uint8_t rescap;
+        // format progress indicator
+        uint8_t fpi;
+        // dealocate logical block features
+        uint8_t dlfeat;
+        // namespace atomic write unit normal
+        uint16_t nawun;
+        // namespace atomic write unit power fail
+        uint16_t nawupf;
+        // namespace atomic compare & write unit
+        uint16_t nacwu;
+        // namespace atomic boundary size normal
+        uint16_t nabsn;
+        // namespace atomic boundary offset
+        uint16_t nabo;
+        // namespace atomic boundary size power fail
+        uint16_t nabspf;
+        // namespace optimal i/o boundary
+        uint16_t noiob;
+        
+        // NVM capacity
+        uint64_t nvmcap[2];
+
+        // namespace preferred write granularity
+        uint16_t npwg;
+        // namespace preferred write alignment
+        uint16_t npwa;
+        // namespace preferred dealocate granularity
+        uint16_t npdg;
+        // namespace preferred deallocate alignment
+        uint16_t npda;
+        // namespace optimal write size
+        uint16_t nows;
+        // maximum single source range length (used for Copy command)
+        uint16_t mssrl;
+        // maximum copy length
+        uint32_t mcl;
+        // maximum source range count
+        uint8_t msrc;
+        // key per i/o status
+        uint8_t kpios;
+        // number of unique attribute lba formats
+        uint8_t nulbaf;
+        
+        uint8_t reserved;
+        // key pre i/o data access alignment and granularity
+        uint32_t kpiodaag;
+        
+        uint32_t reserved2;
+        // anagroup identifier
+        uint32_t anagrpid;
+        
+        uint8_t reserved3[3];
+        
+        // namespace attributes
+        uint8_t nsattr;
+        // NVM set identifier
+        uint16_t nvmsetid;
+        // endurance group identifier
+        uint16_t endgid;
+        // namespace globally unique identifier
+        uint64_t nguid[2];
+        // ieee extended unique identifier
+        uint64_t eui64;
+        // support lba format, this structure use bit field to reduce function (doge)
+        INFile_NVME::_lbaformat_t_ lbaFormat[64];
+        uint8_t vendorSpec[PAGE_SIZE - 384];
+    }) NameSpace;
+
     PACK(typedef struct SubQueEntry{
         uint8_t OPCode;
         uint8_t Attr;
@@ -77,8 +177,8 @@ public:
     })CmplQueEntry;
 
     typedef struct CmplQue {
-        u16 Size, Pos;
-        u16 Phase, Ident;
+        uint16_t Size, Pos;
+        uint16_t Phase, Ident;
 
         CmplQueEntry *Entries;
     } CmplQue;
@@ -91,12 +191,12 @@ public:
     } NVMERequest;
 
     typedef struct SubQue {
-        u16 Size, Load;
+        uint16_t Size, Load;
         // since that controller can not guarantee the process order of command in ring,
         // we need to update the load by checking whether the head of queue has been handled.
-        u16 Tail, Head;
+        uint16_t Tail, Head;
 
-        u16 Ident;
+        uint16_t Ident;
 
         spinlock_t Lock;
         
@@ -105,6 +205,18 @@ public:
 
         NVME::NVMERequest *Req[0];
     } SubQue;
+
+    typedef struct NVMEDev {
+        int32_t nspId;
+        uint64_t size;
+
+        uint64_t *host;
+
+
+        spinlock_t lck;
+        uint64_t reqBitmap;
+        NVME::NVMERequest *reqs[64]; 
+    } NVMEDev;
 
 
     NVME(PCI::PCIHeader0 *header);
@@ -115,14 +227,19 @@ public:
     bool TryInsertRequest(NVME::SubQue *subQue, NVME::NVMERequest *req);
 
     bool RegisterQue();
-    NVME::SubQue *AllocSubQue(u32 iden, u32 size, NVME::CmplQue *trg);
+    NVME::SubQue *AllocSubQue(uint32_t iden, uint32_t size, NVME::CmplQue *trg);
     bool CreateSubQue(NVME::NVMERequest *req, NVME::SubQue *subQue);
-    NVME::CmplQue *AllocCmplQue(u32 iden, u32 size);
+    NVME::CmplQue *AllocCmplQue(uint32_t iden, uint32_t size);
     bool CreateCmplQue(NVME::NVMERequest *req, NVME::CmplQue *cmplQue);
 
     uint32_t ReadReg(uint32_t offset);
     void WriteReg(uint32_t offset, uint32_t value);
+
+    bool InitREQIdent(NVME::NVMERequest *req, u32 tp, u32 nspIden, void *buf);
     
+    uint64_t Read( uint64_t offset, uint64_t size, void *buf);
+    uint64_t Write(uint64_t offset, uint64_t size, void *buf);
+
 protected:
     uint64_t BaseAddr;
 
@@ -141,18 +258,22 @@ protected:
 
 
 	//IRQDesc *intr;
+    int32_t devNum;
 
+    NVMEDev *dev;
     
 
     /*
     */
    uint8_t FialureNUM;
 private:
+
+    int32_t GetSpareReq(NVME::NVMEDev *dev);
+    NVME::SubQue *FindIOSubQue();
     bool InitQue(); // Just for NVME::NVME(*p)
     bool InitIntr();
+    bool InitNsp();
 };
-#endif
-
 #endif
 
 #endif

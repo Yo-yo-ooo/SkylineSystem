@@ -2,7 +2,7 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/interrupt/idt.h>
-
+#include <klib/kio.h>
 
 static u16 *MSICAP_MSGDATA(PCI::PCI_MSI_CAP *cap) {
     return PCI_MSI_CAP_IS64(cap) ? &cap->Cap64.MsgData : &cap->Cap32.MsgData;
@@ -25,6 +25,27 @@ namespace PCI
                 | ((smp_cpu_list[cpuId]->id) << 12)
                 | (redirect << 3) | (destMode << 2);
         }
+
+        bool Enable(PCI::PCI_MSIX_CAP *cap, PCI::PCIHeader0 *hdr, uint64_t INTRIDX){
+            /* if (desc->ctrl != NULL && desc->ctrl->enable != NULL) {
+                if (desc->ctrl->enable(desc) == false) 
+                    return false;
+            } */
+            PCI::PCI_MSIX_TABLE *tbl =  PCI::GetMSIXTbl(cap, hdr);
+            bit_set0_32(&tbl[INTRIDX].vecCtrl, 0);
+            return true;
+        }
+
+        bool EnableAll(PCI::PCI_MSIX_CAP *cap, PCI::PCIHeader0 *hdr, uint64_t INTRNUM) {
+            PCI::PCI_MSIX_TABLE *tbl = PCI::GetMSIXTbl(cap, hdr);
+            for (int i = 0; i < INTRNUM; i++) 
+                if ((tbl[i].vecCtrl & 1) && 
+                    PCI::MSIX::Enable(cap, hdr, i) == false) 
+                        return false;
+            bit_set1_16(&cap->MsgCtrl, 15);
+            bit_set0_16(&cap->MsgCtrl, 14);
+            return true;
+        }
     } // namespace MSIX
     
     namespace MSI{
@@ -37,13 +58,14 @@ namespace PCI
             else cap->Cap32.MsgAddr = val;
         }    
 
+
     }
 
-    /* void GetIntrGate(uint8_t vecID, uint32_t cpuID, uint64_t intrNum) {
+    void GetIntrGate(uint8_t vecID, uint32_t cpuID, uint64_t intrNum) {
         for (int32_t i = 0; i < intrNum; i++) {
-            hal_intr_setIntrGate(smp_cpu_list[cpuID]., vecID, 0, hal_hw_pci_intrLst[vecID - 0x40]);
+            idt_install_irq(vecID + i, nullptr);
         }
-    } */
+    } 
 
     bool SetMsi(PCI::PCI_MSI_CAP *cap, uint8_t vecID, uint32_t cpuID,uint64_t intrNum) {
         PCI::MSI::SetMsgAddr(cap, cpuID, 0, APIC_DestMode_Physical);

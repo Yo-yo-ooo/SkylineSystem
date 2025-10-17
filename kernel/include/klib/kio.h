@@ -396,6 +396,46 @@ static inline void bit_set1(uint64_t *addr, uint64_t index) {
 		: "memory");
 }
 
+static inline void bit_set0(uint64_t *addr, uint64_t index) {
+	__asm__ volatile (
+		"btrq %1, %0		\n\t"
+		: "+m"(*addr)
+		: "r"(index)
+		: "memory");
+}
+
+static inline void bit_set0_16(uint16_t *addr, uint16_t index) { 
+	__asm__ volatile (
+		"btrw %1, %0		\n\t"
+		: "+m"(*addr)
+		: "r"(index)
+		: "memory");
+}
+
+static inline void bit_set1_16(uint16_t *addr, uint16_t index) { 
+	__asm__ volatile (
+		"btsw %1, %0		\n\t"
+		: "+m"(*addr)
+		: "r"(index)
+		: "memory");
+}
+
+static inline void bit_set0_32(uint32_t *addr, uint32_t index) {
+	__asm__ volatile (
+		"btrl %1, %0		\n\t"
+		: "+m"(*addr)
+		: "r"(index)
+		: "memory");
+}
+
+static inline void bit_set1_32(uint32_t *addr, uint32_t index) { 
+	__asm__ volatile (
+		"btsl %1, %0		\n\t"
+		: "+m"(*addr)
+		: "r"(index)
+		: "memory");
+}
+
 #define mfence() __asm__ volatile ("mfence 	\n\t" : : : "memory")
 
 #elif defined (__aarch64__)

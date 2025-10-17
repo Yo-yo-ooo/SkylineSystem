@@ -3,11 +3,13 @@
 #include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/smp/smp.h>
+#include <mem/heap.h>
 
-#if 0
 
 #define ReadReg64(off)      this->ReadReg(off)
 #define WriteReg64(off,v)   this->WriteReg(off,v)
+
+
 
 bool NVME::InitQue(){
     this->cq = (NVME::CmplQue**)kmalloc(sizeof(NVME::CmplQue*) * INTRNUM);
@@ -94,7 +96,7 @@ NVME::NVME(PCI::PCIHeader0 *header){
 
     this->WriteReg(NVME_CTRLREG_CC,this->ReadReg(NVME_CTRLREG_CC) | 1);
 
-    int32_t timeout = 500 * ((cap >> 24) & 0xff);
+    int32_t timeout = 500 * ((this->CAPREG >> 24) & 0xff);
 	while (timeout > 30) {
 		if ((~this->ReadReg(NVME_CTRLREG_CSTS) & 1) || (~this->ReadReg(NVME_CTRLREG_CC) & 1)) {
 			timeout--;
@@ -112,11 +114,11 @@ NVME::NVME(PCI::PCIHeader0 *header){
 	// mask all interrupts
 	this->WriteReg(NVME_CTRLREG_INITMS, ~0u);
 	// unmask interrupts
-	this->WriteReg(NVME_CTRLREG_INITMC, (1u << host->intrNum) - 1);
+	this->WriteReg(NVME_CTRLREG_INITMC, (1u << this->INTRNUM) - 1);
 
-	if (hw_nvme_registerQue(host) == res_FAIL) return;
+	if (this->RegisterQue() == false) return;
 
-	if (hw_nvme_initNsp(host) == res_FAIL) return;
+	if (this->InitNsp() == false) return;
 	
 	kpok("SUCCESSFILLY INIT NVME ");
 
@@ -141,7 +143,7 @@ bool NVME::CreateSubQue(NVME::NVMERequest *req, NVME::SubQue *subQue) {
 	entry->PRP[0] = PHYSICAL(subQue->Entries);
 	entry->Spec[0] = subQue->Ident | (((u32)subQue->Size - 1) << 16);
 	// flag[0] : contiguous
-	entry->Spec[1] = 0b1 | (((u32)subQue->trg->iden) << 16);
+	entry->Spec[1] = 0b1 | (((u32)subQue->Trg->Ident) << 16);
 	return true;
 }
 
@@ -178,12 +180,10 @@ bool NVME::TryInsertRequest(NVME::SubQue *subQue, NVME::NVMERequest *req) {
 void NVME::Request(NVME::SubQue *subQue, NVME::NVMERequest *req){
     while (this->TryInsertRequest(subQue, req) != true) ;
 
-	hw_nvme_writeSubDb(host, subQue);
-
-	task_Request_send(&req->req);
+	this->WriteReg(0x1000 + (subQue->Ident << 1) * this->DBStride, subQue->Tail);
 
 	if (req->res.Status != 0x01) {
-		kerror("(NVME %p): request %p failed status:%x\n", (uint64_t)this, req, req->res.status);
+		kerror("(NVME %p): request %p failed status:%x\n", (uint64_t)this, req, req->res.Status);
 	}
 }
 
@@ -192,59 +192,48 @@ bool NVME::RegisterQue() {
 	for (uint32_t i = 1; i < this->INTRNUM; i++) {
 		this->CreateCmplQue(req, this->cq[i]);
 		this->Request(this->sq[0], req);
-		if (req->res.status != 0x01) {
+		if (req->res.Status != 0x01) {
 			kerror("(NVME %p): failed to register io completion queue #%d\n", (uint64_t)this, i);
 			return false;
 		}
 
-		this->CreateSubQue(req, host->subQue[i]);
-		this->Request(host->subQue[0], req);
-		if (req->res.status != 0x01) {
+		this->CreateSubQue(req, this->sq[i]);
+		this->Request(this->sq[0], req);
+		if (req->res.Status != 0x01) {
 			kerror("(NVME %p): failed to register io submission queue #%d\n", (uint64_t)this, i);
 			return false;
 		}
 	}
-
+    
 	kfree(req);
 	return true;
 }
 
-bool NVME::InitNsp(hw_nvme_Host *host) {
+bool NVME::InitNsp() {
 	uint32_t *nspLst = kmalloc(sizeof(uint32_t) * 1024);
-	hw_nvme_Nsp *nsp = kmalloc(sizeof(hw_nvme_Nsp), mm_Attr_Shared, NULL);
+    NVME::NameSpace *nsp = kmalloc(sizeof(NVME::NameSpace));
 	_memset(nspLst, 0, sizeof(uint32_t) * 1024);
-	hw_nvme_Request *req = hw_nvme_makeReq(1);
-	hw_nvme_initReq_identify(req, hw_nvme_Request_Identify_type_NspLst, 0, nspLst);
+	NVME::NVMERequest *req = this->MakeReq(1);
+    NVME::InitREQIdent(req, REQ_IDENTIFY_TYPE_NSPLST, 0, nspLst);
 
-	hw_nvme_request(host, host->subQue[0], req);
+	NVME::Request(this->sq[0], req);
 
-	for (host->devNum = 0; nspLst[host->devNum]; host->devNum++) ;
+	for (this->devNum = 0; nspLst[this->devNum]; this->devNum++) ;
 	
-	host->dev = mm_kmalloc(sizeof(hw_nvme_Dev) * host->devNum, mm_Attr_Shared, NULL);
+	this->dev = kmalloc(sizeof(NVME::NVMEDev) * this->devNum);
 
-	printk(screen_log, "(NVME %p): nsp num:%d\n", host, host->devNum);
+	kinfo("(NVME %p): nsp num:%d\n", this, this->devNum);
 
-	for (int32_t i = 0; i < host->devNum; i++) {
-		hw_nvme_initReq_identify(req, hw_nvme_Request_Identify_type_Nsp, nspLst[i], nsp);
+	for (int32_t i = 0; i < this->devNum; i++) {
+		NVME::InitREQIdent(req, REQ_IDENTIFY_TYPE_NSPLST, nspLst[i], nsp);
 
-		hw_nvme_request(host, host->subQue[0], req);
+		NVME::Request(this->sq[0], req);
 
-		printk(screen_log, "(NVME %p): nsp #%d: nspSz:%ld nspCap:%ld nspUtil:%ld\n", host, nspLst[i], nsp->nspSz, nsp->nspCap, nsp->nspUtil);
+		kinfo("(NVME %p): nsp #%d: nspSz:%ld nspCap:%ld nspUtil:%ld\n", this, 
+            nspLst[i], nsp->nspSz, nsp->nspCap, nsp->nspUtil);
 
-		hw_nvme_Dev *dev = &host->dev[i];
+		NVMEDev *dev = &this->dev[i];
 
-		dev->size = nsp->nspUtil;
-		dev->host = host;
-
-		dev->nspId = nspLst[i];
-
-		dev->diskDev.device.parent = &host->pci.device;
-		dev->diskDev.device.drv = &hw_nvme_devDrv;
-
-		dev->diskDev.device.drv->cfg(&dev->diskDev.device);
-
-		// install device
-		hw_DiskDev_install(&dev->diskDev);
 	}
 
 	kfree(req);
@@ -267,15 +256,7 @@ void NVME::WriteReg(uint32_t offset, uint32_t value){
 	*nvme_reg = value;
 }
 
-/*
-__always_inline__ uint32_t hw_nvme_read32(hw_nvme_Host *host, uint32_t off) { return hal_read32(this->capRegAddr + off); }
 
-__always_inline__ uint64_t hw_nvme_read64(hw_nvme_Host *host, uint32_t off) { return hal_read64(this->capRegAddr + off); }
-
-__always_inline__ void hw_nvme_write32(hw_nvme_Host *host, uint32_t off, uint32_t val) { hal_write32(this->capRegAddr + off, val); }
-
-__always_inline__ void hw_nvme_write64(hw_nvme_Host *host, uint32_t off, uint64_t val) { hal_write64(this->capRegAddr + off, val); }
-*/
 
 NVME::SubQue *NVME::AllocSubQue(uint32_t iden, uint32_t size, NVME::CmplQue *trg) {
 	NVME::SubQueEntry *entry = (NVME::SubQueEntry *)
@@ -320,7 +301,7 @@ NVME::CmplQue *NVME::AllocCmplQue(uint32_t iden, uint32_t size) {
 
 bool NVME::InitIntr() {
 
-	this->MSI = NULL;
+	/* this->MSI = NULL;
 	this->flags &= ~NVME_FLAG_MISIX;
 
 	for (PCI::PCICapHdr *hdr = PCI::GetNxtCap(this->phdr, NULL); hdr != NULL; hdr = PCI::GetNxtCap(this->phdr, hdr)) {
@@ -398,10 +379,18 @@ bool NVME::InitIntr() {
 	if (res == false) {
 		kerror("[NVME: %p]: failed to enable msi/msix\n", (uint64_t)this);
 		return false;
-	}
+	} */
 	kinfo("[NVME: %p]: enable msi/msix\n", (uint64_t)this);
-    
+
 	return true;
 }
 
-#endif
+
+bool NVME::InitREQIdent(NVME::NVMERequest *req, u32 tp, u32 nspIden, void *buf){
+    NVME::SubQueEntry *entry = &req->input[0];
+    entry->OPCode = 0x6;
+	entry->NspIdent = nspIden;
+	entry->Spec[0] = tp;
+	entry->PRP[0] = VMM::GetPhysics(kernel_pagemap,buf);
+	return true;
+}
