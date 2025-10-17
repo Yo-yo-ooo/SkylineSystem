@@ -3,6 +3,7 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/interrupt/gdt.h>
 #include <arch/x86_64/vmm/vmm.h>
+#include <klib/x86/simd.h>
 
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
@@ -53,6 +54,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     smp_setup_thread_queue(cpu);
     smp_setup_kstack(cpu);
     sse_enable();
+    simd_cpu_init();
     kpok("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
     if (mp_info->lapic_id > smp_last_cpu) smp_last_cpu = mp_info->lapic_id;

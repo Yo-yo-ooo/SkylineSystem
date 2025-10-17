@@ -436,6 +436,62 @@ static inline void bit_set1_32(uint32_t *addr, uint32_t index) {
 		: "memory");
 }
 
+
+static inline void xcr0_write(uint32_t xcr, uint64_t value)
+{
+    uint32_t eax = (uint32_t)value;
+    uint32_t edx = value >> 32;
+    asm volatile("xsetbv" : : "a"(eax), "d"(edx), "c"(xcr) : "memory");
+}
+
+static inline uint64_t cr4_read()
+{
+    uint64_t cr4;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    return cr4;
+}
+
+static inline void cr4_write(uint64_t value)
+{
+    asm volatile("mov %0, %%cr4" : : "r"(value));
+}
+
+static inline uint64_t cr3_read()
+{
+    uint64_t cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    return cr3;
+}
+
+static inline void cr3_write(uint64_t value)
+{
+    asm volatile("mov %0, %%cr3" : : "r"(value));
+}
+
+static inline uint64_t cr2_read()
+{
+    uint64_t cr2;
+    asm volatile("mov %%cr2, %0" : "=r"(cr2));
+    return cr2;
+}
+
+static inline void cr2_write(uint64_t value)
+{
+    asm volatile("mov %0, %%cr2" : : "r"(value));
+}
+
+static inline uint64_t cr0_read()
+{
+    uint64_t cr0;
+    asm volatile("mov %%cr0, %0" : "=r"(cr0));
+    return cr0;
+}
+
+static inline void cr0_write(uint64_t value)
+{
+    asm volatile("mov %0, %%cr0" : : "r"(value));
+}
+
 #define mfence() __asm__ volatile ("mfence 	\n\t" : : : "memory")
 
 #elif defined (__aarch64__)

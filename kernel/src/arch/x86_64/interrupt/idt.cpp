@@ -16,7 +16,7 @@ extern "C" void *idt_int_table[];
 void *handlers[224];
 
 
-static const char* isr_errors[32] = {
+static constexpr char* isr_errors[32] = {
     "Division by zero",
     "Debug",
     "Non-maskable interrupt",
@@ -36,19 +36,19 @@ static const char* isr_errors[32] = {
     "Coprocessor fault",
     "Alignment check",
     "Machine check",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved"
+    "Reserved ISR ERR NO.19",
+    "Reserved ISR ERR NO.20",
+    "Reserved ISR ERR NO.21",
+    "Reserved ISR ERR NO.22",
+    "Reserved ISR ERR NO.23",
+    "Reserved ISR ERR NO.24",
+    "Reserved ISR ERR NO.25",
+    "Reserved ISR ERR NO.26",
+    "Reserved ISR ERR NO.27",
+    "Reserved ISR ERR NO.28",
+    "Reserved ISR ERR NO.29",
+    "Reserved ISR ERR NO.30",
+    "Reserved ISR ERR NO.31"
 };
 
 void idt_set_entry(uint16_t vector, void *isr, uint8_t flags);

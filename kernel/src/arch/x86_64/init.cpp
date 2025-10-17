@@ -7,7 +7,7 @@
 #include <fs/lwext4/ext4.h>
 #include <fs/lwext4/blockdev/blockdev.h>
 
-#include <klib/x86/enable.h>
+#include <klib/x86/simd.h>
 #include <klib/x86/memcpy.h>
 #include <mem/heap.h>
 
@@ -44,21 +44,18 @@ void __init x86_64_init(void){
     InitFunc("PIT",PIT::InitPIT());
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
-    
+    simd_cpu_init();
     
     if (fpu_init()){
         kerror("FPU INIT FAILED: x86_64 CPU doesn't support FPU.\n");
         hcf();
     }
     kpok("FPU INIT!\n");
-    //InitFunc("XSTATE",xstate_enable());
     InitFunc("SSE",sse_enable());
-    //InitFunc("AVX",avx_enable());
-    //InitFunc("AVX512",avx512_enable());
     InitFunc("Schedule",Schedule::Init());
     InitFunc("Syscall",syscall_init());
-
     
+
     InitFunc("VsDev",Dev::Init());
     //InitFunc("ATA",ATA::Init());
     if(ACPI::mcfg == NULL){PCI::DoPCIWithoutMCFG();}
