@@ -77,3 +77,4 @@ clone_repo_commit \
     https://codeberg.org/OSDev/cc-runtime.git \
     cc-runtime
 
+cat /dev/null > ./freestnd-c-hdrs/x86_64/include/mm_malloc.h

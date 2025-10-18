@@ -19,8 +19,9 @@
 > **You can build this project with these commands:**
 > ```bash
 > cd kernel && ./get-deps
+> cd .. && make limine/limine
 > #If can't run get-deps script, you can run "chmod +x kernel/get-deps"
-> cd .. && make cm
+> make cm
 > ```
 > **You can run qemu with these commands:**
 > ```bash
