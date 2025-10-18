@@ -90,7 +90,7 @@ override KCPPFLAGS := \
     -MP
 
 KCC += -std=gnu17
-KCXX += -isystem freestnd-cxx-hdrs/$(KARCH)/include -std=gnu++20
+KCXX += -isystem freestnd-cxx-hdrs/$(KARCH)/include -std=gnu++23
 
 ifeq ($(KARCH),x86_64)
     # Internal nasm flags that should not be changed by the user.
@@ -216,7 +216,7 @@ all: bin-$(KARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(KARCH)/$(OUTPUT): GNUmakefile linker-$(KARCH).ld $(OBJ)
 	@mkdir -p "$$(dirname $@)"
-	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
+	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@ > log.txt
 
 # Include header dependencies.
 -include $(HEADER_DEPS)
@@ -232,6 +232,36 @@ obj-$(KARCH)/%.S.o: src/%.S GNUmakefile
 	@echo GAS $<
 	@mkdir -p "$$(dirname $@)"
 	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+
+SPECIAL_MEM_OPS_X86 =  -ffreestanding -march=skylake -mavx2 -O3 \
+-isystem freestnd-c-hdrs/$(KARCH)/include -isystem freestnd-cxx-hdrs/$(KARCH)/include \
+-I$(SS_BUILD_DIR)/kernel/include -nostdinc -nostdlib\
+-fpie -fomit-frame-pointer -fno-common -fno-zero-initialized-in-bss \
+-fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
+-fno-stack-protector -fno-stack-check -fno-strict-aliasing \
+-fno-merge-all-constants -fno-merge-constants -mno-stack-arg-probe \
+-m64 -mno-red-zone -maccumulate-outgoing-args --std=gnu23 -g3 \
+-Wall -Wextra -Wdouble-promotion -Wpedantic -fmessage-length=0 -ffunction-sections -MMD -MP
+
+obj-$(KARCH)/./klib/x86mem/memcpy.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
+	@echo C++ $<
+	@mkdir -p "$$(dirname $@)"
+	$(KCC) $(SPECIAL_MEM_OPS_X86) -c $< -o $@
+
+obj-$(KARCH)/./klib/x86mem/memset.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
+	@echo C++ $<
+	@mkdir -p "$$(dirname $@)"
+	$(KCC) $(SPECIAL_MEM_OPS_X86) -c $< -o $@
+
+obj-$(KARCH)/./klib/x86mem/memmove.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
+	@echo C++ $<
+	@mkdir -p "$$(dirname $@)"
+	$(KCC) $(SPECIAL_MEM_OPS_X86) -c $< -o $@
+
+obj-$(KARCH)/./klib/x86mem/memcmp.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
+	@echo C++ $<
+	@mkdir -p "$$(dirname $@)"
+	$(KCC) $(SPECIAL_MEM_OPS_X86) -c $< -o $@
 
 obj-$(KARCH)/%.cpp.o: src/%.cpp GNUmakefile
 	@echo C++ $<
