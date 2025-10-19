@@ -54,10 +54,17 @@ uint64_t sys_fork(syscall_frame_t *frame);
 
 void syscall_init();
 
-uint64_t sys_read(uint32_t fd_idx, void *buf, size_t count);
-uint64_t sys_write(uint32_t fd_idx, void *buf, size_t count);
-int64_t sys_lseek(uint32_t fd_idx, int64_t offset, int32_t whence);
-uint64_t sys_open(const char *path, int flags, unsigned int mode);
-uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_envp);
+typedef uint64_t (syscall_function)(uint64_t,uint16_t,uint64_t,uint64_t,uint64_t,uint64_t);
+
+uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_write(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+int64_t sys_lseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 
 #endif

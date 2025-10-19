@@ -241,7 +241,7 @@ SPECIAL_MEM_OPS_X86 =  -ffreestanding -march=skylake -mavx2 -O3 \
 -fno-stack-protector -fno-stack-check -fno-strict-aliasing \
 -fno-merge-all-constants -fno-merge-constants -mno-stack-arg-probe \
 -m64 -mno-red-zone -maccumulate-outgoing-args --std=gnu23 -g3 \
--Wall -Wextra -Wdouble-promotion -Wpedantic -fmessage-length=0 -ffunction-sections -MMD -MP
+-Wno-error=deprecated -fmessage-length=0 -ffunction-sections -MMD -MP
 
 obj-$(KARCH)/./klib/x86mem/memcpy.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
 	@echo C++ $<

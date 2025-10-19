@@ -5,16 +5,20 @@
 #include <mem/pmm.h>
 #include <fs/fd.h>
 
-uint64_t sys_read(uint32_t fd_idx, void *buf, size_t count) {
+uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
+    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if (!fd)
         return -EBADF;
-    ext4_fread(&fd->f,buf,count,NULL);
+    ext4_fread(&fd->f,(const void*)buf,count,NULL);
     fd->off += count;
     return count;
 }
 
-uint64_t sys_write(uint32_t fd_idx, void *buf, size_t count) {
+uint64_t sys_write(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
+        IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if(fd_idx == 1){
         kinfo();
@@ -35,28 +39,31 @@ uint64_t sys_write(uint32_t fd_idx, void *buf, size_t count) {
     }
     if (!fd)
         return -EBADF;
-    ext4_fwrite(&fd->f,buf,count,NULL);
+    ext4_fwrite(&fd->f,(const void*)buf,count,NULL);
     fd->off += count;
     return count;
 }
 
-int64_t sys_lseek(uint32_t fd_idx, int64_t offset, int32_t whence){
+int64_t sys_lseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2){
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if (!fd)
         return -EBADF;
-    if(ext4_fseek(&fd->f,fd->off,whence) == EOK)
+    if(ext4_fseek(&fd->f,fd->off,(uint32_t)whence) == EOK)
         return offset;
     else{return -1;}
 }
 
 
-uint64_t sys_open(const char *path, int flags, unsigned int mode) {
+uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
+        IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     proc_t *proc = Schedule::this_proc();
 
     fd_t *fd = (fd_t*)kmalloc(sizeof(fd));
-    fd->flags = flags;
+    fd->flags = (int32_t)flags;
     fd->off = 0;
-    fd->path = path;
+    fd->path = (char*)path;
     ext4_fopen(&fd->f,path,flags);
 
     if (!fd) return (uint64_t)((int64_t)-1);

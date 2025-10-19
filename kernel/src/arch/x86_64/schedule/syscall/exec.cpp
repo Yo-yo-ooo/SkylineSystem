@@ -13,7 +13,8 @@ void execve_cleanup(int argc, int envc, char **argv, char **envp) {
     kfree(envp);
 }
 
-extern uint64_t sys_open(const char *path, int flags, unsigned int mode);
+extern uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
     Elf64::Elf64_Ehdr *hdr = (Elf64::Elf64_Ehdr*)data;
@@ -73,41 +74,46 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
 }
 
 
-uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_envp) {
+uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
+        IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     // Copy pathname to kernel
-    char *pathname = (char*)kmalloc(strlen(u_pathname)+1);
-    __memcpy(pathname, u_pathname, strlen(u_pathname)+1);
+    const char* pathname_ = (const char*)u_pathname;
+    const char* argv_ = (const char*)u_argv;
+    const char* envp_ = (const char*)u_envp;
+    char *pathname = (char*)kmalloc(strlen(pathname_)+1);
+    __memcpy(pathname, pathname_, strlen(pathname_)+1);
     // Copy argv, envp to kernel
     int argc = 0;
-    if (u_argv) {
-        while (u_argv[argc++]);
+    if (argv_) {
+        while (argv_[argc++]);
         argc -= 1;
     }
     int envc = 0;
-    if (u_envp) {
-        while (u_envp[envc++]);
+    if (envp_) {
+        while (envp_[envc++]);
         envc -= 1;
     }
     char **argv = (char**)kmalloc((argc + 1) * 8);
     argv[argc] = nullptr;
     for (int i = 0; i < argc; i++) {
-        int size = strlen(u_argv[i]) + 1;
+        int size = strlen(argv_[i]) + 1;
         char *arg = (char*)kmalloc(size);
         argv[i] = arg;
-        __memcpy(arg, u_argv[i], size);
+        __memcpy(arg, argv_[i], size);
     }
     char **envp = (char**)kmalloc((envc + 1) * 8);
     envp[envc] = nullptr;
     for (int i = 0; i < envc; i++) {
-        int size = strlen(u_envp[i]) + 1;
+        int size = strlen(envp_[i]) + 1;
         char *env = (char*)kmalloc(size);
         envp[i] = env;
-        __memcpy(env, u_envp[i], size);
+        __memcpy(env, envp_[i], size);
     }
     proc_t *proc = Schedule::this_proc();
     thread_t *thread = Schedule::this_thread();
     //vnode_t *node = vfs_open(proc->cwd, pathname);
-    if(sys_open(u_pathname,O_RDONLY,NULL) == -1){
+    if(sys_open(pathname_,O_RDONLY,NULL,NULL,NULL,NULL) == -1){
         execve_cleanup(argc, envc, argv, envp);
         return (uint64_t)((int64_t)-1);
     }
@@ -126,7 +132,7 @@ uint64_t sys_execve(const char *u_pathname, const char **u_argv, const char **u_
 
     // Load ELF
     static ext4_file f;
-    ext4_fopen(&f,u_pathname,"r");
+    ext4_fopen(&f,pathname_,"r");
     uint8_t *buffer = (uint8_t*)kmalloc(f.fsize);
     ext4_fread(&f,buffer,f.fsize,NULL);
     //vfs_read(node, buffer, 0, node->size);

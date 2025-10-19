@@ -5,6 +5,12 @@
 #include <errno.h>
 #include <arch/x86_64/schedule/sched.h>
 
+uint64_t SYSCALL_NR(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){
+    return NULL;
+}
+
+uint64_t (*syscall_lists[256])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = {SYSCALL_NR};
+
 void dump_REG(syscall_frame_t *frame){
     kinfoln("START DUMP REG");
     kinfoln("RAX:0x%X RBX:0x%X RCX:0x%X RDX:0x%X",frame->rax,frame->rbx,frame->rcx,frame->rdx);
@@ -14,37 +20,19 @@ void dump_REG(syscall_frame_t *frame){
 }
 
 extern "C" void syscall_handler(syscall_frame_t *frame) {
-    kinfoln("HIT SYSCALL!");
-    switch (frame->rax) {
-        case 1: 
-            dump_REG(frame);
-            frame->rax = sys_write(frame->rdi, (void*)frame->rsi, frame->rdx);
-            break;
-        case 2:
-            dump_REG(frame);
-            frame->rax = sys_write(frame->rdi, (void*)frame->rsi, frame->rdx);
-            break;
-        case 15: // sigreturn
-            //sys_sigreturn(frame);
-            break;
-        case 57: // fork
-            frame->rax = sys_fork(frame);
-            break;
-        case 60:
-            Schedule::Exit(frame->rdi);
-            break;
-        default: {
-            kerrorln("Undefined syscall:%d",frame->rax);
-            frame->rax = -ENOSYS;
-            return;
-        }
-    }
+    //kinfoln("HIT SYSCALL!");
+    frame->rax = syscall_lists[frame->rax]
+    (frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
     return;
 }
 
 extern "C" void syscall_entry();
 
 void syscall_init() {
+    
+    syscall_lists[1] = sys_write;
+    syscall_lists[2] = sys_read;
+
     uint64_t efer = rdmsr(IA32_EFER);
     efer |= (1 << 0);
     wrmsr(IA32_EFER, efer);
