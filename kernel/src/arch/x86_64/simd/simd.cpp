@@ -78,7 +78,7 @@ void simd_cpu_init(void)
         asm volatile("fxsave (%0)" : : "r"(initCtx));
     }
 
-    kinfo("cpu simd:");
+    kpok("cpu simd:");
     if (cpuid_is_xsave_avail())
     {
         kprintf("xsave ");
