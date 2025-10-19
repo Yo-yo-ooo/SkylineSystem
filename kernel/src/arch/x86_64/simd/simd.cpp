@@ -6,7 +6,7 @@
 #include <mem/heap.h>
 #include <mem/pmm.h>
 #include <arch/x86_64/smp/smp.h>
-#include <klib/x86/simd.h>
+#include <arch/x86_64/simd/simd.h>
 
 static inline bool cpuid_is_xsave_avail(void)
 {
@@ -78,20 +78,20 @@ void simd_cpu_init(void)
         asm volatile("fxsave (%0)" : : "r"(initCtx));
     }
 
-    kinfo("cpu%d simd ", this_cpu()->id);
+    kinfo("cpu simd:");
     if (cpuid_is_xsave_avail())
     {
-        kinfo("xsave ");
+        kprintf("xsave ");
     }
     if (cpuid_is_avx_avail())
     {
-        kinfo("avx ");
+        kprintf("avx ");
     }
     if (cpuid_is_avx512_avail())
     {
-        kinfo("avx512 ");
+        kprintf("avx512 ");
     }
-    kinfo("enabled\n");
+    kprintf("enabled\n");
 }
 
 uint64_t simd_ctx_init(simd_ctx_t* ctx)

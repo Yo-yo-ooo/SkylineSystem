@@ -7,8 +7,7 @@
 #include <fs/lwext4/ext4.h>
 #include <fs/lwext4/blockdev/blockdev.h>
 
-#include <klib/x86/simd.h>
-#include <klib/x86/memcpy.h>
+#include <arch/x86_64/simd/simd.h>
 #include <mem/heap.h>
 
 #define PIC1_COMMAND 0x20

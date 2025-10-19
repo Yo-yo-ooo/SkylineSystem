@@ -3,7 +3,7 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/interrupt/gdt.h>
 #include <arch/x86_64/vmm/vmm.h>
-#include <klib/x86/simd.h>
+#include <arch/x86_64/simd/simd.h>
 
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
