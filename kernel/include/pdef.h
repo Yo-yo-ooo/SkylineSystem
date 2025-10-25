@@ -18,11 +18,6 @@
 
 #define IGNORE_VALUE(VALUE) (void)VALUE
 
-#ifndef __always_inline__
-// inline function must be static function
-#define __always_inline__ static inline __attribute__ ((always_inline))
-#endif
-
 #ifndef __noinline__
 #define __noinline__ __attribute__ ((noinline))
 #endif

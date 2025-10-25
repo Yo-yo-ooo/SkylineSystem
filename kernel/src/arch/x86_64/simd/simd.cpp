@@ -8,35 +8,11 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/simd/simd.h>
 
-static inline bool cpuid_is_xsave_avail(void)
-{
-    uint32_t ecx;
-    uint32_t unused;
-    cpuid(CPUID_FEATURE_ID, 0, &unused, &unused, &ecx, &unused);
-    return ecx & CPUID_ECX_XSAVE_AVAIL;
-}
-
-static inline bool cpuid_is_avx_avail(void)
-{
-    uint32_t ecx;
-    uint32_t unused;
-    cpuid(CPUID_FEATURE_ID, 0, &unused, &unused, &ecx, &unused);
-    return ecx & CPUID_ECX_AVX_AVAIL;
-}
-
-static inline bool cpuid_is_avx512_avail(void)
-{
-    uint32_t eax;
-    uint32_t ebx;
-    uint32_t unused;
-    cpuid(CPUID_FEATURE_EXTENDED_ID, 0, &eax, &ebx, &unused, &unused);
-    return (eax != 0) && (ebx & CPUID_EBX_AVX512_AVAIL);
-}
-
 static uint8_t alignas(64) initCtx[PAGE_SIZE];
 
 static void simd_xsave_init(void)
 {
+    kinfoln("DO XSAVE INIT");
     cr4_write(cr4_read() | CR4_XSAVE_ENABLE);
 
     uint64_t xcr0 = 0;
@@ -56,8 +32,9 @@ static void simd_xsave_init(void)
     xcr0_write(0, xcr0);
 }
 
-void simd_cpu_init(void)
+void simd_cpu_init(cpu_t *cpu)
 {
+    uint8_t i = 0;
     cr0_write(cr0_read() & ~((uint64_t)CR0_EMULATION));
     cr0_write(cr0_read() | CR0_MONITOR_CO_PROCESSOR | CR0_NUMERIC_ERROR_ENABLE);
 
@@ -81,17 +58,21 @@ void simd_cpu_init(void)
     kpok("cpu simd:");
     if (cpuid_is_xsave_avail())
     {
-        kprintf("xsave ");
+        kprintf("xsave ");i++;
     }
     if (cpuid_is_avx_avail())
     {
-        kprintf("avx ");
+        kprintf("avx ");i++;
     }
     if (cpuid_is_avx512_avail())
     {
-        kprintf("avx512 ");
+        kprintf("avx512 ");i++;
     }
     kprintf("enabled\n");
+    if(i < 3)
+        cpu->SupportSIMD = false;
+    else
+        cpu->SupportSIMD = true;
 }
 
 uint64_t simd_ctx_init(simd_ctx_t* ctx)

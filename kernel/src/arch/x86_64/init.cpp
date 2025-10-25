@@ -38,12 +38,13 @@ void __init x86_64_init(void){
     outb(0x22,0x70);
     outb(0x23,0x01);
     kinfoln("ENABLED ICMR!");
+    simd_cpu_init(get_cpu(0));
     InitFunc("LAPIC",LAPIC::Init());
     InitFunc("IOAPIC",IOAPIC::Init());
     InitFunc("PIT",PIT::InitPIT());
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
-    simd_cpu_init();
+    
     
     if (fpu_init()){
         kerror("FPU INIT FAILED: x86_64 CPU doesn't support FPU.\n");

@@ -1,6 +1,8 @@
 // Compile with GCC -O3 for best performance
 // It pretty much entirely negates the need to write these by hand in asm.
-#include <klib/x86/x86mem.h>
+#include "./x86mem.h"
+
+#ifdef __x86_64__
 
 #undef BYTE_ALIGNMENT
 // Default (8-bit, 1 byte at a time)
@@ -2179,6 +2181,6 @@ void * AVX_memcpy(void *dest, void *src, size_t numbytes)
   return returnval;
 }
 
-
+#endif
 // AVX-1024+ support pending existence of the standard.
 #undef BYTE_ALIGNMENT

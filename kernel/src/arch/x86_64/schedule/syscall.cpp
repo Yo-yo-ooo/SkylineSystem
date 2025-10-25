@@ -9,7 +9,8 @@ uint64_t SYSCALL_NR(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){
     return NULL;
 }
 
-uint64_t (*syscall_lists[256])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = {SYSCALL_NR};
+uint64_t (*syscall_lists[256])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = \
+    {SYSCALL_NR};
 
 void dump_REG(syscall_frame_t *frame){
     kinfoln("START DUMP REG");

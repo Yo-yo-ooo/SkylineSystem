@@ -1,6 +1,8 @@
 // Compile with GCC -O3 for best performance
 // It pretty much entirely negates the need to write these by hand in asm.
-#include <klib/x86/x86mem.h>
+#include "./x86mem.h"
+
+#ifdef __x86_64__
 
 #undef BYTE_ALIGNMENT
 void * memset_fpx86 (void *dest, const uint8_t val, size_t len)
@@ -3102,6 +3104,6 @@ void * AVX_memset_4B(void *dest, const uint32_t val, size_t numbytes_div_4)
 
   return returnval;
 }
-
+#endif
 // AVX-1024+ support pending existence of the standard.
 #undef BYTE_ALIGNMENT

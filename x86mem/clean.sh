@@ -1,0 +1,1 @@
+rm -rf memops.d memops.o memops.a

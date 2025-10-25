@@ -111,3 +111,28 @@ inline void sse_enable() {
 #define CPUID_EBX_AVX512_AVAIL (1 << 16)
 #define CPUID_ECX_XSAVE_AVAIL (1 << 26)
 #define CPUID_ECX_AVX_AVAIL (1 << 28)
+
+static inline bool cpuid_is_xsave_avail(void)
+{
+    uint32_t ecx;
+    uint32_t unused;
+    cpuid(CPUID_FEATURE_ID, 0, &unused, &unused, &ecx, &unused);
+    return ecx & CPUID_ECX_XSAVE_AVAIL;
+}
+
+static inline bool cpuid_is_avx_avail(void)
+{
+    uint32_t ecx;
+    uint32_t unused;
+    cpuid(CPUID_FEATURE_ID, 0, &unused, &unused, &ecx, &unused);
+    return ecx & CPUID_ECX_AVX_AVAIL;
+}
+
+static inline bool cpuid_is_avx512_avail(void)
+{
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t unused;
+    cpuid(CPUID_FEATURE_EXTENDED_ID, 0, &eax, &ebx, &unused, &unused);
+    return (eax != 0) && (ebx & CPUID_EBX_AVX512_AVAIL);
+}

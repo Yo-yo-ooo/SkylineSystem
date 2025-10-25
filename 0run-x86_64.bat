@@ -12,7 +12,7 @@ if not exist %SourceFile% (
 )
 
 
-qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx ^
+qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx,+avx512f,+xsave ^
 -cdrom SkylineSystem-x86_64.iso -m 2G -smp 4 ^
 -serial stdio -net nic -device AC97 ^
 -drive file=%SourceFile%,if=none,id=sata1 ^

@@ -178,6 +178,9 @@ kernel-deps:
 
 .PHONY: kernel
 kernel: kernel-deps
+ifeq ($(KARCH),x86_64)
+	$(MAKE) -C x86mem
+endif
 	$(MAKE) -C kernel
 
 $(IMAGE_NAME).iso: limine/limine kernel

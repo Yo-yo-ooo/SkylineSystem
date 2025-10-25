@@ -29,6 +29,7 @@ typedef struct cpu_t{
     uint64_t thread_count;
     int32_t sched_lock;
     bool has_runnable_thread;
+    bool SupportSIMD = false;
 } cpu_t;
 
 extern uint32_t smp_bsp_cpu;

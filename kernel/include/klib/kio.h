@@ -492,6 +492,7 @@ static inline void cr0_write(uint64_t value)
     asm volatile("mov %0, %%cr0" : : "r"(value));
 }
 
+
 #define mfence() __asm__ volatile ("mfence 	\n\t" : : : "memory")
 
 #elif defined (__aarch64__)

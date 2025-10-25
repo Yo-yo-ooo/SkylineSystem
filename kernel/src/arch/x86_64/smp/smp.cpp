@@ -54,7 +54,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     smp_setup_thread_queue(cpu);
     smp_setup_kstack(cpu);
     sse_enable();
-    simd_cpu_init();
+    simd_cpu_init(cpu);
     kpok("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
     if (mp_info->lapic_id > smp_last_cpu) smp_last_cpu = mp_info->lapic_id;

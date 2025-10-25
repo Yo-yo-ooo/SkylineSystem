@@ -1,6 +1,8 @@
 // Compile with GCC -O3 for best performance
 // It pretty much entirely negates the need to write these by hand in asm.
-#include <klib/x86/x86mem.h>
+#include "./x86mem.h"
+
+#ifdef __x86_64__
 
 #undef BYTE_ALIGNMENT
 int memcmp_fpx86 (const void *str1, const void *str2, size_t count)
@@ -1319,3 +1321,5 @@ int AVX_memcmp(const void *str1, const void *str2, size_t numbytes, int equality
 
 // AVX-1024+ support pending existence of the standard.
 #undef BYTE_ALIGNMENT
+
+#endif

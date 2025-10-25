@@ -233,35 +233,11 @@ obj-$(KARCH)/%.S.o: src/%.S GNUmakefile
 	@mkdir -p "$$(dirname $@)"
 	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
-SPECIAL_MEM_OPS_X86 =  -ffreestanding -march=skylake -mavx2 -O3 \
--isystem freestnd-c-hdrs/$(KARCH)/include -isystem freestnd-cxx-hdrs/$(KARCH)/include \
--I$(SS_BUILD_DIR)/kernel/include -nostdinc -nostdlib\
--fpie -fomit-frame-pointer -fno-common -fno-zero-initialized-in-bss \
--fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
--fno-stack-protector -fno-stack-check -fno-strict-aliasing \
--fno-merge-all-constants -fno-merge-constants -mno-stack-arg-probe \
--m64 -mno-red-zone -maccumulate-outgoing-args --std=gnu23 -g3 \
--Wno-error=deprecated -fmessage-length=0 -ffunction-sections -MMD -MP
-
-obj-$(KARCH)/./klib/x86mem/memcpy.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
+obj-$(KARCH)/klib/mem.cpp.o: src/klib/mem.cpp GNUmakefile
 	@echo C++ $<
 	@mkdir -p "$$(dirname $@)"
-	$(KCC) $(SPECIAL_MEM_OPS_X86) -c $< -o $@
-
-obj-$(KARCH)/./klib/x86mem/memset.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
-	@echo C++ $<
-	@mkdir -p "$$(dirname $@)"
-	$(KCC) $(SPECIAL_MEM_OPS_X86) -c $< -o $@
-
-obj-$(KARCH)/./klib/x86mem/memmove.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
-	@echo C++ $<
-	@mkdir -p "$$(dirname $@)"
-	$(KCC) $(SPECIAL_MEM_OPS_X86) -c $< -o $@
-
-obj-$(KARCH)/./klib/x86mem/memcmp.c.o: src/./klib/x86mem/memcpy.c GNUmakefile
-	@echo C++ $<
-	@mkdir -p "$$(dirname $@)"
-	$(KCC) $(SPECIAL_MEM_OPS_X86) -c $< -o $@
+	@$(KCXX) -I$(SS_BUILD_DIR)/x86mem -L$(SS_BUILD_DIR)/x86mem/memops.a \
+	$(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 obj-$(KARCH)/%.cpp.o: src/%.cpp GNUmakefile
 	@echo C++ $<
