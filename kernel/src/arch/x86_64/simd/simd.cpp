@@ -12,9 +12,13 @@ static uint8_t alignas(64) initCtx[PAGE_SIZE];
 
 static void simd_xsave_init(void)
 {
+    asm volatile("cli");
     kinfoln("DO XSAVE INIT");
-    cr4_write(cr4_read() | CR4_XSAVE_ENABLE);
+    uint64_t cr4 = cr4_read() | CR4_XSAVE_ENABLE;
+    kinfoln("READ CR4");
+    asm volatile("mov %0, %%cr4" : : "r"(cr4));
 
+    kinfoln("WRITE CR4");
     uint64_t xcr0 = 0;
 
     xcr0 = xcr0 | XCR0_XSAVE_SAVE_X87 | XCR0_XSAVE_SAVE_SSE;
@@ -30,6 +34,7 @@ static void simd_xsave_init(void)
     }
 
     xcr0_write(0, xcr0);
+    asm volatile("sti");
 }
 
 void simd_cpu_init(cpu_t *cpu)
