@@ -5,6 +5,7 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/schedule/syscall.h>
 #include <arch/x86_64/vmm/vmm.h>
+#include <arch/x86_64/simd/simd.h>
 
 static volatile uint64_t sched_tid = 0;
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap);
@@ -134,7 +135,7 @@ namespace Schedule{
         }
 
         void Switch(context_t *ctx) {
-            asm volatile("cli");
+            //asm volatile("cli");
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             spinlock_lock(&cpu->sched_lock);
@@ -142,7 +143,11 @@ namespace Schedule{
                 thread_t *thread = cpu->current_thread;
                 thread->fs = rdmsr(FS_BASE);
                 thread->ctx = *ctx;
-                __asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
+                if (cpuid_is_xsave_avail())
+                    asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(UINT64_MAX), "d"(UINT64_MAX) : "memory");
+                else
+                    asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
+                //__asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
             }
             thread_t *next_thread = Schedule::Useless::Pick(cpu);
             cpu->current_thread = next_thread;
@@ -156,7 +161,7 @@ namespace Schedule{
             spinlock_unlock(&cpu->sched_lock);
             // An ideal thread wouldn't need the timer to preempt.
             LAPIC::Oneshot(SCHED_VEC, cpu->thread_queues[next_thread->priority].quantum);
-            asm volatile("sti");
+            //asm volatile("sti");
             LAPIC::EOI();
         }
 
