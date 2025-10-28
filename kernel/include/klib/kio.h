@@ -151,6 +151,18 @@ static inline void store(uint64_t *addr, uint32_t value) {
     );
 }
 
+static inline void cpuid(const uint32_t leaf,
+      const uint32_t subleaf,
+      uint64_t *const a,
+      uint64_t *const b,
+      uint64_t *const c,
+      uint64_t *const d)
+{
+    asm volatile("cpuid"
+                 : "=a"(*a), "=b"(*b), "=c"(*c), "=d"(*d)
+                 : "a" (leaf), "c" (subleaf));
+}
+
 static inline bool cpuid(uint32_t leaf, uint32_t subleaf,
           uint32_t *eax, uint32_t *ebx, uint32_t *ecx, uint32_t *edx) {
     uint32_t cpuid_max;

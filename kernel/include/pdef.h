@@ -21,3 +21,5 @@
 #ifndef __noinline__
 #define __noinline__ __attribute__ ((noinline))
 #endif
+
+#define rm_mask(num, mask) ((num) & ((typeof(num))~(mask)))
