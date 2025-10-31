@@ -63,12 +63,14 @@ typedef struct thread_t {
     struct thread_t *list_prev;
     struct proc_t *parent;
     uint64_t sleeping_time;
+
+    void* heap;//data segment
+    uint64_t heap_size;
 } thread_t;
 
 typedef struct proc_t {
     uint64_t id;
     sigaction_t sig_handlers[64];
-    //vnode_t *cwd;
     thread_t *threads;
     pagemap_t *pagemap;
     struct proc_t *parent; // In case of fork

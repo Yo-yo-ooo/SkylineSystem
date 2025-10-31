@@ -35,3 +35,13 @@ uint64_t sys_dup2(uint64_t filedesc,uint64_t filedesc2, uint64_t ign_0, \
 
     return filedesc;
 }
+
+uint64_t sys_exit(uint64_t code,uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4) {
+    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
+    IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);
+
+    Schedule::Exit(code);
+
+    return 0;
+}

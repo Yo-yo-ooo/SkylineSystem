@@ -36,11 +36,15 @@ void syscall_init() {
     syscall_lists[2] = sys_open;
 
     syscall_lists[8] = sys_lseek;
+    syscall_lists[9] = sys_mmap;
+    syscall_lists[11] = sys_munmap;
+    syscall_lists[12] = sys_brk;
     syscall_lists[32] = sys_dup;
     syscall_lists[33] = sys_dup2;
     syscall_lists[39] = sys_getpid;
-    syscall_lists[57] =  sys_fork;
-    syscall_lists[59] =  sys_execve;
+    syscall_lists[57] = sys_fork;
+    syscall_lists[59] = sys_execve;
+    syscall_lists[60] = sys_exit;
 
     uint64_t efer = rdmsr(IA32_EFER);
     efer |= (1 << 0);

@@ -299,6 +299,7 @@ namespace Schedule{
         Schedule::Useless::ProcessAddThread(parent, thread);
         thread->sig_deliver = 0;
         thread->sig_mask = 0;
+        thread->heap_size = 0;
 
         // Fx area
         thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);
@@ -339,10 +340,14 @@ namespace Schedule{
         thread->flags = 0;
         thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
 
+        /* thread->heap = VMM::Alloc(thread->pagemap, 8, true);
+        thread->heap_size = 8 * PAGE_SIZE; */
+
         Schedule::Useless::ProcessAddThread(parent, thread);
 
         thread->sig_deliver = 0;
         thread->sig_mask = 0;
+        thread->heap_size = 0;
 
         // Load ELF
         static ext4_file f;
