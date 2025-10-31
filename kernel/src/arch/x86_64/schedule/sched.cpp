@@ -136,6 +136,7 @@ namespace Schedule{
 
         void Switch(context_t *ctx) {
             //asm volatile("cli");
+            bool IsXSAVEAvail = cpuid_is_xsave_avail();
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             spinlock_lock(&cpu->sched_lock);
@@ -143,7 +144,7 @@ namespace Schedule{
                 thread_t *thread = cpu->current_thread;
                 thread->fs = rdmsr(FS_BASE);
                 thread->ctx = *ctx;
-                if (cpuid_is_xsave_avail())
+                if (IsXSAVEAvail)
                     asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(UINT64_MAX), "d"(UINT64_MAX) : "memory");
                 else
                     asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
@@ -156,7 +157,10 @@ namespace Schedule{
             VMM::SwitchPageMap(next_thread->pagemap);
             wrmsr(FS_BASE, next_thread->fs);
             wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
-            __asm__ volatile ("fxrstor (%0)" : : "r"(next_thread->fx_area) : "memory");
+            if (IsXSAVEAvail)
+                asm volatile("xrstor %0" : : "m"(*next_thread->fx_area), "a"(UINT64_MAX), "d"(UINT64_MAX) : "memory");
+            else
+                asm volatile("fxrstor (%0)" : : "r"(next_thread->fx_area) : "memory");
             
             spinlock_unlock(&cpu->sched_lock);
             // An ideal thread wouldn't need the timer to preempt.

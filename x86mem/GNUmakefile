@@ -8,7 +8,7 @@ all:
 -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
 -fno-stack-protector -fno-stack-check -fno-strict-aliasing \
 -fno-merge-all-constants -fno-merge-constants -mno-stack-arg-probe \
--m64 -mno-red-zone -maccumulate-outgoing-args --std=gnu++23 -g3 \
+-m64 -mno-red-zone -maccumulate-outgoing-args --std=gnu++17 -g3 \
 -Wno-error=deprecated -fmessage-length=0 -ffunction-sections -MMD -MP \
  memcmp.cpp memcpy.cpp memmove.cpp memset.cpp -o memops.o
 
