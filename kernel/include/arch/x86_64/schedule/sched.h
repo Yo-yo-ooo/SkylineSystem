@@ -5,6 +5,8 @@
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
 
+extern "C++" {
+
 #define SCHED_VEC 48
 
 #define THREAD_ZOMBIE 0
@@ -108,4 +110,6 @@ namespace Schedule{
     void Yield();
     void PAUSE();
     void Resume();
+}
+
 }

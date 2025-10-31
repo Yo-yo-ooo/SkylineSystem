@@ -8,6 +8,8 @@
 #include <arch/x86_64/asm/msr.h>
 #include <arch/x86_64/asm/xcr.h>
 
+extern "C++" {
+
 typedef uint32_t xsave_feat_mask_t;
 
 enum xsave_feature : uint8_t {
@@ -84,5 +86,8 @@ static inline void xsave_set_user_features(const uint32_t features) {
    | __XSAVE_FEAT_MASK(XSAVE_FEAT_AVX_512_HI16_ZMM) \
    | __XSAVE_FEAT_MASK(XSAVE_FEAT_AMX_TILECFG) \
    | __XSAVE_FEAT_MASK(XSAVE_FEAT_AMX_TILEDATA))
+
+
+}
 
 #endif

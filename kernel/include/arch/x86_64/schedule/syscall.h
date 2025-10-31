@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+extern "C++" {
+
 typedef struct context_t context_t;
 
 typedef struct syscall_args{
@@ -66,5 +68,13 @@ uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_getpid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
+    uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
+uint64_t sys_dup(uint64_t filedesc,uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4);
+uint64_t sys_dup2(uint64_t filedesc,uint64_t filedesc2, uint64_t ign_0, \
+    uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
+
+}
 
 #endif

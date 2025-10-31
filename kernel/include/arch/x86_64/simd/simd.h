@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <klib/kio.h>
 
+extern "C++" {
+
 #ifdef __x86_64__
 
 
@@ -15,5 +17,6 @@ void simd_cpu_init(cpu_t *cpu);
 #error "You include x86_64 ARCH file,but your ARCH not x86_64"
 #endif
 
+}
 
 #endif
