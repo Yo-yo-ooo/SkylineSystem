@@ -59,7 +59,8 @@ uint64_t sys_brk(uint64_t addr, \
     thread_t *t = Schedule::this_thread();
     if(*((int64_t*)addr) < 0 && !t->heap)
         return -1;
-    if((*((int64_t*)addr) < 0 ? -*((int64_t*)addr) : *((int64_t*)addr)) > t->heap_size)
+    if((*((int64_t*)addr) < 0 ? -*((int64_t*)addr) : *((int64_t*)addr)) > t->heap_size
+        && *((int64_t*)addr) < 0)
         return -1;
     if(!t->heap && t->heap_size < *((int64_t*)addr)){
         SLAB::Alloc(*((uint64_t*)addr));
