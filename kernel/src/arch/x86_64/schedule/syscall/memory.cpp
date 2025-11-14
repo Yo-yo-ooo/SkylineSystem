@@ -63,13 +63,13 @@ uint64_t sys_brk(uint64_t addr, \
         && *((int64_t*)addr) < 0)
         return -1;
     if(!t->heap && t->heap_size < *((int64_t*)addr)){
-        SLAB::Alloc(*((uint64_t*)addr));
+        SLAB::UserAlloc(*((uint64_t*)addr));
         t->heap_size += *((int64_t*)addr);
         return 0;
     }
     uint64_t old_size = t->heap_size;
     t->heap_size += *((int64_t*)addr);
-    void *new_ptr = SLAB::Alloc(t->heap_size);
+    void *new_ptr = SLAB::UserAlloc(t->heap_size);
     __memcpy(new_ptr, t->heap_size, (old_size > t->heap_size ? t->heap_size : old_size));
     SLAB::Free(t->heap);
     t->heap = new_ptr;

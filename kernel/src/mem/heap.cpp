@@ -148,6 +148,38 @@ namespace SLAB{
         spinlock_unlock(&heap_lock);
     }
 
+    void *UserAlloc(size_t size) {
+        spinlock_lock(&heap_lock);
+        slab_cache_t *cache = SLAB::GetCache(size);
+        if (!cache) {
+            uint64_t total_pages = DIV_ROUND_UP(size + sizeof(slab_page_t), PAGE_SIZE);
+            slab_page_t *page = VMM::Alloc(kernel_pagemap, total_pages, true);
+            page->magic = SLAB_MAGIC;
+            page->page_count = total_pages;
+            spinlock_unlock(&heap_lock);
+            return (void*)(page + 1);
+        }
+        bool found = false;
+        int64_t free_obj;
+        slab_obj_t *obj = NULL;
+        while (!found) {
+            if (cache->used) {
+                cache = cache_get_empty(cache);
+            }
+            free_obj = SLAB::FindFree(cache);
+            if (free_obj == -1)
+                cache->used = true;
+            else {
+                obj = SLAB_IDX(cache, free_obj);
+                found = true;
+            }
+        }
+        obj->cache = cache;
+        obj->magic = SLAB_MAGIC;
+        spinlock_unlock(&heap_lock);
+        return (void*)(obj + 1);
+    }
+
     uint64_t GetSize(void* ptr,bool ERO = false){
         spinlock_lock(&heap_lock);
         slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));

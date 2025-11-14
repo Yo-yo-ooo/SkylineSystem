@@ -34,6 +34,7 @@ namespace SLAB{
     void *Alloc(size_t size);
     void *Realloc(void *ptr, size_t size);
     void Free(void *ptr);
+    void *UserAlloc(size_t size);
 
     uint64_t GetSize(void* ptr,bool ERO = false);
 
