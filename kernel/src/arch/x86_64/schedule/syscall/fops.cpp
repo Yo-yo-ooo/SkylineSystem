@@ -64,6 +64,12 @@ uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, \
     fd->flags = (int32_t)flags;
     fd->off = 0;
     fd->path = (char*)path;
+    if(_memcmp(fd->path,"/dev/fb0",8) == 0){
+        fd->IsSpecial = true;
+        fd->Type = 1; //Framebuffer
+        proc->fd_table[proc->fd_count++] = fd;
+        return proc->fd_count - 1;
+    }
     ext4_fopen(&fd->f,path,flags);
 
     if (!fd) return (uint64_t)((int64_t)-1);

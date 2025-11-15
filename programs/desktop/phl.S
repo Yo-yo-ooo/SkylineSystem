@@ -1,6 +1,6 @@
 .section .data
 msg:
-    .ascii "Hello World! \nTHIS IS SKYLINESYSTEM USER PATTERN\n"
+    .ascii "Hello World! \nTHIS IS SkylineSystem USER PATTERN\n"
 len = . - msg
 
 .section .text

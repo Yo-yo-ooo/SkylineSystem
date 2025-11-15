@@ -6,6 +6,9 @@
 #include <arch/x86_64/schedule/syscall.h>
 #include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/simd/simd.h>
+#include <klib/algorithm/queue.h>
+
+extern volatile queue_t *map_file_queue;
 
 static volatile uint64_t sched_tid = 0;
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap);
@@ -136,6 +139,7 @@ namespace Schedule{
 
         void Switch(context_t *ctx) {
             //asm volatile("cli");
+            
             bool IsXSAVEAvail = cpuid_is_xsave_avail();
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();

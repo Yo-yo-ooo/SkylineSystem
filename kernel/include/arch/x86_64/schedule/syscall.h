@@ -10,6 +10,15 @@ extern "C++" {
 
 typedef struct context_t context_t;
 
+typedef struct MapedFileInfo{
+    void *fs_desc;
+    uint16_t DescSize;
+    uint64_t BufferBaseAddr;
+    uint64_t PID;
+    uint64_t length;
+    uint64_t fd;
+} MapedFileInfo;
+
 typedef struct syscall_args{
     void* arg1;
     void* arg2;
@@ -75,7 +84,7 @@ uint64_t sys_dup(uint64_t filedesc,uint64_t ign_0, uint64_t ign_1, \
 uint64_t sys_dup2(uint64_t filedesc,uint64_t filedesc2, uint64_t ign_0, \
     uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
 uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t prot, \
-    uint64_t flags, uint64_t fd,uint64_t ign_0);
+    uint64_t flags, uint64_t fd,uint64_t offset);
 uint64_t sys_munmap(uint64_t addr, uint64_t length, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
 uint64_t sys_brk(uint64_t addr, \

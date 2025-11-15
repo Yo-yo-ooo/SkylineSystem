@@ -54,6 +54,7 @@ namespace VMM{
     {
         uint64_t *NewLevel(uint64_t *level, uint64_t entry);
         uint64_t GetPhysicsFlags(pagemap_t *pagemap, uint64_t vaddr);
+        uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
     } // namespace Useless
 
     extern "C" void Init();
