@@ -20,6 +20,8 @@ typedef struct thread_queue_t{
     uint64_t quantum;
 } thread_queue_t;
 
+#include <arch/x86_64/schedule/syscall.h>
+
 typedef struct cpu_t{
     uint32_t id;
     uint64_t lapic_ticks;
@@ -30,6 +32,8 @@ typedef struct cpu_t{
     int32_t sched_lock;
     bool has_runnable_thread;
     bool SupportSIMD = false;
+    bool SupportXSAVE = false;
+    
 } cpu_t;
 
 extern uint32_t smp_bsp_cpu;

@@ -85,6 +85,7 @@ void simd_cpu_init(cpu_t *cpu)
     if (cpuid_is_xsave_avail())
     {
         kprintf("xsave ");i++;
+        cpu->SupportXSAVE = true;
     }
     if (cpuid_is_avx_avail())
     {

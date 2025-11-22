@@ -23,10 +23,7 @@ void dump_REG(syscall_frame_t *frame){
 extern "C" void syscall_handler(syscall_frame_t *frame) {
     //kinfoln("HIT SYSCALL!");
     //Not Tested yet!
-    /* MapedFileInfo *info = Queue::Dequeue(map_file_queue);
-    ext4_fwrite(
-        &Schedule::this_proc()->fd_table[info->fd]->f,(const void*)info->BufferBaseAddr,
-        info->length,NULL); */
+    
     frame->rax = syscall_lists[frame->rax]
     (frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
     return;
@@ -34,10 +31,8 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
 
 #include <klib/algorithm/queue.h>
 extern "C" void syscall_entry();
-extern volatile queue_t *map_file_queue;
 
 void syscall_init() {
-    map_file_queue = Queue::Create();
     
     syscall_lists[0] = sys_read;
     syscall_lists[1] = sys_write;

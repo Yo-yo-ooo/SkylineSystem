@@ -66,6 +66,8 @@ typedef struct thread_t {
 
     void* heap;//data segment
     uint64_t heap_size;
+    
+    MapedFileLists maped_file_list;
 } thread_t;
 
 typedef struct proc_t {

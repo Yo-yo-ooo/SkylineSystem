@@ -8,7 +8,6 @@
 #include <arch/x86_64/simd/simd.h>
 #include <klib/algorithm/queue.h>
 
-extern volatile queue_t *map_file_queue;
 
 static volatile uint64_t sched_tid = 0;
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap);
@@ -140,7 +139,7 @@ namespace Schedule{
         void Switch(context_t *ctx) {
             //asm volatile("cli");
             
-            bool IsXSAVEAvail = cpuid_is_xsave_avail();
+            //bool IsXSAVEAvail = cpuid_is_xsave_avail();
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             spinlock_lock(&cpu->sched_lock);
@@ -148,7 +147,7 @@ namespace Schedule{
                 thread_t *thread = cpu->current_thread;
                 thread->fs = rdmsr(FS_BASE);
                 thread->ctx = *ctx;
-                if (IsXSAVEAvail)
+                if (cpu->SupportXSAVE)
                     asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(UINT64_MAX), "d"(UINT64_MAX) : "memory");
                 else
                     asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
@@ -161,7 +160,7 @@ namespace Schedule{
             VMM::SwitchPageMap(next_thread->pagemap);
             wrmsr(FS_BASE, next_thread->fs);
             wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
-            if (IsXSAVEAvail)
+            if (cpu->SupportXSAVE)
                 asm volatile("xrstor %0" : : "m"(*next_thread->fx_area), "a"(UINT64_MAX), "d"(UINT64_MAX) : "memory");
             else
                 asm volatile("fxrstor (%0)" : : "r"(next_thread->fx_area) : "memory");
@@ -398,6 +397,11 @@ namespace Schedule{
 
         thread->state = THREAD_RUNNING;
         get_cpu(cpu_num)->has_runnable_thread = true;
+
+        thread->maped_file_list.Info = kmalloc(sizeof(MapedFileInfo) * 256);
+        thread->maped_file_list.MaxCount = 256;
+        thread->maped_file_list.UsedCount = 0;
+        thread->maped_file_list.NextInfoCount = 0;
 
         Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
         kpokln("Add Thread!");
