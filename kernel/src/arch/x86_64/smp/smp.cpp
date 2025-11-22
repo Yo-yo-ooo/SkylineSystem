@@ -11,7 +11,7 @@
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_mp_request limine_mp = {
-    .id = LIMINE_MP_REQUEST,
+    .id = LIMINE_MP_REQUEST_ID,
     .revision = 0
 };
 

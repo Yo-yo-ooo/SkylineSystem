@@ -8,7 +8,7 @@
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_memmap_request memmap_request = {
-    .id = LIMINE_MEMMAP_REQUEST,
+    .id = LIMINE_MEMMAP_REQUEST_ID,
     .revision = 0
 };
 
@@ -32,9 +32,6 @@ namespace PMM{
             if (entry->length % PAGE_SIZE != 0){
                 kinfoln("ENTRY LENGTH: %d",entry->length);
                 kwarn("Memory map entry length is NOT divisible by the page size. \n");
-                kwarn("This will not count in page_count\n");
-                kwarn("Do Next Search entry->length % PAGE_SIZE = 0\n");
-                continue;
             }
             page_count += entry->length;
         }

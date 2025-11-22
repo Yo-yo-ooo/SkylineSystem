@@ -13,7 +13,7 @@ static volatile struct limine_kernel_address_request kernel_address_request = {
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_executable_address_request limine_executable_address = {
-    .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST,
+    .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID,
     .revision = 0
 };
 
