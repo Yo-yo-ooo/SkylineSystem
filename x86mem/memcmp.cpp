@@ -36,25 +36,7 @@ int memcmp_eq (const void *str1, const void *str2, size_t count)
   return 0; // Return 0 if equal to match normal memcmp_fpx86
 }
 
-///=============================================================================
-/// LICENSING INFORMATION
-///=============================================================================
-//
-// The code above this comment is in the public domain.
-// The code below this comment is subject to the custom attribution license found
-// here: https://github.com/KNNSpeed/AVX-Memmove/blob/master/LICENSE
-//
-//==============================================================================
-//  AVX Memory Functions: AVX Memcmp
-//==============================================================================
-//
-// Version 1.2
-//
-// Author:
-//  KNNSpeed
-//
-// Source Code:
-//  https://github.com/KNNSpeed/AVX-Memmove
+
 //
 // Minimum requirement:
 //  x86_64 CPU with SSE4.2, but AVX2 or later is recommended
