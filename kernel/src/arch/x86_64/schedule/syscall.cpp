@@ -9,7 +9,7 @@ uint64_t SYSCALL_NR(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){
     return NULL;
 }
 
-uint64_t (*syscall_lists[256])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = \
+uint64_t (*syscall_lists[467])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = \
     {SYSCALL_NR};
 
 void dump_REG(syscall_frame_t *frame){
@@ -39,15 +39,18 @@ void syscall_init() {
     syscall_lists[2] = sys_open;
 
     syscall_lists[8] = sys_lseek;
-    syscall_lists[9] = sys_mmap;
+    syscall_lists[9] = sys_mmap;//!
     syscall_lists[11] = sys_munmap;
     syscall_lists[12] = sys_brk;
-    syscall_lists[32] = sys_dup;
-    syscall_lists[33] = sys_dup2;
+    syscall_lists[24] = sched_yield;
+    syscall_lists[32] = sys_dup;//?!
+    syscall_lists[33] = sys_dup2;//?!
     syscall_lists[39] = sys_getpid;
     syscall_lists[57] = sys_fork;
     syscall_lists[59] = sys_execve;
     syscall_lists[60] = sys_exit;
+    syscall_lists[157] = sys_arch_prctl;//!
+    syscall_lists[201] = sys_time;
 
     uint64_t efer = rdmsr(IA32_EFER);
     efer |= (1 << 0);

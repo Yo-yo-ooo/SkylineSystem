@@ -67,6 +67,8 @@ typedef struct syscall_frame_t{
 
 uint64_t sys_fork(syscall_frame_t *frame);
 
+typedef int64_t time_t;
+
 #define IA32_EFER  0xC0000080
 #define IA32_STAR  0xC0000081
 #define IA32_LSTAR 0xC0000082
@@ -100,6 +102,11 @@ uint64_t sys_brk(uint64_t addr, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,uint64_t ign_3,uint64_t ign_4);
 uint64_t sys_exit(uint64_t code,uint64_t ign_0, uint64_t ign_1, \
     uint64_t ign_2,uint64_t ign_3,uint64_t ign_4);
+uint64_t sys_time(uint64_t tloc,uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4);
+uint64_t sched_yield(uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
+uint64_t sys_arch_prctl(uint64_t op, uint64_t extra,uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3);
 }
-
 #endif
