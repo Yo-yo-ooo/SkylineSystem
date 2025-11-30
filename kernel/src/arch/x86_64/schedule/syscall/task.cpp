@@ -12,6 +12,14 @@ uint64_t sys_getpid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
     return Schedule::this_proc()->id;
 }
 
+uint64_t sys_gettid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
+    uint64_t ign_3,uint64_t ign_4,uint64_t ign_5) {
+    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
+    IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);IGNORE_VALUE(ign_5);
+
+    return Schedule::this_thread()->id;
+}
+
 uint64_t sys_dup(uint64_t filedesc,uint64_t ign_0, uint64_t ign_1, \
     uint64_t ign_2,uint64_t ign_3,uint64_t ign_4) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);

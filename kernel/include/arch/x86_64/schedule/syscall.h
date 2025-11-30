@@ -108,5 +108,7 @@ uint64_t sched_yield(uint64_t ign_0, uint64_t ign_1, \
     uint64_t ign_2,uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
 uint64_t sys_arch_prctl(uint64_t op, uint64_t extra,uint64_t ign_0, uint64_t ign_1, \
     uint64_t ign_2,uint64_t ign_3);
+uint64_t sys_gettid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
+    uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
 }
 #endif

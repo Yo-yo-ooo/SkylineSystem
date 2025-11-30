@@ -50,6 +50,7 @@ void syscall_init() {
     syscall_lists[59] = sys_execve;
     syscall_lists[60] = sys_exit;
     syscall_lists[157] = sys_arch_prctl;//!
+    syscall_lists[186] = sys_gettid;
     syscall_lists[201] = sys_time;
 
     uint64_t efer = rdmsr(IA32_EFER);
