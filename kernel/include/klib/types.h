@@ -44,6 +44,10 @@ typedef int32_t ssize_t;
 typedef long ssize_t;
 #endif
 
+typedef int32_t pid_t;
+typedef int64_t clock_t;
+typedef uint64_t uid_t;
+
 #define _unused
 
 #endif

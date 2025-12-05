@@ -76,6 +76,21 @@ typedef int64_t time_t;
 
 void syscall_init();
 
+#define GENERATE_IGN3() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2
+#define GENERATE_IGN4() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,\
+                        uint64_t ign_3
+#define GENERATE_IGN5() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,\
+                        uint64_t ign_3,uint64_t ign_4
+#define GENERATE_IGN6() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,\
+                        uint64_t ign_3,uint64_t ign_4,uint64_t ign_5
+#define IGNV_3() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2)
+#define IGNV_4() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);\
+                IGNORE_VALUE(ign_3)
+#define IGNV_5() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);\
+                IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4)
+#define IGNV_6() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);\
+                IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);IGNORE_VALUE(ign_5)
+
 typedef uint64_t (syscall_function)(uint64_t,uint16_t,uint64_t,uint64_t,uint64_t,uint64_t);
 
 uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \

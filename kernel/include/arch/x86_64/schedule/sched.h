@@ -4,6 +4,7 @@
 
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
+#include <arch/x86_64/schedule/signal.h>
 
 extern "C++" {
 
@@ -21,17 +22,6 @@ extern "C++" {
 
 typedef struct proc_t proc_t;
 #include <fs/fd.h>
-
-typedef struct {
-    unsigned long sig[1024 / 64];
-} sigset_t;
-
-typedef struct {
-    void *handler;
-    unsigned long sa_flags;
-    void (*sa_restorer)(void);
-    sigset_t sa_mask;
-} sigaction_t;
 
 typedef struct thread_t {
     uint64_t thread_stack; // GS+0
@@ -82,11 +72,14 @@ typedef struct proc_t {
     int32_t fd_count;
 } proc_t;
 
+typedef struct procl{
+    proc_t *proc;
+}procl_t;
+
 namespace Schedule{
     extern uint64_t sched_pid;
-    extern proc_t *sched_proclist[256];
-
-    
+    extern uint64_t procl_count;
+    extern procl_t *sched_proclist;
 
     namespace Useless{
         void Switch(context_t *ctx);

@@ -31,9 +31,9 @@ static cpu_t *get_lw_cpu() {
 }
 
 namespace Schedule{
-
+    procl_t *sched_proclist = nullptr;
     uint64_t sched_pid = 0;
-    proc_t *sched_proclist[256] = { 0 };
+    uint64_t procl_count = 256;
 
     namespace Useless{
 
@@ -137,9 +137,6 @@ namespace Schedule{
         }
 
         void Switch(context_t *ctx) {
-            //asm volatile("cli");
-            
-            //bool IsXSAVEAvail = cpuid_is_xsave_avail();
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             spinlock_lock(&cpu->sched_lock);
@@ -151,7 +148,6 @@ namespace Schedule{
                     asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(UINT64_MAX), "d"(UINT64_MAX) : "memory");
                 else
                     asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
-                //__asm__ volatile ("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
             }
             thread_t *next_thread = Schedule::Useless::Pick(cpu);
             cpu->current_thread = next_thread;
@@ -185,6 +181,8 @@ namespace Schedule{
         idt_install_irq(17, (void*)Schedule::Useless::Switch);
         idt_set_ist(SCHED_VEC, 1);
         idt_set_ist(SCHED_VEC + 1, 1);
+        sched_proclist = (procl_t*)kmalloc(procl_count * sizeof(procl_t));
+        _memset(sched_proclist,0,procl_count * sizeof(procl_t));
     }
     
     void Install(){
@@ -212,7 +210,15 @@ namespace Schedule{
         /* proc->fd_table[2] = fd_open("/dev/pts0", O_WRONLY); */
         /* proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY); */
         proc->fd_count = 4;
-        sched_proclist[proc->id] = proc;
+        if(proc->id > procl_count){
+            size_t size;
+            size_t olds = procl_count * sizeof(procl_t);
+            procl_count += 256;
+            size = procl_count * sizeof(procl_t);
+            krealloc(sched_proclist,size);
+            _memset(sched_proclist + olds,0,olds * sizeof(procl_t));
+        }
+        sched_proclist[proc->id].proc = proc;
         return proc;
     }
 
@@ -484,7 +490,15 @@ namespace Schedule{
         __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
         __memcpy(proc->fd_table, parent->fd_table, 256 * 8);
         proc->fd_count = parent->fd_count;
-        sched_proclist[proc->id] = proc;
+        if(proc->id > procl_count){
+            size_t size;
+            size_t olds = procl_count * sizeof(procl_t);
+            procl_count += 256;
+            size = procl_count * sizeof(procl_t);
+            krealloc(sched_proclist,size);
+            _memset(sched_proclist + olds,0,olds * sizeof(procl_t));
+        }
+        sched_proclist[proc->id].proc = proc;
         return proc;
     }
 
@@ -501,6 +515,7 @@ namespace Schedule{
         thread_t *thread = Schedule::this_thread();
         thread->state = THREAD_ZOMBIE;
         thread->exit_code = code;
+        kinfoln("Do exit %d",code);
         // Wake up any threads waiting on this process
         proc_t *parent = Schedule::this_proc()->parent;
         if (!parent) {

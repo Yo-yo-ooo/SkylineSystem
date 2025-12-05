@@ -62,3 +62,18 @@ uint64_t sched_yield(uint64_t ign_0, uint64_t ign_1, \
     Schedule::Yield();
     return 0;
 }
+
+
+uint64_t sys_kill(uint64_t pid,uint64_t sig, uint64_t ign_0, \
+    uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
+    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
+    IGNORE_VALUE(ign_3);
+
+    for(uint64_t i = 0;i < Schedule::procl_count;i++){
+        if(Schedule::sched_proclist[i].proc->id == pid){
+            
+        }
+    }
+
+    return 0;
+}

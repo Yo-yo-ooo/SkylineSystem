@@ -21,7 +21,7 @@ void dump_REG(syscall_frame_t *frame){
 }
 
 extern "C" void syscall_handler(syscall_frame_t *frame) {
-    //kinfoln("HIT SYSCALL!");
+    kinfoln("HIT SYSCALL! %d",frame->rax);
     //Not Tested yet!
     
     frame->rax = syscall_lists[frame->rax]
@@ -32,6 +32,10 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
 #include <klib/algorithm/queue.h>
 extern "C" void syscall_entry();
 
+/*
+syscall_lists[x] = sys_xxxx //! <---- it means some feature in this syscall doesn't complete!
+syscall_lists[x] = sys_xxxx //? <---- it means i don't know how to impl this syscall
+*/
 void syscall_init() {
     
     syscall_lists[0] = sys_read;
@@ -48,7 +52,7 @@ void syscall_init() {
     syscall_lists[39] = sys_getpid;
     syscall_lists[57] = sys_fork;
     syscall_lists[59] = sys_execve;
-    syscall_lists[60] = sys_exit;
+    syscall_lists[60] = sys_exit;//!
     syscall_lists[157] = sys_arch_prctl;//!
     syscall_lists[186] = sys_gettid;
     syscall_lists[201] = sys_time;

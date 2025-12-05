@@ -137,3 +137,24 @@ uint64_t sys_brk(uint64_t addr, \
     t->heap = new_ptr;
     return 0;
 }
+
+uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
+    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
+
+    thread_t * tthread = Schedule::this_thread();
+    size_t pages = DIV_ROUND_UP(len, PAGE_SIZE);
+    uint64_t vm_flags = 0;
+    if (prot & 2) 
+        vm_flags |= MM_READ;
+    if (prot & 4) 
+        vm_flags |= MM_WRITE;
+    if (!(prot & 1)) 
+        vm_flags |= MM_NX;
+
+    spinlock_lock(&tthread->pagemap->vma_lock);
+    VMM::MapRange(tthread->pagemap, addr, 0, vm_flags, pages);
+    spinlock_unlock(&tthread->pagemap->vma_lock);
+
+    return 0;
+}
