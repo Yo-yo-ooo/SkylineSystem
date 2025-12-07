@@ -92,6 +92,11 @@ namespace Schedule{
         uint8_t Demote(cpu_t *cpu, thread_t *thread);
     }
 
+    namespace Signal{
+        int32_t Raise(proc_t *process, int32_t signal);
+        void DefaultHandler(int32_t signal);
+    }
+
     void Init();
     void Install();
 

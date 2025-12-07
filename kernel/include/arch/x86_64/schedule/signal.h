@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <klib/types.h>
+#include <arch/x86_64/schedule/lsignal.h>
 
 typedef union sigval {
 	int sival_int;
@@ -54,6 +55,5 @@ typedef struct sigaction_t{
     uint32_t sa_flags;
     void (*sa_restorer)(void);
 } sigaction_t;
-
 
 #endif// _X86_64_SCHEDULE_SIGNAL_H

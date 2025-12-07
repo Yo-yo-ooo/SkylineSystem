@@ -7,7 +7,7 @@ extern "C" void exit(void);
 
 int main(){
     phl();
-    //exit();
+    exit();
     phl();
     while(true);
     return 0;

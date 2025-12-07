@@ -512,9 +512,35 @@ namespace Schedule{
     }
     void Exit(int32_t code){
         LAPIC::StopTimer();
-        thread_t *thread = Schedule::this_thread();
-        thread->state = THREAD_ZOMBIE;
-        thread->exit_code = code;
+        thread_t *thread = Schedule::this_proc()->threads;
+        do{
+            thread->state = THREAD_ZOMBIE;
+            thread->exit_code = code;
+            kfree(thread->heap);
+            VMM::Free(thread->pagemap,thread->kernel_stack);
+            VMM::Free(thread->pagemap,thread->sig_stack);
+            VMM::Free(thread->pagemap,thread->thread_stack);
+            VMM::Free(thread->pagemap,thread->fx_area);
+            
+            // Remove thread from scheduler queue
+            cpu_t *cpu = get_cpu(thread->cpu_num);
+            spinlock_lock(&cpu->sched_lock);
+            thread_queue_t *queue = &cpu->thread_queues[thread->priority];
+            if (thread->list_next == thread) {
+                queue->head = nullptr;
+                queue->current = nullptr;
+            } else {
+                if (queue->head == thread)
+                    queue->head = thread->list_next;
+                if (queue->current == thread)
+                    queue->current = thread->list_next;
+                thread->list_next->list_prev = thread->list_prev;
+                thread->list_prev->list_next = thread->list_next;
+            }
+            cpu->thread_count--;
+            spinlock_unlock(&cpu->sched_lock);
+            thread = thread->next;
+        }while (thread->next != nullptr);
         kinfoln("Do exit %d",code);
         // Wake up any threads waiting on this process
         proc_t *parent = Schedule::this_proc()->parent;
