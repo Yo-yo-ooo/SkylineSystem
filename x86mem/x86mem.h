@@ -1,15 +1,3 @@
-//==================================================================================================================================
-//  AVX Memory Functions: Main Header
-//==================================================================================================================================
-//
-// Version 1.35
-//
-// Author:
-//  KNNSpeed
-//
-// Source Code:
-//  https://github.com/KNNSpeed/AVX-Memmove
-//
 // Minimum requirement:
 //  x86_64 CPU with SSE4.2, but AVX2 or later is *highly* recommended
 //
@@ -32,6 +20,9 @@
 // Applies to: AVX_memmove, AVX_memset, and AVX_memcpy
 #define CACHESIZELIMIT 3*1024*1024 // 3 MB
 
+#ifdef __cplusplus
+extern "C"{
+#endif
 //-----------------------------------------------------------------------------
 // Main Functions:
 //-----------------------------------------------------------------------------
@@ -403,7 +394,9 @@ int memcmp_512bit_eq_a(const void *str1, const void *str2, size_t count);
 #endif
 // END MEMCMP
 
-
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 

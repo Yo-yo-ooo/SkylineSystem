@@ -50,7 +50,6 @@ uint64_t sys_exit(uint64_t code,uint64_t ign_0, uint64_t ign_1, \
     IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);
 
     Schedule::Exit((int32_t)code);
-    
 
     return 0;
 }

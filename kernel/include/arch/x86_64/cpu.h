@@ -1,37 +1,37 @@
 #pragma once
 
 #include <arch/x86_64/cpuid.h>
-
-#include <klib/klib.h>
+#include <stdint.h>
 #include <klib/kio.h>
-#include <klib/sysflag.h>
+
+//Do NOT write any C++ things in this file!!!
 
 #define IA32_GS_MSR 0xC0000101
 #define IA32_GS_KERNEL_MSR 0xC0000102
 
-inline u64 read_cpu_gs() {
+inline uint64_t read_cpu_gs() {
     return rdmsr(IA32_GS_MSR);
 }
 
-inline void write_cpu_gs(u64 value) {
+inline void write_cpu_gs(uint64_t value) {
     wrmsr(IA32_GS_MSR, value);
 }
 
-inline u64 read_kernel_gs() {
+inline uint64_t read_kernel_gs() {
     return rdmsr(IA32_GS_KERNEL_MSR);
 }
 
-inline void write_kernel_gs(u64 value) {
+inline void write_kernel_gs(uint64_t value) {
     wrmsr(IA32_GS_KERNEL_MSR, value);
 }
 
-inline u64 fpu_init() {
+inline uint64_t fpu_init() {
     u32 eax, unused, edx;
     __get_cpuid(1, &eax, &unused, &unused, &edx);
     if (!(edx & (1 << 0)))
         return 1; // CPU Doesnt support FPU.
 
-    u64 cr0;
+    uint64_t cr0;
     __asm__ volatile("mov %%cr0, %0" : "=r"(cr0) : : "memory");
     cr0 &= ~(1 << 3); // Clear TS bit
     cr0 &= ~(1 << 2); // Clear EM bit
@@ -41,17 +41,17 @@ inline u64 fpu_init() {
 }
 
 inline void sse_enable() {
-    u64 cr0;
-    u64 cr4;
+    uint64_t cr0;
+    uint64_t cr4;
     __asm__ volatile("mov %%cr0, %0" : "=r"(cr0) : : "memory");
-    cr0 &= ~((u64)1 << 2);
-    cr0 |= (u64)1 << 1;
+    cr0 &= ~((uint64_t)1 << 2);
+    cr0 |= (uint64_t)1 << 1;
     __asm__ volatile("mov %0, %%cr0" : : "r"(cr0) : "memory");
     __asm__ volatile("mov %%cr4, %0" :"=r"(cr4) : : "memory");
-    cr4 |= (u64)3 << 9;
+    cr4 |= (uint64_t)3 << 9;
     __asm__ volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
 
-    sysflag_g.SSEEnabled = 1;
+    //sysflag_g.SSEEnabled = 1;
 }
 
 #define XCR0_XSAVE_SAVE_X87 (1 << 0)

@@ -31,9 +31,9 @@ static cpu_t *get_lw_cpu() {
 }
 
 namespace Schedule{
-    procl_t *sched_proclist = nullptr;
+    //procl_t *sched_proclist = nullptr;
     uint64_t sched_pid = 0;
-    uint64_t procl_count = 256;
+    //uint64_t procl_count = 256;
 
     namespace Useless{
 
@@ -181,8 +181,8 @@ namespace Schedule{
         idt_install_irq(17, (void*)Schedule::Useless::Switch);
         idt_set_ist(SCHED_VEC, 1);
         idt_set_ist(SCHED_VEC + 1, 1);
-        sched_proclist = (procl_t*)kmalloc(procl_count * sizeof(procl_t));
-        _memset(sched_proclist,0,procl_count * sizeof(procl_t));
+        /* sched_proclist = (procl_t*)kmalloc(procl_count * sizeof(procl_t));
+        _memset(sched_proclist,0,procl_count * sizeof(procl_t)); */
     }
     
     void Install(){
@@ -210,7 +210,7 @@ namespace Schedule{
         /* proc->fd_table[2] = fd_open("/dev/pts0", O_WRONLY); */
         /* proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY); */
         proc->fd_count = 4;
-        if(proc->id > procl_count){
+        /* if(proc->id > procl_count){
             size_t size;
             size_t olds = procl_count * sizeof(procl_t);
             procl_count += 256;
@@ -218,7 +218,7 @@ namespace Schedule{
             krealloc(sched_proclist,size);
             _memset(sched_proclist + olds,0,olds * sizeof(procl_t));
         }
-        sched_proclist[proc->id].proc = proc;
+        sched_proclist[proc->id].proc = proc; */
         return proc;
     }
 
@@ -490,7 +490,7 @@ namespace Schedule{
         __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
         __memcpy(proc->fd_table, parent->fd_table, 256 * 8);
         proc->fd_count = parent->fd_count;
-        if(proc->id > procl_count){
+        /* if(proc->id > procl_count){
             size_t size;
             size_t olds = procl_count * sizeof(procl_t);
             procl_count += 256;
@@ -498,7 +498,7 @@ namespace Schedule{
             krealloc(sched_proclist,size);
             _memset(sched_proclist + olds,0,olds * sizeof(procl_t));
         }
-        sched_proclist[proc->id].proc = proc;
+        sched_proclist[proc->id].proc = proc; */
         return proc;
     }
 
@@ -513,30 +513,28 @@ namespace Schedule{
     void Exit(int32_t code){
         LAPIC::StopTimer();
         thread_t *thread = Schedule::this_proc()->threads;
+        kinfoln("GET THERE!!!");
         do{
             thread->state = THREAD_ZOMBIE;
             thread->exit_code = code;
             kfree(thread->heap);
-            VMM::Free(thread->pagemap,thread->kernel_stack);
-            VMM::Free(thread->pagemap,thread->sig_stack);
-            VMM::Free(thread->pagemap,thread->thread_stack);
-            VMM::Free(thread->pagemap,thread->fx_area);
+            VMM::Free(kernel_pagemap,thread->kernel_stack);
+            VMM::Free(kernel_pagemap,thread->sig_stack);
+            VMM::Free(kernel_pagemap,thread->thread_stack);
+            VMM::Free(kernel_pagemap,thread->fx_area);
             
             // Remove thread from scheduler queue
             cpu_t *cpu = get_cpu(thread->cpu_num);
             spinlock_lock(&cpu->sched_lock);
+
             thread_queue_t *queue = &cpu->thread_queues[thread->priority];
-            if (thread->list_next == thread) {
-                queue->head = nullptr;
-                queue->current = nullptr;
-            } else {
-                if (queue->head == thread)
-                    queue->head = thread->list_next;
-                if (queue->current == thread)
-                    queue->current = thread->list_next;
-                thread->list_next->list_prev = thread->list_prev;
-                thread->list_prev->list_next = thread->list_next;
+            if (queue->head == thread) {
+                queue->head = thread->list_prev;
+                queue->current = thread->list_next;
+                continue;
             }
+            queue->head->list_prev = queue->head->list_prev->list_next;
+            cpu->thread_queues[thread->priority];
             cpu->thread_count--;
             spinlock_unlock(&cpu->sched_lock);
             thread = thread->next;

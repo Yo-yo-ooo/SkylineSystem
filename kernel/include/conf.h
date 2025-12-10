@@ -7,6 +7,11 @@
 #define MAX_CPU 128
 #define PCI_PRINT_HEADER_INFORMATION 0
 
+#define CONFIG_FAST_MEMCPY 1
+#define CONFIG_FAST_MEMSET 1
+#define CONFIG_FAST_MEMCMP 1
+#define CONFIG_FAST_MEMMOVE 1
+
 #endif
 
 /*-------------------------------------------------*/

@@ -1,5 +1,6 @@
 #include <klib/klib.h>
 #include <klib/kio.h>
+#include <conf.h>
 #ifdef __x86_64__
 #include <arch/x86_64/smp/smp.h>
 #include "../../../x86mem/x86mem.h"
@@ -18,7 +19,7 @@ void _memcpy_128(void* src, void* dest, int64_t size)
 
 void _memcpy(void* src, void* dest, uint64_t size)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCPY)
     if(smp_started != false && this_cpu()->SupportSIMD){
         AVX_memcpy(dest,src,size);
         return;
@@ -60,7 +61,7 @@ void _memset_128(void* dest, uint8_t value, int64_t size)
 
 void _memset(void* dest, uint8_t value, uint64_t size)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMSET)
     if(smp_started != false && this_cpu()->SupportSIMD){
 
         AVX_memset(dest,value,size);
@@ -85,7 +86,7 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 
 
 void _memmove(void* src, void* dest, uint64_t size) {
-#ifdef __x86_64__
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMMOVE)
     if(smp_started != false && this_cpu()->SupportSIMD){
         AVX_memmove(dest,src,size);
         return;
@@ -108,7 +109,7 @@ void _memmove(void* src, void* dest, uint64_t size) {
 
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCMP)
     if(smp_started != false && this_cpu()->SupportSIMD){
         return AVX_memcmp(buffer1,buffer2,count,1);
     }

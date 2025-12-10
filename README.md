@@ -71,6 +71,7 @@
   * Output
   * SMP
   * Virtual Memory
+  * Process & thread management
 * Disk Interfaces
   * Sata
   * Ram
