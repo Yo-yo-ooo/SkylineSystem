@@ -18,10 +18,6 @@
 
 #define IGNORE_VALUE(VALUE) (void)VALUE
 
-#ifndef __noinline__
-#define __noinline__ __attribute__ ((noinline))
-#endif
-
 #define rm_mask(num, mask) ((num) & ((typeof(num))~(mask)))
 
 #define likely(x) __builtin_expect(!!(x), 1)

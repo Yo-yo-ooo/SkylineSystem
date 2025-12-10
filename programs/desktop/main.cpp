@@ -1,4 +1,3 @@
-#include <syscall.h>
 
 extern "C" void phl(void);
 extern "C" void exit(void);

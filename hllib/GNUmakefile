@@ -1,3 +1,7 @@
+# Nuke built-in rules and variables.
+MAKEFLAGS += -rR
+.SUFFIXES:
+
 include ../gdef.mk
 
 LIB_BUILD_ARCH = $(BUILD_ARCH)
@@ -37,17 +41,20 @@ bin-$(LIB_BUILD_ARCH)/hllib.a: GNUmakefile $(OBJ)
 	@mkdir -p "$$(dirname $@)"
 	$(AR) rcs bin-$(LIB_BUILD_ARCH)/hllib.a $(OBJ)
 
-obj-$(LIB_BUILD_ARCH)/%.c.o: src/$(CFILES) GNUmakefile
+# Include header dependencies.
+-include $(HEADER_DEPS)
+
+obj-$(LIB_BUILD_ARCH)/%.c.o: src/%.c GNUmakefile
 	@echo C $<
 	@mkdir -p "$$(dirname $@)"
 	@$(CC) $(CFLAGS)  -c $< -o $@
 
-obj-$(LIB_BUILD_ARCH)/%.S.o: src/$(ASFILES) GNUmakefile
+obj-$(LIB_BUILD_ARCH)/%.S.o: src/%.S GNUmakefile
 	@echo GAS $<
 	@mkdir -p "$$(dirname $@)"
 	@$(AS) $(CFLAGS)  -c $< -o $@
 	
-obj-$(LIB_BUILD_ARCH)/%.cpp.o: src/$(CPPFILES) GNUmakefile
+obj-$(LIB_BUILD_ARCH)/%.cpp.o: src/%.cpp GNUmakefile
 	@echo C++ $<
 	@mkdir -p "$$(dirname $@)"
 	@$(CXX) $(CPPFLAGS)  -c $< -o $@
