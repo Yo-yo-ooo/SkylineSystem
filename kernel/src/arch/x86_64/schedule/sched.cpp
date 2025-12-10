@@ -513,16 +513,18 @@ namespace Schedule{
     void Exit(int32_t code){
         LAPIC::StopTimer();
         thread_t *thread = Schedule::this_proc()->threads;
-        kinfoln("GET THERE!!!");
         do{
             thread->state = THREAD_ZOMBIE;
             thread->exit_code = code;
-            kfree(thread->heap);
-            VMM::Free(kernel_pagemap,thread->kernel_stack);
-            VMM::Free(kernel_pagemap,thread->sig_stack);
-            VMM::Free(kernel_pagemap,thread->thread_stack);
+            if(thread->heap != nullptr)
+                kfree(thread->heap);
             VMM::Free(kernel_pagemap,thread->fx_area);
-            
+            VMM::Free(kernel_pagemap,thread->kernel_stack);
+            VMM::Free(kernel_pagemap,thread->stack);
+            if(thread->next == nullptr){
+                VMM::Free(kernel_pagemap,thread->sig_stack);
+            }
+            kinfoln("GET THERE!!!");
             // Remove thread from scheduler queue
             cpu_t *cpu = get_cpu(thread->cpu_num);
             spinlock_lock(&cpu->sched_lock);
@@ -534,11 +536,11 @@ namespace Schedule{
                 continue;
             }
             queue->head->list_prev = queue->head->list_prev->list_next;
-            cpu->thread_queues[thread->priority];
             cpu->thread_count--;
             spinlock_unlock(&cpu->sched_lock);
             thread = thread->next;
         }while (thread->next != nullptr);
+        
         kinfoln("Do exit %d",code);
         // Wake up any threads waiting on this process
         proc_t *parent = Schedule::this_proc()->parent;
