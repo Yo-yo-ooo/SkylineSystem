@@ -1,6 +1,6 @@
 .section .data
 msg:
-    .ascii "Hello World! \nTHIS IS SkylineSystem USER PATTERN\n"
+    .ascii "PROC is exit,should not be here!!!\n"
 len = . - msg
 
 .section .text

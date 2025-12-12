@@ -13,12 +13,12 @@ CXX = g++
 AS = as
 
 LDFLAGS  = --gc-sections  -entry=main -static -nostdlib \
-    -m elf_x86_64 -unresolved-symbols=ignore-all 
+    -m elf_x86_64 -unresolved-symbols=ignore-all
 
 CFLAGS    = -I../../hllib/include -I. -nostdinc -L../../hllib/bin-$(BUILD_ARCH) -lhllib\
 	-I../../hllib/include/arch/$(BUILD_ARCH) \
 	-ffreestanding -fshort-wchar -mno-red-zone \
- 	-fno-omit-frame-pointer -fno-exceptions -ffunction-sections -fdata-sections -O0 -m64
+ 	-fno-omit-frame-pointer -fno-exceptions -ffunction-sections -fdata-sections -O0 -m64 -static
 
 CPPFLAGS  = $(CFLAGS) -std=gnu++20 -fno-threadsafe-statics
 
