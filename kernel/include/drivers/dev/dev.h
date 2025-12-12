@@ -25,6 +25,7 @@ typedef struct DevOPS{ //存储器抽象层
     u8 (*WriteBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     uint32_t (*GetMaxSectorCount)(void*);
 
+    uint64_t (*ioctl)(uint64_t cmd, uint64_t arg);
 }DevOPS;
 
 typedef struct DevList{

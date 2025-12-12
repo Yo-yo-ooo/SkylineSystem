@@ -6,7 +6,8 @@ extern "C" void exit(void);
 //test exit in user prog
 
 int main(){
-    write(1,"Hello, World!\n",13);
+    //write(1,"Hello, World!\n",13);
+    phl();
     exit();
     phl();
     while(true);

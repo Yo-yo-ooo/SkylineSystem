@@ -5,12 +5,11 @@
 #include <errno.h>
 #include <arch/x86_64/schedule/sched.h>
 
-uint64_t SYSCALL_NR(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){
-    return NULL;
-}
+static uint64_t 
+SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){return NULL;}
 
 uint64_t (*syscall_lists[467])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = \
-    {SYSCALL_NR};
+    {SYSCALL_NULL};
 
 void dump_REG(syscall_frame_t *frame){
     kinfoln("START DUMP REG");
@@ -41,6 +40,7 @@ void syscall_init() {
     syscall_lists[0] = sys_read;
     syscall_lists[1] = sys_write;
     syscall_lists[2] = sys_open;
+    syscall_lists[3] = sys_close;
 
     syscall_lists[8] = sys_lseek;
     syscall_lists[9] = sys_mmap;//!
@@ -53,9 +53,11 @@ void syscall_init() {
     syscall_lists[57] = sys_fork;
     syscall_lists[59] = sys_execve;
     syscall_lists[60] = sys_exit;//!
+    syscall_lists[83] = sys_mkdir;
     syscall_lists[157] = sys_arch_prctl;//!
     syscall_lists[186] = sys_gettid;
     syscall_lists[201] = sys_time;
+    syscall_lists[318] = sys_getrandom;
 
     uint64_t efer = rdmsr(IA32_EFER);
     efer |= (1 << 0);

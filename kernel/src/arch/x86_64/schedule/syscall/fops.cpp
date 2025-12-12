@@ -64,15 +64,34 @@ uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, \
     fd->flags = (int32_t)flags;
     fd->off = 0;
     fd->path = (char*)path;
-    if(_memcmp(fd->path,"/dev/fb0",8) == 0){
-        fd->IsSpecial = true;
-        fd->Type = 1; //Framebuffer
-        proc->fd_table[proc->fd_count++] = fd;
-        return proc->fd_count - 1;
-    }
+    
     ext4_fopen(&fd->f,path,flags);
 
     if (!fd) return (uint64_t)((int64_t)-1);
     proc->fd_table[proc->fd_count++] = fd;
     return proc->fd_count - 1;
+}
+
+uint64_t sys_close(uint64_t fd,GENERATE_IGN5()){
+    IGNV_5();
+    proc_t *proc = Schedule::this_proc();
+    if(fd >= (uint64_t)proc->fd_count)
+        return (uint64_t)((int64_t)-1);
+    else{
+        if(proc->fd_table[fd]->Type == 0){ //Generic File
+            ext4_fclose(&proc->fd_table[fd]->f);
+        }
+    }
+    proc->fd_table[fd] = nullptr;
+    return 0;
+}
+
+uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4()){
+    IGNV_4();
+    if(ext4_dir_mk((const char*)path) != EOK)
+        return (uint64_t)((int64_t)-1);
+    if(mode != NULL)
+        if(ext4_mode_set(path,(uint32_t)mode) != EOK)
+        return (uint64_t)((int64_t)-1);
+    return 0;
 }

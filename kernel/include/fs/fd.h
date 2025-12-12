@@ -48,8 +48,18 @@ typedef struct {
     size_t size;
     ext4_file f;
     bool IsSpecial; //Is/NOT special device (eg.Framebuffer)
-    uint32_t Type; //device type
+    uint32_t Type; //file type
     void *RSVD;
 } fd_t;
+
+/*
+fd_t->Type
+0:Generic File
+1:DIR
+2:socket
+3:block dev
+4:char dev
+5:pipe
+*/
 
 #endif

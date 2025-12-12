@@ -125,5 +125,10 @@ uint64_t sys_arch_prctl(uint64_t op, uint64_t extra,uint64_t ign_0, uint64_t ign
     uint64_t ign_2,uint64_t ign_3);
 uint64_t sys_gettid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
     uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
+uint64_t sys_getrandom(uint64_t buf, uint64_t size, uint64_t flags,
+    uint64_t IGN_0,uint64_t IGN_1,uint64_t IGN_3);
+uint64_t sys_close(uint64_t fd,GENERATE_IGN5());
+uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4());
+
 }
 #endif
