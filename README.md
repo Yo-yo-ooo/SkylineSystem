@@ -112,3 +112,8 @@ Many more in future
 ## Connect
 
 **You can conect with e-mail <1218849168@qq.com>** 
+
+## Build(aarch64)
+```bash
+clear && make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-gnu-ld
+```

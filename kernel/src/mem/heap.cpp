@@ -1,7 +1,9 @@
 #include <mem/heap.h>
 #include <mem/pmm.h>
 
+#ifdef __x86_64__
 #include <arch/x86_64/smp/smp.h>
+#endif
 #include <pdef.h>
 
 volatile spinlock_t heap_lock = 0;
@@ -17,6 +19,7 @@ volatile spinlock_t heap_lock = 0;
 slab_cache_t *caches[8] = { 0 };
 
 static slab_cache_t *slab_create_cache(uint64_t obj_size) {
+#ifdef __x86_64__
     slab_cache_t *cache = (slab_cache_t*)VMM::Alloc(kernel_pagemap, 1, false);
     cache->obj_size = obj_size;
     uint64_t obj_count = SLAB_SIZE / (cache->obj_size + sizeof(slab_obj_t));
@@ -26,11 +29,15 @@ static slab_cache_t *slab_create_cache(uint64_t obj_size) {
     cache->used = false;
     cache->empty_cache = NULL;
     return cache;
+#else
+    return nullptr;
+#endif
 }
 
 namespace SLAB{
 
     void Init() {
+#ifdef __x86_64__
         uint64_t last_size = 8;
         uint64_t size = 0;
         for (int32_t i = 0; i < 8; i++) {
@@ -38,6 +45,7 @@ namespace SLAB{
             last_size = size;
             caches[i] = slab_create_cache(size);
         }
+#endif
     }
 
     slab_cache_t *GetCache(size_t size) {
@@ -73,6 +81,7 @@ namespace SLAB{
     }
 
     void *Alloc(size_t size) {
+#ifdef __x86_64__
         spinlock_lock(&heap_lock);
         slab_cache_t *cache = SLAB::GetCache(size);
         if (!cache) {
@@ -102,9 +111,11 @@ namespace SLAB{
         obj->magic = SLAB_MAGIC;
         spinlock_unlock(&heap_lock);
         return (void*)(obj + 1);
+#endif
     }
 
     void *Realloc(void *ptr, size_t size) {
+#ifdef __x86_64__
         if (!ptr) return SLAB::Alloc(size);
         uint64_t old_size = 0;
         slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
@@ -125,9 +136,11 @@ namespace SLAB{
         __memcpy(new_ptr, ptr, (old_size > size ? size : old_size));
         SLAB::Free(ptr);
         return new_ptr;
+#endif
     }
 
     void Free(void *ptr) {
+#ifdef __x86_64__
         spinlock_lock(&heap_lock);
         slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
         if (page->magic != SLAB_MAGIC) {
@@ -146,9 +159,11 @@ namespace SLAB{
         }
         VMM::Free(kernel_pagemap, page);
         spinlock_unlock(&heap_lock);
+#endif
     }
 
     void *UserAlloc(size_t size) {
+#ifdef __x86_64__
         spinlock_lock(&heap_lock);
         slab_cache_t *cache = SLAB::GetCache(size);
         if (!cache) {
@@ -178,9 +193,11 @@ namespace SLAB{
         obj->magic = SLAB_MAGIC;
         spinlock_unlock(&heap_lock);
         return (void*)(obj + 1);
+#endif
     }
 
     uint64_t GetSize(void* ptr,bool ERO = false){
+#ifdef __x86_64__
         spinlock_lock(&heap_lock);
         slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
         if (page->magic != SLAB_MAGIC) {
@@ -197,6 +214,7 @@ namespace SLAB{
             return page->page_count * PAGE_SIZE - sizeof(slab_page_t);
         }
         spinlock_unlock(&heap_lock);
+#endif
     }
 }
 

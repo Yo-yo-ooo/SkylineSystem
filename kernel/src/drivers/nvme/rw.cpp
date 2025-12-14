@@ -1,3 +1,4 @@
+#ifdef __x86_64__
 #include <drivers/nvme/nvme.h>
 
 #include <arch/x86_64/vmm/vmm.h>
@@ -101,3 +102,4 @@ uint64_t NVME::Write(uint64_t offset, uint64_t size, void *buf) {
     bit_set0(&this->dev->reqBitmap, reqIdx);
 	return res;
 }
+#endif

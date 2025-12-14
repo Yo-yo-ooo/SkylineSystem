@@ -149,7 +149,7 @@ namespace AHCI
 
         HBAPRDTEntry prdtEntry[];
     };
-
+#ifdef __x86_64__
     class Port
     {
     public:
@@ -184,4 +184,5 @@ namespace AHCI
         PortType CheckPortType(HBAPort* port);
         
     };
+#endif
 }

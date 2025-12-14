@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-//#include "kio.h"
+#include <pdef.h>
 #include <klib/types.h>
 #include <klib/list.h>
 #include <klib/cstr.h>

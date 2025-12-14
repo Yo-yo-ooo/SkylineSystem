@@ -1,3 +1,4 @@
+#ifdef __x86_64__
 #include <drivers/Disk_Interfaces/ram/ramDiskInterface.h>
 #include <mem/heap.h>
 
@@ -63,3 +64,4 @@ namespace RamDiskInterface
         return true;
     }
 }
+#endif

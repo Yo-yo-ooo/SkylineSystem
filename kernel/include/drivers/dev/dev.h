@@ -3,7 +3,12 @@
 #ifndef _DEV_H
 #define _DEV_H
 
+#ifdef __x86_64__
 #include <klib/klib.h>
+#else
+#include <klib/types.h>
+#endif
+#include <stdint.h>
 #include <conf.h>
 
 typedef enum VsDevType
@@ -17,12 +22,12 @@ typedef enum VsDevType
 }VsDevType;
 
 typedef struct DevOPS{ //存储器抽象层
-    u8 (*Read)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
-    u8 (*Write)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t (*Read)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t (*Write)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
 
     //可选 Can Select
-    u8 (*ReadBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
-    u8 (*WriteBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
+    uint8_t (*ReadBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
+    uint8_t (*WriteBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     uint32_t (*GetMaxSectorCount)(void*);
 
     uint64_t (*ioctl)(uint64_t cmd, uint64_t arg);
@@ -33,8 +38,8 @@ typedef struct DevList{
     VsDevType type;
     DevOPS ops;
     char* Name;
-    u64 MaxSectorCount;    //按照SectorSize计
-    u64 SectorSize;
+    uint64_t MaxSectorCount;    //按照SectorSize计
+    uint64_t SectorSize;
     bool buf; //Y/N class
     void* classp; //class pointer
 }VDL;
@@ -48,23 +53,23 @@ namespace Dev
     extern VDL DevList_[MAX_VSDEV_COUNT];
     extern uint32_t vsdev_list_idx;
 
-    constexpr u8 RW_OK = 1;
-    constexpr u8 RW_ERROR = 0;
+    constexpr uint8_t RW_OK = 1;
+    constexpr uint8_t RW_ERROR = 0;
 
     void Init();
 
     char* TypeToString(VsDevType type);
     void AddStorageDevice(VsDevType type,DevOPS ops,
-        u32 SectorCount = 0,void* Class = nullptr);
+        uint32_t SectorCount = 0,void* Class = nullptr);
     /*获取存储器的相关信息*/
-    VsDevInfo GetSDEV(u32 idx);
+    VsDevInfo GetSDEV(uint32_t idx);
 
-    void SetSDev(u32 idx);
+    void SetSDev(uint32_t idx);
 
-    u8 Read(uint64_t lba, uint32_t SectorCount, void* Buffer);
-    u8 Write(uint64_t lba, uint32_t SectorCount, void* Buffer);
-    u8 ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
-    u8 WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
+    uint8_t Read(uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t Write(uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
+    uint8_t WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
 
 
 

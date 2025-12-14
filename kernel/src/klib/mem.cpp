@@ -4,9 +4,10 @@
 #ifdef __x86_64__
 #include <arch/x86_64/smp/smp.h>
 #include "../../../x86mem/x86mem.h"
+#pragma GCC target("sse,avx")
 #endif
 
-#pragma GCC target("sse,avx")
+
 
 void _memcpy_128(void* src, void* dest, int64_t size)
 {
@@ -126,4 +127,6 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
  
 }
 
+#ifdef __x86_64__
 #pragma GCC pop_options
+#endif

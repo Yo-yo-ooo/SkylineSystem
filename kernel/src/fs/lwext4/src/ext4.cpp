@@ -68,8 +68,9 @@
 #include <mem/heap.h>
 
 //UNSAFE INCLUDE
+#ifdef __x86_64__
 #include <arch/x86_64/rtc/rtc.h>
-
+#endif
 /**@brief   Mount point OS dependent lock*/
 #define EXT4_MP_LOCK(_m)                                                       \
 	do {                                                                   \

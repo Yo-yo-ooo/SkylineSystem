@@ -6,12 +6,13 @@
 #include <arch/x86_64/dev/pci/pci.h>
 #include <arch/x86_64/pit/pit.h>
 #endif
-
 namespace Serial
 {
     int32_t SerialPort = 0x3F8;          // COM1
     uint64_t pciCard = 0;
+#ifdef __x86_64__
     PCI::PCI_BAR_TYPE pciType;
+#endif
     int32_t serialPciOffset = 0;
     bool SerialWorks = false;
     //SerialManager::GenericPacket* currentSerialReadPacket = NULL;
@@ -20,7 +21,7 @@ namespace Serial
     bool Init()
     {
         
-
+#ifdef __x86_64__
         if (pciCard != 0)
         {
             //osData.debugTerminalWindow->Log("Serial PCI CARD AT: 0x{}", ConvertHexToString(pciCard), Colors.yellow);
@@ -54,7 +55,7 @@ namespace Serial
         {
 
         }
-        
+
         // if (pciCard == 0)
         // {
         //     // Disable all interrupts
@@ -170,6 +171,7 @@ namespace Serial
         SerialWorks = true;
         //currentSerialReadPacket = NULL;
         currentSerialReadPacketIndex = 0;
+#endif
         return true;
     }
 
@@ -194,7 +196,9 @@ namespace Serial
 
     bool _CanRead()
     {
+#ifdef __x86_64__
         return SerialWorks && (Sinb(5) & 1 == 1);
+#endif
     }
 
     char _Read()
@@ -358,6 +362,7 @@ namespace Serial
 
     void WriteTime()
     {
+#ifdef __x86_64__
         if (!PIT::Inited)
         {
             Write("[??:??.???] ");
@@ -376,6 +381,7 @@ namespace Serial
         Write(".");
         PrintVal(ms, 3);
         Write("] ");
+#endif
     }
 
     void TWrite(const char* str)
@@ -424,6 +430,7 @@ namespace Serial
 
     __ffunc void _Writef(const char* str, va_list arg)
     {
+#ifdef __x86_64__
         int32_t len = strlen(str);
 
         for (int32_t i = 0; i < len; i++)
@@ -503,21 +510,27 @@ namespace Serial
                 Write(str[i]);
             }
         }
+#endif
     }
 
     void Soutb(uint16_t port, uint8_t value)
     {
+#ifdef __x86_64__
         if (pciCard == 0)
             outb(SerialPort + port, value);
+
         else
             PCI::write_byte(pciCard, pciType, serialPciOffset + port, value);
+#endif
     }
 
     uint8_t Sinb(uint16_t port)
     {
+#ifdef __x86_64__
         if (pciCard == 0)
             return inb(SerialPort + port);
         else
             return PCI::read_byte(pciCard, pciType, serialPciOffset + port);
+#endif
     }
 }

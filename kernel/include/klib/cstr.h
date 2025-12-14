@@ -8,11 +8,11 @@ const char* to_string(uint64_t value);
 const char* to_string(int64_t value);
 
 const char* to_string(int32_t value);
-
+#ifdef __x86_64__
 const char* to_string(double value, uint8_t places);
 
 const char* to_string(double value);
-
+#endif
 const char* to_string(bool value);
 
 const char* to_string(char value);

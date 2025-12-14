@@ -1,7 +1,8 @@
 #include <klib/mutex/mutex.h>
 #include <klib/klib.h>
+#ifdef __x86_64__
 #include <arch/x86_64/schedule/sched.h>
-
+#endif
 
 namespace Mutex{
     mutex_t *Create(){
@@ -13,6 +14,7 @@ namespace Mutex{
     }
 
     void mutex_acquire(mutex_t *mutex) {
+#ifdef __x86_64__
         thread_t *thread = Schedule::this_thread();
         if (__sync_lock_test_and_set(&mutex->lock, 1)) {
             // Enqueue this thread to wait to be the owner.
@@ -21,9 +23,11 @@ namespace Mutex{
             Schedule::Yield();
         }
         mutex->owner = Schedule::this_thread();
+#endif
     }
 
     void mutex_release(mutex_t *mutex) {
+#ifdef __x86_64__
         ASSERT(mutex->owner == Schedule::this_thread());
         mutex->owner = NULL;
         __sync_lock_release(&mutex->lock);
@@ -32,5 +36,6 @@ namespace Mutex{
         if (!thread)
             return;
         thread->state = THREAD_RUNNING;
+#endif
     }
 }

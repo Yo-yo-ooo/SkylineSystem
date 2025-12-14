@@ -1,6 +1,8 @@
 #include <klib/rnd.h>
 
+#ifdef __x86_64__
 #pragma GCC target("sse2")
+
 namespace RND
 {
     __uint128_t g_lehmer64_state = 1337;
@@ -38,3 +40,4 @@ namespace RND
     }
 };
 #pragma GCC pop_options
+#endif

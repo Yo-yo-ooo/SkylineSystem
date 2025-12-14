@@ -112,6 +112,7 @@ const char *to_string(char value)
 }
 
 char doubleTo_stringOutput[128];
+#ifdef __x86_64__
 __ffunc const char *to_string(double value, uint8_t places)
 {
     uint8_t size = 0;
@@ -175,6 +176,7 @@ const char *to_string(double value)
 {
     return to_string(value, 2);
 }
+#endif
 
 const char *to_string(bool value)
 {

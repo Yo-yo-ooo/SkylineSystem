@@ -1,4 +1,5 @@
 #pragma once
+#ifdef __x86_64__
 #include <drivers/ahci/ahci.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -23,3 +24,4 @@ public:
     bool WriteBytes(uint64_t address, uint64_t count, void* buffer);
     uint32_t GetMaxSectorCount();
 };
+#endif

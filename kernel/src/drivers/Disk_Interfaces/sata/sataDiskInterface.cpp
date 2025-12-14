@@ -1,14 +1,13 @@
+
+#ifdef __x86_64__
 #include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
 #include <mem/heap.h>
 #include <mem/pmm.h>
-#ifdef __x86_64__
 #include <arch/x86_64/allin.h>
-#endif
+
 #include <drivers/ahci/ahci.h>
 #include <drivers/dev/dev.h>
 
-#pragma GCC push_options
-#pragma GCC optimize ("O0")
 
 uint32_t SataDiskInterface::GetMaxSectorCount()
 {
@@ -344,4 +343,4 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
     return true;
 }
 
-#pragma GCC pop_options
+#endif

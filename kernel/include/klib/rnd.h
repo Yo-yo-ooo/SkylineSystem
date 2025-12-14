@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __x86_64__
+
 namespace RND
 {
     extern __uint128_t g_lehmer64_state;
@@ -29,5 +31,6 @@ namespace RND
     }
 
 };
+#endif
 
 #endif

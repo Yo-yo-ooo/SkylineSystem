@@ -1,6 +1,6 @@
+#ifdef __x86_64__
 #include <drivers/dev/dev.h>
-#pragma GCC push_options
-#pragma GCC optimize ("O0")
+
 
 namespace Dev{
     VDL DevList_[MAX_VSDEV_COUNT] = {0};
@@ -264,5 +264,4 @@ namespace Dev{
 
     
 }
-
-#pragma GCC pop_options
+#endif

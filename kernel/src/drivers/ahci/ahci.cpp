@@ -1,8 +1,7 @@
+#ifdef __x86_64__
 #include <drivers/ahci/ahci.h>
 #include <allin.h>
-#ifdef __x86_64__
 #include <arch/x86_64/allin.h>
-#endif
 #include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
 
 #pragma GCC push_options
@@ -484,3 +483,4 @@ namespace AHCI
 }
 
 #pragma GCC pop_options
+#endif

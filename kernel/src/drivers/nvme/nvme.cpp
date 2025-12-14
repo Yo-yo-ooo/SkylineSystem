@@ -1,3 +1,4 @@
+#ifdef __x86_64__
 #include <drivers/nvme/nvme.h>
 
 #include <arch/x86_64/vmm/vmm.h>
@@ -394,3 +395,4 @@ bool NVME::InitREQIdent(NVME::NVMERequest *req, u32 tp, u32 nspIden, void *buf){
 	entry->PRP[0] = VMM::GetPhysics(kernel_pagemap,buf);
 	return true;
 }
+#endif

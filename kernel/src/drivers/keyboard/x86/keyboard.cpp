@@ -1,3 +1,4 @@
+#ifdef __x86_64__
 #include <arch/x86_64/allin.h>
 #include <drivers/keyboard/x86/keyboard.h>
 #include <flanterm/flanterm.h>
@@ -160,3 +161,4 @@ void keyboard_init()
     idt_install_irq(1,keyboard_handler);
     inb(0x60);
 }
+#endif
