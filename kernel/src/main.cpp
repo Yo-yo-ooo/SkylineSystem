@@ -186,7 +186,6 @@ extern "C" void kmain(void) {
         0, 0,
         0
     );
-    e9_print("Check OK!!");
 
     if(hhdm_request.response == NULL) {
         kerror("Can not get (limine hhdm request)->response\n");
