@@ -16,8 +16,9 @@
 > Run with this command in the project root dir
 
 ## Build Template(Not applicable to x86_64)
-You must edit the 'BUILD_ARCH' variable in 'gdef.mk' file 
-to set the architecture you want to build for.
+> [!CAUTION]
+> You must edit the 'BUILD_ARCH' variable in 'gdef.mk' file 
+> to set the architecture you want to build for.
 ```bash
 make cm KCC=(XXX arch)-linux-gnu-gcc KCXX=(XXX arch)-linux-gnu-g++ KLD=(XXX arch)-linux-gnu-ld
 ```
