@@ -1,6 +1,7 @@
 /kernel-deps
 /limine
 /ovmf
+/edk2-ovmf
 *.iso
 *.hdd
 .vscode/
