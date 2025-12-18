@@ -51,7 +51,6 @@ inline void sse_enable() {
     cr4 |= (uint64_t)3 << 9;
     __asm__ volatile("mov %0, %%cr4" : : "r"(cr4) : "memory");
 
-    //sysflag_g.SSEEnabled = 1;
 }
 
 #define XCR0_XSAVE_SAVE_X87 (1 << 0)

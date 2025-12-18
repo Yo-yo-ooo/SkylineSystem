@@ -8,7 +8,7 @@ override OUTPUT := kernel
 
 # Convenience macro to reliably declare user overridable variables.
 override USER_VARIABLE = $(if $(filter $(origin $(1)),default undefined),$(eval override $(1) := $(2)))
-
+override X86MEM_PATH = $(SS_BUILD_DIR)/x86mem
 # Target architecture to build for. Default to x86_64.
 include ../gdef.mk
 KARCH = $(BUILD_ARCH)
@@ -133,6 +133,8 @@ ifeq ($(KARCH),aarch64)
 			-target aarch64-unknown-none
 	endif
     override KCFLAGS += \
+		-mcpu=generic \
+        -march=armv8-a+nofp+nosimd \
         -mgeneral-regs-only
     override KLDFLAGS += \
         -m aarch64elf
@@ -182,14 +184,13 @@ endif
 
 # Internal linker flags that should not be changed by the user.
 override KLDFLAGS += \
-	-unresolved-symbols=ignore-all \
     -nostdlib \
     -static \
     -z max-page-size=0x1000 \
     -gc-sections \
 	-Bsymbolic \
-	--gc-sections   \
     -T linker-$(KARCH).ld
+
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
 # object and header dependency file names.
@@ -216,7 +217,17 @@ all: bin-$(KARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(KARCH)/$(OUTPUT): GNUmakefile linker-$(KARCH).ld $(OBJ)
 	@mkdir -p "$$(dirname $@)"
+	@echo LD $<
+ifeq ($(KARCH),x86_64)
+	$(KLD) $(OBJ) $(X86MEM_PATH)/memcmp.o \
+				$(X86MEM_PATH)/memcpy.o \
+				$(X86MEM_PATH)/memmove.o \
+				$(X86MEM_PATH)/memset.o \
+				$(KLDFLAGS) -o $@
+else
 	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
+endif
+	
 
 # Include header dependencies.
 -include $(HEADER_DEPS)
@@ -233,11 +244,6 @@ obj-$(KARCH)/%.S.o: src/%.S GNUmakefile
 	@mkdir -p "$$(dirname $@)"
 	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
-obj-$(KARCH)/klib/mem.cpp.o: src/klib/mem.cpp GNUmakefile
-	@echo C++ $<
-	@mkdir -p "$$(dirname $@)"
-	@$(KCXX) -I$(SS_BUILD_DIR)/x86mem -L$(SS_BUILD_DIR)/x86mem/memops.a \
-	$(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 obj-$(KARCH)/%.cpp.o: src/%.cpp GNUmakefile
 	@echo C++ $<
@@ -254,7 +260,7 @@ endif
 # Remove object files and the final executable.
 .PHONY: clean
 clean:
-	rm -rf bin-$(KARCH) obj-$(KARCH)
+	rm -rf bin-* obj-*
 
 # Remove everything built and generated including downloaded dependencies.
 .PHONY: distclean

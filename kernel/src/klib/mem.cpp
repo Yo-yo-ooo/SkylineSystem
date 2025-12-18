@@ -4,10 +4,9 @@
 #ifdef __x86_64__
 #include <arch/x86_64/smp/smp.h>
 #include "../../../x86mem/x86mem.h"
-#pragma GCC target("sse,avx")
+#include <klib/serial.h>
+#pragma GCC target("sse,avx2")
 #endif
-
-
 
 void _memcpy_128(void* src, void* dest, int64_t size)
 {
@@ -64,7 +63,6 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 {
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMSET)
     if(smp_started != false && this_cpu()->SupportSIMD){
-
         AVX_memset(dest,value,size);
         return;
     }

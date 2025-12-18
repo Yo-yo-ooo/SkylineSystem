@@ -10,12 +10,15 @@
 #include <mem/pmm.h>
 #include <klib/renderer/fb.h>
 #include <klib/renderer/rnd.h>
-#include <klib/sysflag.h>
 
 #if defined (__x86_64__)
 extern void __init x86_64_init(void);
-struct x86_64_sysflag sysflag_g = {0};
+#elif defined(__aarch64__)
+extern void aarch64_init(void);
 #endif
+
+//This function must not be delete
+extern "C" void _Unwind_Resume(void){/*unrealized!*/}
 // Set the base revision to 2, this is recommended as this is the latest
 // base revision described by the Limine boot protocol specification.
 // See specification for further info.
@@ -183,6 +186,7 @@ extern "C" void kmain(void) {
         0, 0,
         0
     );
+    e9_print("Check OK!!");
 
     if(hhdm_request.response == NULL) {
         kerror("Can not get (limine hhdm request)->response\n");

@@ -255,8 +255,9 @@ endif
 
 .PHONY: clean
 clean:
+	$(MAKE) -C x86mem clean
 	$(MAKE) -C kernel clean
-	rm -rf iso_root $(IMAGE_NAME).iso $(IMAGE_NAME).hdd
+	rm -rf iso_root *.iso *.hdd
 
 .PHONY: distclean
 distclean:

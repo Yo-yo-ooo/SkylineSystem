@@ -8,7 +8,6 @@ extern "C" void exit(void);
 int main(){
     //write(1,"Hello, World!\n",13);
     phl();
-    exit();
     phl();
     while(true);
     return 0;
