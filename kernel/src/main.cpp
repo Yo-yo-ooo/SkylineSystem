@@ -217,6 +217,8 @@ extern "C" void kmain(void) {
 
 #ifdef __x86_64__
     x86_64_init();
+#elif defined(__aarch64__)
+    aarch64_init();
 #endif
 
     hcf();

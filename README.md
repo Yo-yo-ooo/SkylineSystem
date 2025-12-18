@@ -15,8 +15,19 @@
 >
 > Run with this command in the project root dir
 
+## Build Template(Not applicable to x86_64)
+You must edit the 'BUILD_ARCH' variable in 'gdef.mk' file 
+to set the architecture you want to build for.
+```bash
+make cm KCC=(XXX arch)-linux-gnu-gcc KCXX=(XXX arch)-linux-gnu-g++ KLD=(XXX arch)-linux-gnu-ld
+```
+For example, to build aarch64 arch, run:
+```bash
+make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-gnu-ld
+```
+
 > [!TIP]
-> **You can build this project with these commands:**
+> **You can build this project(x86_64 arch) with these commands:**
 > ```bash
 > cd kernel && ./get-deps
 > cd .. && make limine/limine
@@ -113,7 +124,3 @@ Many more in future
 
 **You can conect with e-mail <1218849168@qq.com>** 
 
-## Build(aarch64)
-```bash
-clear && make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-gnu-ld
-```
