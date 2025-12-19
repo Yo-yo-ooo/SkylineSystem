@@ -1,6 +1,7 @@
 #include <arch/aarch64/asm/mair.h>
 #include <arch/aarch64/vmm/vmm.h>
 #include <klib/kprintf.h>
+#include <pdef.h>
 
 void setup_mair() {
     // Device nGnRnE

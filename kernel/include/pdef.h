@@ -22,3 +22,57 @@
 
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
+
+#define max(a, b) ({ \
+    __typeof__(a) ta = (a); \
+    __typeof__(b) tb = (b); \
+    ta < tb ? tb : ta; \
+})
+
+#define min(a, b) ({ \
+    __typeof__(a) ta = (a); \
+    __typeof__(b) tb = (b); \
+    ta > tb ? tb : ta; \
+})
+
+#ifdef __cplusplus
+template <class _Ty>
+struct remove_reference {
+    using type                 = _Ty;
+    using _Const_thru_ref_type = const _Ty;
+};
+
+template <class _Ty>
+struct remove_reference<_Ty&> {
+    using type                 = _Ty;
+    using _Const_thru_ref_type = const _Ty&;
+};
+
+template <class _Ty>
+struct remove_reference<_Ty&&> {
+    using type                 = _Ty;
+    using _Const_thru_ref_type = const _Ty&&;
+};
+
+template<class T>
+typename remove_reference<T>::type&&
+move(T&& a) noexcept
+{
+  typedef typename remove_reference<T>::type&& RvalRef;
+  return static_cast<RvalRef>(a);
+}
+
+template<typename T>
+void swap(T &a,T &b) noexcept
+{
+    T temp = move(a);
+    a = move(b);
+    b = move(temp);
+}
+#else
+#define swap(a, b) ({ \
+    const auto __swap_tmp = (b); \
+    b = a; \
+    a = __swap_tmp; \
+})
+#endif
