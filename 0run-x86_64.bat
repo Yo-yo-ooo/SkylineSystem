@@ -1,5 +1,7 @@
 @echo off
 
+cls
+
 SET SourceFile=disk.img
 
 if not exist %SourceFile% (
