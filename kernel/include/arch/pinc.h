@@ -8,3 +8,4 @@
 #define WELCOME_RISCV64 kinfo("Welcome to the SkylineSystem in riscv64 architecture!\n");
 #define WELCOME_LOONGARCH64 kinfo("Welcome to the SkylineSystem in loongarch64 architecture!\n");
 
+#define InitFunc(name,func) func;kpok("%s Initialised!\n",name)

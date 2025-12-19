@@ -1401,3 +1401,7 @@ static inline uint64_t read_mpidr_el1() {
 
     return result;
 }
+
+static inline uint64_t cpuid(){
+    return read_mpidr_el1() & 0xFF;
+}

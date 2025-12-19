@@ -1,8 +1,3 @@
-/*
- * kernel/include/arch/aarch64/mm/tcr.h
- * © suhas pai
- */
-
 #pragma once
 #include <stdint.h>
 

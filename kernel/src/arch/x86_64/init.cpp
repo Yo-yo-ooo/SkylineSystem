@@ -15,7 +15,6 @@
 #define PIC2_DATA 0xA1
 
 extern void FT_Deinit();
-#define InitFunc(name,func) /* kinfo("Initialise %s...\n",name); */func;kpok("%s Initialised!\n",name)
 
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
