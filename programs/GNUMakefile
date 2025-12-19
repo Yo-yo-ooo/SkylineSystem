@@ -6,13 +6,13 @@ PROGRAM_BUILD_DIR = ./bin
 all: 
 	@echo "Building all programs in $(BUILD_ARCH) architecture"
 	@mkdir -p $(PROGRAM_BUILD_DIR)
-	$(MAKE) -C desktop
+	$(MAKE) -C syscalltest
 
 	
 	@echo "Copying programs to disk image..."
 	e2mkdir ../$(PROGRAM_IMAGE_NAME).img:/bin/
-	e2cp ./bin/desktop.elf ../$(PROGRAM_IMAGE_NAME).img:/bin/
+	e2cp ./bin/syscalltest.elf ../$(PROGRAM_IMAGE_NAME).img:/bin/
 
 clean:
-	$(MAKE) -C desktop clean
+	$(MAKE) -C syscalltest clean
 	rm -rf $(PROGRAM_BUILD_DIR)

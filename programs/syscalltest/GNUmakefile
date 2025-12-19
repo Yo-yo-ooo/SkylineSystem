@@ -25,9 +25,9 @@ CPPFLAGS  = $(CFLAGS) -std=gnu++20 -fno-threadsafe-statics
 override OBJ := $(addprefix $(OBJDIR)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(CPPFILES:.cpp=.cpp.o))
 
 .PHONY: all
-all: $(BINDIR)/desktop.elf
+all: $(BINDIR)/syscalltest.elf
 
-$(BINDIR)/desktop.elf: GNUmakefile $(OBJ)
+$(BINDIR)/syscalltest.elf: GNUmakefile $(OBJ)
 	mkdir -p "$$(dirname $@)"
 	$(LD) $(LDFLAGS) -o $@ $(OBJ)
 

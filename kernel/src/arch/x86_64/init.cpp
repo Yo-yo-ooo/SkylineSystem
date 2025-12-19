@@ -71,9 +71,9 @@ void __init x86_64_init(void){
     proc_t *proc = Schedule::NewProcess(true);
 
     
-    thread_t *desktop = Schedule::NewThread(proc, 0, 0, 
-        "/mp/bin/desktop.elf", 1, (char*[]){"Desktop Main Thread"}, (char*[]){nullptr}); 
-    kinfoln("Desktop Thread: %d",desktop->id);
+    thread_t *syscalltest = Schedule::NewThread(proc, 0, 0, 
+        "/mp/bin/syscalltest.elf", 1, (char*[]){"Desktop Main Thread"}, (char*[]){nullptr}); 
+    kinfoln("syscalltest Thread: %d",syscalltest->id);
 
     LAPIC::IPIOthers(0, SCHED_VEC);
 }
