@@ -55,7 +55,7 @@ struct sigaction{
     void (*sa_restorer)(void);
 };
 
-int sigaction(int signum,const struct sigaction * restrict act, \
-    struct sigaction * restrict oldact);
+/* int sigaction(int signum,const struct sigaction * restrict act, \
+    struct sigaction * restrict oldact); */
 
 #endif
