@@ -118,6 +118,7 @@ Many more in future
 
 * [Yo-yo-ooo](https://github.com/Yo-yo-ooo/)
 * [marceldobehere](https://github.com/marceldobehere)
+* 人造人(qq:1440332527)
 
 [//]: (https://github.com/asterd-og/)
 
