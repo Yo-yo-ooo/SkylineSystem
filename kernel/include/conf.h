@@ -1,5 +1,8 @@
 #pragma once
-
+/*
+COMMON: 0:FALSE
+        1:TRUE
+*/
 //ABOUT ARCH
 #ifdef __x86_64__
 
@@ -12,6 +15,11 @@
 #define CONFIG_FAST_MEMCMP 1
 #define CONFIG_FAST_MEMMOVE 1
 
+#endif
+
+#ifdef __aarch64__
+#define CONFIG_DOSENT_SUPPORT_SYS_REG_ID_AA64SMFR0_EL1 0
+#define CONFIG_DOSENT_SUPPORT_SYS_REG_ID_AA64ZFR0_EL1 0
 #endif
 
 /*-------------------------------------------------*/
