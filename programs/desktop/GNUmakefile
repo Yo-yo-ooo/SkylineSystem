@@ -13,9 +13,9 @@ CXX = g++
 AS = as
 
 LDFLAGS  = --gc-sections  -entry=main -static -nostdlib \
-    -m elf_x86_64 -unresolved-symbols=ignore-all
+    -m elf_x86_64 -z noexecstack
 
-CFLAGS    = -I../../hllib/include -I. -nostdinc -L../../hllib/bin-$(BUILD_ARCH) -lhllib\
+CFLAGS    = -nostdlib -I../../hllib/include -I. -nostdinc -L../../hllib/bin-$(BUILD_ARCH) -lhllib\
 	-I../../hllib/include/arch/$(BUILD_ARCH) \
 	-ffreestanding -fshort-wchar -mno-red-zone \
  	-fno-omit-frame-pointer -fno-exceptions -ffunction-sections -fdata-sections -O0 -m64 -static

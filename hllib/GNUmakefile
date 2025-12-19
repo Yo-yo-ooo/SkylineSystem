@@ -30,7 +30,7 @@ CFLAGS = -ffreestanding -fshort-wchar -mno-red-zone -fno-omit-frame-pointer \
 CPPFLAGS = -ffreestanding -fshort-wchar -mno-red-zone -fno-omit-frame-pointer -I./include/arch/$(LIB_BUILD_ARCH) -I./include \
 	-fno-exceptions -nostdinc\
 	-fpermissive -Wno-pmf-conversions -ffunction-sections -fdata-sections -I .  -m64 -std=gnu++20 -nostdlib
-LDFLAGS = --gc-sections  -static -nostdlib -m elf_x86_64 -unresolved-symbols=ignore-all
+LDFLAGS = --gc-sections  -static -nostdlib -m elf_x86_64 
 
 
 .PHONY: all
