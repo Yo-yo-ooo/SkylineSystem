@@ -112,7 +112,6 @@ Many more in future
 
 * PCI MSI/MSIX
 * NVME
-* VFS
 
 ## Contributors
 
