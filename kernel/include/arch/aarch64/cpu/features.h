@@ -415,3 +415,4 @@ struct cpu_features {
 
 extern struct cpu_features g_cpu_features;
 void CollectCPUFeatures();
+uint8_t GetCurrentEL();

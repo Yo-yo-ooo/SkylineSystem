@@ -34,6 +34,7 @@ namespace VMM
     }
 
     uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr){
+        // Get Current Exception Level
         
     }
 } // namespace VMM

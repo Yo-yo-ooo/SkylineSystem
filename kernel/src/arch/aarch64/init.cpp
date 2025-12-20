@@ -9,6 +9,9 @@ void aarch64_init(void){
     WELCOME_AARCH64
     CollectCPUFeatures();
     kpokln("Collected CPU Features in aarch64 architecture.!");
+    kinfoln("Current EL:%d",GetCurrentEL());
     InitFunc("PMM",PMM::Init());
     InitFunc("VMM",VMM::Init());
+
+    kpokln("KERNEL STARTED!");
 }
