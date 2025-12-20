@@ -2,6 +2,7 @@
 /limine
 /ovmf
 /edk2-ovmf
+/limine-protocol
 *.iso
 *.hdd
 .vscode/

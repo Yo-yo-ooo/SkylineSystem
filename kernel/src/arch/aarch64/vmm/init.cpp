@@ -32,4 +32,8 @@ namespace VMM
         kpokln("Setup Mair!");
         //TODO: VMM::INIT
     }
+
+    uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr){
+        
+    }
 } // namespace VMM

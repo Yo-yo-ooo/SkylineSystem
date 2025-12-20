@@ -116,7 +116,8 @@ ifeq ($(KARCH),x86_64)
 		-mno-red-zone \
         -mcmodel=kernel \
 		-mno-sse \
-        -mno-sse2 
+        -mno-sse2 \
+		-DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM)
 		
     override KLDFLAGS += \
         -m elf_x86_64
@@ -218,7 +219,7 @@ all: bin-$(KARCH)/$(OUTPUT)
 bin-$(KARCH)/$(OUTPUT): GNUmakefile linker-$(KARCH).ld $(OBJ)
 	@mkdir -p "$$(dirname $@)"
 	@echo LD $<
-ifeq ($(KARCH),x86_64)
+ifeq ($(NOT_COMPILE_X86MEM),0)
 	$(KLD) $(OBJ) $(X86MEM_PATH)/memcmp.o \
 				$(X86MEM_PATH)/memcpy.o \
 				$(X86MEM_PATH)/memmove.o \
@@ -227,6 +228,9 @@ ifeq ($(KARCH),x86_64)
 else
 	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
 endif
+
+	
+
 	
 
 # Include header dependencies.

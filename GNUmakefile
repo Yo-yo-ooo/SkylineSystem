@@ -149,7 +149,8 @@ limine/limine:
 	rm -rf limine
 	git clone https://github.com/limine-bootloader/limine.git --branch=v10.x-binary --depth=1
 	$(MAKE) -C limine
-	cp -f ./limine/limine.h ./kernel/src
+	git clone https://github.com/limine-bootloader/limine-protocol
+	cp -f ./limine-protocol/include/limine.h ./kernel/src
 
 kernel-deps:
 	./kernel/get-deps
@@ -157,7 +158,8 @@ kernel-deps:
 
 .PHONY: kernel
 kernel: kernel-deps
-ifeq ($(KARCH),x86_64)
+	@echo "Start Building Kernel!"
+ifeq ($(NOT_COMPILE_X86MEM),0)
 	$(MAKE) -C x86mem
 endif
 	$(MAKE) -C kernel
@@ -242,7 +244,7 @@ clean:
 distclean:
 	$(MAKE) -C kernel distclean
 	rm -rf iso_root *.iso *.hdd kernel-deps limine ovmf
-
+	rm -rf limine-protocol
 
 cm:
 	make clean 
