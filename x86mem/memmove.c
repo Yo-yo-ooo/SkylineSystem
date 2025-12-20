@@ -31,9 +31,7 @@ void * memmove_fpx86 (void *dest, const void *src, size_t len)
   return dest;
 }
 
-// Source Code:
-//  https://github.com/KNNSpeed/AVX-Memmove
-//
+
 // Minimum requirement:
 //  x86_64 CPU with SSE4.1, but AVX2 or later is recommended
 //
