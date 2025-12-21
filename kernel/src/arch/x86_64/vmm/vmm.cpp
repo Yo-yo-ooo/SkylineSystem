@@ -3,14 +3,6 @@
 #include <arch/x86_64/vmm/vmm.h>
 
 
-/* __attribute__((used, section(".limine_requests")))
-static volatile struct limine_kernel_address_request kernel_address_request = {
-    .id = LIMINE_KERNEL_ADDRESS_REQUEST,
-    .revision = 0
-}; */
-#pragma GCC push_options
-#pragma GCC optimize ("O0")
-
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_executable_address_request limine_executable_address = {
     .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID,
@@ -424,6 +416,3 @@ namespace VMM{
     }
 
 }
-
-
-#pragma GCC pop_options
