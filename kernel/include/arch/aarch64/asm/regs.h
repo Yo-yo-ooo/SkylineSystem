@@ -1406,3 +1406,13 @@ static inline uint64_t read_mpidr_el1() {
 static inline uint64_t cpuid(){
     return read_mpidr_el1() & 0xFF;
 }
+
+#define read_ttbr_el1(num,val)                             \
+({                                                         \
+    asm volatile ("mrs %0, ttbr" #num "_el1" : "=r"(val)); \
+})
+
+#define write_ttbr_el1(num, value)                           \
+{                                                            \
+    asm volatile ("msr ttbr" #num "_el1, %0" :: "r"(value)); \
+}

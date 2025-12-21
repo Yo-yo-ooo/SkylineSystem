@@ -507,86 +507,6 @@ static inline void cr0_write(uint64_t value)
 
 #define mfence() __asm__ volatile ("mfence 	\n\t" : : : "memory")
 
-#elif defined (__aarch64__)
-
-#define read_ttbr_el1(num)                                   \
-({                                                           \
-    uint64_t value;                                          \
-    asm volatile ("mrs %0, ttbr" #num "_el1" : "=r"(value)); \
-    value;                                                   \
-})
-
-#define write_ttbr_el1(num, value)                           \
-{                                                            \
-    asm volatile ("msr ttbr" #num "_el1, %0" :: "r"(value)); \
-}
-
-static inline uint64_t rdtsc(void) {
-    uint64_t v;
-    asm volatile ("mrs %0, cntpct_el0" : "=r" (v));
-    return v;
-}
-
-#define locked_read(var) ({ \
-    typeof(*var) locked_read__ret = 0; \
-    asm volatile ( \
-        "ldar %0, %1" \
-        : "=r" (locked_read__ret) \
-        : "m" (*(var)) \
-        : "memory" \
-    ); \
-    locked_read__ret; \
-})
-
-static inline size_t icache_line_size(void) {
-    uint64_t ctr;
-    asm volatile ("mrs %0, ctr_el0" : "=r"(ctr));
-
-    return (ctr & 0b1111) << 4;
-}
-
-static inline size_t dcache_line_size(void) {
-    uint64_t ctr;
-    asm volatile ("mrs %0, ctr_el0" : "=r"(ctr));
-
-    return ((ctr >> 16) & 0b1111) << 4;
-}
-
-// Clean D-Cache to Point of Coherency
-static inline void clean_dcache_poc(uintptr_t start, uintptr_t end) {
-    size_t dsz = dcache_line_size();
-
-    uintptr_t addr = start & ~(dsz - 1);
-    while (addr < end) {
-        asm volatile ("dc cvac, %0" :: "r"(addr) : "memory");
-        addr += dsz;
-    }
-
-    asm volatile ("dsb sy\n\tisb");
-}
-
-// Invalidate I-Cache to Point of Unification
-static inline void inval_icache_pou(uintptr_t start, uintptr_t end) {
-    size_t isz = icache_line_size();
-
-    uintptr_t addr = start & ~(isz - 1);
-    while (addr < end) {
-        asm volatile ("ic ivau, %0" :: "r"(addr) : "memory");
-        addr += isz;
-    }
-
-    asm volatile ("dsb sy\n\tisb");
-}
-
-static inline int32_t current_el(void) {
-    uint64_t v;
-
-    asm volatile ("mrs %0, currentel" : "=r"(v));
-    v = (v >> 2) & 0b11;
-
-    return v;
-}
-
 #elif defined (__riscv)
 
 static inline uint64_t rdtsc(void) {
@@ -671,11 +591,6 @@ static inline void delay(uint64_t cycles) {
 
 #define ENABLE_INTERRUPTS() asm volatile ("sti")
 #define DISABLE_INTERRUPTS() asm volatile ("cli")
-
-#elif defined(__aarch64__)
-
-#define ENABLE_INTERRUPTS() asm volatile ("msr daifclr, #2" : : : "memory")
-#define DISABLE_INTERRUPTS() asm volatile ("msr daifset, #2" : : : "memory")
 
 #elif defined(__riscv)
 

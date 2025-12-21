@@ -236,8 +236,11 @@ endif
 
 .PHONY: clean
 clean:
-	$(MAKE) -C x86mem clean
-	$(MAKE) -C kernel clean
+	@$(MAKE) -C x86mem clean
+	@$(MAKE) -C kernel clean
+	@$(MAKE) -C hllib clean
+	@$(MAKE) -C programs clean
+	@$(MAKE) -C saf clean
 	rm -rf iso_root *.iso *.hdd
 
 .PHONY: distclean
@@ -247,25 +250,24 @@ distclean:
 	rm -rf limine-protocol
 
 cm:
-	make clean 
-	make -C hllib clean
-	make -C programs clean
-	make -j$(shell nproc)
+	@$(MAKE) clean 
+	@$(MAKE) -C saf
+	@$(MAKE) -j$(shell nproc)
 ifeq ($(KARCH),x86_64)
-	cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
-	qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
-	qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
-	mkfs.ext4 \
+	@cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
+	@qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
+	@qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
+	@mkfs.ext4 \
 	-O ^has_journal,extent,huge_file,flex_bg,64bit,dir_nlink,extra_isize \
 	./$(PROGRAM_IMAGE_NAME).img
-	make -C hllib
-	make -C programs
+	@$(MAKE) -C hllib
+	@$(MAKE) -C programs
 endif
 	
 cmk:
-	make clean
-	make -j$(shell nproc)
+	@$(MAKE) clean
+	@$(MAKE) -j$(shell nproc)
 
 cmr:
-	make cm
-	make run
+	@$(MAKE) cm
+	@$(MAKE) run

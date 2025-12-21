@@ -10,8 +10,7 @@ all:
 
 	
 	@echo "Copying programs to disk image..."
-	e2mkdir ../$(PROGRAM_IMAGE_NAME).img:/bin/
-	e2cp ./bin/syscalltest.elf ../$(PROGRAM_IMAGE_NAME).img:/bin/
+	e2cp $(PROGRAM_BUILD_DIR)/syscalltest.elf ../$(PROGRAM_IMAGE_NAME).img:/
 
 clean:
 	$(MAKE) -C syscalltest clean

@@ -1,7 +1,9 @@
 #include <arch/aarch64/asm/mair.h>
+#include <arch/aarch64/asm/regs.h>
 #include <arch/aarch64/vmm/vmm.h>
 #include <klib/kprintf.h>
 #include <pdef.h>
+#include <klib/kio.h>
 
 void setup_mair() {
     // Device nGnRnE
@@ -35,6 +37,16 @@ namespace VMM
 
     uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr){
         // Get Current Exception Level
+        uint16_t *high = (uint16_t*)&vaddr;
+        uint64_t ttbr_;
+        if(high == 0b1111111111111111)
+            read_ttbr_el1(1,ttbr_);
+        else if(high == 0b0000000000000000)
+            read_ttbr_el1(0,ttbr_);
+        else
+            return -1;
+        uint64_t pa;
+        ((uint16_t*)&pa)[4] = high[4];
         
     }
 } // namespace VMM
