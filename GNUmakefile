@@ -153,6 +153,7 @@ limine/limine:
 	cp -f ./limine-protocol/include/limine.h ./kernel/src
 
 kernel-deps:
+	chmod +x ./kernel/get-deps
 	./kernel/get-deps
 	touch kernel-deps
 
