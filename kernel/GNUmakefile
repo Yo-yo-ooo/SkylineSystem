@@ -188,6 +188,7 @@ override KLDFLAGS += \
     -nostdlib \
     -static \
     -z max-page-size=0x1000 \
+	-z noexecstack \
     -gc-sections \
 	-Bsymbolic \
     -T linker-$(KARCH).ld
