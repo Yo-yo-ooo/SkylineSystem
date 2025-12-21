@@ -37,8 +37,6 @@ namespace Schedule{
 
     namespace Useless{
 
-        
-
         void ProcessAddThread(proc_t *parent, thread_t *thread) {
             if (!parent->threads) {
                 parent->threads = thread;
