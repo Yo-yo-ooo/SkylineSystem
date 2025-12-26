@@ -193,6 +193,8 @@ namespace Schedule{
         }
     }
 
+    
+
     proc_t *NewProcess(bool user){
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         proc->id = sched_pid++;
@@ -508,52 +510,7 @@ namespace Schedule{
     proc_t *this_proc(){
         return this_cpu()->current_thread->parent;
     }
-    void Exit(int32_t code){
-        LAPIC::StopTimer();
-        thread_t *thread = Schedule::this_proc()->threads;
-        do{
-            thread->state = THREAD_ZOMBIE;
-            thread->exit_code = code;
-            if(thread->heap != nullptr)
-                kfree(thread->heap);
-            VMM::Free(kernel_pagemap,thread->fx_area);
-            VMM::Free(kernel_pagemap,thread->kernel_stack);
-            VMM::Free(kernel_pagemap,thread->stack);
-            if(thread->next == nullptr){
-                VMM::Free(kernel_pagemap,thread->sig_stack);
-            }
-            kinfoln("GET THERE!!!");
-            // Remove thread from scheduler queue
-            cpu_t *cpu = get_cpu(thread->cpu_num);
-            spinlock_lock(&cpu->sched_lock);
-
-            thread_queue_t *queue = &cpu->thread_queues[thread->priority];
-            if (queue->head == thread) {
-                queue->head = thread->list_prev;
-                queue->current = thread->list_next;
-                continue;
-            }
-            queue->head->list_prev = queue->head->list_prev->list_next;
-            cpu->thread_count--;
-            spinlock_unlock(&cpu->sched_lock);
-            thread = thread->next;
-        }while (thread->next != nullptr);
-        
-        kinfoln("Do exit %d",code);
-        // Wake up any threads waiting on this process
-        proc_t *parent = Schedule::this_proc()->parent;
-        if (!parent) {
-            Schedule::Yield();
-            return;
-        }
-        thread_t *child = parent->threads;
-        do {
-            child->sig_deliver |= 1 << 17;
-            child->waiting_status = code | (thread->id << 32);
-            child = child->next;
-        } while (child != parent->threads);
-        Schedule::Yield();
-    }
+    
 
     void Sleep(uint64_t ms){
         LAPIC::StopTimer();

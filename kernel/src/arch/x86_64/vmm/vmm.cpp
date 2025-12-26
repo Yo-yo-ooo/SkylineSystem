@@ -391,19 +391,22 @@ namespace VMM{
     uint8_t HandlePF(context_t *ctx){
         // Check if the fault was a CoW fault, or if it was truly just a page fault.
         uint64_t cr2 = 0;
+        thread_t *t = Schedule::this_thread();
         __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
-        if (!smp_started || !this_cpu() || !Schedule::this_thread()) {
+        if (!smp_started || !this_cpu() || !t) {
             kerror("Page fault on 0x%p, Should NOT continue.\n", cr2);
             return 1; // Should NOT continue execution.
         }
         pagemap_t *restore = VMM::SwitchPageMap(kernel_pagemap);
         uint64_t fault_addr = ALIGN_DOWN(cr2, PAGE_SIZE);
-        pagemap_t *pagemap = Schedule::this_thread()->pagemap;
+        pagemap_t *pagemap = t->pagemap;
         uint64_t page = VMM::Useless::GetPhysicsFlags(pagemap, fault_addr);
         uint64_t old_phys = PTE_MASK(page);
         if (!old_phys) {
             kerror("Page fault on thread (0x%p).\n", cr2);
-            return 1;
+            kerrorln("Segmentation fault (core undumped)");
+            Schedule::DeleteProc(Schedule::this_proc());
+            return 0;
         }
         uint64_t new_flags = PTE_FLAGS(page);
         new_flags &= ~(1ULL << 5);

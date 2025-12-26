@@ -112,6 +112,10 @@ namespace Schedule{
     void Yield();
     void PAUSE();
     void Resume();
+
+    void DeleteThread(cpu_t *cpu, thread_t *thread);
+    void DeleteProc(proc_t *proc);
+    void FreeThreadResources(thread_t *thread);
 }
 
 }
