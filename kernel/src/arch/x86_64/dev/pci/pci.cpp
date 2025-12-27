@@ -45,16 +45,6 @@ namespace PCI
                         uint16_t vendor_id = value_v & 0xffff;
                         uint16_t device_id = value_d & 0xffff;
 
-                        /*
-                        pci_device_t device = malloc(sizeof(struct pci_device));
-                        device->name = pci_classname(class_code);
-                        device->vendor_id = vendor_id;
-                        device->device_id = device_id;
-                        device->class_code = class_code;
-                        device->bus = BUS;
-                        device->slot = Equipment;
-                        device->func = F;
-                        */
                         PCIDeviceHeader* device = (PCIDeviceHeader*)kmalloc(sizeof(PCIDeviceHeader));
                         device->Vendor_ID = vendor_id;
                         device->Device_ID = device_id;

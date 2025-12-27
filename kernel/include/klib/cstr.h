@@ -2,7 +2,9 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <klib/str.h>
 
+#ifdef __cplusplus
 const char* to_string(uint64_t value);
 
 const char* to_string(int64_t value);
@@ -30,12 +32,4 @@ unsigned long ConvertStringToLongHex(const char* data);
 
 char* StrCombine(const char* a, const char* b);
 
-uint8_t strcmp(const char *cs, const char *ct);
-char *strtok(char *str, const char *delim);
-char* strchr(char* str, int32_t c);
-char *strcpy(char *strDest, const char *strSrc);
-int32_t strncmp(const char* a, const char* b, size_t n);
-char *strncpy(char *dest, const char *src, size_t n);
-char* strcat(char* dest, const char* source);
-size_t strlen(const char* str);
-int32_t atoi(char *str);
+#endif

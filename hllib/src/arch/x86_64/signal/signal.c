@@ -5,11 +5,10 @@
 int sigaction(int signum,const struct sigaction * restrict act, \
 struct sigaction * restrict oldact){
 
-    int ret;
-    syscall3(__NR_rt_sigaction, 
+    int ret = syscall(__NR_rt_sigaction, 
         (uint64_t)signum, 
         (uint64_t)act, 
-        (uint64_t)oldact,ret
+        (uint64_t)oldact,ret,0,0
     );
     return ret;
 }

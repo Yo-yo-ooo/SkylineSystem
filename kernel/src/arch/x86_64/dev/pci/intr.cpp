@@ -86,4 +86,8 @@ namespace PCI
         return true;
         
     } // namespace pci
+
+    bool CheckSupportMSI(PCI::PCIHeader0 *cfg){
+            
+    }
 }

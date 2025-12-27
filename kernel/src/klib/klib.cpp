@@ -125,3 +125,21 @@ uint64_t kld_64 (const uint8_t* ptr)	/* Load an 8-byte little-endian word */
 	rv = rv << 8 | ptr[0];
 	return rv;
 }
+
+#if defined(__x86_64__)
+#include <arch/x86_64/rtc/rtc.h>
+#endif
+
+extern "C" uint32_t sys_now(void){
+#if defined(__x86_64__)
+    return (uint32_t)(RTC::Year - 80) << 25 |
+           (uint32_t)(RTC::Month + 1) << 21 |
+           (uint32_t)RTC::Day << 16 |
+           (uint32_t)RTC::Hour << 11 |
+           (uint32_t)RTC::Minute << 5 |
+           (uint32_t)RTC::Second >> 1;
+#else
+    return 0;
+#endif
+
+}
