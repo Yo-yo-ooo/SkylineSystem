@@ -504,6 +504,11 @@ static inline void cr0_write(uint64_t value)
     asm volatile("mov %0, %%cr0" : : "r"(value));
 }
 
+static inline void delay(uint64_t cycles) {
+    uint64_t next_stop = rdtsc() + cycles;
+
+    while (rdtsc() < next_stop);
+}
 
 #define mfence() __asm__ volatile ("mfence 	\n\t" : : : "memory")
 
@@ -574,15 +579,9 @@ static inline uint64_t rdtsc(void) {
     return v;
 }
 
-#else
-#error Unknown architecture
 #endif
 
-static inline void delay(uint64_t cycles) {
-    uint64_t next_stop = rdtsc() + cycles;
 
-    while (rdtsc() < next_stop);
-}
 
 
 //HAL
