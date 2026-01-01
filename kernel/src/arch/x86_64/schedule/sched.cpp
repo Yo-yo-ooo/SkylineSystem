@@ -302,6 +302,7 @@ namespace Schedule{
         thread->id = sched_tid++;
         thread->cpu_num = cpu_num;
         thread->parent = parent;
+        thread->IsForkThread = false;
         thread->pagemap = parent->pagemap;
         thread->flags = 0;
         thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
@@ -345,6 +346,7 @@ namespace Schedule{
         thread->id = sched_tid++;
         thread->cpu_num = cpu_num;
         thread->parent = parent;
+        thread->IsForkThread = false;
         thread->pagemap = parent->pagemap;
         thread->flags = 0;
         thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
@@ -404,10 +406,10 @@ namespace Schedule{
         thread->state = THREAD_RUNNING;
         get_cpu(cpu_num)->has_runnable_thread = true;
 
-        thread->maped_file_list.Info = kmalloc(sizeof(MapedFileInfo) * 256);
-        thread->maped_file_list.MaxCount = 256;
-        thread->maped_file_list.UsedCount = 0;
-        thread->maped_file_list.NextInfoCount = 0;
+        //thread->maped_file_list.Info = kmalloc(sizeof(MapedFileInfo) * 256);
+        //thread->maped_file_list.MaxCount = 256;
+        //thread->maped_file_list.UsedCount = 0;
+        //thread->maped_file_list.NextInfoCount = 0;
 
         Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
         kpokln("Add Thread!");
@@ -422,6 +424,7 @@ namespace Schedule{
         thread->id = sched_tid++;
         thread->cpu_num = cpu->id;
         thread->parent = proc;
+        thread->IsForkThread = true;
         thread->pagemap = proc->pagemap;
         thread->flags = 0;
         thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);

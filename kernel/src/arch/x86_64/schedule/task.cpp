@@ -13,10 +13,20 @@ namespace Schedule{
         if(thread->heap != nullptr)
             kfree(thread->heap);
 
-        VMM::Free(kernel_pagemap, thread->fx_area);
-        VMM::Free(kernel_pagemap,thread->kernel_stack);
-        VMM::Free(kernel_pagemap,thread->stack);
-        VMM::Free(kernel_pagemap,thread->sig_stack);
+        kinfoln("Thread Heap Freed!");
+        if(thread->fx_area)
+            VMM::Free(kernel_pagemap, thread->fx_area);
+        kinfoln("Thread FX Area freeed!");
+        if(thread->kernel_stack && thread->IsForkThread == false)
+            VMM::Free(kernel_pagemap,thread->kernel_stack);
+        kinfoln("Thread Kernel Stack freeed!");
+        if(thread->stack)
+            VMM::Free(kernel_pagemap,thread->stack);
+        kinfoln("Thread Stack freeed!");
+        if(thread->sig_stack)
+            VMM::Free(kernel_pagemap,thread->sig_stack);
+        kinfoln("Thread Signal Stack freeed!");
+        kinfoln("Thread Res All freeed!");
     }
 
     void DeleteThread(cpu_t *cpu, thread_t *thread) {
@@ -24,32 +34,36 @@ namespace Schedule{
         thread_queue_t *queue = &cpu->thread_queues[thread->priority];
     
         // 2. 处理队列中只有这一个线程的情况
-        if (thread->list_next == thread) {
-            queue->head = NULL;
-            queue->current = NULL;  // 清空当前指针
+        spinlock_lock(&cpu->sched_lock);
+        if (thread->list_next == thread && thread->list_prev == thread) {
+            // 队列中只有这一个线程
+            if (queue->head == thread) {
+                queue->head = NULL;
+            }
+            if (queue->current == thread) {
+                queue->current = NULL;
+            }
         } else {
-            // 3. 从循环链表中安全摘除该线程
+            // 从循环双向链表中移除
             thread->list_prev->list_next = thread->list_next;
             thread->list_next->list_prev = thread->list_prev;
             
-            // 4. 如果删除的是头节点，需要更新头指针
+            // 更新队列头指针
             if (queue->head == thread) {
                 queue->head = thread->list_next;
             }
-            // 5. 如果删除的是当前运行线程，需要更新当前指针
-            // 注意：这里选择将current设为新的头节点，实际策略可能因调度需求而异
+            
+            // 更新当前运行线程指针
             if (queue->current == thread) {
-                queue->current = queue->head;  // 或其他调度策略
+                queue->current = queue->head;
             }
         }
-        
-        // 6. 可选：将线程的链表指针置空，避免悬空引用
-        thread->list_next = thread->list_prev = NULL;
         
         FreeThreadResources(thread);
 
         // 7. 更新线程计数
         cpu->thread_count--;
+        spinlock_unlock(&cpu->sched_lock);
     }
 
     void DeleteProc(proc_t *proc) {
@@ -98,26 +112,10 @@ namespace Schedule{
 
     void Exit(int32_t code){
         LAPIC::StopTimer();
-        thread_t *thread = Schedule::this_thread();
-        thread->state = THREAD_ZOMBIE;
-        thread->exit_code = code;
-        
-        kinfoln("Do exit %d",code);
-        // Wake up any threads waiting on this process
-        proc_t *parent = Schedule::this_proc()->parent;
-        if (!parent) {
-            Schedule::Yield();
-            return;
-        }
-        thread_t *child = parent->threads;
-        do {
-            child->sig_deliver |= 1 << 17;
-            child->waiting_status = code | (thread->id << 32);
-            child = child->next;
-        } while (child != parent->threads);
-
         //Delete PROC!
         Schedule::DeleteProc(Schedule::this_proc());
-        Schedule::Yield();
+        kinfoln("Delete PROC!");
+        LAPIC::IPI(this_cpu()->id, SCHED_VEC + 1);
+        return;
     }
 }
