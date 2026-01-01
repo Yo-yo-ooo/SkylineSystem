@@ -240,7 +240,6 @@ endif
 clean:
 	@$(MAKE) -C x86mem clean
 	@$(MAKE) -C kernel clean
-	@$(MAKE) -C hllib clean
 	@$(MAKE) -C programs clean
 	@$(MAKE) -C saf clean
 	rm -rf iso_root *.iso *.hdd
@@ -262,7 +261,6 @@ ifeq ($(KARCH),x86_64)
 	@mkfs.ext4 \
 	-O ^has_journal,extent,huge_file,flex_bg,64bit,dir_nlink,extra_isize \
 	./$(PROGRAM_IMAGE_NAME).img
-	@$(MAKE) -C hllib
 	@$(MAKE) -C programs
 endif
 	

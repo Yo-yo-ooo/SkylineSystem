@@ -1,52 +1,12 @@
-#include <io.h>
-#include <syscall.h>
-#include <signal.h>
-
-void new_op(int signum, siginfo_t *info, void *myact)
-{
-    //printf("receive signam %d\n", signum);
-    ssize_t ret = syscall(
-        __NR_write,
-        (uint64_t)1,
-        (uint64_t)"receive signam\n",
-        (uint64_t)16,
-        0,0,0
-    );
-}
-
-//test exit in user prog
+#include "syscall.h"
 
 int main(){
-    ssize_t x = write(1,"Hello, World!\n",13); 
-    /* struct sigaction* act;
-    int sig;
-    int ret;
-    ssize_t ret3;
-    //act.sa_flags = SA_SIGINFO;
-    act->sa_sigaction = new_op;
-    syscall3(
-        __NR_write,
-        (uint64_t)1,
-        (uint64_t)"OK THERE!\n",
-        (uint64_t)11,
-        ret
-    );
-    
-    syscall3(__NR_rt_sigaction, 
-        (uint64_t)sig, 
-        (uint64_t)act, 
-        (uint64_t)NULL,ret
-    );
-    if(ret < 0){
-        ssize_t ret2;
-        syscall3(
-            __NR_write,
-            (uint64_t)1,
-            (uint64_t)"Install ERROR\n",
-            (uint64_t)15,
-            ret
-        );
-    } */
-    while(true);
+    //Write Test
+    const char* msg = "Hello, SkylineSystem Syscall Test!\n";
+    syscall(1, 1, (long)msg, 34, 0, 0, 0); //Syscall Write
+    //Do Exit
+    syscall(60, 0, 0, 0, 0, 0, 0); //Syscall Exit
+    syscall(1, 1, (long)"Should not be printed", 22, 0, 0, 0); //Syscall Write
+    while (true);
     return 0;
 }

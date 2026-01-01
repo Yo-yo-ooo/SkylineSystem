@@ -1,3 +1,0 @@
-static char a[]{
-    "aaa"
-};

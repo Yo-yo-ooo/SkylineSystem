@@ -1,4 +1,4 @@
-#include <arch/x86_64/syscall.h>
+#include "syscall.h"
 
 long syscall(long number,long arg1,long arg2, \
 long arg3,long arg4,long arg5,long arg6){
