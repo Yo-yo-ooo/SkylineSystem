@@ -17,9 +17,9 @@ namespace Schedule{
         if(thread->fx_area)
             VMM::Free(kernel_pagemap, thread->fx_area);
         kinfoln("Thread FX Area freeed!");
-        if(thread->kernel_stack && thread->IsForkThread == false)
+        /* if(thread->kernel_stack && thread->IsForkThread == false)
             VMM::Free(kernel_pagemap,thread->kernel_stack);
-        kinfoln("Thread Kernel Stack freeed!");
+        kinfoln("Thread Kernel Stack freeed!"); */
         if(thread->stack)
             VMM::Free(kernel_pagemap,thread->stack);
         kinfoln("Thread Stack freeed!");
@@ -34,7 +34,6 @@ namespace Schedule{
         thread_queue_t *queue = &cpu->thread_queues[thread->priority];
     
         // 2. 处理队列中只有这一个线程的情况
-        spinlock_lock(&cpu->sched_lock);
         if (thread->list_next == thread && thread->list_prev == thread) {
             // 队列中只有这一个线程
             if (queue->head == thread) {
@@ -61,9 +60,10 @@ namespace Schedule{
         
         FreeThreadResources(thread);
 
+        thread->list_next = thread->list_prev = NULL;
+
         // 7. 更新线程计数
         cpu->thread_count--;
-        spinlock_unlock(&cpu->sched_lock);
     }
 
     void DeleteProc(proc_t *proc) {
