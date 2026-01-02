@@ -36,7 +36,7 @@ run-hdd: run-hdd-$(KARCH)
 run-x86_64: edk2-ovmf $(IMAGE_NAME).iso
 	qemu-system-$(KARCH) \
 		-M q35 \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-x86_64.fd,readonly=on \
 		-cdrom $(IMAGE_NAME).iso \
 		$(QEMUFLAGS)
 
@@ -44,7 +44,7 @@ run-x86_64: edk2-ovmf $(IMAGE_NAME).iso
 run-hdd-x86_64: edk2-ovmf $(IMAGE_NAME).hdd
 	qemu-system-$(KARCH) \
 		-M q35 \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-x86_64.fd,readonly=on \
 		-hda $(IMAGE_NAME).hdd \
 		$(QEMUFLAGS)
 
@@ -57,7 +57,7 @@ run-aarch64: edk2-ovmf $(IMAGE_NAME).iso
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-aarch64.fd,readonly=on \
 		-cdrom $(IMAGE_NAME).iso \
 		$(QEMUFLAGS)
 
@@ -70,7 +70,7 @@ run-hdd-aarch64: edk2-ovmf $(IMAGE_NAME).hdd
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-aarch64.fd,readonly=on \
 		-hda $(IMAGE_NAME).hdd \
 		$(QEMUFLAGS)
 
@@ -83,7 +83,7 @@ run-riscv64: edk2-ovmf $(IMAGE_NAME).iso
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
 		-cdrom $(IMAGE_NAME).iso \
 		$(QEMUFLAGS)
 
@@ -96,7 +96,7 @@ run-hdd-riscv64: edk2-ovmf $(IMAGE_NAME).hdd
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-riscv64.fd,readonly=on \
 		-hda $(IMAGE_NAME).hdd \
 		$(QEMUFLAGS)
 
@@ -109,7 +109,7 @@ run-loongarch64: edk2-ovmf $(IMAGE_NAME).iso
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-loongarch64.fd,readonly=on \
 		-cdrom $(IMAGE_NAME).iso \
 		$(QEMUFLAGS)
 
@@ -122,7 +122,7 @@ run-hdd-loongarch64: edk2-ovmf $(IMAGE_NAME).hdd
 		-device qemu-xhci \
 		-device usb-kbd \
 		-device usb-mouse \
-		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-$(ARCH).fd,readonly=on \
+		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-loongarch64.fd,readonly=on \
 		-hda $(IMAGE_NAME).hdd \
 		$(QEMUFLAGS)
 
