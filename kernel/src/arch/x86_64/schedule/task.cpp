@@ -17,9 +17,6 @@ namespace Schedule{
         if(thread->fx_area)
             VMM::Free(kernel_pagemap, thread->fx_area);
         kinfoln("Thread FX Area freeed!");
-        /* if(thread->kernel_stack && thread->IsForkThread == false)
-            VMM::Free(kernel_pagemap,thread->kernel_stack);
-        kinfoln("Thread Kernel Stack freeed!"); */
         if(thread->stack)
             VMM::Free(kernel_pagemap,thread->stack);
         kinfoln("Thread Stack freeed!");
