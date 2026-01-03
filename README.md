@@ -3,8 +3,8 @@
 > [!CAUTION]
 > Don't run it in real machine because it's now in test
 > If Build Failed, please open an issue or contact me
-> The General Build Faild reason is you don't have install the required dependencies
-> [OR] You are building for unsupported architecture
+> The General Build Faild reason is you don't have install the required dependencies <br>
+> [OR] You are building for unsupported architecture <br>
 > [OR] The 'GNUmakefile' file name fail (Try to rename as 'GNUMakefile')
 ## How to build
 
@@ -15,8 +15,8 @@
 > * xorriso
 > * make
 > * e2cp
->
 > Run with this command in the project root dir
+
 **You can build this project(x86_64 arch) with these commands:**
 ```bash
 cd kernel && ./get-deps
