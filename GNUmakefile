@@ -264,6 +264,10 @@ ifeq ($(KARCH),x86_64)
 	./$(PROGRAM_IMAGE_NAME).img
 	@$(MAKE) -C programs
 endif
+
+mk:
+	$(MAKE) -j$(shell nproc)
+	cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
 	
 cmk:
 	@$(MAKE) clean

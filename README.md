@@ -2,7 +2,10 @@
 
 > [!CAUTION]
 > Don't run it in real machine because it's now in test
-
+> If Build Failed, please open an issue or contact me
+> The General Build Faild reason is you don't have install the required dependencies
+> [OR] You are building for unsupported architecture
+> [OR] The 'GNUmakefile' file name fail (Try to rename as 'GNUMakefile')
 ## How to build
 
 > [!IMPORTANT]
@@ -14,7 +17,13 @@
 > * e2cp
 >
 > Run with this command in the project root dir
-
+**You can build this project(x86_64 arch) with these commands:**
+```bash
+cd kernel && ./get-deps
+cd .. && make limine/limine
+#If can't run get-deps script, you can run "chmod +x kernel/get-deps"
+make cm
+```
 ## Build Template(Not applicable to x86_64)
 > [!CAUTION]
 > You must edit the 'BUILD_ARCH' variable in 'gdef.mk' file 
@@ -28,13 +37,6 @@ make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-g
 ```
 
 > [!TIP]
-> **You can build this project(x86_64 arch) with these commands:**
-> ```bash
-> cd kernel && ./get-deps
-> cd .. && make limine/limine
-> #If can't run get-deps script, you can run "chmod +x kernel/get-deps"
-> make cm
-> ```
 > **You can run qemu with these commands:**
 > ```bash
 > # just run x86_64 qemu example command
