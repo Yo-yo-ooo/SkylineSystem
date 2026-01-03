@@ -86,6 +86,7 @@ namespace Schedule{
                 thread->list_next->list_prev = thread->list_prev;
                 thread->list_prev->list_next = thread->list_next;
             }
+            --cpu->thread_count;
             Schedule::Useless::AddThread(cpu, thread);
             return 0;
         }
@@ -126,7 +127,8 @@ namespace Schedule{
                     thread = next;
                 } while (thread != queue->head);
                 if (found) {
-                    queue->current = thread->next;
+                    //queue->current = thread->next;
+                    queue->current = thread->list_next;
                     thread->flags &= ~TFLAGS_PREEMPTED;
                     return thread;
                 }

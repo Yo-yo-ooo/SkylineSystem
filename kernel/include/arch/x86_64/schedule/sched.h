@@ -42,7 +42,7 @@ typedef struct thread_t {
     context_t sig_ctx;
     uint64_t sig_stack;
     uint64_t sig_fs;
-    pagemap_t *pagemap;
+    volatile pagemap_t *pagemap;
     uint64_t exit_code;
     uint64_t flags;
     uint64_t waiting_status;

@@ -405,8 +405,8 @@ namespace VMM{
         if (!old_phys) {
             kerror("Page fault on thread (0x%p).\n", cr2);
             kerrorln("Segmentation fault (core undumped)");
-            Schedule::DeleteProc(Schedule::this_proc());
-            return 0;
+            //Schedule::DeleteProc(Schedule::this_proc());
+            return 1;
         }
         uint64_t new_flags = PTE_FLAGS(page);
         new_flags &= ~(1ULL << 5);

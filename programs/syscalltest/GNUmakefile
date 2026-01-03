@@ -17,7 +17,8 @@ LDFLAGS  = --gc-sections  -entry=main -static -nostdlib \
 
 CFLAGS    = -nostdlib -nostdinc -I../../kernel/freestnd-c-hdrs/$(BUILD_ARCH)/include \
 	-ffreestanding -fshort-wchar -mno-red-zone \
- 	-fno-omit-frame-pointer -fno-exceptions -ffunction-sections -fdata-sections -O0 -m64 -static
+ 	-fno-omit-frame-pointer -fno-exceptions \
+	-ffunction-sections -fdata-sections -O0 -m64 -static -g3
 
 CPPFLAGS  = $(CFLAGS) -std=gnu++20 -fno-threadsafe-statics
 

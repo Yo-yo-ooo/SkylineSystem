@@ -238,27 +238,27 @@ endif
 
 # Compilation rules for *.c files.
 obj-$(KARCH)/%.c.o: src/%.c GNUmakefile
-	@echo C $<
-	@mkdir -p "$$(dirname $@)"
-	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+	echo C $<
+	mkdir -p "$$(dirname $@)"
+	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
 obj-$(KARCH)/%.S.o: src/%.S GNUmakefile
-	@echo GAS $<
-	@mkdir -p "$$(dirname $@)"
-	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+	echo GAS $<
+	mkdir -p "$$(dirname $@)"
+	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 
 obj-$(KARCH)/%.cpp.o: src/%.cpp GNUmakefile
-	@echo C++ $<
-	@mkdir -p "$$(dirname $@)"
-	@$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+	echo C++ $<
+	mkdir -p "$$(dirname $@)"
+	$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 ifeq ($(KARCH),x86_64)
 # Compilation rules for *.asm (nasm) files.
 obj-$(KARCH)/%.asm.o: src/%.asm GNUmakefile
-	@mkdir -p "$$(dirname $@)"
-	@nasm $(KNASMFLAGS) $< -o $@
+	mkdir -p "$$(dirname $@)"
+	nasm $(KNASMFLAGS) $< -o $@
 endif
 
 # Remove object files and the final executable.

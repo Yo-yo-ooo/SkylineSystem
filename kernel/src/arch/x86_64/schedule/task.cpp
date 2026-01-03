@@ -25,7 +25,6 @@ namespace Schedule{
         kinfoln("Thread Stack freeed!");
         if(thread->sig_stack)
             VMM::Free(kernel_pagemap,thread->sig_stack);
-        VMM::DestroyPM(thread->pagemap);
         kinfoln("Thread Signal Stack freeed!");
         kinfoln("Thread Res All freeed!");
     }
@@ -73,7 +72,7 @@ namespace Schedule{
         // 1. 终止进程中的所有线程
         thread_t *thread = proc->threads;
         while (thread) {
-            thread_t *next_thread = thread->next;
+            thread_t *next_thread = thread->next != thread ? thread->next : NULL;
             cpu_t *cpu = smp_cpu_list[thread->cpu_num];
             Schedule::DeleteThread(cpu, thread); // Just Delete Thread(Mainly)
             thread->state = THREAD_ZOMBIE;
@@ -113,24 +112,9 @@ namespace Schedule{
 
     void Exit(int32_t code){
         LAPIC::StopTimer();
-        thread_t *thread = Schedule::this_thread();
-        thread->state = THREAD_ZOMBIE;
-        thread->exit_code = code;
-        // Wake up any threads waiting on this process
-        proc_t *parent = Schedule::this_proc()->parent;
         Schedule::DeleteProc(Schedule::this_proc());
-        if (!parent) {
-            Schedule::Yield();
-            return;
-        }
-        thread_t *child = parent->threads;
-        do {
-            child->sig_deliver |= 1 << 17;
-            child->waiting_status = code | (thread->id << 32);
-            child = child->next;
-        } while (child != parent->threads); 
-        Schedule::Yield();
-        for(;;)
-            asm volatile("" : : : "memory");
+        this_cpu()->current_thread = nullptr;
+        kinfoln("Delete PROC!");
+        LAPIC::IPI(this_cpu()->id, SCHED_VEC + 1);
     }
 }

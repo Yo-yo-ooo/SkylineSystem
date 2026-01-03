@@ -258,8 +258,9 @@ ifeq ($(KARCH),x86_64)
 	@cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
 	@qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
 	@qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
+	dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2
 	@mkfs.ext4 \
-	-O ^has_journal,extent,huge_file,flex_bg,64bit,dir_nlink,extra_isize \
+	-O ^metadata_csum \
 	./$(PROGRAM_IMAGE_NAME).img
 	@$(MAKE) -C programs
 endif
