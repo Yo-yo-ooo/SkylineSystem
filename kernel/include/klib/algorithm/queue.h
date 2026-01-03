@@ -15,11 +15,13 @@ typedef struct {
     queue_item_t *tail;
 } queue_t;
 
+#ifdef __cplusplus
 namespace Queue{
     queue_t *Create();
 
     queue_item_t *Append(queue_t *queue, void *data);
     void *Dequeue(queue_t *queue);
 }
+#endif
 
 #endif

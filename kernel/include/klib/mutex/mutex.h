@@ -12,9 +12,8 @@ typedef struct {
     int32_t lock;
 } mutex_t;
 
-namespace Mutex{
-    mutex_t *Create();
-    void Acquire(mutex_t *mutex);
-    void Release(mutex_t *mutex);
-}
+
+mutex_t *MutexCreate();
+void MutexAcquire(mutex_t *mutex);
+void MutexRelease(mutex_t *mutex);
 #endif
