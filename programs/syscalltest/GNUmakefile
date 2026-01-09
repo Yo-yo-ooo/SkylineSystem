@@ -20,7 +20,7 @@ CFLAGS    = -nostdlib -nostdinc -I../../kernel/freestnd-c-hdrs/$(BUILD_ARCH)/inc
  	-fno-omit-frame-pointer -fno-exceptions \
 	-ffunction-sections -fdata-sections -O0 -m64 -static -g3
 
-CPPFLAGS  = $(CFLAGS) -std=gnu++20 -fno-threadsafe-statics
+CPPFLAGS  = $(CFLAGS) -std=gnu++20 -fno-threadsafe-statics 
 
 override OBJ := $(addprefix $(OBJDIR)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(CPPFILES:.cpp=.cpp.o))
 

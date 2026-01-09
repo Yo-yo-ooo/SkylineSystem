@@ -57,8 +57,8 @@ void keyboard_handle_key(u8 key)
         ev.type = 1;
         ev.value = keyboard_state;
         ev.code = keyboard_char;
-        if(keyboard_state == 1 )
-            kprintf("%c", keyboard_char);
+        //if(keyboard_state == 1 )
+        //    kprintf("%c", keyboard_char);
         FIFO::Push(keyboard_fifo, &ev);
         break;
     }}
@@ -107,13 +107,11 @@ void keyboard_handler(registers *regs)
     LAPIC::EOI();
 }
 
-/*i32 keyboard_read(struct vfs_node *vnode, u8 *buffer, u32 count)
+i32 keyboard_read(u8 *buffer)
 {
-    (void)vnode;
-    (void)count;
     FIFO::Pop(keyboard_fifo, buffer);
     return sizeof(keyboard_event);
-}*/
+}
 
 void keyboard_init()
 {
