@@ -68,10 +68,12 @@ void __init x86_64_init(void){
     Schedule::Install();
 
     proc_t *proc = Schedule::NewProcess(true);
-
+    proc_t *proc2 = Schedule::NewProcess(true);
     
     thread_t *syscalltest = Schedule::NewThread(proc, 0, 0, 
-        "/mp/syscalltest.elf", 1, (char*[]){"Desktop Main Thread"}, (char*[]){nullptr}); 
+        "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread"}, (char*[]){nullptr}); 
+    thread_t *syscalltest2 = Schedule::NewThread(proc2, 0, 0, 
+        "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread-2"}, (char*[]){nullptr}); 
     kinfoln("syscalltest Thread: %d",syscalltest->id);
 
     LAPIC::IPIOthers(0, SCHED_VEC);
