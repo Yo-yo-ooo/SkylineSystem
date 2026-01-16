@@ -31,8 +31,7 @@ namespace Dev{
         }
     }
 
-#pragma GCC push_options
-#pragma GCC optimize ("O2")
+
     void AddStorageDevice(VsDevType type, DevOPS ops,u32 SectorCount = 0,void* Class = nullptr)
     {
         spinlock_lock(&DevList_->lock);
@@ -62,7 +61,6 @@ namespace Dev{
     }
 
 
-#pragma GCC pop_options
 
     u32 GetSDEVTCount(VsDevType type){
         u32 c;
