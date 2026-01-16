@@ -69,7 +69,23 @@ uint64_t sys_kill(uint64_t pid,uint64_t sig, uint64_t ign_0, \
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     IGNORE_VALUE(ign_3);
 
-    Schedule::Signal::Raise(Schedule::this_proc(), LINUX_SIGKILL);
+    //Schedule::Signal::Raise(Schedule::this_proc(), LINUX_SIGKILL);
+    for(uint32_t i = 0;i < smp_last_cpu;i++){
+        for (uint32_t j = 0; j < THREAD_QUEUE_CNT; j++){
+            thread_queue_t *tq = &smp_cpu_list[i]->thread_queues[j];
+            thread_t *thread = tq->head;
+            while (thread->next != nullptr){
+                if(thread->parent->id == pid){
+                    Schedule::Signal::Raise(thread->parent, LINUX_SIGKILL);
+                    Schedule::DeleteProc(thread->parent);
+                    if(thread == this_cpu()->current_thread)
+                        this_cpu()->current_thread = nullptr;
+                    return 0;
+                }
+                thread = thread->next;
+            }
+        }
+    }
 
     return 0;
 }
