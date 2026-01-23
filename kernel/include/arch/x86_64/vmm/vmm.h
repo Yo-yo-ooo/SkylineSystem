@@ -12,6 +12,25 @@
 #define MM_USER 4
 #define MM_NX (1ull << 63)
 
+#define VMM_FLAG_PRESENT        (1 << 0)        /* P   */
+#define VMM_FLAG_READWRITE      (1 << 1)        /* R/W */
+#define VMM_FLAG_USER           (1 << 2)        /* U/S */
+#define VMM_FLAG_WRITETHROUGH   (1 << 3)        /* PWT */
+#define VMM_FLAG_CACHE_DISABLE  (1 << 4)        /* PCD */
+#define VMM_FLAG_PAT            (1 << 7)        /* PAT */
+
+#define VMM_FLAGS_DEFAULT       (VMM_FLAG_PRESENT | VMM_FLAG_READWRITE)
+
+/* According to Intel's manual, only when CACHE_DISABLE and WRITETHROUGH
+ * are both set to 1, the MMIO will be strong uncacheable (UC) which can
+ * meet requirements of some memory regions, e.g., xAPIC memory address.
+ * If we only set CACHE_DISABLE value, thw writing operation will be halt
+ * when running on NEC VersaPro which has a i5-6200U CPU.
+ */
+#define VMM_FLAGS_MMIO          (VMM_FLAGS_DEFAULT | VMM_FLAG_CACHE_DISABLE \
+                                | VMM_FLAG_WRITETHROUGH)
+#define VMM_FLAGS_USERMODE      (VMM_FLAGS_DEFAULT | VMM_FLAG_USER)
+
 #define PML4E(x) ((x >> 39) & 0x1ff)
 #define PDPTE(x) ((x >> 30) & 0x1ff)
 #define PDE(x) ((x >> 21) & 0x1ff)

@@ -66,6 +66,14 @@ namespace ACPI{
         char table[];
     } __attribute__((packed)) SDT;
 
+    typedef struct[[gnu::packed]] {
+        uint8_t addr_space_id;
+        uint8_t reg_bit_width;
+        uint8_t reg_bit_offset;
+        uint8_t reserved;
+        uint64_t address;
+    } gas_t;
+
     extern ACPI::MCFGHeader* mcfg;
     extern ACPI::SDTHeader* rootThing;
     extern int32_t ACPI_DIV;

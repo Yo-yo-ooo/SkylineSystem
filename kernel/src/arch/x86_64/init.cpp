@@ -9,6 +9,7 @@
 
 #include <arch/x86_64/simd/simd.h>
 #include <mem/heap.h>
+#include <arch/x86_64/drivers/hpet/hpet.h>
 
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
@@ -41,6 +42,7 @@ void __init x86_64_init(void){
     InitFunc("LAPIC",LAPIC::Init());
     InitFunc("IOAPIC",IOAPIC::Init());
     InitFunc("PIT & RTC",PIT::InitPIT());
+    InitFunc("HPET",HPET::InitHPET());
     InitFunc("SMP",smp_init());
     //InitFunc("RTC",RTC::InitRTC());
     
