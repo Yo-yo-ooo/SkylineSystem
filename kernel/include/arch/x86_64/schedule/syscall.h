@@ -68,6 +68,8 @@ typedef struct syscall_frame_t{
 uint64_t sys_fork(syscall_frame_t *frame);
 
 typedef int64_t time_t;
+typedef int64_t suseconds_t;
+
 
 #define IA32_EFER  0xC0000080
 #define IA32_STAR  0xC0000081

@@ -1,4 +1,9 @@
 #include <arch/x86_64/allin.h>
+
+extern uint64_t mktime (uint32_t year, uint32_t mon,
+    uint32_t day, uint32_t hour,
+    uint32_t min, uint32_t sec);
+
 namespace PIT
 {
     int32_t roughCount = (BaseFrequency/200) / 2;
@@ -22,6 +27,16 @@ namespace PIT
         //irq_register(0, PIT::Handler);
         idt_install_irq(0,PIT::Handler);
         //Inited = true;
+        RTC::InitRTC();
+        RTC::read_rtc();
+        RTC_INIT_DAY = RTC::Day;
+        RTC_INIT_MONTH = RTC::Month;
+        RTC_INIT_YEAR = RTC::Year;
+        RTC_INIT_HOUR = RTC::Hour;
+        RTC_INIT_MINUTE = RTC::Minute;
+        RTC_INIT_SECOND = RTC::Second;
+        TIME_SINCE_RTC_INITED_SECOND = mktime(RTC_INIT_YEAR,RTC_INIT_MONTH,RTC_INIT_DAY,
+            RTC_INIT_HOUR,RTC_INIT_MINUTE,RTC_INIT_SECOND);
     }
 
     void Handler(registers *r){

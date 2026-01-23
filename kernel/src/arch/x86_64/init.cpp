@@ -40,9 +40,9 @@ void __init x86_64_init(void){
     simd_cpu_init(get_cpu(0));
     InitFunc("LAPIC",LAPIC::Init());
     InitFunc("IOAPIC",IOAPIC::Init());
-    InitFunc("PIT",PIT::InitPIT());
+    InitFunc("PIT & RTC",PIT::InitPIT());
     InitFunc("SMP",smp_init());
-    InitFunc("RTC",RTC::InitRTC());
+    //InitFunc("RTC",RTC::InitRTC());
     
     
     if (fpu_init()){
@@ -74,7 +74,8 @@ void __init x86_64_init(void){
         "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread"}, (char*[]){nullptr}); 
     thread_t *syscalltest2 = Schedule::NewThread(proc2, 0, 0, 
         "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread-2"}, (char*[]){nullptr}); 
-    kinfoln("syscalltest Thread: %d",syscalltest->id);
+    kinfoln("syscalltest PROCESS: %d",proc->id);
+    kinfoln("syscalltest2 PROCESS: %d",proc2->id);
 
     LAPIC::IPIOthers(0, SCHED_VEC);
 }
