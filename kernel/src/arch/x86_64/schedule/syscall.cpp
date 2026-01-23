@@ -52,11 +52,12 @@ void syscall_init() {
     syscall_lists[39] = sys_getpid;
     syscall_lists[57] = sys_fork;
     syscall_lists[59] = sys_execve;
-    syscall_lists[60] = sys_exit;//!
+    syscall_lists[60] = sys_exit;
     syscall_lists[83] = sys_mkdir;
     syscall_lists[157] = sys_arch_prctl;//!
     syscall_lists[186] = sys_gettid;
     syscall_lists[201] = sys_time;
+    syscall_lists[228] = sys_clock_gettime;
     syscall_lists[318] = sys_getrandom;
 
     uint64_t efer = rdmsr(IA32_EFER);

@@ -4,8 +4,19 @@
 #include <elf/elf.h>
 #include <mem/pmm.h>
 #include <klib/algorithm/queue.h>
-
+#include <arch/x86_64/drivers/hpet/hpet.h>
 #include <arch/x86_64/rtc/rtc.h>
+
+static const int32_t CLOCK_REALTIME = 0;
+static const int32_t CLOCK_MONOTONIC = 1;
+static const int32_t CLOCK_PROCESS_CPUTIME_ID = 2;
+static const int32_t CLOCK_THREAD_CPUTIME_ID = 3;
+static const int32_t CLOCK_REALTIME_COARSE = 4;
+static const int32_t CLOCK_MONOTONIC_RAW = 4;
+static const int32_t CLOCK_MONOTONIC_COARSE = 6;
+static const int32_t CLOCK_BOOTTIME = 7;
+static const int32_t CLOCK_TAI = 11;
+static const int32_t CLOCK_BOOTTIME_ALARM = 9;
 
 uint64_t mktime (uint32_t year, uint32_t mon,
     uint32_t day, uint32_t hour,
@@ -45,6 +56,13 @@ struct timezone {
     int32_t tz_minuteswest;     /* minutes west of Greenwich */
     int32_t tz_dsttime;         /* type of DST correction */
 };
+struct timespec
+{
+    time_t tv_sec;        /* Seconds. */
+    int64_t   tv_nsec;       /* Nanoseconds. */
+};
+
+
 /* int gettimeofday(struct timeval *restrict tv,
                  struct timezone *_Nullable restrict tz); */
 static int64_t tv_s_off,tv_ms_off;
@@ -76,4 +94,24 @@ uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
     tv_s_off = ((struct timeval*)tv)->tv_sec;
     tv_ms_off = ((struct timeval*)tv)->tv_usec;
     return 0;
+}
+
+uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, uint64_t ign_0, 
+    uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
+    IGNV_4();
+    struct timespec *tp_ = (struct timespec *)tp;
+    switch (clkid)
+    {
+    case CLOCK_MONOTONIC_COARSE:
+    case CLOCK_MONOTONIC_RAW:
+    case CLOCK_MONOTONIC:
+        tp_->tv_sec = HPET::GetTimeNS() / 1000000000;
+        tp_->tv_nsec = HPET::GetTimeNS() - tp_->tv_sec * 1000000000;
+        break;
+    default:
+        break;
+    }
+
+    return 0;
+
 }
