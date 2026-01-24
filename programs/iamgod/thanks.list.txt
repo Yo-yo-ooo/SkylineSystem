@@ -1,0 +1,2 @@
+[1]:https://github.com/zhiyb/graphic
+[2]:cos/sin from https://github.com/logeexpluoqi/unisrc/blob/main/qmath/qtrigf.c
