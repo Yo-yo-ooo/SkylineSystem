@@ -62,7 +62,7 @@
 #include <fs/lwext4/ext4_xattr.h>
 
 #include <fs/lwext4/blockdev/blockdev.h>
-
+#include <fs/fd.h>
 #include <klib/cstr.h>
 #include <klib/klib.h>
 #include <mem/heap.h>
@@ -3335,6 +3335,8 @@ bool ext4_kernel_init(const char* devname,const char* mpname){
     kpok("ext4_journal_start !\n");
 
     ext4_cache_write_back(mpname, 1);
+
+    
     return true;
 }
 
@@ -3548,3 +3550,5 @@ void ext4_fs_test_all(){
     FSPrintDesc(); 
 
 }
+
+

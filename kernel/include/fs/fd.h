@@ -46,7 +46,7 @@ Device type list:
 
 */
 
-typedef struct {
+typedef struct FileDesc{
     size_t off;
     int32_t flags;
     char* path;
@@ -57,6 +57,15 @@ typedef struct {
     void *RSVD;
     FSType FsType;
 } fd_t;
+
+struct FSOps{
+    int32_t (*write)(fd_t* fsd, const void *buf, size_t count);
+    int32_t (*read)(fd_t* fsd, void *buf, size_t count);
+    int32_t (*lseek)(fd_t* fsd, size_t offset, int32_t whence);
+    int32_t (*close)(fd_t* fsd);
+};
+
+extern struct FSOps FileSystemOps[256];
 
 /*
 fd_t->Type

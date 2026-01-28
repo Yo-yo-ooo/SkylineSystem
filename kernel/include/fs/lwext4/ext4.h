@@ -627,6 +627,8 @@ FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image)
 
 void ext4_fs_test_all();
 
+
+
 #endif /* EXT4_H_ */
 
 /**

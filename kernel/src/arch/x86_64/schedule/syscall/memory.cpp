@@ -11,9 +11,11 @@
 #define PROT_EXEC 4
 #define MAP_SHARED 1
 uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t prot, uint64_t flags, uint64_t fd,uint64_t offset) {
-    pagemap_t *pagemap = Schedule::this_proc()->pagemap;
     
-    if(Schedule::this_proc()->fd_table[fd]->path == NULL){
+    proc_t *process = Schedule::this_proc();
+    pagemap_t *pagemap = process->pagemap;
+    
+    if(process->fd_table[fd]->path == NULL){
         return -EINVAL;
     }
     size_t pages = DIV_ROUND_UP(length, PAGE_SIZE);
@@ -33,8 +35,10 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t prot, uint64_t flags, u
     VMM::NewMapping(pagemap, Address, pages, flags_vm);
     spinlock_unlock(&pagemap->vma_lock);
     if(flags & MAP_SHARED){
-        
-        _memset((void*)Address,0,length);
+        FileSystemOps[process->fd_table[fd]->FsType].read(
+            process->fd_table[fd],
+            (void*)Address,
+            length);
     }
     return Address;
 }
