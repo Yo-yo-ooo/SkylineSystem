@@ -5,95 +5,38 @@
 #include <mem/pmm.h>
 #include <klib/algorithm/queue.h>
 
+#define PROT_NONE 0
+#define PROT_READ 1
+#define PROT_WRITE 2
+#define PROT_EXEC 4
+#define MAP_SHARED 1
 uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t prot, uint64_t flags, uint64_t fd,uint64_t offset) {
-    MapedFileInfo info;
-    uint64_t vm_flags;
-    if (prot & 2) 
-        vm_flags |= MM_READ;
-    if (prot & 4) 
-        vm_flags |= MM_WRITE;
-    if (!(prot & 1)) 
-        vm_flags |= MM_NX;
-    info.FakeVMFlag = vm_flags;
-    info.RealVMFlag = vm_flags | MM_USER;
-    thread_t * tthread = Schedule::this_thread();
-    //cpu_t* tcpu = this_cpu();
-
-    size_t pages = DIV_ROUND_UP(length, PAGE_SIZE);
-    void *virt_addr = nullptr;
-
-    void *buffer = kmalloc(pages * PAGE_SIZE);
-    _memset(buffer, 0, pages * PAGE_SIZE - length);
-    if(Schedule::this_proc()->fd_table[fd]->IsSpecial == false){
-        ext4_fopen(&Schedule::this_proc()->fd_table[fd]->f,
-            Schedule::this_proc()->fd_table[fd]->path,"r");
-        ext4_fseek(&Schedule::this_proc()->fd_table[fd]->f,offset,SEEK_SET);
-        ext4_fread(&Schedule::this_proc()->fd_table[fd]->f,buffer,length,NULL);
-        if (!addr) {
-            // Allocate new address
-            // Look for the first fit on the list.
-            spinlock_lock(&tthread->pagemap->vma_lock);
-            uint64_t flags = vm_flags;
-            virt_addr = VMM::Useless::InternalAlloc(
-                tthread->pagemap, pages, flags);
-            for (int32_t i = 0; i < pages; i++)
-                VMM::Map(
-                    tthread->pagemap, 
-                    virt_addr + (i * PAGE_SIZE), 
-                    VMM::GetPhysics(kernel_pagemap,buffer) + (i * PAGE_SIZE), 
-                    flags
-                );
-            VMM::NewMapping(tthread->pagemap, virt_addr, pages, flags);
-            spinlock_unlock(&tthread->pagemap->vma_lock);
-            
-            info.length = length;
-            info.fs_desc = (void*)&Schedule::this_proc()->fd_table[fd]->f;
-            info.DescSize = sizeof(ext4_file);
-            info.fd = fd;
-            info.BufferBaseAddr = (uint64_t)buffer;
-            if(tthread->maped_file_list.UsedCount + 1 > tthread->maped_file_list.MaxCount){
-                tthread->maped_file_list.Info = krealloc(tthread->maped_file_list.Info, \
-                    sizeof(MapedFileInfo) * (tthread->maped_file_list.MaxCount + 16));
-                tthread->maped_file_list.MaxCount += 16;
-            }
-            tthread->maped_file_list.Info[tthread->maped_file_list.UsedCount + 1] = info;
-            tthread->maped_file_list.UsedCount++;
-            //virt_addr = (void*)addr;
-        } else {
-            // TODO: Check if a mapping already exists in this address
-            // if it does, pick another address.
-            for (size_t i = 0; i < pages; i++) {
-                VMM::Map(
-                    tthread->pagemap, 
-                    (uint64_t)addr + i * PAGE_SIZE, 
-                    VMM::GetPhysics(kernel_pagemap,buffer) + (i * PAGE_SIZE), 
-                    vm_flags
-                );
-            }
-            virt_addr = addr;
-        }
-    }else{
-        if (!addr) {
-            // Allocate new address
-            virt_addr = VMM::Alloc(tthread->pagemap, pages, true);
-        } else {
-            // TODO: Check if a mapping already exists in this address
-            // if it does, pick another address.
-            uint64_t phys = 0;
-            for (size_t i = 0; i < pages; i++) {
-                phys = (uint64_t)PMM::Request();
-                VMM::Map(
-                    tthread->pagemap, 
-                    (uint64_t)addr + i * PAGE_SIZE, 
-                    phys, 
-                    vm_flags
-                );
-            }
-            virt_addr = addr;
-        }
+    pagemap_t *pagemap = Schedule::this_proc()->pagemap;
+    
+    if(Schedule::this_proc()->fd_table[fd]->path == NULL){
+        return -EINVAL;
     }
-
-    return (uint64_t)virt_addr;
+    size_t pages = DIV_ROUND_UP(length, PAGE_SIZE);
+    
+    uint64_t flags_vm = 0;
+    if(prot & PROT_READ) flags_vm |= MM_READ;
+    if(prot & PROT_WRITE) flags_vm |= MM_WRITE;
+    if(prot & PROT_EXEC) flags_vm |= MM_NX;
+    flags_vm |= MM_USER;
+    spinlock_lock(&pagemap->vma_lock);
+    uint64_t Address = 0;
+    if(!addr){
+        Address = VMM::Useless::InternalAlloc(pagemap, pages, flags_vm);
+    }else{Address = (uint64_t)addr;}
+    for (int32_t i = 0; i < pages; i++)
+        VMM::Map(pagemap, Address + (i * PAGE_SIZE), (uint64_t)PMM::Request(), flags_vm);
+    VMM::NewMapping(pagemap, Address, pages, flags_vm);
+    spinlock_unlock(&pagemap->vma_lock);
+    if(flags & MAP_SHARED){
+        
+        _memset((void*)Address,0,length);
+    }
+    return Address;
 }
 
 uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t prot, \

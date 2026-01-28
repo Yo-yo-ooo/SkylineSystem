@@ -34,6 +34,11 @@
 #define O_SEARCH O_PATH
 #include <fs/lwext4/ext4.h>
 
+enum FSType : uint8_t{
+    FS_EXT4 = 1,
+    FS_FATFS = 2,
+};
+
 /*
 Device type list:
 0 - Reserved
@@ -50,6 +55,7 @@ typedef struct {
     bool IsSpecial; //Is/NOT special device (eg.Framebuffer)
     uint32_t Type; //file type
     void *RSVD;
+    FSType FsType;
 } fd_t;
 
 /*

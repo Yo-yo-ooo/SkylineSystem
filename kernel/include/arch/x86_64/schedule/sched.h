@@ -57,7 +57,6 @@ typedef struct thread_t {
     void* heap;//data segment
     uint64_t heap_size;
     
-    MapedFileLists maped_file_list;
 
     bool IsForkThread;
 } thread_t;

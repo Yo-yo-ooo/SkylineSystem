@@ -10,23 +10,7 @@ extern "C++" {
 
 typedef struct context_t context_t;
 
-typedef struct MapedFileInfo{
-    void *fs_desc;
-    uint16_t DescSize;
-    uint64_t BufferBaseAddr;
-    //uint64_t PID;
-    uint64_t length;
-    uint64_t fd;
-    uint64_t RealVMFlag;
-    uint64_t FakeVMFlag;
-} MapedFileInfo;
 
-typedef struct MapedFileLists{
-    MapedFileInfo *Info;
-    uint64_t MaxCount;
-    uint64_t UsedCount;
-    uint64_t NextInfoCount;
-}MapedFileLists;
 
 typedef struct syscall_args{
     void* arg1;

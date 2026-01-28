@@ -44,6 +44,7 @@ static volatile spinlock_t ptf_lock = 0;
 void _putchar(char character){
     e9_putc(character);
     Serial::Write(character);
+    return;
 }
 
 

@@ -408,11 +408,6 @@ namespace Schedule{
         thread->state = THREAD_RUNNING;
         get_cpu(cpu_num)->has_runnable_thread = true;
 
-        //thread->maped_file_list.Info = kmalloc(sizeof(MapedFileInfo) * 256);
-        //thread->maped_file_list.MaxCount = 256;
-        //thread->maped_file_list.UsedCount = 0;
-        //thread->maped_file_list.NextInfoCount = 0;
-
         Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
         kpokln("Add Thread!");
 

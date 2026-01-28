@@ -82,5 +82,4 @@ uint64_t kld_64 (const uint8_t* ptr);
 void qsort(void *base, size_t num, size_t width, int32_t (*sort)(const void *e1, const void *e2));
 
 
-
 #endif
