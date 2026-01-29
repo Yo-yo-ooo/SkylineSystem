@@ -18,7 +18,8 @@ typedef enum VsDevType
     NVME,
     SAS,
     Undefined,
-    NSDEV //Not Storage Device
+    NSDEV, //Not Storage Device
+    FrameBuffer,
 }VsDevType;
 
 typedef struct DevOPS{ //存储器抽象层

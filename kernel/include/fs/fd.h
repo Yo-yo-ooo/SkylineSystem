@@ -33,6 +33,7 @@
 #define O_EXEC O_PATH
 #define O_SEARCH O_PATH
 #include <fs/lwext4/ext4.h>
+#include <drivers/dev/dev.h>
 
 enum FSType : uint8_t{
     FS_EXT4 = 1,
@@ -56,6 +57,8 @@ typedef struct FileDesc{
     uint32_t Type; //file type
     void *RSVD;
     FSType FsType;
+    VsDevType DevType;
+    uint32_t dev_idx;
 } fd_t;
 
 struct FSOps{
@@ -65,7 +68,7 @@ struct FSOps{
     int32_t (*close)(fd_t* fsd);
 };
 
-extern struct FSOps FileSystemOps[256];
+extern volatile struct FSOps FileSystemOps[256];
 
 /*
 fd_t->Type

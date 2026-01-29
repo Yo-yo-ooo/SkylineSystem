@@ -21,7 +21,7 @@ int32_t Ext4Close(fd_t* fsd){
     return ext4_fclose(&f);
 }
 
-struct FSOps FileSystemOps[256] = {
+volatile struct FSOps FileSystemOps[256] = {
     {nullptr,nullptr,nullptr,nullptr}, //0:Unused
     {Ext4Write,Ext4Read,Ext4Lseek,Ext4Close}, //FS_EXT4
 };
