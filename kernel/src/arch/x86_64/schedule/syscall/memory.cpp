@@ -35,19 +35,7 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t prot, uint64_t flags, u
     VMM::NewMapping(pagemap, Address, pages, flags_vm);
     spinlock_unlock(&pagemap->vma_lock);
     if(flags & MAP_SHARED){
-        if(process->fd_table[fd]->IsSpecial == false){
-            FileSystemOps[process->fd_table[fd]->FsType].read(
-            process->fd_table[fd],
-            (void*)Address,
-            length);
-        }else{
-            Dev::DevList_[process->fd_table[fd]->dev_idx].ops.ReadBytes(
-                Dev::DevList_[process->fd_table[fd]->dev_idx].classp,
-                offset,
-                length,
-                (void*)Address
-            );
-        }
+        ReadFile(process->fd_table[fd],Address,length);
     }
     return Address;
 }

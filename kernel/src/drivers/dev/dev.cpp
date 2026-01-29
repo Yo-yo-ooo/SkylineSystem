@@ -258,6 +258,18 @@ namespace Dev{
         }
     }
 
-    
+    TypeAndIDX GetDevTypeAndIdxFromStr(char* path){
+        TypeAndIDX _buf = {0};
+        if(_memcmp(path + 5,"fb",2) == 0){
+                _buf.type = VsDevType::FrameBuffer;
+                for(uint32_t i = 0;; i++){
+                    if(strcmp(path + 5, Dev::DevList_[i].Name) == 0){
+                        _buf.idx = i;
+                        break;
+                    }
+                }
+        }
+        return _buf;
+    }
 }
 #endif

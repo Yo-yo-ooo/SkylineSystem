@@ -25,8 +25,13 @@ typedef enum VsDevType
 typedef struct DevOPS{ //存储器抽象层
     uint8_t (*Read)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
     uint8_t (*Write)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t (*Read_)(uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t (*Write_)(uint64_t lba, uint32_t SectorCount, void* Buffer);
 
     //可选 Can Select
+    uint8_t (*ReadBytes_)(uint64_t address, uint32_t Count, void* Buffer);
+    uint8_t (*WriteBytes_)(uint64_t address, uint32_t Count, void* Buffer);
+    uint32_t (*GetMaxSectorCount_)();
     uint8_t (*ReadBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     uint8_t (*WriteBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     uint32_t (*GetMaxSectorCount)(void*);
@@ -72,8 +77,12 @@ namespace Dev
     uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
     uint8_t WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
 
+    typedef struct TypeAndIDX{
+        VsDevType type;
+        uint32_t idx;
+    };
 
-
+    TypeAndIDX GetDevTypeAndIdxFromStr(char* path);
 };
 
 

@@ -36,6 +36,7 @@
 #include <drivers/dev/dev.h>
 
 enum FSType : uint8_t{
+    FS_UNKOWN = 0,
     FS_EXT4 = 1,
     FS_FATFS = 2,
 };
@@ -66,9 +67,17 @@ struct FSOps{
     int32_t (*read)(fd_t* fsd, void *buf, size_t count);
     int32_t (*lseek)(fd_t* fsd, size_t offset, int32_t whence);
     int32_t (*close)(fd_t* fsd);
+    int32_t (*open)(fd_t* fsd, const char* path, int32_t flags);
 };
 
 extern volatile struct FSOps FileSystemOps[256];
+
+
+int32_t ReadFile(fd_t* fsd, void *buf, size_t count);
+int32_t WriteFile(fd_t* fsd, const void *buf, size_t count);
+int32_t LseekFile(fd_t* fsd, size_t offset, int32_t whence);
+int32_t CloseFile(fd_t* fsd);
+int32_t OpenFile(fd_t* fsd, const char* path, int32_t flags);
 
 /*
 fd_t->Type
