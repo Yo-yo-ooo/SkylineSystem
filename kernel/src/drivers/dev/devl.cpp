@@ -48,18 +48,17 @@ namespace Dev{
                 Ptr->RegistedDevIDX[NodeCurrIDX]++;
                 Vdevice = Ptr->Node[NodeCurrIDX].Next->list[0];
                 Ptr->Node[NodeCurrIDX].Next->CurrIDX = 1;
-                goto out_of_if_else;
+            }else{
+                Ptr->RegistedDevIDX[NodeCurrIDX]++;
+                Vdevice = Ptr->Node[NodeCurrIDX].list[Ptr->Node[NodeCurrIDX].CurrIDX];
+                Ptr->Node[NodeCurrIDX].CurrIDX++;
             }
-            Ptr->RegistedDevIDX[NodeCurrIDX]++;
-            Vdevice = Ptr->Node[NodeCurrIDX].list[Ptr->Node[NodeCurrIDX].CurrIDX];
-            Ptr->Node[NodeCurrIDX].CurrIDX++;
             //Vdevice = Ptr->list[Ptr->CurrIDX++];
         }else{
             DevList.RegistedDevIDX[IndexOfType]++;
             Vdevice = DevList.Node[IndexOfType].list[DevList.Node[IndexOfType].CurrIDX];  
             DevList.Node[IndexOfType].CurrIDX++;  
         }
-out_of_if_else:
         Vdevice.Name = DeviceName;
         Vdevice.classp = ClassPtr;
         Vdevice.ops.ioctl = DeviceOperations.ioctl;
