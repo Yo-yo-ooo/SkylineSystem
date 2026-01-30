@@ -8,7 +8,7 @@
 static uint64_t 
 SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){return NULL;}
 
-uint64_t (*syscall_lists[467])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = \
+uint64_t (*syscall_lists[512])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = \
     {SYSCALL_NULL};
 
 void dump_REG(syscall_frame_t *frame){
@@ -41,7 +41,7 @@ void syscall_init() {
     syscall_lists[1] = sys_write;
     syscall_lists[2] = sys_open;
     syscall_lists[3] = sys_close;
-
+    
     syscall_lists[8] = sys_lseek;
     syscall_lists[9] = sys_mmap;//!
     syscall_lists[11] = sys_munmap;

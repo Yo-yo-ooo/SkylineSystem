@@ -11,7 +11,7 @@ uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if (!fd)
         return -EBADF;
-    ext4_fread(&fd->f,(const void*)buf,count,NULL);
+    FileSystemOps[fd->FsType].read(fd,(void*)buf,count,NULL);
     fd->off += count;
     return count;
 }
@@ -39,7 +39,7 @@ uint64_t sys_write(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     }
     if (!fd)
         return -EBADF;
-    ext4_fwrite(&fd->f,(const void*)buf,count,NULL);
+    FileSystemOps[fd->FsType].write(fd,(void*)buf,count);
     fd->off += count;
     return count;
 }
@@ -49,7 +49,7 @@ int64_t sys_lseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if (!fd)
         return -EBADF;
-    if(ext4_fseek(&fd->f,fd->off,(uint32_t)whence) == EOK)
+    if(FileSystemOps[fd->FsType].lseek(fd,offset,whence) == EOK)
         return offset;
     else{return -1;}
 }
@@ -95,7 +95,7 @@ uint64_t sys_close(uint64_t fd,GENERATE_IGN5()){
         return (uint64_t)((int64_t)-1);
     else{
         if(proc->fd_table[fd]->Type == 0){ //Generic File
-            ext4_fclose(&proc->fd_table[fd]->f);
+            FileSystemOps[proc->fd_table[fd]->FsType].close(proc->fd_table[fd]);
         }
     }
     proc->fd_table[fd] = nullptr;
@@ -111,3 +111,4 @@ uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4()){
         return (uint64_t)((int64_t)-1);
     return 0;
 }
+
