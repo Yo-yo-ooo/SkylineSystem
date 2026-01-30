@@ -28,12 +28,10 @@ namespace Dev{
         DevOPS DeviceOperations,void *ClassPtr = nullptr
     ){
         uint32_t IndexOfType = 0;
-        if(T2Index[DeviceType]){
+        if(T2Index[DeviceType])
             IndexOfType = T2Index[DeviceType];
-        }else{
-            IndexOfType = TypeIndex++;
-            T2Index[DeviceType] = TypeIndex;
-        }
+        else
+            IndexOfType = TypeIndex++,T2Index[DeviceType] = TypeIndex;
         VDL Vdevice;// = DevList.Node[DeviceType].list[DevList.Node[DeviceType].CurrIDX + 1];
         if(IndexOfType > DEV_LIST_NODE_COUNT){
             DeviceList_t *Ptr = &DevList;
