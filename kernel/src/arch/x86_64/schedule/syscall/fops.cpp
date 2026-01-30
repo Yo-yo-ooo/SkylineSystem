@@ -11,7 +11,7 @@ uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if (!fd)
         return -EBADF;
-    FileSystemOps[fd->FsType].read(fd,(void*)buf,count,NULL);
+    FileSystemOps[fd->FsType].read(fd,(void*)buf,count);
     fd->off += count;
     return count;
 }
@@ -65,19 +65,7 @@ uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, \
     fd->off = 0;
     fd->path = (char*)path;
 
-    if(_memcmp(path,"/dev/",5) == 0){
-        Dev::TypeAndIDX dt = Dev::GetDevTypeAndIdxFromStr((char*)path);
-        if(dt.type == VsDevType::Undefined){
-            kfree(fd);
-            return (uint64_t)((int64_t)-1);
-        }
-        fd->IsSpecial = true;
-        fd->DevType = dt.type;
-        fd->dev_idx = dt.idx;
-        fd->FsType = FSType::FS_UNKOWN; //占位
-        fd->Type = dt.type; //Block Device
-        goto return_;
-    }
+    
     /* ext4_fopen(&fd->f,path,flags); */
     FileSystemOps[FSType::FS_EXT4].open(fd,(const char*)path,flags);
     fd->FsType = FSType::FS_EXT4;

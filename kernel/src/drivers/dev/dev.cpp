@@ -4,7 +4,9 @@
 
 namespace Dev{
     VDL DevList_[MAX_VSDEV_COUNT] = {0};
+    DevOPS DevOperations[MAX_VSDEV_COUNT] = {0};
     uint32_t vsdev_list_idx = 0;
+    uint32_t vsdev_ops_idx = 0;
     
 
     u32 ThisDev = 0;
@@ -41,17 +43,23 @@ namespace Dev{
         DevList_[vsdev_list_idx].type = type;
         
         if(Class != nullptr){
-            DevList_[vsdev_list_idx].buf = true;
             DevList_[vsdev_list_idx].classp = Class;
+
+            DevList_[vsdev_list_idx].ops.GetMaxSectorCount = ops.GetMaxSectorCount;
+            DevList_[vsdev_list_idx].ops.Read = ops.Read;
+            DevList_[vsdev_list_idx].ops.Write = ops.Write;
+            DevList_[vsdev_list_idx].ops.ReadBytes = ops.ReadBytes;
+            DevList_[vsdev_list_idx].ops.WriteBytes = ops.WriteBytes; 
         }else{
-            DevList_[vsdev_list_idx].buf = false;
             DevList_[vsdev_list_idx].classp = nullptr;
+
+            DevList_[vsdev_list_idx].ops.GetMaxSectorCount_ = ops.GetMaxSectorCount_;
+            DevList_[vsdev_list_idx].ops.Read_ = ops.Read_;
+            DevList_[vsdev_list_idx].ops.Write_ = ops.Write_;
+            DevList_[vsdev_list_idx].ops.ReadBytes_ = ops.ReadBytes_;
+            DevList_[vsdev_list_idx].ops.WriteBytes_ = ops.WriteBytes_; 
         }
-        DevList_[vsdev_list_idx].ops.GetMaxSectorCount = ops.GetMaxSectorCount;
-        DevList_[vsdev_list_idx].ops.Read = ops.Read;
-        DevList_[vsdev_list_idx].ops.Write = ops.Write;
-        DevList_[vsdev_list_idx].ops.ReadBytes = ops.ReadBytes;
-        DevList_[vsdev_list_idx].ops.WriteBytes = ops.WriteBytes;
+        
         DevList_[vsdev_list_idx].MaxSectorCount = SectorCount;
         vsdev_list_idx++;
         kfree(temp_str);
@@ -258,18 +266,6 @@ namespace Dev{
         }
     }
 
-    TypeAndIDX GetDevTypeAndIdxFromStr(char* path){
-        TypeAndIDX _buf = {0};
-        if(_memcmp(path + 5,"fb",2) == 0){
-                _buf.type = VsDevType::FrameBuffer;
-                for(uint32_t i = 0;; i++){
-                    if(strcmp(path + 5, Dev::DevList_[i].Name) == 0){
-                        _buf.idx = i;
-                        break;
-                    }
-                }
-        }
-        return _buf;
-    }
+
 }
 #endif

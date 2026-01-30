@@ -46,7 +46,6 @@ typedef struct DevList{
     char* Name;
     uint64_t MaxSectorCount;    //按照SectorSize计
     uint64_t SectorSize;
-    bool buf; //Y/N class
     void* classp; //class pointer
 }VDL;
 
@@ -55,6 +54,14 @@ typedef struct DevList VsDevInfo;
 
 namespace Dev
 {
+    typedef struct DeviceListNL_t{
+        VDL *list; //This Storage Device Specific Information //32
+        DeviceListNL_t *Next;
+    }DeviceListNL_t;
+    typedef struct DeviceList_t{
+        DeviceListNL_t *Node; //This Node Storage Type of Device //256
+        DeviceList_t *Next;
+    }DeviceList_t;   
 
     extern VDL DevList_[MAX_VSDEV_COUNT];
     extern uint32_t vsdev_list_idx;
@@ -77,12 +84,7 @@ namespace Dev
     uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
     uint8_t WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
 
-    typedef struct TypeAndIDX{
-        VsDevType type;
-        uint32_t idx;
-    };
-
-    TypeAndIDX GetDevTypeAndIdxFromStr(char* path);
+    
 };
 
 

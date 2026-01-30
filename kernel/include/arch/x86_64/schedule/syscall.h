@@ -62,6 +62,7 @@ typedef int64_t suseconds_t;
 
 void syscall_init();
 
+#define GENERATE_IGN2() uint64_t ign_0,uint64_t ign_1
 #define GENERATE_IGN3() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2
 #define GENERATE_IGN4() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,\
                         uint64_t ign_3
@@ -69,6 +70,7 @@ void syscall_init();
                         uint64_t ign_3,uint64_t ign_4
 #define GENERATE_IGN6() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,\
                         uint64_t ign_3,uint64_t ign_4,uint64_t ign_5
+#define IGNV_2() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);
 #define IGNV_3() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2)
 #define IGNV_4() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);\
                 IGNORE_VALUE(ign_3)

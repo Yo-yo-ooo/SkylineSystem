@@ -49,6 +49,8 @@ COMMON: 0:FALSE
 #define PRINT_INFORMATION_ 1
 
 #define MAX_VSDEV_COUNT 256
+#define DEV_LIST_NODE_OF_VDL_LIST_COUNT 32 //Dev::DeviceListNL_t->VDL Alloc Count
+#define DEV_LIST_NODE_COUNT 256 //Dev::DeviceList_t->Node Alloc Count
 
 #define VFS_MAX_PATH_LEN    4096
 #define VFS_MAX_NAME_LEN    36

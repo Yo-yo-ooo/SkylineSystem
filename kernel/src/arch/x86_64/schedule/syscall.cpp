@@ -42,6 +42,7 @@ void syscall_init() {
     syscall_lists[2] = sys_open;
     syscall_lists[3] = sys_close;
     
+    
     syscall_lists[8] = sys_lseek;
     syscall_lists[9] = sys_mmap;//!
     syscall_lists[11] = sys_munmap;
