@@ -56,12 +56,16 @@ namespace Dev
 {
     typedef struct DeviceListNL_t{
         VDL *list; //This Storage Device Specific Information //32
+        uint32_t CurrIDX;
         DeviceListNL_t *Next;
+        uint64_t Parent;//Point To DeviceList_t
     }DeviceListNL_t;
     typedef struct DeviceList_t{
         DeviceListNL_t *Node; //This Node Storage Type of Device //256
+        uint32_t *RegistedDevIDX;
         DeviceList_t *Next;
     }DeviceList_t;   
+    extern DeviceList_t DevList;
 
     extern VDL DevList_[MAX_VSDEV_COUNT];
     extern uint32_t vsdev_list_idx;
