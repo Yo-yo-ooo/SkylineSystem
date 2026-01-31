@@ -579,11 +579,6 @@ public:
 		return _rbt.erase(Key).second;
 	}
 
-	iterator erase(iterator pos) {
-		std_::pair<iterator, bool> ret = _rbt.insert(std_::make_pair(pos, T()));
-		return _rbt.erase(ret.first).first;
-	}
-
 	T& operator[](const K& key){
 		std_::pair<iterator, bool> ret = _rbt.insert(std_::make_pair(key, T()));
 		//ret.first 迭代器
