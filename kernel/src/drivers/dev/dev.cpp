@@ -45,20 +45,21 @@ namespace Dev{
         if(Class != nullptr){
             DevList_[vsdev_list_idx].classp = Class;
 
-            DevList_[vsdev_list_idx].ops.GetMaxSectorCount = ops.GetMaxSectorCount;
+            /* DevList_[vsdev_list_idx].ops.GetMaxSectorCount = ops.GetMaxSectorCount;
             DevList_[vsdev_list_idx].ops.Read = ops.Read;
             DevList_[vsdev_list_idx].ops.Write = ops.Write;
             DevList_[vsdev_list_idx].ops.ReadBytes = ops.ReadBytes;
-            DevList_[vsdev_list_idx].ops.WriteBytes = ops.WriteBytes; 
+            DevList_[vsdev_list_idx].ops.WriteBytes = ops.WriteBytes;  */
         }else{
             DevList_[vsdev_list_idx].classp = nullptr;
 
-            DevList_[vsdev_list_idx].ops.GetMaxSectorCount_ = ops.GetMaxSectorCount_;
+            /* DevList_[vsdev_list_idx].ops.GetMaxSectorCount_ = ops.GetMaxSectorCount_;
             DevList_[vsdev_list_idx].ops.Read_ = ops.Read_;
             DevList_[vsdev_list_idx].ops.Write_ = ops.Write_;
             DevList_[vsdev_list_idx].ops.ReadBytes_ = ops.ReadBytes_;
-            DevList_[vsdev_list_idx].ops.WriteBytes_ = ops.WriteBytes_; 
+            DevList_[vsdev_list_idx].ops.WriteBytes_ = ops.WriteBytes_;  */
         }
+        __memcpy(&DevList_[vsdev_list_idx].ops,&ops,sizeof(DevOPS));
         
         DevList_[vsdev_list_idx].MaxSectorCount = SectorCount;
         vsdev_list_idx++;

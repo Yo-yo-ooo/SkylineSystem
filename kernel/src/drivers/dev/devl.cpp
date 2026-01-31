@@ -15,6 +15,7 @@ static void InitListNode(Dev::DeviceList_t *Ptr){
 }
 
 static Map<VsDevType,uint32_t> T2Index;
+//static Map<VsDevType,Map<uint32_t,VDL>> DeviceInfoMap;
 static uint32_t TypeIndex = 0;
 
 namespace Dev{
@@ -32,7 +33,11 @@ namespace Dev{
             IndexOfType = T2Index[DeviceType];
         else
             IndexOfType = TypeIndex++,T2Index[DeviceType] = TypeIndex;
-        VDL Vdevice;// = DevList.Node[DeviceType].list[DevList.Node[DeviceType].CurrIDX + 1];
+        //VDL Vdevice;// = DevList.Node[DeviceType].list[DevList.Node[DeviceType].CurrIDX + 1];
+        VDL Vdevice;
+        Vdevice.Name = DeviceName;
+        Vdevice.classp = ClassPtr;
+        Vdevice.ops.ioctl = DeviceOperations.ioctl;
         if(IndexOfType > DEV_LIST_NODE_COUNT){
             DeviceList_t *Ptr = &DevList;
             uint32_t LoopCount = (IndexOfType/DEV_LIST_NODE_COUNT);
@@ -46,35 +51,25 @@ namespace Dev{
                 Ptr->Node[NodeCurrIDX].Next = (DeviceListNL_t*)kmalloc(sizeof(DeviceListNL_t) * DEV_LIST_NODE_COUNT);
                 Ptr->Node[NodeCurrIDX].Next->CurrIDX = 0;
                 Ptr->RegistedDevIDX[NodeCurrIDX]++;
-                Vdevice = Ptr->Node[NodeCurrIDX].Next->list[0];
-                Ptr->Node[NodeCurrIDX].Next->CurrIDX = 1;
+                //Ptr->Node[NodeCurrIDX].Next->list[0] = Vdevice;
+                __memcpy(&Ptr->Node[NodeCurrIDX].Next->list[0],&Vdevice,sizeof(DevOPS));
+                //Ptr->Node[NodeCurrIDX].Next->CurrIDX = 1;
             }else{
                 Ptr->RegistedDevIDX[NodeCurrIDX]++;
-                Vdevice = Ptr->Node[NodeCurrIDX].list[Ptr->Node[NodeCurrIDX].CurrIDX];
+                //Ptr->Node[NodeCurrIDX].list[Ptr->Node[NodeCurrIDX].CurrIDX++]= Vdevice;
                 Ptr->Node[NodeCurrIDX].CurrIDX++;
+                __memcpy(&Ptr->Node[NodeCurrIDX].list[Ptr->Node[NodeCurrIDX].CurrIDX],&Vdevice,sizeof(DevOPS));
+                //Ptr->Node[NodeCurrIDX].CurrIDX++;
             }
             //Vdevice = Ptr->list[Ptr->CurrIDX++];
         }else{
             DevList.RegistedDevIDX[IndexOfType]++;
-            Vdevice = DevList.Node[IndexOfType].list[DevList.Node[IndexOfType].CurrIDX];  
-            DevList.Node[IndexOfType].CurrIDX++;  
+            DevList.Node[IndexOfType].CurrIDX++;
+            __memcpy(&DevList.Node[IndexOfType].list[DevList.Node[IndexOfType].CurrIDX],&Vdevice,sizeof(DevOPS));
+            //DevList.Node[IndexOfType].list[DevList.Node[IndexOfType].CurrIDX++] = Vdevice;  
+            //DevList.Node[IndexOfType].CurrIDX++;  
         }
-        Vdevice.Name = DeviceName;
-        Vdevice.classp = ClassPtr;
-        Vdevice.ops.ioctl = DeviceOperations.ioctl;
-        if(ClassPtr != nullptr){
-            Vdevice.ops.GetMaxSectorCount = DeviceOperations.GetMaxSectorCount;
-            Vdevice.ops.Read = DeviceOperations.Read;
-            Vdevice.ops.Write = DeviceOperations.Write;
-            Vdevice.ops.ReadBytes = DeviceOperations.ReadBytes;
-            Vdevice.ops.WriteBytes = DeviceOperations.WriteBytes;
-        }else{
-            Vdevice.ops.GetMaxSectorCount_ = DeviceOperations.GetMaxSectorCount_;
-            Vdevice.ops.Read_ = DeviceOperations.Read_;
-            Vdevice.ops.Write_ = DeviceOperations.Write_;
-            Vdevice.ops.ReadBytes_ = DeviceOperations.ReadBytes_;
-            Vdevice.ops.WriteBytes_ = DeviceOperations.WriteBytes_;
-        }
+        
         return;
     }
 }
