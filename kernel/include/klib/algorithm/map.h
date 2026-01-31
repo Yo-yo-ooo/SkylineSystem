@@ -189,7 +189,8 @@ public:
 		parent->_parent = subL;
 	}
 
-	Node* leftMost(){
+	Node* leftMost()
+	{
 		Node* cur = _header->_parent;
 		while (cur && cur->_left)
 		{
@@ -198,7 +199,8 @@ public:
 		return cur;
 	}
 
-	Node* rightMost(){
+	Node* rightMost()
+	{
 		Node* cur = _header->_parent;
 		while (cur && cur->_right)
 		{
@@ -207,9 +209,9 @@ public:
 		return cur;
 	}
 
-	bool erase( K key) {
+	std_::pair<iterator, bool> erase(K key) {
 		if (_header->_parent == nullptr) {
-			return false;
+			return std_::make_pair<iterator,bool>(iterator(nullptr), false);
 		}
 
 		Node* cur = _header->_parent;
@@ -232,7 +234,14 @@ public:
 
 		// 没找到要删除的节点
 		if (cur == nullptr) {
-			return false;
+			return std_::make_pair<iterator, bool>(iterator(nullptr), false);
+		}
+
+		iterator next_it(cur);
+		Node* next_node = nullptr;
+		// 如果下一个节点不是 end()，则获取其指针
+		if (next_it._node != _header) {
+			next_node = next_it._node;
 		}
 
 		// 2. 如果要删除的节点有两个孩子
@@ -414,7 +423,14 @@ public:
 			_header->_left = _header->_right = _header;
 		}
 
-		return true;
+		//return true;
+		if (next_node != nullptr) {
+			return  std_::make_pair<iterator, bool>(iterator(next_node),true);
+		}
+		else {
+			return  std_::make_pair<iterator, bool>(end(),true);
+		}
+		return std_::make_pair<iterator, bool>(iterator(_header->_parent), true);
 	}
 
 	std_::pair<iterator, bool> insert(const V& val) {
@@ -559,12 +575,16 @@ public:
 		return _rbt.insert(kv);
 	}
 
-	void erase(K Key) {
-		_rbt.erase(Key);
+	size_t erase(K Key) {
+		return _rbt.erase(Key).second;
 	}
 
-	T& operator[](const K& key)
-	{
+	iterator erase(iterator pos) {
+		std_::pair<iterator, bool> ret = _rbt.insert(std_::make_pair(pos, T()));
+		return _rbt.erase(ret.first).first;
+	}
+
+	T& operator[](const K& key){
 		std_::pair<iterator, bool> ret = _rbt.insert(std_::make_pair(key, T()));
 		//ret.first 迭代器
 		//迭代器-> pair<k,v>对象
