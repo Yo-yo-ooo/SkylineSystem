@@ -23,12 +23,13 @@ typedef enum VsDevType
 }VsDevType;
 
 typedef struct DevOPS{ //存储器抽象层
+    //Storage Device Must impl this!
     uint8_t (*Read)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
     uint8_t (*Write)(void*,uint64_t lba, uint32_t SectorCount, void* Buffer);
     uint8_t (*Read_)(uint64_t lba, uint32_t SectorCount, void* Buffer);
     uint8_t (*Write_)(uint64_t lba, uint32_t SectorCount, void* Buffer);
 
-    //可选 Can Select
+    //Not Storage Device Must impl this!
     uint8_t (*ReadBytes_)(uint64_t address, uint32_t Count, void* Buffer);
     uint8_t (*WriteBytes_)(uint64_t address, uint32_t Count, void* Buffer);
     uint32_t (*GetMaxSectorCount_)();
@@ -52,20 +53,7 @@ typedef struct DevList{
 typedef struct DevList VsDevInfo;
 
 
-namespace Dev
-{
-    typedef struct DeviceListNL_t{
-        VDL *list; //This Storage Device Specific Information //32
-        uint32_t CurrIDX;
-        DeviceListNL_t *Next;
-        uint64_t Parent;//Point To DeviceList_t
-    }DeviceListNL_t;
-    typedef struct DeviceList_t{
-        DeviceListNL_t *Node; //This Node Storage Type of Device //256
-        uint32_t *RegistedDevIDX;
-        DeviceList_t *Next;
-    }DeviceList_t;   
-    extern DeviceList_t DevList;
+namespace Dev{
 
     extern VDL DevList_[MAX_VSDEV_COUNT];
     extern uint32_t vsdev_list_idx;
@@ -88,7 +76,10 @@ namespace Dev
     uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
     uint8_t WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
 
-    
+    void AddDevice(VDL DeviceInfo,VsDevType DeviceType);
+    VDL FindDevice(VsDevType DeviceType,uint32_t DeviceIndex);
+    uint8_t DeviceRead(VsDevType DeviceType,uint32_t DevIDX,size_t offset,void* Buffer,size_t nbytes);
+    uint8_t DeviceWrite(VsDevType DeviceType,uint32_t DevIDX,size_t offset,void* Buffer,size_t nbytes);
 };
 
 

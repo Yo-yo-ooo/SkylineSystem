@@ -154,12 +154,9 @@ namespace Dev{
                 
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));
                 uint8_t* buffer2 = (uint8_t*)kmalloc(512); //Malloc for Write Buffer
-                //window->Log("Writing Bytes...");
                 
                 if (tempSectorCount == 1)
                 {
-                    //window->Log("Writing Bytes (1/1)");
-                    //uint8_t* buffer2 = (uint8_t*)malloc(512, "Malloc for Read Buffer (1/1)");
                     _memset(buffer2, 0, 512);
                     if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
                     {
@@ -179,20 +176,15 @@ namespace Dev{
                         return false;
                     }
                     
-                    //free(buffer2);
                 }
                 else
                 {
-                    //window->Log("Writing Bytes (1/3)");
                     uint64_t newAddr = address;
                     uint64_t newCount = Count;
                     uint64_t addrOffset = 0;
                     {
-                        // GlobalRenderer->Clear(Colors.dgray);
-                        // while (true);
 
                         _memset(buffer2, 0, 512);
-                        //window->Log("Writing to Sector: {}", to_string((address / 512)), Colors.yellow);
                         if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
                         {
                             kfree(buffer2);
