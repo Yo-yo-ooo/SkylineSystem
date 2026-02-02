@@ -1,6 +1,6 @@
 CC_x86mem = gcc
 AR_x86mem = ar
-CFLAGS_x86mem = -ffreestanding -march=skylake -mavx2 -O3 \
+CFLAGS_x86mem = -ffreestanding -msse4.2 -O3 \
 	-isystem ../kernel/freestnd-c-hdrs/x86_64/include \
 	-nostdlib -nostdinc \
 	-fpie -fomit-frame-pointer -fno-common -fno-zero-initialized-in-bss \

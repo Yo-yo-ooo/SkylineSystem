@@ -8,7 +8,7 @@ PROGRAM_IMAGE_NAME = disk
 # 0:FALSE
 ifeq ($(BUILD_ARCH),x86_64)
 # You can change it but can't change in else
-NOT_COMPILE_X86MEM = 1
+NOT_COMPILE_X86MEM = 0
 else
 NOT_COMPILE_X86MEM = 1
 endif
