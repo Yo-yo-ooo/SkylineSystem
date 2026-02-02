@@ -1,7 +1,5 @@
 #ifdef __x86_64__
 #include <drivers/dev/dev.h>
-#include <klib/algorithm/stl/map.h>
-#include <klib/algorithm/stl/vector.h>
 
 /* static void InitListNode(Dev::DeviceList_t *Ptr){
     Ptr->Node = (Dev::DeviceListNL_t*)kmalloc(sizeof(Dev::DeviceListNL_t) * DEV_LIST_NODE_COUNT);
@@ -19,8 +17,7 @@
 static EasySTL::map<uint32_t,uint64_t> T2Ptr0; //Node IDX (LOOPCOUNT -> Pointer Base Adddress)
 static EasySTL::map<uint32_t,uint64_t> T2Ptr1; //list IDX (LOOPCOUNT -> Pointer Base Address)
 static EasySTL::map<VsDevType,DevOPS> Type2Device; */
-static EasySTL::map<VsDevType,EasySTL::vector<VDL>> DeviceInfos;
-static EasySTL::map<VsDevType,DevOPS> Type2DeviceOPS;
+
 /* static uint32_t T2Ptr1_idx = 0;
 //static Map<VsDevType,Map<uint32_t,VDL>> DeviceInfoMap;
 static uint32_t TypeIndex = 0;
@@ -28,9 +25,16 @@ static uint32_t TypeIndex = 0;
 namespace Dev{
 
     void AddDevice(VDL DeviceInfo,VsDevType DeviceType,DevOPS OPS){
+        
+        //DevOPS p = Type2DeviceOPS[DeviceType];
+        //Type2DeviceOPS.insert(EasySTL::pair<DeviceType,OPS>);
+        //Type2DeviceOPS[(VsDevType)DeviceType] = (DevOPS){0};
+        //kinfoln("OK ");
+        //__memcpy(&Type2DeviceOPS[DeviceType],&OPS,sizeof(DevOPS));
+        DevOPS *p = kmalloc(sizeof(DevOPS));
+        __memcpy(p,&OPS,sizeof(DevOPS));
         kinfoln("OK ");
-        DevOPS p = Type2DeviceOPS[DeviceType];
-        __memcpy(&p,&OPS,sizeof(DevOPS));
+        Type2DeviceOPS[DeviceType] = (uint64_t)p;
         DeviceInfos[DeviceType].push_back(DeviceInfo);
     }
 
@@ -39,7 +43,7 @@ namespace Dev{
     }
 
     uint8_t DeviceRead(VsDevType DeviceType,uint32_t DevIDX,size_t offset,void* Buffer,size_t nbytes){
-        DevOPS curr_operation = Type2DeviceOPS[DeviceType];
+        DevOPS curr_operation = *(DevOPS*)Type2DeviceOPS[DeviceType];
         if(curr_operation.ReadBytes != nullptr){
             return curr_operation.ReadBytes(
                 FindDevice(DeviceType,DevIDX).classp,
@@ -110,7 +114,7 @@ namespace Dev{
     }
 
     uint8_t DeviceWrite(VsDevType DeviceType,uint32_t DevIDX,size_t offset,void* Buffer,size_t nbytes){
-        DevOPS curr_operation = Type2DeviceOPS[DeviceType];
+        DevOPS curr_operation = *(DevOPS*)Type2DeviceOPS[DeviceType];
         if(curr_operation.WriteBytes != nullptr){
             return curr_operation.WriteBytes(
                 FindDevice(DeviceType,DevIDX).classp,
@@ -421,7 +425,7 @@ namespace Dev{
         uint64_t length,uint64_t prot,
         uint64_t offset,uint64_t VADDR
     ){
-        DevOPS curr_operation = Type2DeviceOPS[DeviceType];
+        DevOPS curr_operation = *(DevOPS*)Type2DeviceOPS[DeviceType];
         if(curr_operation.MemoryMap != nullptr){
             return curr_operation.MemoryMap(
                 length,

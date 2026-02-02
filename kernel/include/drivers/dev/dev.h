@@ -5,6 +5,8 @@
 
 #ifdef __x86_64__
 #include <klib/klib.h>
+#include <klib/algorithm/stl/map.h>
+#include <klib/algorithm/stl/vector.h>
 #else
 #include <klib/types.h>
 #endif
@@ -89,6 +91,9 @@ namespace Dev{
         uint64_t length,uint64_t prot,
         uint64_t offset,uint64_t VADDR
     );
+
+    extern EasySTL::map<VsDevType,EasySTL::vector<VDL>,EasySTL::less<VsDevType>> DeviceInfos;
+    extern EasySTL::map<VsDevType,uint64_t  /*Storage DevOPS<--Pointer*/,EasySTL::less<VsDevType>> Type2DeviceOPS;
 };
 
 
