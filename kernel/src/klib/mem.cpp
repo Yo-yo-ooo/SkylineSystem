@@ -208,7 +208,7 @@ void _memset(void* dest, uint8_t value, uint64_t size)
         AVX_memset(dest,value,size);
         return;
     }
-#elif defined(__x86_64__)
+#elif defined(__x86_64__) // For General x86_64 cpu(DIDn't support >=sse4.2)
     if(smp_started != false && this_cpu()->SupportSIMD){
         uint64_t Loop128C = size / 128;
         __m128i val = _mm_set1_epi8((char)value);
