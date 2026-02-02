@@ -48,7 +48,7 @@ namespace FrameBufferDevice{
         FrameBuffer.type = VsDevType::FrameBuffer;
         FrameBuffer.DescBaseAddr = (uint64_t)Fb;
         FrameBuffer.DescLength = sizeof(Framebuffer);
-        DevOPS ops;
+        DevOPS ops = {0};
         ops.MemoryMap = FrameBufferDevice::MemoryMap;
         Dev::AddDevice(FrameBuffer,VsDevType::FrameBuffer,ops);
     }

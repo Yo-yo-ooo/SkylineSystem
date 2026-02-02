@@ -28,7 +28,9 @@ static uint32_t TypeIndex = 0;
 namespace Dev{
 
     void AddDevice(VDL DeviceInfo,VsDevType DeviceType,DevOPS OPS){
-        __memcpy(&Type2DeviceOPS[DeviceType],&OPS,sizeof(DevOPS));
+        kinfoln("OK ");
+        DevOPS p = Type2DeviceOPS[DeviceType];
+        __memcpy(&p,&OPS,sizeof(DevOPS));
         DeviceInfos[DeviceType].push_back(DeviceInfo);
     }
 

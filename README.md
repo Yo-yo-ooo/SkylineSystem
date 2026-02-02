@@ -49,7 +49,7 @@ make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-g
 > -no-reboot --no-shutdown \
 > -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait
 > ```
-> **You can debaug with gdb**
+> **You can debug with gdb**
 > ```bash
 > #first run qemu
 > # just run x86_64 qemu example command

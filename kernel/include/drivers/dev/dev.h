@@ -80,7 +80,7 @@ namespace Dev{
     uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
     uint8_t WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
 
-    void AddDevice(VDL DeviceInfo,VsDevType DeviceType);
+    void AddDevice(VDL DeviceInfo,VsDevType DeviceType,DevOPS OPS);
     VDL FindDevice(VsDevType DeviceType,uint32_t DeviceIndex);
     uint8_t DeviceRead(VsDevType DeviceType,uint32_t DevIDX,size_t offset,void* Buffer,size_t nbytes);
     uint8_t DeviceWrite(VsDevType DeviceType,uint32_t DevIDX,size_t offset,void* Buffer,size_t nbytes);

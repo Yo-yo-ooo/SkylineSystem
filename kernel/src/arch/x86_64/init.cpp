@@ -10,6 +10,7 @@
 #include <arch/x86_64/simd/simd.h>
 #include <mem/heap.h>
 #include <arch/x86_64/drivers/hpet/hpet.h>
+#include <drivers/framebuffer/fb.h>
 
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
@@ -70,7 +71,8 @@ void __init x86_64_init(void){
     Schedule::Install();
 
     proc_t *proc = Schedule::NewProcess(true);
-    proc_t *proc2 = Schedule::NewProcess(true);
+
+    FrameBufferDevice::Init();
     
     thread_t *syscalltest = Schedule::NewThread(proc, 0, 0, 
         "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread"}, (char*[]){nullptr}); 
