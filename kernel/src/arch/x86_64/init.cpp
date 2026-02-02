@@ -74,10 +74,7 @@ void __init x86_64_init(void){
     
     thread_t *syscalltest = Schedule::NewThread(proc, 0, 0, 
         "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread"}, (char*[]){nullptr}); 
-    thread_t *syscalltest2 = Schedule::NewThread(proc2, 0, 0, 
-        "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread-2"}, (char*[]){nullptr}); 
     kinfoln("syscalltest PROCESS: %d",proc->id);
-    kinfoln("syscalltest2 PROCESS: %d",proc2->id);
 
     LAPIC::IPIOthers(0, SCHED_VEC);
 }

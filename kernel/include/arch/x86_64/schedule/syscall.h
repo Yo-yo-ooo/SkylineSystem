@@ -121,5 +121,10 @@ uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, uint64_t ign_0,
     uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
 
 
+uint64_t sys_dev_mmap(uint64_t DevType,uint64_t DevIDX,
+uint64_t length,uint64_t prot,uint64_t offset,uint64_t VADDR);
+uint64_t sys_dev_getinfo(
+    uint64_t DevType,uint64_t DevIDX,uint64_t UserDesc,
+    GENERATE_IGN3());
 }
 #endif

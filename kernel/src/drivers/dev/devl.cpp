@@ -27,8 +27,8 @@ static uint32_t TypeIndex = 0;
  */
 namespace Dev{
 
-    void AddDevice(VDL DeviceInfo,VsDevType DeviceType){
-        __memcpy(&Type2DeviceOPS[DeviceType],&DeviceInfo.ops,sizeof(DevOPS));
+    void AddDevice(VDL DeviceInfo,VsDevType DeviceType,DevOPS OPS){
+        __memcpy(&Type2DeviceOPS[DeviceType],&OPS,sizeof(DevOPS));
         DeviceInfos[DeviceType].push_back(DeviceInfo);
     }
 
@@ -413,6 +413,23 @@ namespace Dev{
         
         return;
     } */
+
+    uint64_t DeviceMemoryMap(VsDevType DeviceType,
+        uint32_t DevIDX,
+        uint64_t length,uint64_t prot,
+        uint64_t offset,uint64_t VADDR
+    ){
+        DevOPS curr_operation = Type2DeviceOPS[DeviceType];
+        if(curr_operation.MemoryMap != nullptr){
+            return curr_operation.MemoryMap(
+                length,
+                prot,
+                offset,
+                VADDR
+            );
+        }
+        return -1;
+    }
 }
 
 

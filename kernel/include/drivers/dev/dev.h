@@ -37,7 +37,7 @@ typedef struct DevOPS{ //存储器抽象层
     uint8_t (*WriteBytes)(void*,uint64_t address, uint32_t Count, void* Buffer);
     uint32_t (*GetMaxSectorCount)(void*);
 
-    uint32_t (*MemoryMap)(uint64_t length,uint64_t prot,uint64_t flags,uint64_t offset,void* vaddr);
+    uint64_t (*MemoryMap)(uint64_t length,uint64_t prot,uint64_t offset,uint64_t VADDR);
     
     uint64_t (*ioctl)(uint64_t cmd, uint64_t arg);
 }DevOPS;
@@ -50,6 +50,8 @@ typedef struct DevList{
     uint64_t MaxSectorCount;    //按照SectorSize计
     uint64_t SectorSize;
     void* classp; //class pointer
+    uint64_t DescBaseAddr;
+    uint32_t DescLength;
 }VDL;
 
 typedef struct DevList VsDevInfo;
@@ -82,6 +84,11 @@ namespace Dev{
     VDL FindDevice(VsDevType DeviceType,uint32_t DeviceIndex);
     uint8_t DeviceRead(VsDevType DeviceType,uint32_t DevIDX,size_t offset,void* Buffer,size_t nbytes);
     uint8_t DeviceWrite(VsDevType DeviceType,uint32_t DevIDX,size_t offset,void* Buffer,size_t nbytes);
+    uint64_t DeviceMemoryMap(VsDevType DeviceType,
+        uint32_t DevIDX,
+        uint64_t length,uint64_t prot,
+        uint64_t offset,uint64_t VADDR
+    );
 };
 
 

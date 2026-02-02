@@ -5,11 +5,7 @@
 #include <mem/pmm.h>
 #include <klib/algorithm/queue.h>
 
-#define PROT_NONE 0
-#define PROT_READ 1
-#define PROT_WRITE 2
-#define PROT_EXEC 4
-#define MAP_SHARED 1
+
 uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t prot, uint64_t flags, uint64_t fd,uint64_t offset) {
     
     proc_t *process = Schedule::this_proc();

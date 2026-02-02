@@ -42,7 +42,9 @@ void syscall_init() {
     syscall_lists[2] = sys_open;
     syscall_lists[3] = sys_close;
     
-    
+    syscall_lists[4] = sys_dev_mmap;
+    syscall_lists[5] = sys_dev_getinfo;
+
     syscall_lists[8] = sys_lseek;
     syscall_lists[9] = sys_mmap;//!
     syscall_lists[11] = sys_munmap;
@@ -60,6 +62,7 @@ void syscall_init() {
     syscall_lists[201] = sys_time;
     syscall_lists[228] = sys_clock_gettime;
     syscall_lists[318] = sys_getrandom;
+    
 
     uint64_t efer = rdmsr(IA32_EFER);
     efer |= (1 << 0);

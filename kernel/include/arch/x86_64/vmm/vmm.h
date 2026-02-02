@@ -7,6 +7,12 @@
 #include <stddef.h>
 #include <arch/x86_64/interrupt/idt.h>
 
+#define PROT_NONE 0
+#define PROT_READ 1
+#define PROT_WRITE 2
+#define PROT_EXEC 4
+#define MAP_SHARED 1
+
 #define MM_READ 1
 #define MM_WRITE 2
 #define MM_USER 4

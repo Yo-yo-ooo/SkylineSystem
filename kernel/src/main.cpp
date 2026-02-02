@@ -17,8 +17,7 @@ extern void __init x86_64_init(void);
 extern void aarch64_init(void);
 #endif
 
-//This function must not be delete
-extern "C" void _Unwind_Resume(void){/*unrealized!*/}
+
 // Set the base revision to 2, this is recommended as this is the latest
 // base revision described by the Limine boot protocol specification.
 // See specification for further info.
