@@ -5,10 +5,15 @@
 #include <arch/x86_64/smp/smp.h>
 #include "../../../x86mem/x86mem.h"
 #include <klib/serial.h>
-#pragma GCC target("sse,avx2")
+#pragma GCC target("sse2")
+#ifdef __AVX512F__
+#pragma GCC target("avx512f,avx512bw,avx512dq,avx512vl")
+#elif defined(__AVX2__)
+#pragma GCC target("avx2")
+#endif
 #endif
 
-void _memcpy_128(void* src, void* dest, int64_t size)
+void _memcpy_128(void* src, void* dest, size_t size)
 {
 	auto _src = (__uint128_t*)src;
 	auto _dest = (__uint128_t*)dest;
