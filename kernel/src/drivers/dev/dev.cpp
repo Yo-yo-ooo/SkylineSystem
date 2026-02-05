@@ -11,8 +11,8 @@ namespace Dev{
 
     u32 ThisDev = 0;
 
-    EasySTL::map<VsDevType,EasySTL::vector<VDL>,EasySTL::less<VsDevType>> DeviceInfos;
-    EasySTL::map<VsDevType,uint64_t /*Storage DevOPS<--Pointer*/,EasySTL::less<VsDevType>> Type2DeviceOPS;
+    EasySTL::Map<VsDevType,EasySTL::vector<VDL>> DeviceInfos;
+    EasySTL::Map<VsDevType,uint64_t /*Storage DevOPS<--Pointer*/> Type2DeviceOPS;
 
     void Init(){
         vsdev_list_idx = 0;

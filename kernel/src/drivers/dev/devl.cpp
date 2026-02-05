@@ -34,7 +34,8 @@ namespace Dev{
         DevOPS *p = kmalloc(sizeof(DevOPS));
         __memcpy(p,&OPS,sizeof(DevOPS));
         kinfoln("OK ");
-        Type2DeviceOPS[DeviceType] = (uint64_t)p;
+        Type2DeviceOPS.insert(DeviceType,(uint64_t)p);
+        //Type2DeviceOPS[DeviceType] = (uint64_t)p;
         DeviceInfos[DeviceType].push_back(DeviceInfo);
     }
 

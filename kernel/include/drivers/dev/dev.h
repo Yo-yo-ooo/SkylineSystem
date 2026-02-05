@@ -92,8 +92,8 @@ namespace Dev{
         uint64_t offset,uint64_t VADDR
     );
 
-    extern EasySTL::map<VsDevType,EasySTL::vector<VDL>,EasySTL::less<VsDevType>> DeviceInfos;
-    extern EasySTL::map<VsDevType,uint64_t  /*Storage DevOPS<--Pointer*/,EasySTL::less<VsDevType>> Type2DeviceOPS;
+    extern EasySTL::Map<VsDevType,EasySTL::vector<VDL>> DeviceInfos;
+    extern EasySTL::Map<VsDevType,uint64_t  /*Storage DevOPS<--Pointer*/> Type2DeviceOPS;
 };
 
 
