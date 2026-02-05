@@ -216,7 +216,7 @@ void _memset(void* dest, uint8_t value, uint64_t size)
             _mm_store_si128((__m128i*)((uint64_t)dest + i * 16), val);
             size -= 16;
         }
-        if(size < 128){
+        if(size != 0){
             char* d = (char*)dest;
             for (uint64_t i = 0; i < size; i++)
                 *(d++) = value;
