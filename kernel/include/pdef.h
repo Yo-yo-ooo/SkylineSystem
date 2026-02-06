@@ -40,37 +40,37 @@
 
 #ifdef __cplusplus
 template <class _Ty>
-struct remove_reference {
+struct _if_remove_reference {
     using type                 = _Ty;
     using _Const_thru_ref_type = const _Ty;
 };
 
 template <class _Ty>
-struct remove_reference<_Ty&> {
+struct _if_remove_reference<_Ty&> {
     using type                 = _Ty;
     using _Const_thru_ref_type = const _Ty&;
 };
 
 template <class _Ty>
-struct remove_reference<_Ty&&> {
+struct _if_remove_reference<_Ty&&> {
     using type                 = _Ty;
     using _Const_thru_ref_type = const _Ty&&;
 };
 
-template<class T>
-typename remove_reference<T>::type&&
-move(T&& a) noexcept
-{
-  typedef typename remove_reference<T>::type&& RvalRef;
-  return static_cast<RvalRef>(a);
+template <class _Ty>
+using _if_remove_reference_t = typename _if_remove_reference<_Ty>::type;
+
+template <class _Ty>
+[[nodiscard]]  constexpr _if_remove_reference_t<_Ty>&& _if_move(_Ty&& _Arg) noexcept {
+    return static_cast<_if_remove_reference_t<_Ty>&&>(_Arg);
 }
 
 template<typename T>
 void swap(T &a,T &b) noexcept
 {
-    T temp = move(a);
-    a = move(b);
-    b = move(temp);
+    T temp = _if_move(a);
+    a = _if_move(b);
+    b = _if_move(temp);
 }
 #else
 #define swap(a, b) ({ \

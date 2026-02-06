@@ -8,6 +8,88 @@ namespace EasySTL {
 
 	struct _false_type { };
 
+    template <class _Ty>
+    constexpr bool is_trivial_v = __is_trivial(_Ty);
+
+    // 1. 基础模板：默认情况，不包含引用
+    template <class _Ty>
+    struct remove_reference {
+        using type                 = _Ty;
+        using _Const_thru_ref_type = const _Ty;
+    };
+
+    template <class _Ty>
+    struct remove_reference<_Ty&> {
+        using type                 = _Ty;
+        using _Const_thru_ref_type = const _Ty&;
+    };
+
+    template <class _Ty>
+    struct remove_reference<_Ty&&> {
+        using type                 = _Ty;
+        using _Const_thru_ref_type = const _Ty&&;
+    };
+
+    template <class _Ty>
+    using remove_reference_t = typename remove_reference<_Ty>::type;
+
+    
+    template <class _Ty, _Ty _Val>
+    struct integral_constant {
+        static constexpr _Ty value = _Val;
+
+        using value_type = _Ty;
+        using type       = integral_constant;
+
+        constexpr operator value_type() const noexcept {
+            return value;
+        }
+
+        [[nodiscard]] constexpr value_type operator()() const noexcept {
+            return value;
+        }
+    };
+
+    template <bool _Val>
+    using bool_constant = integral_constant<bool, _Val>;
+
+    using true_type  = bool_constant<true>;
+    using false_type = bool_constant<false>;
+
+    template <class>
+    constexpr bool is_lvalue_reference_v = false; // determine whether type argument is an lvalue reference
+
+    template <class _Ty>
+    constexpr bool is_lvalue_reference_v<_Ty&> = true;
+
+    template <class _Ty>
+    struct is_lvalue_reference : bool_constant<is_lvalue_reference_v<_Ty>> {};
+
+    template <class>
+    constexpr bool is_rvalue_reference_v = false; // determine whether type argument is an rvalue reference
+
+    template <class _Ty>
+    constexpr bool is_rvalue_reference_v<_Ty&&> = true;
+
+    template <class _Ty>
+    struct is_rvalue_reference : bool_constant<is_rvalue_reference_v<_Ty>> {};
+
+
+    template <class _Ty>
+    [[nodiscard]]  constexpr _Ty&& forward(remove_reference_t<_Ty>& _Arg) noexcept {
+        return static_cast<_Ty&&>(_Arg);
+    }
+
+    template <class _Ty>
+    [[nodiscard]]  constexpr _Ty&& forward(remove_reference_t<_Ty>&& _Arg) noexcept {
+        static_assert(!is_lvalue_reference_v<_Ty>, "bad forward call");
+        return static_cast<_Ty&&>(_Arg);
+    }
+
+    template <class _Ty>
+    [[nodiscard]]  constexpr remove_reference_t<_Ty>&& move(_Ty&& _Arg) noexcept {
+        return static_cast<remove_reference_t<_Ty>&&>(_Arg);
+    }
 
 
 	/*

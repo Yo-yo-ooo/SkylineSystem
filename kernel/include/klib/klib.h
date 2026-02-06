@@ -58,8 +58,7 @@ void spinlock_unlock(spinlock_t* l);
 
 //class func pointer -> func pointer
 template <typename T>
-T CFCast(auto F)
-{
+T CFCast(auto F){
 	union FT
 	{T   t;decltype(F) f;};
 	FT ft;ft.f=F;
