@@ -72,6 +72,13 @@ void swap(T &a,T &b) noexcept
     a = _if_move(b);
     b = _if_move(temp);
 }
+
+#if __cplusplus  > 202302L
+#define _EXPORT_STD export 
+#else
+#define _EXPORT_STD
+#endif
+
 #else
 #define swap(a, b) ({ \
     const auto __swap_tmp = (b); \

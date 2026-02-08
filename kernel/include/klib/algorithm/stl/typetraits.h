@@ -1,6 +1,8 @@
 #ifndef _TYPE_TRAITS_H_
 #define _TYPE_TRAITS_H_
 
+#include <pdef.h>
+
 namespace EasySTL {
 
 	
@@ -8,23 +10,23 @@ namespace EasySTL {
 
 	struct _false_type { };
 
-    template <class _Ty>
+    _EXPORT_STD template <class _Ty>
     constexpr bool is_trivial_v = __is_trivial(_Ty);
 
     // 1. 基础模板：默认情况，不包含引用
-    template <class _Ty>
+    _EXPORT_STD template <class _Ty>
     struct remove_reference {
         using type                 = _Ty;
         using _Const_thru_ref_type = const _Ty;
     };
 
-    template <class _Ty>
+    _EXPORT_STD template <class _Ty>
     struct remove_reference<_Ty&> {
         using type                 = _Ty;
         using _Const_thru_ref_type = const _Ty&;
     };
 
-    template <class _Ty>
+    _EXPORT_STD template <class _Ty>
     struct remove_reference<_Ty&&> {
         using type                 = _Ty;
         using _Const_thru_ref_type = const _Ty&&;
@@ -34,7 +36,7 @@ namespace EasySTL {
     using remove_reference_t = typename remove_reference<_Ty>::type;
 
     
-    template <class _Ty, _Ty _Val>
+    _EXPORT_STD template <class _Ty, _Ty _Val>
     struct integral_constant {
         static constexpr _Ty value = _Val;
 
@@ -50,12 +52,12 @@ namespace EasySTL {
         }
     };
 
-    template <bool _Val>
+    _EXPORT_STD template <bool _Val>
     using bool_constant = integral_constant<bool, _Val>;
 
-    using true_type  = bool_constant<true>;
-    using false_type = bool_constant<false>;
-    template <bool _Test, class _Ty = void>
+    _EXPORT_STD using true_type  = bool_constant<true>;
+    _EXPORT_STD using false_type = bool_constant<false>;
+    _EXPORT_STD template <bool _Test, class _Ty = void>
     struct enable_if {}; // no member "type" when !_Test
 
     template <class _Ty>
@@ -63,40 +65,40 @@ namespace EasySTL {
         using type = _Ty;
     };
 
-    template <bool _Test, class _Ty = void>
+    _EXPORT_STD template <bool _Test, class _Ty = void>
     using enable_if_t = typename enable_if<_Test, _Ty>::type;
 
-    template <class>
+    _EXPORT_STD template <class>
     constexpr bool is_lvalue_reference_v = false; // determine whether type argument is an lvalue reference
 
     template <class _Ty>
     constexpr bool is_lvalue_reference_v<_Ty&> = true;
 
-    template <class _Ty>
+    _EXPORT_STD  template <class _Ty>
     struct is_lvalue_reference : bool_constant<is_lvalue_reference_v<_Ty>> {};
 
-    template <class>
+    _EXPORT_STD template <class>
     constexpr bool is_rvalue_reference_v = false; // determine whether type argument is an rvalue reference
 
     template <class _Ty>
     constexpr bool is_rvalue_reference_v<_Ty&&> = true;
 
-    template <class _Ty>
+    _EXPORT_STD template <class _Ty>
     struct is_rvalue_reference : bool_constant<is_rvalue_reference_v<_Ty>> {};
 
 
-    template <class _Ty>
+    _EXPORT_STD template <class _Ty>
     [[nodiscard]]  constexpr _Ty&& forward(remove_reference_t<_Ty>& _Arg) noexcept {
         return static_cast<_Ty&&>(_Arg);
     }
 
-    template <class _Ty>
+    _EXPORT_STD template <class _Ty>
     [[nodiscard]]  constexpr _Ty&& forward(remove_reference_t<_Ty>&& _Arg) noexcept {
         static_assert(!is_lvalue_reference_v<_Ty>, "bad forward call");
         return static_cast<_Ty&&>(_Arg);
     }
 
-    template <class _Ty>
+    _EXPORT_STD template <class _Ty>
     [[nodiscard]]  constexpr remove_reference_t<_Ty>&& move(_Ty&& _Arg) noexcept {
         return static_cast<remove_reference_t<_Ty>&&>(_Arg);
     }
