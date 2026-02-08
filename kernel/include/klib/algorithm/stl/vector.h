@@ -30,17 +30,34 @@ namespace EasySTL {
         vector(size_t Size) {
             this->Capacity = Size % sizeof(T) ? Size / sizeof(T) + 1 : Size / sizeof(T);
             List = (T*)VMalloc(this->Capacity * sizeof(T));
-        }
+        }/* 
 
         void push_back(T Data) {
             this->push_back_check_realloc();
-            //this->List[this->Position] = Data;
+            kinfoln("%X",EasySTL::addressof(this->List[this->Position]));
+            kinfoln("%X",EasySTL::addressof(Data));
             VMemcpy(
                 EasySTL::addressof(this->List[this->Position]),
                 EasySTL::addressof(Data),
                 sizeof(T)
             );
             this->Position++;
+            kinfoln("Memcpy OK!");
+            return;
+        } */
+
+        void push_back(T& Data) {
+            this->push_back_check_realloc();
+            kinfoln("%X",EasySTL::addressof(this->List[this->Position]));
+            kinfoln("%X",EasySTL::addressof(Data));
+            kinfoln("Sizeof T:%d",sizeof(T));
+            VMemcpy(
+                (void*)&this->List[this->Position],
+                &Data,
+                sizeof(T)
+            );
+            this->Position++;
+            kinfoln("Memcpy OK!");
             return;
         }
 

@@ -32,7 +32,7 @@ void * memcpy_fpx86 (void *dest, const void *src, size_t len)
 // instead of AVX_memmove, and you need to use it on overlapping areas, enable
 // the below definition. It will check for overlap and automatically redirect to
 // AVX_memmove if overlap is found.
-#define OVERLAP_CHECK
+// #define OVERLAP_CHECK
 //
 
 #ifdef __clang__

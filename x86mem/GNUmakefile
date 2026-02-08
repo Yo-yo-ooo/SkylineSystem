@@ -16,7 +16,6 @@ all:
 	$(CC_x86mem) $(CFLAGS_x86mem) -c memmove.c -o memmove.o
 	$(CC_x86mem) $(CFLAGS_x86mem) -c memset.c -o memset.o
 	$(CC_x86mem) $(CFLAGS_x86mem) -c memcmp.c -o memcmp.o
-#$(AR_x86mem) rcs memops.a memcpy.o memmove.o memset.o memcmp.o
 
 clean:
 	rm -rf *.d *.o *.a

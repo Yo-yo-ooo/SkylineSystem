@@ -25,18 +25,11 @@ static uint32_t TypeIndex = 0;
 namespace Dev{
 
     void AddDevice(VDL DeviceInfo,VsDevType DeviceType,DevOPS OPS){
-        
-        //DevOPS p = Type2DeviceOPS[DeviceType];
-        //Type2DeviceOPS.insert(EasySTL::pair<DeviceType,OPS>);
-        //Type2DeviceOPS[(VsDevType)DeviceType] = (DevOPS){0};
-        //kinfoln("OK ");
-        //__memcpy(&Type2DeviceOPS[DeviceType],&OPS,sizeof(DevOPS));
         DevOPS *p = kmalloc(sizeof(DevOPS));
         __memcpy(p,&OPS,sizeof(DevOPS));
 
         Type2DeviceOPS.insert(DeviceType,(uint64_t)p);
         kinfoln("OK");
-        //Type2DeviceOPS[DeviceType] = (uint64_t)p;
         DeviceInfos[DeviceType].push_back(DeviceInfo);
         kinfoln("OK !");
     }
