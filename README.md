@@ -66,6 +66,7 @@ qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx \
 #run gdb on kernel folder
 cd kernel && gdb
 ```
+In GDB:
 ```bash
 #and enter these command in gdb
 target remote :26000
