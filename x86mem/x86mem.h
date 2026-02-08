@@ -14,7 +14,13 @@
 #ifdef __x86_64__
 #include <stddef.h>
 #include <stdint.h>
+
+#ifndef __AVX__
+#include <nmmintrin.h> 
+#else
 #include <x86intrin.h>
+#endif
+
 
 // Size limit (in bytes) before switching to non-temporal/streaming loads & stores
 // Applies to: AVX_memmove, AVX_memset, and AVX_memcpy

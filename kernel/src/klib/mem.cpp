@@ -3,6 +3,7 @@
 #include <conf.h>
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
 #include "../../../x86mem/x86mem.h"
+#include <arch/x86_64/smp/smp.h>
 #include <klib/serial.h>
 #pragma GCC target("sse2")
 #ifdef __AVX512F__
