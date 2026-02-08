@@ -20,7 +20,7 @@ void * memcpy_fpx86 (void *dest, const void *src, size_t len)
 }
 
 // Minimum requirement:
-//  x86_64 CPU with SSE4.1, but AVX2 or later is recommended
+//  x86_64 CPU with SSE4.2, but AVX2 or later is recommended
 //
 // This file provides a highly optimized version of memcpy_fpx86.
 // Overlapping memory regions are not supported by default: use memmove instead.
