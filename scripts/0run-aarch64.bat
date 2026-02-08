@@ -5,6 +5,6 @@ qemu-system-aarch64 ^
 -device qemu-xhci ^
 -device usb-kbd ^
 -device usb-mouse ^
--cdrom SkylineSystem-aarch64.iso ^
+-cdrom %~dp0/../SkylineSystem-aarch64.iso ^
 -drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-aarch64.fd,readonly=on ^
 -m 2G

@@ -36,40 +36,42 @@ For example, to build aarch64 arch, run:
 make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-gnu-ld
 ```
 
-> [!TIP]
-> **You can run qemu with these commands:**
-> ```bash
-> # just run x86_64 qemu example command
-> qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx \
-> -cdrom SkylineSystem-x86_64.iso -m 2G -smp 4 \
-> -serial stdio -net nic -device AC97 \
-> -drive file=disk.img,if=none,id=sata1 \
-> -device ahci,id=ahci1 \
-> -device ide-hd,drive=sata1,bus=ahci1.0 \
-> -no-reboot --no-shutdown \
-> -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait
-> ```
-> **You can debug with gdb**
-> ```bash
-> #first run qemu
-> # just run x86_64 qemu example command
-> qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx \
-> -cdrom SkylineSystem-x86_64.iso -m 2G -smp 4 \
-> -serial stdio -net nic -device AC97 \
-> -drive file=disk.img,if=none,id=sata1 \
-> -device ahci,id=ahci1 \
-> -device ide-hd,drive=sata1,bus=ahci1.0 \
-> -no-reboot --no-shutdown \
-> -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait -S
-> #run gdb on kernel folder
-> cd kernel && gdb
-> ```
-> ```bash
-> #and enter these command in gdb
-> target remote :26000
-> file kernel
-> #do like you what you want to do than
-> ```
+## Run
+### In Linux:
+```bash
+# just run x86_64 qemu example command
+qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx \
+-cdrom SkylineSystem-x86_64.iso -m 2G -smp 4 \
+-serial stdio -net nic -device AC97 \
+-drive file=disk.img,if=none,id=sata1 \
+-device ahci,id=ahci1 \
+-device ide-hd,drive=sata1,bus=ahci1.0 \
+-no-reboot --no-shutdown \
+-gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait
+```
+### In WSL(Windows Subsystem for Linux):
+see ./scripts/ folder run the arch you need to run
+## Debug
+```bash
+#first run qemu
+# just run x86_64 qemu example command
+qemu-system-x86_64 -machine q35 -cpu qemu64,+x2apic,+avx \
+-cdrom SkylineSystem-x86_64.iso -m 2G -smp 4 \
+-serial stdio -net nic -device AC97 \
+-drive file=disk.img,if=none,id=sata1 \
+-device ahci,id=ahci1 \
+-device ide-hd,drive=sata1,bus=ahci1.0 \
+-no-reboot --no-shutdown \
+-gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait -S
+#run gdb on kernel folder
+cd kernel && gdb
+```
+```bash
+#and enter these command in gdb
+target remote :26000
+file kernel
+#do like you what you want to do than
+```
 
 ## Features(x86_64)
 
