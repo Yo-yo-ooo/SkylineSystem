@@ -33,10 +33,12 @@ namespace Dev{
         //__memcpy(&Type2DeviceOPS[DeviceType],&OPS,sizeof(DevOPS));
         DevOPS *p = kmalloc(sizeof(DevOPS));
         __memcpy(p,&OPS,sizeof(DevOPS));
-        kinfoln("OK ");
+
         Type2DeviceOPS.insert(DeviceType,(uint64_t)p);
+        kinfoln("OK");
         //Type2DeviceOPS[DeviceType] = (uint64_t)p;
         DeviceInfos[DeviceType].push_back(DeviceInfo);
+        kinfoln("OK !");
     }
 
     VDL FindDevice(VsDevType DeviceType,uint32_t DeviceIndex){

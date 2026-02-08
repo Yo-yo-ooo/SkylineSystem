@@ -553,7 +553,10 @@ namespace EasySTL {
 	};
 
 
-
+    template <class _Ty>
+    [[nodiscard]] constexpr _Ty* addressof(_Ty& _Val) noexcept {
+        return __builtin_addressof(_Val);
+    }
 }
 
 #endif
