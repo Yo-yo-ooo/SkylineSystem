@@ -15,6 +15,9 @@
 #pragma GCC target("sse2")
 #include <arch/x86_64/smp/smp.h>
 #include <emmintrin.h>
+#elif defined(__aarch64__)
+extern "C" void NEON_MEMCPY(void* dst, const void* src, size_t size);
+extern "C" void NEON_MEMSET(void* dst, unsigned char value, size_t size);
 #endif
 
 void * __memcpy_fpx86 (void *dest, const void *src, size_t len)
@@ -167,6 +170,9 @@ void _memcpy(void* src, void* dest, uint64_t size)
 
         return ret;
     }
+#elif defined(__aarch64__)
+    NEON_MEMCPY(dest,src,size);
+    return;
 #endif
 	if (size & 0xFFE0)//(size >= 32)
 	{
@@ -224,6 +230,10 @@ void _memset(void* dest, uint8_t value, uint64_t size)
         }
         return;
     }
+
+#elif defined(__aarch64__)
+    NEON_MEMSET(dest,value,size);
+    return;
 #endif
 
 	if (size & 0xFFE0)//(size >= 32)
