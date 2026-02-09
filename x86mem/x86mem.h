@@ -15,12 +15,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef __AVX__
 #include <nmmintrin.h> 
-#else
-#include <x86intrin.h>
+
+#if defined(__AVX__) 
+#include "./avxintrin.h"
+#endif
+#if defined(__AVX2__) 
+#include "./avx2intrin.h"
 #endif
 
+#if defined(__AVX512F__)
+#include "./avx512fintrin.h"
+#endif
 
 // Size limit (in bytes) before switching to non-temporal/streaming loads & stores
 // Applies to: AVX_memmove, AVX_memset, and AVX_memcpy
