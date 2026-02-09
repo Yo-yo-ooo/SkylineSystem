@@ -84,10 +84,6 @@ file kernel
 * [HanOS](https://github.com/jjwang/HanOS/)
 * [SAF](https://github.com/chocabloc/saf)
 
-## Unfinished features
-
-* PCI MSI/MSIX
-* NVME
 
 ## Contributors
 
