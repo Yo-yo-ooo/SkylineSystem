@@ -5,6 +5,13 @@
 #include <pdef.h>
 #include <klib/kio.h>
 
+PACK(struct __u64_addr{
+    uint8_t TTBR_S : 16;
+    uint8_t RSVD;
+
+    uint32_t PA_ : 29;
+});
+
 void setup_mair() {
     // Device nGnRnE
     const uint64_t device_uncacheable_encoding = 0b00000000;
@@ -33,6 +40,7 @@ namespace VMM
         setup_mair();
         kpokln("Setup Mair!");
         //TODO: VMM::INIT
+        
     }
 
     uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr){

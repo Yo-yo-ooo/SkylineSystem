@@ -28,6 +28,11 @@ make cm
 > [!CAUTION]
 > You must edit the 'BUILD_ARCH' variable in 'gdef.mk' file 
 > to set the architecture you want to build for.
+In gdef.mk you must change:
+```patch
+- # BUILD_ARCH = x86_64
++ BUILD_ARCH = aarch64
+```
 ```bash
 make cm KCC=(XXX arch)-linux-gnu-gcc KCXX=(XXX arch)-linux-gnu-g++ KLD=(XXX arch)-linux-gnu-ld
 ```
