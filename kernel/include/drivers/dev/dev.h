@@ -3,13 +3,9 @@
 #ifndef _DEV_H
 #define _DEV_H
 
-#ifdef __x86_64__
 #include <klib/klib.h>
 #include <klib/algorithm/stl/map.h>
 #include <klib/algorithm/stl/vector.h>
-#else
-#include <klib/types.h>
-#endif
 #include <stdint.h>
 #include <conf.h>
 
