@@ -74,35 +74,6 @@ file kernel
 #do like you what you want to do than
 ```
 
-## Features(x86_64)
-
-* Devices
-  * AHCI
-  * IDE
-  * ACPI
-  * IOAPIC
-  * LAPIC
-* Basics
-  * Syscall
-  * Scheduler
-  * Output
-  * SMP
-  * Virtual Memory
-  * Process & thread management
-* Disk Interfaces
-  * Sata
-  * Ram
-
-* File Systems Support
-  * Fat12
-  * Fat16
-  * Fat32
-  * Exfat
-  * ext2/3/4
-
-* Dynamic File System Type Check(get_fs_type!)
-
-Many more in future
 
 ## Thanks to
 
