@@ -28,6 +28,7 @@ make cm
 > [!CAUTION]
 > You must edit the 'BUILD_ARCH' variable in 'gdef.mk' file 
 > to set the architecture you want to build for.
+
 In gdef.mk you must change:
 ```patch
 - # BUILD_ARCH = x86_64
