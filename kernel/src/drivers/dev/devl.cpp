@@ -1,30 +1,13 @@
 #ifdef __x86_64__
 #include <drivers/dev/dev.h>
 
-/* static void InitListNode(Dev::DeviceList_t *Ptr){
-    Ptr->Node = (Dev::DeviceListNL_t*)kmalloc(sizeof(Dev::DeviceListNL_t) * DEV_LIST_NODE_COUNT);
-    Ptr->RegistedDevIDX = 0;
-    Ptr->Next = nullptr;
-    for(size_t i = 0;i < DEV_LIST_NODE_COUNT;i++){
-        Ptr->Node[i].list = (VDL*)kmalloc(sizeof(VDL) * DEV_LIST_NODE_OF_VDL_LIST_COUNT);
-        Ptr->Node[i].CurrIDX = 0;
-        Ptr->Node[i].Next = nullptr;
-        Ptr->Node[i].Parent = (uint64_t)Ptr;
-    }
-} */
 
-/* static EasySTL::map<VsDevType,uint32_t> T2Index;
-static EasySTL::map<uint32_t,uint64_t> T2Ptr0; //Node IDX (LOOPCOUNT -> Pointer Base Adddress)
-static EasySTL::map<uint32_t,uint64_t> T2Ptr1; //list IDX (LOOPCOUNT -> Pointer Base Address)
-static EasySTL::map<VsDevType,DevOPS> Type2Device; */
-
-/* static uint32_t T2Ptr1_idx = 0;
-//static Map<VsDevType,Map<uint32_t,VDL>> DeviceInfoMap;
-static uint32_t TypeIndex = 0;
- */
+EasySTL::Map<VsDevType,EasySTL::vector<VDL>> DeviceInfos;
+EasySTL::Map<VsDevType,uint64_t  /*Storage DevOPS<--Pointer*/> Type2DeviceOPS;
 namespace Dev{
 
     void AddDevice(VDL DeviceInfo,VsDevType DeviceType,DevOPS OPS){
+        spinlock_lock(&DeviceInfo.lock);
         DevOPS *p = kmalloc(sizeof(DevOPS));
         __memcpy(p,&OPS,sizeof(DevOPS));
 
@@ -32,6 +15,7 @@ namespace Dev{
         kinfoln("OK");
         DeviceInfos[DeviceType].push_back(DeviceInfo);
         kinfoln("OK !");
+        spinlock_unlock(&DeviceInfo.lock);
     }
 
     VDL FindDevice(VsDevType DeviceType,uint32_t DeviceIndex){

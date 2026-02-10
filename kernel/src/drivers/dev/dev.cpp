@@ -11,9 +11,6 @@ namespace Dev{
 
     u32 ThisDev = 0;
 
-    EasySTL::Map<VsDevType,EasySTL::vector<VDL>> DeviceInfos;
-    EasySTL::Map<VsDevType,uint64_t /*Storage DevOPS<--Pointer*/> Type2DeviceOPS;
-
     void Init(){
         vsdev_list_idx = 0;
         ThisDev = 0;

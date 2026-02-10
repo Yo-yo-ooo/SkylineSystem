@@ -1,9 +1,11 @@
 #include <arch/aarch64/asm/mair.h>
 #include <arch/aarch64/asm/regs.h>
 #include <arch/aarch64/vmm/vmm.h>
+#include <mem/pmm.h>
 #include <klib/kprintf.h>
 #include <pdef.h>
 #include <klib/kio.h>
+#include <klib/klib.h>
 
 PACK(struct __u64_addr{
     uint8_t TTBR_S : 16;
@@ -34,12 +36,23 @@ void setup_mair() {
     write_mair_el1(mair_value);
 }
 
+typedef struct PageMap{
+    uint64_t *LowerRoot; 
+    uint64_t *HigherRoot;
+}PageMap;
+
 namespace VMM
 {
+    volatile PageMap KernelPageMap;
     void Init(){
         setup_mair();
         kpokln("Setup Mair!");
         //TODO: VMM::INIT
+        const uint64_t lower_root = PMM::Request();
+        const uint64_t higher_root = PMM::Request();
+        KernelPageMap.LowerRoot = HIGHER_HALF(lower_root);
+        KernelPageMap.HigherRoot = HIGHER_HALF(higher_root);
+
         
     }
 
