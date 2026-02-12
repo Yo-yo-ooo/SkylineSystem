@@ -16,14 +16,14 @@ class RBTree {
         ValType value;
 
         // 重载 < 运算符，这样可以直接使用 std::less
-        bool operator<(const Pair& other) const {
-            return key < other.key;
-        }
+        bool operator<(const Pair& other) const {return key < other.key;}
+        bool operator<(const KeyType& k) const { return key < k; }
     };
 
 public:
-    void Insert(KeyType key, ValType value) {
-        rbt.insert({ key, value });
+    ValType& Insert(const KeyType& key, const ValType& value) {
+        auto p = rbt.insert({ key, value });
+        return const_cast<ValType&>(p->data.value);
     }
 
     void Erase(KeyType key) {
@@ -32,19 +32,14 @@ public:
         rbt.erase(tmp);
     }
 
-    ValType Find(KeyType key) {
-        // 创建一个临时 Pair 对象用于查找
-        Pair tmp{ key, ValType{} };
-        // 使用 lower_bound 找到第一个不小于 key 的节点
+    ValType* FindPtr(const KeyType& key) {
+        Pair tmp{ key, ValType{} }; // 建议底层 rbt 支持 key 查找，避免构造 ValType
         auto p = rbt.lower_bound(tmp);
-
-        // 检查是否找到完全匹配的节点
+        
         if (p && !(p->data < tmp) && !(tmp < p->data)) {
-            return p->data.value;
+            return &(p->data.value);
         }
-
-        // 没找到，返回默认值
-        return ValType{};
+        return nullptr;
     }
 
     EasySTL::pair<ValType,bool> Find(KeyType key,bool x){
