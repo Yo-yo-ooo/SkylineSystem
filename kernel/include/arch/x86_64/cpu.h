@@ -111,6 +111,8 @@ inline void sse_enable() {
 #define CPUID_ECX_XSAVE_AVAIL (1 << 26)
 #define CPUID_ECX_AVX_AVAIL (1 << 28)
 
+
+
 static inline bool cpuid_is_xsave_avail(void)
 {
     uint32_t ecx;
@@ -127,6 +129,18 @@ static inline bool cpuid_is_avx_avail(void)
     return ecx & CPUID_ECX_AVX_AVAIL;
 }
 
+static inline bool check_xsaves_support() {
+    uint32_t eax, ebx, ecx, edx;
+
+    // 2. 访问 0x0D 叶，子叶 1
+    eax = 0x0D;
+    ecx = 1;
+    //__asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(eax), "c"(ecx));
+    cpuid(0x0D,1,&eax,&ebx,&ecx,&edx);
+    // 3. 检查 EAX 的第 3 位 (XSAVES support)
+    return (eax & (0x1 << 3));
+}
+
 static inline bool cpuid_is_avx512_avail(void)
 {
     uint32_t eax;
@@ -134,4 +148,11 @@ static inline bool cpuid_is_avx512_avail(void)
     uint32_t unused;
     cpuid(CPUID_FEATURE_EXTENDED_ID, 0, &eax, &ebx, &unused, &unused);
     return (eax != 0) && (ebx & CPUID_EBX_AVX512_AVAIL);
+}
+
+
+static inline bool cpuid_is_avx2_avail(void){
+    uint32_t eax, ebx, ecx, edx;
+    cpuid(7, 0, &eax, &ebx, &ecx, &edx);
+    return (ebx & (1 << 5)) != 0;
 }

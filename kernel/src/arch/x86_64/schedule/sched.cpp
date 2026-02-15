@@ -314,8 +314,8 @@ namespace Schedule{
         thread->heap_size = 0;
 
         // Fx area
-        thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);
-        _memset(thread->fx_area, 0, 512);
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(MaxXsaveSize,PAGE_SIZE), true);
+        _memset(thread->fx_area, 0, MaxXsaveSize);
         *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
         *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
 
@@ -372,8 +372,8 @@ namespace Schedule{
         ext4_fclose(&f);
 
         // Fx area
-        thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);
-        _memset(thread->fx_area, 0, 512);
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(MaxXsaveSize,PAGE_SIZE), true);
+        _memset(thread->fx_area, 0, MaxXsaveSize);
         *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
         *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
 
@@ -424,8 +424,8 @@ namespace Schedule{
         thread->IsForkThread = true;
         thread->pagemap = proc->pagemap;
         thread->flags = 0;
-        thread->fx_area = VMM::Alloc(kernel_pagemap, 1, true);
-        __memcpy(thread->fx_area, parent->fx_area, 512);
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(MaxXsaveSize,PAGE_SIZE), true);
+        __memcpy(thread->fx_area, parent->fx_area, MaxXsaveSize);
 
         Schedule::Useless::ProcessAddThread(proc, thread);
 

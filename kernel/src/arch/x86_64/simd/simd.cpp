@@ -8,7 +8,7 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/simd/simd.h>
 #include <arch/x86_64/simd/xsave.h>
-
+uint32_t MaxXsaveSize = 0;
 
 void simd_xsave_init(void)
 {
@@ -77,7 +77,24 @@ void simd_cpu_init(cpu_t *cpu)
     if (cpuid_is_xsave_avail())
     {
         simd_xsave_init();
+        if(check_xsaves_support()){
+            kinfoln("Checked Xsaves enable.");
+            wrmsr(IA32_XSS, 0);
+            kinfoln("Xsaves INIT!");
+        }
+        uint32_t eax, ebx, ecx, edx;
+        uint32_t leaf = 0x0D;
+        uint32_t subleaf = 0;
+
+        // 调用 CPUID (EAX=0Dh, ECX=0)
+        asm volatile("cpuid"
+                    : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                    : "a"(leaf), "c"(subleaf));
+        //MaxXsaveSize = ebx;
+        if(ebx > MaxXsaveSize)
+            MaxXsaveSize = ebx;
     }
+    
 
     asm volatile("fninit");
 
@@ -90,10 +107,14 @@ void simd_cpu_init(cpu_t *cpu)
     if (cpuid_is_avx_avail())
     {
         kprintf("avx ");i++;
+        cpu->SupportAVX = true;
+        if((cpu->SupportAVX2 = cpuid_is_avx2_avail()))
+            kprintf("avx2 ");
     }
     if (cpuid_is_avx512_avail())
     {
         kprintf("avx512 ");i++;
+        cpu->SupportAVX512 = true;
     }
     kprintf("enabled\n");
     if(i > 0)

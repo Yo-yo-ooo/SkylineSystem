@@ -22,6 +22,7 @@ void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
     WELCOME_X86_64
     kinfo("INIT x86_64 ARCH\n");
+    InitFunc("SSE",sse_enable());
     kinfoln("HHDM OFFSET:0x%X",hhdm_offset);
 
     InitFunc("GDT",GDT::Init(0));
@@ -53,7 +54,7 @@ void __init x86_64_init(void){
         hcf();
     }
     kpok("FPU INIT!\n");
-    InitFunc("SSE",sse_enable());
+    
     InitFunc("Schedule",Schedule::Init());
     InitFunc("Syscall",syscall_init());
     

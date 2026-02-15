@@ -7,15 +7,15 @@ EasySTL::Map<VsDevType,uint64_t  /*Storage DevOPS<--Pointer*/> Type2DeviceOPS;
 namespace Dev{
 
     void AddDevice(VDL DeviceInfo,VsDevType DeviceType,DevOPS OPS){
-        spinlock_lock(&DeviceInfo.lock);
+        //spinlock_lock(&DeviceInfo.lock);
         DevOPS *p = kmalloc(sizeof(DevOPS));
         __memcpy(p,&OPS,sizeof(DevOPS));
 
         Type2DeviceOPS.insert(DeviceType,(uint64_t)p);
-        kinfoln("OK");
+        //kinfoln("OK");
         DeviceInfos[DeviceType].push_back(DeviceInfo);
-        kinfoln("OK !");
-        spinlock_unlock(&DeviceInfo.lock);
+        //kinfoln("OK !");
+        //spinlock_unlock(&DeviceInfo.lock);
     }
 
     VDL FindDevice(VsDevType DeviceType,uint32_t DeviceIndex){

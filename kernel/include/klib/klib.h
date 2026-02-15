@@ -69,6 +69,7 @@ T CFCast(auto F){
 #ifdef __x86_64__
 #define __ffunc __attribute__((target("sse2")))
 #define _intr __attribute__((interrupt))
+extern uint32_t MaxXsaveSize;
 #else
 #define __ffunc
 #endif

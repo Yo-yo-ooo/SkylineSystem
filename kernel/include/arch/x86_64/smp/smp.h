@@ -33,6 +33,9 @@ typedef struct cpu_t{
     bool has_runnable_thread;
     bool SupportSIMD = false;
     bool SupportXSAVE = false;
+    bool SupportAVX = false;
+    bool SupportAVX2 = false;
+    bool SupportAVX512 = false;
     
 } cpu_t;
 
