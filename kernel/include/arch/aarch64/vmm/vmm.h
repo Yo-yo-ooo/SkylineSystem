@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <arch/aarch64/vmm/plvldescs.h>
 
 typedef struct _pagemap_t{
     uint32_t   levels;
@@ -15,6 +16,7 @@ enum page_size {
     Size2MiB,
     Size1GiB
 };
+
 
 namespace VMM
 {

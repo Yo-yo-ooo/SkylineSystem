@@ -42,7 +42,11 @@ static void parsenode(char* path, void* base, saf_node_hdr_t* node, int level)
 
     if (node->flags == FLAG_ISFOLDER) {
         saf_node_folder_t* fldr = (saf_node_folder_t*)node;
+#ifdef __MINGW64__
+        mkdir(fullpath);
+#else
         mkdir(fullpath, 0700);
+#endif
         for (size_t i = 0; i < fldr->num_children; i++)
             parsenode(fullpath, base, (saf_node_hdr_t*)((uint8_t*)base + fldr->children[i]), level + 1);
     } else {

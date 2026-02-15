@@ -31,6 +31,13 @@ COMMON: 0:FALSE
 #ifdef __aarch64__
 #define CONFIG_DOSENT_SUPPORT_SYS_REG_ID_AA64SMFR0_EL1 0
 #define CONFIG_DOSENT_SUPPORT_SYS_REG_ID_AA64ZFR0_EL1 0
+
+#define CONFIG_PAGESIZE_4K  0
+#define CONFIG_PAGESIZE_16K 1
+#define CONFIG_PAGESIZE_64K 2
+
+#define CONFIG_PAGESIZE CONFIG_PAGESIZE_4K
+
 #endif
 
 /*-------------------------------------------------*/

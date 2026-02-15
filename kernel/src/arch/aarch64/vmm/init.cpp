@@ -6,13 +6,9 @@
 #include <pdef.h>
 #include <klib/kio.h>
 #include <klib/klib.h>
+#include <conf.h>
 
-PACK(struct __u64_addr{
-    uint8_t TTBR_S : 16;
-    uint8_t RSVD;
 
-    uint32_t PA_ : 29;
-});
 
 void setup_mair() {
     // Device nGnRnE
@@ -36,6 +32,66 @@ void setup_mair() {
     write_mair_el1(mair_value);
 }
 
+uint64_t V2P_4K(uint64_t vaddr){
+    uint64_t ttbr;
+    if(vaddr <= 0x0000FFFFFFFFFFFF)
+        read_ttbr_el1(0,ttbr);
+    else
+        read_ttbr_el1(1,ttbr);
+    Translate4K t;t.vaddr = vaddr;
+    __tdesc_4K *lv0 = (__tdesc_4K*)
+                    (ttbr + (uint64_t)t.addrdesc.LV0_TblIndex * sizeof(__tdesc_4K));
+    TableDesc4KLV1 *lv1 = (TableDesc4KLV1*)
+                    ((uint64_t)lv0->NextLvl + t.addrdesc.LV1_TblIndex * sizeof(__tdesc_4K));
+    if(lv1->desc.Type == 0){
+        lv1->lv1desc.OutputAddr | t.addrdesc.BlockOffset;
+    }
+    TableDesc4KLV2 *lv2 = (TableDesc4KLV2*)
+                    ((uint64_t)lv1->desc.NextLvl + t.addrdesc.LV2_TblIndex * sizeof(__tdesc_4K));
+    if(lv2->desc.Type == 0){
+        
+    }
+    PageDescriptor4K *Page = (PageDescriptor4K*)
+                    ((uint64_t)lv2->desc.NextLvl + t.addrdesc.LV3_TblIndex * sizeof(PageDescriptor4K));
+
+    return (Page->fields.OutputAddr << 12) | t.addrdesc.BlockOffset;
+}
+
+uint64_t V2P_16K(uint64_t vaddr){
+    uint64_t ttbr;
+    if(vaddr <= 0x0000FFFFFFFFFFFF)
+        read_ttbr_el1(0,ttbr);
+    else
+        read_ttbr_el1(1,ttbr);
+    Translate16K t;t.vaddr = vaddr;
+    __tdesc_16K *lv0 = (__tdesc_16K*)
+                        (ttbr + t.addrdesc.LV0_TblIndex * sizeof(__tdesc_16K));
+    __tdesc_16K *lv1 = (__tdesc_16K*)
+                        ((uint64_t)lv0->NextLvl + t.addrdesc.LV1_TblIndex * sizeof(__tdesc_16K));
+    __tdesc_16K *lv2 = (__tdesc_16K*)
+                        ((uint64_t)lv1->NextLvl + t.addrdesc.LV2_TblIndex * sizeof(__tdesc_16K));
+    
+    PageDescriptor64K *Page = (PageDescriptor64K*)
+                    ((uint64_t)lv2->NextLvl + t.addrdesc.LV3_TblIndex * sizeof(PageDescriptor64K));
+    return (Page->fields.OutputAddr << 14) | t.addrdesc.BlockOffset;
+}
+
+uint64_t V2P_64K(uint64_t vaddr){
+    uint64_t ttbr;
+    if(vaddr <= 0x0000FFFFFFFFFFFF)
+        read_ttbr_el1(0,ttbr);
+    else
+        read_ttbr_el1(1,ttbr);
+    Translate64K t;t.vaddr = vaddr;
+    __tdesc_64K *lv1 = (__tdesc_64K*)
+                        (ttbr + t.addrdesc.LV1_TblIndex * sizeof(__tdesc_64K));
+    __tdesc_64K *lv2 = (__tdesc_64K*)
+                        (lv1->NextLvl + t.addrdesc.LV2_TblIndex * sizeof(__tdesc_64K));
+    PageDescriptor64K *Page = (PageDescriptor64K*)
+                    (lv2->NextLvl + t.addrdesc.LV3_TblIndex * sizeof(PageDescriptor64K));
+    return (Page->fields.OutputAddr << 16) | t.addrdesc.BlockOffset;
+}
+
 typedef struct PageMap{
     uint64_t *LowerRoot; 
     uint64_t *HigherRoot;
@@ -57,17 +113,6 @@ namespace VMM
     }
 
     uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr){
-        // Get Current Exception Level
-        uint16_t *high = (uint16_t*)&vaddr;
-        uint64_t ttbr_;
-        if(high == 0b1111111111111111)
-            read_ttbr_el1(1,ttbr_);
-        else if(high == 0b0000000000000000)
-            read_ttbr_el1(0,ttbr_);
-        else
-            return -1;
-        uint64_t pa;
-        ((uint16_t*)&pa)[4] = high[4];
         
     }
 } // namespace VMM

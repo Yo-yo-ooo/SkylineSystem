@@ -391,3 +391,37 @@ static inline uint64_t tcr_el1_read() {
 static inline void tcr_el1_write(const uint64_t value) {
     asm volatile ("msr tcr_el1, %0" :: "r"(value));
 }
+
+union TCR_EL1 {
+    uint64_t raw;
+
+    PACK(struct {
+        // --- TTBR0 区域配置 ---
+        uint64_t T0SZ  : 6;  // [5:0] Size offset for TTBR0_EL1
+        uint64_t res0  : 1;  // [6] Reserved
+        uint64_t EPD0  : 1;  // [7] End point descriptor (Disable walk for TTBR0)
+        uint64_t IRGN0 : 2;  // [9:8] Inner cacheability for TTBR0
+        uint64_t ORGN0 : 2;  // [11:10] Outer cacheability for TTBR0
+        uint64_t SH0   : 2;  // [13:12] Shareability for TTBR0
+        uint64_t TG0   : 2;  // [15:14] Granule size for TTBR0 (00=4KB, 01=16KB, 10=64KB)
+
+        // --- TTBR1 区域配置 ---
+        uint64_t T1SZ  : 6;  // [21:16] Size offset for TTBR1_EL1
+        uint64_t A1    : 1;  // [22] ASID selection
+        uint64_t EPD1  : 1;  // [23] Disable walk for TTBR1
+        uint64_t IRGN1 : 2;  // [25:24] Inner cacheability for TTBR1
+        uint64_t ORGN1 : 2;  // [27:26] Outer cacheability for TTBR1
+        uint64_t SH1   : 2;  // [29:28] Shareability for TTBR1
+        uint64_t TG1   : 2;  // [31:30] Granule size for TTBR1 (10=4KB, 01=16KB, 11=64KB)
+
+        // --- 全局配置 ---
+        uint64_t IPS   : 3;  // [34:32] Intermediate Physical Address Size
+        uint64_t res1  : 1;  // [35] Reserved
+        uint64_t AS    : 1;  // [36] ASID Size (0=8bit, 1=16bit)
+        uint64_t TBI0  : 1;  // [37] Top Byte Ignored (TTBR0)
+        uint64_t TBI1  : 1;  // [38] Top Byte Ignored (TTBR1)
+        uint64_t HA    : 1;  // [39] Hardware Access flag update
+        uint64_t HD    : 1;  // [40] Hardware Dirty state update
+        uint64_t res2  : 23; // [63:41] Reserved
+    }) bits;
+};

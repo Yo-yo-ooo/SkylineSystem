@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #define INITIAL_ALLOC_SIZE (4ULL * 1024 * 1024 * 1024)
 #define MAX_PATH_SIZE 1024
@@ -91,11 +92,23 @@ static nodelist_t* make_node(char* path)
         sprintf(fullpath, "%s/%s", path, ent->d_name);
         info("adding node %s\n", fullpath);
 
+#ifndef __MINGW64__
         // ignore things that are not files or folders
         if (ent->d_type != DT_DIR && ent->d_type != DT_REG) {
             info("ignoring node %s with unknown type\n", fullpath);
             continue;
         }
+#else
+        struct stat st;
+        if (stat(fullpath, &st) == 0) {
+            // S_ISDIR 对应 DT_DIR, S_ISREG 对应 DT_REG
+            if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
+                info("ignoring node %s with unknown type\n", fullpath);
+                // 执行你的逻辑（既不是目录也不是普通文件）
+                continue;
+            }
+        }
+#endif
 
         ret->offsets[ret->len++] = adata.curr_offset;
         saf_node_hdr_t* hdr = (saf_node_hdr_t*)(adata.ptr + adata.curr_offset);
@@ -104,7 +117,11 @@ static nodelist_t* make_node(char* path)
 
         // calculate size of node structure
         size_t nodesize;
+#ifndef __MINGW64__
         if (ent->d_type == DT_DIR)
+#else
+        if(S_ISDIR(st.st_mode))
+#endif
             nodesize = sizeof(saf_node_folder_t) + (childcnt(fullpath) * sizeof(saf_offset_t));
         else
             nodesize = sizeof(saf_node_file_t);
@@ -112,7 +129,11 @@ static nodelist_t* make_node(char* path)
         hdr->len = nodesize;
 
         // the node is a folder
+#ifndef __MINGW64__
         if (ent->d_type == DT_DIR) {
+#else
+        if(S_ISDIR(st.st_mode)) {
+#endif
             saf_node_folder_t* fldr = (saf_node_folder_t*)(hdr);
             fldr->hdr.flags = FLAG_ISFOLDER;
             nodelist_t* children = make_node(fullpath);
@@ -121,7 +142,11 @@ static nodelist_t* make_node(char* path)
                 fldr->children[i] = children->offsets[i];
         }
         // the node is a file
+#ifndef __MINGW64__
         else if (ent->d_type == DT_REG) {
+#else
+        else if (S_ISREG(st.st_mode))   {
+#endif
             saf_node_file_t* file = (saf_node_file_t*)(hdr);
             file->hdr.flags = 0;
             file->addr = adata.curr_offset;
