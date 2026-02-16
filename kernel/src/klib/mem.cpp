@@ -54,10 +54,12 @@ void _memcpy(void* src, void* dest, uint64_t size)
         fx_area = th->fx_area;
     if(KernelInited && size > 1024 * 8){
         if(cpu->SupportXSAVE){
-            asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
             asm volatile("xrstor %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
         }else{
-            asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
             asm volatile("fxrstor (%0)" : : "r"(KernelXsaveSpace) : "memory");
         }
     }
@@ -67,7 +69,8 @@ void _memcpy(void* src, void* dest, uint64_t size)
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMCPY) && NOT_COMPILE_X86MEM == 0
     if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (size > 1024 * 8))){
         AVX_memcpy(dest,src,size);
-        return;
+        if(KernelInited == false)
+            return;
     }
 #elif defined(__x86_64__)
 
@@ -187,23 +190,28 @@ void _memcpy(void* src, void* dest, uint64_t size)
                 goto tail;
             }
         }
-
-        return ret;
+        if(KernelInited == false)
+            return;
+        //return ret;
     }
 #elif defined(__aarch64__)
     NEON_MEMCPY(dest,src,size);
-    return;
+    if(KernelInited == false)
+        return;
 #endif
 
 #ifdef __x86_64__
     if(KernelInited && size > 1024 * 8){
         if(cpu->SupportXSAVE){
             asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
-            asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
         }else{
             asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
-            asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
         }
+        return;
     }
 #endif
 	memcpy_fscpuf(dest,src,size);
@@ -221,10 +229,12 @@ void _memset(void* dest, uint8_t value, uint64_t size)
     
     if(KernelInited && size > 1024 * 8){
         if(cpu->SupportXSAVE){
-            asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
             asm volatile("xrstor %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
         }else{
-            asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
             asm volatile("fxrstor (%0)" : : "r"(KernelXsaveSpace) : "memory");
         }
     }
@@ -234,7 +244,8 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMSET) && NOT_COMPILE_X86MEM == 0
     if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (size > 1024 * 8))){
         AVX_memset(dest,value,size);
-        return;
+        if(KernelInited == false)
+            return;
     }
 #elif defined(__x86_64__) // For General x86_64 cpu(DIDn't support >=sse4.2)
     if(smp_started != false && ((KernelInited == false) || (size > 1024 * 8))){
@@ -249,7 +260,7 @@ void _memset(void* dest, uint8_t value, uint64_t size)
             for (uint64_t i = 0; i < size; i++)
                 *(d++) = value;
         }
-        return;
+        //return;
     }
 
 #elif defined(__aarch64__)
@@ -260,11 +271,14 @@ void _memset(void* dest, uint8_t value, uint64_t size)
     if(KernelInited && size > 1024 * 8){
         if(cpu->SupportXSAVE){
             asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
-            asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
         }else{
             asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
-            asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
         }
+        return;
     }
 #endif
 
@@ -273,8 +287,7 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 
 
 void _memmove(void* dest,void* src, uint64_t size) {
-
-#ifdef __x86_64__
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMMOVE) && NOT_COMPILE_X86MEM == 0
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
@@ -283,29 +296,29 @@ void _memmove(void* dest,void* src, uint64_t size) {
     
     if(KernelInited && size > 1024 * 8){
         if(cpu->SupportXSAVE){
-            asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
             asm volatile("xrstor %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
         }else{
-            asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
             asm volatile("fxrstor (%0)" : : "r"(KernelXsaveSpace) : "memory");
         }
     }
-#endif
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMMOVE) && NOT_COMPILE_X86MEM == 0
     if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (size > 1024 * 8))){
         AVX_memmove(dest,src,size);
         return;
     }
-#endif
 
-#ifdef __x86_64__
     if(KernelInited && size > 1024 * 8){
         if(cpu->SupportXSAVE){
             asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
-            asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
         }else{
             asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
-            asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
         }
     }
 #endif
@@ -314,7 +327,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
 
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCMP) && NOT_COMPILE_X86MEM == 0
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
@@ -323,34 +336,31 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
     
     if(KernelInited && count > 1024 * 8){
         if(cpu->SupportXSAVE){
-            asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
             asm volatile("xrstor %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
         }else{
-            asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
             asm volatile("fxrstor (%0)" : : "r"(KernelXsaveSpace) : "memory");
         }
     }
-#endif
-
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCMP) && NOT_COMPILE_X86MEM == 0
     if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (count > 1024 * 8))){
         return AVX_memcmp(buffer1,buffer2,count,1);
     }
-#endif
-
-#ifdef __x86_64__
     if(KernelInited && count > 1024 * 8){
         if(cpu->SupportXSAVE){
             asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
-            asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
         }else{
             asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
-            asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
+            if(fx_area != nullptr)
+                asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
         }
     }
 #endif
     return memcmp_fscpuf(buffer1,buffer2,count);
- 
 }
 
 #ifdef __x86_64__
