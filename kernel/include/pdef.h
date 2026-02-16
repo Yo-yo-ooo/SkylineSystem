@@ -14,6 +14,8 @@
 #define __VAR_CONCAT_IMPL(a, b) a##b
 #define VAR_CONCAT(a, b) __VAR_CONCAT_IMPL(a, b)
 
+
+
 #if !defined(func_optimize)
     #if __has_attribute(optimize) && defined(DEBUG) && !defined(RELEASE)
         #define func_optimize(n) __attribute__((optimize(n)))

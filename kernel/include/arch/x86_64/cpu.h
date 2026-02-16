@@ -156,3 +156,11 @@ static inline bool cpuid_is_avx2_avail(void){
     cpuid(7, 0, &eax, &ebx, &ecx, &edx);
     return (ebx & (1 << 5)) != 0;
 }
+
+static inline bool cpuid_is_sse4_2_avail() {
+    uint32_t eax, ebx, ecx, edx;
+    // SSE4.2 位于 Leaf 1, ECX 寄存器
+    cpuid(1, 0, &eax, &ebx, &ecx, &edx);
+    // Bit 20 是 SSE4.2
+    return (ecx & (1 << 20)) != 0;
+}

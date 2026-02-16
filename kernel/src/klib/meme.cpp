@@ -1,6 +1,84 @@
 
 #include <klib/klib.h>
 
+#define DECL_MEM_COPY_BACK_FUNC(type) \
+    func_optimize(3) static inline size_t \
+    VAR_CONCAT(_memcpy_bw_, type)(void *const dst, \
+                                  const void *const src, \
+                                  const size_t n) \
+    {                                                                          \
+        if (n < sizeof(type)) {                                                \
+            return n;                                                          \
+        }                                                                      \
+                                                                               \
+        size_t off = n - sizeof(type);                                  \
+        do {                                                                   \
+            *((type *)(dst + off)) = *((const type *)(src + off));             \
+            if (off < sizeof(type)) {                                          \
+                return off;                                                    \
+            }                                                                  \
+                                                                               \
+            off -= sizeof(type);                                               \
+        } while (true);                                                        \
+                                                                               \
+        return n;                                                              \
+    }
+
+func_optimize(3) static inline size_t
+_memcpy_bw_uint64_t(void *const dst,
+                    const void *const src,
+                    const size_t n)
+{
+    if (n < sizeof(uint64_t)) {
+        return n;
+    }
+
+    size_t off = n - sizeof(uint64_t);
+#if defined(__aarch64__)
+    if (n >= (2 * sizeof(uint64_t))) {
+        off -= sizeof(uint64_t);
+        do {
+            uint64_t left_ch = 0;
+            uint64_t right_ch = 0;
+
+            asm volatile ("ldp %0, %1, [%2]"
+                            : "+r"(left_ch), "+r"(right_ch)
+                            : "r"((const uint64_t *)(src + off))
+                            : "memory");
+
+            asm volatile ("stp %0, %1, [%2]"
+                            :: "r"(left_ch), "r"(right_ch),
+                                "r"((uint64_t *)(dst + off)));
+
+            if (off < sizeof(uint64_t) * 2) {
+                break;
+            }
+
+            off -= sizeof(uint64_t) * 2;
+        } while (true);
+
+        if (off < sizeof(uint64_t)) {
+            return off;
+        }
+    }
+#endif /* defined(__aarch64__) */
+
+    do {
+        *(uint64_t *)(dst + off) = *(const uint64_t *)(src + off);
+        if (off < sizeof(uint64_t)) {
+            break;
+        }
+
+        off -= sizeof(uint64_t);
+    } while (true);
+
+    return off;
+}
+
+
+DECL_MEM_COPY_BACK_FUNC(uint8_t)
+DECL_MEM_COPY_BACK_FUNC(uint16_t)
+DECL_MEM_COPY_BACK_FUNC(uint32_t)
 
 func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
     void *ret = dst;
@@ -184,4 +262,223 @@ func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n) {
     }
 
     return ret;
+}
+
+#define DECL_MEM_COPY_BACK_FUNC(type) \
+    func_optimize(3) static inline size_t \
+    VAR_CONCAT(_memcpy_bw_, type)(void *const dst, \
+                                  const void *const src, \
+                                  const size_t n) \
+    {                                                                          \
+        if (n < sizeof(type)) {                                                \
+            return n;                                                          \
+        }                                                                      \
+                                                                               \
+        size_t off = n - sizeof(type);                                  \
+        do {                                                                   \
+            *((type *)(dst + off)) = *((const type *)(src + off));             \
+            if (off < sizeof(type)) {                                          \
+                return off;                                                    \
+            }                                                                  \
+                                                                               \
+            off -= sizeof(type);                                               \
+        } while (true);                                                        \
+                                                                               \
+        return n;                                                              \
+    }
+
+
+
+func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
+    void *ret = dst;
+    if (src > dst) {
+    #if defined(__x86_64__)
+        if (n >= 16) {
+            asm volatile ("cld\n"
+                          "rep movsb\n"
+                          : "+D"(dst), "+S"(src), "+c"(n)
+                          :: "memory");
+            return ret;
+        }
+    #endif /* defined(__x86_64__) */
+        const uint64_t diff = ((uint64_t)(src) - (uint64_t)(dst));
+        if (diff >= sizeof(uint64_t)) {
+            memcpy_fscpuf(dst, src, n);
+        } else if (diff >= sizeof(uint32_t)) {
+            n = _memcpy_uint32_t(dst, src, n, &dst, &src);
+            n = _memcpy_uint16_t(dst, src, n, &dst, &src);
+
+            _memcpy_uint8_t(dst, src, n, &dst, &src);
+        } else if (diff >= sizeof(uint16_t)) {
+            n = _memcpy_uint16_t(dst, src, n, &dst, &src);
+            _memcpy_uint8_t(dst, src, n, &dst, &src);
+        } else if (diff >= sizeof(uint8_t)) {
+            _memcpy_uint8_t(dst, src, n, &dst, &src);
+        }
+    } else {
+    #if defined(__x86_64__)
+        if (n >= 16) {
+            void *dst_back = &((uint8_t *)dst)[n - 1];
+            const void *src_back = &((const uint8_t *)src)[n - 1];
+
+            asm volatile ("std\n"
+                          "rep movsb\n"
+                          "cld"
+                          : "+D"(dst_back), "+S"(src_back), "+c"(n)
+                          :: "memory");
+
+            return ret;
+        }
+    #endif /* defined(__x86_64__) */
+        const uint64_t diff = ((uint64_t)(dst) - (uint64_t)(src));
+        if (diff >= sizeof(uint64_t)) {
+            n = _memcpy_bw_uint64_t(dst, src, n);
+            n = _memcpy_bw_uint32_t(dst, src, n);
+            n = _memcpy_bw_uint16_t(dst, src, n);
+
+            _memcpy_bw_uint8_t(dst, src, n);
+        } else if (diff >= sizeof(uint32_t)) {
+            n = _memcpy_bw_uint32_t(dst, src, n);
+            n = _memcpy_bw_uint16_t(dst, src, n);
+
+            _memcpy_bw_uint8_t(dst, src, n);
+        } else if (diff >= sizeof(uint16_t)) {
+            n = _memcpy_bw_uint16_t(dst, src, n);
+            _memcpy_bw_uint8_t(dst, src, n);
+        } else if (diff >= sizeof(uint8_t)) {
+            _memcpy_bw_uint8_t(dst, src, n);
+        }
+    }
+
+    return ret;
+}
+
+// TODO: Fix
+#define DECL_MEM_CMP_FUNC(type)                                                \
+    func_optimize(3) static inline int                                      \
+    VAR_CONCAT(_memcmp_, type)(const void *left,                               \
+                               const void *right,                              \
+                               size_t len,                                     \
+                               const void **const left_out,                    \
+                               const void **const right_out,                   \
+                               size_t *const len_out)                          \
+    {                                                                          \
+        if (len >= sizeof(type)) {                                             \
+            do {                                                               \
+                const type left_ch = *(const type *)left;                      \
+                const type right_ch = *(const type *)right;                    \
+                                                                               \
+                if (left_ch != right_ch) {                                     \
+                    return (int)(left_ch - right_ch);                          \
+                }                                                              \
+                                                                               \
+                left += sizeof(type);                                          \
+                right += sizeof(type);                                         \
+                len -= sizeof(type);                                           \
+            } while (len >= sizeof(type));                                     \
+                                                                               \
+            *left_out = left;                                                  \
+            *right_out = right;                                                \
+            *len_out = len;                                                    \
+        }                                                                      \
+                                                                               \
+        return 0;                                                              \
+    }
+
+func_optimize(3) static inline int
+_memcmp_uint64_t(const void *left,
+                 const void *right,
+                 size_t len,
+                 const void **const left_out,
+                 const void **const right_out,
+                 size_t *const len_out)
+{
+    if (len >= sizeof(uint64_t)) {
+    #if defined(__aarch64__)
+        if (len >= (2 * sizeof(uint64_t))) {
+            do {
+                uint64_t left_ch = 0;
+                uint64_t right_ch = 0;
+
+                uint64_t left_ch_2 = 0;
+                uint64_t right_ch_2 = 0;
+
+                asm volatile ("ldp %0, %1, [%2]"
+                              : "+r"(left_ch), "+r"(left_ch_2)
+                              : "r"(left)
+                              : "memory");
+
+                asm volatile ("ldp %0, %1, [%2]"
+                              : "+r"(right_ch), "+r"(right_ch_2)
+                              : "r"(right)
+                              : "memory");
+
+                if (left_ch != right_ch) {
+                    return (int)(left_ch - right_ch);
+                }
+
+                if (left_ch_2 != right_ch_2) {
+                    return (int)(left_ch_2 - right_ch_2);
+                }
+
+                len -= sizeof(uint64_t) * 2;
+                left += sizeof(uint64_t) * 2;
+                right += sizeof(uint64_t) * 2;
+            } while (len >= sizeof(uint64_t) * 2);
+
+            if (len < sizeof(uint64_t)) {
+                *left_out = left;
+                *right_out = right;
+                *len_out = len;
+
+                return 0;
+            }
+        }
+    #endif /* defined(__aarch64__) */
+
+        do {
+            const uint64_t left_ch = *(const uint64_t *)left;
+            const uint64_t right_ch = *(const uint64_t *)right;
+
+            if (left_ch != right_ch) {
+                return (int)(left_ch - right_ch);
+            }
+
+            len -= sizeof(uint64_t);
+            left += sizeof(uint64_t);
+            right += sizeof(uint64_t);
+        } while (len >= sizeof(uint64_t));
+
+        *left_out = left;
+        *right_out = right;
+        *len_out = len;
+    }
+
+    return 0;
+}
+
+DECL_MEM_CMP_FUNC(uint8_t)
+DECL_MEM_CMP_FUNC(uint16_t)
+DECL_MEM_CMP_FUNC(uint32_t)
+
+
+func_optimize(3)
+int32_t memcmp_fscpuf(const void *left, const void *right, size_t len) {
+    int32_t res = _memcmp_uint64_t(left, right, len, &left, &right, &len);
+    if (res != 0) {
+        return res;
+    }
+
+    res = _memcmp_uint32_t(left, right, len, &left, &right, &len);
+    if (res != 0) {
+        return res;
+    }
+
+    res = _memcmp_uint16_t(left, right, len, &left, &right, &len);
+    if (res != 0) {
+        return res;
+    }
+
+    res = _memcmp_uint8_t(left, right, len, &left, &right, &len);
+    return res;
 }

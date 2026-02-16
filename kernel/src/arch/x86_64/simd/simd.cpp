@@ -95,22 +95,22 @@ void simd_cpu_init(cpu_t *cpu)
     asm volatile("fninit");
 
     kpok("cpu simd:");
-    if (cpuid_is_xsave_avail())
-    {
+    if (cpuid_is_xsave_avail()){
         kprintf("xsave ");i++;
         cpu->SupportXSAVE = true;
     }
-    if (cpuid_is_avx_avail())
-    {
+    if (cpuid_is_avx_avail()){
         kprintf("avx ");i++;
         cpu->SupportAVX = true;
         if((cpu->SupportAVX2 = cpuid_is_avx2_avail()))
             kprintf("avx2 ");
     }
-    if (cpuid_is_avx512_avail())
-    {
+    if (cpuid_is_avx512_avail()){
         kprintf("avx512 ");i++;
         cpu->SupportAVX512 = true;
+    }
+    if(cpuid_is_sse4_2_avail()){
+        cpu->SupportSSE4_2 = true;
     }
     kprintf("enabled\n");
     if(i > 0)

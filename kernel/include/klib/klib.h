@@ -45,7 +45,7 @@ if (CONDITION){}else {Panic(#CONDITION);}
 
 void _memcpy(void* src, void* dest, uint64_t size);
 void _memset(void* dest, uint8_t value, uint64_t size);
-void _memmove(void* src, void* dest, uint64_t size);
+void _memmove(void* dest,void* src, uint64_t size);
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count);
 void *__memcpy(void * d, const void * s, uint64_t n);
 
@@ -91,5 +91,13 @@ void *memset_fscpuf(void *dst, const int32_t val, size_t n);
 //memcpy that freestanding cpu features
 func_optimize(3)
 void *memcpy_fscpuf(void *dst, const void *src, size_t n);
+
+//memmove that freestanding cpu features
+func_optimize(3)
+void *memmove_fscpuf(void *dst, const void *src, size_t n);
+
+//memcmp that freestanding cpu features
+func_optimize(3)
+int32_t memcmp_fscpuf(const void *left, const void *right, size_t len);
 
 #endif
