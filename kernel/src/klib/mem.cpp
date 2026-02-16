@@ -349,15 +349,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
         }
     }
 #endif
-    const u8 *p1 = (const u8 *)buffer1;
-    const u8 *p2 = (const u8 *)buffer2;
-    for (size_t i = 0; i < count; i++) {
-        if (p1[i] != p2[i]) {
-            return p1[i] < p2[i] ? -1 : 1;
-        }
-    }
-
-    return 0;
+    return memcmp_fscpuf(buffer1,buffer2,count);
  
 }
 
