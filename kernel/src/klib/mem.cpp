@@ -4,6 +4,7 @@
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
 #include "../../../x86mem/x86mem.h"
 #include <arch/x86_64/smp/smp.h>
+#include <arch/x86_64/schedule/sched.h>
 #include <klib/serial.h>
 #pragma GCC target("sse2")
 #ifdef __AVX512F__
@@ -14,6 +15,7 @@
 #elif defined(__x86_64__)
 #pragma GCC target("sse2")
 #include <arch/x86_64/smp/smp.h>
+#include <arch/x86_64/schedule/sched.h>
 #include <emmintrin.h>
 #elif defined(__aarch64__)
 extern "C" void NEON_MEMCPY(void* dst, const void* src, size_t size);
@@ -44,14 +46,29 @@ void _memcpy_128(void* src, void* dest, size_t size)
 
 void _memcpy(void* src, void* dest, uint64_t size)
 {
+#ifdef __x86_64__
+    cpu_t *cpu = this_cpu();
+    int8_t *fx_area = Schedule::this_thread()->fx_area;
+    if(KernelInited && size > 1024 * 8){
+        if(cpu->SupportXSAVE){
+            asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            asm volatile("xrstor %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+        }else{
+            asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory");
+            asm volatile("fxrstor (%0)" : : "r"(KernelXsaveSpace) : "memory");
+        }
+    }
+#endif
+
+
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMCPY) && NOT_COMPILE_X86MEM == 0
-    if(smp_started != false && this_cpu()->SupportSIMD){
+    if(smp_started != false && cpu->SupportSIMD && ((KernelInited == false) || (size > 1024 * 8))){
         AVX_memcpy(dest,src,size);
         return;
     }
 #elif defined(__x86_64__)
 
-    if(smp_started != false && this_cpu()->SupportSIMD){
+    if(smp_started != false && cpu->SupportSIMD && ((KernelInited == false) || (size > 1024 * 8))){
         /// We will use pointer arithmetic, so char pointer will be used.
         /// Note that __restrict makes sense (otherwise compiler will reload data from memory
         /// instead of using the value of registers due to possible aliasing).
@@ -173,6 +190,18 @@ void _memcpy(void* src, void* dest, uint64_t size)
 #elif defined(__aarch64__)
     NEON_MEMCPY(dest,src,size);
     return;
+#endif
+
+#ifdef __x86_64__
+    if(KernelInited && size > 1024 * 8){
+        if(cpu->SupportXSAVE){
+            asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+            asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+        }else{
+            asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
+            asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
+        }
+    }
 #endif
 	if (size & 0xFFE0)//(size >= 32)
 	{

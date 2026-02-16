@@ -60,10 +60,6 @@ void simd_xsave_init(void)
     write_xcr(XCR_XSTATE_FEATURES_ENABLED, xcr | xsave_user_features);
 
     return;
-
-    
-    
-    
 }
 
 void simd_cpu_init(cpu_t *cpu)

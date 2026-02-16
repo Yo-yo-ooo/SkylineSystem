@@ -54,6 +54,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     smp_setup_thread_queue(cpu);
     smp_setup_kstack(cpu);
     sse_enable();
+    fpu_init();
     simd_cpu_init(cpu);
     kpok("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
@@ -90,7 +91,7 @@ void smp_init() {
     Schedule::Useless::AddThread(bsp_cpu, init_thread);
     bsp_cpu->current_thread = init_thread;
     sse_enable();
-    simd_cpu_init(bsp_cpu);
+    //simd_cpu_init(bsp_cpu);
     kinfo("Detected %zu CPUs.\n", mp_response->cpu_count);
     for (uint64_t i = 0; i < mp_response->cpu_count; i++) {
         struct limine_mp_info *mp_info = mp_response->cpus[i];

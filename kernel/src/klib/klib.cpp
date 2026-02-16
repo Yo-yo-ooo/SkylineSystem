@@ -143,3 +143,6 @@ extern "C" uint32_t sys_now(void){
 #endif
 
 }
+
+bool KernelInited = false;
+int8_t *KernelXsaveSpace = nullptr;

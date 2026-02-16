@@ -70,10 +70,13 @@ T CFCast(auto F){
 #define __ffunc __attribute__((target("sse2")))
 #define _intr __attribute__((interrupt))
 extern uint32_t MaxXsaveSize;
+extern int8_t *KernelXsaveSpace;
 #else
 #define __ffunc
 #endif
 #define UnCompleteCode 1
+
+extern bool KernelInited;
 
 uint16_t kld_16 (const uint8_t* ptr);
 uint32_t kld_32 (const uint8_t* ptr);
