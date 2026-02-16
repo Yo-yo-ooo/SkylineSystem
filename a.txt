@@ -1,6 +1,6 @@
 /*
 * SPDX-License-Identifier: GPL-2.0-only
-* File: fork.cpp
+* File: %FILENAME%
 * Copyright (C) 2026 Yo-yo-ooo
 *
 * This file is part of SkylineSystem.
@@ -19,13 +19,3 @@
 * along with this program; if not, write to the Free Software
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
-#include <arch/x86_64/schedule/sched.h>
-#include <arch/x86_64/schedule/syscall.h>
-
-uint64_t sys_fork(syscall_frame_t *frame){
-    Schedule::PAUSE();
-    proc_t* proc = Schedule::ForkProcess();
-    thread_t *thread = Schedule::ForkThread(proc, Schedule::this_thread(), frame);
-    Schedule::Resume();
-    return proc->id;
-}
