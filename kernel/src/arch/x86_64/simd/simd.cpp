@@ -110,6 +110,7 @@ void simd_cpu_init(cpu_t *cpu)
         cpu->SupportAVX512 = true;
     }
     if(cpuid_is_sse4_2_avail()){
+        kprintf("sse4.2 ");i++;
         cpu->SupportSSE4_2 = true;
     }
     kprintf("enabled\n");
