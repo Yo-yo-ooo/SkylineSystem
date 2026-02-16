@@ -41,7 +41,7 @@ public:
     BTreeNode *CreateNode(uint64_t Dgree,bool IsLeaf){
         BTreeNode *Node = (BTreeNode*)kcalloc(1,sizeof(BTreeNode));
         if(Node == nullptr){
-            kerror("(BTreeNode)Create Node Failed");
+            //kerror("(BTreeNode)Create Node Failed");
             return nullptr;
         }
         Node->IsLeaf = IsLeaf;

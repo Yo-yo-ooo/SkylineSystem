@@ -79,5 +79,6 @@ void __init x86_64_init(void){
         "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread"}, (char*[]){nullptr}); 
     kinfoln("syscalltest PROCESS: %d",proc->id);
 
+
     LAPIC::IPIOthers(0, SCHED_VEC);
 }

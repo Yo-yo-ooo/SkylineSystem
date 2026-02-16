@@ -71,22 +71,22 @@
 
 namespace LAPIC{
 
-    extern u64 apic_ticks;
+    extern uint64_t apic_ticks;
     extern bool x2apic;
 
     void Init();
 
-    void Write(u32 reg, u32 val);
-    u32 Read(u32 reg);
-    u32 GetID();
+    void Write(uint32_t reg, uint64_t val);
+    uint64_t Read(uint32_t reg);
+    uint32_t GetID();
     void EOI();
 
     void StopTimer();
-    void Oneshot(u8 vec, u64 ms);
+    void Oneshot(uint8_t vec, uint64_t ms);
     void CalibrateTimer();
     uint64_t InitTimer();
 
-    void IPI(u32 id, u8 dat);
+    void IPI(uint32_t id, uint32_t dat);
     void IPIAll(uint32_t lapic_id, uint32_t vector);
     void IPIOthers(uint32_t lapic_id, uint32_t vector);
 }

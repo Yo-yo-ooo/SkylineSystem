@@ -35,16 +35,16 @@ namespace EasySTL {
 
         void push_back(T& Data) {
             this->push_back_check_realloc();
-            kinfoln("%X",EasySTL::addressof(this->List[this->Position]));
-            kinfoln("%X",EasySTL::addressof(Data));
-            kinfoln("Sizeof T:%d",sizeof(T));
+            //kinfoln("%X",EasySTL::addressof(this->List[this->Position]));
+            //kinfoln("%X",EasySTL::addressof(Data));
+            //kinfoln("Sizeof T:%d",sizeof(T));
             VMemcpy(
                 (void*)&this->List[this->Position],
                 &Data,
                 sizeof(T)
             );
             this->Position++;
-            kinfoln("Memcpy OK!");
+            //kinfoln("Memcpy OK!");
             return;
         }
 

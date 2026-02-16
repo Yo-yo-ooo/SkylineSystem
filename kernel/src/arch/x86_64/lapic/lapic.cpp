@@ -8,7 +8,7 @@ static volatile uint64_t lapic_address = 0;
 
 namespace LAPIC{
 
-    u64 apic_ticks = 0;
+    uint64_t apic_ticks = 0;
     bool x2apic = false;
 
 
@@ -26,7 +26,7 @@ namespace LAPIC{
         LAPIC::Write(0xF0, LAPIC::Read(0xF0) | 0x100); // Spurious interrupt vector
     }
 
-    void Write(u32 reg, u32 val) {
+    void Write(uint32_t reg, uint64_t val) {
         if (x2apic) {
             wrmsr((reg >> 4) + 0x800, val);
             return;
@@ -36,7 +36,7 @@ namespace LAPIC{
         return;
     }
 
-    u32 Read(u32 reg) {
+    uint64_t Read(uint32_t reg) {
         if (x2apic) {
             reg = (reg >> 4) + 0x800;
             return rdmsr(reg);
@@ -46,7 +46,7 @@ namespace LAPIC{
     }
 
 
-    u32 GetID() {
+    uint32_t GetID() {
         if(!x2apic) return LAPIC::Read(0x0020) >> LAPIC_ICDESTSHIFT;
         else return LAPIC::Read(0x0020);
     }
@@ -61,7 +61,7 @@ namespace LAPIC{
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
     }
 
-    void Oneshot(u8 vec, u64 ms) {
+    void Oneshot(uint8_t vec, uint64_t ms) {
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
         LAPIC::Write(LAPIC_TIMER_INITCNT, 0);
         LAPIC::Write(LAPIC_TIMER_DIV,0x3);
@@ -74,11 +74,11 @@ namespace LAPIC{
         LAPIC::Write(LAPIC_TIMER_INITCNT, 0xFFFFFFFF);
         PIT::Sleep(1); // 1 ms
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
-        u32 ticks = 0xFFFFFFFF - LAPIC::Read(LAPIC_TIMER_CURCNT);
+        uint32_t ticks = 0xFFFFFFFF - LAPIC::Read(LAPIC_TIMER_CURCNT);
         return ticks;
     }
 
-    void IPI(u32 id, u8 dat) {
+    void IPI(uint32_t id, uint32_t dat) {
         if (x2apic) {
             LAPIC::Write(0x300, ((uint64_t)id << 32) | dat);
             return;
