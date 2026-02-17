@@ -98,7 +98,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
         /// Note that __restrict makes sense (otherwise compiler will reload data from memory
         /// instead of using the value of registers due to possible aliasing).
         char* __restrict dst = reinterpret_cast<char* __restrict>(dest);
-        const char* __restrict src = reinterpret_cast<const char* __restrict>(src);
+        const char* __restrict src_ = reinterpret_cast<const char* __restrict>(src);
 
         /// Standard memcpy returns the original value of dst. It is rarely used but we have to do it.
         /// If you use memcpy with small but non-constant sizes, you can call inline_memcpy directly
@@ -116,25 +116,25 @@ void _memcpy(void* src, void* dest, uint64_t size)
             if (size >= 8)
             {
                 /// Chunks of 8..16 bytes.
-                memcpy_fscpuf(dst + size - 8, src + size - 8, 8);
-                memcpy_fscpuf(dst, src, 8);
+                memcpy_fscpuf(dst + size - 8, src_ + size - 8, 8);
+                memcpy_fscpuf(dst, src_, 8);
             }
             else if (size >= 4)
             {
                 /// Chunks of 4..7 bytes.
-                memcpy_fscpuf(dst + size - 4, src + size - 4, 4);
-                memcpy_fscpuf(dst, src, 4);
+                memcpy_fscpuf(dst + size - 4, src_ + size - 4, 4);
+                memcpy_fscpuf(dst, src_, 4);
             }
             else if (size >= 2)
             {
                 /// Chunks of 2..3 bytes.
-                memcpy_fscpuf(dst + size - 2, src + size - 2, 2);
-                memcpy_fscpuf(dst, src, 2);
+                memcpy_fscpuf(dst + size - 2, src_ + size - 2, 2);
+                memcpy_fscpuf(dst, src_, 2);
             }
             else if (size >= 1)
             {
                 /// A single byte.
-                *dst = *src;
+                *dst = *src_;
             }
             /// No bytes remaining.
         }
@@ -146,16 +146,16 @@ void _memcpy(void* src, void* dest, uint64_t size)
                 /// Medium size, not enough for full loop unrolling.
 
                 /// We will copy the last 16 bytes.
-                _mm_storeu_si128(reinterpret_cast<__m128i *>(dst + size - 16), _mm_loadu_si128(reinterpret_cast<const __m128i *>(src + size - 16)));
+                _mm_storeu_si128(reinterpret_cast<__m128i *>(dst + size - 16), _mm_loadu_si128(reinterpret_cast<const __m128i *>(src_ + size - 16)));
 
                 /// Then we will copy every 16 bytes from the beginning in a loop.
                 /// The last loop iteration will possibly overwrite some part of already copied last 16 bytes.
                 /// This is Ok, similar to the code for small sizes above.
                 while (size > 16)
                 {
-                    _mm_storeu_si128(reinterpret_cast<__m128i *>(dst), _mm_loadu_si128(reinterpret_cast<const __m128i *>(src)));
+                    _mm_storeu_si128(reinterpret_cast<__m128i *>(dst), _mm_loadu_si128(reinterpret_cast<const __m128i *>(src_)));
                     dst += 16;
-                    src += 16;
+                    src_ += 16;
                     size -= 16;
                 }
             }
@@ -169,29 +169,29 @@ void _memcpy(void* src, void* dest, uint64_t size)
                 /// If not aligned - we will copy first 16 bytes with unaligned stores.
                 if (padding > 0)
                 {
-                    __m128i head = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src));
+                    __m128i head = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_));
                     _mm_storeu_si128(reinterpret_cast<__m128i*>(dst), head);
                     dst += padding;
-                    src += padding;
+                    src_ += padding;
                     size -= padding;
                 }
 
                 /// Aligned unrolled copy. We will use half of available SSE registers.
-                /// It's not possible to have both src and dst aligned.
+                /// It's not possible to have both src_ and dst aligned.
                 /// So, we will use aligned stores and unaligned loads.
                 __m128i c0, c1, c2, c3, c4, c5, c6, c7;
 
                 while (size >= 128)
                 {
-                    c0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src) + 0);
-                    c1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src) + 1);
-                    c2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src) + 2);
-                    c3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src) + 3);
-                    c4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src) + 4);
-                    c5 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src) + 5);
-                    c6 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src) + 6);
-                    c7 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src) + 7);
-                    src += 128;
+                    c0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 0);
+                    c1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 1);
+                    c2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 2);
+                    c3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 3);
+                    c4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 4);
+                    c5 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 5);
+                    c6 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 6);
+                    c7 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 7);
+                    src_ += 128;
                     _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 0), c0);
                     _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 1), c1);
                     _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 2), c2);
@@ -264,9 +264,9 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 #elif defined(__x86_64__) // For General x86_64 cpu(DIDn't support >=sse4.2)
     if(/* smp_started != false &&  */((KernelInited == false) || (size > 1024 * 8))){
         uint64_t Loop128C = size / 128;
-        __m128i val = _mm_set1_epi8((char)value);
+        __m128i val = reinterpret_cast<__m128i>(_mm_set1_epi8((char)value));
         for(uint64_t i = 0; i < Loop128C; i++){
-            _mm_store_si128((__m128i*)((uint64_t)dest + i * 16), val);
+            _mm_store_si128(reinterpret_cast<__m128i*>((uint64_t)dest + i * 16), val);
             size -= 16;
         }
         /* if(size != 0){
