@@ -43,18 +43,6 @@ extern "C" void NEON_MEMCPY(void* dst, const void* src, size_t size);
 extern "C" void NEON_MEMSET(void* dst, unsigned char value, size_t size);
 #endif
 
-void * __memcpy_fpx86 (void *dest, const void *src, size_t len)
-{
-    const char *s = (char*)src;
-    char *d = (char*)dest;
-
-    while (len--)
-    {
-        *d++ = *s++;
-    }
-
-    return dest;
-}
 
 void _memcpy_128(void* src, void* dest, size_t size)
 {
@@ -119,20 +107,20 @@ void _memcpy(void* src, void* dest, uint64_t size)
             if (size >= 8)
             {
                 /// Chunks of 8..16 bytes.
-                __memcpy_fpx86(dst + size - 8, src + size - 8, 8);
-                __memcpy_fpx86(dst, src, 8);
+                memcpy_fscpuf(dst + size - 8, src + size - 8, 8);
+                memcpy_fscpuf(dst, src, 8);
             }
             else if (size >= 4)
             {
                 /// Chunks of 4..7 bytes.
-                __memcpy_fpx86(dst + size - 4, src + size - 4, 4);
-                __memcpy_fpx86(dst, src, 4);
+                memcpy_fscpuf(dst + size - 4, src + size - 4, 4);
+                memcpy_fscpuf(dst, src, 4);
             }
             else if (size >= 2)
             {
                 /// Chunks of 2..3 bytes.
-                __memcpy_fpx86(dst + size - 2, src + size - 2, 2);
-                __memcpy_fpx86(dst, src, 2);
+                memcpy_fscpuf(dst + size - 2, src + size - 2, 2);
+                memcpy_fscpuf(dst, src, 2);
             }
             else if (size >= 1)
             {
@@ -214,7 +202,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
         }
         if(KernelInited == false)
             return;
-        //return ret;
+        goto end_deal;
     }
 #elif defined(__aarch64__)
     NEON_MEMCPY(dest,src,size);
@@ -286,6 +274,9 @@ void _memset(void* dest, uint8_t value, uint64_t size)
         }
         //return; */
         memset_fscpuf(dest,(const int32_t)value,size);
+        if(KernelInited == false)
+            return;
+        goto end_deal;
     }
 
 #elif defined(__aarch64__)
