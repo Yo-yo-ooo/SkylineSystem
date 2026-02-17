@@ -111,8 +111,8 @@ void smp_init() {
     init_thread->pagemap = kernel_pagemap;
     Schedule::Useless::AddThread(bsp_cpu, init_thread);
     bsp_cpu->current_thread = init_thread;
-    sse_enable();
-    //simd_cpu_init(bsp_cpu);
+    //sse_enable();
+    simd_cpu_init(bsp_cpu);
     kinfo("Detected %zu CPUs.\n", mp_response->cpu_count);
     for (uint64_t i = 0; i < mp_response->cpu_count; i++) {
         struct limine_mp_info *mp_info = mp_response->cpus[i];

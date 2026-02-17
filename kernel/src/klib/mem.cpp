@@ -28,16 +28,17 @@
 #include <arch/x86_64/schedule/sched.h>
 #include <klib/serial.h>
 #pragma GCC target("sse2")
+#include <emmintrin.h>
+
+typedef char xmm_t __attribute__((__vector_size__(16), __aligned__(1)));
 #ifdef __AVX512F__
-#pragma GCC target("avx512f,avx512bw,avx512dq,avx512vl")
+#pragma GCC target("avx512f")
 #elif defined(__AVX2__)
 #pragma GCC target("avx2")
 #endif
 #elif defined(__x86_64__)
-#pragma GCC target("sse2")
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/schedule/sched.h>
-#include <emmintrin.h>
 #elif defined(__aarch64__)
 extern "C" void NEON_MEMCPY(void* dst, const void* src, size_t size);
 extern "C" void NEON_MEMSET(void* dst, unsigned char value, size_t size);
@@ -84,7 +85,15 @@ void _memcpy(void* src, void* dest, uint64_t size)
     }
 #elif defined(__x86_64__)
 
-    if(/* smp_started != false &&  */((KernelInited == false) || (size > 1024 * 8))){
+    
+#elif defined(__aarch64__)
+    NEON_MEMCPY(dest,src,size);
+    if(KernelInited == false)
+        return;
+#endif
+
+#ifdef __x86_64__
+    if(((KernelInited == false) || (size > 1024 * 8))){
         /// We will use pointer arithmetic, so char pointer will be used.
         /// Note that __restrict makes sense (otherwise compiler will reload data from memory
         /// instead of using the value of registers due to possible aliasing).
@@ -204,13 +213,6 @@ void _memcpy(void* src, void* dest, uint64_t size)
             return;
         goto end_deal;
     }
-#elif defined(__aarch64__)
-    NEON_MEMCPY(dest,src,size);
-    if(KernelInited == false)
-        return;
-#endif
-
-#ifdef __x86_64__
     if(KernelInited && size > 1024 * 8){
     end_deal:
         if(cpu->SupportXSAVE){

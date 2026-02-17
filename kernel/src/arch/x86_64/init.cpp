@@ -66,7 +66,7 @@ void __init x86_64_init(void){
     outb(0x22,0x70);
     outb(0x23,0x01);
     kinfoln("ENABLED ICMR!");
-    simd_cpu_init(get_cpu(0));
+    //simd_cpu_init(get_cpu(0));
     InitFunc("LAPIC",LAPIC::Init());
     InitFunc("IOAPIC",IOAPIC::Init());
     InitFunc("PIT & RTC",PIT::InitPIT());
