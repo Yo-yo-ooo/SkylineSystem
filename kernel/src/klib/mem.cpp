@@ -261,31 +261,14 @@ void _memset(void* dest, uint8_t value, uint64_t size)
             return;
         goto end_deal;
     }
-#elif defined(__x86_64__) // For General x86_64 cpu(DIDn't support >=sse4.2)
-    if(/* smp_started != false &&  */((KernelInited == false) || (size > 1024 * 8))){
-        uint64_t Loop128C = size / 128;
-        __m128i val = reinterpret_cast<__m128i>(_mm_set1_epi8((char)value));
-        for(uint64_t i = 0; i < Loop128C; i++){
-            _mm_store_si128(reinterpret_cast<__m128i*>((uint64_t)dest + i * 16), val);
-            size -= 16;
-        }
-        /* if(size != 0){
-            char* d = (char*)dest;
-            for (uint64_t i = 0; i < size; i++)
-                *(d++) = value;
-        }
-        //return; */
-        memset_fscpuf(dest,(const int32_t)value,size);
-        if(KernelInited == false)
-            return;
-        goto end_deal;
-    }
 
 #elif defined(__aarch64__)
     NEON_MEMSET(dest,value,size);
     return;
 #endif
 #ifdef __x86_64__
+    // For General x86_64 cpu(DIDn't support >=sse4.2)
+    //TODO: memset sse VER < sse 4.2
     if(KernelInited && size > 1024 * 8){
     end_deal:
         if(cpu->SupportXSAVE){
