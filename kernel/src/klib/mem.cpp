@@ -92,10 +92,11 @@ void _memcpy(void* src, void* dest, uint64_t size)
         AVX_memcpy(dest,src,size);
         if(KernelInited == false)
             return;
+        goto end_deal;
     }
 #elif defined(__x86_64__)
 
-    if(smp_started != false && ((KernelInited == false) || (size > 1024 * 8))){
+    if(/* smp_started != false &&  */((KernelInited == false) || (size > 1024 * 8))){
         /// We will use pointer arithmetic, so char pointer will be used.
         /// Note that __restrict makes sense (otherwise compiler will reload data from memory
         /// instead of using the value of registers due to possible aliasing).
@@ -223,6 +224,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
 
 #ifdef __x86_64__
     if(KernelInited && size > 1024 * 8){
+    end_deal:
         if(cpu->SupportXSAVE){
             asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
             if(fx_area != nullptr)
@@ -267,21 +269,23 @@ void _memset(void* dest, uint8_t value, uint64_t size)
         AVX_memset(dest,value,size);
         if(KernelInited == false)
             return;
+        goto end_deal;
     }
 #elif defined(__x86_64__) // For General x86_64 cpu(DIDn't support >=sse4.2)
-    if(smp_started != false && ((KernelInited == false) || (size > 1024 * 8))){
+    if(/* smp_started != false &&  */((KernelInited == false) || (size > 1024 * 8))){
         uint64_t Loop128C = size / 128;
         __m128i val = _mm_set1_epi8((char)value);
         for(uint64_t i = 0; i < Loop128C; i++){
             _mm_store_si128((__m128i*)((uint64_t)dest + i * 16), val);
             size -= 16;
         }
-        if(size != 0){
+        /* if(size != 0){
             char* d = (char*)dest;
             for (uint64_t i = 0; i < size; i++)
                 *(d++) = value;
         }
-        //return;
+        //return; */
+        memset_fscpuf(dest,(const int32_t)value,size);
     }
 
 #elif defined(__aarch64__)
@@ -290,6 +294,7 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 #endif
 #ifdef __x86_64__
     if(KernelInited && size > 1024 * 8){
+    end_deal:
         if(cpu->SupportXSAVE){
             asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
             if(fx_area != nullptr)
