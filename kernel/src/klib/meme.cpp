@@ -376,7 +376,7 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
 
 // TODO: Fix
 #define DECL_MEM_CMP_FUNC(type)                                                \
-    func_optimize(3) static inline int                                      \
+    func_optimize(3) static inline int32_t                                      \
     VAR_CONCAT(_memcmp_, type)(const void *left,                               \
                                const void *right,                              \
                                size_t len,                                     \
@@ -390,7 +390,7 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
                 const type right_ch = *(const type *)right;                    \
                                                                                \
                 if (left_ch != right_ch) {                                     \
-                    return (int)(left_ch - right_ch);                          \
+                    return (int32_t)(left_ch - right_ch);                          \
                 }                                                              \
                                                                                \
                 left += sizeof(type);                                          \
@@ -406,7 +406,7 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
         return 0;                                                              \
     }
 
-func_optimize(3) static inline int
+func_optimize(3) static inline int32_t
 _memcmp_uint64_t(const void *left,
                  const void *right,
                  size_t len,
@@ -435,11 +435,11 @@ _memcmp_uint64_t(const void *left,
                               : "memory");
 
                 if (left_ch != right_ch) {
-                    return (int)(left_ch - right_ch);
+                    return (int32_t)(left_ch - right_ch);
                 }
 
                 if (left_ch_2 != right_ch_2) {
-                    return (int)(left_ch_2 - right_ch_2);
+                    return (int32_t)(left_ch_2 - right_ch_2);
                 }
 
                 len -= sizeof(uint64_t) * 2;
@@ -462,7 +462,7 @@ _memcmp_uint64_t(const void *left,
             const uint64_t right_ch = *(const uint64_t *)right;
 
             if (left_ch != right_ch) {
-                return (int)(left_ch - right_ch);
+                return (int32_t)(left_ch - right_ch);
             }
 
             len -= sizeof(uint64_t);
@@ -503,3 +503,73 @@ int32_t memcmp_fscpuf(const void *left, const void *right, size_t len) {
     res = _memcmp_uint8_t(left, right, len, &left, &right, &len);
     return res;
 }
+
+#ifdef __x86_64__
+#include <emmintrin.h>
+static int32_t __sse_memcmp_tail(const uint16_t *a, const uint16_t *b, int32_t len)
+{
+    switch(len)
+    {
+    case 8:
+        if(*a++ != *b++) return -1;
+    case 7:
+        if(*a++ != *b++) return -1;
+    case 6:
+        if(*a++ != *b++) return -1;
+    case 5:
+        if(*a++ != *b++) return -1;
+    case 4:
+        if(*a++ != *b++) return -1;
+    case 3:
+        if(*a++ != *b++) return -1;
+    case 2:
+        if(*a++ != *b++) return -1;
+    case 1:
+        if(*a != *b) return -1;
+    }
+    return 0;
+}
+#pragma GCC target("sse2")
+int32_t __sse_memcmp(const uint16_t *a, const uint16_t *b, int32_t half_words)
+{
+    int32_t i = 0;
+    int32_t len = half_words;
+    int32_t aligned_a = 0, aligned_b = 0;
+    if(!len) return 0;
+    if(!a && !b) return 0;
+    if(!a || !b) return -1;
+    if( (unsigned long) a & 1 ) return -1;
+    if( (unsigned long) b & 1 ) return -1;
+    aligned_a = ( (unsigned long)a & (sizeof(__m128i)-1) );
+    aligned_b = ( (unsigned long)b & (sizeof(__m128i)-1) );
+    if(aligned_a != aligned_b) return -1; /* both has to be unaligned on the same boundary or aligned */
+    if(aligned_a)
+    {
+        while( len && 
+               ( (unsigned long) a & ( sizeof(__m128i)-1) ) )
+        {
+            if(*a++ != *b++) return -1;
+            --len; 
+        }
+    }
+    if(!len) return 0;
+    while( len && !(len & 7 ) )
+    {
+        __m128i x = _mm_load_si128( (__m128i*)&a[i]);
+        __m128i y = _mm_load_si128( (__m128i*)&b[i]);
+        /*
+         * _mm_cmpeq_epi16 returns 0xffff for each of the 8 half words when it matches
+         */
+        __m128i cmp = _mm_cmpeq_epi16(x, y);
+        /* 
+         * _mm_movemask_epi8 creates a 16 bit mask with the MSB for each of the 16 bytes of cmp
+         */
+        if ( (uint16_t)_mm_movemask_epi8(cmp) != 0xffffU) return -1; 
+        len -= 8;
+        i += 8;
+    }
+    return __sse_memcmp_tail(&a[i], &b[i], len);
+}
+#pragma GCC pop_options
+
+#endif

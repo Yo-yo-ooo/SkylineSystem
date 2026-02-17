@@ -1,4 +1,4 @@
-find ./kernel/src/arch/aarch64 -type f \( -name "*.c" -o -name "*.cpp" \) | while read -r file; do
+find ./kernel/include/partition -type f \( -name "*.h" -o -name "*.hpp" \) | while read -r file; do
     filename=$(basename "$file")
     # 创建一个临时文件，将模板中的 %FILENAME% 替换为实际文件名
     sed "s/%FILENAME%/$filename/g" a.txt > header.tmp
