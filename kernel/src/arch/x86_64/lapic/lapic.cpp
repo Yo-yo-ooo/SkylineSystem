@@ -49,7 +49,8 @@ namespace LAPIC{
 
     void Write(uint32_t reg, uint64_t val) {
         if (x2apic) {
-            wrmsr((reg >> 4) + 0x800, val);
+            reg = (reg >> 4) + 0x800;
+            wrmsr(reg, val);
             return;
         }
         uint64_t addr = lapic_address + reg;

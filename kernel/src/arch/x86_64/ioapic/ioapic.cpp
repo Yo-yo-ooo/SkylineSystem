@@ -38,10 +38,8 @@ namespace IOAPIC{
     void Init(){
         ioapic_address = HIGHER_HALF((uint64_t)madt_ioapic->ioapic_addr);
         ASSERT(PHYSICAL(ioapic_address));
-        kinfoln("HIT!");
         uint32_t value = IOAPIC::Read(IOAPIC_VER);
         uint32_t count = ((value >> 16) & 0xFF) + 1;
-        kinfoln("HIT!2");
         kinfoln("IOAPIC COUNT:%d",count);
         for (uint32_t i = 0; i < count; i++) {
             uint32_t low = IOAPIC::Read(REDTBL(i));
