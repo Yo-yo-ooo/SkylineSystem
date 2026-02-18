@@ -47,7 +47,7 @@ namespace PIT
         freq = GetFrequency();
         //irq_register(0, PIT::Handler);
         idt_install_irq(0,PIT::Handler);
-        //Inited = true;
+        Inited = true;
         RTC::InitRTC();
         RTC::read_rtc();
         RTC_INIT_DAY = RTC::Day;
@@ -94,7 +94,7 @@ namespace PIT
             return;
         uint64_t endTime = TimeSinceBootMS() + milliseconds;
         while (TimeSinceBootMS() < endTime)
-            asm("hlt");
+            asm("pause");
     }
 
     void Sleepd(uint64_t seconds)

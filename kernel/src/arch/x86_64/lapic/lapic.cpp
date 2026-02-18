@@ -105,6 +105,7 @@ namespace LAPIC{
             LAPIC::Write(0x300, ((uint64_t)id << 32) | dat);
             return;
         }
+        LAPIC::WaitICR(); // 发送前必须等待上一个完成
         LAPIC::Write(LAPIC_ICRHI, id << LAPIC_ICDESTSHIFT);
         LAPIC::Write(LAPIC_ICRLO, dat);
     }
@@ -113,8 +114,16 @@ namespace LAPIC{
         LAPIC::IPI(lapic_id, vector | 0x80000);
     }
 
+    void WaitICR() {
+        if (x2apic) return; // x2APIC 不需要检查 Busy 位
+        // 检查 ICR_LOW (0x300) 的第 12 位 (Delivery Status)
+        while (LAPIC::Read(0x300) & (1 << 12)) {
+            asm volatile("pause"); 
+        }
+    }
+
     void IPIOthers(uint32_t lapic_id, uint32_t vector) {
-        LAPIC::IPI(lapic_id, vector | 0xC0000);
+        LAPIC::IPI(lapic_id, vector | 0xC4000);
     }
 
 }

@@ -99,6 +99,7 @@ namespace LAPIC{
 
     void Write(uint32_t reg, uint64_t val);
     uint64_t Read(uint32_t reg);
+    void WaitICR();
     uint32_t GetID();
     void EOI();
 
