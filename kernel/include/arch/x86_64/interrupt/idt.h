@@ -28,7 +28,7 @@
 #include <stddef.h>
 #include <pdef.h>
 
-typedef struct context_t{
+PACK(typedef struct context_t{
     uint64_t r15;
     uint64_t r14;
     uint64_t r13;
@@ -51,7 +51,7 @@ typedef struct context_t{
     uint64_t rflags;
     uint64_t rsp;
     uint64_t ss;
-} context_t;
+})context_t;
 
 typedef context_t registers;
 
