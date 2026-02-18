@@ -91,8 +91,8 @@ namespace Schedule{
         uint8_t Demote(cpu_t *cpu, thread_t *thread) {
             if (thread->priority == THREAD_QUEUE_CNT - 1)
                 return 1;
-            Serial::Writelnf("\n\033[38;2;0;255;255m<@%s>:\033[0mDemoted thread %d to queue %d.\n"
-                ,__FUNCTION__,thread->id, thread->priority);
+            //Serial::Writelnf("\n\033[38;2;0;255;255m<@%s>:\033[0mDemoted thread %d to queue %d.\n"
+            //    ,__FUNCTION__,thread->id, thread->priority);
             thread_queue_t *old_queue = &cpu->thread_queues[thread->priority];
             thread->priority++;
             thread_queue_t *new_queue = &cpu->thread_queues[thread->priority];
@@ -202,8 +202,6 @@ namespace Schedule{
         idt_install_irq(17, (void*)Schedule::Useless::Switch);
         idt_set_ist(SCHED_VEC, 1);
         idt_set_ist(SCHED_VEC + 1, 1);
-        /* sched_proclist = (procl_t*)kmalloc(procl_count * sizeof(procl_t));
-        _memset(sched_proclist,0,procl_count * sizeof(procl_t)); */
     }
     
     void Install(){
@@ -228,20 +226,7 @@ namespace Schedule{
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         _memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
         _memset(proc->fd_table, 0, 256 * 8);
-        /* proc->fd_table[0] = fd_open("/dev/pts0", O_RDONLY); */
-        /* proc->fd_table[1] = fd_open("/dev/pts0", O_WRONLY); */
-        /* proc->fd_table[2] = fd_open("/dev/pts0", O_WRONLY); */
-        /* proc->fd_table[3] = fd_open("/dev/serial", O_WRONLY); */
         proc->fd_count = 4;
-        /* if(proc->id > procl_count){
-            size_t size;
-            size_t olds = procl_count * sizeof(procl_t);
-            procl_count += 256;
-            size = procl_count * sizeof(procl_t);
-            krealloc(sched_proclist,size);
-            _memset(sched_proclist + olds,0,olds * sizeof(procl_t));
-        }
-        sched_proclist[proc->id].proc = proc; */
         return proc;
     }
 
