@@ -1,5 +1,5 @@
 ## There is some general commit message 
-## I recommand you use it 
+I recommand you use it 
 
 | message | describe |
 |------|------|
