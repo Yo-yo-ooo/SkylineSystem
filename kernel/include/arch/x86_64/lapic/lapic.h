@@ -104,7 +104,7 @@ namespace LAPIC{
     void EOI();
 
     void StopTimer();
-    void Oneshot(uint8_t vec, uint64_t ms);
+    void Oneshot(uint32_t vec, uint64_t ms);
     void CalibrateTimer();
     uint64_t InitTimer();
 

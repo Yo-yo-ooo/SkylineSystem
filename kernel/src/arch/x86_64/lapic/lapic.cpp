@@ -83,7 +83,7 @@ namespace LAPIC{
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
     }
 
-    void Oneshot(uint8_t vec, uint64_t ms) {
+    void Oneshot(uint32_t vec, uint64_t ms) {
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
         LAPIC::Write(LAPIC_TIMER_INITCNT, 0);
         LAPIC::Write(LAPIC_TIMER_DIV,0x3);
@@ -123,7 +123,7 @@ namespace LAPIC{
     }
 
     void IPIOthers(uint32_t lapic_id, uint32_t vector) {
-        LAPIC::IPI(lapic_id, vector | 0xC4000);
+        LAPIC::IPI(lapic_id, vector | 0xC0000);
     }
 
 }
