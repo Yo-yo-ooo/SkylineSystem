@@ -123,7 +123,7 @@ namespace LAPIC{
     }
 
     void IPIOthers(uint32_t lapic_id, uint32_t vector) {
-        LAPIC::IPI(lapic_id, vector | 0xC0000);
+        LAPIC::IPI(lapic_id, vector | 0xC4000);
     }
 
 }

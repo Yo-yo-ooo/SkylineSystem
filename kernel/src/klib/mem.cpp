@@ -29,7 +29,6 @@
 #include <klib/serial.h>
 #pragma GCC target("sse2")
 #include <emmintrin.h>
-
 typedef char xmm_t __attribute__((__vector_size__(16), __aligned__(1)));
 #ifdef __AVX512F__
 #pragma GCC target("avx512f")
@@ -44,22 +43,14 @@ extern "C" void NEON_MEMCPY(void* dst, const void* src, size_t size);
 extern "C" void NEON_MEMSET(void* dst, unsigned char value, size_t size);
 #endif
 
-
-void _memcpy_128(void* src, void* dest, size_t size)
-{
-	auto _src = (__uint128_t*)src;
-	auto _dest = (__uint128_t*)dest;
-	size >>= 4; // size /= 16
-	while (size--)
-		*(_dest++) = *(_src++);
-}
-
 void _memcpy(void* src, void* dest, uint64_t size)
 {
 #ifdef __x86_64__
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
+    if(cpu == nullptr)
+        goto deal_kfinited;
     if(th != nullptr)
         fx_area = th->fx_area;
     if(KernelInited && size > 1024 * 8){
@@ -94,6 +85,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
 
 #ifdef __x86_64__
     if(((KernelInited == false) || (size > 1024 * 8))){
+    deal_kfinited:
         /// We will use pointer arithmetic, so char pointer will be used.
         /// Note that __restrict makes sense (otherwise compiler will reload data from memory
         /// instead of using the value of registers due to possible aliasing).
@@ -237,6 +229,8 @@ void _memset(void* dest, uint8_t value, uint64_t size)
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
+    if(cpu == nullptr)
+        goto deal_kfinited;
     if(th != nullptr)
         fx_area = th->fx_area;
     
@@ -283,16 +277,18 @@ void _memset(void* dest, uint8_t value, uint64_t size)
         return;
     }
 #endif
-
+deal_kfinited:
 	memset_fscpuf(dest,(const int32_t)value,size);
 }
 
 
 void _memmove(void* dest,void* src, uint64_t size) {
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMMOVE) && NOT_COMPILE_X86MEM == 0
-    cpu_t *cpu = this_cpu();
+    cpu_t *cpu = this_cpu();    
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
+    if(cpu == nullptr)
+        goto deal_kfinited;
     if(th != nullptr)
         fx_area = th->fx_area;
     
@@ -324,6 +320,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
         }
     }
 #endif
+deal_kfinited:
 	memmove_fscpuf(dest,src,size);
 }
 
@@ -333,6 +330,8 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
+    if(cpu == nullptr)
+        goto deal_kfinited;
     if(th != nullptr)
         fx_area = th->fx_area;
     
@@ -362,6 +361,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
         }
     }
 #endif
+deal_kfinited:
     return memcmp_fscpuf(buffer1,buffer2,count);
 }
 
