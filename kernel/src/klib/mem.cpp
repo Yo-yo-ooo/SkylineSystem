@@ -105,6 +105,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
         /// Example: to copy 5 bytes [0, 1, 2, 3, 4] we will copy tail [1, 2, 3, 4] first and then head [0, 1, 2, 3].
         if (size <= 16)
         {
+#define memcpy_fscpuf(a,b,c) _memcpy_fscpuf(b,a,c)
             if (size >= 8)
             {
                 /// Chunks of 8..16 bytes.
@@ -219,7 +220,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
         return;
     }
 #endif
-	memcpy_fscpuf(dest,src,size);
+	_memcpy_fscpuf(src,dest,size);
 }
 
 
@@ -278,7 +279,7 @@ void _memset(void* dest, uint8_t value, uint64_t size)
     }
 #endif
 deal_kfinited:
-	memset_fscpuf(dest,(const int32_t)value,size);
+	_memset_fscpuf(dest,value,size);
 }
 
 
@@ -321,7 +322,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
     }
 #endif
 deal_kfinited:
-	memmove_fscpuf(dest,src,size);
+	_memmove_fscpuf(src,dest,size);
 }
 
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
@@ -362,7 +363,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
     }
 #endif
 deal_kfinited:
-    return memcmp_fscpuf(buffer1,buffer2,count);
+    return _memcmp_fscpuf(buffer1,buffer2,count);
 }
 
 #ifdef __x86_64__
