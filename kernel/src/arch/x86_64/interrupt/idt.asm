@@ -48,7 +48,7 @@ int_stub%+%1:
     call idt_exception_handler
 
     popaq
-    add rsp, 16 ; pop int32_t number and error code.
+    add rsp, 16 ; pop int number and error code.
     iretq
 %endmacro
 
@@ -62,7 +62,7 @@ int_stub%+%1:
     call idt_exception_handler
 
     popaq
-    add rsp, 16 ; pop int32_t number and error code.
+    add rsp, 16 ; pop int number and error code.
     iretq
 %endmacro
 
@@ -76,7 +76,7 @@ isr_err_stub i
 %assign i i+1
 %endrep
 
-[section .data]
+section .data
 
 idt_int_table:
     %assign i 0

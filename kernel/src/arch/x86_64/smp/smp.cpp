@@ -129,7 +129,7 @@ void smp_init() {
 }
 
 cpu_t *this_cpu() {
-    if (!smp_started) return NULL;
+    if (!smp_started) return nullptr;
     return smp_cpu_list[LAPIC::GetID()];
 }
 
