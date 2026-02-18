@@ -5,7 +5,6 @@
 > If Build Failed, please open an issue or contact me
 > The General Build Faild reason is you don't have install the required dependencies <br>
 > [OR] You are building for unsupported architecture <br>
-> [OR] The 'GNUmakefile' file name fail (Try to rename as 'GNUMakefile')
 ## How to build
 
 > [!IMPORTANT]

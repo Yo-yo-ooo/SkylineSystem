@@ -216,7 +216,7 @@ override HEADER_DEPS := $(addprefix obj-$(KARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S
 all: bin-$(KARCH)/$(OUTPUT)
 
 # Link rules for the final executable.
-bin-$(KARCH)/$(OUTPUT): GNUmakefile linker-$(KARCH).ld $(OBJ)
+bin-$(KARCH)/$(OUTPUT): Makefile linker-$(KARCH).ld $(OBJ)
 	@mkdir -p "$$(dirname $@)"
 	@echo LD $<
 ifeq ($(NOT_COMPILE_X86MEM),0)
@@ -237,26 +237,26 @@ endif
 -include $(HEADER_DEPS)
 
 # Compilation rules for *.c files.
-obj-$(KARCH)/%.c.o: src/%.c GNUmakefile
+obj-$(KARCH)/%.c.o: src/%.c Makefile
 	echo C $<
 	mkdir -p "$$(dirname $@)"
 	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
-obj-$(KARCH)/%.S.o: src/%.S GNUmakefile
+obj-$(KARCH)/%.S.o: src/%.S Makefile
 	echo GAS $<
 	mkdir -p "$$(dirname $@)"
 	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 
-obj-$(KARCH)/%.cpp.o: src/%.cpp GNUmakefile
+obj-$(KARCH)/%.cpp.o: src/%.cpp Makefile
 	echo C++ $<
 	mkdir -p "$$(dirname $@)"
 	$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 ifeq ($(KARCH),x86_64)
 # Compilation rules for *.asm (nasm) files.
-obj-$(KARCH)/%.asm.o: src/%.asm GNUmakefile
+obj-$(KARCH)/%.asm.o: src/%.asm Makefile
 	mkdir -p "$$(dirname $@)"
 	nasm $(KNASMFLAGS) $< -o $@
 endif
