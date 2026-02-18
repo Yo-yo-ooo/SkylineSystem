@@ -36,7 +36,7 @@ static volatile struct limine_mp_request limine_mp = {
     .revision = 0
 };
 
-cpu_t *smp_cpu_list[MAX_CPU];
+cpu_t *smp_cpu_list[MAX_CPU] = {nullptr};
 volatile spinlock_t smp_lock = 0;
 uint64_t started_count = 0;
 bool smp_started = false;
