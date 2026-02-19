@@ -22,11 +22,16 @@
 #include <klib/klib.h>
 #include <klib/kio.h>
 #include <conf.h>
+
+#ifdef __x86_64__
+#pragma GCC push_options
+#endif
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
 #include "../../../x86mem/x86mem.h"
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <klib/serial.h>
+
 #pragma GCC target("sse2")
 #include <emmintrin.h>
 typedef char xmm_t __attribute__((__vector_size__(16), __aligned__(1)));

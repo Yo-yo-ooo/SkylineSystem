@@ -30,9 +30,42 @@
 #include <arch/x86_64/vmm/vmm.h>
 #include <conf.h>
 #include <klib/klib.h>
+#include <klib/algorithm/stl/vector.h>
+#include <klib/algorithm/hmap.h>
+#include <klib/rnd.h>
+/* PCI::PCIDeviceHeader* pciDevices[PCI_DEVICE_MAX] = {0};
+uint32_t pciDeviceidx = 0; */
+volatile static struct hashmap *PCIDevMap = nullptr;
 
-PCI::PCIDeviceHeader* pciDevices[PCI_DEVICE_MAX] = {0};
-u8 pciDeviceidx = 0;
+PACK(typedef struct _MapIdent_32b{
+    uint8_t RSVD = 0;
+    uint8_t Class;
+    uint8_t SubClass;
+    uint8_t ProgIF;
+})_MapIdent_32b;
+
+typedef struct PCIDevMapS{
+    uint64_t PCIDevBaseAddr;
+    _MapIdent_32b mi;
+}PCIDevMapS;
+
+int32_t pdev_compare(const void *a, const void *b, void *udata) {
+    uint32_t va = *(volatile uint32_t*)&((const PCIDevMapS*)a)->mi;
+    uint32_t vb = *(volatile uint32_t*)&((const PCIDevMapS*)b)->mi;
+    
+    return (va < vb) ? -1 : (va > vb);
+}
+
+bool pdev_iter(const void *item, void *udata) {
+    return true;
+}
+
+uint64_t pdev_hash(const void *item, uint64_t seed0, uint64_t seed1) {
+    const PCIDevMapS *A = (PCIDevMapS*)item;
+    return hashmap_sip(&A->mi,4,seed0,seed1);
+}
+
+
 namespace PCI
 {
 
@@ -73,10 +106,10 @@ namespace PCI
                         device->Prog_IF = io_in8(PCI_PROG_IF);
                         device->SubClass = io_in8(PCI_SUBCLASS);
 
-                        if (pciDeviceidx > PCI_DEVICE_MAX) {
+                        /* if (pciDeviceidx > PCI_DEVICE_MAX) {
                             kwarn("PCI:add device full %d", pciDeviceidx);
                             return;
-                        }
+                        } */
                         //pciDevices[pciDeviceidx++] = device;
 
                         if(device->Class == 0x060400 || (device->Class & 0xFFFF00) == 0x060400){
@@ -97,9 +130,12 @@ namespace PCI
         //kinfoln("PCI HIT! 2");
 
         //_memset(pciDevices, 0, sizeof(PCI::PCIDeviceHeader) * 128);
-        for(uint8_t i = 0;i < PCI_LIST_MAX;i++)
+        /* for(uint8_t i = 0;i < PCI_LIST_MAX;i++)
             pciDevices[i] = {0}; 
-        pciDeviceidx = 0;
+        pciDeviceidx = 0; */
+
+        PCIDevMap = hashmap_new(sizeof(PCIDevMapS),256,RND::RandomInt(),RND::RandomInt(),
+            pdev_hash,pdev_compare,NULL,NULL);
         
 
         //kinfoln("PCI HIT! 3");
@@ -258,59 +294,43 @@ namespace PCI
             //renderer->Print(" / ");
         }
         kprintf("\n");
-
-        /* pciDevices[pciDeviceidx].BIST = pciDeviceHeader->BIST;
-        pciDevices[pciDeviceidx].CacheLineSize = pciDeviceHeader->CacheLineSize;
-        pciDevices[pciDeviceidx].Class = pciDeviceHeader->Class;
-        pciDevices[pciDeviceidx].Command = pciDeviceHeader->Command;
-        pciDevices[pciDeviceidx].Device_ID = pciDeviceHeader->Device_ID;
-        pciDevices[pciDeviceidx].HeaderType = pciDeviceHeader->HeaderType;
-        pciDevices[pciDeviceidx].LatencyTimer = pciDeviceHeader->LatencyTimer;
-        pciDevices[pciDeviceidx].Prog_IF = pciDeviceHeader->Prog_IF;
-        pciDevices[pciDeviceidx].Revision_ID = pciDeviceHeader->Revision_ID;
-        pciDevices[pciDeviceidx].Status = pciDeviceHeader->Status;
-        pciDevices[pciDeviceidx].SubClass = pciDeviceHeader->SubClass;
-        pciDevices[pciDeviceidx].Vendor_ID = pciDeviceHeader->Vendor_ID; */
-        pciDevices[pciDeviceidx] = pciDeviceHeader;
-
-#if PCI_PRINT_HEADER_INFORMATION == 1
-        kinfoln("   PCI DEV DESC BASE ADDR:0x%p",(uint64_t)pciDeviceHeader);
-        kinfoln("   PCI DEV HEADER TYPE:%d",pciDevices[pciDeviceidx]->HeaderType);
-        kinfoln("   PCI DEV LATENCY TIMER:%d",pciDevices[pciDeviceidx]->LatencyTimer);
-        kinfoln("   PCI DEV RIVISION ID:%d",pciDevices[pciDeviceidx]->Revision_ID);
-        kinfoln("   PCI DEV CACHE LINE SIZE:%d",pciDevices[pciDeviceidx]->CacheLineSize);
-        kinfoln("   PCI DEV BIST:%d",pciDevices[pciDeviceidx]->BIST);
-        kinfoln("   PCI DEV STATUS:%d",pciDevices[pciDeviceidx]->Status);
-        kinfoln("   PCI DEV CLASS ID:%d",pciDevices[pciDeviceidx]->Class);
-        kinfoln("   PCI DEV SUBCLASS ID:%d",pciDevices[pciDeviceidx]->SubClass);
-        kinfoln("   PCI DEV VENDOR ID:%d",pciDevices[pciDeviceidx]->Vendor_ID);
-        kinfoln("   PCI DEV DEVICE ID:%d",pciDevices[pciDeviceidx]->Device_ID);
-        kinfoln("   PCI DEV PROG IF:%d",pciDevices[pciDeviceidx]->Prog_IF);
-        kinfoln("   pciDeviceidx %d",pciDeviceidx);
-#endif
-        
-        pciDeviceidx++;
+        //pciDevices[pciDeviceidx] = pciDeviceHeader;
+        PCIDevMapS ms = {0};
+        ms.mi.Class = pciDeviceHeader->Class;
+        ms.mi.SubClass = pciDeviceHeader->SubClass;
+        ms.mi.ProgIF = pciDeviceHeader->Prog_IF;
+        ms.mi.RSVD = 0;
+        kinfoln("%X",(uint64_t)pciDeviceHeader);
+        ms.PCIDevBaseAddr = (uint64_t)pciDeviceHeader;
+        hashmap_set(PCIDevMap,&ms);
 
         return;
     }
 
     PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass,u8 ProgIF){
-        for (u8 i = 0; i < PCI_LIST_MAX; i++){
+        /* for (u8 i = 0; i < PCI_LIST_MAX; i++){
             if(pciDevices[i]->Class == Class 
                 && pciDevices[i]->SubClass == SubClass 
                 && pciDevices[i]->Prog_IF == ProgIF){
                 return pciDevices[i];
             }
-        }
+        } */
+        PCIDevMapS ps;
+        ps.mi.Class = Class;
+        ps.mi.SubClass = SubClass;
+        ps.mi.ProgIF = ProgIF;
+        ps.mi.RSVD = 0;
+        PCIDevMapS *p = (PCIDevMapS*)hashmap_get(PCIDevMap,&ps);
+        return (PCI::PCIDeviceHeader*)p->PCIDevBaseAddr;
     }
 
-    PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass){
+    /* PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass){
         for (u8 i = 0; i < PCI_LIST_MAX; i++){
             if(pciDevices[i]->Class == Class 
             && pciDevices[i]->SubClass == SubClass)
                 return pciDevices[i];
         }
-    }
+    } */
 
 
     IOAddress get_address(PCIDeviceHeader* hdr, uint8_t field)

@@ -63,7 +63,7 @@ namespace PCI
     const char* GetProgIFName(uint8_t classCode, uint8_t subclassCode, uint8_t progIFCode);
 
     PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass,u8 ProgIF);
-    PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass);
+    //PCI::PCIDeviceHeader* FindPCIDev(u8 Class,u8 SubClass);
 
     uint8_t io_read_byte(uint64_t address, uint8_t field);
 	uint16_t io_read_word(uint64_t address, uint8_t field);

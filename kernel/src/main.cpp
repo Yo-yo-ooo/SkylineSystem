@@ -91,7 +91,11 @@ static volatile struct limine_module_request module_request = {
     .revision = 0
 };
 
-
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_mp_request limine_mp = {
+    .id = LIMINE_MP_REQUEST_ID,
+    .revision = 0
+};
 
 
 // Finally, define the start and end markers for the Limine requests.
@@ -161,6 +165,9 @@ volatile uint32_t bsp_lapic_id = 0;
 volatile uint64_t smp_cpu_count = 0;
 
 volatile struct limine_framebuffer *fb;
+
+struct limine_mp_response *mp_response;
+
 Framebuffer FB;
 Framebuffer *Fb;
 // The following will be our kernel's entry point.
@@ -229,7 +236,11 @@ extern "C" void kmain(void) {
     }
     RSDP_ADDR = (rsdp_request.response->address);
 
-
+    mp_response = limine_mp.response;
+    if (mp_response->cpu_count > MAX_CPU) {
+        kerror("The system has more CPUs (%d) than allowed. Change MAX_CPU on smp.h\n", mp_response->cpu_count);
+        hcf();
+    }
 
     kinfo("Starting kernel...\n");
     kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->timestamp);

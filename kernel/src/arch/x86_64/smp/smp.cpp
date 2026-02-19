@@ -30,11 +30,7 @@
 #pragma GCC optimize ("O0")
 
 
-__attribute__((used, section(".limine_requests")))
-static volatile struct limine_mp_request limine_mp = {
-    .id = LIMINE_MP_REQUEST_ID,
-    .revision = 0
-};
+
 
 cpu_t *smp_cpu_list[MAX_CPU] = {nullptr};
 volatile spinlock_t smp_lock = 0;
@@ -85,12 +81,9 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
         __asm__ volatile ("hlt");
 }
 
+extern struct limine_mp_response *mp_response;
 void smp_init() {
-    struct limine_mp_response *mp_response = limine_mp.response;
-    if (mp_response->cpu_count > MAX_CPU) {
-        kerror("The system has more CPUs (%d) than allowed. Change MAX_CPU on smp.h\n", mp_response->cpu_count);
-        ASSERT(0);
-    }
+    
     cpu_t *bsp_cpu = (cpu_t*)kmalloc(sizeof(cpu_t));
     bsp_cpu->id = mp_response->bsp_lapic_id;
     bsp_cpu->pagemap = kernel_pagemap;
