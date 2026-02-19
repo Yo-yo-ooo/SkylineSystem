@@ -300,7 +300,7 @@ namespace PCI
         ms.mi.SubClass = pciDeviceHeader->SubClass;
         ms.mi.ProgIF = pciDeviceHeader->Prog_IF;
         ms.mi.RSVD = 0;
-        kinfoln("%X",(uint64_t)pciDeviceHeader);
+        //kinfoln("%X",(uint64_t)pciDeviceHeader);
         ms.PCIDevBaseAddr = (uint64_t)pciDeviceHeader;
         hashmap_set(PCIDevMap,&ms);
 
