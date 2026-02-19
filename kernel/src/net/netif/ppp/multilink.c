@@ -363,7 +363,7 @@ static void remove_bundle_link()
 	if (p != NULL) {
 		q = p + strlen(entry);
 		l = strlen(q) + 1;
-		memmove(p, q, l);
+		_memmove(p, q, l);
 		rec.dsize = p - rec.dptr + l;
 		if (tdb_store(pppdb, key, rec, TDB_REPLACE))
 			error("couldn't update bundle link list (removal)");
@@ -442,7 +442,7 @@ owns_unit(key, unit)
 	vd = tdb_fetch(pppdb, kd);
 	if (vd.dptr != NULL) {
 		ret = vd.dsize == key.dsize
-			&& memcmp(vd.dptr, key.dptr, vd.dsize) == 0;
+			&& _memcmp(vd.dptr, key.dptr, vd.dsize) == 0;
 		free(vd.dptr);
 	}
 	return ret;

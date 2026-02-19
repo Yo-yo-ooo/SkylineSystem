@@ -138,7 +138,7 @@ ppp_pcb *pppol2tp_create(struct netif *pppif,
     goto ppp_new_failed;
   }
 
-  memset(l2tp, 0, sizeof(pppol2tp_pcb));
+  _memset(l2tp, 0, sizeof(pppol2tp_pcb));
   l2tp->phase = PPPOL2TP_STATE_INITIAL;
   l2tp->ppp = ppp;
   l2tp->udp = udp;
@@ -657,7 +657,7 @@ static void pppol2tp_dispatch_control_packet(pppol2tp_pcb *l2tp, u16_t port, str
             lwip_md5_update(&md5_ctx, l2tp->secret_rv, sizeof(l2tp->secret_rv));
             lwip_md5_finish(&md5_ctx, md5_hash);
             lwip_md5_free(&md5_ctx);
-            if ( memcmp(inp, md5_hash, sizeof(md5_hash)) ) {
+            if ( _memcmp(inp, md5_hash, sizeof(md5_hash)) ) {
               PPPDEBUG(LOG_DEBUG, ("pppol2tp: Received challenge response from peer and secret key do not match\n"));
               pppol2tp_abort_connect(l2tp);
               return;

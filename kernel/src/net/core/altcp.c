@@ -137,7 +137,7 @@ altcp_alloc(void)
 {
   struct altcp_pcb *ret = (struct altcp_pcb *)memp_malloc(MEMP_ALTCP_PCB);
   if (ret != NULL) {
-    memset(ret, 0, sizeof(struct altcp_pcb));
+    _memset(ret, 0, sizeof(struct altcp_pcb));
   }
   return ret;
 }

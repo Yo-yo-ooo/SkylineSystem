@@ -258,7 +258,7 @@ lwip_itoa(char *result, size_t bufsize, int number)
     return;
   }
   /* move from temporary buffer to output buffer (sign is not moved) */
-  memmove(res, tmp, (size_t)((result + bufsize) - tmp));
+  _memmove(res, tmp, (size_t)((result + bufsize) - tmp));
 }
 #endif
 
@@ -267,7 +267,7 @@ lwip_itoa(char *result, size_t bufsize, int number)
  * @ingroup sys_nonstandard
  * The goal of this function is to compare memory with constant runtime in order to prevent
  * timing attacks to various parts in the stack.
- * To do that, in contrast to memcmp(), it only returns:
+ * To do that, in contrast to _memcmp(), it only returns:
  * 0: equal
  * != 0: not equal
  */

@@ -51,7 +51,7 @@ vj_compress_init(struct vjcompress *comp)
   struct cstate *tstate = comp->tstate;
 
 #if MAX_SLOTS == 0
-  memset((char *)comp, 0, sizeof(*comp));
+  _memset((char *)comp, 0, sizeof(*comp));
 #endif
   comp->maxSlotIndex = MAX_SLOTS - 1;
   comp->compressSlot = 0;    /* Disable slot ID compression by default. */

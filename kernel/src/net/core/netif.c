@@ -50,7 +50,7 @@
 
 #include <lwip/opt.h>
 
-#include <klib/cstr.h> /* memset */
+#include <klib/cstr.h> /* _memset */
 //#include <stdlib.h> /* atoi */
 
 #include <lwip/def.h>
@@ -338,7 +338,7 @@ netif_add(struct netif *netif,
   netif->mtu = 0;
   netif->flags = 0;
 #ifdef netif_get_client_data
-  memset(netif->client_data, 0, sizeof(netif->client_data));
+  _memset(netif->client_data, 0, sizeof(netif->client_data));
 #endif /* LWIP_NUM_NETIF_CLIENT_DATA */
 #if LWIP_IPV6
 #if LWIP_IPV6_AUTOCONFIG

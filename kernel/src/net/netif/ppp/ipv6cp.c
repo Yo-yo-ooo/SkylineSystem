@@ -436,8 +436,8 @@ static void ipv6cp_init(ppp_pcb *pcb) {
     fsm_init(f);
 
 #if 0 /* Not necessary, everything is cleared in ppp_new() */
-    memset(wo, 0, sizeof(*wo));
-    memset(ao, 0, sizeof(*ao));
+    _memset(wo, 0, sizeof(*wo));
+    _memset(ao, 0, sizeof(*ao));
 #endif /* 0 */
 
     wo->accept_local = 1;

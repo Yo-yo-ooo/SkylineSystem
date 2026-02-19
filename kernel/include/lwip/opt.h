@@ -51,6 +51,11 @@
 #include <lwip/lwipopts.h>
 #include <lwip/debug.h>
 
+extern void _memcpy(void* src, void* dest, uint64_t size);
+extern void _memset(void* dest, uint8_t value, uint64_t size);
+extern void _memmove(void* dest,void* src, uint64_t size);
+extern int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count);
+
 /**
  * @defgroup lwip_opts Options (lwipopts.h)
  * @ingroup lwip
@@ -134,7 +139,7 @@
  * one included in your C library
  */
 #if !defined MEMCPY || defined __DOXYGEN__
-#define MEMCPY(dst,src,len)             memcpy(dst,src,len)
+#define MEMCPY(dst,src,len)             _memcpy(src,dst,len)
 #endif
 
 /**
@@ -142,7 +147,7 @@
  * call to memcpy() if the length is known at compile time and is small.
  */
 #if !defined SMEMCPY || defined __DOXYGEN__
-#define SMEMCPY(dst,src,len)            memcpy(dst,src,len)
+#define SMEMCPY(dst,src,len)            _memcpy(src,dst,len)
 #endif
 
 /**
@@ -151,7 +156,7 @@
  * fragmentation support is enabled.
  */
 #if !defined MEMMOVE || defined __DOXYGEN__
-#define MEMMOVE(dst,src,len)            memmove(dst,src,len)
+#define MEMMOVE(dst,src,len)            _memmove(dst,src,len)
 #endif
 /**
  * @}

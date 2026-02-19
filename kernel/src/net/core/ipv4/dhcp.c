@@ -227,7 +227,7 @@ static u8_t xid_initialised;
 #define dhcp_option_given(dhcp, idx)          (dhcp_rx_options_given[idx] != 0)
 #define dhcp_got_option(dhcp, idx)            (dhcp_rx_options_given[idx] = 1)
 #define dhcp_clear_option(dhcp, idx)          (dhcp_rx_options_given[idx] = 0)
-#define dhcp_clear_all_options(dhcp)          (memset(dhcp_rx_options_given, 0, sizeof(dhcp_rx_options_given)))
+#define dhcp_clear_all_options(dhcp)          (_memset(dhcp_rx_options_given, 0, sizeof(dhcp_rx_options_given)))
 #define dhcp_get_option_value(dhcp, idx)      (dhcp_rx_options_val[idx])
 #define dhcp_set_option_value(dhcp, idx, val) (dhcp_rx_options_val[idx] = (val))
 
@@ -762,7 +762,7 @@ dhcp_set_struct(struct netif *netif, struct dhcp *dhcp)
   LWIP_ASSERT("netif already has a struct dhcp set", netif_dhcp_data(netif) == NULL);
 
   /* clear data structure */
-  memset(dhcp, 0, sizeof(struct dhcp));
+  _memset(dhcp, 0, sizeof(struct dhcp));
   /* mark this as externally allocated */
   dhcp->flags |= DHCP_FLAG_EXTERNAL_MEM;
   /* dhcp_set_state(&dhcp, DHCP_STATE_OFF); */
@@ -847,7 +847,7 @@ dhcp_start(struct netif *netif)
   }
 
   /* clear data structure */
-  memset(dhcp, 0, sizeof(struct dhcp));
+  _memset(dhcp, 0, sizeof(struct dhcp));
   /* dhcp_set_state(&dhcp, DHCP_STATE_OFF); */
 
 
@@ -904,7 +904,7 @@ dhcp_inform(struct netif *netif)
     return;
   }
 
-  memset(&dhcp, 0, sizeof(struct dhcp));
+  _memset(&dhcp, 0, sizeof(struct dhcp));
   dhcp_set_state(&dhcp, DHCP_STATE_INFORMING);
 
   /* create and initialize the DHCP message header */
@@ -1930,7 +1930,7 @@ dhcp_create_msg(struct netif *netif, struct dhcp *dhcp, u8_t message_type, u16_t
               ("transaction id xid(%"X32_F")\n", xid));
 
   msg_out = (struct dhcp_msg *)p_out->payload;
-  memset(msg_out, 0, sizeof(struct dhcp_msg));
+  _memset(msg_out, 0, sizeof(struct dhcp_msg));
 
   msg_out->op = DHCP_BOOTREQUEST;
   /* @todo: make link layer independent */
@@ -1946,7 +1946,7 @@ dhcp_create_msg(struct netif *netif, struct dhcp *dhcp, u8_t message_type, u16_t
     ip4_addr_copy(msg_out->ciaddr, *netif_ip4_addr(netif));
   }
   for (i = 0; i < LWIP_MIN(DHCP_CHADDR_LEN, NETIF_MAX_HWADDR_LEN); i++) {
-    /* copy netif hardware address (padded with zeroes through memset already) */
+    /* copy netif hardware address (padded with zeroes through _memset already) */
     msg_out->chaddr[i] = netif->hwaddr[i];
   }
   msg_out->cookie = PP_HTONL(DHCP_MAGIC_COOKIE);

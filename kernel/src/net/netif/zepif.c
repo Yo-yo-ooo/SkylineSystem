@@ -188,7 +188,7 @@ zepif_linkoutput(struct netif *netif, struct pbuf *p)
     return ERR_MEM;
   }
   zep = (struct zep_hdr *)q->payload;
-  memset(zep, 0, sizeof(struct zep_hdr));
+  _memset(zep, 0, sizeof(struct zep_hdr));
   zep->prot_id[0] = 'E';
   zep->prot_id[1] = 'X';
   zep->prot_version = 2;
@@ -230,7 +230,7 @@ zepif_init(struct netif *netif)
   if (state == NULL) {
     return ERR_MEM;
   }
-  memset(state, 0, sizeof(struct zepif_state));
+  _memset(state, 0, sizeof(struct zepif_state));
   if (init_state != NULL) {
     memcpy(&state->init, init_state, sizeof(struct zepif_init));
   }

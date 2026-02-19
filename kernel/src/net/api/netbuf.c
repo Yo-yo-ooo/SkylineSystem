@@ -66,7 +66,7 @@ netbuf *netbuf_new(void)
 
   buf = (struct netbuf *)memp_malloc(MEMP_NETBUF);
   if (buf != NULL) {
-    memset(buf, 0, sizeof(struct netbuf));
+    _memset(buf, 0, sizeof(struct netbuf));
   }
   return buf;
 }

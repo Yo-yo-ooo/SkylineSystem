@@ -176,10 +176,10 @@ bridgeif_fdb_remove(struct netif *bridgeif, const struct eth_addr *addr)
 
   BRIDGEIF_READ_PROTECT(lev);
   for (i = 0; i < br->max_fdbs_entries; i++) {
-    if (br->fdbs[i].used && !memcmp(&br->fdbs[i].addr, addr, sizeof(struct eth_addr))) {
+    if (br->fdbs[i].used && !_memcmp(&br->fdbs[i].addr, addr, sizeof(struct eth_addr))) {
       BRIDGEIF_WRITE_PROTECT(lev);
-      if (br->fdbs[i].used && !memcmp(&br->fdbs[i].addr, addr, sizeof(struct eth_addr))) {
-        memset(&br->fdbs[i], 0, sizeof(bridgeif_fdb_static_entry_t));
+      if (br->fdbs[i].used && !_memcmp(&br->fdbs[i].addr, addr, sizeof(struct eth_addr))) {
+        _memset(&br->fdbs[i], 0, sizeof(bridgeif_fdb_static_entry_t));
         BRIDGEIF_WRITE_UNPROTECT(lev);
         BRIDGEIF_READ_UNPROTECT(lev);
         return ERR_OK;
@@ -201,7 +201,7 @@ bridgeif_find_dst_ports(bridgeif_private_t *br, struct eth_addr *dst_addr)
   /* first check for static entries */
   for (i = 0; i < br->max_fdbs_entries; i++) {
     if (br->fdbs[i].used) {
-      if (!memcmp(&br->fdbs[i].addr, dst_addr, sizeof(struct eth_addr))) {
+      if (!_memcmp(&br->fdbs[i].addr, dst_addr, sizeof(struct eth_addr))) {
         bridgeif_portmask_t ret = br->fdbs[i].dst_ports;
         BRIDGEIF_READ_UNPROTECT(lev);
         return ret;
@@ -227,14 +227,14 @@ bridgeif_is_local_mac(bridgeif_private_t *br, struct eth_addr *addr)
 {
   int i;
   BRIDGEIF_DECL_PROTECT(lev);
-  if (!memcmp(br->netif->hwaddr, addr, sizeof(struct eth_addr))) {
+  if (!_memcmp(br->netif->hwaddr, addr, sizeof(struct eth_addr))) {
     return 1;
   }
   BRIDGEIF_READ_PROTECT(lev);
   for (i = 0; i < br->num_ports; i++) {
     struct netif *portif = br->ports[i].port_netif;
     if (portif != NULL) {
-      if (!memcmp(portif->hwaddr, addr, sizeof(struct eth_addr))) {
+      if (!_memcmp(portif->hwaddr, addr, sizeof(struct eth_addr))) {
         BRIDGEIF_READ_UNPROTECT(lev);
         return 1;
       }

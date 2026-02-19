@@ -104,7 +104,7 @@ autoip_set_struct(struct netif *netif, struct autoip *autoip)
               netif_autoip_data(netif) == NULL);
 
   /* clear data structure */
-  memset(autoip, 0, sizeof(struct autoip));
+  _memset(autoip, 0, sizeof(struct autoip));
   /* autoip->state = AUTOIP_STATE_OFF; */
   netif_set_client_data(netif, LWIP_NETIF_CLIENT_DATA_INDEX_AUTOIP, autoip);
 }

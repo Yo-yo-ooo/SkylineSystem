@@ -47,7 +47,7 @@
 #include <lwip/api.h>
 #include <lwip/dns.h>
 
-#include <klib/cstr.h> /* memset */
+#include <klib/cstr.h> /* _memset */
 #include <stdlib.h> /* atoi */
 
 /** helper struct for gethostbyname_r to access the char* buffer */
@@ -374,7 +374,7 @@ lwip_getaddrinfo(const char *nodename, const char *servname,
   if (ai == NULL) {
     return EAI_MEMORY;
   }
-  memset(ai, 0, total_size);
+  _memset(ai, 0, total_size);
   /* cast through void* to get rid of alignment warnings */
   sa = (struct sockaddr_storage *)(void *)((u8_t *)ai + sizeof(struct addrinfo));
   if (IP_IS_V6_VAL(addr)) {

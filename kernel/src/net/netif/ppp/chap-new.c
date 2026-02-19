@@ -125,9 +125,9 @@ static void chap_init(ppp_pcb *pcb) {
 	LWIP_UNUSED_ARG(pcb);
 
 #if 0 /* Not necessary, everything is cleared in ppp_new() */
-	memset(&pcb->chap_client, 0, sizeof(chap_client_state));
+	_memset(&pcb->chap_client, 0, sizeof(chap_client_state));
 #if PPP_SERVER
-	memset(&pcb->chap_server, 0, sizeof(chap_server_state));
+	_memset(&pcb->chap_server, 0, sizeof(chap_server_state));
 #endif /* PPP_SERVER */
 #endif /* 0 */
 }
@@ -423,7 +423,7 @@ static int chap_verify_response(ppp_pcb *pcb, const char *name, const char *ourn
 	}
 	ok = digest->verify_response(pcb, id, name, secret, secret_len, challenge,
 				     response, message, message_space);
-	memset(secret, 0, sizeof(secret));
+	_memset(secret, 0, sizeof(secret));
 
 	return ok;
 }
@@ -477,7 +477,7 @@ static void chap_respond(ppp_pcb *pcb, int id,
 
 	pcb->chap_client.digest->make_response(pcb, outp, id, pcb->chap_client.name, pkt,
 				  secret, secret_len, pcb->chap_client.priv);
-	memset(secret, 0, secret_len);
+	_memset(secret, 0, secret_len);
 
 	clen = *outp;
 	nlen = strlen(pcb->chap_client.name);

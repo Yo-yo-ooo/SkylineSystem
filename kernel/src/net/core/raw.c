@@ -604,7 +604,7 @@ raw_new(u8_t proto)
   /* could allocate RAW PCB? */
   if (pcb != NULL) {
     /* initialize PCB to all zeroes */
-    memset(pcb, 0, sizeof(struct raw_pcb));
+    _memset(pcb, 0, sizeof(struct raw_pcb));
     pcb->protocol = proto;
     pcb->ttl = RAW_TTL;
 #if LWIP_MULTICAST_TX_OPTIONS

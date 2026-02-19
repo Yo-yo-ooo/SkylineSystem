@@ -209,7 +209,7 @@ ppp_pcb *pppoe_create(struct netif *pppif,
     return NULL;
   }
 
-  memset(sc, 0, sizeof(struct pppoe_softc));
+  _memset(sc, 0, sizeof(struct pppoe_softc));
   sc->pcb = ppp;
   sc->sc_ethif = ethif;
 #if PPPOE_SCNAME_SUPPORT

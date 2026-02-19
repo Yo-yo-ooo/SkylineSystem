@@ -662,7 +662,7 @@ ppp_pcb *ppp_new(struct netif *pppif, const struct link_callbacks *callbacks, vo
     return NULL;
   }
 
-  memset(pcb, 0, sizeof(ppp_pcb));
+  _memset(pcb, 0, sizeof(ppp_pcb));
 
   /* default configuration */
 #if PAP_SUPPORT
@@ -740,8 +740,8 @@ void ppp_start(ppp_pcb *pcb) {
 #endif /* PPP_STATS_SUPPORT */
 #if MPPE_SUPPORT
   pcb->mppe_keys_set = 0;
-  memset(&pcb->mppe_comp, 0, sizeof(pcb->mppe_comp));
-  memset(&pcb->mppe_decomp, 0, sizeof(pcb->mppe_decomp));
+  _memset(&pcb->mppe_comp, 0, sizeof(pcb->mppe_comp));
+  _memset(&pcb->mppe_decomp, 0, sizeof(pcb->mppe_decomp));
 #endif /* MPPE_SUPPORT */
 #if VJ_SUPPORT
   vj_compress_init(&pcb->vj_comp);

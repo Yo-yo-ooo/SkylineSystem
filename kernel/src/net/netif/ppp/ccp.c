@@ -374,10 +374,10 @@ static void ccp_init(ppp_pcb *pcb) {
     fsm_init(f);
 
 #if 0 /* Not necessary, everything is cleared in ppp_new() */
-    memset(wo, 0, sizeof(*wo));
-    memset(go, 0, sizeof(*go));
-    memset(ao, 0, sizeof(*ao));
-    memset(ho, 0, sizeof(*ho));
+    _memset(wo, 0, sizeof(*wo));
+    _memset(go, 0, sizeof(*go));
+    _memset(ao, 0, sizeof(*ao));
+    _memset(ho, 0, sizeof(*ho));
 #endif /* 0 */
 
 #if DEFLATE_SUPPORT
@@ -846,7 +846,7 @@ static int ccp_ackci(fsm *f, u_char *p, int len) {
 	opt_buf[0] = CI_MPPE;
 	opt_buf[1] = CILEN_MPPE;
 	MPPE_OPTS_TO_CI(go->mppe, &opt_buf[2]);
-	if (len < CILEN_MPPE || memcmp(opt_buf, p, CILEN_MPPE))
+	if (len < CILEN_MPPE || _memcmp(opt_buf, p, CILEN_MPPE))
 	    return 0;
 	p += CILEN_MPPE;
 	len -= CILEN_MPPE;
@@ -936,7 +936,7 @@ static int ccp_nakci(fsm *f, u_char *p, int len, int treat_as_reject) {
     LWIP_UNUSED_ARG(len);
 #endif /* !MPPE_SUPPORT && !DEFLATE_SUPPORT && !BSDCOMPRESS_SUPPORT */
 
-    memset(&no, 0, sizeof(no));
+    _memset(&no, 0, sizeof(no));
     try_ = *go;
 
 #if MPPE_SUPPORT
@@ -1122,7 +1122,7 @@ static int ccp_reqci(fsm *f, u_char *p, int *lenp, int dont_nak) {
     retp = p0 = p;
     len = *lenp;
 
-    memset(ho, 0, sizeof(ccp_options));
+    _memset(ho, 0, sizeof(ccp_options));
     ho->method = (len > 0)? p[0]: 0;
 
     while (len > 0) {

@@ -1620,7 +1620,7 @@ tcp_receive(struct tcp_pcb *pcb)
             tcp_remove_sacks_lt(pcb, pcb->ooseq->tcphdr->seqno);
           } else if (LWIP_TCP_SACK_VALID(pcb, 0)) {
             /* ooseq has been cleared. Nothing to SACK */
-            memset(pcb->rcv_sacks, 0, sizeof(pcb->rcv_sacks));
+            _memset(pcb->rcv_sacks, 0, sizeof(pcb->rcv_sacks));
           }
         }
 #endif /* LWIP_TCP_SACK_OUT */

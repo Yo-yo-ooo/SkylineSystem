@@ -183,8 +183,8 @@ memp_init_pool(const struct memp_desc *desc)
   *desc->tab = NULL;
   memp = (struct memp *)LWIP_MEM_ALIGN(desc->base);
 #if MEMP_MEM_INIT
-  /* force memset on pool memory */
-  memset(memp, 0, (size_t)desc->num * (MEMP_SIZE + desc->size
+  /* force _memset on pool memory */
+  _memset(memp, 0, (size_t)desc->num * (MEMP_SIZE + desc->size
 #if MEMP_OVERFLOW_CHECK
                                        + MEM_SANITY_REGION_AFTER_ALIGNED
 #endif

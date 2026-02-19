@@ -275,11 +275,11 @@ static int chapms_verify_response(ppp_pcb *pcb, int id, const char *name,
 #ifdef MSLANMAN
 	/* Determine which part of response to verify against */
 	if (!response[MS_CHAP_USENT])
-		diff = memcmp(&response[MS_CHAP_LANMANRESP],
+		diff = _memcmp(&response[MS_CHAP_LANMANRESP],
 			      &md[MS_CHAP_LANMANRESP], MS_CHAP_LANMANRESP_LEN);
 	else
 #endif
-		diff = memcmp(&response[MS_CHAP_NTRESP], &md[MS_CHAP_NTRESP],
+		diff = _memcmp(&response[MS_CHAP_NTRESP], &md[MS_CHAP_NTRESP],
 			      MS_CHAP_NTRESP_LEN);
 
 	if (diff == 0) {
@@ -333,7 +333,7 @@ static int chapms2_verify_response(ppp_pcb *pcb, int id, const char *name,
 	 * Special thanks to Alex Swiridov <say@real.kharkov.ua> for
 	 * help debugging this.
 	 */
-	if (memcmp(&md[MS_CHAP2_NTRESP], &response[MS_CHAP2_NTRESP],
+	if (_memcmp(&md[MS_CHAP2_NTRESP], &response[MS_CHAP2_NTRESP],
 		   MS_CHAP2_NTRESP_LEN) == 0) {
 		if (response[MS_CHAP2_FLAGS])
 			ppp_slprintf(message, message_space, "S=%s", saresponse);
@@ -410,7 +410,7 @@ static int chapms2_check_success(ppp_pcb *pcb, unsigned char *msg, int len, unsi
 	msg += 2;
 	len -= 2;
 	if (len < MS_AUTH_RESPONSE_LENGTH
-	    || memcmp(msg, private_, MS_AUTH_RESPONSE_LENGTH)) {
+	    || _memcmp(msg, private_, MS_AUTH_RESPONSE_LENGTH)) {
 		/* Authenticator Response did not match expected. */
 		ppp_error(("MS-CHAPv2 mutual authentication failed."));
 		return 0;

@@ -135,7 +135,7 @@
       (sin)->sin_family = AF_INET; \
       (sin)->sin_port = lwip_htons((port)); \
       inet_addr_from_ip4addr(&(sin)->sin_addr, ipaddr); \
-      memset((sin)->sin_zero, 0, SIN_ZERO_LEN); }while(0)
+      _memset((sin)->sin_zero, 0, SIN_ZERO_LEN); }while(0)
 #define SOCKADDR4_TO_IP4ADDR_PORT(sin, ipaddr, port) do { \
     inet_addr_to_ip4addr(ip_2_ip4(ipaddr), &((sin)->sin_addr)); \
     (port) = lwip_ntohs((sin)->sin_port); }while(0)
@@ -1517,7 +1517,7 @@ lwip_sendmsg(int s, const struct msghdr *msg, int flags)
                set_errno(err_to_errno(ERR_ARG)); done_socket(sock); return -1;);
 
     /* initialize chain buffer with destination */
-    memset(&chain_buf, 0, sizeof(struct netbuf));
+    _memset(&chain_buf, 0, sizeof(struct netbuf));
     if (msg->msg_name) {
       u16_t remote_port;
       SOCKADDR_TO_IPADDR_PORT((const struct sockaddr *)msg->msg_name, &chain_buf.addr, remote_port);
@@ -2056,7 +2056,7 @@ lwip_select(int maxfdp1, fd_set *readset, fd_set *writeset, fd_set *exceptset,
          mode). */
       API_SELECT_CB_VAR_DECLARE(select_cb);
       API_SELECT_CB_VAR_ALLOC(select_cb, set_errno(ENOMEM); lwip_select_dec_sockets_used(maxfdp1, &used_sockets); return -1);
-      memset(&API_SELECT_CB_VAR_REF(select_cb), 0, sizeof(struct lwip_select_cb));
+      _memset(&API_SELECT_CB_VAR_REF(select_cb), 0, sizeof(struct lwip_select_cb));
 
       API_SELECT_CB_VAR_REF(select_cb).readset = readset;
       API_SELECT_CB_VAR_REF(select_cb).writeset = writeset;
@@ -2397,7 +2397,7 @@ lwip_poll(struct pollfd *fds, nfds_t nfds, int timeout)
       goto return_success;
     }
     API_SELECT_CB_VAR_ALLOC(select_cb, set_errno(EAGAIN); lwip_poll_dec_sockets_used(fds, nfds); return -1);
-    memset(&API_SELECT_CB_VAR_REF(select_cb), 0, sizeof(struct lwip_select_cb));
+    _memset(&API_SELECT_CB_VAR_REF(select_cb), 0, sizeof(struct lwip_select_cb));
 
     /* None ready: add our semaphore to list:
        We don't actually need any dynamic memory. Our entry on the

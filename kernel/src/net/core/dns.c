@@ -799,7 +799,7 @@ dns_send(u8_t idx)
     const ip_addr_t *dst;
     u16_t dst_port;
     /* fill dns header */
-    memset(&hdr, 0, SIZEOF_DNS_HDR);
+    _memset(&hdr, 0, SIZEOF_DNS_HDR);
     hdr.id = lwip_htons(entry->txid);
     hdr.flags1 = DNS_FLAG1_RD;
     hdr.numquestions = PP_HTONS(1);

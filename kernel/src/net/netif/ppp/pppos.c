@@ -189,7 +189,7 @@ ppp_pcb *pppos_create(struct netif *pppif, pppos_output_cb_fn output_cb,
     return NULL;
   }
 
-  memset(pppos, 0, sizeof(pppos_pcb));
+  _memset(pppos, 0, sizeof(pppos_pcb));
   pppos->ppp = ppp;
   pppos->output_cb = output_cb;
   return ppp;
@@ -323,7 +323,7 @@ pppos_connect(ppp_pcb *ppp, void *ctx)
 #endif /* PPP_INPROC_IRQ_SAFE */
 
   /* reset PPPoS control block to its initial state */
-  memset(&pppos->last_xmit, 0, sizeof(pppos_pcb) - offsetof(pppos_pcb, last_xmit));
+  _memset(&pppos->last_xmit, 0, sizeof(pppos_pcb) - offsetof(pppos_pcb, last_xmit));
 
   /*
    * Default the in and out accm so that escape and flag characters
@@ -355,7 +355,7 @@ pppos_listen(ppp_pcb *ppp, void *ctx)
 #endif /* PPP_INPROC_IRQ_SAFE */
 
   /* reset PPPoS control block to its initial state */
-  memset(&pppos->last_xmit, 0, sizeof(pppos_pcb) - offsetof(pppos_pcb, last_xmit));
+  _memset(&pppos->last_xmit, 0, sizeof(pppos_pcb) - offsetof(pppos_pcb, last_xmit));
 
   /*
    * Default the in and out accm so that escape and flag characters

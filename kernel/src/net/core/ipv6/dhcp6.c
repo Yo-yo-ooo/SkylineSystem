@@ -118,7 +118,7 @@ struct dhcp6_option_info dhcp6_rx_options[DHCP6_OPTION_IDX_MAX];
 #define dhcp6_option_given(dhcp6, idx)           (dhcp6_rx_options[idx].option_given != 0)
 #define dhcp6_got_option(dhcp6, idx)             (dhcp6_rx_options[idx].option_given = 1)
 #define dhcp6_clear_option(dhcp6, idx)           (dhcp6_rx_options[idx].option_given = 0)
-#define dhcp6_clear_all_options(dhcp6)           (memset(dhcp6_rx_options, 0, sizeof(dhcp6_rx_options)))
+#define dhcp6_clear_all_options(dhcp6)           (_memset(dhcp6_rx_options, 0, sizeof(dhcp6_rx_options)))
 #define dhcp6_get_option_start(dhcp6, idx)       (dhcp6_rx_options[idx].val_start)
 #define dhcp6_get_option_length(dhcp6, idx)      (dhcp6_rx_options[idx].val_length)
 #define dhcp6_set_option(dhcp6, idx, start, len) do { dhcp6_rx_options[idx].val_start = (start); dhcp6_rx_options[idx].val_length = (len); }while(0)
@@ -189,7 +189,7 @@ dhcp6_set_struct(struct netif *netif, struct dhcp6 *dhcp6)
   LWIP_ASSERT("netif already has a struct dhcp6 set", netif_dhcp6_data(netif) == NULL);
 
   /* clear data structure */
-  memset(dhcp6, 0, sizeof(struct dhcp6));
+  _memset(dhcp6, 0, sizeof(struct dhcp6));
   /* dhcp6_set_state(&dhcp, DHCP6_STATE_OFF); */
   netif_set_client_data(netif, LWIP_NETIF_CLIENT_DATA_INDEX_DHCP6, dhcp6);
 }
@@ -226,7 +226,7 @@ dhcp6_get_struct(struct netif *netif, const char *dbg_requester)
     }
 
     /* clear data structure, this implies DHCP6_STATE_OFF */
-    memset(dhcp6, 0, sizeof(struct dhcp6));
+    _memset(dhcp6, 0, sizeof(struct dhcp6));
     /* store this dhcp6 client in the netif */
     netif_set_client_data(netif, LWIP_NETIF_CLIENT_DATA_INDEX_DHCP6, dhcp6);
   } else {
@@ -401,7 +401,7 @@ dhcp6_create_msg(struct netif *netif, struct dhcp6 *dhcp6, u8_t message_type,
               ("transaction id xid(%"X32_F")\n", dhcp6->xid));
 
   msg_out = (struct dhcp6_msg *)p_out->payload;
-  memset(msg_out, 0, sizeof(struct dhcp6_msg) + opt_len_alloc);
+  _memset(msg_out, 0, sizeof(struct dhcp6_msg) + opt_len_alloc);
 
   msg_out->msgtype = message_type;
   msg_out->transaction_id[0] = (u8_t)(dhcp6->xid >> 16);

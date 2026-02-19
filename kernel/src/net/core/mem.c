@@ -139,11 +139,11 @@ mem_overflow_init_raw(void *p, size_t size)
   u8_t *m;
 #if MEM_SANITY_REGION_BEFORE_ALIGNED > 0
   m = (u8_t *)p - MEM_SANITY_REGION_BEFORE_ALIGNED;
-  memset(m, 0xcd, MEM_SANITY_REGION_BEFORE_ALIGNED);
+  _memset(m, 0xcd, MEM_SANITY_REGION_BEFORE_ALIGNED);
 #endif
 #if MEM_SANITY_REGION_AFTER_ALIGNED > 0
   m = (u8_t *)p + size;
-  memset(m, 0xcd, MEM_SANITY_REGION_AFTER_ALIGNED);
+  _memset(m, 0xcd, MEM_SANITY_REGION_AFTER_ALIGNED);
 #endif
 #else /* MEM_SANITY_REGION_BEFORE_ALIGNED > 0 || MEM_SANITY_REGION_AFTER_ALIGNED > 0 */
   LWIP_UNUSED_ARG(p);
@@ -279,7 +279,7 @@ mem_malloc(mem_size_t size)
 #endif /* MEMP_OVERFLOW_CHECK || (LWIP_STATS && MEM_STATS) */
 #if MEMP_OVERFLOW_CHECK
   /* initialize unused memory (diff between requested size and selected pool's size) */
-  memset((u8_t *)ret + size, 0xcd, memp_pools[poolnr]->size - size);
+  _memset((u8_t *)ret + size, 0xcd, memp_pools[poolnr]->size - size);
 #endif /* MEMP_OVERFLOW_CHECK */
   return ret;
 }
@@ -997,7 +997,7 @@ mem_calloc(mem_size_t count, mem_size_t size)
   p = mem_malloc((mem_size_t)alloc_size);
   if (p) {
     /* zero the memory */
-    memset(p, 0, alloc_size);
+    _memset(p, 0, alloc_size);
   }
   return p;
 }

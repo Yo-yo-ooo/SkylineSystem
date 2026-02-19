@@ -1233,7 +1233,7 @@ udp_new(void)
      * which means checksum is generated over the whole datagram per default
      * (recommended as default by RFC 3828). */
     /* initialize PCB to all zeroes */
-    memset(pcb, 0, sizeof(struct udp_pcb));
+    _memset(pcb, 0, sizeof(struct udp_pcb));
     pcb->ttl = UDP_TTL;
 #if LWIP_MULTICAST_TX_OPTIONS
     udp_set_multicast_ttl(pcb, UDP_TTL);

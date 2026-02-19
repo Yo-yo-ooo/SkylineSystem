@@ -916,7 +916,7 @@ ip4_output_if_opt_src(struct pbuf *p, const ip4_addr_t *src, const ip4_addr_t *d
       MEMCPY(p->payload, ip_options, optlen);
       if (optlen < optlen_aligned) {
         /* zero the remaining bytes */
-        memset(((char *)p->payload) + optlen, 0, (size_t)(optlen_aligned - optlen));
+        _memset(((char *)p->payload) + optlen, 0, (size_t)(optlen_aligned - optlen));
       }
 #if CHECKSUM_GEN_IP_INLINE
       for (i = 0; i < optlen_aligned / 2; i++) {

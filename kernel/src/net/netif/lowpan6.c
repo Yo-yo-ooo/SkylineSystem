@@ -402,7 +402,7 @@ lowpan6_frag(struct netif *netif, struct pbuf *p, const struct lowpan6_link_addr
   if (remaining_len > max_data_len) {
     u16_t data_len;
     /* We must move the 6LowPAN header to make room for the FRAG header. */
-    memmove(&buffer[ieee_header_len + 4], &buffer[ieee_header_len], lowpan6_header_len);
+    _memmove(&buffer[ieee_header_len + 4], &buffer[ieee_header_len], lowpan6_header_len);
 
     /* Now we need to fragment the packet. FRAG1 header first */
     buffer[ieee_header_len] = 0xc0 | (((p->tot_len + hidden_header_len) >> 8) & 0x7);
@@ -683,7 +683,7 @@ lowpan6_input(struct pbuf *p, struct netif *netif)
       u8_t discard = 0;
       lrh_next = lrh->next_packet;
       if ((lrh->sender_addr.addr_len == src.addr_len) &&
-          (memcmp(lrh->sender_addr.addr, src.addr, src.addr_len) == 0)) {
+          (_memcmp(lrh->sender_addr.addr, src.addr, src.addr_len) == 0)) {
         /* address match with packet in reassembly. */
         if ((datagram_tag == lrh->datagram_tag) && (datagram_size == lrh->datagram_size)) {
           /* duplicate fragment. */
@@ -744,7 +744,7 @@ lowpan6_input(struct pbuf *p, struct netif *netif)
 
     for (lrh = lowpan6_data.reass_list; lrh != NULL; lrh_prev = lrh, lrh = lrh->next_packet) {
       if ((lrh->sender_addr.addr_len == src.addr_len) &&
-          (memcmp(lrh->sender_addr.addr, src.addr, src.addr_len) == 0) &&
+          (_memcmp(lrh->sender_addr.addr, src.addr, src.addr_len) == 0) &&
           (datagram_tag == lrh->datagram_tag) &&
           (datagram_size == lrh->datagram_size)) {
         break;
