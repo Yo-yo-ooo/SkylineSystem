@@ -84,9 +84,20 @@ uint64_t kld_64 (const uint8_t* ptr);
 
 void qsort(void *base, size_t num, size_t width, int32_t (*sort)(const void *e1, const void *e2));
 
-void _memcpy_fscpuf(void* src, void* dest, uint64_t size);
-void _memset_fscpuf(void* dest, uint8_t value, uint64_t size);
-void _memmove_fscpuf(void* src, void* dest, uint64_t size);
-int _memcmp_fscpuf(const void* src, const void* dest, int amt);
+//memset that freestanding cpu features
+func_optimize(3) 
+void *memset_fscpuf(void *dst, const int32_t val, size_t n);
+
+//memcpy that freestanding cpu features
+func_optimize(3)
+void *memcpy_fscpuf(void *dst, const void *src, size_t n);
+
+//memmove that freestanding cpu features
+func_optimize(3)
+void *memmove_fscpuf(void *dst, const void *src, size_t n);
+
+//memcmp that freestanding cpu features
+func_optimize(3)
+int32_t memcmp_fscpuf(const void *left, const void *right, size_t len);
 
 #endif
