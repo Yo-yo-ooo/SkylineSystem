@@ -64,10 +64,12 @@ namespace SLAB{
     int64_t FindFree(slab_cache_t *cache);
 }
 
-void* kmalloc(u64 size);
+extern "C"{
+void* kmalloc(uint64_t size);
 void kfree(void* ptr);
-void* krealloc(void* ptr, u64 size);
+void* krealloc(void* ptr, uint64_t size);
 void *kcalloc(size_t numitems, size_t size);
+}
 uint64_t GetPtrPointAreaSize(void *ptr);
 
 inline void operator delete(void* p) {kfree(p);}

@@ -32,7 +32,7 @@
 #include <mem/heap.h>
 #include <klib/klib.h>
 
-void *kmalloc(u64 size);
+extern "C" void *kmalloc(uint64_t size);
 
 #if defined(_MSC_VER)
 #pragma warning(push)

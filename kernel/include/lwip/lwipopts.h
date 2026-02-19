@@ -173,6 +173,11 @@ ing and verifying the IP, UDP, TCP and ICMP checksums by hardware:
 */
 //#define LWIP_DEBUG                      1
 
+#define MEM_CUSTOM_ALLOCATOR            1
+#define MEM_CUSTOM_FREE                 kfree
+#define MEM_CUSTOM_MALLOC               kmalloc
+#define MEM_CUSTOM_CALLOC               kcalloc
+
 #endif /* __LWIPOPTS_H__ */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/

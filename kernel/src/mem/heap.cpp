@@ -239,15 +239,15 @@ namespace SLAB{
     }
 }
 
-void* kmalloc(u64 size) {
+extern "C" void* kmalloc(uint64_t size) {
     return SLAB::Alloc(size);
 }
 
-void kfree(void* ptr) {
+extern "C" void kfree(void* ptr) {
     SLAB::Free(ptr);
 }
 
-void* krealloc(void* ptr, u64 size) {
+extern "C" void* krealloc(void* ptr, uint64_t size) {
     return SLAB::Realloc(ptr,size);
 }
 
@@ -257,7 +257,7 @@ uint64_t GetPtrPointAreaSize(void *ptr){
 
 
 #define align4(x) (((((x)-1)>>2)<<2)+4)
-void *kcalloc(size_t numitems, size_t size)
+extern "C" void *kcalloc(size_t numitems, size_t size)
 {
     size_t *knew;
     size_t s, i;

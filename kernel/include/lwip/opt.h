@@ -50,11 +50,9 @@
  */
 #include <lwip/lwipopts.h>
 #include <lwip/debug.h>
+#include <klib/klibc.h>
 
-extern void _memcpy(void* src, void* dest, uint64_t size);
-extern void _memset(void* dest, uint8_t value, uint64_t size);
-extern void _memmove(void* dest,void* src, uint64_t size);
-extern int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count);
+
 
 /**
  * @defgroup lwip_opts Options (lwipopts.h)
