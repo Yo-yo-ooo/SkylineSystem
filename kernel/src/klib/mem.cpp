@@ -42,7 +42,7 @@ typedef char xmm_t __attribute__((__vector_size__(16), __aligned__(1)));
 extern "C" void NEON_MEMCPY(void* dst, const void* src, size_t size);
 extern "C" void NEON_MEMSET(void* dst, unsigned char value, size_t size);
 #endif
-
+extern "C" {
 void _memcpy(void* src, void* dest, uint64_t size)
 {
 #ifdef __x86_64__
@@ -363,6 +363,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count)
 #endif
 deal_kfinited:
     return memcmp_fscpuf(buffer1,buffer2,count);
+}
 }
 
 #ifdef __x86_64__

@@ -42,12 +42,13 @@ void hcf(void);
 
 #define ASSERT(CONDITION) \
 if (CONDITION){}else {Panic(#CONDITION);}
-
+extern "C" {
 void _memcpy(void* src, void* dest, uint64_t size);
 void _memset(void* dest, uint8_t value, uint64_t size);
 void _memmove(void* dest,void* src, uint64_t size);
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count);
 void *__memcpy(void * d, const void * s, uint64_t n);
+}
 
 void bitmap_set(u8* bitmap, u64 bit);
 void bitmap_clear(u8* bitmap, u64 bit);
@@ -84,20 +85,14 @@ uint64_t kld_64 (const uint8_t* ptr);
 
 void qsort(void *base, size_t num, size_t width, int32_t (*sort)(const void *e1, const void *e2));
 
-//memset that freestanding cpu features
-func_optimize(3) 
-void *memset_fscpuf(void *dst, const int32_t val, size_t n);
 
-//memcpy that freestanding cpu features
-func_optimize(3)
-void *memcpy_fscpuf(void *dst, const void *src, size_t n);
-
-//memmove that freestanding cpu features
-func_optimize(3)
-void *memmove_fscpuf(void *dst, const void *src, size_t n);
-
-//memcmp that freestanding cpu features
-func_optimize(3)
-int32_t memcmp_fscpuf(const void *left, const void *right, size_t len);
+extern "C" {
+//freestanding cpu features functions
+func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n);
+func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n);
+func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n);
+func_optimize(3) int32_t memcmp_fscpuf(const void *left, const void *right, size_t len);
+func_optimize(3) void bzero(void *dst, size_t n);
+}
 
 #endif

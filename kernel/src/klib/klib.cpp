@@ -74,7 +74,7 @@ void spinlock_unlock(spinlock_t* l) {
     __sync_lock_release(l);
 }
 
-void *__memcpy(void * d, const void * s, uint64_t n) { 
+extern "C" void *__memcpy(void * d, const void * s, uint64_t n) { 
     _memcpy(s, d, n);
     return d;
 }

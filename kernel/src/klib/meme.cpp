@@ -22,6 +22,8 @@
 
 #include <klib/klib.h>
 
+extern "C"{
+
 #define DECL_MEM_COPY_BACK_FUNC(type) \
     func_optimize(3) static inline size_t \
     VAR_CONCAT(_memcpy_bw_, type)(void *const dst, \
@@ -502,4 +504,88 @@ int32_t memcmp_fscpuf(const void *left, const void *right, size_t len) {
 
     res = _memcmp_uint8_t(left, right, len, &left, &right, &len);
     return res;
+}
+
+
+func_optimize(3) void bzero(void *dst, size_t n) {
+#if defined(__x86_64__)
+    if (n >= 48) {
+        asm volatile ("cld\n"
+                      "rep stosb"
+                      : "+D"(dst), "+c"(n)
+                      : "a"(0)
+                      : "memory");
+        return;
+    }
+#elif defined(__aarch64__)
+    if (n >= sizeof(uint64_t) * 2) {
+        do {
+            asm volatile ("stp xzr, xzr, [%0]" :: "r"(dst));
+
+            dst += sizeof(uint64_t) * 2;
+            n -= sizeof(uint64_t) * 2;
+        } while (n >= sizeof(uint64_t) * 2);
+
+        if (n == 0) {
+            return;
+        }
+    }
+#elif defined(__riscv64)
+    uint16_t cbo_size = 0;
+    with_preempt_disabled({
+        cbo_size = this_cpu()->cbo_size;
+    });
+
+    if (__builtin_expect(cbo_size != 0, 1)) {
+        if (has_align((uint64_t)dst, cbo_size)) {
+            while (n >= cbo_size) {
+                asm volatile ("cbo.zero (%0)" :: "r"(dst));
+
+                dst += cbo_size;
+                n -= cbo_size;
+            }
+        }
+    }
+#endif
+    while (n >= sizeof(uint64_t)) {
+        *(uint64_t *)dst = 0;
+
+        dst += sizeof(uint64_t);
+        n -= sizeof(uint64_t);
+    }
+
+    if (n == 0) {
+        return;
+    }
+
+    while (n >= sizeof(uint32_t)) {
+        *(uint32_t *)dst = 0;
+
+        dst += sizeof(uint32_t);
+        n -= sizeof(uint32_t);
+    }
+
+    if (n == 0) {
+        return;
+    }
+
+    while (n >= sizeof(uint16_t)) {
+        *(uint16_t *)dst = 0;
+
+        dst += sizeof(uint16_t);
+        n -= sizeof(uint16_t);
+    }
+
+    if (n == 0) {
+        return;
+    }
+
+    while (n >= sizeof(uint8_t)) {
+        *(uint8_t *)dst = 0;
+
+        dst += sizeof(uint8_t);
+        n -= sizeof(uint8_t);
+    }
+}
+
 }
