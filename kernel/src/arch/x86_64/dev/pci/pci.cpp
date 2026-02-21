@@ -549,20 +549,7 @@ namespace PCI
     }
 
     PCI::PCI_MSIX_TABLE *GetMSIXTbl(PCI::PCI_MSIX_CAP *cap, PCIHeader0 *cfg) {
-        uint32_t temp;
-        //if(PCI_MSIX_CAP_BIR(cap) == 0)temp = cfg->BAR0;
-        switch (PCI_MSIX_CAP_BIR(cap))
-        {
-        case 0:temp = cfg->BAR0;break;
-        case 1:temp = cfg->BAR1;break;
-        case 2:temp = cfg->BAR2;break;
-        case 3:temp = cfg->BAR3;break;
-        case 4:temp = cfg->BAR4;break;
-        case 5:temp = cfg->BAR5;break;
-        default:
-            break;
-        }
-        return (PCI::pci_get_bar(cfg,temp).mem_address + PCI_MSIX_CAP_TableOff(cap));
+        return (PCI::PCI_MSIX_TABLE*)PCI::GetMSIXTblBaseAddr(cfg,cap);
     }
 
     void MSI_CAP_SetVecNum(PCI::PCI_MSI_CAP *cap, u64 vecNum) {
@@ -581,4 +568,69 @@ namespace PCI
         //return n;
         cap->Cap32.MsgCtrl = (cap->Cap32.MsgCtrl & ~(0x7u << 4)) | ((n - 1) << 4);
     }
+
+    PCI::MSI_CAP32* GetMSICap(PCI::PCIHeader0 *Header){
+        uint64_t BaseAddr = (uint64_t)Header;
+        uint8_t *Ptr = (uint8_t*)(Header->CapabilitiesPtr + BaseAddr);
+        for(uint8_t i = 0;Ptr[1] != 0;i++){
+            if(Ptr[0] == 0x5){ //PCI MSI Capability ID
+                return (PCI::MSI_CAP32*)((uint64_t)Ptr);
+            }
+            Ptr = (uint8_t*)(BaseAddr + Ptr[1]);
+        }
+    }
+
+    PCI::PCI_MSIX_CAP* GetMSIXCap(PCI::PCIHeader0 *Header){
+        uint64_t BaseAddr = (uint64_t)Header;
+        uint8_t *Ptr = (uint8_t*)(Header->CapabilitiesPtr + BaseAddr);
+        for(uint8_t i = 0;Ptr[1] != 0;i++){
+            if(Ptr[0] == 0x11){ //PCI MSIX Capability ID
+                return (PCI::PCI_MSIX_CAP*)((uint64_t)Ptr);
+            }
+            Ptr = (uint8_t*)(BaseAddr + Ptr[1]);
+        }
+    }
+
+    uint64_t GetMSIXTblBaseAddr(PCI::PCIHeader0 *Header,PCI::PCI_MSIX_CAP *CapPtr){
+        uint8_t TblBIR = (uint8_t)(CapPtr->DW1 & 0x07);
+        uint32_t TblOffset = CapPtr->DW1 >> 3;
+        uint32_t BAR_LOW = Header->BAR[TblBIR];
+        uint64_t PhyAddr = BAR_LOW & ~0xFULL;
+        uint64_t HdrAddr = (uint64_t)Header;
+        if(((BAR_LOW >> 1) & 0x3) == 0x2){
+            uint32_t BARH = *(uint32_t*)(HdrAddr + 20 + TblBIR * 4);
+            PhyAddr |= ((uint64_t)BARH << 32);
+        }
+
+        return PhyAddr + hhdm_offset + TblOffset;
+    }
+
+    uint64_t GetPBABaseAddr(PCI::PCIHeader0 *Header,PCI::PCI_MSIX_CAP *CapPtr){
+        /* uint8_t PBABIR = (uint8_t)(CapPtr->DW2 & 0x07);
+        uint32_t PBAOffset = CapPtr->DW2 >> 3;
+        return (uint64_t)(((uint64_t)Header->BAR[PBABIR] + hhdm_offset) + (uint64_t)PBAOffset); */
+        uint8_t PBABIR = (uint8_t)(CapPtr->DW2 & 0x07);
+        uint32_t PBAOffset = CapPtr->DW2 >> 3;
+        uint32_t BAR_LOW = Header->BAR[PBABIR];
+        uint64_t PhyAddr = BAR_LOW & ~0xFULL;
+        uint64_t HdrAddr = (uint64_t)Header;
+        if(((BAR_LOW >> 1) & 0x3) == 0x2){
+            uint32_t BARH = *(uint32_t*)(HdrAddr + 20 + PBABIR * 4);
+            PhyAddr |= ((uint64_t)BARH << 32);
+        }
+
+        return PhyAddr + hhdm_offset + PBAOffset;
+    }
+
+    uint8_t *FindCapability(PCI::PCIHeader0 *Hdr,uint8_t CapID){
+        uint64_t BaseAddr = (uint64_t)Hdr;
+        uint8_t *Ptr = (uint8_t*)(Hdr->CapabilitiesPtr + BaseAddr);
+        for(uint8_t i = 0;Ptr[1] != 0;i++){
+            if(Ptr[0] == CapID){ //PCI XXX Capability ID
+                return (uint8_t*)((uint64_t)Ptr);
+            }
+            Ptr = (uint8_t*)(BaseAddr + Ptr[1]);
+        }
+    }
+
 }

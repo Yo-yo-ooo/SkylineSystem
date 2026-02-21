@@ -100,6 +100,13 @@ namespace PCI
     PCI::PCICapHdr *GetNxtCap(PCIHeader0 *cfg, PCI::PCICapHdr *cur);
     PCI::PCI_MSIX_TABLE *GetMSIXTbl(PCI::PCI_MSIX_CAP *cap, PCIHeader0 *cfg);
     void MSI_CAP_SetVecNum(PCI::PCI_MSI_CAP *cap, u64 vecNum);
+    PCI::PCI_MSIX_CAP* GetMSIXCap(PCI::PCIHeader0 *Header);
+    uint64_t GetMSIXTblBaseAddr(PCI::PCIHeader0 *Header,PCI::PCI_MSIX_CAP *CapPtr);
+    uint64_t GetPBABaseAddr(PCI::PCIHeader0 *Header,PCI::PCI_MSIX_CAP *CapPtr);
+    //ReturnValue[0] means Capability ID
+    //ReturnValue[1] means Capability Next Ptr
+    //[(uint64_t) ReturnValue] Can get the Base Addr of PCI xxx Capability 
+    uint8_t *FindCapability(PCI::PCIHeader0 *Hdr,uint8_t CapID);
     namespace MSIX{
         void SetMsgAddr(uint64_t *msgAddr, uint32_t cpuId, uint32_t redirect, uint32_t destMode); 
     } // namespace MSIX
@@ -107,5 +114,4 @@ namespace PCI
     namespace MSI{
         void SetMsgAddr(PCI::PCI_MSI_CAP *cap, uint32_t cpuId, uint32_t redirect, uint32_t destMode);
     } // namespace MSI
-    bool SetMsi(PCI::PCI_MSI_CAP *cap, uint8_t vecID, uint32_t cpuID,uint64_t intrNum);
 }

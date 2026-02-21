@@ -407,7 +407,18 @@ namespace AHCI
         this->PCIBaseAddress = pciBaseAddress;
         kinfoln("> AHCIDriver has been created! (PCI: 0x%p)", (uint64_t)pciBaseAddress);
 
-        ABAR = (HBAMemory*)(((uint64_t)((PCI::PCIHeader0*)(uint64_t)pciBaseAddress)->BAR5)  + hhdm_offset);
+        uint32_t low = ((PCI::PCIHeader0*)(uint64_t)pciBaseAddress)->BAR5;
+        uint64_t full_phys = (low & ~0xF);
+        if (((low >> 1) & 0x3) == 0x2) { // 依据规范：10b 表示 64-bit 内存空间
+            // 依据规范：高 32 位在“连续的下一个 32 位位置”
+            // 即偏移量 0x24 + 4 = 0x28
+            uint32_t high = *(uint32_t*)((uint64_t)&low + 4); 
+            full_phys = ((uint64_t)high << 32) | (low & ~0xF);
+        }
+        this->ABAR = (HBAMemory*)(full_phys + hhdm_offset);
+
+        // 3. 映射到 HHDM 虚拟地址
+        //ABAR = (HBAMemory*)(phys_addr + hhdm_offset);
         ABAR->globalHostControl |= 0x80000000;
 
         ProbePorts();

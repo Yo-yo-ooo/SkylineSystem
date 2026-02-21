@@ -41,36 +41,37 @@ namespace PCI
     }
     namespace MSIX
     {
+        //redirect = 0 : 直接投递给指定的 CPU。
+        //redirect = 1 : 允许中断控制器根据负载均衡等策略重新分发。
         void SetMsgAddr(uint64_t *msgAddr, uint32_t cpuId, uint32_t redirect, uint32_t destMode) {
             *msgAddr = 0xfee00000u
-                | ((smp_cpu_list[cpuId]->id) << 12)
+                | (((smp_cpu_list[cpuId]->id) & 0xFF) << 12)
                 | (redirect << 3) | (destMode << 2);
         }
 
-        bool Enable(PCI::PCI_MSIX_CAP *cap, PCI::PCIHeader0 *hdr, uint64_t INTRIDX){
-            /* if (desc->ctrl != NULL && desc->ctrl->enable != NULL) {
-                if (desc->ctrl->enable(desc) == false) 
-                    return false;
-            } */
-            PCI::PCI_MSIX_TABLE *tbl =  PCI::GetMSIXTbl(cap, hdr);
-            bit_set0_32(&tbl[INTRIDX].vecCtrl, 0);
-            return true;
-        }
-
-        bool EnableAll(PCI::PCI_MSIX_CAP *cap, PCI::PCIHeader0 *hdr, uint64_t INTRNUM) {
-            PCI::PCI_MSIX_TABLE *tbl = PCI::GetMSIXTbl(cap, hdr);
-            for (int i = 0; i < INTRNUM; i++) 
-                if ((tbl[i].vecCtrl & 1) && 
-                    PCI::MSIX::Enable(cap, hdr, i) == false) 
-                        return false;
-            bit_set1_16(&cap->MsgCtrl, 15);
-            bit_set0_16(&cap->MsgCtrl, 14);
-            return true;
+        void ConfigMSIX(
+        PCI::PCIHeader0 *Hdr,uint32_t CpuId, uint32_t Redirect, 
+        uint32_t DestMode,uint16_t TblIdx,uint16_t INTRNUM,bool IsOldIntrNUM,
+        void (*Handler)(context_t*)){
+            PCI::PCI_MSIX_CAP *Cap = PCI::GetMSIXCap(Hdr);
+            uint32_t MsgAddr = 0xfee00000u
+                | ((smp_cpu_list[CpuId]->id) << 12)
+                | (Redirect << 3) | (DestMode << 2);
+            PCI::PCI_MSIX_TABLE* Tbl = PCI::GetMSIXTblBaseAddr(Hdr,Cap);
+            
+            Tbl[TblIdx].msgAddr = MsgAddr;
+            Tbl[TblIdx].msgData = INTRNUM;
+            Tbl[TblIdx].vecCtrl &= ~1u; // 解除ENTRY[INTRNUM]'s Mask
+            if(!IsOldIntrNUM){
+                
+            }//Hdr->Header.Command |= (1 << 2); // Bus Master
+            PCI::enable_bus_mastering((uint64_t)Hdr);
+            Cap->MsgCtrl |= (1 << 15); // Enable
+            Cap->MsgCtrl &= ~(1 << 14); // Unmask all
         }
     } // namespace MSIX
     
     namespace MSI{
-
         void SetMsgAddr(PCI::PCI_MSI_CAP *cap, uint32_t cpuId, uint32_t redirect, uint32_t destMode) {
             uint32_t val = 0xfee00000u
                 | ((smp_cpu_list[cpuId]->id) << 12)
@@ -78,37 +79,5 @@ namespace PCI
             if (PCI_MSI_CAP_IS64(cap)) cap->Cap64.MsgAddr = val;
             else cap->Cap32.MsgAddr = val;
         }    
-
-
-    }
-
-    void GetIntrGate(uint8_t vecID, uint32_t cpuID, uint64_t intrNum) {
-        for (int32_t i = 0; i < intrNum; i++) {
-            idt_install_irq(vecID + i, nullptr);
-        }
-    } 
-
-    bool SetMsi(PCI::PCI_MSI_CAP *cap, uint8_t vecID, uint32_t cpuID,uint64_t intrNum) {
-        PCI::MSI::SetMsgAddr(cap, cpuID, 0, APIC_DestMode_Physical);
-        PCI::SetMsgData16(MSICAP_MSGDATA(cap), vecID, APIC_DeliveryMode_Fixed, APIC_Level_Deassert, APIC_TriggerMode_Edge);
-
-        //hal_hw_pci_getIntrGate(desc, intrNum);
-        return true;
-    }
-
-    bool SetMsix(PCI::PCI_MSIX_CAP *cap, PCI::PCIHeader0 *cfg, uint8_t vecID, uint32_t cpuID,uint64_t intrNum) {
-        PCI::PCI_MSIX_TABLE *tbl = PCI::GetMSIXTbl(cap, cfg);
-        //VMM::Map((tbl));
-        for (int32_t i = 0; i < intrNum; i++) {
-            PCI::MSIX::SetMsgAddr(&tbl[i].msgAddr, cpuID, 0, APIC_DestMode_Physical);
-            PCI::SetMsgData32(&tbl[i].msgData, vecID, APIC_DeliveryMode_Fixed, APIC_Level_Deassert, APIC_TriggerMode_Edge);
-        }
-        //hal_hw_pci_getIntrGate(desc, intrNum);
-        return true;
-        
-    } // namespace pci
-
-    bool CheckSupportMSI(PCI::PCIHeader0 *cfg){
-            
     }
 }

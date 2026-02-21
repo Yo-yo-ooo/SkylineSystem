@@ -237,6 +237,7 @@ extern "C" void kmain(void) {
     RSDP_ADDR = (rsdp_request.response->address);
 
     mp_response = limine_mp.response;
+    smp_cpu_count = mp_response->cpu_count;
     if (mp_response->cpu_count > MAX_CPU) {
         kerror("The system has more CPUs (%d) than allowed. Change MAX_CPU on smp.h\n", mp_response->cpu_count);
         hcf();

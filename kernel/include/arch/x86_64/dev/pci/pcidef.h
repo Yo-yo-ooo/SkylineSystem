@@ -123,12 +123,17 @@ namespace PCI{
 
     PACK(typedef struct PCIHeader0 {
         PCIDeviceHeader Header;
-        uint32_t BAR0;
-        uint32_t BAR1;
-        uint32_t BAR2;
-        uint32_t BAR3;
-        uint32_t BAR4;
-        uint32_t BAR5;
+        union {
+            struct{
+                uint32_t BAR0;
+                uint32_t BAR1;
+                uint32_t BAR2;
+                uint32_t BAR3;
+                uint32_t BAR4;
+                uint32_t BAR5;
+            };
+            uint32_t BAR[6];
+        };
         uint32_t CardbusCISPtr;
         uint16_t SubsystemVendorID;
         uint16_t SubsystemID;
@@ -165,6 +170,7 @@ namespace PCI{
         uint16_t MsgCtrl;
         uint32_t MsgAddr;
         uint16_t MsgData;
+        uint16_t RsvdP;
         uint32_t MSK;
         uint32_t Pending;
     }) MSI_CAP32;

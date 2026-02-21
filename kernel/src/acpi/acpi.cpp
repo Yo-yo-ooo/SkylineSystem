@@ -24,6 +24,7 @@
 
 namespace ACPI{
     ACPI::MCFGHeader* mcfg = nullptr;
+    ACPI::FADTHeader *FADT = nullptr;
     int32_t ACPI_DIV = 0;
     ACPI::SDTHeader* rootThing = nullptr;
     volatile bool UseXSDT = false;
@@ -160,6 +161,7 @@ namespace ACPI{
 
         
         ACPI::mcfg = (ACPI::MCFGHeader*)ACPI::FindTable(rootThing, (char*)"MCFG", div);
+        ACPI::FADT = (ACPI::FADTHeader*)ACPI::FindTable(rootThing,"FACP",div);
         //ASSERT(!PHYSICAL(ACPI::mcfg));
         ACPI_DIV = div;
         kinfoln("ACPI_DIV: %d",div);
