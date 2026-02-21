@@ -64,7 +64,7 @@ COMMON: 0:FALSE
 
 //#define _SYS_DEBUG_OUT
 
-
+#define CONFIG_USE_DESKTOP_SUBSYS
 
 #define USE_TEST_x2Apic 0
 

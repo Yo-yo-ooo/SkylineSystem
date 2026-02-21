@@ -32,12 +32,12 @@
 #include <mem/heap.h>
 #include <arch/x86_64/drivers/hpet/hpet.h>
 #include <drivers/framebuffer/fb.h>
+#include <desktop/basicdraw/basicdraw.h>
 
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
 #define PIC2_DATA 0xA1
 
-extern void FT_Deinit();
 
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
@@ -107,7 +107,7 @@ void __init x86_64_init(void){
         asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
     else
         asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
-    
+
     thread_t *syscalltest = Schedule::NewThread(proc, 0, 0, 
         "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread"}, (char*[]){nullptr}); 
     kinfoln("syscalltest PROCESS: %d",proc->id);
