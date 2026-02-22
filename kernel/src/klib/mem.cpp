@@ -293,17 +293,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
         return;
     }
 
-    if(KernelInited && size > 1024 * 256){
-        if(cpu->SupportXSAVE){
-            asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
-            if(fx_area != nullptr)
-                asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
-        }else{
-            asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
-            if(fx_area != nullptr)
-                asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory");
-        }
-    }
+    XFXSAVE_CASB;
 #endif
 deal_kfinited:
 	memmove_fscpuf(dest,src,size);
@@ -320,7 +310,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size)
     if(th != nullptr)
         fx_area = th->fx_area;
     
-    XFXSAVE_CAS
+    XFXSAVE_CAS;
     if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (size > 1024 * 256))){
         return AVX_memcmp(buffer1,buffer2,size,1);
     }

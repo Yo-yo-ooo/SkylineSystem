@@ -29,10 +29,8 @@
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 
-
-
-
-cpu_t *smp_cpu_list[MAX_CPU] = {nullptr};
+cpu_t ZeroCPU = {0};
+cpu_t *smp_cpu_list[MAX_CPU] = {&ZeroCPU};
 volatile spinlock_t smp_lock = 0;
 uint64_t started_count = 0;
 bool smp_started = false;
@@ -122,7 +120,7 @@ void smp_init() {
 }
 
 cpu_t *this_cpu() {
-    if (!smp_started) return nullptr;
+    if (!smp_started) return smp_cpu_list[mp_response->bsp_lapic_id];
     return smp_cpu_list[LAPIC::GetID()];
 }
 
