@@ -67,7 +67,7 @@ extern "C" {
 void _memcpy(void* src, void* dest, uint64_t size);
 void _memset(void* dest, uint8_t value, uint64_t size);
 void _memmove(void* dest,void* src, uint64_t size);
-int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count);
+int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size);
 void *__memcpy(void * d, const void * s, uint64_t n);
 }
 

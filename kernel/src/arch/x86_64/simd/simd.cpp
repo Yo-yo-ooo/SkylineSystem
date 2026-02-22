@@ -110,6 +110,9 @@ void simd_cpu_init(cpu_t *cpu)
         //MaxXsaveSize = ebx;
         if(ebx > MaxXsaveSize)
             MaxXsaveSize = ebx;
+
+        asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0xD), "c"(1));
+        cpu->SupportXSAVEOPT = (eax & (1 << 0));
     }
     
 

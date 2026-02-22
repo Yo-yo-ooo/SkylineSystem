@@ -32,7 +32,7 @@
 extern void _memcpy(void* src, void* dest, uint64_t size);
 extern void _memset(void* dest, uint8_t value, uint64_t size);
 extern void _memmove(void* dest,void* src, uint64_t size);
-extern int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  count);
+extern int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size);
 
 extern void* kmalloc(uint64_t size);
 extern void kfree(void* ptr);

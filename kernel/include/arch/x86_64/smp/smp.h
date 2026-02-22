@@ -58,6 +58,7 @@ typedef struct cpu_t{
     bool SupportAVX2 = false;
     bool SupportAVX512 = false;
     bool SupportSSE4_2 = false;
+    bool SupportXSAVEOPT = false;
 } cpu_t;
 
 extern uint32_t smp_bsp_cpu;
