@@ -48,6 +48,10 @@ public:
     void DrawWindow(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, const char* Title);
     void DrawCircle(uint64_t xc, uint64_t yc, uint64_t r, uint32_t Color);
 
+    void DrawRoundedRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint64_t R, uint32_t Color, bool Fill);
+
+    void DrawProportionalUI();
+
     ~BasicDraw(){}
 };
 

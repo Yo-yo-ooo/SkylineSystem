@@ -25,23 +25,69 @@
 
 extern "C" {
 //freestanding cpu features functions
-func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n);
 func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n);
 func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n);
 func_optimize(3) int32_t memcmp_fscpuf(const void *left, const void *right, size_t len);
 func_optimize(3) void bzero(void *dst, size_t n);
 }
 
+func_optimize(3) void *memset32_fscpuf(void *dst, const int32_t val, size_t n){
+    void *ret = dst;
+
+#if defined(__x86_64__)
+    // 针对 x86_64 的极致优化
+    // 'n' 在这里代表像素数量 (Pixels)，即 4-byte units
+    if (n > 0) {
+        asm volatile (
+            "cld\n"
+            "rep stosl"  // 使用 stosl (Double-word) 填充 32 位值
+            : "+D"(dst), "+c"(n)
+            : "a"(val)
+            : "memory"
+        );
+    }
+
+#elif defined(__aarch64__)
+    // 针对 AArch64 的优化：使用 STP (Store Pair) 指令
+    uint64_t color64 = ((uint64_t)val << 32) | val;
+    
+    // 每次处理 4 个像素 (16 字节)
+    while (n >= 4) {
+        asm volatile (
+            "stp %0, %0, [%1], #16" 
+            : : "r"(color64), "r"(dst) : "memory"
+        );
+        n -= 4;
+        dst = (uint32_t*)dst + 4;
+    }
+    
+    // 处理剩余像素
+    while (n--) {
+        *(uint32_t *)dst = val;
+        dst = (uint32_t*)dst + 1;
+    }
+
+#else
+    // 基础兜底逻辑
+    uint32_t *p = (uint32_t *)dst;
+    while (n--) {
+        *p++ = val;
+    }
+#endif
+
+    return ret;
+
+    return ret;
+}
 
 void BasicDraw::ClearScreen(uint32_t Color){
     uint64_t fbBase = (uint64_t)this->FrameBuf->BaseAddress;
     uint64_t pxlsPerScanline = this->FrameBuf->PixelsPerScanLine;
     uint64_t fbHeight = this->FrameBuf->Height;
 
-    /* for (int64_t y = 0; y < this->FrameBuf->Height; y++)
+    for (int64_t y = 0; y < this->FrameBuf->Height; y++)
         for (int64_t x = 0; x < this->FrameBuf->Width; x++)
-            *((uint32_t*)(fbBase + 4 * (x + pxlsPerScanline * y))) = Color; */
-    memset_fscpuf(fbBase,Color,fbHeight * this->FrameBuf->Width);
+            *((uint32_t*)(fbBase + 4 * (x + pxlsPerScanline * y))) = Color; 
 }
 
 void BasicDraw::PutPixel(uint64_t X,uint64_t Y,uint32_t Color){
@@ -58,7 +104,7 @@ void BasicDraw::DrawHLine(uint64_t X, uint64_t Y, uint64_t Width, uint32_t Color
     
     uint32_t* p = (uint32_t*)FrameBuf->BaseAddress + (Y * FrameBuf->PixelsPerScanLine);
     // 使用快速填充
-    memset_fscpuf(&p[startX], Color, (endX - startX));
+    memset32_fscpuf(&p[startX], Color, (endX - startX));
 }
 
 void BasicDraw::DrawRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint32_t Color, bool Fill) {
@@ -170,6 +216,95 @@ void BasicDraw::DrawCircle(uint64_t xc, uint64_t yc, uint64_t r, uint32_t Color)
             d = d + 4 * x + 6;
         }
     }
+}
+void BasicDraw::DrawRoundedRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint64_t R, uint32_t Color, bool Fill) {
+    // 基础安全检查：防止半径过大导致图形畸变
+    if (R * 2 > W) R = W / 2;
+    if (R * 2 > H) R = H / 2;
+    if (R == 0) { // 半径为0时退化为普通矩形
+        DrawRect(X, Y, W, H, Color, Fill);
+        return;
+    }
+
+    int64_t x = 0;
+    int64_t y = R;
+    int64_t d = 3 - 2 * R;
+
+    // 绘制四个圆角
+    while (y >= x) {
+        if (Fill) {
+            // 利用你的 DrawHLine (调用了快速 memset)
+            // 填充顶部两个圆角之间的缝隙
+            DrawHLine(X + R - x, Y + R - y, W - 2 * R + 2 * x, Color);
+            DrawHLine(X + R - y, Y + R - x, W - 2 * R + 2 * y, Color);
+            // 填充底部两个圆角之间的缝隙
+            DrawHLine(X + R - x, Y + H - R + y - 1, W - 2 * R + 2 * x, Color);
+            DrawHLine(X + R - y, Y + H - R + x - 1, W - 2 * R + 2 * y, Color);
+        } else {
+            // 仅仅是描边
+            PutPixel(X + R - x, Y + R - y, Color); // 左上
+            PutPixel(X + R - y, Y + R - x, Color);
+            PutPixel(X + W - R + x - 1, Y + R - y, Color); // 右上
+            PutPixel(X + W - R + y - 1, Y + R - x, Color);
+            PutPixel(X + R - x, Y + H - R + y - 1, Color); // 左下
+            PutPixel(X + R - y, Y + H - R + x - 1, Color);
+            PutPixel(X + W - R + x - 1, Y + H - R + y - 1, Color); // 右下
+            PutPixel(X + W - R + y - 1, Y + H - R + x - 1, Color);
+        }
+
+        if (d > 0) {
+            d = d + 4 * (x - y) + 10;
+            y--;
+        } else {
+            d = d + 4 * x + 6;
+        }
+        x++;
+    }
+
+    // 绘制中间的主体部分
+    if (Fill) {
+        // 这一部分是圆弧中间没有覆盖到的矩形区域
+        for (uint64_t i = R; i < H - R; i++) {
+            DrawHLine(X, Y + i, W, Color);
+        }
+    } else {
+        // 描边模式：连接四条直线边
+        DrawHLine(X + R, Y, W - 2 * R, Color);         // 顶边
+        DrawHLine(X + R, Y + H - 1, W - 2 * R, Color); // 底边
+        DrawVLine(X, Y + R, H - 2 * R, Color);         // 左边
+        DrawVLine(X + W - 1, Y + R, H - 2 * R, Color); // 右边
+    }
+}
+
+void BasicDraw::DrawProportionalUI() {
+    // 1. 获取屏幕实时尺寸
+    uint64_t sw = this->FrameBuf->Width;
+    uint64_t sh = this->FrameBuf->Height;
+
+    // 2. 根据比例计算尺寸 (使用整数运算防止浮点开销)
+    // 宽度 = 40%, 高度 = 50%
+    uint64_t rectW = (sw * 40) / 100;
+    uint64_t rectH = (sh * 50) / 100;
+    
+    // 3. 计算居中坐标
+    uint64_t x = (sw - rectW) / 2;
+    uint64_t y = (sh - rectH) / 2;
+
+    // 4. 计算自适应圆角半径 (设为宽度的 1/20, 即 5%)
+    uint64_t radius = rectW / 20;
+
+    // 5. 绘制
+    uint32_t darkBg = 0x1A1A1A;     // 极深灰
+    uint32_t cardColor = 0x2D2D2D;  // 稍微浅一点的灰色卡片
+    uint32_t accent = 0x0078D7;     // 蓝色高亮边框
+
+    this->ClearScreen(darkBg);
+    
+    // 画阴影/背景卡片
+    this->DrawRoundedRect(x, y, rectW, rectH, radius, cardColor, true);
+    
+    // 画一个 2 像素宽的外边框（通过两次绘制实现）
+    this->DrawRoundedRect(x, y, rectW, rectH, radius, accent, false);
 }
 
 #endif
