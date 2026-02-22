@@ -165,8 +165,10 @@ namespace Schedule{
                 thread_t *thread = cpu->current_thread;
                 thread->fs = rdmsr(FS_BASE);
                 thread->ctx = *ctx;
-                if (cpu->SupportXSAVE)
-                    asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(UINT64_MAX), "d"(UINT64_MAX) : "memory");
+                if (cpu->SupportXSAVEOPT)
+                    asm volatile("xsaveopt %0" : : "m"(*thread->fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
+                else if(cpu->SupportXSAVE)
+                    asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
                 else
                     asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
             }
@@ -178,7 +180,7 @@ namespace Schedule{
             wrmsr(FS_BASE, next_thread->fs);
             wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
             if (cpu->SupportXSAVE)
-                asm volatile("xrstor %0" : : "m"(*next_thread->fx_area), "a"(UINT64_MAX), "d"(UINT64_MAX) : "memory");
+                asm volatile("xrstor %0" : : "m"(*next_thread->fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
             else
                 asm volatile("fxrstor (%0)" : : "r"(next_thread->fx_area) : "memory");
             
