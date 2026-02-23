@@ -50,6 +50,7 @@ extern "C" void NEON_MEMSET(void* dst, unsigned char value, size_t size);
 
 #ifdef __x86_64__
 
+//X/FXSave Check And Set
 #define XFXSAVE_CAS if(KernelInited && size > 1024 * 256){ \
         if(cpu->SupportXSAVE){ \
             if(fx_area != nullptr){ \
@@ -66,6 +67,7 @@ extern "C" void NEON_MEMSET(void* dst, unsigned char value, size_t size);
         } \
     } 
 
+//X/FXSave Check And Set Back
 #define XFXSAVE_CASB if(KernelInited && size > 1024 * 256){ \
     end_deal: \
         if(cpu->SupportXSAVE){ \
