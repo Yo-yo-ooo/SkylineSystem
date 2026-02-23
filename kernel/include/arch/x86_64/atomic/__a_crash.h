@@ -22,12 +22,12 @@
 # define _A_CRASH	__a_crash
 # define A_CRASH	__a_crash
 
-static __attribute__((always_inline)) void	__a_crash(void)
+static inline __attribute__((always_inline)) void	__a_crash(void)
 {
 	__asm__ volatile ("hlt" : : : "memory");
 }
 
-/* extern __attribute__((always_inline)) void	a_crash(void)
+/* extern inline __attribute__((always_inline)) void	a_crash(void)
 		__attribute__((weak, alias("__a_crash"))); */
 
 #endif

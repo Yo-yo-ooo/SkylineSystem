@@ -24,13 +24,13 @@
 # define _A_CTZ_64	__a_ctz_64
 # define A_CTZ_64	__a_ctz_64
 
-static __attribute__((always_inline)) int	__a_ctz_64(uint64_t x)
+static inline __attribute__((always_inline)) int	__a_ctz_64(uint64_t x)
 {
 	__asm__("bsf %1,%0" : "=r"(x) : "r"(x));
 	return (x);
 }
 
-/* extern __attribute__((always_inline)) int	a_ctz_64(uint64_t x)
+/* extern inline __attribute__((always_inline)) int	a_ctz_64(uint64_t x)
 		__attribute__((weak, alias("__a_ctz_64"))); */
 
 #endif

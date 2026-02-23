@@ -22,14 +22,14 @@
 # define _A_INC		__a_inc
 # define A_INC		__a_inc
 
-static __attribute__((always_inline)) void	__a_inc(volatile int *p)
+static inline __attribute__((always_inline)) void	__a_inc(volatile int *p)
 {
 	__asm__	volatile (
 			"lock ; incl %0"
 			: "=m"(*p) : "m"(*p) : "memory" );
 }
 
-/* extern __attribute__((always_inline)) void	a_inc(volatile int *p)
+/* extern inline __attribute__((always_inline)) void	a_inc(volatile int *p)
 		__attribute__((weak, alias("__a_inc"))); */
 
 #endif

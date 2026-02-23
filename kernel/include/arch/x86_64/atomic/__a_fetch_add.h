@@ -22,7 +22,7 @@
 # define _A_FETCH_ADD	__a_fetch_add
 # define A_FETCH_ADD	__a_fetch_add
 
-static __attribute__((always_inline)) int	__a_fetch_add(volatile int *p, int v)
+static inline __attribute__((always_inline)) int	__a_fetch_add(volatile int *p, int v)
 {
 	__asm__	volatile (
 			"lock ; xadd %0, %1"
@@ -31,7 +31,7 @@ static __attribute__((always_inline)) int	__a_fetch_add(volatile int *p, int v)
 	return (v);
 }
 
-/* extern __attribute__((always_inline)) int	a_fetch_add(volatile int *p, int v)
+/* extern inline __attribute__((always_inline)) int	a_fetch_add(volatile int *p, int v)
 		__attribute__((weak, alias("__a_fetch_add"))); */
 
 #endif

@@ -22,12 +22,12 @@
 # define _A_BARRIER		__a_barrier
 # define A_BARRIER		__a_barrier
 
-static __attribute__((always_inline)) void	__a_barrier(void)
+static inline __attribute__((always_inline)) void	__a_barrier(void)
 {
 	__asm__ volatile ("" : : : "memory");
 }
 
-/* extern __attribute__((always_inline)) void	a_barrier(void)
+/* extern inline __attribute__((always_inline)) void	a_barrier(void)
 		__attribute__((weak, alias("__a_barrier"))); */
 
 #endif

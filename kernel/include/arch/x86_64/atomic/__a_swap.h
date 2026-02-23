@@ -22,7 +22,7 @@
 # define _A_SWAP	__a_swap
 # define A_SWAP		__a_swap
 
-static __attribute__((always_inline)) int	__a_swap(volatile int *p, int v)
+static inline __attribute__((always_inline)) int	__a_swap(volatile int *p, int v)
 {
 	__asm__	volatile (
 			"xchg %0, %1"

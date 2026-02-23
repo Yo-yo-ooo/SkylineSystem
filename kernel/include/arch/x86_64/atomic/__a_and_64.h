@@ -12,14 +12,14 @@
 # define _A_AND_64	__a_and_64
 # define A_AND_64	__a_and_64
 
-static __attribute__((always_inline)) void	__a_and_64(volatile uint64_t *p, uint64_t v)
+static inline __attribute__((always_inline)) void	__a_and_64(volatile uint64_t *p, uint64_t v)
 {
 	__asm__	volatile (
 			"lock ; and %1, %0"
 			: "=m"(*p) : "r"(v) : "memory" );
 }
 
-/* extern __attribute__((always_inline)) void	a_and_64(volatile uint64_t *p, uint64_t v)
+/* extern inline __attribute__((always_inline)) void	a_and_64(volatile uint64_t *p, uint64_t v)
 		__attribute__((weak, alias("__a_and_64"))); */
 
 #endif

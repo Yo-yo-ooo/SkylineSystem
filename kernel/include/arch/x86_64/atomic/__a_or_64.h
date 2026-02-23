@@ -24,14 +24,14 @@
 # define _A_OR_64	__a_or_64
 # define A_OR_64	__a_or_64
 
-static __attribute__((always_inline)) void	__a_or_64(volatile uint64_t *p, uint64_t v)
+static inline __attribute__((always_inline)) void	__a_or_64(volatile uint64_t *p, uint64_t v)
 {
 	__asm__	volatile (
 			"lock ; or %1, %0"
 			: "=m"(*p) : "r"(v) : "memory" );
 }
 
-/* extern __attribute__((always_inline)) void	a_or_64(volatile uint64_t *p, uint64_t v)
+/* extern inline __attribute__((always_inline)) void	a_or_64(volatile uint64_t *p, uint64_t v)
 		__attribute__((weak, alias("__a_or_64"))); */
 
 #endif

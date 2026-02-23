@@ -73,6 +73,11 @@
     ta > tb ? tb : ta; \
 })
 
+#define __stringify_1(x...)	#x
+#define __stringify(x...)	__stringify_1(x)
+
+#define FILE_LINE	__FILE__ ":" __stringify(__LINE__)
+
 #ifdef __cplusplus
 template <class _Ty>
 struct _if_remove_reference {

@@ -22,12 +22,12 @@
 # define _A_SPIN	__a_spin
 # define A_SPIN		__a_spin
 
-static __attribute__((always_inline)) void	__a_spin(void)
+static inline __attribute__((always_inline)) void	__a_spin(void)
 {
 	__asm__ volatile ("pause" : : : "memory");
 }
 
-/* extern __attribute__((always_inline)) void	a_spin(void)
+/* extern inline __attribute__((always_inline)) void	a_spin(void)
 		__attribute__((weak, alias("__a_spin"))); */
 
 #endif

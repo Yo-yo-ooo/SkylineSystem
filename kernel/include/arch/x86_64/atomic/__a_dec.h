@@ -22,14 +22,14 @@
 # define _A_DEC		__a_dec
 # define A_DEC		__a_dec
 
-static __attribute__((always_inline)) void	__a_dec(volatile int *p)
+static inline __attribute__((always_inline)) void	__a_dec(volatile int *p)
 {
 	__asm__	volatile (
 			"lock ; decl %0"
 			: "=m"(*p) : "m"(*p) : "memory" );
 }
 
-/* extern __attribute__((always_inline)) void	a_dec(volatile int *p)
+/* extern inline __attribute__((always_inline)) void	a_dec(volatile int *p)
 		__attribute__((weak, alias("__a_dec"))); */
 
 #endif

@@ -24,13 +24,13 @@
 # define _A_CLZ_64	__a_clz_64
 # define A_CLZ_64	__a_clz_64
 
-static __attribute__((always_inline)) int	__a_clz_64(uint64_t x)
+static inline __attribute__((always_inline)) int	__a_clz_64(uint64_t x)
 {
 	__asm__("bsr %1,%0 ; xor $63,%0" : "=r"(x) : "r"(x));
 	return (x);
 }
 
-/* extern __attribute__((always_inline)) int	a_clz_64(uint64_t x)
+/* extern inline __attribute__((always_inline)) int	a_clz_64(uint64_t x)
 		__attribute__((weak, alias("__a_clz_64"))); */
 
 #endif

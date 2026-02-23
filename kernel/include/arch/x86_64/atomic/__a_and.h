@@ -22,14 +22,14 @@
 # define _A_AND		__a_and
 # define A_AND		__a_and
 
-static __attribute__((always_inline)) void	__a_and(volatile int *p, int v)
+static inline __attribute__((always_inline)) void	__a_and(volatile int *p, int v)
 {
 	__asm__	volatile (
 			"lock ; and %1, %0"
 			: "=m"(*p) : "r"(v) : "memory" );
 }
 
-/* extern __attribute__((always_inline)) void	a_and(volatile int *p, int v)
+/* extern inline __attribute__((always_inline)) void	a_and(volatile int *p, int v)
 		__attribute__((weak, alias("__a_and"))); */
 
 #endif

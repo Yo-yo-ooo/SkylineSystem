@@ -22,7 +22,7 @@
 # define _A_CAS_P	__a_cas_p
 # define A_CAS_P	__a_cas_p
 
-static __attribute__((always_inline)) void	*__a_cas_p(volatile void *p, void *t, void *s)
+static inline __attribute__((always_inline)) void	*__a_cas_p(volatile void *p, void *t, void *s)
 {
 	__asm__("lock ; cmpxchg %3, %1"
 		: "=a"(t), "=m"(*(void *volatile *)p)
@@ -30,7 +30,7 @@ static __attribute__((always_inline)) void	*__a_cas_p(volatile void *p, void *t,
 	return (t);
 }
 
-/* extern __attribute__((always_inline)) void	*a_cas_p(volatile void *p, void *t, void *s)
+/* extern inline __attribute__((always_inline)) void	*a_cas_p(volatile void *p, void *t, void *s)
 		__attribute__((weak, alias("__a_cas_p")));
  */
 #endif

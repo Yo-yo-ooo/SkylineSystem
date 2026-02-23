@@ -22,7 +22,7 @@
 # define _A_STORE	__a_store
 # define A_STORE	__a_store
 
-static __attribute__((always_inline)) void	__a_store(volatile int *p, int x)
+static inline __attribute__((always_inline)) void	__a_store(volatile int *p, int x)
 {
 	__asm__	volatile (
 			"mov %1, %0 ; lock ; orl $0,(%%rsp)"

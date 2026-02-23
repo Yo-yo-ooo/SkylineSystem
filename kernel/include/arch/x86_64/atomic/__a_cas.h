@@ -22,7 +22,7 @@
 # define _A_CAS		__a_cas
 # define A_CAS		__a_cas
 
-static __attribute__((always_inline)) int	__a_cas(volatile int *p, int t, int s)
+static inline __attribute__((always_inline)) int	__a_cas(volatile int *p, int t, int s)
 {
 	__asm__	volatile (
 			"lock ; cmpxchg %3, %1"
@@ -31,7 +31,7 @@ static __attribute__((always_inline)) int	__a_cas(volatile int *p, int t, int s)
 	return (t);
 }
 
-/* extern __attribute__((always_inline)) int	a_cas(volatile int *p, int t, int s)
+/* extern inline __attribute__((always_inline)) int	a_cas(volatile int *p, int t, int s)
 		__attribute__((weak, alias("__a_cas"))); */
 
 #endif
