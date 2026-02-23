@@ -44,7 +44,7 @@ extern void aarch64_init(void);
 // See specification for further info.
 
 __attribute__((used, section(".limine_requests")))
-static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(4);
+static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(5);
 
 #if LIMINE_API_REVISION < 3
 #error "UNSUPPORT LOW LEVEL LIMINE API REVISION"
