@@ -34,6 +34,7 @@
 #include <drivers/framebuffer/fb.h>
 #include <klib/renderer/rnd.h>
 #include <desktop/basicdraw/basicdraw.h>
+#include <arch/x86_64/atomic/atomic_arch.h>
 
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
@@ -103,7 +104,8 @@ void __init x86_64_init(void){
 
     FrameBufferDevice::Init();
 
-    KernelInited = true;
+    //KernelInited = 1;
+    __a_inc(&KernelInited);
     if(this_cpu()->SupportXSAVE)
         asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
     else

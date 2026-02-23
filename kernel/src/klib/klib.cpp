@@ -23,6 +23,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __x86_64__
+#include <arch/x86_64/atomic/atomic_arch.h>
+#endif
+
 void Panic(const char* message){
     kerrorln("Panic!");
     e9_printf(message);
@@ -61,17 +65,25 @@ void hcf(void) {
 
 
 void spinlock_lock(spinlock_t* l) {
-    while (__sync_lock_test_and_set(l, 1)){
-#if defined(__x86_64__)
-        __asm__ volatile("pause");
+    
+#ifdef __x86_64__
+    while(__a_swap(l,1) != 0)
+        __a_spin();
 #else
-        ;
+    while (__sync_lock_test_and_set(l, 1)){
+        asm volatile("nop");
+    } 
 #endif
-    }
 }
 
 void spinlock_unlock(spinlock_t* l) {
+    //__sync_lock_release(l);
+    
+#ifdef __x86_64__
+    __a_store(l,0);
+#else
     __sync_lock_release(l);
+#endif
 }
 
 extern "C" void *__memcpy(void * d, const void * s, uint64_t n) { 
@@ -165,5 +177,5 @@ extern "C" uint32_t sys_now(void){
 
 }
 
-bool KernelInited = false;
+volatile int KernelInited = 0;
 int8_t *KernelXsaveSpace = nullptr;

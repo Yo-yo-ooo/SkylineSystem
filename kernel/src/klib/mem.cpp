@@ -99,9 +99,9 @@ void _memcpy(void* src, void* dest, uint64_t size)
 
 
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMCPY) && NOT_COMPILE_X86MEM == 0
-    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (size > 1024 * 256))){
+    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == 1) || (size > 1024 * 256))){
         AVX_memcpy(dest,src,size);
-        if(KernelInited == false)
+        if(KernelInited == 1)
             return;
         goto end_deal;
     }
@@ -110,12 +110,12 @@ void _memcpy(void* src, void* dest, uint64_t size)
     
 #elif defined(__aarch64__)
     NEON_MEMCPY(dest,src,size);
-    if(KernelInited == false)
+    if(KernelInited == 1)
         return;
 #endif
 
 #ifdef __x86_64__
-    if(((KernelInited == false) || (size > 1024 * 256))){
+    if(((KernelInited == 1) || (size > 1024 * 256))){
     deal_kfinited:
         /// We will use pointer arithmetic, so char pointer will be used.
         /// Note that __restrict makes sense (otherwise compiler will reload data from memory
@@ -232,7 +232,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
                 goto tail;
             }
         }
-        if(KernelInited == false)
+        if(KernelInited == 1)
             return;
         goto end_deal;
     }
@@ -258,9 +258,9 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 
 
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMSET) && NOT_COMPILE_X86MEM == 0
-    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (size > 1024 * 256))){
+    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == 1) || (size > 1024 * 256))){
         AVX_memset(dest,value,size);
-        if(KernelInited == false)
+        if(KernelInited == 1)
             return;
         goto end_deal;
     }
@@ -290,7 +290,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
         fx_area = th->fx_area;
     
     XFXSAVE_CAS
-    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (size > 1024 * 256))){
+    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == 1) || (size > 1024 * 256))){
         AVX_memmove(dest,src,size);
         return;
     }
@@ -313,7 +313,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size)
         fx_area = th->fx_area;
     
     XFXSAVE_CAS;
-    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == false) || (size > 1024 * 256))){
+    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == 1) || (size > 1024 * 256))){
         return AVX_memcmp(buffer1,buffer2,size,1);
     }
     XFXSAVE_CASB;

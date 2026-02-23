@@ -98,7 +98,7 @@ extern int8_t *KernelXsaveSpace;
 #endif
 #define UnCompleteCode 1
 
-extern bool KernelInited;
+extern volatile int KernelInited;
 
 uint16_t kld_16 (const uint8_t* ptr);
 uint32_t kld_32 (const uint8_t* ptr);
