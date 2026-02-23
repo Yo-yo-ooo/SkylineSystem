@@ -74,7 +74,7 @@ override KCFLAGS += \
     -fdata-sections \
 	-O0 \
 	-g3 \
-	-DLIMINE_API_REVISION=3 \
+	-DLIMINE_API_REVISION=5 \
 	-fpermissive \
 	-Wno-error=deprecated \
 
@@ -84,7 +84,7 @@ override KCPPFLAGS := \
 	-isystem freestnd-c-hdrs/$(KARCH)/include \
 	-I$(SS_BUILD_DIR)/kernel/include \
 	-Ifakestdlib \
-	-DLIMINE_API_REVISION=3 \
+	-DLIMINE_API_REVISION=5 \
     $(KCPPFLAGS) \
     -MMD \
     -MP

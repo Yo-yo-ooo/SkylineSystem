@@ -79,7 +79,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
         __asm__ volatile ("hlt");
 }
 
-extern struct limine_mp_response *mp_response;
+extern volatile struct limine_mp_response *mp_response;
 void smp_init() {
     
     cpu_t *bsp_cpu = (cpu_t*)kmalloc(sizeof(cpu_t));

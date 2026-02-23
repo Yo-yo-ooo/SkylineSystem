@@ -166,10 +166,15 @@ volatile uint64_t smp_cpu_count = 0;
 
 volatile struct limine_framebuffer *fb;
 
-struct limine_mp_response *mp_response;
+volatile struct limine_mp_response *mp_response;
 
 Framebuffer FB;
 Framebuffer *Fb;
+
+// Extern declarations for global constructors array.
+extern void (*__init_array[])();
+extern void (*__init_array_end[])();
+
 // The following will be our kernel's entry point.
 // If renaming kmain() to something else, make sure to change the
 // linker script accordingly.
@@ -177,6 +182,11 @@ extern "C" void kmain(void) {
     // Ensure the bootloader actually understands our base revision (see spec).
     if (LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision) == false) {
         hcf();
+    }
+
+    // Call global constructors.
+    for (size_t i = 0; &__init_array[i] != __init_array_end; i++) {
+        __init_array[i]();
     }
 
     // Ensure we got a framebuffer.
