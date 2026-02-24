@@ -117,7 +117,7 @@ namespace VMM{
         kernel_pagemap->vma_head = nullptr;
         _memset(kernel_pagemap->pml4, 0, PAGE_SIZE);
 
-        uint64_t first_free_addr = pmm_memmap->entries[0]->base + PMM::pmm_bitmap_pages * PAGE_SIZE;
+        //uint64_t first_free_addr = pmm_memmap->entries[0]->base + PMM::pmm_bitmap_pages * PAGE_SIZE;
         VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(0x100000000000), 1);
 
         uint64_t executable_vaddr = executable_address->virtual_base;
