@@ -105,7 +105,7 @@ void __init x86_64_init(void){
     FrameBufferDevice::Init();
 
     //KernelInited = 1;
-    __a_inc(&KernelInited);
+    __a_swap(&KernelInited, 1);
     if(this_cpu()->SupportXSAVE)
         asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
     else
