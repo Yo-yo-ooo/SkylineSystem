@@ -105,33 +105,39 @@ namespace SLAB{
 #ifdef __x86_64__
         spinlock_lock(&heap_lock);
         slab_cache_t *cache = SLAB::GetCache(size);
+        
+        // 1. 处理大块内存分配 (>= 4096)
         if (!cache) {
             uint64_t total_pages = DIV_ROUND_UP(size + sizeof(slab_page_t), PAGE_SIZE);
-            slab_page_t *page = VMM::Alloc(kernel_pagemap, total_pages, false);
+            slab_page_t *page = (slab_page_t*)VMM::Alloc(kernel_pagemap, total_pages, false);
             page->magic = SLAB_MAGIC;
             page->page_count = total_pages;
             spinlock_unlock(&heap_lock);
             return (void*)(page + 1);
         }
-        bool found = false;
-        int64_t free_obj;
-        slab_obj_t *obj = NULL;
-        while (!found) {
-            if (cache->used) {
-                cache = cache_get_empty(cache);
+
+        // 2. 优化后的 SLAB 分配逻辑
+        slab_cache_t *current = cache;
+        while (current) {
+            // 找当前 slab 里的空闲位
+            int64_t free_obj = SLAB::FindFree(current);
+            if (free_obj != -1) {
+                slab_obj_t *obj = SLAB_IDX(current, free_obj);
+                obj->cache = current; // 存回 cache 指针方便 Free 时查找
+                obj->magic = SLAB_MAGIC;
+                spinlock_unlock(&heap_lock);
+                return (void*)(obj + 1);
             }
-            free_obj = SLAB::FindFree(cache);
-            if (free_obj == -1)
-                cache->used = true;
-            else {
-                obj = SLAB_IDX(cache, free_obj);
-                found = true;
+            
+            // 如果当前 slab 满了，看链表下一个
+            if (!current->empty_cache) {
+                current->empty_cache = slab_create_cache(cache->obj_size);
             }
+            current = current->empty_cache;
         }
-        obj->cache = cache;
-        obj->magic = SLAB_MAGIC;
+        
         spinlock_unlock(&heap_lock);
-        return (void*)(obj + 1);
+        return nullptr;
 #endif
     }
 
@@ -217,24 +223,26 @@ namespace SLAB{
 #endif
     }
 
-    uint64_t GetSize(void* ptr,bool ERO = false){
+    uint64_t GetSize(void* ptr, bool ERO = false) {
 #ifdef __x86_64__
         spinlock_lock(&heap_lock);
         slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
-        if (page->magic != SLAB_MAGIC) {
+        
+        uint64_t size = 0;
+        if (page->magic == SLAB_MAGIC) {
+            size = page->page_count * PAGE_SIZE - sizeof(slab_page_t);
+        } else {
             slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
-            if (obj->magic != SLAB_MAGIC) {
-                if(ERO == false){
-                    kerror("Critical SLAB error: Trying to get size of ptr.\n");
-                    return UINT64_MAX;
-                }else{return 1;}
+            if (obj->magic == SLAB_MAGIC) {
+                size = obj->cache->obj_size;
+            } else {
+                if (!ERO) kerror("Invalid SLAB ptr\n");
+                size = (ERO ? 1 : UINT64_MAX);
             }
-            spinlock_unlock(&heap_lock);
-            return obj->cache->obj_size;
-        }else{
-            return page->page_count * PAGE_SIZE - sizeof(slab_page_t);
         }
-        spinlock_unlock(&heap_lock);
+        
+        spinlock_unlock(&heap_lock); // 统一解锁出口
+        return size;
 #endif
     }
 }
