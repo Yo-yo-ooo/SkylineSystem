@@ -35,7 +35,7 @@
 #include <klib/rnd.h>
 /* PCI::PCIDeviceHeader* pciDevices[PCI_DEVICE_MAX] = {0};
 uint32_t pciDeviceidx = 0; */
-volatile static struct hashmap *PCIDevMap = nullptr;
+static struct hashmap *PCIDevMap = nullptr;
 
 PACK(typedef struct _MapIdent_32b{
     uint8_t RSVD = 0;
@@ -160,7 +160,7 @@ namespace PCI
         
         if (busAddress == 0){return;}
 
-        VMM::Map((void*)(busAddress), (void*)(busAddress));
+        VMM::Map((busAddress), (busAddress));
         //kinfoln("PCI HIT! 5");
         
         PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)HIGHER_HALF(busAddress);
@@ -190,7 +190,7 @@ namespace PCI
             return;
         }
 
-        VMM::Map((void*)(deviceAddress), (void*)(deviceAddress));
+        VMM::Map((deviceAddress), (deviceAddress));
         //kinfoln("PCI HIT! 6");
         
         PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)HIGHER_HALF(deviceAddress);
@@ -218,7 +218,7 @@ namespace PCI
             return;
         }
 
-        VMM::Map((void*)(functionAddress), (void*)(functionAddress));
+        VMM::Map((functionAddress),(functionAddress));
         //kinfoln("PCI HIT! 7");
         
         PCIDeviceHeader* pciDeviceHeader  = (PCIDeviceHeader*)HIGHER_HALF(functionAddress);

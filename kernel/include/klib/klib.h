@@ -49,9 +49,9 @@ extern volatile uint64_t RSDP_ADDR;
 #define ALIGN_UP(x, y)     DIV_ROUND_UP(x, y) * y
 #define ALIGN_DOWN(x, y)   ((x / y) * y)
 
-#define HIGHER_HALF(x)   (typeof(x))((uint64_t)x + hhdm_offset)
+#define HIGHER_HALF(x)   (decltype(x))((uint64_t)x + hhdm_offset)
 #define VIRTUAL(ptr)       HIGHER_HALF(ptr)
-#define PHYSICAL(x)      (typeof(x))((uint64_t)x - hhdm_offset)
+#define PHYSICAL(x)      (decltype(x))((uint64_t)x - hhdm_offset)
 #define FORCE_INLINE inline __attribute__((always_inline))
 
 void Panic(const char* message);
