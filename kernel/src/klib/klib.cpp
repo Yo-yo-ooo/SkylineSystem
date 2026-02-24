@@ -113,6 +113,7 @@ void bitmap_clear(u8* bitmap, u64 bit) {
 #endif
 }
 
+
 bool bitmap_get(u8* bitmap, u64 bit) {
 #if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
     return (bitmap[bit / 8] & (1 << (bit % 8))) != 0;

@@ -23,6 +23,8 @@
 
 #include <klib/types.h>
 
+#define BuddyMaxOrder	15
+
 namespace PMM{
 
     extern volatile uint8_t *bitmap;

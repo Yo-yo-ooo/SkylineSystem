@@ -36,6 +36,13 @@
 #define __VAR_CONCAT_IMPL(a, b) a##b
 #define VAR_CONCAT(a, b) __VAR_CONCAT_IMPL(a, b)
 
+#if defined(__GNUC__) || defined(__clang__)
+    #define _FUNCTION_FORCE_INLINE static inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+    #define _FUNCTION_FORCE_INLINE static __forceinline
+#else
+    #define _FUNCTION_FORCE_INLINE static inline
+#endif
 
 
 #if !defined(func_optimize)

@@ -107,6 +107,63 @@ uint64_t kld_64 (const uint8_t* ptr);
 void qsort(void *base, size_t num, size_t width, int32_t (*sort)(const void *e1, const void *e2));
 
 
+namespace Interrupt{
+    // 返回 1 表示中断开启，0 表示中断关闭
+    static inline int32_t State() {
+    #ifdef __x86_64__
+        u64 rflags; 
+        __asm__ volatile (
+            "pushfq     \n\t" 
+            "popq %0    \n\t" 
+            : "=r"(rflags) 
+            : 
+            : "memory" 
+        ); 
+        return (rflags >> 9) & 1; 
+    #elif defined(__aarch64__)
+        uint64_t daif;
+        asm volatile("mrs %0, daif" : "=r"(daif));
+        // 检查第 7 位 (IRQ)，注意：DAIF 位为 1 是屏蔽，所以取反
+        return !(daif & (1 << 7));
+    #else defined(__riscv)
+        uint64_t sstatus;
+        asm volatile("csrr %0, sstatus" : "=r"(sstatus));
+        // 检查第 1 位 (SIE)
+        return (sstatus & (1 << 1)) ? 1 : 0;
+    #endif
+    }
+
+    // 屏蔽 IRQ (DAIF 中的 I 位)
+    static inline void Mask() {
+    #ifdef __x86_64__
+        asm volatile("cli" ::: "memory");
+    #elif defined(__aarch64__)
+        // #2 对应 DAIF 寄存器的 I 位 (bit 7)
+        // 使用 msr 指令直接置位
+        asm volatile("msr daifset, #2" ::: "memory");
+    #elif defined(__riscv)
+        // csrci 指令：CSR Clear Immediate (将立即数对应的位清零)
+        // 2 对应 sstatus 寄存器的 SIE 位 (bit 1)
+        asm volatile("csrci sstatus, 2" ::: "memory");
+    #endif
+    }
+
+    // 开启 IRQ
+    static inline void Unmask() {
+    #ifdef __x86_64__
+        asm volatile ("sti" ::: "memory");
+    #elif defined(__aarch64__)
+        // 使用 msr 指令直接清除 I 位
+        asm volatile("msr daifclr, #2" ::: "memory");
+    #elif defined(__riscv)
+        // csrsi 指令：CSR Set Immediate (将立即数对应的位设置为 1)
+        asm volatile("csrsi sstatus, 2" ::: "memory");
+    #endif
+        
+    }
+}
+
+
 extern "C" {
 //freestanding cpu features functions
 func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n);
