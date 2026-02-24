@@ -62,7 +62,7 @@ bool pdev_iter(const void *item, void *udata) {
 
 uint64_t pdev_hash(const void *item, uint64_t seed0, uint64_t seed1) {
     const PCIDevMapS *A = (PCIDevMapS*)item;
-    return hashmap_sip(&A->mi,4,seed0,seed1);
+    return hashmap_xxhash3(&A->mi,4,seed0,seed1);
 }
 
 
