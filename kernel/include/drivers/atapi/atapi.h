@@ -36,7 +36,7 @@ public:
     uint8_t Read(bool slave, uint32_t lba, uint32_t sectors, uint16_t *buffer);
     uint8_t Write(bool slave, uint32_t lba, uint32_t sectors, uint16_t *buffer);
     ~ATAPI();
-}
+};
 
 #endif
 

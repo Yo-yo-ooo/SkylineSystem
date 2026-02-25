@@ -21,9 +21,7 @@
 */
 #ifdef __x86_64__
 #include <drivers/atapi/atapi.h>
-#include <allin.h>
-#include <arch/x86_64/allin.h>
-#include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
+#include <klib/kio.h>
 
 // Handy register number defines
 #define DATA 0
