@@ -229,6 +229,18 @@ static inline uint32_t ind(uint16_t port) {
     return value;
 }
 
+static inline void insw(uint16_t __port, void *__buf, unsigned long __n) {
+	__asm__ __volatile__("cld; rep; insw"
+			: "+D"(__buf), "+c"(__n)
+			: "d"(__port));
+}
+
+static inline void outsw(uint16_t __port, const void *__buf, unsigned long __n) {
+	__asm__ __volatile__("cld; rep; outsw"
+			: "+S"(__buf), "+c"(__n)
+			: "d"(__port));
+}
+
 #define inl ind
 #define outl outd
 
