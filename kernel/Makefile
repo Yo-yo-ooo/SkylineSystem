@@ -236,6 +236,12 @@ endif
 # Include header dependencies.
 -include $(HEADER_DEPS)
 
+# 4. 针对这些特定目标，在 aarch64 架构下移除 Flag
+ifeq ($(BUILD_ARCH), aarch64)
+obj-$(KARCH)/./klib/algorithm/hashmap.c.o: KCFLAGS := -march=armv8-a+fp+simd $(filter-out -mgeneral-regs-only -march=armv8-a+nofp+nosimd, $(KCFLAGS))
+endif
+
+
 # Compilation rules for *.c files.
 obj-$(KARCH)/%.c.o: src/%.c Makefile
 	echo C $<

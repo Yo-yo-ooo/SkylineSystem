@@ -7,7 +7,7 @@ COMMON: 0:FALSE
 #ifdef __x86_64__
 
 #define PCI_LIST_MAX 128
-#define MAX_CPU 128
+
 
 #if NOT_COMPILE_X86MEM == 1
 
@@ -65,8 +65,7 @@ COMMON: 0:FALSE
 //#define _SYS_DEBUG_OUT
 
 #define CONFIG_USE_DESKTOP_SUBSYS
-
-#define USE_TEST_x2Apic 0
+#define MAX_CPU 128
 
 
 #define BACKGROUND_COLOR_AUTHOR_LIKE 0x292D3E

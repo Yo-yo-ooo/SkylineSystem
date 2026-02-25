@@ -54,7 +54,7 @@ struct hashmap {
 void hashmap_set_grow_by_power(struct hashmap *map, size_t power) {
     map->growpower = power < 1 ? 1 : power > 16 ? 16 : power;
 }
-#ifdef __x86_64__
+#if defined(__x86_64__)
 #pragma GCC push_options
 #pragma GCC target("sse2")
 #endif
@@ -65,7 +65,6 @@ static double clamp_load_factor(double factor, double default_factor) {
            factor > 0.95 ? 0.95 : 
            factor;
 }
-
 
 void hashmap_set_load_factor(struct hashmap *map, double factor) {
     factor = clamp_load_factor(factor, map->loadfactor / 100.0);
@@ -772,7 +771,6 @@ uint64_t hashmap_xxhash3(const void *data, size_t len, uint64_t seed0,
     (void)seed1;
     return xxh3(data, len ,seed0);
 }
-
-#ifdef __x86_64__
+#if defined(__x86_64__)
 #pragma GCC pop_options
 #endif
