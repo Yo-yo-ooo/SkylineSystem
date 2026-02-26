@@ -111,8 +111,8 @@ void idt_set_ist(uint16_t vector, uint8_t ist) {
 }
 
 void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist) {
-    
-    idt_entries[vector].ist = ist;
+    idt_entry_t* local_idt = (idt_entry_t*)smp_cpu_list[cpuid]->idtdesc.address;
+    local_idt[vector].ist = ist;
 }
 
 extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
