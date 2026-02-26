@@ -73,11 +73,6 @@ static volatile struct limine_hhdm_request hhdm_request = {
     .revision = 0
 };
 
-__attribute__((used, section(".limine_requests")))
-static volatile struct limine_paging_mode_request paging_mode_request = {
-    .id = LIMINE_PAGING_MODE_REQUEST_ID,
-    .revision = 0
-};
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_date_at_boot_request boot_time_request = {
@@ -230,11 +225,7 @@ extern "C" void kmain(void) {
     }
     hhdm_offset = hhdm_request.response->offset;
 
-    if(paging_mode_request.response == NULL) {
-        kerror("Can not get (limine paging_mode_request)->response\n");
-        hcf();
-    }
-    paging_mode = paging_mode_request.response->mode;
+
     
     if(boot_time_request.response == NULL) {
         kerror("Can not get (limine boot_time_request)->response\n");

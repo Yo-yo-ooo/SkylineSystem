@@ -32,7 +32,7 @@ uint64_t sys_arch_prctl(uint64_t op, uint64_t extra,uint64_t ign_0, uint64_t ign
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     IGNORE_VALUE(ign_3);
     uint64_t temp=0;
-    uint64_t *pdpt = (uint64_t*)Schedule::this_thread()->pagemap->pml4[PML4E(extra)];
+    uint64_t *pdpt = (uint64_t*)Schedule::this_thread()->pagemap->toplvl[PML4E(extra)];
     if (!PAGE_EXISTS(pdpt)) 
         temp = EFAULT;
     switch (op) {

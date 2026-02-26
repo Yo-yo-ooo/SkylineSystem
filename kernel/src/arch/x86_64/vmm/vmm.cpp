@@ -30,6 +30,18 @@ static volatile struct limine_executable_address_request limine_executable_addre
     .revision = 0
 };
 
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_paging_mode_request paging_mode_request = {
+    .id = LIMINE_PAGING_MODE_REQUEST_ID,
+    .revision = 0,
+    .mode = LIMINE_PAGING_MODE_X86_64_5LVL,
+    .max_mode = LIMINE_PAGING_MODE_X86_64_5LVL,
+    .min_mode = LIMINE_PAGING_MODE_X86_64_MIN
+};
+
+static volatile bool IsPM5LVL = 
+    (paging_mode_request.response->mode == LIMINE_PAGING_MODE_X86_64_5LVL);
+
 
 #define PHYS_BASE(x) (x - executable_vaddr + executable_paddr)
 
@@ -65,7 +77,13 @@ namespace VMM{
         }
 
         uint64_t GetPhysicsFlags(pagemap_t *pagemap, uint64_t vaddr) {
-            uint64_t *pdpt = (uint64_t*)pagemap->pml4[PML4E(vaddr)];
+            uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
+            if(IsPM5LVL){
+                pml4 = (uint64_t*)pagemap->toplvl[PML5E(vaddr)];
+                if(!PAGE_EXISTS(pml4))return 0;
+                pml4 = HIGHER_HALF(PTE_MASK(pml4));
+            }
+            uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
             if (!PAGE_EXISTS(pdpt)) return 0;
             pdpt = HIGHER_HALF(PTE_MASK(pdpt));
 
@@ -113,9 +131,11 @@ namespace VMM{
 
         struct limine_executable_address_response *executable_address = limine_executable_address.response;
         kernel_pagemap = HIGHER_HALF((pagemap_t*)PMM::Request());
-        kernel_pagemap->pml4 = HIGHER_HALF((uint64_t*)PMM::Request());
+        kernel_pagemap->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
         kernel_pagemap->vma_head = nullptr;
-        _memset(kernel_pagemap->pml4, 0, PAGE_SIZE);
+        _memset(kernel_pagemap->toplvl, 0, PAGE_SIZE);
+        if(IsPM5LVL)
+            kinfoln("THIS CPU SUPPORT 5 LVL PAGING!");
 
         //uint64_t first_free_addr = pmm_memmap->entries[0]->base + PMM::pmm_bitmap_pages * PAGE_SIZE;
         VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(0x100000000000), 1);
@@ -159,9 +179,17 @@ namespace VMM{
     void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags){
 
         //There!
-        uint64_t *pdpt = (uint64_t*)pagemap->pml4[PML4E(vaddr)];
+        uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
+        if(IsPM5LVL){
+            pml4 = (uint64_t*)pagemap->toplvl[PML5E(vaddr)];
+                if (!PAGE_EXISTS(pml4))
+                pml4 = VMM::Useless::NewLevel(pagemap->toplvl, PML5E(vaddr));
+            pml4 = HIGHER_HALF(PTE_MASK(pml4));
+        }
+
+        uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
         if (!PAGE_EXISTS(pdpt))
-            pdpt = VMM::Useless::NewLevel(pagemap->pml4, PML4E(vaddr));
+            pdpt = VMM::Useless::NewLevel(pml4, PML4E(vaddr));
         pdpt = HIGHER_HALF(PTE_MASK(pdpt));
 
         uint64_t *pd = (uint64_t*)pdpt[PDPTE(vaddr)];
@@ -183,7 +211,13 @@ namespace VMM{
 
 
     void Unmap(pagemap_t *pagemap, uint64_t vaddr){
-        uint64_t *pdpt = (uint64_t*)pagemap->pml4[PML4E(vaddr)];
+        uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
+        if(IsPM5LVL){
+            pml4 = (uint64_t*)pagemap->toplvl[PML5E(vaddr)];
+            if (!PAGE_EXISTS(pml4)) return;
+            pml4 = HIGHER_HALF(PTE_MASK(pml4));
+        }
+        uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
         if (!PAGE_EXISTS(pdpt)) return;
         pdpt = HIGHER_HALF(PTE_MASK(pdpt));
 
@@ -216,20 +250,20 @@ namespace VMM{
             old_pagemap = this_cpu()->pagemap;
             this_cpu()->pagemap = pagemap;
         }
-        __asm__ volatile ("movq %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->pml4)) : "memory");
+        __asm__ volatile ("movq %0, %%cr3" : : "r"(PHYSICAL((uint64_t)pagemap->toplvl)) : "memory");
         asm volatile("sti");
         return old_pagemap;
     }
 
     pagemap_t *NewPM(){
         pagemap_t *pagemap = HIGHER_HALF((pagemap_t*)PMM::Request());
-        pagemap->pml4 = HIGHER_HALF((uint64_t*)PMM::Request());
-        _memset(pagemap->pml4, 0, PAGE_SIZE);
+        pagemap->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
+        _memset(pagemap->toplvl, 0, PAGE_SIZE);
         pagemap->vm_mappings = nullptr;
         pagemap->vma_lock = 0;
         pagemap->vma_head = nullptr;
         for (uint64_t i = 256; i < 512; i++)
-            pagemap->pml4[i] = kernel_pagemap->pml4[i];
+            pagemap->toplvl[i] = kernel_pagemap->toplvl[i];
         // The vma root is defined after the pagemap is created
         // I wont put it here because the starting address
         // might vary from page map to page map (for example, in an ELF it might be
@@ -338,10 +372,10 @@ namespace VMM{
     pagemap_t *Fork(pagemap_t *parent){
         pagemap_t *restore = VMM::SwitchPageMap(kernel_pagemap);
         pagemap_t *pagemap = HIGHER_HALF((pagemap_t*)PMM::Request());
-        pagemap->pml4 = HIGHER_HALF((uint64_t*)PMM::Request());
-        _memset(pagemap->pml4, 0, PAGE_SIZE);
+        pagemap->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
+        _memset(pagemap->toplvl, 0, PAGE_SIZE);
         for (uint64_t i = 256; i < 512; i++)
-            pagemap->pml4[i] = kernel_pagemap->pml4[i];
+            pagemap->toplvl[i] = kernel_pagemap->toplvl[i];
         // Copy mappings
         vm_mapping_t *mapping = parent->vm_mappings;
         while (true) {
@@ -405,7 +439,7 @@ namespace VMM{
     }
     void DestroyPM(pagemap_t *pagemap){
         VMM::CleanPM(pagemap);
-        PMM::Free(PHYSICAL(pagemap->pml4));
+        PMM::Free(PHYSICAL(pagemap->toplvl));
         PMM::Free(PHYSICAL(pagemap));
     }
 

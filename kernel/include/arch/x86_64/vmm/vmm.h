@@ -58,6 +58,7 @@
                                 | VMM_FLAG_WRITETHROUGH)
 #define VMM_FLAGS_USERMODE      (VMM_FLAGS_DEFAULT | VMM_FLAG_USER)
 
+#define PML5E(x) ((x >> 48) & 0x1ff)
 #define PML4E(x) ((x >> 39) & 0x1ff)
 #define PDPTE(x) ((x >> 30) & 0x1ff)
 #define PDE(x) ((x >> 21) & 0x1ff)
@@ -85,7 +86,8 @@ typedef struct vm_mapping_t {
 } vm_mapping_t;
 
 typedef struct {
-    volatile uint64_t *pml4;
+    //volatile uint64_t *pml4;
+    volatile uint64_t *toplvl;
     vm_mapping_t *vm_mappings;
     int32_t vma_lock;
     vma_region_t *vma_head;
