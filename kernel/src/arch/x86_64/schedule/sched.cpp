@@ -28,7 +28,9 @@
 #include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/simd/simd.h>
 #include <klib/algorithm/queue.h>
+#include <klib/algorithm/art.h>
 
+static volatile art_tree *PID2ProcessTree;
 
 static volatile uint64_t sched_tid = 0;
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap);
@@ -160,6 +162,7 @@ namespace Schedule{
         void Switch(context_t *ctx) {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
+            if (!cpu || !cpu->thread_count) return;
             spinlock_lock(&cpu->sched_lock);
             if (cpu->current_thread) {
                 thread_t *thread = cpu->current_thread;
@@ -173,6 +176,10 @@ namespace Schedule{
                     asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
             }
             thread_t *next_thread = Schedule::Useless::Pick(cpu);
+            if (!next_thread) {
+                spinlock_unlock(&cpu->sched_lock);
+                return; 
+            }
             cpu->current_thread = next_thread;
             *ctx = next_thread->ctx;
             
@@ -200,6 +207,7 @@ namespace Schedule{
     }
 
     void Init(){
+        art_tree_init(PID2ProcessTree);
         idt_install_irq(16, (void*)Schedule::Useless::Preempt);
         idt_install_irq(17, (void*)Schedule::Useless::Switch);
         idt_set_ist(SCHED_VEC, 1);
@@ -221,6 +229,7 @@ namespace Schedule{
     proc_t *NewProcess(bool user){
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         proc->id = sched_pid++;
+        art_insert(PID2ProcessTree,(const uint8_t*)&proc->id,8,proc);
         //proc->cwd = VFS::root_node;
         proc->threads = nullptr;
         proc->parent = nullptr;
