@@ -40,45 +40,40 @@ uint8_t IdentifyMBR(uint32_t DriverID){
     return 4;
 }
 
-uint8_t GetPartitionSize(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionSize){
-    if(DriverID > Dev::vsdev_list_idx)
-        return 1; //DriverID ERR
-    
-    DevList ThisInfo = Dev::DevList_[DriverID];
-    MBR_DPT dpt; 
-    uint32_t buffer;
+uint8_t GetPartitionSize(uint32_t DriverID, uint32_t PartitionID, uint64_t &PartitionSize) {
+    if (DriverID > Dev::vsdev_list_idx) return 1;
+
     Dev::SetSDev(DriverID);
-    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
+    MBR_DPT dpt;
+    
+    // 读取 MBR 的第一个分区表项来检查是否为 GPT 保护分区
+    if (Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) 
         return 2;
-        //80
 
-    if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
-        if(Dev::ReadBytes(MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET,4,&buffer) == Dev::RW_ERROR)
-            return 3;
-        if(PartitionID > buffer)
-            return 4;
+    if (dpt.PartitionTypeIndicator == 0xEE) { // GPT 模式
+        uint32_t entry_count;
+        // 从 GPT Header 读取分区表项总数
+        Dev::ReadBytes(MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &entry_count);
+        
+        if (PartitionID >= entry_count) return 4;
+
         GPT_PTE gptpte;
-        if(Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + PartitionID * 128,
-                128,&gptpte) == Dev::RW_ERROR)
-                return 5;
-        PartitionSize = gptpte.PartitionEnd - gptpte.PartitionStart;
-        return 0;
-    }else{
+        if (Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + (PartitionID * 128), 128, &gptpte) == Dev::RW_ERROR)
+            return 5;
 
-        if(PartitionID > MBR_PARTITION_MAX)
-            return 6; //PartitionID ERR
-        
-        MBR_DPT buffer2;
-        //Dev::SetSDev(DriverID);
-        if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + PartitionID * 16,
-            16,&buffer2) == Dev::RW_ERROR)
+        // GPT 范围通常是闭区间 [Start, End]
+        PartitionSize = (gptpte.PartitionEnd - gptpte.PartitionStart) + 1;
+        return 0;
+    } else { // 传统 MBR 模式
+        if (PartitionID >= MBR_PARTITION_MAX) return 6;
+
+        MBR_DPT entry;
+        if (Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + (PartitionID * 16), 16, &entry) == Dev::RW_ERROR)
             return 7;
-        
-        //CHS To LBA : easy to R/W 
-        PartitionSize = buffer2.SectorsInPartition;
+
+        PartitionSize = entry.SectorsInPartition;
         return 0;
     }
-    return 0;
 }
 
 
