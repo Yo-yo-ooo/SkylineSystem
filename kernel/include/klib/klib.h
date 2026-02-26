@@ -54,7 +54,7 @@ extern volatile uint64_t RSDP_ADDR;
 #define PHYSICAL(x)      (decltype(x))((uint64_t)x - hhdm_offset)
 #define FORCE_INLINE inline __attribute__((always_inline))
 
-void Panic(const char* message);
+extern "C" void Panic(const char* message);
 void Panic(bool halt, const char* message);
 void Panic(const char* message,bool halt);
 #define panic Panic

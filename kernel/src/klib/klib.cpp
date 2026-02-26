@@ -27,7 +27,7 @@
 #include <arch/x86_64/atomic/atomic_arch.h>
 #endif
 
-void Panic(const char* message){
+extern "C" void Panic(const char* message){
     kerrorln("Panic!");
     e9_printf(message);
     hcf();
