@@ -87,7 +87,9 @@ override KCPPFLAGS := \
 	-DLIMINE_API_REVISION=5 \
     $(KCPPFLAGS) \
     -MMD \
-    -MP
+    -MP \
+	-fno-rtti \
+	-fno-exceptions
 
 KCC += -std=gnu17
 KCXX += -isystem  -std=gnu++17
