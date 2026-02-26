@@ -85,13 +85,14 @@ void idt_init() {
     __asm__ volatile ("sti");
 }
 
-void idt_reinit() {
+void idt_reinit(uint32_t CPUID) {
     idt_entry_t* local_idt = (idt_entry_t*)kmalloc(sizeof(idt_entries));
     __memcpy(local_idt, (void*)&idt_entries, sizeof(idt_entries));
     
     idt_desc_t local_desc;
     local_desc.size = sizeof(idt_entries) - 1;
     local_desc.address = (uint64_t)local_idt;
+    smp_cpu_list[CPUID]->idtdesc = local_desc;
     __asm__ volatile ("lidt %0" : : "m"(local_desc) : "memory");
     __asm__ volatile ("sti");
 }
@@ -108,6 +109,11 @@ void idt_set_entry(uint16_t vector, void *isr, uint8_t flags) {
 }
 
 void idt_set_ist(uint16_t vector, uint8_t ist) {
+    idt_entries[vector].ist = ist;
+}
+
+void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist) {
+    
     idt_entries[vector].ist = ist;
 }
 

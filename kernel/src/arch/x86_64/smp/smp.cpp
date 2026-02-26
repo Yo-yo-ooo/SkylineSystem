@@ -56,7 +56,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     VMM::SwitchPageMap(kernel_pagemap);
     spinlock_lock(&smp_lock);
     GDT::Init(mp_info->lapic_id);
-    idt_reinit();
+    idt_reinit(mp_info->lapic_id);
     cpu_t *cpu = smp_cpu_list[mp_info->lapic_id];
     cpu->id = mp_info->lapic_id;
     LAPIC::Init();

@@ -51,6 +51,7 @@ typedef struct cpu_t{
     thread_t *current_thread;
     uint64_t thread_count;
     int32_t sched_lock;
+    idt_desc_t idtdesc;
     bool has_runnable_thread;
     bool SupportSIMD = false;
     bool SupportXSAVE = false;
