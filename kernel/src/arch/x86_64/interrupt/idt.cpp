@@ -86,7 +86,13 @@ void idt_init() {
 }
 
 void idt_reinit() {
-    __asm__ volatile ("lidt %0" : : "m"(idt_desc) : "memory");
+    idt_entry_t* local_idt = (idt_entry_t*)kmalloc(sizeof(idt_entries));
+    __memcpy(local_idt, (void*)&idt_entries, sizeof(idt_entries));
+    
+    idt_desc_t local_desc;
+    local_desc.size = sizeof(idt_entries) - 1;
+    local_desc.address = (uint64_t)local_idt;
+    __asm__ volatile ("lidt %0" : : "m"(local_desc) : "memory");
     __asm__ volatile ("sti");
 }
 

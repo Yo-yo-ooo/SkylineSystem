@@ -102,7 +102,7 @@ void __init x86_64_init(void){
 
     proc_t *proc = Schedule::NewProcess(true);
 
-    FrameBufferDevice::Init();
+    //FrameBufferDevice::Init();
 
     //KernelInited = 1;
     __a_swap(&KernelInited, 1);

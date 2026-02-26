@@ -51,7 +51,7 @@ namespace PCI
 
         void ConfigMSIX(
         PCI::PCIHeader0 *Hdr,uint32_t CpuId, uint32_t Redirect, 
-        uint32_t DestMode,uint16_t TblIdx,uint16_t INTRNUM,bool IsOldIntrNUM,
+        uint32_t DestMode,uint16_t TblIdx,uint16_t INTRNUM,
         void (*Handler)(context_t*)){
             PCI::PCI_MSIX_CAP *Cap = PCI::GetMSIXCap(Hdr);
             uint32_t MsgAddr = 0xfee00000u
@@ -62,9 +62,9 @@ namespace PCI
             Tbl[TblIdx].msgAddr = MsgAddr;
             Tbl[TblIdx].msgData = INTRNUM;
             Tbl[TblIdx].vecCtrl &= ~1u; // 解除ENTRY[INTRNUM]'s Mask
-            if(!IsOldIntrNUM){
-                
-            }//Hdr->Header.Command |= (1 << 2); // Bus Master
+            
+            idt_install_irq(INTRNUM,Handler);
+
             PCI::enable_bus_mastering((uint64_t)Hdr);
             Cap->MsgCtrl |= (1 << 15); // Enable
             Cap->MsgCtrl &= ~(1 << 14); // Unmask all
