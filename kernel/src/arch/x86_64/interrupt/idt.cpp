@@ -31,7 +31,7 @@ extern void FT_Clear();
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 
-__attribute__((aligned(0x10))) static idt_entry_t idt_entries[256];
+volatile static idt_entry_t alignas(16) idt_entries[256];
 static idt_desc_t idt_desc;
 extern "C" void *idt_int_table[];
 void *handlers[224];
