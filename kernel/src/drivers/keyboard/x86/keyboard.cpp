@@ -177,7 +177,7 @@ void keyboard_init()
     */
 
     //irq_register(1, keyboard_handler);
-    idt_install_irq(1,keyboard_handler);
+    idt_install_irq(33,keyboard_handler);
     inb(0x60);
 }
 #endif

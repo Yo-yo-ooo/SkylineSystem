@@ -45,10 +45,11 @@ void smp_setup_kstack(cpu_t *cpu) {
 
 void smp_setup_thread_queue(cpu_t *cpu) {
     _memset(cpu->thread_queues, 0, THREAD_QUEUE_CNT * sizeof(thread_queue_t));
-    uint64_t quantum = 500;
+    //uint64_t quantum = 500;
     for (int32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
-        cpu->thread_queues[i].quantum = quantum;
-        quantum += 5;
+        uint64_t ms = 10 + (i * 5);
+        cpu->thread_queues[i].quantum = ms * cpu->lapic_ticks;
+        //quantum += 5;
     }
 }
 

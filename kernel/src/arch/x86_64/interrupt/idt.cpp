@@ -111,6 +111,8 @@ void idt_set_ist(uint16_t vector, uint8_t ist) {
 }
 
 void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist) {
+    if(cpuid == smp_bsp_cpu)
+        idt_set_ist(vector,ist);
     idt_entry_t* local_idt = (idt_entry_t*)smp_cpu_list[cpuid]->idtdesc.address;
     local_idt[vector].ist = ist;
 }
@@ -118,15 +120,15 @@ void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist) {
 extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
     kpokln("IRQ %d Installed",irq);
     handlers[irq] = handler;
-    if (irq < 16){IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
+    //if (irq < 16){IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
     // Right now we just map
     // every interrupt to MP.
 }
 
 extern "C" void idt_irq_handler(context_t *ctx) {
-    void (*handler)(context_t*) = handlers[ctx->int_no - 32];
+    void (*handler)(context_t*) = handlers[ctx->int_no];
     if (!handler) {
-        kerror("(PANIC)Uncaught IRQ #%d.\n", ctx->int_no - 32);
+        kerror("(PANIC)Uncaught IRQ #%d.\n", ctx->int_no);
     }
     handler(ctx);
 }

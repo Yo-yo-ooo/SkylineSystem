@@ -193,7 +193,10 @@ namespace Schedule{
             
             spinlock_unlock(&cpu->sched_lock);
             // An ideal thread wouldn't need the timer to preempt.
-            LAPIC::Oneshot(SCHED_VEC, cpu->thread_queues[next_thread->priority].quantum);
+            //LAPIC::Oneshot(SCHED_VEC, cpu->thread_queues[next_thread->priority].quantum);
+            uint64_t final_ticks = cpu->thread_queues[next_thread->priority].quantum;
+            LAPIC::Write(LAPIC_TIMER_INITCNT, final_ticks);
+            LAPIC::Write(LAPIC_TIMER_LVT, SCHED_VEC);
             //asm volatile("sti");
             LAPIC::EOI();
         }
@@ -208,8 +211,8 @@ namespace Schedule{
 
     void Init(){
         art_tree_init(PID2ProcessTree);
-        idt_install_irq(16, (void*)Schedule::Useless::Preempt);
-        idt_install_irq(17, (void*)Schedule::Useless::Switch);
+        idt_install_irq(48, (void*)Schedule::Useless::Preempt);
+        idt_install_irq(49, (void*)Schedule::Useless::Switch);
         idt_set_ist(SCHED_VEC, 1);
         idt_set_ist(SCHED_VEC + 1, 1);
     }

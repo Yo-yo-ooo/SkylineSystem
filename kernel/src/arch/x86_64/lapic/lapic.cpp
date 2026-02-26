@@ -22,6 +22,7 @@
 #include <arch/x86_64/allin.h>
 #include <klib/kio.h>
 #include <conf.h>
+#include <arch/x86_64/drivers/hpet/hpet.h>
 
 
 static volatile uint64_t lapic_address = 0;
@@ -94,7 +95,8 @@ namespace LAPIC{
     uint64_t InitTimer() {
         LAPIC::Write(LAPIC_TIMER_DIV, 0x3);
         LAPIC::Write(LAPIC_TIMER_INITCNT, 0xFFFFFFFF);
-        PIT::Sleep(1); // 1 ms
+        //PIT::Sleep(1); // 1 ms
+        HPET::SleepNS(1000000);
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
         uint32_t ticks = 0xFFFFFFFF - LAPIC::Read(LAPIC_TIMER_CURCNT);
         return ticks;
