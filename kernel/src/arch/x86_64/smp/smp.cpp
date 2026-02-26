@@ -36,7 +36,6 @@ uint64_t started_count = 0;
 bool smp_started = false;
 int32_t smp_last_cpu = 0;
 uint32_t smp_bsp_cpu;
-extern art_tree *IRQHandlersTree;
 
 void smp_setup_kstack(cpu_t *cpu) {
     void *stack = (void*)VMM::Alloc(kernel_pagemap, 8, true);
