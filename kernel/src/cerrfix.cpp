@@ -20,7 +20,6 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 //These function just for compile (idk why)
-//This function must not be delete
 #include <stdint.h>
 extern "C" void _Unwind_Resume(void){/*unrealized!*/}
 extern "C" void __cxa_throw_bad_array_new_length(void) {}
