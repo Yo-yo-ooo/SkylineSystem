@@ -32,7 +32,7 @@ extern void FT_Clear();
 #pragma GCC optimize ("O0")
 
 volatile static idt_entry_t alignas(16) idt_entries[256];
-static idt_desc_t idt_desc;
+//static idt_desc_t idt_desc;
 extern "C" void *idt_int_table[];
 void *handlers[224];
 
