@@ -443,7 +443,7 @@ namespace VMM{
         PMM::Free(PHYSICAL(pagemap));
     }
 
-    uint8_t HandlePF(context_t *ctx){
+    uint32_t HandlePF(context_t *ctx){
         // Check if the fault was a CoW fault, or if it was truly just a page fault.
         uint64_t cr2 = 0;
         thread_t *t = Schedule::this_thread();

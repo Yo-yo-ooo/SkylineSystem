@@ -79,7 +79,8 @@ void idt_init();
 void idt_reinit(uint32_t CPUID);
 void idt_set_ist(uint16_t vector, uint8_t ist);
 extern "C" void idt_install_irq(uint8_t irq, void *handler);
-
+extern "C" void idt_install_irq_cpu(uint32_t cpuid,uint8_t irq, void* handler);
+void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist);
 
 
 #endif

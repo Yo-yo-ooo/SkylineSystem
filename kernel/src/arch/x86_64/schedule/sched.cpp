@@ -213,6 +213,7 @@ namespace Schedule{
         art_tree_init(PID2ProcessTree);
         idt_install_irq(48, (void*)Schedule::Useless::Preempt);
         idt_install_irq(49, (void*)Schedule::Useless::Switch);
+        
         idt_set_ist(SCHED_VEC, 1);
         idt_set_ist(SCHED_VEC + 1, 1);
     }

@@ -34,7 +34,7 @@ extern void FT_Clear();
 volatile static idt_entry_t alignas(16) idt_entries[256];
 //static idt_desc_t idt_desc;
 extern "C" void *idt_int_table[];
-void *handlers[224];
+void *handlers[256];
 
 
 static constexpr char* isr_errors[32] = {
@@ -80,6 +80,7 @@ void idt_init() {
 
     smp_cpu_list[smp_bsp_cpu]->idtdesc.size = sizeof(idt_entries) - 1;
     smp_cpu_list[smp_bsp_cpu]->idtdesc.address = (uint64_t)&idt_entries;
+    smp_cpu_list[smp_bsp_cpu]->handlers = (uint64_t)handlers;
 
     __asm__ volatile ("lidt %0" : : "m"(smp_cpu_list[smp_bsp_cpu]->idtdesc) : "memory");
     __asm__ volatile ("sti");
@@ -91,6 +92,7 @@ void idt_reinit(uint32_t CPUID) {
     
     smp_cpu_list[CPUID]->idtdesc.size = sizeof(idt_entries) - 1;
     smp_cpu_list[CPUID]->idtdesc.address = (uint64_t)local_idt;
+    smp_cpu_list[CPUID]->handlers = kmalloc(256 * sizeof(uint64_t));
     __asm__ volatile ("lidt %0" : : "m"(smp_cpu_list[CPUID]->idtdesc) : "memory");
     __asm__ volatile ("sti");
 }
@@ -119,14 +121,19 @@ void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist) {
 
 extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
     kpokln("IRQ %d Installed",irq);
-    handlers[irq] = handler;
+    smp_cpu_list[smp_bsp_cpu]->handlers[irq] = (uint64_t)handler;
+    //handlers[irq] = handler;
     //if (irq < 16){IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
     // Right now we just map
     // every interrupt to MP.
 }
 
+extern "C" void idt_install_irq_cpu(uint32_t cpuid,uint8_t irq, void* handler) {
+    smp_cpu_list[cpuid]->handlers[irq] = (uint64_t)handler;
+}
+
 extern "C" void idt_irq_handler(context_t *ctx) {
-    void (*handler)(context_t*) = handlers[ctx->int_no];
+    void (*handler)(context_t*) = this_cpu()->handlers[ctx->int_no];
     if (!handler) {
         kerror("(PANIC)Uncaught IRQ #%d.\n", ctx->int_no);
     }
@@ -141,7 +148,7 @@ extern "C" void idt_exception_handler(context_t *ctx) {
         return idt_irq_handler(ctx);
     if (ctx->int_no == 14) {
         LAPIC::StopTimer();
-        uint8_t should_halt = VMM::HandlePF(ctx);
+        uint32_t should_halt = VMM::HandlePF(ctx);
         if (!should_halt) {
             Schedule::Yield();
             return;

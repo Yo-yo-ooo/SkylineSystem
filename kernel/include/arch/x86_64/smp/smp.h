@@ -52,6 +52,7 @@ typedef struct cpu_t{
     uint64_t thread_count;
     int32_t sched_lock;
     idt_desc_t idtdesc;
+    uint64_t *handlers;
     bool has_runnable_thread;
     bool SupportSIMD = false;
     bool SupportXSAVE = false;

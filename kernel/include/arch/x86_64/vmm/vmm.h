@@ -133,7 +133,7 @@ namespace VMM{
     void CleanPM(pagemap_t *pagemap);
     void DestroyPM(pagemap_t *pagemap);
 
-    uint8_t HandlePF(context_t *ctx);
+    uint32_t HandlePF(context_t *ctx);
 
 }
 
