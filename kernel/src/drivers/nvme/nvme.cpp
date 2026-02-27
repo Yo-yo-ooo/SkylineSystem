@@ -321,71 +321,58 @@ NVME::CmplQue *NVME::AllocCmplQue(uint32_t iden, uint32_t size) {
 	return que;
 }
 
+extern volatile uint64_t smp_cpu_count;
+
 bool NVME::InitIntr() {
 
 	this->MSI = nullptr;
 	this->flags &= ~NVME_FLAG_MISIX;
 
-	/* for (PCI::PCICapHdr *hdr = PCI::GetNxtCap(this->phdr, NULL); hdr != NULL; hdr = PCI::GetNxtCap(this->phdr, hdr)) {
-		switch (hdr->CapID) {
-			case CAPHDR_CAPID_MSI :
-				this->MSI = PCI::GetMSICap(this->phdr);
-				break;
-			case CAPHDR_CAPID_MSIX :
-				this->MSIX = PCI::GetMSIXCap(this->phdr);
-				this->flags |= NVME_FLAG_MISIX;
-				break;
-		}
-		if (this->flags & NVME_FLAG_MISIX) break;
-	} */
+
     this->MSI = PCI::GetMSICap(this->phdr);
     this->MSIX = PCI::GetMSIXCap(this->phdr);
 	if (this->MSI == nullptr || this->MSIX == nullptr) {
 		kerror("[NVME: %p]: no MSI/MSI-X support\n", (uint64_t)this);
 		return false;
 	}else if(this->MSIX != nullptr){this->flags |= NVME_FLAG_MISIX;}
-	
-	/* this->INTRNUM = max(2, min(NVME_MAX_INTRNUM, smp_cpu_count));
-	// allocate interrupt descriptor
-	this->intr = kmalloc(sizeof(intr_Desc) * this->INTRNUM);
-	if (this->intr == NULL) {
-		kerror("[NVME: %p]: failed to allocate interrupt descriptor\n", (uint64_t)this);
-		return false;
-	}
 
+
+	
+	this->INTRNUM = max(2, min(NVME_MAX_INTRNUM, smp_cpu_count));
+	
 	if (this->flags & NVME_FLAG_MISIX) {
 		kinfo("[NVME: %p]: use msix\n", (uint64_t)this);
 		
 		int32_t vecNum = PCI_MSIX_CAP_VecNum(this->MSIX);
 		vecNum = this->INTRNUM = min(vecNum, this->INTRNUM);
 
-		PCI::PCI_MSIX_TABLE *tbl = PCI::GetMSIXTbl(this->MSIX, this->phdr);
+        PCI::PCI_MSIX_CAP *Cap = PCI::GetMSIXCap(this->phdr);
+        PCI::PCI_MSIX_TABLE* Tbl = PCI::GetMSIXTblBaseAddr(this->phdr,Cap);
+		for (int32_t i = 0; i < this->INTRNUM; i++){
+            // 1. 决定这个队列由哪个 CPU 核心处理 (负载均衡)
+            // 假设你有 n 个 CPU，这里可以用简单的轮询 (Round Robin)
+            uint32_t targetCpu = i % smp_cpu_count; //ToDo: lw!!!
 
-		kinfo("[NVME: %p]: msixtbl:%p vecNum:%d msgCtrl:%#010x\n", host, tbl, vecNum, this->MSIX->MsgCtrl);
+            // 2. 分配一个唯一的 IDT 向量号 (通常从 0x20 开始，避开异常区)
+            // 在你的架构里，不同 CPU 的同一个向量号可以挂不同的 Handler
+            uint16_t vector = 0x32 + i; 
 
-		for (int32_t i = 0; i < this->INTRNUM; i++)
-			hw_pci_initIntr(this->intr + i, hw_nvme_msiHandler, (u64)host | i, "nvme msix");
-		if (hw_pci_allocMsix(this->MSIX, this->phdr, this->intr, this->INTRNUM) == false) {
-			kerror("[NVME: %p]: failed to allocate msix interrupt\n", (uint64_t)this);
-			return false;
-		}
+            uint32_t MsgAddr = 0xfee00000u
+                | ((targetCpu) << 12)
+                | (0 << 3) | (0 << 2);                   
+            Tbl[i].msgAddr = MsgAddr;
+            Tbl[i].msgData = i;
+            __asm__ volatile ("mfence" ::: "memory"); // 确保硬件看到地址和数据
+            Tbl[i].vecCtrl &= ~1u; // 解除ENTRY[INTRNUM]'s Mask 
+            idt_install_irq_cpu(targetCpu,vector,nullptr/*TODO:NVME HANDLER!!!*/);
+        }
+        PCI::enable_bus_mastering((uint64_t)this->phdr);
+        Cap->MsgCtrl |= (1 << 15); // Enable
+        Cap->MsgCtrl &= ~(1 << 14); // Unmask all
 	} 
- */
+ 
 	PCI::disable_interrupt(this->phdr);
 	kinfo("[NVME: %p]: msi/msix set\n", (uint64_t)this);
-
-	// enable msi/msix
-	int32_t res;
-	/* 
-    if (this->flags & NVME_FLAG_MISIX) 
-		res = PCI::MSIX::ConfigMSIX(this->phdr,/*get_lw_irq_cpu,0,0,);
-	else
-		res = hw_pci_enableMsiAll(this->MSI, this->intr, this->INTRNUM); 
-    */
-	if (res == false) {
-		kerror("[NVME: %p]: failed to enable msi/msix\n", (uint64_t)this);
-		return false;
-	} 
 	kinfo("[NVME: %p]: enable msi/msix\n", (uint64_t)this);
 
 	return true;

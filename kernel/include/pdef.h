@@ -68,6 +68,7 @@
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
+#ifndef __cplusplus
 #define max(a, b) ({ \
     __typeof__(a) ta = (a); \
     __typeof__(b) tb = (b); \
@@ -79,6 +80,7 @@
     __typeof__(b) tb = (b); \
     ta > tb ? tb : ta; \
 })
+#endif
 
 #define __stringify_1(x...)	#x
 #define __stringify(x...)	__stringify_1(x)
@@ -86,6 +88,18 @@
 #define FILE_LINE	__FILE__ ":" __stringify(__LINE__)
 
 #ifdef __cplusplus
+
+#define max(a, b) ({ \
+    decltype(a) ta = (a); \
+    decltype(b) tb = (b); \
+    ta < tb ? tb : ta; \
+})
+
+#define min(a, b) ({ \
+    decltype(a) ta = (a); \
+    decltype(b) tb = (b); \
+    ta > tb ? tb : ta; \
+})
 template <class _Ty>
 struct _if_remove_reference {
     using type                 = _Ty;
