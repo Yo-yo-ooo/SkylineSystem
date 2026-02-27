@@ -45,7 +45,7 @@ namespace PCI
         //redirect = 1 : 允许中断控制器根据负载均衡等策略重新分发。
         void SetMsgAddr(uint64_t *msgAddr, uint32_t cpuId, uint32_t redirect, uint32_t destMode) {
             *msgAddr = 0xfee00000u
-                | (((smp_cpu_list[cpuId]->id) & 0xFF) << 12)
+                | (((cpuId) & 0xFF) << 12)
                 | (redirect << 3) | (destMode << 2);
         }
 
@@ -55,7 +55,7 @@ namespace PCI
         void (*Handler)(context_t*)){
             PCI::PCI_MSIX_CAP *Cap = PCI::GetMSIXCap(Hdr);
             uint32_t MsgAddr = 0xfee00000u
-                | ((smp_cpu_list[CpuId]->id) << 12)
+                | ((CpuId) << 12)
                 | (Redirect << 3) | (DestMode << 2);
             PCI::PCI_MSIX_TABLE* Tbl = PCI::GetMSIXTblBaseAddr(Hdr,Cap);
             
@@ -63,7 +63,7 @@ namespace PCI
             Tbl[TblIdx].msgData = INTRNUM;
             Tbl[TblIdx].vecCtrl &= ~1u; // 解除ENTRY[INTRNUM]'s Mask
             
-            idt_install_irq(INTRNUM,Handler);
+            idt_install_irq_cpu(CpuId,INTRNUM,Handler);
 
             PCI::enable_bus_mastering((uint64_t)Hdr);
             Cap->MsgCtrl |= (1 << 15); // Enable
@@ -74,7 +74,7 @@ namespace PCI
     namespace MSI{
         void SetMsgAddr(PCI::PCI_MSI_CAP *cap, uint32_t cpuId, uint32_t redirect, uint32_t destMode) {
             uint32_t val = 0xfee00000u
-                | ((smp_cpu_list[cpuId]->id) << 12)
+                | ((cpuId) << 12)
                 | (redirect << 3) | (destMode << 2);
             if (PCI_MSI_CAP_IS64(cap)) cap->Cap64.MsgAddr = val;
             else cap->Cap32.MsgAddr = val;
