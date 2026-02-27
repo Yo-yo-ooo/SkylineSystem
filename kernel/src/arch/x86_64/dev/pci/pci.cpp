@@ -573,11 +573,12 @@ namespace PCI
         uint64_t BaseAddr = (uint64_t)Header;
         uint8_t *Ptr = (uint8_t*)(Header->CapabilitiesPtr + BaseAddr);
         for(uint8_t i = 0;Ptr[1] != 0;i++){
-            if(Ptr[0] == 0x5){ //PCI MSI Capability ID
+            if(Ptr[0] == 0x05){ //PCI MSI Capability ID
                 return (PCI::MSI_CAP32*)((uint64_t)Ptr);
             }
             Ptr = (uint8_t*)(BaseAddr + Ptr[1]);
         }
+        return nullptr;
     }
 
     PCI::PCI_MSIX_CAP* GetMSIXCap(PCI::PCIHeader0 *Header){
@@ -589,6 +590,7 @@ namespace PCI
             }
             Ptr = (uint8_t*)(BaseAddr + Ptr[1]);
         }
+        return nullptr;
     }
 
     uint64_t GetMSIXTblBaseAddr(PCI::PCIHeader0 *Header,PCI::PCI_MSIX_CAP *CapPtr){

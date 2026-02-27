@@ -61,6 +61,7 @@ namespace PCI
             
             Tbl[TblIdx].msgAddr = MsgAddr;
             Tbl[TblIdx].msgData = INTRNUM;
+            __asm__ volatile ("mfence" ::: "memory"); // 确保硬件看到地址和数据
             Tbl[TblIdx].vecCtrl &= ~1u; // 解除ENTRY[INTRNUM]'s Mask
             
             idt_install_irq_cpu(CpuId,INTRNUM,Handler);

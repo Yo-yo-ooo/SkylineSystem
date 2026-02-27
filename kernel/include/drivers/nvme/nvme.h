@@ -274,7 +274,7 @@ protected:
 
     PCI::PCIHeader0 *phdr;
 
-    PCI::PCI_MSI_CAP *MSI;
+    PCI::MSI_CAP32 *MSI;
     PCI::PCI_MSIX_CAP *MSIX;
 
 
@@ -283,7 +283,7 @@ protected:
 
     NVMEDev *dev;
     
-
+    uint64_t flags;
     /*
     */
    uint8_t FialureNUM;
