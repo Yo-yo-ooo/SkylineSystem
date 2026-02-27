@@ -169,7 +169,9 @@ Framebuffer *Fb;
 // Extern declarations for global constructors array.
 extern void (*__init_array[])();
 extern void (*__init_array_end[])();
-
+#ifdef __x86_64__
+uint32_t smp_bsp_cpu;
+#endif
 // The following will be our kernel's entry point.
 // If renaming kmain() to something else, make sure to change the
 // linker script accordingly.
@@ -248,6 +250,7 @@ extern "C" void kmain(void) {
     kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->timestamp);
 
 #ifdef __x86_64__
+    smp_bsp_cpu = mp_response->bsp_lapic_id;
     x86_64_init();
 #elif defined(__aarch64__)
     aarch64_init();

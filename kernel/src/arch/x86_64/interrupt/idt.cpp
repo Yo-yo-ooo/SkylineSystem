@@ -78,10 +78,10 @@ void idt_init() {
     for (uint16_t vector = 0; vector < 256; vector++)
         idt_set_entry(vector, idt_int_table[vector], 0x8e);
 
-    idt_desc.size = sizeof(idt_entries) - 1;
-    idt_desc.address = (uint64_t)&idt_entries;
+    smp_cpu_list[smp_bsp_cpu]->idtdesc.size = sizeof(idt_entries) - 1;
+    smp_cpu_list[smp_bsp_cpu]->idtdesc.address = (uint64_t)&idt_entries;
 
-    __asm__ volatile ("lidt %0" : : "m"(idt_desc) : "memory");
+    __asm__ volatile ("lidt %0" : : "m"(smp_cpu_list[smp_bsp_cpu]->idtdesc) : "memory");
     __asm__ volatile ("sti");
 }
 

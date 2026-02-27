@@ -35,7 +35,7 @@ volatile spinlock_t smp_lock = 0;
 uint64_t started_count = 0;
 bool smp_started = false;
 int32_t smp_last_cpu = 0;
-uint32_t smp_bsp_cpu;
+extern volatile struct limine_mp_response *mp_response;
 
 void smp_setup_kstack(cpu_t *cpu) {
     void *stack = (void*)VMM::Alloc(kernel_pagemap, 8, true);
@@ -80,7 +80,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
         __asm__ volatile ("hlt");
 }
 
-extern volatile struct limine_mp_response *mp_response;
+
 void smp_init() {
     
     cpu_t *bsp_cpu = (cpu_t*)kmalloc(sizeof(cpu_t));

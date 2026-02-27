@@ -26,7 +26,7 @@ extern "C"{
 
 #define DECL_MEM_COPY_BACK_FUNC(type) \
     func_optimize(3) static inline size_t \
-    VAR_CONCAT(_memcpy_bw_, type)(void *const dst, \
+    _memcpy_bw_##type(void *const dst, \
                                   const void *const src, \
                                   const size_t n) \
     {                                                                          \
@@ -170,7 +170,7 @@ func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
 
 #define DECL_MEM_COPY_FUNC(type) \
     func_optimize(3) static inline size_t                            \
-    VAR_CONCAT(_memcpy_, type)(void *dst,                                      \
+    _memcpy_##type(void *dst,                                      \
                                const void *src,                                \
                                size_t n,                                \
                                void **const dst_out,                           \
@@ -287,31 +287,6 @@ func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n) {
     return ret;
 }
 
-#define DECL_MEM_COPY_BACK_FUNC(type) \
-    func_optimize(3) static inline size_t \
-    VAR_CONCAT(_memcpy_bw_, type)(void *const dst, \
-                                  const void *const src, \
-                                  const size_t n) \
-    {                                                                          \
-        if (n < sizeof(type)) {                                                \
-            return n;                                                          \
-        }                                                                      \
-                                                                               \
-        size_t off = n - sizeof(type);                                  \
-        do {                                                                   \
-            *((type *)(dst + off)) = *((const type *)(src + off));             \
-            if (off < sizeof(type)) {                                          \
-                return off;                                                    \
-            }                                                                  \
-                                                                               \
-            off -= sizeof(type);                                               \
-        } while (true);                                                        \
-                                                                               \
-        return n;                                                              \
-    }
-
-
-
 func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
     void *ret = dst;
     if (src > dst) {
@@ -379,7 +354,7 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
 // TODO: Fix
 #define DECL_MEM_CMP_FUNC(type)                                                \
     func_optimize(3) static inline int32_t                                      \
-    VAR_CONCAT(_memcmp_, type)(const void *left,                               \
+    _memcmp_##type(const void *left,                               \
                                const void *right,                              \
                                size_t len,                                     \
                                const void **const left_out,                    \
@@ -392,7 +367,7 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
                 const type right_ch = *(const type *)right;                    \
                                                                                \
                 if (left_ch != right_ch) {                                     \
-                    return (int32_t)(left_ch - right_ch);                          \
+                    return (int32_t)(left_ch - right_ch);                      \
                 }                                                              \
                                                                                \
                 left += sizeof(type);                                          \
