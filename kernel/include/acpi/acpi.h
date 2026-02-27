@@ -29,7 +29,6 @@ namespace ACPI{
     } __attribute__((packed));
 
 
-
     struct SDTHeader
     {
         uint8_t Signature[4];
