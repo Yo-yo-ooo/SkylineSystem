@@ -111,8 +111,10 @@ void __init x86_64_init(void){
     else
         asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
 
+    char *argv[] = {(char*)"Test Main Thread"};
+    char *envp[] = {nullptr};
     thread_t *syscalltest = Schedule::NewThread(proc, 0, 0, 
-        "/mp/syscalltest.elf", 1, (char*[]){"Test Main Thread"}, (char*[]){nullptr}); 
+        "/mp/syscalltest.elf", 1, argv, envp); 
     kinfoln("syscalltest PROCESS: %d",proc->id);
 
 
