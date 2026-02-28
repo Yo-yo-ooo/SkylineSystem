@@ -29,7 +29,7 @@
 
 typedef struct _pagemap_t{
     uint32_t   levels;
-    void *top_level[2];
+    void *top_level[2]; // 0:LowerRoot,1:HigherRoot!
 }pagemap_t;
 
 enum page_size {
@@ -41,8 +41,9 @@ enum page_size {
 
 namespace VMM
 {
+    extern volatile pagemap_t *KernelPageMap;
     void Init();
-    uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr);
+    void SwitchPM(pagemap_t *pagemap);
 } // namespace VMM
 
 

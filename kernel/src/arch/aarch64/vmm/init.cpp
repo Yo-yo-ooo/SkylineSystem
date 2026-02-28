@@ -120,21 +120,28 @@ typedef struct PageMap{
 
 namespace VMM
 {
-    volatile PageMap KernelPageMap;
+    volatile pagemap_t *KernelPageMap = nullptr;
     void Init(){
         setup_mair();
         kpokln("Setup Mair!");
         //TODO: VMM::INIT
-        const uint64_t lower_root = PMM::Request();
-        const uint64_t higher_root = PMM::Request();
-        KernelPageMap.LowerRoot = HIGHER_HALF(lower_root);
-        KernelPageMap.HigherRoot = HIGHER_HALF(higher_root);
+        KernelPageMap = HIGHER_HALF(PMM::Request());
+        KernelPageMap->top_level[0] = HIGHER_HALF(PMM::Request());
+        KernelPageMap->top_level[1] = HIGHER_HALF(PMM::Request());
+        _memset(KernelPageMap->top_level[0],0,PAGE_SIZE);
+        _memset(KernelPageMap->top_level[1],0,PAGE_SIZE);
 
-        
-        
+        hcf(); //I didn't know how to set tec_el1 val!!!
+
+        VMM::SwitchPM(VMM::KernelPageMap);
     }
 
-    uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr){
-        
+    void SwitchPM(pagemap_t *pagemap){
+        asm volatile (
+            "msr ttbr0_el1, %0\n"
+            "msr ttbr1_el1, %1\n"
+            "isb"
+            : : "r"(pagemap->top_level[0]), "r"(pagemap->top_level[1]) : "memory"
+        );
     }
 } // namespace VMM
