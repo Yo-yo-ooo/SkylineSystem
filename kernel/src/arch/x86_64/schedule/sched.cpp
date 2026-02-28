@@ -42,7 +42,7 @@ void sched_idle(){
 static cpu_t *get_lw_cpu() {
     cpu_t *cpu = nullptr;
     for (int32_t i = 0; i < smp_last_cpu; i++) {
-        if (smp_cpu_list[i] == NULL || i == smp_bsp_cpu) continue;
+        if (smp_cpu_list[i] == nullptr || i == smp_bsp_cpu) continue;
         if (!cpu) {
             cpu = smp_cpu_list[i];
             continue;

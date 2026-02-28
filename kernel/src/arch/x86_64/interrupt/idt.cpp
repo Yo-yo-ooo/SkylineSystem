@@ -37,40 +37,7 @@ extern "C" void *idt_int_table[];
 void *handlers[256];
 
 
-static constexpr char* isr_errors[32] = {
-    "Division by zero",
-    "Debug",
-    "Non-maskable interrupt",
-    "Breakpoint",
-    "Detected overflow",
-    "Out-of-bounds",
-    "Invalid opcode",
-    "No coprocessor",
-    "Double fault",
-    "Coprocessor segment overrun",
-    "Bad TSS",
-    "Segment not present",
-    "Stack fault",
-    "General protection fault",
-    "Page fault",
-    "Unknown interrupt",
-    "Coprocessor fault",
-    "Alignment check",
-    "Machine check",
-    "Reserved ISR ERR NO.19",
-    "Reserved ISR ERR NO.20",
-    "Reserved ISR ERR NO.21",
-    "Reserved ISR ERR NO.22",
-    "Reserved ISR ERR NO.23",
-    "Reserved ISR ERR NO.24",
-    "Reserved ISR ERR NO.25",
-    "Reserved ISR ERR NO.26",
-    "Reserved ISR ERR NO.27",
-    "Reserved ISR ERR NO.28",
-    "Reserved ISR ERR NO.29",
-    "Reserved ISR ERR NO.30",
-    "Reserved ISR ERR NO.31"
-};
+extern volatile const char* isr_errors[32];
 
 void idt_set_entry(uint16_t vector, void *isr, uint8_t flags);
 
@@ -130,6 +97,22 @@ extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
 
 extern "C" void idt_install_irq_cpu(uint32_t cpuid,uint8_t irq, void* handler) {
     smp_cpu_list[cpuid]->handlers[irq] = (uint64_t)handler;
+    smp_cpu_list[cpuid]->IntrRegistCount++;
+}
+
+extern int32_t smp_last_cpu;
+extern "C" cpu_t* GetLWIntrCpu(){
+    cpu_t *cpu = nullptr;
+    for (int32_t i = 0; i < smp_last_cpu; i++) {
+        if (smp_cpu_list[i] == nullptr || i == smp_bsp_cpu) continue;
+        if (!cpu) {
+            cpu = smp_cpu_list[i];
+            continue;
+        }
+        if (smp_cpu_list[i]->IntrRegistCount < cpu->IntrRegistCount)
+            cpu = smp_cpu_list[i];
+    }
+    return cpu;
 }
 
 extern "C" void idt_irq_handler(context_t *ctx) {

@@ -322,7 +322,6 @@ NVME::CmplQue *NVME::AllocCmplQue(uint32_t iden, uint32_t size) {
 }
 
 extern volatile uint64_t smp_cpu_count;
-
 bool NVME::InitIntr() {
 
 	this->MSI = nullptr;
@@ -351,7 +350,7 @@ bool NVME::InitIntr() {
 		for (int32_t i = 0; i < this->INTRNUM; i++){
             // 1. 决定这个队列由哪个 CPU 核心处理 (负载均衡)
             // 假设你有 n 个 CPU，这里可以用简单的轮询 (Round Robin)
-            uint32_t targetCpu = i % smp_cpu_count; //ToDo: lw!!!
+            uint32_t targetCpu = GetLWIntrCpu();
 
             // 2. 分配一个唯一的 IDT 向量号 (通常从 0x20 开始，避开异常区)
             // 在你的架构里，不同 CPU 的同一个向量号可以挂不同的 Handler
