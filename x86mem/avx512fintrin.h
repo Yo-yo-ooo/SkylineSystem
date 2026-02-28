@@ -24,11 +24,11 @@
 #ifndef _AVX512FINTRIN_H_INCLUDED
 #define _AVX512FINTRIN_H_INCLUDED
 
-#if !defined (__AVX512F__) || defined (__EVEX512__)
+#if !defined (__AVX512F__)
 #pragma GCC push_options
-#pragma GCC target("avx512f,no-evex512")
-#define __DISABLE_AVX512F__
-#endif /* __AVX512F__ */
+#pragma GCC target("avx512f")
+#define __DISABLE_AVX512F_512__
+#endif /* __AVX512F_512__ */
 
 typedef unsigned char  __mmask8;
 typedef unsigned short __mmask16;
