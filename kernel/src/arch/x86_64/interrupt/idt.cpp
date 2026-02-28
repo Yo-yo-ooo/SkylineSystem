@@ -86,9 +86,28 @@ void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist) {
     local_idt[vector].ist = ist;
 }
 
+//ZH:根据CPU负载均衡分配最适合的IRQ向量号
+//EN:Allocate the optimal IRQ vector by evaluating per-CPU interrupt load
+extern "C" uint8_t RequestFreeIRQPerCPU(){
+    cpu_t *target_cpu = GetLWIntrCpu();
+    for (uint32_t i = 0; i < 4; i++) {
+        uint64_t bitmap_val = target_cpu->IntrBitMap[i];
+        //64 bit all = 1 (0xFFFFFFFFFFFFFFFF)
+        if (bitmap_val == UINT64_MAX) continue;
+        for(uint32_t j = 0; j < 64;i++){
+            if(GET_BIT(bitmap_val,i) == 0)
+                return ((i * 64) + j);
+        }
+    }
+}
+
 extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
     kpokln("IRQ %d Installed",irq);
     smp_cpu_list[smp_bsp_cpu]->handlers[irq] = (uint64_t)handler;
+    uint32_t Index = irq / 64;
+    uint32_t SIndex = irq % 64;
+    //smp_cpu_list[smp_bsp_cpu]->IntrBitMap[Index] |= (1 << SIndex);
+    SET1_BIT(smp_cpu_list[smp_bsp_cpu]->IntrBitMap[Index],SIndex);
     //handlers[irq] = handler;
     //if (irq < 16){IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
     // Right now we just map
@@ -98,6 +117,10 @@ extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
 extern "C" void idt_install_irq_cpu(uint32_t cpuid,uint8_t irq, void* handler) {
     smp_cpu_list[cpuid]->handlers[irq] = (uint64_t)handler;
     smp_cpu_list[cpuid]->IntrRegistCount++;
+    uint32_t Index = irq / 64;
+    uint32_t SIndex = irq % 64;
+    //smp_cpu_list[cpuid]->IntrBitMap[Index] |= (1 << SIndex);
+    SET1_BIT(smp_cpu_list[cpuid]->IntrBitMap[Index],SIndex);
 }
 
 extern int32_t smp_last_cpu;

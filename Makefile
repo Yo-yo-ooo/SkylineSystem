@@ -153,6 +153,7 @@ limine/limine:
 	cp -f ./limine-protocol/include/limine.h ./kernel/src
 
 kernel-deps:
+	dos2unix ./kernel/get-deps
 	chmod +x ./kernel/get-deps
 	./kernel/get-deps
 	touch kernel-deps
@@ -253,9 +254,8 @@ distclean:
 cm:
 	@$(MAKE) clean 
 	@$(MAKE) -C saf
-	@$(MAKE) -j$(shell nproc)
 ifeq ($(KARCH),x86_64)
-	@cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
+	
 	@qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
 	@qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
 	dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2
@@ -264,12 +264,14 @@ ifeq ($(KARCH),x86_64)
 	./$(PROGRAM_IMAGE_NAME).img
 	@$(MAKE) -C programs
 endif
-
-ma:
-	@$(MAKE) -C saf
 	@$(MAKE) -j$(shell nproc)
 ifeq ($(KARCH),x86_64)
 	@cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
+endif
+
+ma:
+	@$(MAKE) -C saf
+ifeq ($(KARCH),x86_64)
 	@qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
 	@qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
 	dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2
@@ -277,6 +279,10 @@ ifeq ($(KARCH),x86_64)
 	-O ^metadata_csum \
 	./$(PROGRAM_IMAGE_NAME).img
 	@$(MAKE) -C programs
+endif
+	@$(MAKE) -j$(shell nproc)
+ifeq ($(KARCH),x86_64)
+	@cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
 endif
 
 mk:
