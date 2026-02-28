@@ -30,111 +30,108 @@
 
 
 PACK(typedef struct __u64_vaddr_4K{
-    uint16_t Reserved        ;
-    uint16_t LV0_TblIndex : 9; //Level 0 Table Index
-    uint16_t LV1_TblIndex : 9; //Level 1 Table Index
-    uint16_t LV2_TblIndex : 9; //Level 2 Table Index
-    uint16_t LV3_TblIndex : 9; //Level 3 Table Index
     uint16_t BlockOffset : 12;
+    uint16_t LV3_TblIndex : 9; // Level 3 Table Index
+    uint16_t LV2_TblIndex : 9; // Level 2 Table Index
+    uint16_t LV1_TblIndex : 9; // Level 1 Table Index
+    uint16_t LV0_TblIndex : 9; // Level 0 Table Index
+    uint16_t Reserved        ;
 })__u64_vaddr_4K;
 
 PACK(typedef struct __u64_vaddr_16K{
-    uint16_t Reserved         ;
-    uint8_t  LV0_TblIndex : 1 ;
-    uint16_t LV1_TblIndex : 11;
-    uint16_t LV2_TblIndex : 11;
-    uint16_t LV3_TblIndex : 11;
     uint16_t BlockOffset  : 14;
+    uint16_t LV3_TblIndex : 11;
+    uint16_t LV2_TblIndex : 11;
+    uint16_t LV1_TblIndex : 11;
+    uint8_t  LV0_TblIndex : 1 ;
+    uint16_t Reserved         ;
 })__u64_vaddr_16K;
 
 PACK(typedef struct __u64_vaddr_64K{
-    uint16_t Reserved         ;
-    uint16_t LV1_TblIndex : 6 ;
-    uint16_t LV2_TblIndex : 13;
-    uint16_t LV3_TblIndex : 13;
     uint16_t BlockOffset      ;
+    uint16_t LV3_TblIndex : 13;
+    uint16_t LV2_TblIndex : 13;
+    uint16_t LV1_TblIndex : 6 ;
+    uint16_t Reserved         ;
 })__u64_vaddr_64K;
 
 PACK(typedef struct __tdesc_4K{
-    uint8_t  NATbl      : 1 ;
-    uint8_t  APTbl      : 2 ;
-    uint8_t  XNTbl      : 1 ;
-    uint8_t  PXNTbl     : 1 ;
-    uint8_t  Reserved   : 7 ;
-    uint8_t  RES0       : 4 ;
-    uint64_t NextLvl    : 36;
-    uint8_t  Rsvd       : 10;
-    uint8_t  Type       : 1 ;
     uint8_t  Valid      : 1 ;
+    uint8_t  Type       : 1 ;
+    uint8_t  Rsvd       : 10;
+    uint64_t NextLvl    : 36;
+    uint8_t  RES0       : 4 ;
+    uint8_t  Reserved   : 7 ;
+    uint8_t  PXNTbl     : 1 ;
+    uint8_t  XNTbl      : 1 ;
+    uint8_t  APTbl      : 2 ;
+    uint8_t  NATbl      : 1 ;
 })__tdesc_4K;
 
 PACK(typedef struct __tdesc_16K{
-    uint8_t  NATbl      : 1 ;
-    uint8_t  APTbl      : 2 ;
-    uint8_t  XNTbl      : 1 ;
-    uint8_t  PXNTbl     : 1 ;
-    uint8_t  Reserved   : 7 ;
-    uint8_t  RES0       : 4 ;
-    uint64_t NextLvl    : 34;
-    uint8_t  Rsvd       : 12;
-    uint8_t  Type       : 1 ;
     uint8_t  Valid      : 1 ;
+    uint8_t  Type       : 1 ;
+    uint8_t  Rsvd       : 12;
+    uint64_t NextLvl    : 34;
+    uint8_t  RES0       : 4 ;
+    uint8_t  Reserved   : 7 ;
+    uint8_t  PXNTbl     : 1 ;
+    uint8_t  XNTbl      : 1 ;
+    uint8_t  APTbl      : 2 ;
+    uint8_t  NATbl      : 1 ;
 })__tdesc_16K;
 
 PACK(typedef struct __tdesc_64K{
-    uint8_t  NATbl      : 1 ;
-    uint8_t  APTbl      : 2 ;
-    uint8_t  XNTbl      : 1 ;
-    uint8_t  PXNTbl     : 1 ;
-    uint8_t  Reserved   : 7 ;
-    uint8_t  RES0       : 4 ;
-    uint32_t NextLvl        ;
-    uint8_t  Rsvd       : 14;
-    uint8_t  Type       : 1 ;
     uint8_t  Valid      : 1 ;
+    uint8_t  Type       : 1 ;
+    uint8_t  Rsvd       : 14;
+    uint32_t NextLvl        ;
+    uint8_t  RES0       : 4 ;
+    uint8_t  Reserved   : 7 ;
+    uint8_t  PXNTbl     : 1 ;
+    uint8_t  XNTbl      : 1 ;
+    uint8_t  APTbl      : 2 ;
+    uint8_t  NATbl      : 1 ;
 })__tdesc_64K;
-
 PACK(typedef struct __bdesc_4K_LV1{
-    uint16_t UpperBlockAttr     : 12;
-    uint8_t  RES0               : 4 ;
-    uint32_t OutputAddr         : 18;
-    uint16_t RES0_2             : 18;
-    uint16_t LowerBlockAttr     : 10;
-    uint8_t  Type               : 1 ;
-    uint8_t  Valid              : 1 ;
+    uint8_t  Valid               : 1 ;
+    uint8_t  Type                : 1 ;
+    uint16_t LowerBlockAttr      : 10;
+    uint16_t RES0_2              : 18;
+    uint32_t OutputAddr          : 18;
+    uint8_t  RES0                : 4 ;
+    uint16_t UpperBlockAttr      : 12;
 })__bdesc_4K_LV1;
 
-
 PACK(typedef struct __bdesc_4K_LV2{
-    uint16_t UpperBlockAttr     : 12;
-    uint8_t  RES0               : 4 ;
-    uint32_t OutputAddr         : 27;
-    uint16_t RES0_2             : 9 ;
-    uint16_t LowerBlockAttr     : 10;
-    uint8_t  Type               : 1 ;
-    uint8_t  Valid              : 1 ;
+    uint8_t  Valid               : 1 ;
+    uint8_t  Type                : 1 ;
+    uint16_t LowerBlockAttr      : 10;
+    uint16_t RES0_2              : 9 ;
+    uint32_t OutputAddr          : 27;
+    uint8_t  RES0                : 4 ;
+    uint16_t UpperBlockAttr      : 12;
 })__bdesc_4K_LV2;
 
-//AARCH64 16K/64K granule size just have lv2 bdesc
 PACK(typedef struct __bdesc_16K_LV2{
-    uint16_t UpperBlockAttr     : 12;
-    uint8_t  RES0               : 4 ;
-    uint32_t OutputAddr         : 23;
-    uint16_t RES0_2             : 13;
-    uint16_t LowerBlockAttr     : 10;
-    uint8_t  Type               : 1 ;
-    uint8_t  Valid              : 1 ;
-});
+    uint8_t  Valid               : 1 ;
+    uint8_t  Type                : 1 ;
+    uint16_t LowerBlockAttr      : 10;
+    uint16_t RES0_2              : 13;
+    uint32_t OutputAddr          : 23;
+    uint8_t  RES0                : 4 ;
+    uint16_t UpperBlockAttr      : 12;
+})__bdesc_16K_LV2;
 
 PACK(typedef struct __bdesc_64K_LV2{
-    uint16_t UpperBlockAttr     : 12;
-    uint8_t  RES0               : 4 ;
-    uint32_t OutputAddr         : 19;
-    uint16_t RES0_2             : 17;
-    uint16_t LowerBlockAttr     : 10;
-    uint8_t  Type               : 1 ;
-    uint8_t  Valid              : 1 ;
-});
+    uint8_t  Valid               : 1 ;
+    uint8_t  Type                : 1 ;
+    uint16_t LowerBlockAttr      : 10;
+    uint16_t RES0_2              : 17;
+    uint32_t OutputAddr          : 19;
+    uint8_t  RES0                : 4 ;
+    uint16_t UpperBlockAttr      : 12;
+})__bdesc_64K_LV2;
 
 union Translate4K{
     uint64_t vaddr;

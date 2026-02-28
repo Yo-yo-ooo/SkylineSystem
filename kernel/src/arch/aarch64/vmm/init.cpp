@@ -53,37 +53,41 @@ void setup_mair() {
     write_mair_el1(mair_value);
 }
 
-uint64_t V2P_4K(uint64_t vaddr){
+/*
+* @param lowerattr How to R/W()
+* @param gigherattr How to run()
+*/
+uint64_t MapMem4K(pagemap_t *pagemap,uint64_t vaddr, uint64_t paddr,uint64_t lowerattr,uint64_t higherattr){
     uint64_t ttbr;
     if(vaddr <= 0x0000FFFFFFFFFFFF)
-        read_ttbr_el1(0,ttbr);
+        ttbr = (uint64_t)pagemap->top_level[0];
     else
-        read_ttbr_el1(1,ttbr);
+        ttbr = (uint64_t)pagemap->top_level[1];
     Translate4K t;t.vaddr = vaddr;
     __tdesc_4K *lv0 = (__tdesc_4K*)
                     (ttbr + (uint64_t)t.addrdesc.LV0_TblIndex * sizeof(__tdesc_4K));
     TableDesc4KLV1 *lv1 = (TableDesc4KLV1*)
                     ((uint64_t)lv0->NextLvl + t.addrdesc.LV1_TblIndex * sizeof(__tdesc_4K));
-    if(lv1->desc.Type == 0){
-        lv1->lv1desc.OutputAddr | t.addrdesc.BlockOffset;
-    }
     TableDesc4KLV2 *lv2 = (TableDesc4KLV2*)
                     ((uint64_t)lv1->desc.NextLvl + t.addrdesc.LV2_TblIndex * sizeof(__tdesc_4K));
-    if(lv2->desc.Type == 0){
-        
-    }
     PageDescriptor4K *Page = (PageDescriptor4K*)
                     ((uint64_t)lv2->desc.NextLvl + t.addrdesc.LV3_TblIndex * sizeof(PageDescriptor4K));
 
-    return (Page->fields.OutputAddr << 12) | t.addrdesc.BlockOffset;
+    Page->fields.OutputAddr = paddr & 0xFFF; //Set lower 12 bits
+    Page->fields.LowerAttrs = lowerattr;
+    Page->fields.UpperAttrs = higherattr;
 }
 
-uint64_t V2P_16K(uint64_t vaddr){
+/*
+* @param lowerattr How to R/W()
+* @param gigherattr How to run()
+*/
+uint64_t MapMem16K(pagemap_t *pagemap,uint64_t vaddr, uint64_t paddr,uint64_t lowerattr,uint64_t higherattr){
     uint64_t ttbr;
     if(vaddr <= 0x0000FFFFFFFFFFFF)
-        read_ttbr_el1(0,ttbr);
+        ttbr = (uint64_t)pagemap->top_level[0];
     else
-        read_ttbr_el1(1,ttbr);
+        ttbr = (uint64_t)pagemap->top_level[1];
     Translate16K t;t.vaddr = vaddr;
     __tdesc_16K *lv0 = (__tdesc_16K*)
                         (ttbr + t.addrdesc.LV0_TblIndex * sizeof(__tdesc_16K));
@@ -94,15 +98,21 @@ uint64_t V2P_16K(uint64_t vaddr){
     
     PageDescriptor64K *Page = (PageDescriptor64K*)
                     ((uint64_t)lv2->NextLvl + t.addrdesc.LV3_TblIndex * sizeof(PageDescriptor64K));
-    return (Page->fields.OutputAddr << 14) | t.addrdesc.BlockOffset;
+    Page->fields.OutputAddr = paddr & 0x3FFF; //Set lower 14 bits
+    Page->fields.LowerAttrs = lowerattr;
+    Page->fields.UpperAttrs = higherattr;
 }
 
-uint64_t V2P_64K(uint64_t vaddr){
+/*
+* @param lowerattr How to R/W()
+* @param gigherattr How to run()
+*/
+uint64_t MapMem64K(pagemap_t *pagemap,uint64_t vaddr, uint64_t paddr,uint64_t lowerattr,uint64_t higherattr){
     uint64_t ttbr;
     if(vaddr <= 0x0000FFFFFFFFFFFF)
-        read_ttbr_el1(0,ttbr);
+        ttbr = (uint64_t)pagemap->top_level[0];
     else
-        read_ttbr_el1(1,ttbr);
+        ttbr = (uint64_t)pagemap->top_level[1];
     Translate64K t;t.vaddr = vaddr;
     __tdesc_64K *lv1 = (__tdesc_64K*)
                         (ttbr + t.addrdesc.LV1_TblIndex * sizeof(__tdesc_64K));
@@ -111,12 +121,17 @@ uint64_t V2P_64K(uint64_t vaddr){
     PageDescriptor64K *Page = (PageDescriptor64K*)
                     (lv2->NextLvl + t.addrdesc.LV3_TblIndex * sizeof(PageDescriptor64K));
     return (Page->fields.OutputAddr << 16) | t.addrdesc.BlockOffset;
+    //FFFF
+    Page->fields.OutputAddr = paddr & 0xFFFF; //Set lower 16 bits
+    Page->fields.LowerAttrs = lowerattr;
+    Page->fields.UpperAttrs = higherattr;
 }
 
-typedef struct PageMap{
-    uint64_t *LowerRoot; 
-    uint64_t *HigherRoot;
-}PageMap;
+volatile const uint64_t (*MamMemoryFunctionLists[3])
+    (pagemap_t *pagemap,uint64_t vaddr, uint64_t paddr,uint64_t lowerattr,uint64_t higherattr) = {
+    MapMem4K,MapMem16K,MapMem64K
+};
+
 
 namespace VMM
 {

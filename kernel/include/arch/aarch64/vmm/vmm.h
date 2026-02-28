@@ -38,6 +38,8 @@ enum page_size {
     Size1GiB
 };
 
+#define UXN (1ULL << 54) //User mode cannot Run
+#define PXN (1ULL << 53) //Kernel mode cnnot run(data)
 
 namespace VMM
 {
