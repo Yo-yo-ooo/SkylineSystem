@@ -104,6 +104,7 @@ void __init x86_64_init(void){
 
     //FrameBufferDevice::Init();
 
+    //asasasa
     //KernelInited = 1;
     __a_swap(&KernelInited, 1);
     if(this_cpu()->SupportXSAVE)
