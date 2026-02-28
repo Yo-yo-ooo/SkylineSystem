@@ -102,10 +102,6 @@ void __init x86_64_init(void){
 
     proc_t *proc = Schedule::NewProcess(true);
 
-    //FrameBufferDevice::Init();
-
-    //asasasa
-    //KernelInited = 1;
     __a_swap(&KernelInited, 1);
     if(this_cpu()->SupportXSAVE)
         asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
