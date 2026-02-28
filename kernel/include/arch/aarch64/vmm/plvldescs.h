@@ -154,32 +154,32 @@ union Pair4K{
 };
 
 PACK(typedef struct field_4KPD{
-    uint64_t UpperAttrs    : 12; // Bits [63:52]: 高位属性 (PXN, UXN, etc.)
-    uint64_t RES0           : 4;  // Bits [51:48]: 只有开启 TCR_EL1.DS 时有效
-    uint64_t OutputAddr    : 36; // Bits [47:12]: 输出地址
-    uint64_t LowerAttrs    : 10; // Bits [11:2]: 属性位 (AF, SH, AP, etc.)
-    uint64_t Type           : 1;  // Bit 1: 1 为 Page, 0 为 Block
     uint64_t Valid          : 1;  // Bit 0: 必须为 1
+    uint64_t Type           : 1;  // Bit 1: 1 为 Page, 0 为 Block
+    uint64_t LowerAttrs     : 10; // Bits [11:2]: 属性位 (AF, SH, AP, etc.)
+    uint64_t OutputAddr     : 36; // Bits [47:12]: 输出地址
+    uint64_t RES0           : 4;  // Bits [51:48]: 只有开启 TCR_EL1.DS 时有效
+    uint64_t UpperAttrs     : 12; // Bits [63:52]: 高位属性 (PXN, UXN, etc.)
 }) field_4KPD;
 
 PACK(typedef struct field_16KPD{
-    uint64_t UpperAttrs    : 12; // Bits [63:52]: 高位属性 (PXN, UXN, etc.)
-    uint64_t RES0           : 4;  // Bits [51:48]: 只有开启 TCR_EL1.DS 时有效
-    uint64_t OutputAddr    : 34; // Bits [47:12]: 输出地址
-    uint64_t RES0_12_13     : 2;  // Bits [13:12]: 图中 ‡ 标注的 RES0
-    uint64_t LowerAttrs    : 10; // Bits [11:2]: 属性位 (AF, SH, AP, etc.)
-    uint64_t Type           : 1;  // Bit 1: 1 为 Page, 0 为 Block
     uint64_t Valid          : 1;  // Bit 0: 必须为 1
+    uint64_t Type           : 1;  // Bit 1: 1 为 Page, 0 为 Block
+    uint64_t LowerAttrs     : 10; // Bits [11:2]: 属性位 (AF, SH, AP, etc.)
+    uint64_t RES0_12_13     : 2;  // Bits [13:12]: 图中 ‡ 标注的 RES0
+    uint64_t OutputAddr     : 34; // Bits [47:14]: 输出地址 (注意修正了注释中的12)
+    uint64_t RES0           : 4;  // Bits [51:48]: 只有开启 TCR_EL1.DS 时有效
+    uint64_t UpperAttrs     : 12; // Bits [63:52]: 高位属性 (PXN, UXN, etc.)
 }) field_16KPD;
 
 PACK(typedef struct field_64KPD{
-    uint64_t UpperAttrs     : 12; // Bits [63:52]: 高位属性 (PXN, UXN, etc.)
-    uint64_t RES0           : 4;  // Bits [51:48]: 只有开启 TCR_EL1.DS 时有效
-    uint32_t OutputAddr        ; // Bits [47:12]: 输出地址
-    uint64_t RES0_           : 4;  // Bits [13:12]: 图中 ‡ 标注的 RES0
-    uint64_t LowerAttrs     : 10; // Bits [11:2]: 属性位 (AF, SH, AP, etc.)
-    uint64_t Type           : 1;  // Bit 1: 1 为 Page, 0 为 Block
     uint64_t Valid          : 1;  // Bit 0: 必须为 1
+    uint64_t Type           : 1;  // Bit 1: 1 为 Page, 0 为 Block
+    uint64_t LowerAttrs     : 10; // Bits [11:2]: 属性位 (AF, SH, AP, etc.)
+    uint64_t RES0_          : 4;  // Bits [15:12]: 图中 ‡ 标注的 RES0
+    uint64_t OutputAddr     : 32; // Bits [47:16]: 输出地址 (统一为位域以保证打包)
+    uint64_t RES0           : 4;  // Bits [51:48]: 只有开启 TCR_EL1.DS 时有效
+    uint64_t UpperAttrs     : 12; // Bits [63:52]: 高位属性 (PXN, UXN, etc.)
 }) field_64KPD;
 
 union PageDescriptor4K {
