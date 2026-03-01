@@ -48,7 +48,7 @@ make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-g
 qemu-system-x86_64 -machine q35 -cpu max \
 -cdrom ./SkylineSystem-x86_64.iso -m 2G -smp 4 \
 -serial stdio -net nic -device AC97 \
--drive file=%SourceFile%,if=none,id=drive0 \
+-drive file=disk.img,if=none,id=drive0 \
 -device ide-hd,drive=drive0,bus=ide.0 \
 -no-reboot --no-shutdown \
 -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait 
@@ -62,7 +62,7 @@ see ./scripts/ folder run the arch you need to run
 qemu-system-x86_64 -machine q35 -cpu max \
 -cdrom ./SkylineSystem-x86_64.iso -m 2G -smp 4 \
 -serial stdio -net nic -device AC97 \
--drive file=%SourceFile%,if=none,id=drive0 \
+-drive file=disk.img,if=none,id=drive0 \
 -device ide-hd,drive=drive0,bus=ide.0 \
 -no-reboot --no-shutdown \
 -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait -S
