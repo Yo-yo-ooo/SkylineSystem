@@ -46,7 +46,7 @@ make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-g
 ```bash
 # just run x86_64 qemu example command
 qemu-system-x86_64 -machine q35 -cpu max \
--cdrom %~dp0/../SkylineSystem-x86_64.iso -m 2G -smp 4 \
+-cdrom ./SkylineSystem-x86_64.iso -m 2G -smp 4 \
 -serial stdio -net nic -device AC97 \
 -drive file=%SourceFile%,if=none,id=drive0 \
 -device ide-hd,drive=drive0,bus=ide.0 \
@@ -60,7 +60,7 @@ see ./scripts/ folder run the arch you need to run
 #first run qemu
 # just run x86_64 qemu example command
 qemu-system-x86_64 -machine q35 -cpu max \
--cdrom %~dp0/../SkylineSystem-x86_64.iso -m 2G -smp 4 \
+-cdrom ./SkylineSystem-x86_64.iso -m 2G -smp 4 \
 -serial stdio -net nic -device AC97 \
 -drive file=%SourceFile%,if=none,id=drive0 \
 -device ide-hd,drive=drive0,bus=ide.0 \
