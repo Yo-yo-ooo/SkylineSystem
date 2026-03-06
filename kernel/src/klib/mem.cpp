@@ -44,8 +44,8 @@ typedef char xmm_t __attribute__((__vector_size__(16), __aligned__(1)));
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/schedule/sched.h>
 #elif defined(__aarch64__)
-extern "C" void NEON_MEMCPY(void* dst, const void* src, size_t size);
-extern "C" void NEON_MEMSET(void* dst, unsigned char value, size_t size);
+func_optimize(3) void NEON_MEMCPY(void* dst, const void* src, size_t size);
+func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 #endif
 
 #ifdef __x86_64__

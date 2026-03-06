@@ -261,6 +261,8 @@ public:
     uint64_t Read( uint64_t offset, uint64_t size, void *buf);
     uint64_t Write(uint64_t offset, uint64_t size, void *buf);
 
+    void MSIXHandler(context_t *ctx);
+
 protected:
     uint64_t BaseAddr;
 
@@ -274,7 +276,7 @@ protected:
 
     PCI::PCIHeader0 *phdr;
 
-    PCI::MSI_CAP32 *MSI;
+    /* PCI::MSI_CAP32 *MSI; */
     PCI::PCI_MSIX_CAP *MSIX;
 
 

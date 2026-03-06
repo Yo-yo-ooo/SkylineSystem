@@ -241,6 +241,7 @@ endif
 # 4. 针对这些特定目标，在 aarch64 架构下移除 Flag
 ifeq ($(BUILD_ARCH), aarch64)
 obj-$(KARCH)/./klib/algorithm/hashmap.c.o: KCFLAGS := -march=armv8-a+fp+simd $(filter-out -mgeneral-regs-only -march=armv8-a+nofp+nosimd, $(KCFLAGS))
+obj-$(KARCH)/./klib/0aarch64mem.cpp.o: KCFLAGS := -march=armv8-a+fp+simd $(filter-out -mgeneral-regs-only -march=armv8-a+nofp+nosimd, $(KCFLAGS))
 endif
 
 

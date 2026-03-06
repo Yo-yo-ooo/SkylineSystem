@@ -324,16 +324,16 @@ NVME::CmplQue *NVME::AllocCmplQue(uint32_t iden, uint32_t size) {
 extern volatile uint64_t smp_cpu_count;
 bool NVME::InitIntr() {
 
-	this->MSI = nullptr;
+	//this->MSI = nullptr;
 	this->flags &= ~NVME_FLAG_MISIX;
 
 
-    this->MSI = PCI::GetMSICap(this->phdr);
+    //this->MSI = PCI::GetMSICap(this->phdr);
     this->MSIX = PCI::GetMSIXCap(this->phdr);
-	if (this->MSI == nullptr || this->MSIX == nullptr) {
-		kerror("[NVME: %p]: no MSI/MSI-X support\n", (uint64_t)this);
+	if (this->MSIX == nullptr) {
+		kerror("[NVME: %p]: no MSI-X support\n", (uint64_t)this);
 		return false;
-	}else if(this->MSIX != nullptr){this->flags |= NVME_FLAG_MISIX;}
+	}else{this->flags |= NVME_FLAG_MISIX;}
 
 
 	
@@ -353,7 +353,7 @@ bool NVME::InitIntr() {
             uint32_t targetCpu = GetLWIntrCpu();
 
             // 2. 分配一个唯一的 IDT 向量号 (通常从 0x20 开始，避开异常区)
-            // 在你的架构里，不同 CPU 的同一个向量号可以挂不同的 Handler
+            // 不同 CPU 的同一个向量号可以挂不同的 Handler
             uint16_t vector = 0x32 + i; 
 
             uint32_t MsgAddr = 0xfee00000u
@@ -377,6 +377,11 @@ bool NVME::InitIntr() {
 	return true;
 }
 
+void NVME::MSIXHandler(context_t *ctx){
+    NVME *p = (NVME*)(ctx->rdi & ~15);
+    NVME::CmplQue *cmplQuque = this->cq[ctx->rdi & 0xf];
+    
+}
 
 bool NVME::InitREQIdent(NVME::NVMERequest *req, u32 tp, u32 nspIden, void *buf){
     NVME::SubQueEntry *entry = &req->input[0];
