@@ -261,7 +261,17 @@ public:
     uint64_t Read( uint64_t offset, uint64_t size, void *buf);
     uint64_t Write(uint64_t offset, uint64_t size, void *buf);
 
-    void MSIXHandler(context_t *ctx);
+    struct IRQCtx {
+        uint32_t CPUID;
+        uint8_t VecID;
+        NVME *Instance;
+        uint16_t QueueID;
+    }IRQMap[NVME_MAX_INTRNUM];
+
+    NVME::CmplQue **cq;
+    NVME::SubQue **sq;
+
+    inline void WriteCmplDB(NVME::CmplQue *cmplQue);
 
 protected:
     uint64_t BaseAddr;
@@ -271,8 +281,7 @@ protected:
     uint32_t DBStride;
     uint16_t INTRNUM;
 
-    NVME::CmplQue **cq;
-    NVME::SubQue **sq;
+    
 
     PCI::PCIHeader0 *phdr;
 
@@ -289,14 +298,24 @@ protected:
     /*
     */
    uint8_t FialureNUM;
-private:
 
+   
+
+private:
+    
+
+    
     int32_t GetSpareReq(NVME::NVMEDev *dev);
     NVME::SubQue *FindIOSubQue();
     bool InitQue(); // Just for NVME::NVME(*p)
     bool InitIntr();
     bool InitNsp();
 };
+
+
+
+
+
 #endif
 
 #endif

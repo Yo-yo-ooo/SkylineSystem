@@ -31,7 +31,14 @@
 #define ReadReg64(off)      this->ReadReg(off)
 #define WriteReg64(off,v)   this->WriteReg(off,v)
 
+static int32_t NVMEResponse(NVME::NVMERequest *req, NVME::SubQueEntry *entry){
+    __memcpy(entry, &req->res,sizeof(NVME::CmplQueEntry));
+    return 0;
+}
 
+inline void NVME::WriteCmplDB(NVME::CmplQue *cmplQue){
+    this->WriteReg(0x1000 + (cmplQue->Ident << 1 | 1)* this->DBStride, cmplQue->Pos);
+}
 
 bool NVME::InitQue(){
     this->cq = (NVME::CmplQue**)kmalloc(sizeof(NVME::CmplQue*) * INTRNUM);
@@ -322,6 +329,7 @@ NVME::CmplQue *NVME::AllocCmplQue(uint32_t iden, uint32_t size) {
 }
 
 extern volatile uint64_t smp_cpu_count;
+void MSIXHandler(context_t *ctx);
 bool NVME::InitIntr() {
 
 	//this->MSI = nullptr;
@@ -356,6 +364,13 @@ bool NVME::InitIntr() {
             // 不同 CPU 的同一个向量号可以挂不同的 Handler
             uint16_t vector = RequestFreeIRQPerCPU(); 
 
+            /* IRQMap[targetCpu][vector].Instance = this;
+            IRQMap[targetCpu][vector].QueueID = i; */
+            this->IRQMap[i].CPUID = targetCpu;
+            this->IRQMap[i].VecID = vector;
+            this->IRQMap[i].Instance = this;
+            this->IRQMap[i].QueueID = i;
+
             uint32_t MsgAddr = 0xfee00000u
                 | ((targetCpu) << 12)
                 | (0 << 3) | (0 << 2);                   
@@ -363,7 +378,7 @@ bool NVME::InitIntr() {
             Tbl[i].msgData = i;
             __asm__ volatile ("mfence" ::: "memory"); // 确保硬件看到地址和数据
             Tbl[i].vecCtrl &= ~1u; // 解除ENTRY[INTRNUM]'s Mask 
-            idt_install_irq_cpu(targetCpu,vector,nullptr/*TODO:NVME HANDLER!!!*/);
+            idt_install_irq_cpu(targetCpu,vector,MSIXHandler/*TODO:NVME HANDLER!!!*/);
         }
         PCI::enable_bus_mastering((uint64_t)this->phdr);
         Cap->MsgCtrl |= (1 << 15); // Enable
@@ -377,10 +392,51 @@ bool NVME::InitIntr() {
 	return true;
 }
 
-void NVME::MSIXHandler(context_t *ctx){
-    NVME *p = (NVME*)(ctx->rdi & ~15);
-    NVME::CmplQue *cmplQuque = this->cq[ctx->rdi & 0xf];
+void MSIXHandler(context_t *ctx){
+
+    uint32_t cpuid = this_cpu()->id; 
+    uint8_t vector = ctx->int_no;
+
+    NVME *instance;uint16_t queueId;
     
+    for(uint8_t i = 0;i < NVME_MAX_INTRNUM;i++){
+        if(instance->IRQMap[i].CPUID == cpuid && instance->IRQMap[i].VecID == vector){
+            instance = instance->IRQMap[i].Instance;
+            queueId = instance->IRQMap[i].QueueID;
+        }
+    }
+
+    if (instance == nullptr) {
+        kerror("Spurious NVME interrupt on CPU %d, Vector %d\n", cpuid, vector);
+        return; 
+    }
+    NVME::CmplQue *cmpq = instance->cq[queueId];
+    NVME::SubQue *sq = instance->sq[queueId];
+#define PHASETag ((*(uint16_t*)(&cmpq->Entries[cmpq->Pos].Status)) & 1)
+    while(PHASETag == cmpq->Phase){
+        NVME::CmplQueEntry *entry = &cmpq->Entries[cmpq->Pos++];
+
+        if(cmpq->Pos == cmpq->Size){
+            cmpq->Pos = 0;
+            cmpq->Phase ^= 1;
+        }
+
+        NVME::SubQue *SQ = instance->sq[entry->SubQueIden];
+        spinlock_lock(&SQ->Lock);
+        NVME::NVMERequest *req = SQ->Req[entry->CmdIden];
+        if(SQ->Head != entry->SubQueHdrPtr){
+            if(SQ->Head > entry->SubQueHdrPtr)
+                SQ->Head -= SQ->Size - SQ->Head + entry->SubQueHdrPtr;
+            else
+                SQ->Load -= entry->SubQueHdrPtr - SQ->Head;
+            SQ->Head = entry->SubQueHdrPtr;
+        }
+        spinlock_unlock(&SQ->Lock);
+
+        
+    }
+    instance->WriteCmplDB(cmpq);
+
 }
 
 bool NVME::InitREQIdent(NVME::NVMERequest *req, u32 tp, u32 nspIden, void *buf){
