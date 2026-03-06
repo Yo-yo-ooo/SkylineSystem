@@ -79,6 +79,7 @@ void idt_init();
 void idt_reinit(uint32_t CPUID);
 void idt_set_ist(uint16_t vector, uint8_t ist);
 extern "C" void idt_install_irq(uint8_t irq, void *handler);
+extern "C" uint8_t RequestFreeIRQPerCPU();
 typedef struct cpu_t cpu_t;
 extern "C" cpu_t* GetLWIntrCpu();
 extern "C" uint8_t RequestFreeIRQPerCPU();

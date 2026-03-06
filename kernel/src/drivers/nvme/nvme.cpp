@@ -354,7 +354,7 @@ bool NVME::InitIntr() {
 
             // 2. 分配一个唯一的 IDT 向量号 (通常从 0x20 开始，避开异常区)
             // 不同 CPU 的同一个向量号可以挂不同的 Handler
-            uint16_t vector = 0x32 + i; 
+            uint16_t vector = RequestFreeIRQPerCPU(); 
 
             uint32_t MsgAddr = 0xfee00000u
                 | ((targetCpu) << 12)

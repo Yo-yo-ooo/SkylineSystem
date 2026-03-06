@@ -48,6 +48,10 @@ void idt_init() {
     smp_cpu_list[smp_bsp_cpu]->idtdesc.size = sizeof(idt_entries) - 1;
     smp_cpu_list[smp_bsp_cpu]->idtdesc.address = (uint64_t)&idt_entries;
     smp_cpu_list[smp_bsp_cpu]->handlers = (uint64_t)handlers;
+    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[0] = 0x00000000FFFFFFFFULL;
+    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[1] = 0;
+    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[2] = 0;
+    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[3] = 0;
 
     __asm__ volatile ("lidt %0" : : "m"(smp_cpu_list[smp_bsp_cpu]->idtdesc) : "memory");
     __asm__ volatile ("sti");
@@ -60,6 +64,10 @@ void idt_reinit(uint32_t CPUID) {
     smp_cpu_list[CPUID]->idtdesc.size = sizeof(idt_entries) - 1;
     smp_cpu_list[CPUID]->idtdesc.address = (uint64_t)local_idt;
     smp_cpu_list[CPUID]->handlers = kmalloc(256 * sizeof(uint64_t));
+    smp_cpu_list[CPUID]->IntrBitMap[0] = 0x00000000FFFFFFFFULL;
+    smp_cpu_list[CPUID]->IntrBitMap[1] = 0;
+    smp_cpu_list[CPUID]->IntrBitMap[2] = 0;
+    smp_cpu_list[CPUID]->IntrBitMap[3] = 0;
     __asm__ volatile ("lidt %0" : : "m"(smp_cpu_list[CPUID]->idtdesc) : "memory");
     __asm__ volatile ("sti");
 }
@@ -94,8 +102,8 @@ extern "C" uint8_t RequestFreeIRQPerCPU(){
         uint64_t bitmap_val = target_cpu->IntrBitMap[i];
         //64 bit all = 1 (0xFFFFFFFFFFFFFFFF)
         if (bitmap_val == UINT64_MAX) continue;
-        for(uint32_t j = 0; j < 64;i++){
-            if(GET_BIT(bitmap_val,i) == 0)
+        for(uint32_t j = 0; j < 64;j++){
+            if(GET_BIT(bitmap_val,j) == 0)
                 return ((i * 64) + j);
         }
     }
