@@ -48,9 +48,9 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 #endif
 
 #ifdef __x86_64__
-
+#define MEMOPS_x86_THRESHOLD 1024*256
 //X/FXSave Check And Set
-#define XFXSAVE_CAS if(KernelInited && size > 1024 * 256){ \
+#define XFXSAVE_CAS if(KernelInited && size > MEMOPS_x86_THRESHOLD){ \
         if(cpu->SupportXSAVE){ \
             if(fx_area != nullptr){ \
                 if(cpu->SupportXSAVEOPT) \
@@ -67,7 +67,7 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
     } 
 
 //X/FXSave Check And Set Back
-#define XFXSAVE_CASB if(KernelInited && size > 1024 * 256){ \
+#define XFXSAVE_CASB if(KernelInited && size > MEMOPS_x86_THRESHOLD){ \
     end_deal: \
         if(cpu->SupportXSAVE){ \
             asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
@@ -98,7 +98,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
 
 
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMCPY) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
-    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > 1024 * 256))){
+    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
         AVX_memcpy(dest,src,size);
         if(KernelInited == 1)
             return;
@@ -113,7 +113,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
 #endif
 
 #if defined(__x86_64__)  && COMPILER_SUPPORT_AVX512 == 1
-    if(((KernelInited == 1) || (size > 1024 * 256))){
+    if(((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
     deal_kfinited:
         /// We will use pointer arithmetic, so char pointer will be used.
         /// Note that __restrict makes sense (otherwise compiler will reload data from memory
@@ -257,7 +257,7 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 
 
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMSET) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
-    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > 1024 * 256))){
+    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
         AVX_memset(dest,value,size);
         if(KernelInited == 1)
             return;
@@ -289,7 +289,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
         fx_area = th->fx_area;
     
     XFXSAVE_CAS
-    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > 1024 * 256))){
+    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
         AVX_memmove(dest,src,size);
         return;
     }
@@ -302,6 +302,7 @@ deal_kfinited:
 
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size)
 {
+    int32_t res = 0;
 #if defined(__x86_64__) && defined(CONFIG_FAST_MEMCMP) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
@@ -312,12 +313,23 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size)
         fx_area = th->fx_area;
     
     XFXSAVE_CAS;
-    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > 1024 * 256))){
-        int32_t res = AVX_memcmp(buffer1,buffer2,size,1);
-        XFXSAVE_CASB;
-        return res;
+    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
+        res = AVX_memcmp(buffer1,buffer2,size,1);
+        goto end_deal;
     }
-    XFXSAVE_CASB;
+    if(KernelInited && size > MEMOPS_x86_THRESHOLD){ \
+    end_deal: \
+        if(cpu->SupportXSAVE){ \
+            asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
+            if(fx_area != nullptr) \
+                asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
+        }else{ \
+            asm volatile("fxsave (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
+            if(fx_area != nullptr) \
+                asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory"); \
+        } \
+        return res; \
+    } 
 #endif
 deal_kfinited: 
     return memcmp_fscpuf(buffer1,buffer2,size);
