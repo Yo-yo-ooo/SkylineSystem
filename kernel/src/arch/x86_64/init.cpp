@@ -114,6 +114,6 @@ void __init x86_64_init(void){
         "/mp/syscalltest.elf", 1, argv, envp); 
     kinfoln("syscalltest PROCESS: %d",proc->id);
 
-
+    LAPIC::IPI(this_cpu()->id,SCHED_VEC + 1);
     LAPIC::IPIOthers(0, SCHED_VEC);
 }
