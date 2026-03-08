@@ -236,8 +236,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
     }
     XFXSAVE_CASB;
 #endif 
-//We can use these in user mode, so we have to provide implementations that don't rely on CPU features or kernel initialization.
-	memcpy_fscpuf(dest,src,size);
+    memcpy_fscpuf(dest,src,size);
 }
 
 
