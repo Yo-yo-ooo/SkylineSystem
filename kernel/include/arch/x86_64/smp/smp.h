@@ -55,6 +55,7 @@ typedef struct cpu_t{
     uint64_t *handlers;
     uint8_t IntrRegistCount = 0x20; //Base:0x20(CPU RSVD 0~0x20)
     uint64_t IntrBitMap[4]; // 256 Count Bitmap      
+    int8_t* KernelXsaveSpace;
     bool has_runnable_thread;
     bool SupportSIMD = false;
     bool SupportXSAVE = false;

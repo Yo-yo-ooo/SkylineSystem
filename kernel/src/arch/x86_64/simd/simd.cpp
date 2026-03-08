@@ -110,6 +110,10 @@ void simd_cpu_init(cpu_t *cpu)
         //MaxXsaveSize = ebx;
         if(ebx > MaxXsaveSize)
             MaxXsaveSize = ebx;
+        cpu->KernelXsaveSpace = (int8_t*)VMM::Alloc(kernel_pagemap,DIV_ROUND_UP(ebx,PAGE_SIZE),false);
+        _memset(cpu->KernelXsaveSpace,0,MaxXsaveSize);
+        *(uint16_t *)(cpu->KernelXsaveSpace + 0x00) = 0x037F;
+        *(uint32_t *)(cpu->KernelXsaveSpace + 0x18) = 0x1F80;
 
         asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0xD), "c"(1));
         cpu->SupportXSAVEOPT = (eax & (1 << 0));

@@ -119,8 +119,8 @@ ifeq ($(KARCH),x86_64)
         -mcmodel=kernel \
 		-mno-sse \
         -mno-sse2 \
-		-DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM)
-		
+		-DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM) \
+		-DCOMPILER_SUPPORT_AVX512=$(if $(filter yes,$(COMPILER_SUPPORT_AVX512)),1,0)
     override KLDFLAGS += \
         -m elf_x86_64
     override KNASMFLAGS += \

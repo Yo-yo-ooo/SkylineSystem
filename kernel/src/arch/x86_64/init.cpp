@@ -74,10 +74,6 @@ void __init x86_64_init(void){
     InitFunc("PIT & RTC",PIT::InitPIT());
     InitFunc("HPET",HPET::InitHPET());
     InitFunc("SMP",smp_init());
-    KernelXsaveSpace = (int8_t*)VMM::Alloc(kernel_pagemap,DIV_ROUND_UP(MaxXsaveSize,PAGE_SIZE),false);
-    _memset(KernelXsaveSpace,0,MaxXsaveSize);
-    *(uint16_t *)(KernelXsaveSpace + 0x00) = 0x037F;
-    *(uint32_t *)(KernelXsaveSpace + 0x18) = 0x1F80;
     InitFunc("RTC",RTC::InitRTC());
     InitFunc("SIMD Core 0",simd_cpu_init(this_cpu()));
     
@@ -103,10 +99,7 @@ void __init x86_64_init(void){
     proc_t *proc = Schedule::NewProcess(true);
 
     __a_swap(&KernelInited, 1);
-    if(this_cpu()->SupportXSAVE)
-        asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");
-    else
-        asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory");
+    
 
     char *argv[] = {(char*)"Test Main Thread"};
     char *envp[] = {nullptr};

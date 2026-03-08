@@ -34,7 +34,6 @@
 
 #pragma GCC target("sse2")
 #include <emmintrin.h>
-typedef char xmm_t __attribute__((__vector_size__(16), __aligned__(1)));
 #ifdef __AVX512F__
 #pragma GCC target("avx512f")
 #elif defined(__AVX2__)
@@ -51,7 +50,7 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 #ifdef __x86_64__
 
 //X/FXSave Check And Set
-#define XFXSAVE_CAS if(KernelInited && size > 1024 * 64){ \
+#define XFXSAVE_CAS if(KernelInited && size > 1024 * 256){ \
         if(cpu->SupportXSAVE){ \
             if(fx_area != nullptr){ \
                 if(cpu->SupportXSAVEOPT) \
@@ -59,23 +58,23 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
                 else if(cpu->SupportXSAVE)\
                     asm volatile("xsave %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
             } \
-            asm volatile("xrstor %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
+            asm volatile("xrstor %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
         }else{ \
             if(fx_area != nullptr) \
                 asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory"); \
-            asm volatile("fxrstor (%0)" : : "r"(KernelXsaveSpace) : "memory"); \
+            asm volatile("fxrstor (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
         } \
     } 
 
 //X/FXSave Check And Set Back
-#define XFXSAVE_CASB if(KernelInited && size > 1024 * 64){ \
+#define XFXSAVE_CASB if(KernelInited && size > 1024 * 256){ \
     end_deal: \
         if(cpu->SupportXSAVE){ \
-            asm volatile("xsave %0" : : "m"(*KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
+            asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
             if(fx_area != nullptr) \
                 asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
         }else{ \
-            asm volatile("fxsave (%0)" : : "r"(KernelXsaveSpace) : "memory"); \
+            asm volatile("fxsave (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
             if(fx_area != nullptr) \
                 asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory"); \
         } \
@@ -86,7 +85,7 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 extern "C" {
 void _memcpy(void* src, void* dest, uint64_t size)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) && COMPILER_SUPPORT_AVX512 == 1
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
@@ -98,14 +97,13 @@ void _memcpy(void* src, void* dest, uint64_t size)
 #endif
 
 
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCPY) && NOT_COMPILE_X86MEM == 0
-    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == 1) || (size > 1024 * 256))){
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCPY) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
+    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > 1024 * 256))){
         AVX_memcpy(dest,src,size);
         if(KernelInited == 1)
             return;
         goto end_deal;
     }
-#elif defined(__x86_64__)
 
     
 #elif defined(__aarch64__)
@@ -114,7 +112,7 @@ void _memcpy(void* src, void* dest, uint64_t size)
         return;
 #endif
 
-#ifdef __x86_64__
+#if defined(__x86_64__)  && COMPILER_SUPPORT_AVX512 == 1
     if(((KernelInited == 1) || (size > 1024 * 256))){
     deal_kfinited:
         /// We will use pointer arithmetic, so char pointer will be used.
@@ -237,14 +235,15 @@ void _memcpy(void* src, void* dest, uint64_t size)
         goto end_deal;
     }
     XFXSAVE_CASB;
-#endif
+#endif 
+//We can use these in user mode, so we have to provide implementations that don't rely on CPU features or kernel initialization.
 	memcpy_fscpuf(dest,src,size);
 }
 
 
 void _memset(void* dest, uint8_t value, uint64_t size)
 {
-#ifdef __x86_64__
+#if defined(__x86_64__) && COMPILER_SUPPORT_AVX512 == 1
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
@@ -257,8 +256,8 @@ void _memset(void* dest, uint8_t value, uint64_t size)
 #endif
 
 
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMSET) && NOT_COMPILE_X86MEM == 0
-    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == 1) || (size > 1024 * 256))){
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMSET) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
+    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > 1024 * 256))){
         AVX_memset(dest,value,size);
         if(KernelInited == 1)
             return;
@@ -269,18 +268,18 @@ void _memset(void* dest, uint8_t value, uint64_t size)
     NEON_MEMSET(dest,value,size);
     return;
 #endif
-#ifdef __x86_64__
+#if defined(__x86_64__) && COMPILER_SUPPORT_AVX512 == 1
     // For General x86_64 cpu(DIDn't support >=sse4.2)
     //TODO: memset sse VER < sse 4.2
     XFXSAVE_CASB;
 #endif
-deal_kfinited:
+deal_kfinited: 
 	memset_fscpuf(dest,(const int32_t)value,size);
 }
 
 
 void _memmove(void* dest,void* src, uint64_t size) {
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMMOVE) && NOT_COMPILE_X86MEM == 0
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMMOVE) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
     cpu_t *cpu = this_cpu();    
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
@@ -290,20 +289,20 @@ void _memmove(void* dest,void* src, uint64_t size) {
         fx_area = th->fx_area;
     
     XFXSAVE_CAS
-    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == 1) || (size > 1024 * 256))){
+    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > 1024 * 256))){
         AVX_memmove(dest,src,size);
         return;
     }
 
     XFXSAVE_CASB;
 #endif
-deal_kfinited:
+deal_kfinited: 
 	memmove_fscpuf(dest,src,size);
 }
 
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size)
 {
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCMP) && NOT_COMPILE_X86MEM == 0
+#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCMP) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
     cpu_t *cpu = this_cpu();
     int8_t *fx_area = nullptr;
     thread_t *th = Schedule::this_thread();
@@ -313,12 +312,14 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size)
         fx_area = th->fx_area;
     
     XFXSAVE_CAS;
-    if(smp_started != false && cpu->SupportSSE4_2 && ((KernelInited == 1) || (size > 1024 * 256))){
-        return AVX_memcmp(buffer1,buffer2,size,1);
+    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > 1024 * 256))){
+        int32_t res = AVX_memcmp(buffer1,buffer2,size,1);
+        XFXSAVE_CASB;
+        return res;
     }
     XFXSAVE_CASB;
 #endif
-deal_kfinited:
+deal_kfinited: 
     return memcmp_fscpuf(buffer1,buffer2,size);
 }
 }

@@ -179,4 +179,3 @@ extern "C" uint32_t sys_now(void){
 }
 
 volatile int KernelInited = 0;
-int8_t *KernelXsaveSpace = nullptr;
