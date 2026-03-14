@@ -85,9 +85,13 @@ void _memcpy(void* src, void* dest, uint64_t size){
 #if (defined(COMPILER_SUPPORT_AVX512) || \
     defined(COMPILER_SUPPORT_AVX2) || \
     defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
-    if(size >= 78 * 1024/*78KB*/){
-        cpu_t *cpu = this_cpu();
+    cpu_t *cpu = this_cpu();
+    if(cpu == nullptr)
+        goto base_ver;
+    if(size >= 78 * 1024/*78KB*/ && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
+        if(fx_area == nullptr)
+            goto base_ver;
         XFXSAVE_CAS
         AVX_memcpy(dest,src,size);
         XFXSAVE_CASB
@@ -98,6 +102,7 @@ void _memcpy(void* src, void* dest, uint64_t size){
     NEON_MEMCPY(dest,src,size);
     return;
 #endif
+base_ver:
     memcpy_fscpuf(dest,src,size);
 }
 
@@ -107,9 +112,14 @@ void _memset(void* dest, uint8_t value, uint64_t size){
 #if (defined(COMPILER_SUPPORT_AVX512) || \
     defined(COMPILER_SUPPORT_AVX2) || \
     defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
-    if(size >= 32 * 1024/*32KB*/){
-        cpu_t *cpu = this_cpu();
+    cpu_t *cpu = this_cpu();
+    if(cpu == nullptr)
+        goto base_ver;
+    if(size >= 32 * 1024/*32KB*/ && cpu->SupportSSE4_2){
+        
         int8_t *fx_area = Schedule::this_thread()->fx_area;
+        if(fx_area == nullptr)
+            goto base_ver;
         XFXSAVE_CAS
         AVX_memset(dest,value,size);
         XFXSAVE_CASB
@@ -120,6 +130,7 @@ void _memset(void* dest, uint8_t value, uint64_t size){
     NEON_MEMSET(dest,value,size);
     return;
 #endif
+base_ver:
     memset_fscpuf(dest,(int32_t)value,size);
 }
 
@@ -129,9 +140,14 @@ void _memmove(void* dest,void* src, uint64_t size) {
 #if (defined(COMPILER_SUPPORT_AVX512) || \
     defined(COMPILER_SUPPORT_AVX2) || \
     defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
-    if(size >= 128 * 1024/*128KB*/){
+    cpu_t *cpu = this_cpu();
+    if(cpu == nullptr)
+        goto base_ver;
+    if(size >= 128 * 1024/*128KB*/ && cpu->SupportSSE4_2){
         cpu_t *cpu = this_cpu();
         int8_t *fx_area = Schedule::this_thread()->fx_area;
+        if(fx_area == nullptr)
+            goto base_ver;
         XFXSAVE_CAS
         AVX_memmove(dest,src,size);
         XFXSAVE_CASB
@@ -139,6 +155,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
     }
 #endif
 #endif
+base_ver:
     memmove_fscpuf(dest,src,size);
 }
 
@@ -147,16 +164,22 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
 #if (defined(COMPILER_SUPPORT_AVX512) || \
     defined(COMPILER_SUPPORT_AVX2) || \
     defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
-    if(size >= 1 * 1024/*1KB*/){
+    cpu_t *cpu = this_cpu();
+    if(cpu == nullptr)
+        goto base_ver;
+    if(size >= 1 * 1024/*1KB*/ && cpu->SupportSSE4_2){
         cpu_t *cpu = this_cpu();
         int8_t *fx_area = Schedule::this_thread()->fx_area;
+        if(fx_area == nullptr)
+            goto base_ver;
         XFXSAVE_CAS
-        int32_t result = AVX_memcmp(buffer1,buffer2,size);
+        int32_t result = AVX_memcmp(buffer1,buffer2,size,1);
         XFXSAVE_CASB
         return result;
     }
 #endif
 #endif
+base_ver:
     return memcmp_fscpuf(buffer1,buffer2,size);
 }
 }

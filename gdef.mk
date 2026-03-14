@@ -3,11 +3,8 @@
 
 # Here is config space
 
-BUILD_ARCH = x86_64
-PROGRAM_IMAGE_NAME = disk
-# 1:TRUE
-# 0:FALSE
-NOT_COMPILE_X86MEM := 1
+BUILD_ARCH := x86_64
+PROGRAM_IMAGE_NAME := disk
 
 # This Flag means whether build SkylineSystem with host CPU's instruction set extensions. 
 # If set to 1, the build system will check if the host CPU supports certain instruction 
@@ -17,10 +14,10 @@ NOT_COMPILE_X86MEM := 1
 # which can improve performance on compatible hardware. 
 # If set to 0, it will not check for or use any host CPU instruction set extensions, 
 # which can improve compatibility but may result in lower performance on modern CPUs.
-USE_HOST_CPU_EXTENSIONS := 1 
+USE_HOST_CPU_EXTENSIONS := 1
 
 # Config space end
-ifeq ($(USE_HOST_CPU_EXTENSIONS),1)
+ifeq ($(strip $(USE_HOST_CPU_EXTENSIONS)),1)
 HAS_SSE_4_2 := $(shell grep -o 'sse4_2' /proc/cpuinfo | wc -l)
 HAS_AVX := $(shell grep -o 'avx' /proc/cpuinfo | wc -l)
 HAS_AVX2 := $(shell grep -o 'avx2' /proc/cpuinfo | wc -l)
@@ -37,8 +34,10 @@ COMPILER_SUPPORT_AVX := $(shell gcc -mavx -o /dev/null $(SS_BUILD_DIR)/scripts/c
 COMPILER_SUPPORT_AVX2 := $(shell gcc -mavx2 -o /dev/null $(SS_BUILD_DIR)/scripts/cputest/x86_64/avx2.c > /dev/null 2>&1 && echo "yes" || echo "no";)
 COMPILER_SUPPORT_AVX512 := $(shell gcc -mavx512f -o /dev/null $(SS_BUILD_DIR)/scripts/cputest/x86_64/avx512f.c > /dev/null 2>&1 && echo "yes" || echo "no";)
 
-
-ifeq ($(BUILD_ARCH),x86_64)
+# 1:TRUE
+# 0:FALSE
+NOT_COMPILE_X86MEM := 1
+ifeq ($(strip $(BUILD_ARCH)),x86_64)
 ifneq ($(HAS_SSE_4_2),0)
 ifeq ($(COMPILER_SUPPORT_SSE_4_2),yes)
 $(info This Env Can Compile x86mem library)
@@ -47,4 +46,4 @@ endif
 endif
 endif
 
-$(info NOT_COMPILE_X86MEM = $(NOT_COMPILE_X86MEM))
+$(info [DEBUG] NOT_COMPILE_X86MEM = $(NOT_COMPILE_X86MEM))
