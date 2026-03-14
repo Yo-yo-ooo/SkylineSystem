@@ -1,3 +1,4 @@
+# Auto add header to all .h and .hpp files in kernel/include/partition
 find ./kernel/include/partition -type f \( -name "*.h" -o -name "*.hpp" \) | while read -r file; do
     filename=$(basename "$file")
     # 创建一个临时文件，将模板中的 %FILENAME% 替换为实际文件名
