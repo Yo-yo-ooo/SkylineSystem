@@ -50,8 +50,7 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 #ifdef __x86_64__
 #define MEMOPS_x86_THRESHOLD 1024*256
 //X/FXSave Check And Set
-#define XFXSAVE_CAS if(KernelInited && size > MEMOPS_x86_THRESHOLD){ \
-        if(cpu->SupportXSAVE){ \
+#define XFXSAVE_CAS if(cpu->SupportXSAVE){ \
             if(fx_area != nullptr){ \
                 if(cpu->SupportXSAVEOPT) \
                     asm volatile("xsaveopt %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");\
@@ -63,274 +62,93 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
             if(fx_area != nullptr) \
                 asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory"); \
             asm volatile("fxrstor (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
-        } \
-    } 
+        } 
 
 //X/FXSave Check And Set Back
-#define XFXSAVE_CASB if(KernelInited && size > MEMOPS_x86_THRESHOLD){ \
-    end_deal: \
-        if(cpu->SupportXSAVE){ \
-            asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
+#define XFXSAVE_CASB if(cpu->SupportXSAVE){ \
+            if(cpu->SupportXSAVEOPT) \
+                asm volatile("xsaveopt %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
+            else \
+                asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
             if(fx_area != nullptr) \
                 asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
         }else{ \
             asm volatile("fxsave (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
             if(fx_area != nullptr) \
                 asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory"); \
-        } \
-        return; \
-    } 
+        } 
 #endif
 
 extern "C" {
-void _memcpy(void* src, void* dest, uint64_t size)
-{
-#if defined(__x86_64__) && COMPILER_SUPPORT_AVX512 == 1
-    cpu_t *cpu = this_cpu();
-    int8_t *fx_area = nullptr;
-    thread_t *th = Schedule::this_thread();
-    if(cpu == nullptr)
-        goto deal_kfinited;
-    if(th != nullptr)
-        fx_area = th->fx_area;
-    XFXSAVE_CAS;
-#endif
-
-
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCPY) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
-    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
+void _memcpy(void* src, void* dest, uint64_t size){
+#if defined(__x86_64__)
+#if defined(__AVX512F__) || defined(__AVX2__) || defined(__SSE4_2__)
+    if(size >= 78 * 1024/*78KB*/){
+        cpu_t *cpu = this_cpu();
+        int8_t *fx_area = Schedule::this_thread()->fx_area;
+        XFXSAVE_CAS
         AVX_memcpy(dest,src,size);
-        if(KernelInited == 1)
-            return;
-        goto end_deal;
-    }
-
-    
-#elif defined(__aarch64__)
-    NEON_MEMCPY(dest,src,size);
-    if(KernelInited == 1)
+        XFXSAVE_CASB
         return;
-#endif
-
-#if defined(__x86_64__)  && COMPILER_SUPPORT_AVX512 == 1
-    if(((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
-    deal_kfinited:
-        /// We will use pointer arithmetic, so char pointer will be used.
-        /// Note that __restrict makes sense (otherwise compiler will reload data from memory
-        /// instead of using the value of registers due to possible aliasing).
-        char* __restrict dst = reinterpret_cast<char* __restrict>(dest);
-        const char* __restrict src_ = reinterpret_cast<const char* __restrict>(src);
-
-        /// Standard memcpy returns the original value of dst. It is rarely used but we have to do it.
-        /// If you use memcpy with small but non-constant sizes, you can call inline_memcpy directly
-        /// for inlining and removing this single instruction.
-        void* ret = dst;
-
-    tail:
-        /// Small sizes and tails after the loop for large sizes.
-        /// The order of branches is important but in fact the optimal order depends on the distribution of sizes in your application.
-        /// This order of branches is from the disassembly of glibc's code.
-        /// We copy chunks of possibly uneven size with two overlapping movs.
-        /// Example: to copy 5 bytes [0, 1, 2, 3, 4] we will copy tail [1, 2, 3, 4] first and then head [0, 1, 2, 3].
-        if (size <= 16)
-        {
-            if (size >= 8)
-            {
-                /// Chunks of 8..16 bytes.
-                memcpy_fscpuf(dst + size - 8, src_ + size - 8, 8);
-                memcpy_fscpuf(dst, src_, 8);
-            }
-            else if (size >= 4)
-            {
-                /// Chunks of 4..7 bytes.
-                memcpy_fscpuf(dst + size - 4, src_ + size - 4, 4);
-                memcpy_fscpuf(dst, src_, 4);
-            }
-            else if (size >= 2)
-            {
-                /// Chunks of 2..3 bytes.
-                memcpy_fscpuf(dst + size - 2, src_ + size - 2, 2);
-                memcpy_fscpuf(dst, src_, 2);
-            }
-            else if (size >= 1)
-            {
-                /// A single byte.
-                *dst = *src_;
-            }
-            /// No bytes remaining.
-        }
-        else
-        {
-            /// Medium and large sizes.
-            if (size <= 128)
-            {
-                /// Medium size, not enough for full loop unrolling.
-
-                /// We will copy the last 16 bytes.
-                _mm_storeu_si128(reinterpret_cast<__m128i *>(dst + size - 16), _mm_loadu_si128(reinterpret_cast<const __m128i *>(src_ + size - 16)));
-
-                /// Then we will copy every 16 bytes from the beginning in a loop.
-                /// The last loop iteration will possibly overwrite some part of already copied last 16 bytes.
-                /// This is Ok, similar to the code for small sizes above.
-                while (size > 16)
-                {
-                    _mm_storeu_si128(reinterpret_cast<__m128i *>(dst), _mm_loadu_si128(reinterpret_cast<const __m128i *>(src_)));
-                    dst += 16;
-                    src_ += 16;
-                    size -= 16;
-                }
-            }
-            else
-            {
-                /// Large size with fully unrolled loop.
-
-                /// Align destination to 16 bytes boundary.
-                size_t padding = (16 - (reinterpret_cast<size_t>(dst) & 15)) & 15;
-
-                /// If not aligned - we will copy first 16 bytes with unaligned stores.
-                if (padding > 0)
-                {
-                    __m128i head = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_));
-                    _mm_storeu_si128(reinterpret_cast<__m128i*>(dst), head);
-                    dst += padding;
-                    src_ += padding;
-                    size -= padding;
-                }
-
-                /// Aligned unrolled copy. We will use half of available SSE registers.
-                /// It's not possible to have both src_ and dst aligned.
-                /// So, we will use aligned stores and unaligned loads.
-                __m128i c0, c1, c2, c3, c4, c5, c6, c7;
-
-                while (size >= 128)
-                {
-                    c0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 0);
-                    c1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 1);
-                    c2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 2);
-                    c3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 3);
-                    c4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 4);
-                    c5 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 5);
-                    c6 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 6);
-                    c7 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_) + 7);
-                    src_ += 128;
-                    _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 0), c0);
-                    _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 1), c1);
-                    _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 2), c2);
-                    _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 3), c3);
-                    _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 4), c4);
-                    _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 5), c5);
-                    _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 6), c6);
-                    _mm_store_si128((reinterpret_cast<__m128i*>(dst) + 7), c7);
-                    dst += 128;
-
-                    size -= 128;
-                }
-
-                /// The latest remaining 0..127 bytes will be processed as usual.
-                goto tail;
-            }
-        }
-        if(KernelInited == 1)
-            return;
-        goto end_deal;
     }
-    XFXSAVE_CASB;
-#endif 
+#endif
+#else defined(__aarch64__)
+    NEON_MEMCPY(dest,src,size);
+    return;
+#endif
     memcpy_fscpuf(dest,src,size);
 }
 
 
-void _memset(void* dest, uint8_t value, uint64_t size)
-{
-#if defined(__x86_64__) && COMPILER_SUPPORT_AVX512 == 1
-    cpu_t *cpu = this_cpu();
-    int8_t *fx_area = nullptr;
-    thread_t *th = Schedule::this_thread();
-    if(cpu == nullptr)
-        goto deal_kfinited;
-    if(th != nullptr)
-        fx_area = th->fx_area;
-    
-    XFXSAVE_CAS
-#endif
-
-
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMSET) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
-    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
+void _memset(void* dest, uint8_t value, uint64_t size){
+#if defined(__x86_64__)
+#if defined(__AVX512F__) || defined(__AVX2__) || defined(__SSE4_2__)
+    if(size >= 32 * 1024/*32KB*/){
+        cpu_t *cpu = this_cpu();
+        int8_t *fx_area = Schedule::this_thread()->fx_area;
+        XFXSAVE_CAS
         AVX_memset(dest,value,size);
-        if(KernelInited == 1)
-            return;
-        goto end_deal;
+        XFXSAVE_CASB
+        return;
     }
-
-#elif defined(__aarch64__)
+#endif
+#else defined(__aarch64__)
     NEON_MEMSET(dest,value,size);
     return;
 #endif
-#if defined(__x86_64__) && COMPILER_SUPPORT_AVX512 == 1
-    // For General x86_64 cpu(DIDn't support >=sse4.2)
-    //TODO: memset sse VER < sse 4.2
-    XFXSAVE_CASB;
-#endif
-deal_kfinited: 
-	memset_fscpuf(dest,(const int32_t)value,size);
+    memset_fscpuf(dest,(int32_t)value,size);
 }
 
 
 void _memmove(void* dest,void* src, uint64_t size) {
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMMOVE) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
-    cpu_t *cpu = this_cpu();    
-    int8_t *fx_area = nullptr;
-    thread_t *th = Schedule::this_thread();
-    if(cpu == nullptr)
-        goto deal_kfinited;
-    if(th != nullptr)
-        fx_area = th->fx_area;
-    
-    XFXSAVE_CAS
-    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
+#if defined(__x86_64__)
+#if defined(__AVX512F__) || defined(__AVX2__) || defined(__SSE4_2__)
+    if(size >= 128 * 1024/*128KB*/){
+        cpu_t *cpu = this_cpu();
+        int8_t *fx_area = Schedule::this_thread()->fx_area;
+        XFXSAVE_CAS
         AVX_memmove(dest,src,size);
+        XFXSAVE_CASB
         return;
     }
-
-    XFXSAVE_CASB;
 #endif
-deal_kfinited: 
-	memmove_fscpuf(dest,src,size);
+#endif
+    memmove_fscpuf(dest,src,size);
 }
 
-int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size)
-{
-    int32_t res = 0;
-#if defined(__x86_64__) && defined(CONFIG_FAST_MEMCMP) && NOT_COMPILE_X86MEM == 0 && COMPILER_SUPPORT_AVX512 == 1
-    cpu_t *cpu = this_cpu();
-    int8_t *fx_area = nullptr;
-    thread_t *th = Schedule::this_thread();
-    if(cpu == nullptr)
-        goto deal_kfinited;
-    if(th != nullptr)
-        fx_area = th->fx_area;
-    
-    XFXSAVE_CAS;
-    if(smp_started != false && cpu->SupportAVX512 && ((KernelInited == 1) || (size > MEMOPS_x86_THRESHOLD))){
-        res = AVX_memcmp(buffer1,buffer2,size,1);
-        goto end_deal;
+int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
+#if defined(__x86_64__)
+#if defined(__AVX512F__) || defined(__AVX2__) || defined(__SSE4_2__)
+    if(size >= 1 * 1024/*1KB*/){
+        cpu_t *cpu = this_cpu();
+        int8_t *fx_area = Schedule::this_thread()->fx_area;
+        XFXSAVE_CAS
+        int32_t result = AVX_memcmp(buffer1,buffer2,size);
+        XFXSAVE_CASB
+        return result;
     }
-    if(KernelInited && size > MEMOPS_x86_THRESHOLD){ \
-    end_deal: \
-        if(cpu->SupportXSAVE){ \
-            asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
-            if(fx_area != nullptr) \
-                asm volatile("xrstor %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
-        }else{ \
-            asm volatile("fxsave (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
-            if(fx_area != nullptr) \
-                asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory"); \
-        } \
-        return res; \
-    } 
 #endif
-deal_kfinited: 
+#endif
     return memcmp_fscpuf(buffer1,buffer2,size);
 }
 }
