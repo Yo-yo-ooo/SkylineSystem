@@ -52,6 +52,7 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 //X/FXSave Check And Set
 #define XFXSAVE_CAS do{\
         cpu->preempt_count++; \    
+        asm volatile("" ::: "memory");\
         if(cpu->SupportXSAVE){ \
             if(fx_area != nullptr){ \
                 if(cpu->SupportXSAVEOPT) \
@@ -80,7 +81,9 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
             asm volatile("fxsave (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
             if(fx_area != nullptr) \
                 asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory"); \
-        } cpu->preempt_count--;\
+        } \
+        asm volatile("" ::: "memory");\
+        cpu->preempt_count--;\
     }while(0);
 #endif
 
