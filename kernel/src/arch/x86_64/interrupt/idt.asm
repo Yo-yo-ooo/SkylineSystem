@@ -1,5 +1,6 @@
 [bits 64]
 [extern idt_exception_handler]
+[extern this_cpu]
 [global idt_int_table]
 
 %macro pushaq 0
@@ -38,32 +39,38 @@
     pop rax
 %endmacro
 
-%macro isr_no_err_stub 1
-int_stub%+%1:
-    push 0  ; When the CPU doesn't push any error code.
-    push %1
+%define OFFSET_CPU_ININTR 628 
+
+%macro isr_common_logic 1
     pushaq
 
-    mov rdi, rsp
+    ; --- Set InIntr = true ---
+    call this_cpu          ; return rax = cpu_t*
+    mov byte [rax + OFFSET_CPU_ININTR], 1
+
+    mov rdi, rsp           
     call idt_exception_handler
 
+    call this_cpu     
+    mov byte [rax + OFFSET_CPU_ININTR], 0
+
     popaq
-    add rsp, 16 ; pop int number and error code.
+    add rsp, 16
     iretq
+%endmacro
+
+; 然后修改你的 stub 宏
+%macro isr_no_err_stub 1
+int_stub%+%1:
+    push 0
+    push %1
+    isr_common_logic %1
 %endmacro
 
 %macro isr_err_stub 1
 int_stub%+%1:
-    ; The CPU already pushed error code.
     push %1
-    pushaq
-
-    mov rdi, rsp
-    call idt_exception_handler
-
-    popaq
-    add rsp, 16 ; pop int number and error code.
-    iretq
+    isr_common_logic %1
 %endmacro
 
 %assign i 0

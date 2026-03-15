@@ -56,6 +56,10 @@ typedef struct cpu_t{
     uint8_t IntrRegistCount = 0x20; //Base:0x20(CPU RSVD 0~0x20)
     uint64_t IntrBitMap[4]; // 256 Count Bitmap      
     int8_t* KernelXsaveSpace;
+
+    int32_t preempt_count = 0;
+    bool InIntr = false;
+    
     bool has_runnable_thread;
     bool SupportSIMD = false;
     bool SupportXSAVE = false;
@@ -66,6 +70,7 @@ typedef struct cpu_t{
     bool SupportXSAVEOPT = false;
 } cpu_t;
 
+
 extern uint32_t smp_bsp_cpu;
 
 extern int32_t smp_last_cpu;
@@ -73,7 +78,7 @@ extern cpu_t *smp_cpu_list[MAX_CPU];
 extern bool smp_started;
 
 void smp_init();
-cpu_t *this_cpu();
+extern "C" cpu_t *this_cpu();
 cpu_t *get_cpu(uint32_t id);
 
 #endif

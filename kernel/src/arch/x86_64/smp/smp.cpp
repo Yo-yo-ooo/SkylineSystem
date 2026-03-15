@@ -126,7 +126,7 @@ void smp_init() {
     kpok("SMP Initialised.\n");
 }
 
-cpu_t *this_cpu() {
+extern "C" cpu_t *this_cpu() {
     if (!smp_started) return smp_cpu_list[mp_response->bsp_lapic_id];
     return smp_cpu_list[LAPIC::GetID()];
 }

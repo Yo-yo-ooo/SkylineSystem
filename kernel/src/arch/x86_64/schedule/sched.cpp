@@ -162,7 +162,12 @@ namespace Schedule{
         void Switch(context_t *ctx) {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
-            if (!cpu || !cpu->thread_count) return;
+            if (!cpu || !cpu->thread_count) 
+                return;
+            if (cpu->preempt_count > 0) {
+                LAPIC::EOI(); 
+                return; 
+            }
             spinlock_lock(&cpu->sched_lock);
             if (cpu->current_thread) {
                 thread_t *thread = cpu->current_thread;
