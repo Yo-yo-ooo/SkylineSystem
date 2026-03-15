@@ -26,8 +26,8 @@
 #include <arch/x86_64/vmm/vmm.h>
 #endif
 
-#define HEAP_MAGIC 0xdeadbeef
-#define SLAB_MAGIC (uint32_t)0xdeadbeef
+#define HEAP_MAGIC 0x424E5353 //SSNB
+#define SLAB_MAGIC (uint32_t)0x424E5353 //SSNB
 
 typedef struct slab_cache_t {
     void *slabs;
