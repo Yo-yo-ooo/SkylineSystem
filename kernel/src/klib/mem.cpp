@@ -108,9 +108,9 @@ void _memcpy(void* src, void* dest, uint64_t size){
     defined(COMPILER_SUPPORT_AVX2) || \
     defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
     cpu_t *cpu = this_cpu();
-    if(cpu == nullptr)
+    if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
-    if(size >= 79872/*78KB*/ && cpu->SupportSSE4_2 && !cpu->InIntr){
+    if(size >= 79872/*78KB*/ && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
@@ -135,7 +135,7 @@ void _memset(void* dest, uint8_t value, uint64_t size){
     defined(COMPILER_SUPPORT_AVX2) || \
     defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
     cpu_t *cpu = this_cpu();
-    if(cpu == nullptr)
+    if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
     if(size >= 32768/*32KB*/ && cpu->SupportSSE4_2 && !cpu->InIntr){
         
@@ -163,7 +163,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
     defined(COMPILER_SUPPORT_AVX2) || \
     defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
     cpu_t *cpu = this_cpu();
-    if(cpu == nullptr)
+    if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
     if(size >= 131072/*128KB*/ && cpu->SupportSSE4_2 && !cpu->InIntr){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
@@ -186,7 +186,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
     defined(COMPILER_SUPPORT_AVX2) || \
     defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
     cpu_t *cpu = this_cpu();
-    if(cpu == nullptr)
+    if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
     if(size >= 1024/*1KB*/ && cpu->SupportSSE4_2 && !cpu->InIntr){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
