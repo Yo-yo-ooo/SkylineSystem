@@ -137,7 +137,7 @@ void _memset(void* dest, uint8_t value, uint64_t size){
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
-    if(size >= 32768/*32KB*/ && cpu->SupportSSE4_2 && !cpu->InIntr){
+    if(size >= 32768/*32KB*/ && cpu->SupportSSE4_2){
         
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
@@ -165,7 +165,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
-    if(size >= 131072/*128KB*/ && cpu->SupportSSE4_2 && !cpu->InIntr){
+    if(size >= 131072/*128KB*/ && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
@@ -188,7 +188,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
-    if(size >= 1024/*1KB*/ && cpu->SupportSSE4_2 && !cpu->InIntr){
+    if(size >= 1024/*1KB*/ && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
