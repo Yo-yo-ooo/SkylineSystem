@@ -43,6 +43,9 @@ typedef struct thread_queue_t{
 
 #include <arch/x86_64/schedule/syscall.h>
 
+#define PMM_PCP_MAX 256    // 每个 CPU 最多缓存 256 页 (1MB)
+#define PMM_PCP_BATCH 64   // 每次去全局位图“进货”或“退货”的数量
+
 typedef struct cpu_t{
     uint32_t id;
     uint64_t lapic_ticks;
@@ -68,8 +71,12 @@ typedef struct cpu_t{
     bool SupportAVX512 = false;
     bool SupportSSE4_2 = false;
     bool SupportXSAVEOPT = false;
+
+    void* pmm_cache[PMM_PCP_MAX];
+    uint32_t pmm_cache_count;
 } cpu_t;
 
+constexpr uint64_t SCPU_T = sizeof(cpu_t);
 
 extern uint32_t smp_bsp_cpu;
 

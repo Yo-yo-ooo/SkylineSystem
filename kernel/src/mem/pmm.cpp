@@ -20,11 +20,8 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 #include <mem/pmm.h>
-
 #include <limine.h>
 #include <klib/klib.h>
-
-
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_memmap_request memmap_request = {
@@ -35,6 +32,189 @@ static volatile struct limine_memmap_request memmap_request = {
 volatile static spinlock_t pmm_lock = 0;
 volatile struct limine_memmap_response* pmm_memmap = nullptr;
 
+#ifdef __x86_64__
+#include <arch/x86_64/smp/smp.h> // 引入 this_cpu() 和 cpu_t
+namespace PMM {
+    volatile uint8_t *bitmap = nullptr;
+    volatile uint64_t bitmap_size = 0;
+    volatile uint64_t bitmap_last_free = 0;
+
+    volatile uint64_t pmm_bitmap_start = 0;
+    volatile uint64_t pmm_bitmap_size = 0;
+    volatile uint64_t pmm_bitmap_pages = 0;
+
+    void Init() {
+        pmm_memmap = memmap_request.response;
+        uint64_t page_count = 0;
+        
+        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
+            if (entry->length % PAGE_SIZE != 0) {
+                entry->length = (entry->length / PAGE_SIZE) * PAGE_SIZE; // 严格向下对齐
+            }
+            page_count += entry->length;
+        }
+        
+        page_count /= PAGE_SIZE;
+        pmm_bitmap_pages = page_count;
+        bitmap_size = ALIGN_UP(page_count / 8, PAGE_SIZE);
+        
+        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
+            if (entry->length >= bitmap_size && entry->type == LIMINE_MEMMAP_USABLE) {
+                PMM::bitmap = HIGHER_HALF((uint8_t*)entry->base);
+                entry->length -= bitmap_size;
+                entry->base += bitmap_size;
+                _memset((void*)PMM::bitmap, 0xFF, bitmap_size); 
+                break;
+            }
+        }
+        
+        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
+            if (entry->type == LIMINE_MEMMAP_USABLE) {
+                for (uint64_t j = 0; j < entry->length; j += PAGE_SIZE) {
+                    PMM::bitmap_clear_((entry->base + j) / PAGE_SIZE);
+                }
+            }
+        }
+        
+        pmm_bitmap_start = (uint64_t)PMM::bitmap;
+        pmm_bitmap_size = bitmap_size;
+        bitmap_last_free = 0; 
+    }
+
+    void bitmap_clear_(uint64_t bit) { bitmap_clear((void*)PMM::bitmap, bit); }
+    void bitmap_set_(uint64_t bit) { bitmap_set((void*)PMM::bitmap, bit); }
+    bool bitmap_test_(uint64_t bit) { return bitmap_get((void*)PMM::bitmap, bit); }
+
+    // 内部函数：强制从全局位图申请单页（带锁，64倍速硬件加速）
+    static void* GlobalRequestSingle() {
+        uint64_t* map64 = (uint64_t*)PMM::bitmap;
+        uint64_t max_idx = pmm_bitmap_pages / 64;
+        uint64_t start_idx = bitmap_last_free / 64;
+
+        for (uint64_t i = start_idx; i <= max_idx; i++) {
+            if (map64[i] != 0xFFFFFFFFFFFFFFFF) { 
+                uint64_t bit_offset = __builtin_ctzll(~map64[i]); 
+                uint64_t absolute_bit = i * 64 + bit_offset;
+                if (absolute_bit >= pmm_bitmap_pages) break;
+                PMM::bitmap_set_(absolute_bit);
+                bitmap_last_free = absolute_bit + 1;
+                return (void*)(absolute_bit * PAGE_SIZE);
+            }
+        }
+
+        for (uint64_t i = 0; i < start_idx; i++) {
+            if (map64[i] != 0xFFFFFFFFFFFFFFFF) {
+                uint64_t bit_offset = __builtin_ctzll(~map64[i]);
+                uint64_t absolute_bit = i * 64 + bit_offset;
+                if (absolute_bit >= pmm_bitmap_pages) break;
+                PMM::bitmap_set_(absolute_bit);
+                bitmap_last_free = absolute_bit + 1;
+                return (void*)(absolute_bit * PAGE_SIZE);
+            }
+        }
+        return nullptr;
+    }
+
+    // 主申请接口：支持免锁 PCP 缓存与多页回退
+    void* Request(uint64_t n = 1) {
+        if (n == 0) return nullptr;
+
+        // 99% 的情况是申请 1 页物理内存
+        if (n == 1) {
+            cpu_t* cpu = this_cpu(); 
+            
+            // 1. 如果有免锁缓存，直接 O(1) 拿走，绝不排队！
+            if (cpu && cpu->pmm_cache_count > 0) {
+                return cpu->pmm_cache[--cpu->pmm_cache_count];
+            }
+
+            // 2. 缓存干了，去全局位图“批发”进货
+            spinlock_lock(&pmm_lock);
+            void* ret_page = GlobalRequestSingle(); // 先给自己拿一页用来返回
+            
+            if (ret_page && cpu) {
+                // 趁着拿着锁，一次性多批发 BATCH 页放入缓存，供以后免锁使用
+                for (int i = 0; i < PMM_PCP_BATCH; i++) {
+                    void* cache_page = GlobalRequestSingle();
+                    if (!cache_page) break; // 物理内存快没了，能拿多少拿多少
+                    cpu->pmm_cache[cpu->pmm_cache_count++] = cache_page;
+                }
+            }
+            spinlock_unlock(&pmm_lock);
+            return ret_page;
+        }
+
+        // --- 多页申请逻辑 (回退到滑动窗口寻找连续页) ---
+        spinlock_lock(&pmm_lock);
+        uint64_t start_bit = 0, free_count = 0;
+        uint64_t* map64 = (uint64_t*)PMM::bitmap;
+        
+        for (uint64_t bit = 0; bit < pmm_bitmap_pages; ) {
+            if (free_count == 0 && bit % 64 == 0 && map64[bit / 64] == 0xFFFFFFFFFFFFFFFF) {
+                bit += 64; continue; // 瞬间跳过满载的 64 页
+            }
+
+            if (!PMM::bitmap_test_(bit)) {
+                if (free_count == 0) start_bit = bit;
+                if (++free_count == n) {
+                    for (uint64_t i = start_bit; i < start_bit + n; i++) PMM::bitmap_set_(i);
+                    bitmap_last_free = start_bit + n;
+                    spinlock_unlock(&pmm_lock);
+                    return (void*)(start_bit * PAGE_SIZE); 
+                }
+            } else {
+                free_count = 0;
+            }
+            bit++;
+        }
+        kerror("PMM Out of contiguous memory (%lu pages)!\n", n);
+        spinlock_unlock(&pmm_lock);
+        return nullptr;
+    }
+
+    // 主释放接口：单页还入缓存，超量则批发退货
+    void Free(void *ptr, uint64_t n = 1) {
+        if (!ptr || n == 0) return;
+
+        // 单页释放：优先放入免锁缓存
+        if (n == 1) {
+            cpu_t* cpu = this_cpu();
+            if (cpu) {
+                // 如果背包没满，直接扔进背包，返回 (0 锁竞争)
+                if (cpu->pmm_cache_count < PMM_PCP_MAX) {
+                    cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
+                    return;
+                }
+                
+                // 背包满了，需要向全局位图批量退货，腾出空间
+                spinlock_lock(&pmm_lock);
+                for (int i = 0; i < PMM_PCP_BATCH; i++) {
+                    uint64_t bit = (uint64_t)cpu->pmm_cache[--cpu->pmm_cache_count] / PAGE_SIZE;
+                    PMM::bitmap_clear_(bit);
+                    if (bit < bitmap_last_free) bitmap_last_free = bit; // 更新缓存
+                }
+                spinlock_unlock(&pmm_lock);
+                
+                // 退完货后有了空间，把当前释放的页放进去
+                cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
+                return;
+            }
+        }
+
+        // --- 多页释放或无 cpu_t 时回退到全局位图 ---
+        uint64_t start_bit = (uint64_t)ptr / PAGE_SIZE;
+        spinlock_lock(&pmm_lock);
+        for (uint64_t i = 0; i < n; i++) {
+            PMM::bitmap_clear_(start_bit + i);
+        }
+        if (start_bit < bitmap_last_free) bitmap_last_free = start_bit;
+        spinlock_unlock(&pmm_lock);
+    }
+}
+#else
 namespace PMM {
     volatile uint8_t *bitmap = nullptr;
     volatile uint64_t bitmap_size = 0;
@@ -85,33 +265,8 @@ namespace PMM {
     void bitmap_set_(uint64_t bit) { bitmap_set((void*)PMM::bitmap, bit); }
     bool bitmap_test_(uint64_t bit) { return bitmap_get((void*)PMM::bitmap, bit); }
 
-    void *Request() {
-        spinlock_lock(&pmm_lock);
-        uint64_t bit = bitmap_last_free;
-        
-        // 线性扫描空闲位
-        while (bit < pmm_bitmap_pages && PMM::bitmap_test_(bit))
-            bit++;
-            
-        if (bit >= pmm_bitmap_pages) {
-            bit = 0;
-            while (bit < bitmap_last_free && PMM::bitmap_test_(bit))
-                bit++;
-            if (bit >= bitmap_last_free) {
-                kerror("PMM Out of memory!\n");
-                spinlock_unlock(&pmm_lock);
-                return nullptr;
-            }
-        }
-
-        PMM::bitmap_set_(bit);
-        bitmap_last_free = bit + 1; // 优化：下次从后一位开始找
-        spinlock_unlock(&pmm_lock);
-        return (void*)(bit * PAGE_SIZE);
-    }
-
     // 修复了返回地址算错的 Bug，并引入了“连续空闲块滑动窗口”扫描
-    void* Request(uint64_t n) {
+    void* Request(uint64_t n = 1) {
         if (n == 0) return nullptr;
         if (n == 1) return Request();
 
@@ -146,7 +301,7 @@ namespace PMM {
     }
 
     // 增加了多核并发锁，并支持释放“多页”
-    void Free(void *ptr) {
+    void Free(void *ptr,uint64_t n = 1) {
         if (!ptr) return;
         uint64_t bit = (uint64_t)ptr / PAGE_SIZE;
 
@@ -160,3 +315,4 @@ namespace PMM {
         spinlock_unlock(&pmm_lock);
     }
 }
+#endif

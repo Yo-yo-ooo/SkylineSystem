@@ -39,8 +39,6 @@ namespace PMM{
     bool bitmap_test_(uint64_t bit);
 
     void Init();
-    
-    void *Request();
-    void* Request(uint64_t n);
-    void Free(void *ptr);
+    void* Request(uint64_t n = 1);
+    void Free(void *ptr,uint64_t n = 1);
 }
