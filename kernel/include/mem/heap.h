@@ -26,8 +26,8 @@
 #include <arch/x86_64/vmm/vmm.h>
 #endif
 
-#define HEAP_MAGIC 0x424E5353 //SSNB
-#define SLAB_MAGIC (uint32_t)0x424E5353 //SSNB
+#define HEAP_MAGIC 0xdead424E //Dead SkylineSystem
+#define SLAB_MAGIC (uint32_t)0xdead424E //Dead SkylineSystem
 
 typedef struct slab_cache_t {
     void *slabs;
