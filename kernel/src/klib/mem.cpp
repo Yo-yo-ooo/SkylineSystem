@@ -50,7 +50,7 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 #ifdef __x86_64__
 #define MEMOPS_x86_THRESHOLD 1024*256
 //X/FXSave Check And Set
-#define XFXSAVE_CAS if(cpu->SupportXSAVE){ \
+#define XFXSAVE_CAS do{if(cpu->SupportXSAVE){ \
             if(fx_area != nullptr){ \
                 if(cpu->SupportXSAVEOPT) \
                     asm volatile("xsaveopt %0" : : "m"(*fx_area), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory");\
@@ -62,10 +62,10 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
             if(fx_area != nullptr) \
                 asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory"); \
             asm volatile("fxrstor (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
-        } 
+        } }while(0);
 
 //X/FXSave Check And Set Back
-#define XFXSAVE_CASB if(cpu->SupportXSAVE){ \
+#define XFXSAVE_CASB do{if(cpu->SupportXSAVE){ \
             if(cpu->SupportXSAVEOPT) \
                 asm volatile("xsaveopt %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
             else \
@@ -76,7 +76,7 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
             asm volatile("fxsave (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
             if(fx_area != nullptr) \
                 asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory"); \
-        } 
+        } }while(0);
 #endif
 
 extern "C" {
@@ -143,8 +143,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr)
         goto base_ver;
-    if(size >= 128 * 1024/*128KB*/ && cpu->SupportSSE4_2){
-        cpu_t *cpu = this_cpu();
+    if(size >= 131072/*128KB*/ && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
@@ -168,7 +167,6 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
     if(cpu == nullptr)
         goto base_ver;
     if(size >= 1 * 1024/*1KB*/ && cpu->SupportSSE4_2){
-        cpu_t *cpu = this_cpu();
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
