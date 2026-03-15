@@ -64,12 +64,11 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
             if(fx_area != nullptr) \
                 asm volatile("fxsave (%0)" : : "r"(fx_area) : "memory"); \
             asm volatile("fxrstor (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
-        } cpu->preempt_count--;\
+        } \
     }while(0);
 
 //X/FXSave Check And Set Back
 #define XFXSAVE_CASB do{\
-        cpu->preempt_count++;\
         if(cpu->SupportXSAVE){ \
             if(cpu->SupportXSAVEOPT) \
                 asm volatile("xsaveopt %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
