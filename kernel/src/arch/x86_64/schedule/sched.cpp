@@ -386,7 +386,7 @@ namespace Schedule{
         // Load ELF
         static ext4_file f;
         ext4_fopen(&f,Path,"r");
-        kinfoln("%d",f.fsize);
+        //kinfoln("%d",f.fsize);
         uint8_t *buffer = (uint8_t*)kmalloc(ext4_fsize(&f));
         ext4_fread(&f,buffer,ext4_fsize(&f),NULL);
         thread->ctx.rip = elf_load(buffer, thread->pagemap); 
