@@ -97,7 +97,6 @@ extern uint32_t MaxXsaveSize;
 #endif
 #define UnCompleteCode 1
 
-extern volatile int KernelInited;
 
 uint16_t kld_16 (const uint8_t* ptr);
 uint32_t kld_32 (const uint8_t* ptr);

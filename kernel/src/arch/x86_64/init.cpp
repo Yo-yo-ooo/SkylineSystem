@@ -98,7 +98,6 @@ void __init x86_64_init(void){
 
     proc_t *proc = Schedule::NewProcess(true);
 
-    __a_swap(&KernelInited, 1);
     
 
     char *argv[] = {(char*)"Test Main Thread"};

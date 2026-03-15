@@ -177,5 +177,3 @@ extern "C" uint32_t sys_now(void){
 #endif
 
 }
-
-volatile int KernelInited = 0;
