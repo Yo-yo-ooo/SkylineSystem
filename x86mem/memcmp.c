@@ -58,9 +58,9 @@ int memcmp_eq (const void *str1, const void *str2, size_t count)
 #define _mm_cvtsi64x_si128 _mm_cvtsi64_si128
 #endif
 
-#ifdef __AVX512F__
+#if defined(__AVX512F__)
 #define BYTE_ALIGNMENT 0x3F // For 64-byte alignment
-#elif __AVX2__
+#elif defined(__AVX__)
 #define BYTE_ALIGNMENT 0x1F // For 32-byte alignment
 #else
 #define BYTE_ALIGNMENT 0x0F // For 16-byte alignment

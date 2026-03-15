@@ -48,11 +48,17 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 #endif
 
 #ifdef __x86_64__
-#define MEMOPS_x86_THRESHOLD 1024*256
 //X/FXSave Check And Set
+/*
+asm volatile("" ::: "memory");
+    /\
+    ||
+    \/
+Prevent the compiler from moving the code from the back to the front
+*/
 #define XFXSAVE_CAS do{\
         cpu->preempt_count++; \    
-        asm volatile("" ::: "memory");\
+        asm volatile("" ::: "memory"); \ 
         if(cpu->SupportXSAVE){ \
             if(fx_area != nullptr){ \
                 if(cpu->SupportXSAVEOPT) \
@@ -69,6 +75,13 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
     }while(0);
 
 //X/FXSave Check And Set Back
+/*
+asm volatile("" ::: "memory");
+    /\
+    ||
+    \/
+Prevent the compiler from moving previous code to the end
+*/
 #define XFXSAVE_CASB do{\
         if(cpu->SupportXSAVE){ \
             if(cpu->SupportXSAVEOPT) \
@@ -82,9 +95,10 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
             if(fx_area != nullptr) \
                 asm volatile("fxrstor (%0)" : : "r"(fx_area) : "memory"); \
         } \
-        asm volatile("" ::: "memory");\
-        cpu->preempt_count--;\
+        asm volatile("" ::: "memory"); \ 
+        cpu->preempt_count--; \
     }while(0);
+
 #endif
 
 extern "C" {

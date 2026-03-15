@@ -41,9 +41,9 @@ void * memcpy_fpx86 (void *dest, const void *src, size_t len)
 #define __m512i_u __m512i
 #endif
 
-#ifdef __AVX512F__
+#if defined(__AVX512F__)
 #define BYTE_ALIGNMENT 0x3F // For 64-byte alignment
-#elif __AVX__
+#elif defined(__AVX__)
 #define BYTE_ALIGNMENT 0x1F // For 32-byte alignment
 #else
 #define BYTE_ALIGNMENT 0x0F // For 16-byte alignment
