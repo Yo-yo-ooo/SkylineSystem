@@ -43,8 +43,6 @@ void simd_xsave_init(void)
     xsave_feat_mask_t xsave_supervisor_features =
         __XSAVE_FEAT_MASK(XSAVE_FEAT_X87)
       | __XSAVE_FEAT_MASK(XSAVE_FEAT_SSE)
-      | __XSAVE_FEAT_MASK(XSAVE_FEAT_MPX_BNDREGS)
-      | __XSAVE_FEAT_MASK(XSAVE_FEAT_MPX_BNDCSR)
       | __XSAVE_FEAT_MASK(XSAVE_FEAT_CET_USER)
       | __XSAVE_FEAT_MASK(XSAVE_FEAT_CET_SUPERVISOR);
 
@@ -57,9 +55,7 @@ void simd_xsave_init(void)
               &rdx);
     
     uint64_t flags = __XSAVE_FEAT_MASK(XSAVE_FEAT_X87) 
-    | __XSAVE_FEAT_MASK(XSAVE_FEAT_SSE) 
-    | __XSAVE_FEAT_MASK(XSAVE_FEAT_MPX_BNDREGS) 
-    | __XSAVE_FEAT_MASK(XSAVE_FEAT_MPX_BNDCSR);
+    | __XSAVE_FEAT_MASK(XSAVE_FEAT_SSE);
     xsave_feat_mask_t xsave_user_features = ((uint64_t)rdx << 32 | rax);
 
     if(cpuid_is_avx_avail()){
