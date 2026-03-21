@@ -126,4 +126,22 @@ extern "C" cpu_t *this_cpu() {
 cpu_t *get_cpu(uint32_t id) {
     return smp_cpu_list[id];
 }
+
+void InitBSPCPUThread(){
+    thread_t *init_thread = (thread_t*)kmalloc(sizeof(*init_thread));
+    *init_thread = {};
+    init_thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((smp_cpu_list[smp_bsp_cpu]->XsaveSize), PAGE_SIZE), true);
+    _memset(init_thread->fx_area, 0, smp_cpu_list[smp_bsp_cpu]->XsaveSize);
+    uint32_t eax = smp_cpu_list[smp_bsp_cpu]->XsaveMaskLo;
+    uint32_t edx = smp_cpu_list[smp_bsp_cpu]->XsaveMaskHi;
+    asm volatile("xsave %0" : : "m"(*init_thread->fx_area), "a"(eax), "d"(edx) : "memory");
+    init_thread->state = THREAD_RUNNING;
+    init_thread->id = -1;
+    init_thread->cpu_num = smp_bsp_cpu;
+
+    init_thread->pagemap = kernel_pagemap;
+    Schedule::Useless::AddThread(smp_cpu_list[smp_bsp_cpu], init_thread);
+    smp_cpu_list[smp_bsp_cpu]->current_thread = init_thread;
+}
+
 #pragma GCC pop_options

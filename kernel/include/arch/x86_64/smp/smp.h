@@ -91,5 +91,6 @@ extern bool smp_started;
 void smp_init();
 extern "C" cpu_t *this_cpu();
 cpu_t *get_cpu(uint32_t id);
+void InitBSPCPUThread();
 
 #endif
