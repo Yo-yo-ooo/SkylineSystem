@@ -91,11 +91,6 @@ void simd_cpu_init(cpu_t *cpu)
 
     if (cpuid_is_xsave_avail())
     {
-        if(check_xsaves_support()){
-            kinfoln("Checked Xsaves enable.");
-            wrmsr(IA32_XSS, 0);
-            kinfoln("Xsaves INIT!");
-        }
         simd_xsave_init();
         asm volatile("xgetbv" : "=a"(cpu->XsaveMaskLo), "=d"(cpu->XsaveMaskHi) : "c"(0));
         uint32_t eax, ebx, ecx, edx;
@@ -114,10 +109,7 @@ void simd_cpu_init(cpu_t *cpu)
         spinlock_unlock(&simd_lock);
         cpu->KernelXsaveSpace = (int8_t*)VMM::Alloc(kernel_pagemap,DIV_ROUND_UP(ebx,PAGE_SIZE),false);
         _memset(cpu->KernelXsaveSpace,0,ebx);
-        *(uint16_t *)(cpu->KernelXsaveSpace + 0x00) = 0x037F;
-        *(uint32_t *)(cpu->KernelXsaveSpace + 0x18) = 0x1F80;
-        *(uint32_t *)(cpu->KernelXsaveSpace + 0x1C) = 0xFFFF; 
-        *(uint64_t *)(cpu->KernelXsaveSpace + 512) = 0x03;
+        asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
         
         asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0xD), "c"(1));
         cpu->SupportXSAVEOPT = (eax & (1 << 0));

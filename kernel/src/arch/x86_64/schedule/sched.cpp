@@ -337,14 +337,11 @@ namespace Schedule{
         thread->sig_deliver = 0;
         thread->sig_mask = 0;
         thread->heap_size = 0;
+        cpu_t *cpu = get_cpu(cpu_num);
         // Fx area
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(get_cpu(cpu_num)->XsaveSize,PAGE_SIZE), true);
-        _memset(thread->fx_area, 0, get_cpu(cpu_num)->XsaveSize);
-        *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
-        *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
-        *(uint32_t *)(thread->fx_area + 0x1C) = 0xFFFF;
-        if(get_cpu(cpu_num)->SupportXSAVE)
-            *(uint64_t *)(thread->fx_area + 512) = 0x03;
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
+        _memset(thread->fx_area, 0, cpu->XsaveSize);
+        asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
 
         // Stack (4 KB)
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
@@ -402,14 +399,11 @@ namespace Schedule{
         thread->ctx.rip = elf_load(buffer, thread->pagemap); 
         ext4_fclose(&f);
 
+        cpu_t *cpu = get_cpu(cpu_num);
         // Fx area
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(MaxXsaveSize,PAGE_SIZE), true);
-        _memset(thread->fx_area, 0, MaxXsaveSize);
-        *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
-        *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
-        *(uint32_t *)(thread->fx_area + 0x1C) = 0xFFFF;         
-        if(get_cpu(cpu_num)->SupportXSAVE)
-            *(uint64_t *)(thread->fx_area + 512) = 0x03; // Enable x87 and SSE state saving in XSave   
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
+        _memset(thread->fx_area, 0, cpu->XsaveSize);
+        asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
 
         // Kernel stack (16 KB)
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
