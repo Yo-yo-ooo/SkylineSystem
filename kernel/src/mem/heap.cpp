@@ -144,24 +144,31 @@ namespace SLAB{
     void *Realloc(void *ptr, size_t size) {
 #ifdef __x86_64__
         if (!ptr) return SLAB::Alloc(size);
-        uint64_t old_size = 0;
-        slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
-        uint64_t dbg = (uint64_t)page;
-        if (page->magic != SLAB_MAGIC) {
-            slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
-            if (obj->magic != SLAB_MAGIC) {
-                kerror("Critical SLAB error: Trying to reallocate invalid ptr.\n");
-                ASSERT(0);
-                return nullptr;
+        if (size == 0){SLAB::Free(ptr);return nullptr;}
+        uint64_t current_capacity = SLAB::GetSize(ptr, true);
+
+        // Bucket-level Reuse 
+        // 如果新请求的大小，依然没有超出当前 SLAB Cache 档位的容量，直接返回！
+        if (size <= current_capacity) {
+            // 激进的防碎片策略：如果缩容极其夸张（比如从一个 4096 的页缩到 16 字节），
+            // 且当前容量较大，才强制走重新分配释放大内存。否则全部原地复用。
+            if (size >= (current_capacity / 4) || current_capacity <= 64) {
+                return ptr; // 零拷贝 (Zero-copy)，零锁争用 (Zero-lock)！
             }
-            old_size = obj->cache->obj_size;
-            dbg = (uint64_t)obj;
-        } else {
-            old_size = page->page_count * PAGE_SIZE - sizeof(slab_page_t);
         }
+        
+        // 只有在内存确实装不下（或者缩容太夸张）时，才去拿锁、分配、拷贝
         void *new_ptr = SLAB::Alloc(size);
-        __memcpy(new_ptr, ptr, (old_size > size ? size : old_size));
-        SLAB::Free(ptr);
+        if (new_ptr) {
+            // 安全拷贝：取 current_capacity 和 size 的最小值，严防越界 (Buffer Overflow)
+            uint64_t copy_size = (current_capacity > size) ? size : current_capacity;
+            
+            // 这里的 __memcpy 是整个函数最耗时的部分
+            __memcpy(new_ptr, ptr, copy_size); 
+            
+            SLAB::Free(ptr);
+        }
+        
         return new_ptr;
 #endif
     }
