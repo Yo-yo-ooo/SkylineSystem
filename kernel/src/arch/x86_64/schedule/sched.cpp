@@ -341,7 +341,9 @@ namespace Schedule{
         // Fx area
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
         _memset(thread->fx_area, 0, cpu->XsaveSize);
-        asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
+        uint32_t eax = cpu->XsaveMaskLo;
+        uint32_t edx = cpu->XsaveMaskHi;
+        asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(eax), "d"(edx) : "memory");
 
         // Stack (4 KB)
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
@@ -403,7 +405,9 @@ namespace Schedule{
         // Fx area
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
         _memset(thread->fx_area, 0, cpu->XsaveSize);
-        asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
+        uint32_t eax = cpu->XsaveMaskLo;
+        uint32_t edx = cpu->XsaveMaskHi;
+        asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(eax), "d"(edx) : "memory");
 
         // Kernel stack (16 KB)
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
