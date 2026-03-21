@@ -100,15 +100,7 @@ void smp_init() {
     smp_bsp_cpu = bsp_cpu->id;
     smp_setup_thread_queue(bsp_cpu);
     smp_setup_kstack(bsp_cpu);
-    thread_t *init_thread = (thread_t*)kmalloc(sizeof(*init_thread));
-    *init_thread = {};
-    init_thread->state = THREAD_RUNNING;
-    init_thread->id = -1;
-    init_thread->cpu_num = bsp_cpu->id;
-
-    init_thread->pagemap = kernel_pagemap;
-    Schedule::Useless::AddThread(bsp_cpu, init_thread);
-    bsp_cpu->current_thread = init_thread;
+    
     //sse_enable();
     simd_cpu_init(bsp_cpu);
     kinfo("Detected %zu CPUs.\n", mp_response->cpu_count);
