@@ -342,7 +342,7 @@ namespace VMM{
         spinlock_lock(&pagemap->vma_lock);
         uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
         uint64_t addr = VMM::Useless::InternalAlloc(pagemap, page_count, flags);
-        for (int32_t i = 0; i < page_count; i++)
+        for (uint64_t i = 0; i < page_count; i++)
             VMM::Map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)PMM::Request(), flags);
         VMM::NewMapping(pagemap, addr, page_count, flags);
         spinlock_unlock(&pagemap->vma_lock);

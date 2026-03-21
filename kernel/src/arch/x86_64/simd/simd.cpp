@@ -91,12 +91,12 @@ void simd_cpu_init(cpu_t *cpu)
 
     if (cpuid_is_xsave_avail())
     {
-        simd_xsave_init();
         if(check_xsaves_support()){
             kinfoln("Checked Xsaves enable.");
             wrmsr(IA32_XSS, 0);
             kinfoln("Xsaves INIT!");
         }
+        simd_xsave_init();
         asm volatile("xgetbv" : "=a"(cpu->XsaveMaskLo), "=d"(cpu->XsaveMaskHi) : "c"(0));
         uint32_t eax, ebx, ecx, edx;
         uint32_t leaf = 0x0D;
