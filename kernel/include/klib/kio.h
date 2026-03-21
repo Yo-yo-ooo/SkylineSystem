@@ -402,6 +402,27 @@ static inline uint64_t rdtsc(void) {
     rdseed__ret; \
 })
 
+typedef struct {
+    uint32_t lo;
+    uint32_t hi;
+} xsave_mask_t;
+
+inline xsave_mask_t get_max_xsave_mask() {
+    uint32_t eax, ebx, ecx, edx;
+    
+    // 1. 首先检查 CPUID 是否支持 0xD 叶
+    // (通常在 64 位现代 CPU 上肯定支持，但内核开发要严谨)
+    cpuid(0x00, 0, &eax, &ebx, &ecx, &edx);
+    if (eax < 0x0D) {
+        return {0x03, 0}; // 仅支持基础的 x87 (bit 0) 和 SSE (bit 1)
+    }
+
+    // 2. 获取硬件支持的全掩码
+    cpuid(0x0D, 0, &eax, &ebx, &ecx, &edx);
+    
+    return {eax, edx};
+}
+
 #define write_cr(reg, val) do { \
     asm volatile ("mov %0, %%cr" reg :: "r" (val) : "memory"); \
 } while (0)

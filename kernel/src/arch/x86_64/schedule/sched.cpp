@@ -119,36 +119,37 @@ namespace Schedule{
                 thread_queue_t *queue = &cpu->thread_queues[i];
                 if (!queue->head)
                     continue;
-                thread_t *start = queue->head;
-                thread_t *thread = queue->current;
-                thread_t *next;
+                
+                // 替换 Pick 中的 do-while 逻辑
+                thread_t *start = queue->current;
+                thread_t *thread = start;
                 bool found = false;
                 do {
-                    next = thread->list_next;
-                    if (!(thread->state == THREAD_RUNNING)) {
-                        thread = next;
-                        continue;
-                    }
-                    if (!(thread->flags & TFLAGS_PREEMPTED)) {
-                        thread->preempt_count = 0;
-                        found = true;
-                        break;
-                    }
-                    thread->preempt_count++;
-                    if (thread->preempt_count == SCHED_PREEMPTION_MAX) {
-                        int32_t ret = Schedule::Useless::Demote(cpu, thread);
-                        thread->preempt_count = 0;
-                        thread->flags &= ~TFLAGS_PREEMPTED;
-                        if (ret == 1) {
-                            i = 0;
+                    thread_t *next = thread->list_next;
+                    if (thread->state == THREAD_RUNNING) {
+                        if (!(thread->flags & TFLAGS_PREEMPTED)) {
+                            thread->preempt_count = 0;
+                            found = true;
                             break;
                         }
-                    } else {
-                        found = true;
-                        break;
+                        thread->preempt_count++;
+                        if (thread->preempt_count >= SCHED_PREEMPTION_MAX) {
+                            int32_t ret = Schedule::Useless::Demote(cpu, thread);
+                            thread->preempt_count = 0;
+                            thread->flags &= ~TFLAGS_PREEMPTED;
+                            if (ret == 1) {
+                                // 不能用简单的 break，因为我们要退出整个队列的寻找
+                                i = 0; // 重置优先级遍历
+                                break;
+                            }
+                        } else {
+                            found = true;
+                            break;
+                        }
                     }
                     thread = next;
-                } while (thread != queue->head);
+                } while (thread != start); // <--- 关键！回到起点才算遍历完一圈
+
                 if (found) {
                     //queue->current = thread->next;
                     queue->current = thread->list_next;
@@ -364,7 +365,11 @@ namespace Schedule{
         thread->state = THREAD_RUNNING;
         get_cpu(cpu_num)->has_runnable_thread = true;
 
-        Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+        //Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+        cpu_t *target_cpu = get_cpu(cpu_num);
+        spinlock_lock(&target_cpu->sched_lock);
+        Schedule::Useless::AddThread(target_cpu, thread);
+        spinlock_unlock(&target_cpu->sched_lock);
 
         return thread;
     }
@@ -434,7 +439,11 @@ namespace Schedule{
         thread->state = THREAD_RUNNING;
         get_cpu(cpu_num)->has_runnable_thread = true;
 
-        Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+        //Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+        cpu_t *target_cpu = get_cpu(cpu_num);
+        spinlock_lock(&target_cpu->sched_lock);
+        Schedule::Useless::AddThread(target_cpu, thread);
+        spinlock_unlock(&target_cpu->sched_lock);
         kpokln("Add Thread!");
 
         return thread;
