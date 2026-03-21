@@ -72,6 +72,10 @@ typedef struct cpu_t{
     bool SupportSSE4_2 = false;
     bool SupportXSAVEOPT = false;
 
+    uint64_t XsaveSize;
+    uint32_t XsaveMaskLo;
+    uint32_t XsaveMaskHi;
+
     void* pmm_cache[PMM_PCP_MAX];
     uint32_t pmm_cache_count;
 } cpu_t;
