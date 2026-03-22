@@ -232,24 +232,39 @@ namespace SLAB{
 
     uint64_t GetSize(void* ptr, bool ERO = false) {
 #ifdef __x86_64__
-        spinlock_lock(&heap_lock);
+        /* Intercept null pointer and lowest address
+        Not only intercept nullptr, 
+        but also prevent wild pointer read causeing unnecessary page faults in kernel.*/
+        if (!ptr || (uint64_t)ptr < 0x1000) return 0;
+
+        //Try analysing for big page allocation (Page-aligned Allocation)
         slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
         
-        uint64_t size = 0;
+        // 【无锁读取】：x86_64 保证对按自然边界对齐的 64 位整数的读取是原子的
+        // [No lock read] x86_64 guarantee atomic read for 64-bit 
+        // integer aligned to natural boundary
         if (page->magic == SLAB_MAGIC) {
-            size = page->page_count * PAGE_SIZE - sizeof(slab_page_t);
-        } else {
-            slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
-            if (obj->magic == SLAB_MAGIC) {
-                size = obj->cache->obj_size;
-            } else {
-                if (!ERO) kerror("Invalid SLAB ptr\n");
-                size = (ERO ? 1 : UINT64_MAX);
+            return page->page_count * PAGE_SIZE - sizeof(slab_page_t);
+        } 
+
+        // 尝试解析为 SLAB 缓存小对象 (Cache Object Allocation)
+        // Try analysing SLAB as small Cache Object
+        slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
+        if (obj->magic == SLAB_MAGIC) {
+            // 安全校验：确保 cache 指针没有损坏
+            // Safe check: Ensure cache pointer is not corrupted
+            if (obj->cache) {
+                return obj->cache->obj_size;
             }
         }
-        
-        spinlock_unlock(&heap_lock); // 统一解锁出口
-        return size;
+
+        // 异常处理：走到这里说明指针既不是大页也不是 SLAB 对象
+        // Exception handling: Reaching here means the pointer is 
+        // neither a big page nor a SLAB object
+        if (!ERO) kerror("Invalid SLAB ptr\n");
+        return (ERO ? 1 : UINT64_MAX);
+#else
+        return 0;
 #endif
     }
 }
