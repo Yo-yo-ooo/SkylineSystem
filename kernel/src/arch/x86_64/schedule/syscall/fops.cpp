@@ -40,7 +40,9 @@ uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
 uint64_t sys_write(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
+    kinfo("Inside sys_write, fd=%d, buf=0x%p\n", fd_idx, buf);
+while(1); // 如果屏幕停在这里，说明之前的进入逻辑是对的
+        fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if(fd_idx == 1){
         kinfo();
         for(size_t i = 0;i < count;i++){

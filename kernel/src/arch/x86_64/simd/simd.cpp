@@ -113,7 +113,16 @@ void simd_cpu_init(cpu_t *cpu)
         
         asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0xD), "c"(1));
         cpu->SupportXSAVEOPT = (eax & (1 << 0));
+        if(cpu->SupportXSAVEOPT)
+            cpu->OverLoadableFuncs.StoreSIMDState = StoreSIMDState_V2;
+        else           
+            cpu->OverLoadableFuncs.StoreSIMDState = StoreSIMDState_V1;
+        cpu->OverLoadableFuncs.LoadSIMDState = LoadSIMDState_V1;
+    }else{
+        cpu->OverLoadableFuncs.StoreSIMDState = StoreSIMDState_V0;
+        cpu->OverLoadableFuncs.LoadSIMDState = LoadSIMDState_V0;
     }
+    
     
 
     asm volatile("fninit");
@@ -143,3 +152,25 @@ void simd_cpu_init(cpu_t *cpu)
     else
         cpu->SupportSIMD = false;
 }
+
+
+void StoreSIMDState_V0(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("fxsave (%0)" : : "r"(area) : "memory");
+}
+
+void StoreSIMDState_V1(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("xsave %0" : : "m"(*area), "a"(Lo), "d"(Hi) : "memory");
+}
+
+void StoreSIMDState_V2(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("xsaveopt %0" : : "m"(*area), "a"(Lo), "d"(Hi) : "memory");
+}
+
+void LoadSIMDState_V0(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("fxrstor (%0)" : : "r"(area) : "memory");
+}
+
+void LoadSIMDState_V1(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("xrstor %0" : : "m"(*area), "a"(Lo), "d"(Hi) : "memory");
+}
+

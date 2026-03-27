@@ -46,6 +46,12 @@ typedef struct thread_queue_t{
 #define PMM_PCP_MAX 256    // 每个 CPU 最多缓存 256 页 (1MB)
 #define PMM_PCP_BATCH 64   // 每次去全局位图“进货”或“退货”的数量
 
+typedef struct cpu_overloadable_functions_t{
+    void (*StoreSIMDState)(char* area,uint32_t Lo,uint32_t Hi);
+    void (*LoadSIMDState)(char* area,uint32_t Lo,uint32_t Hi);
+}cpu_overloadable_functions_t;
+
+
 typedef struct cpu_t{
     uint32_t id;
     uint64_t lapic_ticks;
@@ -78,6 +84,8 @@ typedef struct cpu_t{
 
     void* pmm_cache[PMM_PCP_MAX];
     uint32_t pmm_cache_count;
+
+    cpu_overloadable_functions_t OverLoadableFuncs;
 } cpu_t;
 
 constexpr uint64_t SCPU_T = sizeof(cpu_t);

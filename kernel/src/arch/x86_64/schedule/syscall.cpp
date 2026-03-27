@@ -41,11 +41,11 @@ void dump_REG(syscall_frame_t *frame){
 }
 
 extern "C" void syscall_handler(syscall_frame_t *frame) {
-    kinfoln("HIT SYSCALL! %d",frame->rax);
-    //Not Tested yet!
-    
-    frame->rax = syscall_lists[frame->rax]
+    kinfoln("Attempting to call index %d at addr 0x%p", frame->rax, syscall_lists[frame->rax]);
+    frame->rax = syscall_lists[frame->rax];
     (frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
+kinfoln("Syscall returned %d", frame->rax);
+    
     return;
 }
 

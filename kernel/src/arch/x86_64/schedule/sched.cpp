@@ -175,12 +175,14 @@ namespace Schedule{
                 thread_t *thread = cpu->current_thread;
                 thread->fs = rdmsr(FS_BASE);
                 thread->ctx = *ctx;
+                cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
+                /* 
                 if (cpu->SupportXSAVEOPT)
                     asm volatile("xsaveopt %0" : : "m"(*thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
                 else if(cpu->SupportXSAVE)
                     asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
                 else
-                    asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory");
+                    asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory"); */
             }
             thread_t *next_thread = Schedule::Useless::Pick(cpu);
             if (!next_thread) {
@@ -193,11 +195,12 @@ namespace Schedule{
             VMM::SwitchPageMap(next_thread->pagemap);
             wrmsr(FS_BASE, next_thread->fs);
             wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
-            if (cpu->SupportXSAVE)
+            /* if (cpu->SupportXSAVE)
                 asm volatile("xrstor %0" : : "m"(*next_thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
             else
                 asm volatile("fxrstor (%0)" : : "r"(next_thread->fx_area) : "memory");
-            
+             */
+            cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             spinlock_unlock(&cpu->sched_lock);
             uint64_t final_ticks = cpu->thread_queues[next_thread->priority].quantum;
             LAPIC::Write(LAPIC_TIMER_INITCNT, final_ticks);
