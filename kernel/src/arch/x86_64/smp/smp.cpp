@@ -25,6 +25,7 @@
 #include <arch/x86_64/interrupt/gdt.h>
 #include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/simd/simd.h>
+#include<arch/x86_64/cpu/vf.h>
 
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
@@ -53,6 +54,35 @@ void smp_setup_thread_queue(cpu_t *cpu) {
     }
 }
 
+bool CheckFSGSBASE() {
+    uint32_t eax, ebx, ecx, edx;
+    
+    // 调用 CPUID Leaf 7, Subleaf 0
+    asm volatile (
+        "cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(7), "c"(0)
+    );
+
+    // 检查 EBX 的 Bit 5
+    return (ebx & (1 << 5));
+}
+
+void EnableFSGSBASE(cpu_t *cpu) {
+    if (!CheckFSGSBASE()){
+        cpu->OverLoadableFuncs.WRFSBASE = WRFSBASE_V0;
+        return;
+    }
+
+    uint64_t cr4;
+    asm volatile("mov %%cr4, %0" : "=r"(cr4));
+    
+    cr4 |= (1 << 16); // Set the 16th bit to enable FSGSBASE instructions
+    
+    asm volatile("mov %0, %%cr4" : : "r"(cr4));
+    cpu->OverLoadableFuncs.WRFSBASE = WRFSBASE_V1;
+}
+
 void smp_cpu_init(struct limine_mp_info *mp_info) {
     VMM::SwitchPageMap(kernel_pagemap);
     spinlock_lock(&smp_lock);
@@ -77,6 +107,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     sse_enable();
     fpu_init();
     simd_cpu_init(cpu);
+    EnableFSGSBASE(cpu);
     
     kpok("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
@@ -100,6 +131,7 @@ void smp_init() {
     smp_bsp_cpu = bsp_cpu->id;
     smp_setup_thread_queue(bsp_cpu);
     smp_setup_kstack(bsp_cpu);
+    EnableFSGSBASE(bsp_cpu);
     
     //sse_enable();
     simd_cpu_init(bsp_cpu);

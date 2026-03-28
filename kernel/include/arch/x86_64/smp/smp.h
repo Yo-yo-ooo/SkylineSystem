@@ -49,6 +49,7 @@ typedef struct thread_queue_t{
 typedef struct cpu_overloadable_functions_t{
     void (*StoreSIMDState)(char* area,uint32_t Lo,uint32_t Hi);
     void (*LoadSIMDState)(char* area,uint32_t Lo,uint32_t Hi);
+    void (*WRFSBASE)(uint64_t value);
 }cpu_overloadable_functions_t;
 
 

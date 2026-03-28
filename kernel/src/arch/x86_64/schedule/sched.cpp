@@ -193,7 +193,8 @@ namespace Schedule{
             *ctx = next_thread->ctx;
             
             VMM::SwitchPageMap(next_thread->pagemap);
-            wrmsr(FS_BASE, next_thread->fs);
+            //wrmsr(FS_BASE, next_thread->fs);
+            cpu->OverLoadableFuncs.WRFSBASE(next_thread->fs);
             wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
             /* if (cpu->SupportXSAVE)
                 asm volatile("xrstor %0" : : "m"(*next_thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
