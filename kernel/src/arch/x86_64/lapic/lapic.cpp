@@ -93,12 +93,19 @@ namespace LAPIC{
     }
 
     uint64_t InitTimer() {
-        LAPIC::Write(LAPIC_TIMER_DIV, 0x3);
+        uint64_t rflags;
+        asm volatile("pushfq\n\t""pop %0\n\t""cli" : "=r"(rflags) :: "memory");
+        LAPIC::Write(LAPIC_TIMER_DIV, 0xB);
         LAPIC::Write(LAPIC_TIMER_INITCNT, 0xFFFFFFFF);
         //PIT::Sleep(1); // 1 ms
         HPET::SleepNS(1000000);
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
         uint32_t ticks = 0xFFFFFFFF - LAPIC::Read(LAPIC_TIMER_CURCNT);
+        asm volatile("push %0\n\t""popfq" :: "r"(rflags) : "memory");
+        if (ticks < 1000) {
+            // 如果 1ms 内滴答数过低，说明校准失败或频率异常
+            return 1000000; // 返回一个合理的假定值（假设 100MHz）
+        }
         return ticks;
     }
 

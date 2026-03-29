@@ -41,12 +41,21 @@ void dump_REG(syscall_frame_t *frame){
 }
 
 extern "C" void syscall_handler(syscall_frame_t *frame) {
-    kinfoln("Attempting to call index %d at addr 0x%p", frame->rax, syscall_lists[frame->rax]);
-    frame->rax = syscall_lists[frame->rax];
-    (frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
-kinfoln("Syscall returned %d", frame->rax);
-    
-    return;
+    // 1. 安全检查：防止用户态传一个 rax = 9999 导致内核空指针解引用
+    // 1. Safe check: prevent user from passing 
+    // rax = 9999 which may cause null pointer dereference in kernel
+    if (frame->rax >= 512 || syscall_lists[frame->rax] == nullptr) {
+        frame->rax = -ENOSYS; 
+        return;
+    }
+
+    // 2. Get function pointer from syscall_lists
+    auto func = syscall_lists[frame->rax];
+
+    kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);
+    frame->rax = func(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
+
+    kinfoln("Syscall returned %ld", frame->rax);
 }
 
 #include <klib/algorithm/queue.h>

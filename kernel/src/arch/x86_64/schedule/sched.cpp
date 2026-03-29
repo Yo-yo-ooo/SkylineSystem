@@ -93,8 +93,6 @@ namespace Schedule{
         uint8_t Demote(cpu_t *cpu, thread_t *thread) {
             if (thread->priority == THREAD_QUEUE_CNT - 1)
                 return 1;
-            //Serial::Writelnf("\n\033[38;2;0;255;255m<@%s>:\033[0mDemoted thread %d to queue %d.\n"
-            //    ,__FUNCTION__,thread->id, thread->priority);
             thread_queue_t *old_queue = &cpu->thread_queues[thread->priority];
             thread->priority++;
             thread_queue_t *new_queue = &cpu->thread_queues[thread->priority];
@@ -161,6 +159,8 @@ namespace Schedule{
         }
 
         void Switch(context_t *ctx) {
+            uint64_t rflags;
+            asm volatile("pushfq\n\t""pop %0\n\t""cli" : "=r"(rflags) :: "memory");
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             if (!cpu || !cpu->thread_count) 
@@ -176,13 +176,6 @@ namespace Schedule{
                 thread->fs = rdmsr(FS_BASE);
                 thread->ctx = *ctx;
                 cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
-                /* 
-                if (cpu->SupportXSAVEOPT)
-                    asm volatile("xsaveopt %0" : : "m"(*thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
-                else if(cpu->SupportXSAVE)
-                    asm volatile("xsave %0" : : "m"(*thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
-                else
-                    asm volatile("fxsave (%0)" : : "r"(thread->fx_area) : "memory"); */
             }
             thread_t *next_thread = Schedule::Useless::Pick(cpu);
             if (!next_thread) {
@@ -193,20 +186,15 @@ namespace Schedule{
             *ctx = next_thread->ctx;
             
             VMM::SwitchPageMap(next_thread->pagemap);
-            //wrmsr(FS_BASE, next_thread->fs);
             cpu->OverLoadableFuncs.WRFSBASE(next_thread->fs);
             wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
-            /* if (cpu->SupportXSAVE)
-                asm volatile("xrstor %0" : : "m"(*next_thread->fx_area), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
-            else
-                asm volatile("fxrstor (%0)" : : "r"(next_thread->fx_area) : "memory");
-             */
             cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             spinlock_unlock(&cpu->sched_lock);
             uint64_t final_ticks = cpu->thread_queues[next_thread->priority].quantum;
-            LAPIC::Write(LAPIC_TIMER_INITCNT, final_ticks);
-            LAPIC::Write(LAPIC_TIMER_LVT, SCHED_VEC);
+            LAPIC::Write(LAPIC_TIMER_LVT, SCHED_VEC);          // 1. Set LAPIC Mode As One-Shot
+            LAPIC::Write(LAPIC_TIMER_INITCNT, final_ticks);    // 2. Write Ticks Count 
             LAPIC::EOI();
+            asm volatile("push %0\n\t""popfq" :: "r"(rflags) : "memory");
         }
 
 
