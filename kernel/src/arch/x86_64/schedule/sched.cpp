@@ -191,8 +191,6 @@ namespace Schedule{
             cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             spinlock_unlock(&cpu->sched_lock);
             uint64_t final_ticks = cpu->thread_queues[next_thread->priority].quantum;
-            //LAPIC::Write(LAPIC_TIMER_LVT, SCHED_VEC);          // 1. Set LAPIC Mode As One-Shot
-            //LAPIC::Write(LAPIC_TIMER_INITCNT, final_ticks);    // 2. Write Ticks Count 
             LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
             LAPIC::Write(LAPIC_TIMER_INITCNT, 0);
             LAPIC::Write(LAPIC_TIMER_DIV,0x3);
