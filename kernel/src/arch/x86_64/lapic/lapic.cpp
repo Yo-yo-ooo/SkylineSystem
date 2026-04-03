@@ -88,7 +88,7 @@ namespace LAPIC{
         LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
         LAPIC::Write(LAPIC_TIMER_INITCNT, 0);
         LAPIC::Write(LAPIC_TIMER_DIV,0x3);
-        LAPIC::Write(LAPIC_TIMER_INITCNT, this_cpu()->lapic_ticks * ms);
+        LAPIC::Write(LAPIC_TIMER_INITCNT, ms);
         LAPIC::Write(LAPIC_TIMER_LVT, vec);
     }
 

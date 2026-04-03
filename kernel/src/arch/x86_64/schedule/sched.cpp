@@ -191,11 +191,7 @@ namespace Schedule{
             cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             spinlock_unlock(&cpu->sched_lock);
             uint64_t final_ticks = cpu->thread_queues[next_thread->priority].quantum;
-            LAPIC::Write(LAPIC_TIMER_LVT, LAPIC_TIMER_DISABLE);
-            LAPIC::Write(LAPIC_TIMER_INITCNT, 0);
-            LAPIC::Write(LAPIC_TIMER_DIV,0x3);
-            LAPIC::Write(LAPIC_TIMER_INITCNT, final_ticks);
-            LAPIC::Write(LAPIC_TIMER_LVT, SCHED_VEC);
+            LAPIC::Oneshot(SCHED_VEC, final_ticks);
             LAPIC::EOI();
             asm volatile("push %0\n\t""popfq" :: "r"(rflags) : "memory");
         }
