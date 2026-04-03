@@ -103,22 +103,18 @@ void syscall_init();
 
 typedef uint64_t (syscall_function)(uint64_t,uint16_t,uint64_t,uint64_t,uint64_t,uint64_t);
 
-uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
-uint64_t sys_write(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 int64_t sys_lseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
-uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, \
+uint64_t sys_fopen(uint64_t path, uint64_t flags, uint64_t mode, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 uint64_t sys_getpid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
     uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
-uint64_t sys_dup(uint64_t filedesc,uint64_t ign_0, uint64_t ign_1, \
-    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4);
-uint64_t sys_dup2(uint64_t filedesc,uint64_t filedesc2, uint64_t ign_0, \
-    uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
 uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t prot, \
     uint64_t flags, uint64_t fd,uint64_t offset);
 uint64_t sys_munmap(uint64_t addr, uint64_t length, \
@@ -137,7 +133,7 @@ uint64_t sys_gettid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
     uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
 uint64_t sys_getrandom(uint64_t buf, uint64_t size, uint64_t flags,
     uint64_t IGN_0,uint64_t IGN_1,uint64_t IGN_3);
-uint64_t sys_close(uint64_t fd,GENERATE_IGN5());
+uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5());
 uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4());
 uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, uint64_t ign_0, 
     uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
@@ -148,5 +144,7 @@ uint64_t length,uint64_t prot,uint64_t offset,uint64_t VADDR);
 uint64_t sys_dev_getinfo(
     uint64_t DevType,uint64_t DevIDX,uint64_t UserDesc,
     GENERATE_IGN3());
+
+uint64_t sys_dbgsout(uint64_t CharsAddr,uint64_t OutSize,GENERATE_IGN4());
 }
 #endif

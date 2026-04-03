@@ -26,7 +26,7 @@
 #include <mem/pmm.h>
 #include <fs/fd.h>
 
-uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
@@ -37,10 +37,10 @@ uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     return count;
 }
 
-uint64_t sys_write(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    kinfo("Inside sys_write, fd=%d, buf=0x%p\n", fd_idx, buf);
+    kinfo("Inside sys_fwrite, fd=%d, buf=0x%p\n", fd_idx, buf);
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if(fd_idx == 1){
         kinfo();
@@ -77,7 +77,7 @@ int64_t sys_lseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
 }
 
 
-uint64_t sys_open(uint64_t path, uint64_t flags, uint64_t mode, \
+uint64_t sys_fopen(uint64_t path, uint64_t flags, uint64_t mode, \
     GENERATE_IGN3()) {
     IGNV_3();
     proc_t *proc = Schedule::this_proc();
@@ -98,7 +98,7 @@ return_:
     return proc->fd_count - 1;
 }
 
-uint64_t sys_close(uint64_t fd,GENERATE_IGN5()){
+uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5()){
     IGNV_5();
     proc_t *proc = Schedule::this_proc();
     if(fd >= (uint64_t)proc->fd_count)

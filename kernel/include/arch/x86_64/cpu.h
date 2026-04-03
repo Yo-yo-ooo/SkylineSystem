@@ -185,3 +185,8 @@ static inline bool cpuid_is_sse4_2_avail() {
     // Bit 20 是 SSE4.2
     return (ecx & (1 << 20)) != 0;
 }
+
+static inline bool is_user_range(uint64_t addr,uint64_t size) {
+    uintptr_t end = addr + size;
+    return (end <= 0x00007FFFFFFFFFFF && addr >= 0x0000000000000000);
+}

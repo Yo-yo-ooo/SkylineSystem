@@ -34,7 +34,7 @@ void execve_cleanup(int argc, int envc, char **argv, char **envp) {
     kfree(envp);
 }
 
-extern uint64_t sys_read(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+extern uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
@@ -134,7 +134,7 @@ uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     proc_t *proc = Schedule::this_proc();
     thread_t *thread = Schedule::this_thread();
     //vnode_t *node = vfs_open(proc->cwd, pathname);
-    if(sys_open(pathname_,O_RDONLY,NULL,NULL,NULL,NULL) == -1){
+    if(sys_fopen(pathname_,O_RDONLY,NULL,NULL,NULL,NULL) == -1){
         execve_cleanup(argc, envc, argv, envp);
         return (uint64_t)((int64_t)-1);
     }

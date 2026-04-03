@@ -66,32 +66,16 @@ syscall_lists[x] = sys_xxxx //! <---- it means some feature in this syscall does
 syscall_lists[x] = sys_xxxx //? <---- it means i don't know how to impl this syscall
 */
 void syscall_init() {
-    
-    syscall_lists[0] = sys_read;
-    syscall_lists[1] = sys_write;
-    syscall_lists[2] = sys_open;
-    syscall_lists[3] = sys_close;
-    
-    syscall_lists[4] = sys_dev_mmap;
-    syscall_lists[5] = sys_dev_getinfo;
 
-    syscall_lists[8] = sys_lseek;
-    syscall_lists[9] = sys_mmap;//!
-    syscall_lists[11] = sys_munmap;
-    syscall_lists[12] = sys_brk;
-    syscall_lists[24] = sched_yield;
-    syscall_lists[32] = sys_dup;//?!
-    syscall_lists[33] = sys_dup2;//?!
-    syscall_lists[39] = sys_getpid;
-    syscall_lists[57] = sys_fork;
-    syscall_lists[59] = sys_execve;
-    syscall_lists[60] = sys_exit;
-    syscall_lists[83] = sys_mkdir;
-    syscall_lists[157] = sys_arch_prctl;//!
-    syscall_lists[186] = sys_gettid;
-    syscall_lists[201] = sys_time;
-    syscall_lists[228] = sys_clock_gettime;
-    syscall_lists[318] = sys_getrandom;
+    syscall_lists[7] = sys_gettid;
+    syscall_lists[8] = sys_getpid;
+    syscall_lists[9] = sys_exit;
+    syscall_lists[13] = nullptr;
+    syscall_lists[14] = sched_yield;
+    syscall_lists[18] = sys_arch_prctl;
+    syscall_lists[20] = sys_getrandom;
+    syscall_lists[23] = sys_fork;
+    syscall_lists[24] = sys_dbgsout;
     
 
     uint64_t efer = rdmsr(IA32_EFER);

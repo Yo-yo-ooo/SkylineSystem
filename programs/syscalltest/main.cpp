@@ -16,18 +16,8 @@ typedef struct FrameBuffer
 #define MAP_SHARED 1
 
 int main(){
-    //Write Test
-    const char* msg = "Hello, SkylineSystem Syscall Test!\n";
-    syscall(1, 1, (long)msg, 34, 0, 0, 0); //Syscall Write
-
-    FrameBuffer fb; 
-    syscall(5,6,0,(uint64_t)&fb,0,0,0);
-    syscall(4,6,0,0,PROT_READ | PROT_WRITE,0,0);
-
-    //Do Exit
-    syscall(60, 0, 0, 0, 0, 0, 0); //Syscall Exit
-    //Test Exit (PROC Shouldn't run to here) --- Should not print this
-    syscall(1, 1, (long)"Should not be printed", 22, 0, 0, 0); 
+    const char *msg = "Hello, World!";
+    syscall(24, (long)msg, 13, 0, 0, 0, 0);
     while (true);
     return 0;
 }

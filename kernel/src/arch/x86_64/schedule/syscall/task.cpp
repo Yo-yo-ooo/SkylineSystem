@@ -41,29 +41,7 @@ uint64_t sys_gettid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
     return Schedule::this_thread()->id;
 }
 
-uint64_t sys_dup(uint64_t filedesc,uint64_t ign_0, uint64_t ign_1, \
-    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);
 
-    fd_t *fd = Schedule::this_proc()->fd_table[filedesc];
-    Schedule::this_proc()->fd_table[filedesc + 1] = fd;
-    Schedule::this_proc()->fd_count++;
-
-    return Schedule::this_proc()->fd_count;
-}
-
-uint64_t sys_dup2(uint64_t filedesc,uint64_t filedesc2, uint64_t ign_0, \
-    uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);
-    IGNORE_VALUE(ign_2);IGNORE_VALUE(ign_3);
-
-    if(filedesc == filedesc2)
-        return filedesc2;
-    Schedule::this_proc()->fd_table[filedesc2] = Schedule::this_proc()->fd_table[filedesc];
-
-    return filedesc;
-}
 
 uint64_t sys_exit(uint64_t code,uint64_t ign_0, uint64_t ign_1, \
     uint64_t ign_2,uint64_t ign_3,uint64_t ign_4) {
@@ -109,4 +87,12 @@ uint64_t sys_kill(uint64_t pid,uint64_t sig, uint64_t ign_0, \
     }
 
     return 0;
+}
+
+uint64_t sys_fork(syscall_frame_t *frame){
+    Schedule::PAUSE();
+    proc_t* proc = Schedule::ForkProcess();
+    thread_t *thread = Schedule::ForkThread(proc, Schedule::this_thread(), frame);
+    Schedule::Resume();
+    return proc->id;
 }
