@@ -68,7 +68,7 @@ typedef struct cpu_t{
     int8_t* KernelXsaveSpace;
 
     int32_t preempt_count = 0;
-    bool InIntr = false;
+    //bool InIntr = false;
     
     bool has_runnable_thread;
     bool SupportSIMD = false;
@@ -89,7 +89,7 @@ typedef struct cpu_t{
     cpu_overloadable_functions_t OverLoadableFuncs;
 } cpu_t;
 
-constexpr uint64_t ININTR_OFF = offsetof(cpu_t, InIntr);
+//constexpr uint64_t ININTR_OFF = offsetof(cpu_t, InIntr);
 
 extern uint32_t smp_bsp_cpu;
 

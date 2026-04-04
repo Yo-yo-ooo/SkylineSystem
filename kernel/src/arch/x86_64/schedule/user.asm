@@ -5,6 +5,7 @@
 
 syscall_entry:
     ; Currently running on user gs, switch to the kernel gs
+    cli
     swapgs ; switch
     mov [gs:0], rsp ; Save user stack in gs
     mov rsp, [gs:8] ; Kernel stack

@@ -45,14 +45,14 @@
     pushaq
 
     ; --- Set InIntr = true ---
-    call this_cpu          ; return rax = cpu_t*
-    mov byte [rax + OFFSET_CPU_ININTR], 1
+    ;call this_cpu          ; return rax = cpu_t*
+    ;mov byte [rax + OFFSET_CPU_ININTR], 1
 
     mov rdi, rsp           
     call idt_exception_handler
 
-    call this_cpu     
-    mov byte [rax + OFFSET_CPU_ININTR], 0
+    ;call this_cpu     
+    ;mov byte [rax + OFFSET_CPU_ININTR], 0
 
     popaq
     add rsp, 16
