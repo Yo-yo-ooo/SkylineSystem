@@ -27,9 +27,6 @@
 #include <arch/x86_64/simd/simd.h>
 #include<arch/x86_64/cpu/vf.h>
 
-#pragma GCC push_options
-#pragma GCC optimize ("O0")
-
 cpu_t ZeroCPU = {0};
 cpu_t *smp_cpu_list[MAX_CPU] = {&ZeroCPU};
 volatile spinlock_t smp_lock = 0;
@@ -176,5 +173,3 @@ void InitBSPCPUThread(){
     Schedule::Internal::AddThread(smp_cpu_list[smp_bsp_cpu], init_thread);
     smp_cpu_list[smp_bsp_cpu]->current_thread = init_thread;
 }
-
-#pragma GCC pop_options
