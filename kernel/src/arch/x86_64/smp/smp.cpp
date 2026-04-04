@@ -96,8 +96,9 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     cpu->thread_count = 0;
     cpu->sched_lock = 0;
     cpu->has_runnable_thread = false;
-    idt_install_irq_cpu(cpu->id,48, (void*)Schedule::Useless::Preempt);
-    idt_install_irq_cpu(cpu->id,49, (void*)Schedule::Useless::Switch);
+    EnableFSGSBASE(cpu);
+    idt_install_irq_cpu(cpu->id,48, (void*)Schedule::Internal::Preempt);
+    idt_install_irq_cpu(cpu->id,49, (void*)Schedule::Internal::Switch);
     
     idt_set_ist_cpu(cpu->id,SCHED_VEC, 1);
     idt_set_ist_cpu(cpu->id,SCHED_VEC + 1, 1);
@@ -172,7 +173,7 @@ void InitBSPCPUThread(){
     init_thread->cpu_num = smp_bsp_cpu;
 
     init_thread->pagemap = kernel_pagemap;
-    Schedule::Useless::AddThread(smp_cpu_list[smp_bsp_cpu], init_thread);
+    Schedule::Internal::AddThread(smp_cpu_list[smp_bsp_cpu], init_thread);
     smp_cpu_list[smp_bsp_cpu]->current_thread = init_thread;
 }
 

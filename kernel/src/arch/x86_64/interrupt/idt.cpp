@@ -184,6 +184,7 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     kerrorln("RBP: 0x%p  RDI: 0x%p RSI: 0x%p RSP: 0x%p.",ctx->rbp,ctx->rdi,ctx->rsi,ctx->rsp);
     kerrorln("CR0: 0x%p  CR4: 0x%p CR3: 0x%p CR2: 0x%p",cr0,cr4,cr3,cr2);
     kerrorln("RFLAGS: 0x%p",ctx->rflags);
+    kerrorln("ERROR_CODE: 0x%p",ctx->error_code);
     kerrorln("CS: 0x%x SS: 0x%x", ctx->cs, ctx->ss);
     
     if (smp_started && this_cpu()->current_thread)

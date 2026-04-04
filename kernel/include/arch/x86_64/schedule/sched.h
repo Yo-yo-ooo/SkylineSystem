@@ -103,7 +103,7 @@ namespace Schedule{
     extern uint64_t procl_count;
     extern procl_t *sched_proclist;
 
-    namespace Useless{
+    namespace Internal{
         void Switch(context_t *ctx);
         void Preempt(context_t *ctx);
 

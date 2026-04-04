@@ -58,7 +58,7 @@ namespace Schedule{
     uint64_t sched_pid = 0;
     //uint64_t procl_count = 256;
 
-    namespace Useless{
+    namespace Internal{
 
         void ProcessAddThread(proc_t *parent, thread_t *thread) {
             if (!parent->threads) {
@@ -108,7 +108,7 @@ namespace Schedule{
                 thread->list_prev->list_next = thread->list_next;
             }
             --cpu->thread_count;
-            Schedule::Useless::AddThread(cpu, thread);
+            Schedule::Internal::AddThread(cpu, thread);
             return 0;
         }
 
@@ -132,7 +132,7 @@ namespace Schedule{
                         }
                         thread->preempt_count++;
                         if (thread->preempt_count >= SCHED_PREEMPTION_MAX) {
-                            int32_t ret = Schedule::Useless::Demote(cpu, thread);
+                            int32_t ret = Schedule::Internal::Demote(cpu, thread);
                             thread->preempt_count = 0;
                             thread->flags &= ~TFLAGS_PREEMPTED;
                             if (ret == 1) {
@@ -163,10 +163,14 @@ namespace Schedule{
             asm volatile("pushfq\n\t""pop %0\n\t""cli" : "=r"(rflags) :: "memory");
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
-            if (!cpu || !cpu->thread_count) 
+            if (!cpu || !cpu->thread_count){
+                LAPIC::EOI();
+                asm volatile("push %0\n\t""popfq" :: "r"(rflags) : "memory");
                 return;
+            }
             if (cpu->preempt_count > 0) {
                 LAPIC::EOI(); 
+                asm volatile("push %0\n\t""popfq" :: "r"(rflags) : "memory");
                 return; 
             }
             spinlock_lock(&cpu->sched_lock);
@@ -177,13 +181,16 @@ namespace Schedule{
                 thread->ctx = *ctx;
                 cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
-            thread_t *next_thread = Schedule::Useless::Pick(cpu);
+            thread_t *next_thread = Schedule::Internal::Pick(cpu);
             if (!next_thread) {
                 spinlock_unlock(&cpu->sched_lock);
+                LAPIC::EOI();
+                asm volatile("push %0\n\t""popfq" :: "r"(rflags) : "memory");
                 return; 
             }
             cpu->current_thread = next_thread;
             *ctx = next_thread->ctx;
+            TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
             
             VMM::SwitchPageMap(next_thread->pagemap);
             cpu->OverLoadableFuncs.WRFSBASE(next_thread->fs);
@@ -200,14 +207,14 @@ namespace Schedule{
         void Preempt(context_t *ctx) {
             Schedule::this_thread()->flags |= TFLAGS_PREEMPTED;
             Schedule::this_thread()->preempt_count++;
-            Schedule::Useless::Switch(ctx);
+            Schedule::Internal::Switch(ctx);
         }
     }
 
     void Init(){
         art_tree_init(PID2ProcessTree);
-        idt_install_irq(48, (void*)Schedule::Useless::Preempt);
-        idt_install_irq(49, (void*)Schedule::Useless::Switch);
+        idt_install_irq(48, (void*)Schedule::Internal::Preempt);
+        idt_install_irq(49, (void*)Schedule::Internal::Switch);
         
         idt_set_ist(SCHED_VEC, 1);
         idt_set_ist(SCHED_VEC + 1, 1);
@@ -261,7 +268,8 @@ namespace Schedule{
         }
 
         // Copy the arguments to the thread stack.
-        uint64_t thread_argv[argc];
+        //uint64_t thread_argv[argc];
+        uint64_t *thread_argv = (uint64_t*)kmalloc(argc * sizeof(uint64_t));
         uint64_t stack_top = thread->ctx.rsp;
         uint64_t offset = 0;
         if ((argc + envc) % 2 == 0) offset = 8;
@@ -311,6 +319,7 @@ namespace Schedule{
         kfree(kernel_argv);
         for (int32_t i = 0; i < envc; i++)
             kfree(kernel_envp[i]);
+        kfree(thread_argv);
         kfree(kernel_envp);
     }
 
@@ -324,7 +333,7 @@ namespace Schedule{
         thread->pagemap = parent->pagemap;
         thread->flags = 0;
         thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
-        Schedule::Useless::ProcessAddThread(parent, thread);
+        Schedule::Internal::ProcessAddThread(parent, thread);
         thread->sig_deliver = 0;
         thread->sig_mask = 0;
         thread->heap_size = 0;
@@ -355,10 +364,10 @@ namespace Schedule{
         thread->state = THREAD_RUNNING;
         get_cpu(cpu_num)->has_runnable_thread = true;
 
-        //Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+        //Schedule::Internal::AddThread(get_cpu(cpu_num), thread);
         cpu_t *target_cpu = get_cpu(cpu_num);
         spinlock_lock(&target_cpu->sched_lock);
-        Schedule::Useless::AddThread(target_cpu, thread);
+        Schedule::Internal::AddThread(target_cpu, thread);
         spinlock_unlock(&target_cpu->sched_lock);
 
         return thread;
@@ -377,7 +386,7 @@ namespace Schedule{
         /* thread->heap = VMM::Alloc(thread->pagemap, 8, true);
         thread->heap_size = 8 * PAGE_SIZE; */
 
-        Schedule::Useless::ProcessAddThread(parent, thread);
+        Schedule::Internal::ProcessAddThread(parent, thread);
 
         thread->sig_deliver = 0;
         thread->sig_mask = 0;
@@ -431,10 +440,10 @@ namespace Schedule{
         thread->state = THREAD_RUNNING;
         get_cpu(cpu_num)->has_runnable_thread = true;
 
-        //Schedule::Useless::AddThread(get_cpu(cpu_num), thread);
+        //Schedule::Internal::AddThread(get_cpu(cpu_num), thread);
         cpu_t *target_cpu = get_cpu(cpu_num);
         spinlock_lock(&target_cpu->sched_lock);
-        Schedule::Useless::AddThread(target_cpu, thread);
+        Schedule::Internal::AddThread(target_cpu, thread);
         spinlock_unlock(&target_cpu->sched_lock);
         kpokln("Add Thread!");
 
@@ -454,7 +463,7 @@ namespace Schedule{
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(MaxXsaveSize,PAGE_SIZE), true);
         __memcpy(thread->fx_area, parent->fx_area, MaxXsaveSize);
 
-        Schedule::Useless::ProcessAddThread(proc, thread);
+        Schedule::Internal::ProcessAddThread(proc, thread);
 
         thread->sig_deliver = 0;
         thread->sig_mask = parent->sig_mask;
@@ -491,7 +500,7 @@ namespace Schedule{
         thread->state = THREAD_RUNNING;
         cpu->has_runnable_thread = true;
         
-        Schedule::Useless::AddThread(cpu, thread);
+        Schedule::Internal::AddThread(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
 
         return thread;

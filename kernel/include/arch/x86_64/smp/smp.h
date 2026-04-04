@@ -89,7 +89,7 @@ typedef struct cpu_t{
     cpu_overloadable_functions_t OverLoadableFuncs;
 } cpu_t;
 
-constexpr uint64_t SCPU_T = sizeof(cpu_t);
+constexpr uint64_t ININTR_OFF = offsetof(cpu_t, InIntr);
 
 extern uint32_t smp_bsp_cpu;
 
