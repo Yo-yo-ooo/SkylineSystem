@@ -42,28 +42,12 @@ uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
         IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     kinfo("Inside sys_fwrite, fd=%d, buf=0x%p\n", fd_idx, buf);
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
-    if(fd_idx == 1){
-        kinfo();
-        for(size_t i = 0;i < count;i++){
-            kprintf("%c",*((char*)buf + i));
-        }
-        kprintf("\n");
-        return count;
-    }else if(fd_idx == 2){
-        return count;
-    }else if(fd_idx == 0){
-        printf_("[\033[38;2;255;0;0mERR FORM USER %d\033[0m]",Schedule::this_proc());
-        for(size_t i = 0;i < count;i++){
-            kprintf("%c",*((char*)buf + i));
-        }
-        kprintf("\n");
-        return count;
-    }
     if (!fd)
         return -EBADF;
-    FileSystemOps[fd->FsType].write(fd,(void*)buf,count);
-    fd->off += count;
-    return count;
+    int64_t written = FileSystemOps[fd->FsType].write(fd, (void*)buf, count);
+    if (written > 0) fd->off += written;
+    return written;
+    //return count;
 }
 
 int64_t sys_lseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \

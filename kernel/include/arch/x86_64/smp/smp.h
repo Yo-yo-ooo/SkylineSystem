@@ -54,6 +54,9 @@ typedef struct cpu_overloadable_functions_t{
 
 
 typedef struct cpu_t{
+    uint64_t kernel_stack;    // 偏移 0: 当前 CPU 的内核栈顶 (用于 syscall 入口)
+    uint64_t user_scratch;    // 偏移 8: 临时存放用户态 RSP (用于 syscall 入口)
+
     uint32_t id;
     uint64_t lapic_ticks;
     pagemap_t *pagemap;
