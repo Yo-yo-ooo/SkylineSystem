@@ -41,6 +41,9 @@ namespace PMM{
     void bitmap_clear_(uint64_t bit);
     void bitmap_set_(uint64_t bit);
     bool bitmap_test_(uint64_t bit);
+#ifdef __x86_64__
+    void* GlobalRequestSingle();
+#endif
 
     void Init();
     void* Request(uint64_t n = 1);

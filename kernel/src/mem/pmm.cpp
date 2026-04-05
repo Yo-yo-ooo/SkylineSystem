@@ -16,7 +16,7 @@ static volatile struct limine_memmap_request memmap_request = {
     .revision = 0
 };
 
-volatile static spinlock_t pmm_lock = 0;
+volatile spinlock_t pmm_lock = 0;
 volatile struct limine_memmap_response* pmm_memmap = nullptr;
 
 #ifdef __x86_64__
@@ -94,7 +94,7 @@ namespace PMM {
         bitmap_last_free = 1; 
     }
 
-    static void* GlobalRequestSingle() {
+    void* GlobalRequestSingle() {
         uint64_t start_idxL1 = (bitmap_last_free / 64) / 64;
         uint64_t max_idxL1 = bitmap_l1_size / 8;
         
