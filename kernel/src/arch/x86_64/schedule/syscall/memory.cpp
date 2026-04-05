@@ -127,6 +127,8 @@ uint64_t sys_brk(uint64_t addr, GENERATE_IGN5()) {
     }
     if (!found) {
         // 错误处理或记录日志
+        kwarnln("VMA region for heap not found during brk adjustment. This may lead to issues with fork or exit.");
+         // 这里我们选择继续执行，因为 brk 本身已经成功调整了堆的大小，VMA 的问题会在后续操作中暴露出来，我们可以通过日志来追踪这个问题，而不是直接失败。
     }
 
     t->heap_size = new_size;
