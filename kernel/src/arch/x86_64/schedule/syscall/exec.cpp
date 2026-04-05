@@ -74,6 +74,7 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
             for (uint64_t i = start; i < end; i += PAGE_SIZE) {
                 uint64_t page = (uint64_t)PMM::Request();
                 VMM::Map(pagemap, i, page, flags);
+                kinfoln("  Mapping vaddr=0x%lx -> page=0x%lx", i, page);
             }
             VMM::NewMapping(pagemap, start, (end - start) / PAGE_SIZE, flags);
             __memcpy((void*)phdr->p_vaddr, (void*)(data + phdr->p_offset), phdr->p_filesz);
@@ -81,6 +82,10 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap) {
                 _memset((void*)(phdr->p_vaddr + phdr->p_filesz), 0, phdr->p_memsz - phdr->p_filesz); // Zero out BSS
             if (end > max_vaddr)
                 max_vaddr = end;
+            kinfoln("ELF LOADER PT_LOAD: vaddr=[0x%lx~0x%lx], "
+                "filesz=0x%lx, memsz=0x%lx, flags=0x%x", 
+            phdr->p_vaddr, phdr->p_vaddr + phdr->p_memsz, 
+            phdr->p_filesz, phdr->p_memsz, phdr->p_flags);
         }
     }
 

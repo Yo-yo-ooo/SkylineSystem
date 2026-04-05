@@ -383,8 +383,6 @@ namespace Schedule{
         thread->flags = 0;
         thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
 
-        /* thread->heap = VMM::Alloc(thread->pagemap, 8, true);
-        thread->heap_size = 8 * PAGE_SIZE; */
 
         Schedule::Internal::ProcessAddThread(parent, thread);
 
@@ -397,11 +395,15 @@ namespace Schedule{
         ext4_fopen(&f,Path,"r");
         //kinfoln("%d",f.fsize);
         uint8_t *buffer = (uint8_t*)kmalloc(ext4_fsize(&f));
+        _memset(&thread->ctx,0,sizeof(context_t));
         ext4_fread(&f,buffer,ext4_fsize(&f),NULL);
         thread->ctx.rip = elf_load(buffer, thread->pagemap); 
         ext4_fclose(&f);
 
         cpu_t *cpu = get_cpu(cpu_num);
+        // HEAP AREA ALLOC HERE
+        thread->heap = (uint64_t)VMM::Alloc(thread->pagemap, 8, true);
+        thread->heap_size = 8 * PAGE_SIZE; 
         // Fx area
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
         _memset(thread->fx_area, 0, cpu->XsaveSize);
@@ -446,6 +448,11 @@ namespace Schedule{
         Schedule::Internal::AddThread(target_cpu, thread);
         spinlock_unlock(&target_cpu->sched_lock);
         kpokln("Add Thread!");
+
+        kinfoln("thread->heap = 0x%lx", (uint64_t)thread->heap);
+        kinfoln("thread->heap_size = 0x%lx", thread->heap_size);
+        kinfoln("thread stack = 0x%lx", thread->stack);
+        kinfoln("thread rip = 0x%lx", thread->ctx.rip);
 
         return thread;
     }
