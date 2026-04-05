@@ -37,11 +37,7 @@
 #include <stdint.h>
 
 #include <conf.h>
-#ifdef __x86_64__
-//Do Nothing
-#else
 #define PRINTF_DISABLE_SUPPORT_FLOAT
-#endif
 
 #ifdef __cplusplus
 extern "C" {
