@@ -67,8 +67,12 @@ void hcf(void) {
 void spinlock_lock(spinlock_t* l) {
     
 #ifdef __x86_64__
-    while(__a_swap(l,1) != 0)
+    while(true){
+        if(*l == 0)
+            if(__a_swap(l,1) == 0)
+                return;
         __a_spin();
+    }
 #else
     while (__sync_lock_test_and_set(l, 1)){
         asm volatile("nop");
