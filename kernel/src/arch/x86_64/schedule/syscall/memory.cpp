@@ -74,30 +74,39 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length, \
     return 0;
 }
 
-uint64_t sys_brk(uint64_t addr, \
-    GENERATE_IGN5()){
+uint64_t sys_brk(uint64_t addr, GENERATE_IGN5()) {
     IGNV_5();
-
     thread_t *t = Schedule::this_thread();
-    if (addr == 0) return (uint64_t)t->heap + t->heap_size; // 返回当前边界
     
+    if (addr == 0) return (uint64_t)t->heap + t->heap_size;
     if (addr < (uint64_t)t->heap) return -1;
 
-    // 检查是否需要分配新页
     uint64_t old_page_count = DIV_ROUND_UP(t->heap_size, PAGE_SIZE);
     uint64_t new_size = addr - (uint64_t)t->heap;
     uint64_t new_page_count = DIV_ROUND_UP(new_size, PAGE_SIZE);
 
     if (new_page_count > old_page_count) {
-        // 在原有的基础上申请物理页并映射，不需要拷贝数据！
-        VMM::MapRange(t->pagemap, (uint64_t)t->heap + old_page_count * PAGE_SIZE, 
-                      new_page_count - old_page_count, MM_USER | MM_WRITE);
-    }else{
-        VMM::Free(t->pagemap, (uint64_t)t->heap + new_page_count * PAGE_SIZE);
+        // 扩容：逐页分配物理内存并映射
+        uint64_t pages_to_alloc = new_page_count - old_page_count;
+        for (uint64_t i = 0; i < pages_to_alloc; i++) {
+            uint64_t vaddr = (uint64_t)t->heap + (old_page_count + i) * PAGE_SIZE;
+            
+            // 【关键点】必须申请真实的物理页！
+            // 假设你的 PMM 分配单页函数叫 PMM::Alloc()
+            uint64_t paddr = PMM::Alloc(); 
+            if (!paddr) return -1; // 物理内存耗尽 (OOM)
+
+            // 映射单页 (count = 1)
+            VMM::MapRange(t->pagemap, vaddr, paddr, MM_USER | MM_WRITE, 1);
+        }
+    } 
+    else if (new_page_count < old_page_count) {
+        // 缩容：逐页解除映射并回收物理内存
+        
     }
     
     t->heap_size = new_size;
-    return 0;
+    return 0; // 或者按照 POSIX 规范，返回 addr
 }
 
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot, \
