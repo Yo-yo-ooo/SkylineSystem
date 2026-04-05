@@ -77,34 +77,51 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length, \
 uint64_t sys_brk(uint64_t addr, GENERATE_IGN5()) {
     IGNV_5();
     thread_t *t = Schedule::this_thread();
-    
-    if (addr == 0) return (uint64_t)t->heap + t->heap_size;
-    if (addr < (uint64_t)t->heap) return -1;
+    pagemap_t *pagemap = t->pagemap;
+
+    // 1. 基础检查与 brk(0) 处理
+    uint64_t current_brk = (uint64_t)t->heap + t->heap_size;
+    if (addr == 0) return current_brk;
+    if (addr < (uint64_t)t->heap) return current_brk;
 
     uint64_t old_page_count = DIV_ROUND_UP(t->heap_size, PAGE_SIZE);
     uint64_t new_size = addr - (uint64_t)t->heap;
     uint64_t new_page_count = DIV_ROUND_UP(new_size, PAGE_SIZE);
 
     if (new_page_count > old_page_count) {
-        // 扩容：逐页分配物理内存并映射
-        uint64_t pages_to_alloc = new_page_count - old_page_count;
-        for (uint64_t i = 0; i < pages_to_alloc; i++) {
-            uint64_t vaddr = (uint64_t)t->heap + (old_page_count + i) * PAGE_SIZE;
+        // 2. 扩容逻辑
+        for (uint64_t i = old_page_count; i < new_page_count; i++) {
+            uint64_t vaddr = (uint64_t)t->heap + (i * PAGE_SIZE);
+            uint64_t paddr = (uint64_t)PMM::Request(); 
+            if (!paddr) return current_brk;
 
-            uint64_t paddr = PMM::Request(); 
-            if (!paddr) return -1; // 物理内存耗尽 (OOM)
-
-            // 映射单页 (count = 1)
-            VMM::MapRange(t->pagemap, vaddr, paddr, MM_USER | MM_WRITE, 1);
+            // 映射并清理内存 
+            VMM::Map(pagemap, vaddr, paddr, MM_USER | MM_WRITE);
+            _memset(HIGHER_HALF((void*)paddr), 0, PAGE_SIZE);
         }
     } 
     else if (new_page_count < old_page_count) {
-        // 缩容：逐页解除映射并回收物理内存
-        
+        // 3. 缩容逻辑：绕过失效的 VMM::Free，直接操作单页
+        for (uint64_t i = new_page_count; i < old_page_count; i++) {
+            uint64_t vaddr = (uint64_t)t->heap + (i * PAGE_SIZE);
+            uint64_t paddr = VMM::GetPhysics(pagemap, vaddr);
+            
+            if (paddr) {
+                VMM::Unmap(pagemap, vaddr);
+                PMM::Free((void*)paddr); // 还给物理内存管理器
+                mmu_invlpg(vaddr);
+            }
+        }
     }
-    
+
+    // 4. 同步 VMA 链表状态
+    // 否则 Fork 或退出时会因为 page_count 不匹配导致解映射错误
+    if (t->heap_vma) {
+        t->heap_vma->page_count = new_page_count;
+    }
+
     t->heap_size = new_size;
-    return 0; // 或者按照 POSIX 规范，返回 addr
+    return (uint64_t)t->heap + t->heap_size; // 返回新的断点
 }
 
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot, \
