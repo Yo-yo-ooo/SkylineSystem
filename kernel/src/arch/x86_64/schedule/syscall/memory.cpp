@@ -90,10 +90,8 @@ uint64_t sys_brk(uint64_t addr, GENERATE_IGN5()) {
         uint64_t pages_to_alloc = new_page_count - old_page_count;
         for (uint64_t i = 0; i < pages_to_alloc; i++) {
             uint64_t vaddr = (uint64_t)t->heap + (old_page_count + i) * PAGE_SIZE;
-            
-            // 【关键点】必须申请真实的物理页！
-            // 假设你的 PMM 分配单页函数叫 PMM::Alloc()
-            uint64_t paddr = PMM::Alloc(); 
+
+            uint64_t paddr = PMM::Request(); 
             if (!paddr) return -1; // 物理内存耗尽 (OOM)
 
             // 映射单页 (count = 1)
