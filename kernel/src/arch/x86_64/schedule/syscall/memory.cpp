@@ -73,7 +73,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length, \
     }
     return 0;
 }
-
+extern "C" void mmu_invlpg(uint64_t vaddr);
 uint64_t sys_brk(uint64_t addr, GENERATE_IGN5()) {
     IGNV_5();
     thread_t *t = Schedule::this_thread();
@@ -116,8 +116,17 @@ uint64_t sys_brk(uint64_t addr, GENERATE_IGN5()) {
 
     // 4. 同步 VMA 链表状态
     // 否则 Fork 或退出时会因为 page_count 不匹配导致解映射错误
-    if (t->heap_vma) {
-        t->heap_vma->page_count = new_page_count;
+    bool found = false;
+    vma_region_t *region = t->pagemap->vma_head->next;
+    for (; region != t->pagemap->vma_head; region = region->next) {
+        if (region->start == (uint64_t)t->heap) {
+            region->page_count = new_page_count;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        // 错误处理或记录日志
     }
 
     t->heap_size = new_size;
