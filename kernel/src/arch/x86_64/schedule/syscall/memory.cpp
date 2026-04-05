@@ -75,27 +75,28 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length, \
 }
 
 uint64_t sys_brk(uint64_t addr, \
-    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,uint64_t ign_3,uint64_t ign_4){
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);
+    GENERATE_IGN5()){
+    IGNV_5();
 
     thread_t *t = Schedule::this_thread();
-    if(*((int64_t*)addr) < 0 && !t->heap)
-        return -1;
-    if((*((int64_t*)addr) < 0 ? -*((int64_t*)addr) : *((int64_t*)addr)) > t->heap_size
-        && *((int64_t*)addr) < 0)
-        return -1;
-    if(!t->heap && t->heap_size < *((int64_t*)addr)){
-        SLAB::UserAlloc(*((uint64_t*)addr));
-        t->heap_size += *((int64_t*)addr);
-        return 0;
+    if (addr == 0) return (uint64_t)t->heap + t->heap_size; // 返回当前边界
+    
+    if (addr < (uint64_t)t->heap) return -1;
+
+    // 检查是否需要分配新页
+    uint64_t old_page_count = DIV_ROUND_UP(t->heap_size, PAGE_SIZE);
+    uint64_t new_size = addr - (uint64_t)t->heap;
+    uint64_t new_page_count = DIV_ROUND_UP(new_size, PAGE_SIZE);
+
+    if (new_page_count > old_page_count) {
+        // 在原有的基础上申请物理页并映射，不需要拷贝数据！
+        VMM::MapRange(t->pagemap, (uint64_t)t->heap + old_page_count * PAGE_SIZE, 
+                      new_page_count - old_page_count, MM_USER | MM_WRITE);
+    }else{
+        VMM::Free(t->pagemap, (uint64_t)t->heap + new_page_count * PAGE_SIZE);
     }
-    uint64_t old_size = t->heap_size;
-    t->heap_size += *((int64_t*)addr);
-    void *new_ptr = SLAB::UserAlloc(t->heap_size);
-    __memcpy(new_ptr, t->heap_size, (old_size > t->heap_size ? t->heap_size : old_size));
-    SLAB::Free(t->heap);
-    t->heap = new_ptr;
+    
+    t->heap_size = new_size;
     return 0;
 }
 
