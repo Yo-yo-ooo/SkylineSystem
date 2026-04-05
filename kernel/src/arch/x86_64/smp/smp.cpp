@@ -105,7 +105,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     sse_enable();
     fpu_init();
     simd_cpu_init(cpu);
-    EnableFSGSBASE(cpu);
+    //EnableFSGSBASE(cpu);
     
     kpok("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
@@ -164,7 +164,8 @@ void InitBSPCPUThread(){
     _memset(init_thread->fx_area, 0, smp_cpu_list[smp_bsp_cpu]->XsaveSize);
     uint32_t eax = smp_cpu_list[smp_bsp_cpu]->XsaveMaskLo;
     uint32_t edx = smp_cpu_list[smp_bsp_cpu]->XsaveMaskHi;
-    asm volatile("xsave %0" : : "m"(*init_thread->fx_area), "a"(eax), "d"(edx) : "memory");
+    //asm volatile("xsave %0" : : "m"(*init_thread->fx_area), "a"(eax), "d"(edx) : "memory");
+    smp_cpu_list[smp_bsp_cpu]->OverLoadableFuncs.StoreSIMDState(init_thread->fx_area,eax,edx);
     init_thread->state = THREAD_RUNNING;
     init_thread->id = -1;
     init_thread->cpu_num = smp_bsp_cpu;
