@@ -95,7 +95,7 @@ namespace LAPIC{
     uint64_t InitTimer() {
         uint64_t rflags;
         asm volatile("pushfq\n\t""pop %0\n\t""cli" : "=r"(rflags) :: "memory");
-        LAPIC::Write(LAPIC_TIMER_DIV, 0xB);
+        LAPIC::Write(LAPIC_TIMER_DIV, 0x3); // Divide by 16
         LAPIC::Write(LAPIC_TIMER_INITCNT, 0xFFFFFFFF);
         //PIT::Sleep(1); // 1 ms
         HPET::SleepNS(1000000);
