@@ -34,7 +34,7 @@ extern void FT_Clear();
 volatile static idt_entry_t alignas(16) idt_entries[256];
 //static idt_desc_t idt_desc;
 extern "C" void *idt_int_table[];
-void *handlers[256];
+interrupt_handler_t handlers[256];
 
 
 extern volatile const char* isr_errors[32];
@@ -47,7 +47,8 @@ void idt_init() {
 
     smp_cpu_list[smp_bsp_cpu]->idtdesc.size = sizeof(idt_entries) - 1;
     smp_cpu_list[smp_bsp_cpu]->idtdesc.address = (uint64_t)&idt_entries;
-    smp_cpu_list[smp_bsp_cpu]->handlers = (uint64_t)handlers;
+    //smp_cpu_list[smp_bsp_cpu]->handlers = handlers;
+    memcpy_fscpuf(smp_cpu_list[smp_bsp_cpu]->handlers, (void*)handlers, 256 * sizeof(uint64_t));
     smp_cpu_list[smp_bsp_cpu]->IntrBitMap[0] = 0x00000000FFFFFFFFULL;
     smp_cpu_list[smp_bsp_cpu]->IntrBitMap[1] = 0;
     smp_cpu_list[smp_bsp_cpu]->IntrBitMap[2] = 0;
@@ -63,13 +64,13 @@ void idt_reinit(uint32_t CPUID) {
     
     smp_cpu_list[CPUID]->idtdesc.size = sizeof(idt_entries) - 1;
     smp_cpu_list[CPUID]->idtdesc.address = (uint64_t)local_idt;
-    smp_cpu_list[CPUID]->handlers = kmalloc(256 * sizeof(uint64_t));
+    memcpy_fscpuf(smp_cpu_list[CPUID]->handlers, (void*)smp_cpu_list[smp_bsp_cpu]->handlers, 256 * sizeof(uint64_t));
     smp_cpu_list[CPUID]->IntrBitMap[0] = 0x00000000FFFFFFFFULL;
     smp_cpu_list[CPUID]->IntrBitMap[1] = 0;
     smp_cpu_list[CPUID]->IntrBitMap[2] = 0;
     smp_cpu_list[CPUID]->IntrBitMap[3] = 0;
     __asm__ volatile ("lidt %0" : : "m"(smp_cpu_list[CPUID]->idtdesc) : "memory");
-    __asm__ volatile ("sti");
+    //__asm__ volatile ("sti");
 }
 
 void idt_set_entry(uint16_t vector, void *isr, uint8_t flags) {
@@ -147,7 +148,12 @@ extern "C" cpu_t* GetLWIntrCpu(){
 }
 
 extern "C" void idt_irq_handler(context_t *ctx) {
-    void (*handler)(context_t*) = this_cpu()->handlers[ctx->int_no];
+    cpu_t* cpu = this_cpu();
+    if (!cpu || !cpu->handlers) {
+        kerror("CPU or Handlers not initialized for IDT %d\n", ctx->int_no);
+        hcf();
+    }
+    interrupt_handler_t handler = cpu->handlers[ctx->int_no];
     if (!handler) {
         kerror("(PANIC)Uncaught IRQ #%d.\n", ctx->int_no);
     }

@@ -52,7 +52,7 @@ typedef struct cpu_overloadable_functions_t{
     void (*WRFSBASE)(uint64_t value);
 }cpu_overloadable_functions_t;
 
-
+typedef void (*interrupt_handler_t)(context_t*);
 typedef struct cpu_t{
     uint64_t kernel_stack;    // 偏移 0: 当前 CPU 的内核栈顶 (用于 syscall 入口)
     uint64_t user_scratch;    // 偏移 8: 临时存放用户态 RSP (用于 syscall 入口)
@@ -65,7 +65,7 @@ typedef struct cpu_t{
     uint64_t thread_count;
     int32_t sched_lock;
     idt_desc_t idtdesc;
-    uint64_t *handlers;
+    interrupt_handler_t handlers[256];
     uint8_t IntrRegistCount = 0x20; //Base:0x20(CPU RSVD 0~0x20)
     uint64_t IntrBitMap[4]; // 256 Count Bitmap      
     int8_t* KernelXsaveSpace;
