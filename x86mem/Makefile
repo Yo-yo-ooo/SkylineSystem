@@ -28,7 +28,7 @@ endif
 ifneq ($(HAS_AVX_512),0)
 ifeq ($(COMPILER_SUPPORT_AVX512),yes)
 $(info CFLAGS_x86mem += -mavx512f)
-CFLAGS_x86mem += -mavx512f
+CFLAGS_x86mem += -mavx512f -mprefer-vector-width=512
 endif
 endif
 

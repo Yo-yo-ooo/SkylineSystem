@@ -23,7 +23,7 @@
 #include <klib/kio.h>
 #include <conf.h>
 
-/* #ifdef __x86_64__
+#ifdef __x86_64__
 #pragma GCC push_options
 #endif
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
@@ -55,7 +55,7 @@ asm volatile("" ::: "memory");
     ||
     \/
 Prevent the compiler from moving the code from the back to the front
-*//* 
+*/
 #define XFXSAVE_CAS do{\
         cpu->preempt_count++; \    
         asm volatile("" ::: "memory"); \ 
@@ -73,7 +73,7 @@ Prevent the compiler from moving the code from the back to the front
             asm volatile("fxrstor (%0)" : : "r"(cpu->KernelXsaveSpace) : "memory"); \
         } \
     }while(0);
- */
+ 
 //X/FXSave Check And Set Back
 /*
 asm volatile("" ::: "memory");
@@ -82,7 +82,7 @@ asm volatile("" ::: "memory");
     \/
 Prevent the compiler from moving previous code to the end
 */
-/* #define XFXSAVE_CASB do{\
+#define XFXSAVE_CASB do{\
         if(cpu->SupportXSAVE){ \
             if(cpu->SupportXSAVEOPT) \
                 asm volatile("xsaveopt %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
@@ -99,18 +99,19 @@ Prevent the compiler from moving previous code to the end
         cpu->preempt_count--; \
     }while(0);
 
-#endif */ 
+#endif 
 
 extern "C" {
 void _memcpy(void* src, void* dest, uint64_t size){
-/* #if defined(__x86_64__)
+#if defined(__x86_64__)
 #if (defined(COMPILER_SUPPORT_AVX512) || \
     defined(COMPILER_SUPPORT_AVX2) || \
-    defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
+    defined(COMPILER_SUPPORT_SSE_4_2)) \
+    && (USE_HOST_CPU_EXTENSIONS == 1) && ((CONFIG_FAST_MEMCPY == 1))
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
-    if(size >= 79872 78K && cpu->SupportSSE4_2){
+    if(size >= 79872 && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
@@ -124,16 +125,17 @@ void _memcpy(void* src, void* dest, uint64_t size){
     NEON_MEMCPY(dest,src,size);
     return;
 #endif 
-base_ver: */
+base_ver: 
     memcpy_fscpuf(dest,src,size);
 }
 
 
 void _memset(void* dest, uint8_t value, uint64_t size){
-/* #if defined(__x86_64__)
+#if defined(__x86_64__)
 #if (defined(COMPILER_SUPPORT_AVX512) || \
     defined(COMPILER_SUPPORT_AVX2) || \
-    defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
+    defined(COMPILER_SUPPORT_SSE_4_2)) \
+    && (USE_HOST_CPU_EXTENSIONS == 1) && ((CONFIG_FAST_MEMSET == 1))
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
@@ -152,16 +154,17 @@ void _memset(void* dest, uint8_t value, uint64_t size){
     NEON_MEMSET(dest,value,size);
     return;
 #endif
-base_ver: */
+base_ver: 
     memset_fscpuf(dest,(int32_t)value,size);
 }
 
 
 void _memmove(void* dest,void* src, uint64_t size) {
-/* #if defined(__x86_64__)
+#if defined(__x86_64__)
 #if (defined(COMPILER_SUPPORT_AVX512) || \
     defined(COMPILER_SUPPORT_AVX2) || \
-    defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
+    defined(COMPILER_SUPPORT_SSE_4_2)) \
+    && (USE_HOST_CPU_EXTENSIONS == 1) && ((CONFIG_FAST_MEMMOVE == 1))
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
@@ -176,19 +179,20 @@ void _memmove(void* dest,void* src, uint64_t size) {
     }
 #endif
 #endif
-base_ver: */
+base_ver: 
     memmove_fscpuf(dest,src,size);
 }
 
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
-/* #if defined(__x86_64__)
+#if defined(__x86_64__)
 #if (defined(COMPILER_SUPPORT_AVX512) || \
     defined(COMPILER_SUPPORT_AVX2) || \
-    defined(COMPILER_SUPPORT_SSE_4_2)) && (USE_HOST_CPU_EXTENSIONS == 1)
+    defined(COMPILER_SUPPORT_SSE_4_2)) \
+    && (USE_HOST_CPU_EXTENSIONS == 1) && ((CONFIG_FAST_MEMCMP == 1))
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
-    if(size >= 1024 && cpu->SupportSSE4_2){
+    if(size >= 4096 && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
@@ -199,7 +203,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
     }
 #endif
 #endif
-base_ver: */
+base_ver: 
     return memcmp_fscpuf(buffer1,buffer2,size);
 }
 }
