@@ -50,7 +50,7 @@ uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     //return count;
 }
 
-int64_t sys_lseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
+int64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2){
     fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
     if (!fd)

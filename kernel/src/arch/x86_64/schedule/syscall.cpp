@@ -52,10 +52,10 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
     // 2. Get function pointer from syscall_lists
     auto func = syscall_lists[frame->rax];
 
-    kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);
+    //kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);
     frame->rax = func(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
 
-    kinfoln("Syscall returned %ld", frame->rax);
+    //kinfoln("Syscall returned %ld", frame->rax);
 }
 
 #include <klib/algorithm/queue.h>
@@ -76,6 +76,7 @@ void syscall_init() {
     syscall_lists[20] = sys_getrandom;
     syscall_lists[23] = sys_fork;
     syscall_lists[24] = sys_dbgsout;
+    syscall_lists[25] = sys_dev_getinfo;
     
 
     uint64_t efer = rdmsr(IA32_EFER);

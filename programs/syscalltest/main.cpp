@@ -17,9 +17,10 @@ typedef struct FrameBuffer
 
 int main(){
     const char *msg = "Hello, World!";
+    FrameBuffer fb;
+    syscall(24, (long)msg, 13, 0, 0, 0, 0);
+    syscall(25, 6, (long)&fb, sizeof(Framebuffer), 0, 0, 0); // Get device info
     
-    while (true){
-        syscall(24, (long)msg, 13, 0, 0, 0, 0);
-    }
+    while (true);
     return 0;
 }
