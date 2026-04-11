@@ -50,7 +50,7 @@ typedef struct FS_TYPE_{
     uint8_t ErrorCode;
 }FS_TYPE;
 
-FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID);
+/* FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID);
 
 bool FSAllIdentify();
-void FSPrintDesc();
+void FSPrintDesc(); */

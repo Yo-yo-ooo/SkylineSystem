@@ -84,7 +84,7 @@ DRESULT disk_read (
 	UINT count		/* Number of sectors to read */
 )
 {
-	DRESULT res;
+	/* DRESULT res;
 	int32_t result;
 
     if(pdrv > Dev::vsdev_list_idx)
@@ -94,7 +94,7 @@ DRESULT disk_read (
     if(Dev::Read(sector, count, buff) == Dev::RW_OK)
         return RES_OK;
     else
-        return RES_ERROR;
+        return RES_ERROR; */
 }
 
 
@@ -115,14 +115,14 @@ DRESULT disk_write (
 	DRESULT res;
 	int32_t result;
 
-    if(pdrv > Dev::vsdev_list_idx)
+    /* if(pdrv > Dev::vsdev_list_idx)
         return RES_ERROR;
 
 	Dev::SetSDev(pdrv);
     if(Dev::Write(sector, count, buff) == Dev::RW_OK)
         return RES_OK;
     else
-        return RES_ERROR;
+        return RES_ERROR; */
 }
 
 #endif

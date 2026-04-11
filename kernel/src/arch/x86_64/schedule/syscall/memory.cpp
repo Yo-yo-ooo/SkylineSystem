@@ -52,7 +52,7 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t prot, uint64_t flags, u
     VMM::NewMapping(pagemap, Address, pages, flags_vm);
     spinlock_unlock(&pagemap->vma_lock);
     if(flags & MAP_SHARED){
-        ReadFile(process->fd_table[fd],Address,length);
+        //ReadFile(process->fd_table[fd],Address,length);
     }
     return Address;
 }

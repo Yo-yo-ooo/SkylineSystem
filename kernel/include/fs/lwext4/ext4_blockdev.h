@@ -43,6 +43,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <drivers/dev/dev.h>
 
 struct ext4_blockdev_iface {
 	/**@brief   Open device function
@@ -98,6 +99,8 @@ struct ext4_blockdev_iface {
 
 	/**@brief   User data pointer*/
 	void* p_user;
+
+
 };
 
 /**@brief   Definition of the simple block device.*/
@@ -134,6 +137,11 @@ struct ext4_blockdev {
     spinlock_t lock;
 
 	void *journal;
+
+    /**@brief   Driver Type */
+    VsDevType DriverType;
+    /**@brief   Driver INDEX */
+    uint32_t DriverIDX;
 };
 
 /**@brief   Static initialization of the block device.*/

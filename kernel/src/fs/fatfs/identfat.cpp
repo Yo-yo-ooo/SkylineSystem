@@ -70,6 +70,7 @@ static uint64_t _InFile_clst2sect (	/* !=0:Sector number, 0:Failed (invalid clus
 	return fs_database + (uint64_t)fs_csize * clst;	/* Start sector number of the cluster */
 }
 
+#ifdef UnC
 FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image){
     uint64_t nclst;
     uint64_t PStart;
@@ -129,3 +130,4 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image){
         return {FST,0};
     }
 }
+#endif

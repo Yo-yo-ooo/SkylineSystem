@@ -27,6 +27,7 @@
 #include <stddef.h>
 #include <pdef.h>
 #include <conf.h>
+#include <drivers/dev/dev.h>
 
 namespace PartitionManager
 {
@@ -35,7 +36,7 @@ namespace PartitionManager
     extern uint64_t CurPartitionStart;
     extern uint64_t CurPartitionEnd;
 
-    void SetCurPartition(uint32_t driverID,uint8_t partitionID);
+    void SetCurPartition(VsDevType DriverType,uint32_t DriverID, uint8_t partitionID);
 
     //These function must do SetCurPartition First!
     uint8_t Read(uint64_t lba, uint32_t SectorCount, void* Buffer);

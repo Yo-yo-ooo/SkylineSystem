@@ -22,6 +22,62 @@
 #ifdef __x86_64__
 #include <drivers/dev/dev.h>
 
+struct DevManKey {
+    VsDevType type;
+    uint32_t index;
+};
+
+typedef struct DevManEntry {
+    DevManKey key;
+    VDL *dev;
+} DevManEntry;
+
+struct DevStrSearch{
+    char *name;
+    VDL *dev;
+};
+
+// --- 全局状态 ---
+static spinlock_t dev_manager_lock = 0;
+
+// --- Hashmap 辅助函数 ---
+int devm_compare(const void* a, const void *b, void *udata) {
+    const DevManEntry* ea = (const DevManEntry*)a;
+    const DevManEntry* eb = (const DevManEntry*)b;
+    if(ea->key.type != eb->key.type) return ea->key.type < eb->key.type ? -1 : 1;
+    if(ea->key.index != eb->key.index) return ea->key.index < eb->key.index ? -1 : 1;
+    return 0;
+}
+bool devm_iter() { return true; }
+uint64_t devm_hash(const void* item, uint64_t seed0, uint64_t seed1) {
+    const DevManEntry* entry = (const DevManEntry*)item;
+    return hashmap_sip(&entry->key, sizeof(DevManKey), seed0, seed1);
+}
+//Device type and it's index manager
+
+int devtim_compare(const void *a,const void*b,void* udata){
+    const DevManKey* ea = (const DevManKey*)a;
+    const DevManKey* eb = (const DevManKey*)b;
+    return ea->index < eb->index ? -1 : (ea->index > eb->index ? 1 : 0);
+}
+uint64_t devtim_hash(const void* item, uint64_t seed0, uint64_t seed1){
+    const DevManKey* entry = (const DevManKey*)item;
+    return hashmap_sip(&entry->type, sizeof(DevManKey), seed0, seed1);
+}
+
+int devstrs_compare(const void* a,const void* b,void* udata){
+    const DevStrSearch* ea = (const DevStrSearch*)a;
+    const DevStrSearch* eb = (const DevStrSearch*)b;
+    return strcmp(ea->name, eb->name);
+}
+
+uint64_t devstrs_hash(const void* item, uint64_t seed0, uint64_t seed1){
+    const DevStrSearch* entry = (const DevStrSearch*)item;
+    return hashmap_sip(entry->name, strlen(entry->name), seed0, seed1);
+}
+
+static volatile hashmap* TIMap = nullptr;
+static volatile hashmap* StrMap = nullptr;
 
 namespace Dev{
     VDL DevList_[MAX_VSDEV_COUNT] = {0};
@@ -29,117 +85,131 @@ namespace Dev{
     uint32_t vsdev_list_idx = 0;
     uint32_t vsdev_ops_idx = 0;
     
-
-    u32 ThisDev = 0;
+    volatile struct hashmap* DevMan_Map = nullptr;
+    VDL ThisDev = {0};
+    uint32_t ThisDevType = Undefined;
+    uint32_t ThisDevIDX = 0;
+    //DevManEntry* ThisEntry = nullptr;
 
     void Init(){
         vsdev_list_idx = 0;
-        ThisDev = 0;
-        
-        //_memset(&ThisDev,0,sizeof(VsDevInfo));
+        DevMan_Map = hashmap_new(sizeof(DevManEntry), 64, 
+            0, 0, devm_hash, devm_compare, nullptr, nullptr);
+        TIMap = hashmap_new(sizeof(DevManKey), 128,
+            0, 0, devtim_hash, devtim_compare, nullptr, nullptr);
+        StrMap = hashmap_new(sizeof(DevStrSearch), 128,
+            0, 0, devstrs_hash, devstrs_compare, nullptr, nullptr);
     }
 
     char* TypeToString(VsDevType type){
         switch(type){
-            case SATA:
-                return "sata";
-            case IDE:
-                return "ide";
-            case NVME:
-                return "nvme";
-            case SAS:
-                return "sas";
-            case Undefined:
-                return "UNDEF";
+            case SATA:return "sata";
+            case IDE:return "ide";
+            case NVME:return "nvme";
+            case SAS:return "sas";
+            case Undefined:return "UNDEF";
         }
     }
 
 
-    void AddStorageDevice(VsDevType type, DevOPS ops,u32 SectorCount = 0,void* Class = nullptr)
-    {
-        spinlock_lock(&DevList_->lock);
-        DevList_[vsdev_list_idx].Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)vsdev_list_idx)) + 1);
+    void AddStorageDevice(VsDevType type, DevOPS ops,u32 SectorCount = 0,void* Class = nullptr){
+        VDL *DeviceInfo = kmalloc(sizeof(VDL));
+        if(type > MAX_TYPE_C)
+            return;
+
+        DeviceInfo->Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)vsdev_list_idx)) + 1);
         char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)vsdev_list_idx));
-        DevList_[vsdev_list_idx].Name = temp_str;
-        DevList_[vsdev_list_idx].type = type;
+        DeviceInfo->Name = temp_str;
+        DeviceInfo->type = type;
         
         if(Class != nullptr){
-            DevList_[vsdev_list_idx].classp = Class;
-
-            /* DevList_[vsdev_list_idx].ops.GetMaxSectorCount = ops.GetMaxSectorCount;
-            DevList_[vsdev_list_idx].ops.Read = ops.Read;
-            DevList_[vsdev_list_idx].ops.Write = ops.Write;
-            DevList_[vsdev_list_idx].ops.ReadBytes = ops.ReadBytes;
-            DevList_[vsdev_list_idx].ops.WriteBytes = ops.WriteBytes;  */
+            DeviceInfo->classp = Class;
         }else{
-            DevList_[vsdev_list_idx].classp = nullptr;
-
-            /* DevList_[vsdev_list_idx].ops.GetMaxSectorCount_ = ops.GetMaxSectorCount_;
-            DevList_[vsdev_list_idx].ops.Read_ = ops.Read_;
-            DevList_[vsdev_list_idx].ops.Write_ = ops.Write_;
-            DevList_[vsdev_list_idx].ops.ReadBytes_ = ops.ReadBytes_;
-            DevList_[vsdev_list_idx].ops.WriteBytes_ = ops.WriteBytes_;  */
+            DeviceInfo->classp = nullptr;
         }
-        __memcpy(&DevList_[vsdev_list_idx].ops,&ops,sizeof(DevOPS));
-        
-        DevList_[vsdev_list_idx].MaxSectorCount = SectorCount;
-        vsdev_list_idx++;
+        __memcpy(&DeviceInfo->ops,&ops,sizeof(DevOPS));
+        spinlock_lock(&dev_manager_lock);
+        DevManKey *p = hashmap_get(TIMap, &(DevManKey){.type = type});
+        uint32_t TypeIndex = p ? p->index : 0;
+        DeviceInfo->idx = TypeIndex;
+
+        DeviceInfo->MaxSectorCount = SectorCount;
+        hashmap_set(StrMap, &(DevStrSearch){.name = DeviceInfo->Name, .dev = DeviceInfo});
+        hashmap_set(TIMap, &(DevManKey){.type = type, .index = TypeIndex++});
+        hashmap_set(DevMan_Map, &(DevManEntry){.key = {.type = type, .index = TypeIndex}, .dev = DeviceInfo});
         kfree(temp_str);
         debugpln("[AddStorageDevice]END");
         
-        spinlock_unlock(&DevList_->lock);
+        spinlock_unlock(&dev_manager_lock);
     }
 
 
 
-    u32 GetSDEVTCount(VsDevType type){
-        u32 c;
-        for(u32 i = 0; i < vsdev_list_idx; i++){
-            if(DevList_[i].type == type){
-                return c++;
-            }
-        }
-        return c;
+    void SetSDev(VsDevType type, u32 idx){
+        ThisDevType = type;
+        ThisDevIDX = idx;
+        DevManKey key = {.type = type, .index = idx};
+        spinlock_lock(&dev_manager_lock);
+        DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &key);
+        spinlock_unlock(&dev_manager_lock);
+        ThisDev = *ThisEntry->dev;
     }
 
-    void SetSDev(u32 idx){ThisDev = idx;}
-
-    VsDevInfo GetSDEV(u32 idx){
+    VDL GetSDEV(u32 idx){
         if(DevList_[idx].type != VsDevType::NSDEV || 
             DevList_[idx].type != VsDevType::Undefined)
             return DevList_[idx];
     }
 
+    VDL GetSDEV(const char *Name){
+        spinlock_lock(&dev_manager_lock);
+        DevStrSearch* search = (DevStrSearch*)hashmap_get(StrMap, &(DevStrSearch){.name = Name});
+        spinlock_unlock(&dev_manager_lock);
+        if(search)
+            return *search->dev;
+        return (VDL){0};
+    }
+
+    VDL GetSDEV(VsDevType Type, uint32_t idx){
+        DevManKey key = {.type = Type, .index = idx};
+        spinlock_lock(&dev_manager_lock);
+        DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &key);
+        spinlock_unlock(&dev_manager_lock);
+        if(ThisEntry)
+            return *ThisEntry->dev;
+        return (VDL){0};
+    }
+
 
     u8 Read(uint64_t lba, uint32_t SectorCount, void* Buffer){
-        if(DevList_[ThisDev].type != VsDevType::Undefined)
-            return DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,lba, SectorCount, Buffer);
+        if(ThisDev.type != VsDevType::Undefined)
+            return ThisDev.ops.Read(ThisDev.classp,lba, SectorCount, Buffer);
         else
             return false;
     }
 
     u8 Write(uint64_t lba, uint32_t SectorCount, void* Buffer){
-        if(DevList_[ThisDev].type != VsDevType::Undefined)
-            return DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,lba, SectorCount, Buffer);
+        if(ThisDev.type != VsDevType::Undefined)
+            return ThisDev.ops.Write(ThisDev.classp,lba, SectorCount, Buffer);
         else
             return false;
     }
 
     u8 ReadBytes(uint64_t address, uint32_t Count, void* Buffer){
-        if(DevList_[ThisDev].type != VsDevType::Undefined){
-            if(DevList_[ThisDev].ops.ReadBytes != nullptr)
-                return DevList_[ThisDev].ops.ReadBytes(DevList_[ThisDev].classp,address, Count, Buffer);
+        if(ThisDev.type != VsDevType::Undefined){
+            if(ThisDev.ops.ReadBytes != nullptr)
+                return ThisDev.ops.ReadBytes(ThisDev.classp,address, Count, Buffer);
             else {
                 if (Count == 0)
                     return true;
-                if (address + Count > DevList_[ThisDev].MaxSectorCount * 512)
+                if (address + Count > ThisDev.MaxSectorCount * 512)
                     return false;
                 
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));
                 uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);//"Malloc for Read Buffer"
                 _memset(buffer2, 0, tempSectorCount * 512);
 
-                if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,(address / 512), tempSectorCount, buffer2))
+                if (!ThisDev.ops.Read(ThisDev.classp,(address / 512), tempSectorCount, buffer2))
                 {
                     uint16_t offset = address % 512;
                     for (uint64_t i = 0; i < Count; i++)
@@ -164,13 +234,13 @@ namespace Dev{
     }
 
     u8 WriteBytes(uint64_t address, uint32_t Count, void* Buffer){
-        if(DevList_[ThisDev].type != VsDevType::Undefined){
-            if(DevList_[ThisDev].ops.WriteBytes != nullptr)
-                return DevList_[ThisDev].ops.WriteBytes(DevList_[ThisDev].classp,address, Count, Buffer);
+        if(ThisDev.type != VsDevType::Undefined){
+            if(ThisDev.ops.WriteBytes != nullptr)
+                return ThisDev.ops.WriteBytes(ThisDev.classp,address, Count, Buffer);
             else{
                 if (Count == 0)
                     return true;
-                if (address + Count > DevList_[ThisDev].MaxSectorCount * 512)
+                if (address + Count > ThisDev.MaxSectorCount * 512)
                     return false;
                 
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));
@@ -179,7 +249,7 @@ namespace Dev{
                 if (tempSectorCount == 1)
                 {
                     _memset(buffer2, 0, 512);
-                    if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
+                    if (!ThisDev.ops.Read(ThisDev.classp,(address / 512), 1, buffer2))
                     {
                         kfree(buffer2);
                         
@@ -190,7 +260,7 @@ namespace Dev{
                     for (uint64_t i = 0; i < Count; i++)
                         buffer2[i + offset] = ((uint8_t*)Buffer)[i];
 
-                    if (!DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
+                    if (!ThisDev.ops.Write(ThisDev.classp,(address / 512), 1, buffer2))
                     {
                         kfree(buffer2);
                         
@@ -206,7 +276,7 @@ namespace Dev{
                     {
 
                         _memset(buffer2, 0, 512);
-                        if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
+                        if (!ThisDev.ops.Read(ThisDev.classp,(address / 512), 1, buffer2))
                         {
                             kfree(buffer2);
                             
@@ -222,7 +292,7 @@ namespace Dev{
                         for (uint64_t i = 0; i < specialCount; i++)
                             buffer2[i + offset] = ((uint8_t*)Buffer)[i];
 
-                        if (!DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,(address / 512), 1, buffer2))
+                        if (!ThisDev.ops.Write(ThisDev.classp,(address / 512), 1, buffer2))
                         {
                             kfree(buffer2);
                             
@@ -231,7 +301,7 @@ namespace Dev{
                     }
                     {
                         _memset(buffer2, 0, 512);
-                        if (!DevList_[ThisDev].ops.Read(DevList_[ThisDev].classp,((address + Count) / 512), 1, buffer2))
+                        if (!ThisDev.ops.Read(ThisDev.classp,((address + Count) / 512), 1, buffer2))
                         {
                             kfree(buffer2);
                             
@@ -246,7 +316,7 @@ namespace Dev{
                         for (int64_t i = 0; i < specialCount; i++)
                             buffer2[i] = ((uint8_t*)Buffer)[i + blehus];
 
-                        if (!DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,((address + Count) / 512), 1, buffer2))
+                        if (!ThisDev.ops.Write(ThisDev.classp,((address + Count) / 512), 1, buffer2))
                         {
                             kfree(buffer2);
                             
@@ -259,7 +329,7 @@ namespace Dev{
                         {
                             uint64_t newSectorStartId = newAddr / 512;
 
-                            if (!DevList_[ThisDev].ops.Write(DevList_[ThisDev].classp,newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset)))
+                            if (!ThisDev.ops.Write(ThisDev.classp,newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset)))
                             {
                                 kfree(buffer2);
                                 

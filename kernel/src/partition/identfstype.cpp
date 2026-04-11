@@ -28,7 +28,7 @@
 #include <fs/lwext4/ext4.h>
 
 #include <conf.h>
-
+/* 
 FS_TYPE_ID IdentifyFSType(uint32_t DriverID,uint32_t PartitionID){
     
 
@@ -70,17 +70,6 @@ bool FSAllIdentify(){
 
             for(uint8_t j = 0;j < GetPartitionCount(i);j++){
                 uint8_t type = IdentifyFSType(i,j);
-                /*
-                if(type == PARTITION_TYPE_EXFAT || type == PARTITION_TYPE_FAT12 ||
-                    type == PARTITION_TYPE_FAT16 || type == PARTITION_TYPE_FAT32){
-                    
-                    //Not Complete
-                    if(ff_count >= 10)
-                        continue;
-                    else
-                        ff_count++;
-                }
-                        */
                 fs_desc[ff_count].FSType = type;
                 fs_desc[ff_count].DriverID = i;
                 fs_desc[ff_count].PartitionID = j;
@@ -101,10 +90,10 @@ bool FSAllIdentify(){
     }
 #endif
     return true;
-}
+} */
 
 
-void FSPrintDesc(){
+/* void FSPrintDesc(){
     //uint8_t ff_count;
 
     for(uint32_t i = 0;i < ff_count;i++){
@@ -120,6 +109,6 @@ void FSPrintDesc(){
     }
     return true;
 }
-
+ */
 
 //shutdown func:kfree(fs_desc);

@@ -23,13 +23,13 @@
 #include <drivers/dev/dev.h>
 #include <mem/heap.h>
 
-uint8_t IdentifyMBR(uint32_t DriverID){
+uint8_t IdentifyMBR(VsDevType DriverType,uint32_t DriverID){
     if(DriverID > Dev::vsdev_list_idx)
         return 1; //DriverID ERR
     
-    DevList ThisInfo = Dev::DevList_[DriverID];
+    DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
-    Dev::SetSDev(DriverID);
+    Dev::SetSDev(DriverType, DriverID);
     if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == Dev::RW_ERROR)
         return 2;
     if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
@@ -40,10 +40,10 @@ uint8_t IdentifyMBR(uint32_t DriverID){
     return 4;
 }
 
-uint8_t GetPartitionSize(uint32_t DriverID, uint32_t PartitionID, uint64_t &PartitionSize) {
+uint8_t GetPartitionSize(VsDevType DriverType, uint32_t DriverID, uint32_t PartitionID, uint64_t &PartitionSize) {
     if (DriverID > Dev::vsdev_list_idx) return 1;
 
-    Dev::SetSDev(DriverID);
+    Dev::SetSDev(DriverType, DriverID);
     MBR_DPT dpt;
     
     // 读取 MBR 的第一个分区表项来检查是否为 GPT 保护分区
@@ -77,14 +77,14 @@ uint8_t GetPartitionSize(uint32_t DriverID, uint32_t PartitionID, uint64_t &Part
 }
 
 
-uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart){
+uint8_t GetPartitionStart(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart){
     if(DriverID > Dev::vsdev_list_idx)
         return 1; //DriverID ERR
     
-    DevList ThisInfo = Dev::DevList_[DriverID];
+    DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
     uint32_t buffer;
-    Dev::SetSDev(DriverID);
+    Dev::SetSDev(DriverType, DriverID);
     if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
         return 2;
         //80
@@ -118,14 +118,14 @@ uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t Partit
     return 0;
 }
 
-uint8_t GetPartitionEnd(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionEnd){
+uint8_t GetPartitionEnd(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionEnd){
     if(DriverID > Dev::vsdev_list_idx)
         return 1; //DriverID ERR
     
-    DevList ThisInfo = Dev::DevList_[DriverID];
+    DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
     uint32_t buffer;
-    Dev::SetSDev(DriverID);
+    Dev::SetSDev(DriverType, DriverID);
     if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
         return 2;
         //80
@@ -164,14 +164,14 @@ uint8_t GetPartitionEnd(uint32_t DriverID,uint32_t PartitionID,uint64_t Partitio
     return 0;
 }
 
-uint8_t GetPartitionCount(uint32_t DriverID){
+uint8_t GetPartitionCount(VsDevType DriverType, uint32_t DriverID){
     if(DriverID > Dev::vsdev_list_idx)
         return 1; //DriverID ERR
     
-    DevList ThisInfo = Dev::DevList_[DriverID];
+    DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
     uint32_t buffer;
-    Dev::SetSDev(DriverID);
+    Dev::SetSDev(DriverType, DriverID);
     if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
         return 2;
     

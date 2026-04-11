@@ -3495,7 +3495,7 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
     r = ext4_fclose(&f);
     return true;
 }
-
+#ifdef UnC
 FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image){
     uint64_t PStart;
     if(Use_Virt_Image == true){
@@ -3533,7 +3533,7 @@ Identify:
         }
     }
 }
-
+#endif
 void ext4_fs_test_all(){
 
     if(!ext4_kernel_init("sata0","/mp/")){hcf();}
@@ -3544,10 +3544,10 @@ void ext4_fs_test_all(){
     if(test_lwext4_file_test(buf,strlen(buf),2) == true)
         kprintf("[Ext4 Test?]YESSSSSSSSSSSSSSSSS\n");
 
-    if(FSAllIdentify() == false)
-        kerror("False!");
-    kinfoln("I");
-    FSPrintDesc(); 
+    //if(FSAllIdentify() == false)
+    //    kerror("False!");
+    //kinfoln("I");
+    ///FSPrintDesc(); 
 
 }
 

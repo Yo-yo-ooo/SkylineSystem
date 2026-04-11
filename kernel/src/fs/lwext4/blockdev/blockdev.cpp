@@ -74,7 +74,7 @@ from the VsDev "namespace".
 
 /**********************BLOCKDEV INTERFACE**************************************/
 
-VsDevInfo ThisInfo;
+static VDL ThisInfo = {0};
 
 /******************************************************************************/
 
@@ -82,7 +82,7 @@ VsDevInfo ThisInfo;
 static int32_t blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
-    ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
+    ThisInfo = Dev::GetSDEV((VsDevType)bdev->DriverType,(uint32_t)bdev->DriverIDX);
     bdev->part_offset = 0;
     bdev->bdif->ph_bsize = 512;
     bdev->part_size = ThisInfo.ops.GetMaxSectorCount(ThisInfo.classp) * 512;
@@ -99,10 +99,11 @@ static int32_t blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t bl
     //debugpln("blockdev_bread: HIT!");
     //ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
     //debugpln("blk_id: %d,blk_cnt: %d",blk_id,blk_cnt);
+    //Dev::SetSDev(bdev->DriverType,bdev->DriverIDX);
 #ifdef USE_VIRT_IMAGE
-    PartitionManager::SetCurPartition(bdev->block_reg_idx,0);
+    PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,0);
 #else
-    PartitionManager::SetCurPartition(bdev->block_reg_idx,bdev->wpart);
+    PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
 #endif
     if(PartitionManager::Read(blk_id,blk_cnt, buf) == Dev::RW_OK){
         return EOK;
@@ -120,10 +121,11 @@ static int32_t blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 {
 	/*blockdev_bwrite: skeleton*/
     //ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
+    //Dev::SetSDev(bdev->DriverType,bdev->DriverIDX);
 #ifdef USE_VIRT_IMAGE
-    PartitionManager::SetCurPartition(bdev->block_reg_idx,0);
+    PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,0);
 #else
-    PartitionManager::SetCurPartition(bdev->block_reg_idx,bdev->wpart);
+    PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
 #endif
     if(PartitionManager::Write(blk_id, blk_cnt, buf) == Dev::RW_OK)
         return EOK;
@@ -141,13 +143,7 @@ static int32_t blockdev_close(struct ext4_blockdev *bdev)
 static int32_t blockdev_lock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_lock: skeleton*/
-    while (__sync_lock_test_and_set(&bdev->lock, 1)){
-#if defined(__x86_64__)
-        __asm__ volatile("pause");
-#else
-        ;
-#endif
-    }
+    spinlock_lock(&bdev->lock);
 	return EOK;
 }
 
@@ -155,7 +151,7 @@ static int32_t blockdev_unlock(struct ext4_blockdev *bdev)
 {
 	/*blockdev_unlock: skeleton*/
     
-    __sync_lock_release(&bdev->lock);
+    spinlock_unlock(&bdev->lock);
 
 	return EOK;
 }
@@ -174,16 +170,10 @@ static struct ext4_blockdev blockdev = {
     .bdif = &blockdev_iface, 
     .part_offset = 0, .part_size = (0) * (512), };
 /******************************************************************************/
-struct ext4_blockdev *ext4_blockdev_get(u32 which,u8 wpart)
-{
-    ThisInfo = Dev::GetSDEV(which);
-    blockdev.block_reg_idx = which;
-    blockdev.wpart = wpart;
-	return &blockdev;
-}
 
-struct ext4_blockdev *ext4_blockdev_get(const char* mname,u8 wpart)
-{
+
+struct ext4_blockdev *ext4_blockdev_get(const char* mname,uint32_t wpart)
+{/* 
     for(uint32_t i = 0;i < Dev::vsdev_list_idx;i++){
         if(strcmp(Dev::DevList_[i].Name,mname) == 0){
             ThisInfo = Dev::DevList_[i];
@@ -191,7 +181,12 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname,u8 wpart)
             blockdev.wpart = wpart;
             break;
         }
-    }
+    } */
+    ThisInfo = Dev::GetSDEV(mname);
+    blockdev.DriverIDX = ThisInfo.idx;
+    blockdev.DriverType = ThisInfo.type;
+    blockdev.wpart = wpart;
+
 	return &blockdev;
 }
 /******************************************************************************/

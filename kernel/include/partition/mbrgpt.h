@@ -76,8 +76,10 @@ PACK(typedef struct gpt_pte{
 
 #define GPT_PARTITION_TABLE_OFFSET 1024
 
-uint8_t IdentifyMBR(uint32_t DriverID);
-uint8_t GetPartitionStart(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart);
-uint8_t GetPartitionSize(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionSize);
-uint8_t GetPartitionEnd(uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionEnd);
-uint8_t GetPartitionCount(uint32_t DriverID);
+#include <drivers/dev/dev.h>
+
+uint8_t IdentifyMBR(VsDevType DriverType,uint32_t DriverID);
+uint8_t GetPartitionStart(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart);
+uint8_t GetPartitionSize(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionSize);
+uint8_t GetPartitionEnd(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionEnd);
+uint8_t GetPartitionCount(VsDevType DriverType,uint32_t DriverID);

@@ -27,6 +27,7 @@
 #include <klib/klib.h>
 #include <klib/algorithm/stl/map.h>
 #include <klib/algorithm/stl/vector.h>
+#include <klib/algorithm/hmap.h>
 #include <stdint.h>
 #include <conf.h>
 
@@ -40,6 +41,8 @@ typedef enum VsDevType
     NSDEV, //Not Storage Device
     FrameBuffer,
 }VsDevType;
+
+#define MAX_TYPE_C 6
 
 typedef struct DevOPS{ //存储器抽象层
     //Storage Device Must impl this!
@@ -62,8 +65,9 @@ typedef struct DevOPS{ //存储器抽象层
 }DevOPS;
 
 typedef struct DevList{
-    spinlock_t lock;
+    //spinlock_t lock;
     VsDevType type;
+    uint32_t idx;
     DevOPS ops;
     char* Name;
     uint64_t MaxSectorCount;    //按照SectorSize计
@@ -77,6 +81,7 @@ typedef struct DevList VsDevInfo;
 
 
 namespace Dev{
+    extern volatile struct hashmap* DevMan_Map;
 
     extern VDL DevList_[MAX_VSDEV_COUNT];
     extern uint32_t vsdev_list_idx;
@@ -84,15 +89,21 @@ namespace Dev{
     constexpr uint8_t RW_OK = 1;
     constexpr uint8_t RW_ERROR = 0;
 
+    extern uint32_t ThisDevType;
+    extern uint32_t ThisDevIDX;
+    extern VDL ThisDev;
+
     void Init();
 
     char* TypeToString(VsDevType type);
     void AddStorageDevice(VsDevType type,DevOPS ops,
         uint32_t SectorCount = 0,void* Class = nullptr);
     /*获取存储器的相关信息*/
-    VsDevInfo GetSDEV(uint32_t idx);
+    VDL GetSDEV(uint32_t idx);
+    VDL GetSDEV(const char *Name);
+    VDL (VsDevType Type, uint32_t idx);
 
-    void SetSDev(uint32_t idx);
+    void SetSDev(VsDevType type, u32 idx);
 
     uint8_t Read(uint64_t lba, uint32_t SectorCount, void* Buffer);
     uint8_t Write(uint64_t lba, uint32_t SectorCount, void* Buffer);
