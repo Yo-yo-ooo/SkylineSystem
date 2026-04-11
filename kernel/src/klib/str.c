@@ -119,10 +119,77 @@ char *strncpy(char *dest, const char *src, size_t n) {
     return tmp;
 }
 
-size_t strlen(const char* str) {
-   const char* eos = str;
-   while(*eos++);
-   return (eos - str - 1);
+//From Arty3
+#if defined(__GNUC__) || defined (__clang__)
+typedef unsigned long int __attribute__ ((__may_alias__)) word_t;
+typedef unsigned long int __attribute__ ((__may_alias__)) bytemask_t;
+#else
+typedef unsigned long int word_t;
+typedef unsigned long int bytemask_t;
+#endif
+
+size_t	strlen(const char *__restrict__  s)
+{
+#if defined(__GNUC__) || defined (__clang__)
+	register const uintptr_t	s0 = (uintptr_t)s;
+	register const word_t		*w = (const word_t *)(((uintptr_t)s) & \
+									-((uintptr_t)(sizeof(word_t))));
+
+	register word_t	wi = *w;
+
+	register word_t	m = ((word_t)-1 / 0xff) * 0x7f;
+
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+	bytemask_t	register mask = ~(((wi & m) + m) | wi | m) >> (/* CHAR_BIT */ 8 * (s0 % sizeof (word_t)));
+#else
+	bytemask_t	register mask = ~(((wi & m) + m) | wi | m) << (/* CHAR_BIT */ 8 * (s0 % sizeof (word_t)));
+#endif
+
+	if (mask)
+	{
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+# if __SIZEOF_POINTER__ == 8
+		return (__builtin_ctzl(mask) / /* CHAR_BIT */ 8);
+# else
+		return (__builtin_ctzll(mask) / /* CHAR_BIT */ 8);
+# endif
+#else
+# if __SIZEOF_POINTER__ == 8
+		return (__builtin_clzl(mask) / /* CHAR_BIT */ 8);
+# else
+		return (__builtin_clzll(mask) / /* CHAR_BIT */ 8);
+# endif
+#endif
+	}
+
+	do
+	{
+		wi = *++w;
+	} while (((wi - (((word_t)-1 / 0xff) * 0x01)) & ~wi & (((word_t)-1 / 0xff) * 0x80)) == 0);
+
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+	wi = (wi - ((word_t)-1 / 0xff) * 0x01) & ~wi & ((word_t)-1 / 0xff) * 0x80;
+#else
+	word_t rb = ((word_t)-1 / 0xff) * 0x7f;
+	wi = ~(((wi & rb) + rb) | wi | rb);
+#endif
+
+#if __BYTE_ORDER == __LITTLE_ENDIAN
+# if __SIZEOF_POINTER__ == 8
+		wi = (__builtin_ctzl(wi) / /* CHAR_BIT */ 8);
+# else
+		wi = (__builtin_ctzll(wi) / /* CHAR_BIT */ 8);
+# endif
+#else
+# if __SIZEOF_POINTER__ == 8
+		wi = (__builtin_clzl(wi) / /* CHAR_BIT */ 8);
+# else
+		wi = (__builtin_clzll(wi) / /* CHAR_BIT */ 8);
+# endif
+#endif
+
+	return ((const char *)w) + wi - s;
+#endif
 }
 
 int32_t atoi(char *str) {

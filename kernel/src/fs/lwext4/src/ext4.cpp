@@ -128,11 +128,29 @@ struct ext4_block_devices *s_bdevices;
 uint32_t registed_mountpoints;
 struct ext4_mountpoint *s_mp;
 
+#include <klib/algorithm/hmap.h>
+
+struct __hmap_s_mp{
+    char *MPName;
+    struct ext4_mountpoint *MP;
+};
+
+static int __hmap_s_mp_compare(const void* a,const void* b){
+    return strcmp(((struct __hmap_s_mp*)a)->MPName,((struct __hmap_s_mp*)b)->MPName);
+}
+
+static uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t seed1){
+    const struct __hmap_s_mp* entry = (const struct __hmap_s_mp*)item;
+    return hashmap_sip(&entry->MPName, strlen(entry->MPName), seed0, seed1);
+}
+
+static volatile struct hashmap* HMapS_MP = nullptr;
+
 int32_t ext4_device_register(struct ext4_blockdev *bd,
 			 const char *dev_name)
 {
 	ext4_assert(bd && dev_name);
-
+/* 
 	if (strlen(dev_name) > CONFIG_EXT4_MAX_BLOCKDEV_NAME)
 		return EINVAL;
 
@@ -161,15 +179,18 @@ int32_t ext4_device_register(struct ext4_blockdev *bd,
             registed_blockdevs++;
 			return EOK;
 		}
-	}
+	} */
 
-	return ENOSPC;
+
+    return EOK;
+	//return ENOSPC;
+    
 }
 
 int32_t ext4_device_unregister(const char *dev_name)
 {
 	ext4_assert(dev_name);
-
+/* 
 	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
 		if (strcmp(s_bdevices[i].name, dev_name))
 			continue;
@@ -177,15 +198,16 @@ int32_t ext4_device_unregister(const char *dev_name)
 		_memset(&s_bdevices[i], 0, sizeof(s_bdevices[i]));
 		return EOK;
 	}
-
-	return ENOENT;
+ */
+    return EOK;
+	//return ENOENT;
 }
 
 int32_t ext4_device_unregister_all(void)
-{
+{/* 
 	_memset(s_bdevices, 0, sizeof(s_bdevices));
     kfree(s_bdevices);
-
+ */
 	return EOK;
 }
 
@@ -410,14 +432,16 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
 	if (mount_point[mp_len - 1] != '/')
 		return ENOTSUP; // return 95;
 
-	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
+	/* for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
 		if (!strcmp(dev_name, s_bdevices[i].name)) {
             //kinfo("DEV NAME: %s\n", dev_name);
             //kinfo("s_bdevices[i].name: %s\n", s_bdevices[i].name);
 			bd = s_bdevices[i].bd;
 			break;
 		}
-	}
+	} */
+    bd = ext4_blockdev_get(dev_name, 0);
+    //bd = hashmap_get(HMap, dev_name);
 
     debugpln("HIT!(0)");
 	if (!bd){
@@ -425,7 +449,7 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
         return ENODEV;
     }
 
-	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
+	/* for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 		if (!s_mp[i].mounted) {
 			strcpy(s_mp[i].name, mount_point);
 			mp = &s_mp[i];
@@ -436,7 +460,10 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
 			registed_mountpoints++;
             return EOK;
         }
-	}
+	} */
+    struct __hmap_s_mp *hsmp = 
+            hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    mp = hsmp ? hsmp->MP : nullptr;
 
 	if (!mp)
 		return ENOMEM;
@@ -492,12 +519,15 @@ int32_t ext4_umount(const char *mount_point)
 	int32_t r;
 	struct ext4_mountpoint *mp = 0;
 
-	for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
+	/* for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 		if (!strcmp(s_mp[i].name, mount_point)) {
 			mp = &s_mp[i];
 			break;
 		}
-	}
+	} */
+    struct __hmap_s_mp *hsmp = 
+            hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    mp = hsmp ? hsmp->MP : nullptr;
 
 	if (!mp)
 		return ENODEV;
@@ -518,7 +548,7 @@ Finish:
 }
 
 static struct ext4_mountpoint *ext4_get_mount(const char *path)
-{
+{/* 
 	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 
 		if (!s_mp[i].mounted)
@@ -526,7 +556,11 @@ static struct ext4_mountpoint *ext4_get_mount(const char *path)
 
 		if (!strncmp(s_mp[i].name, path, strlen(s_mp[i].name)))
 			return &s_mp[i];
-	}
+	} */
+    struct __hmap_s_mp *hsmp = 
+        hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    ext4_mountpoint* mp = hsmp ? hsmp->MP : nullptr;
+    return mp;
 
 	return NULL;
 }
@@ -785,12 +819,17 @@ int32_t ext4_mount_setup_locks(const char *mount_point,
 	uint32_t i;
 	struct ext4_mountpoint *mp = 0;
 
-	for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
+	/* for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
 		if (!strcmp(s_mp[i].name, mount_point)) {
 			mp = &s_mp[i];
 			break;
 		}
-	}
+	} */
+
+    struct __hmap_s_mp *hsmp = 
+        hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    mp = hsmp ? hsmp->MP : nullptr;
+    
 	if (!mp)
 		return ENOENT;
 
@@ -3310,6 +3349,10 @@ Ext4_Kernel_INIT
 */
 
 bool ext4_kernel_init(const char* devname,const char* mpname){
+
+    HMapS_MP = hashmap_new(sizeof(struct __hmap_s_mp), 16,0,0,
+        __hmap_s_mp_hash, __hmap_s_mp_compare, nullptr, nullptr);
+
     uint32_t r = ext4_device_register(ext4_blockdev_get(devname,0), devname);
 	if (r != EOK) {
 		kerror("ext4_device_register: rc = %d\n", r);
