@@ -95,39 +95,22 @@ extern "C" void *__memcpy(void * d, const void * s, uint64_t n) {
     return d;
 }
 
+// 设置某一位为 1
 void bitmap_set(u8* bitmap, u64 bit) {
-#if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
-    bitmap[bit / 8] |= 1 << (bit % 8);
-#elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    bitmap[bit / 8] = __builtin_bswap64(bitmap[bit/8]);
-    bitmap[bit / 8] |= 1 << (bit % 8);
-    bitmap[bit / 8] = __builtin_bswap64(bitmap[bit/8]);
-#else
-#error "Unknown endianness"
-#endif
+    // bit >> 3 等价于 bit / 8
+    // bit & 7 等价于 bit % 8
+    bitmap[bit >> 3] |= (1U << (bit & 7));
 }
 
+// 清除某一位（设为 0）
 void bitmap_clear(u8* bitmap, u64 bit) {
-#if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
-    bitmap[bit / 8] &= ~(1 << (bit % 8));
-#elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    bitmap[bit / 8] = __builtin_bswap64(bitmap[bit / 8] & (~(1 << (bit % 8))));
-#else
-#error "Unknown endianness"
-#endif
+    bitmap[bit >> 3] &= ~(1U << (bit & 7));
 }
 
-
+// 获取某一位的值
 bool bitmap_get(u8* bitmap, u64 bit) {
-#if __BYTE_ORDER__==__ORDER_LITTLE_ENDIAN__
-    return (bitmap[bit / 8] & (1 << (bit % 8))) != 0;
-#elif __BYTE_ORDER__==__ORDER_BIG_ENDIAN__
-    return (bitmap[bit / 8] & (1 >> (bit % 8))) != 0;
-#else
-#error "Unknown endianness"
-#endif
+    return (bitmap[bit >> 3] & (1U << (bit & 7))) != 0;
 }
-
 
 uint16_t kld_16 (const uint8_t* ptr)	/*	 Load a 2-byte little-endian word */
 {
