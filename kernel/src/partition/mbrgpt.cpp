@@ -24,8 +24,8 @@
 #include <mem/heap.h>
 
 uint8_t IdentifyMBR(VsDevType DriverType,uint32_t DriverID){
-    if(DriverID > Dev::vsdev_list_idx)
-        return 1; //DriverID ERR
+    //if(DriverID > Dev::vsdev_list_idx)
+    //    return 1; //DriverID ERR
     
     DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
@@ -41,7 +41,7 @@ uint8_t IdentifyMBR(VsDevType DriverType,uint32_t DriverID){
 }
 
 uint8_t GetPartitionSize(VsDevType DriverType, uint32_t DriverID, uint32_t PartitionID, uint64_t &PartitionSize) {
-    if (DriverID > Dev::vsdev_list_idx) return 1;
+    //if (DriverID > Dev::vsdev_list_idx) return 1;
 
     Dev::SetSDev(DriverType, DriverID);
     MBR_DPT dpt;
@@ -78,8 +78,8 @@ uint8_t GetPartitionSize(VsDevType DriverType, uint32_t DriverID, uint32_t Parti
 
 
 uint8_t GetPartitionStart(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart){
-    if(DriverID > Dev::vsdev_list_idx)
-        return 1; //DriverID ERR
+    //if(DriverID > Dev::vsdev_list_idx)
+    //    return 1; //DriverID ERR
     
     DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
@@ -119,8 +119,8 @@ uint8_t GetPartitionStart(VsDevType DriverType,uint32_t DriverID,uint32_t Partit
 }
 
 uint8_t GetPartitionEnd(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionEnd){
-    if(DriverID > Dev::vsdev_list_idx)
-        return 1; //DriverID ERR
+    //if(DriverID > Dev::vsdev_list_idx)
+    //    return 1; //DriverID ERR
     
     DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
@@ -165,8 +165,8 @@ uint8_t GetPartitionEnd(VsDevType DriverType,uint32_t DriverID,uint32_t Partitio
 }
 
 uint8_t GetPartitionCount(VsDevType DriverType, uint32_t DriverID){
-    if(DriverID > Dev::vsdev_list_idx)
-        return 1; //DriverID ERR
+    //if(DriverID > Dev::vsdev_list_idx)
+    //    return 1; //DriverID ERR
     
     DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 

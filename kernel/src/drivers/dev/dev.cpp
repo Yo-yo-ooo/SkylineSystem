@@ -21,7 +21,7 @@
 */
 #ifdef __x86_64__
 #include <drivers/dev/dev.h>
-
+#include <klib/algorithm/hmap.h>
 struct DevManKey {
     VsDevType type;
     uint32_t index;
@@ -44,11 +44,11 @@ static spinlock_t dev_manager_lock = 0;
 int devm_compare(const void* a, const void *b, void *udata) {
     const DevManEntry* ea = (const DevManEntry*)a;
     const DevManEntry* eb = (const DevManEntry*)b;
-    if(ea->key.type != eb->key.type) return ea->key.type < eb->key.type ? -1 : 1;
+    /* if(ea->key.type != eb->key.type) return ea->key.type < eb->key.type ? -1 : 1;
     if(ea->key.index != eb->key.index) return ea->key.index < eb->key.index ? -1 : 1;
-    return 0;
+    return 0; */
+    return _memcmp(&ea->key, &eb->key, sizeof(DevManKey));
 }
-bool devm_iter() { return true; }
 uint64_t devm_hash(const void* item, uint64_t seed0, uint64_t seed1) {
     const DevManEntry* entry = (const DevManEntry*)item;
     return hashmap_sip(&entry->key, sizeof(DevManKey), seed0, seed1);
@@ -78,47 +78,25 @@ uint64_t devstrs_hash(const void* item, uint64_t seed0, uint64_t seed1){
 
 static volatile hashmap* TIMap = nullptr;
 static volatile hashmap* StrMap = nullptr;
-
+static volatile hashmap* DevMan_Map = nullptr;
 namespace Dev{
-    VDL DevList_[MAX_VSDEV_COUNT] = {0};
-    DevOPS DevOperations[MAX_VSDEV_COUNT] = {0};
-    uint32_t vsdev_list_idx = 0;
-    uint32_t vsdev_ops_idx = 0;
-    
-    volatile struct hashmap* DevMan_Map = nullptr;
     VDL ThisDev = {0};
     uint32_t ThisDevType = Undefined;
     uint32_t ThisDevIDX = 0;
     //DevManEntry* ThisEntry = nullptr;
 
-    void Init(){
-        vsdev_list_idx = 0;
-        DevMan_Map = hashmap_new(sizeof(DevManEntry), 64, 
-            0, 0, devm_hash, devm_compare, nullptr, nullptr);
-        TIMap = hashmap_new(sizeof(DevManKey), 128,
-            0, 0, devtim_hash, devtim_compare, nullptr, nullptr);
-        StrMap = hashmap_new(sizeof(DevStrSearch), 128,
-            0, 0, devstrs_hash, devstrs_compare, nullptr, nullptr);
-    }
-
-    char* TypeToString(VsDevType type){
-        switch(type){
-            case SATA:return "sata";
-            case IDE:return "ide";
-            case NVME:return "nvme";
-            case SAS:return "sas";
-            case Undefined:return "UNDEF";
-        }
-    }
-
-
-    void AddStorageDevice(VsDevType type, DevOPS ops,u32 SectorCount = 0,void* Class = nullptr){
+    void AddStorageDevice(VsDevType type, DevOPS ops,uint32_t SectorCount = 0,void* Class = nullptr){
+        spinlock_lock(&dev_manager_lock);
+        DevManKey *p = hashmap_get(TIMap, &(DevManKey){.type = type});
+        uint32_t TypeIndex = p ? p->index : 0;
+        
+        spinlock_unlock(&dev_manager_lock);
         VDL *DeviceInfo = kmalloc(sizeof(VDL));
         if(type > MAX_TYPE_C)
             return;
-
-        DeviceInfo->Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)vsdev_list_idx)) + 1);
-        char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)vsdev_list_idx));
+        DeviceInfo->idx = TypeIndex;
+        DeviceInfo->Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)TypeIndex)) + 1);
+        char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)TypeIndex));
         DeviceInfo->Name = temp_str;
         DeviceInfo->type = type;
         
@@ -128,19 +106,15 @@ namespace Dev{
             DeviceInfo->classp = nullptr;
         }
         __memcpy(&DeviceInfo->ops,&ops,sizeof(DevOPS));
+        
         spinlock_lock(&dev_manager_lock);
-        DevManKey *p = hashmap_get(TIMap, &(DevManKey){.type = type});
-        uint32_t TypeIndex = p ? p->index : 0;
-        DeviceInfo->idx = TypeIndex;
-
         DeviceInfo->MaxSectorCount = SectorCount;
         hashmap_set(StrMap, &(DevStrSearch){.name = DeviceInfo->Name, .dev = DeviceInfo});
         hashmap_set(TIMap, &(DevManKey){.type = type, .index = TypeIndex++});
         hashmap_set(DevMan_Map, &(DevManEntry){.key = {.type = type, .index = TypeIndex}, .dev = DeviceInfo});
+        spinlock_unlock(&dev_manager_lock);
         kfree(temp_str);
         debugpln("[AddStorageDevice]END");
-        
-        spinlock_unlock(&dev_manager_lock);
     }
 
 
@@ -155,11 +129,6 @@ namespace Dev{
         ThisDev = *ThisEntry->dev;
     }
 
-    VDL GetSDEV(u32 idx){
-        if(DevList_[idx].type != VsDevType::NSDEV || 
-            DevList_[idx].type != VsDevType::Undefined)
-            return DevList_[idx];
-    }
 
     VDL GetSDEV(const char *Name){
         spinlock_lock(&dev_manager_lock);
@@ -350,6 +319,20 @@ namespace Dev{
         }
     }
 
+    const char* TypeToString(VsDevType type){
+        switch(type){
+            case SATA:return "sata";
+            case IDE:return "ide";
+            case NVME:return "nvme";
+            case SAS:return "sas";
+            case Undefined:return "UNDEF";
+        }
+    }
 
+    void Init(){
+        DevMan_Map = hashmap_new(sizeof(DevManEntry), 64, 0, 0, devm_hash, devm_compare, nullptr, nullptr);
+        TIMap = hashmap_new(sizeof(DevManKey), 128,0, 0, devtim_hash, devtim_compare, nullptr, nullptr);
+        StrMap = hashmap_new(sizeof(DevStrSearch), 128,0, 0, devstrs_hash, devstrs_compare, nullptr, nullptr);
+    }
 }
 #endif

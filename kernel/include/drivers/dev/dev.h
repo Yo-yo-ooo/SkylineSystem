@@ -25,9 +25,7 @@
 #define _DEV_H
 
 #include <klib/klib.h>
-#include <klib/algorithm/stl/map.h>
-#include <klib/algorithm/stl/vector.h>
-#include <klib/algorithm/hmap.h>
+
 #include <stdint.h>
 #include <conf.h>
 
@@ -81,10 +79,9 @@ typedef struct DevList VsDevInfo;
 
 
 namespace Dev{
-    extern volatile struct hashmap* DevMan_Map;
 
-    extern VDL DevList_[MAX_VSDEV_COUNT];
-    extern uint32_t vsdev_list_idx;
+    /* extern VDL DevList_[MAX_VSDEV_COUNT];
+    extern uint32_t vsdev_list_idx; */
 
     constexpr uint8_t RW_OK = 1;
     constexpr uint8_t RW_ERROR = 0;
@@ -95,13 +92,11 @@ namespace Dev{
 
     void Init();
 
-    char* TypeToString(VsDevType type);
-    void AddStorageDevice(VsDevType type,DevOPS ops,
-        uint32_t SectorCount = 0,void* Class = nullptr);
+    const char* TypeToString(VsDevType type);
+    void AddStorageDevice(VsDevType type,DevOPS ops,uint32_t SectorCount = 0,void* Class = nullptr);
     /*获取存储器的相关信息*/
-    VDL GetSDEV(uint32_t idx);
     VDL GetSDEV(const char *Name);
-    VDL (VsDevType Type, uint32_t idx);
+    VDL GetSDEV(VsDevType Type, uint32_t idx);
 
     void SetSDev(VsDevType type, u32 idx);
 

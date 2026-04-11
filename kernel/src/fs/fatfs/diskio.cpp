@@ -138,12 +138,12 @@ DRESULT disk_ioctl (
 	void *buff		/* Buffer to send/receive control data */
 )
 {
-	DRESULT res;
+	/* DRESULT res;
 	int32_t result;
 
 	if(pdrv > Dev::vsdev_list_idx)
         return RES_ERROR;
 
-	return RES_OK;
+	return RES_OK; */
 }
 
