@@ -592,27 +592,44 @@ Finish:
 }
 
 static char* GetMountPointName(const char* path) {
-    if (!path || *path != '/') return nullptr;
-
-    const char* start = path + 1; // 跳过第一个 '/'
-    if (*start == '\0' || *start == '/') return nullptr;
-
-    // 寻找第二个 '/'
-    const char* end = strchr(start, '/');
-
-    size_t len;
-    if (end) {
-        len = end - start; // 两个 '/' 之间的长度
-    } else {
-        len = strlen(start); // 路径只有一级，如 "/mp"
+    // 1. 基本合法性检查
+    if (!path || path[0] != '/') {
+        return nullptr;
     }
 
-    // 分配内存
-    char* mp_name = (char*)kmalloc(len + 1);
-    if (!mp_name) return nullptr;
+    // 2. 处理开头可能存在的多个斜杠 (如 "///mp/...")
+    const char* first_valid_char = path;
+    while (*first_valid_char == '/') {
+        first_valid_char++;
+    }
 
-    // 拷贝内容
-    __memcpy(mp_name, start, len);
+    // 如果路径只有斜杠 (如 "/")，无法满足 "/mp/" 格式
+    if (*first_valid_char == '\0') {
+        return nullptr;
+    }
+
+    // 3. 寻找第二个斜杠的位置
+    const char* second_slash = strchr(first_valid_char, '/');
+    
+    // 如果没找到第二个斜杠 (如 "/mp")，不符合你的返回 "/mp/" 的要求
+    if (!second_slash) {
+        return nullptr;
+    }
+
+    // 4. 计算长度：从 path 开始到 second_slash 结束
+    // 示例: path -> "/mp/test"
+    // second_slash 指向 'p' 后的 '/'
+    // 长度 = (second_slash地址 - path地址) + 1 (为了包含末尾那个'/')
+    size_t len = (size_t)(second_slash - path) + 1;
+
+    // 5. 分配内核内存
+    char* mp_name = (char*)kmalloc(len + 1);
+    if (!mp_name) {
+        return nullptr; 
+    }
+
+    // 6. 拷贝并闭合字符串
+    __memcpy(mp_name, path, len);
     mp_name[len] = '\0';
 
     return mp_name;
