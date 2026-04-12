@@ -32,10 +32,16 @@ char* StrCombine(const char* a, const char* b)
     char* tempStr = (char*) kmalloc(totalLen + 1);
     tempStr[totalLen] = 0;
 
-    for (int32_t i = 0; i < lenA; i++)
+    /* for (int32_t i = 0; i < lenA; i++)
         tempStr[i] = a[i];
     for (int32_t i = 0; i < lenB; i++)
-        tempStr[i + lenA] = b[i];
+        tempStr[i + lenA] = b[i]; */
+    if (lenA > 0) {
+        __memcpy(tempStr, a, lenA);
+    }
+    if (lenB > 0) {
+        __memcpy(tempStr + lenA, b, lenB);
+    }
 
     return tempStr;
 }

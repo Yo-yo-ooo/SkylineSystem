@@ -84,6 +84,7 @@ static int32_t blockdev_open(struct ext4_blockdev *bdev)
 	/*blockdev_open: skeleton*/
     debugpln("blockdev_open: HIT!");
     VDL* ThisInfo = Dev::GetSDEV((VsDevType)bdev->DriverType,(uint32_t)bdev->DriverIDX);
+    debugpln("ThisInfo: %p",ThisInfo);
     bdev->part_offset = 0;
     bdev->bdif->ph_bsize = 512;
     bdev->part_size = ThisInfo->ops.GetMaxSectorCount(ThisInfo->classp) * 512;

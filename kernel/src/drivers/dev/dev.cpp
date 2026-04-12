@@ -86,18 +86,19 @@ namespace Dev{
     //DevManEntry* ThisEntry = nullptr;
 
     void AddStorageDevice(VsDevType type, DevOPS ops,uint32_t SectorCount = 0,void* Class = nullptr){
-        spinlock_lock(&dev_manager_lock);
-        DevManKey *p = hashmap_get(TIMap, &(DevManKey){.type = type});
-        uint32_t TypeIndex = p ? p->index : 0;
-        
-        spinlock_unlock(&dev_manager_lock);
         VDL *DeviceInfo = kmalloc(sizeof(VDL));
         if(type > MAX_TYPE_C)
             return;
+        spinlock_lock(&dev_manager_lock);
+        DevManKey *p = hashmap_get(TIMap, &(DevManKey){.type = type});
+        uint32_t TypeIndex = p ? p->index : 0;
+        hashmap_set(TIMap, &(DevManKey){.type = type, .index = TypeIndex + 1});
+        spinlock_unlock(&dev_manager_lock);
+        
         DeviceInfo->idx = TypeIndex;
-        DeviceInfo->Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)TypeIndex)) + 1);
-        char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)TypeIndex));
-        DeviceInfo->Name = temp_str;
+        //DeviceInfo->Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)TypeIndex)) + 1);
+        //char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)TypeIndex));
+        DeviceInfo->Name = StrCombine(TypeToString(type),to_string((uint64_t)TypeIndex));
         DeviceInfo->type = type;
         
         if(Class != nullptr){
@@ -110,10 +111,11 @@ namespace Dev{
         spinlock_lock(&dev_manager_lock);
         DeviceInfo->MaxSectorCount = SectorCount;
         hashmap_set(StrMap, &(DevStrSearch){.name = DeviceInfo->Name, .dev = DeviceInfo});
-        hashmap_set(TIMap, &(DevManKey){.type = type, .index = TypeIndex++});
+        //TypeIndex++;
+        //hashmap_set(TIMap, &(DevManKey){.type = type, .index = TypeIndex});
         hashmap_set(DevMan_Map, &(DevManEntry){.key = {.type = type, .index = TypeIndex}, .dev = DeviceInfo});
         spinlock_unlock(&dev_manager_lock);
-        kfree(temp_str);
+        //kfree(temp_str);
         debugpln("[AddStorageDevice]END");
     }
 
@@ -142,7 +144,7 @@ namespace Dev{
     VDL* GetSDEV(VsDevType Type, uint32_t idx){
         DevManKey key = {.type = Type, .index = idx};
         spinlock_lock(&dev_manager_lock);
-        DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &key);
+        DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &(DevManEntry){.key = key});
         spinlock_unlock(&dev_manager_lock);
         if(ThisEntry)
             return ThisEntry->dev;
