@@ -140,7 +140,7 @@ int32_t ext4_device_unregister_all(void);
  * @param   read_only mount as read-only mode.
  *
  * @return Standard error code */
-int32_t ext4_mount(const char *dev_name,
+int32_t ext4_mount(struct ext4_blockdev *bd,
 	       const char *mount_point,
 	       bool read_only);
 

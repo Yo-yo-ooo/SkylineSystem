@@ -92,7 +92,7 @@ struct ext4_mountpoint {
 	bool mounted;
 
 	/**@brief   Mount point name (@ref ext4_mount)*/
-	char name[CONFIG_EXT4_MAX_MP_NAME + 1];
+	char *name;
 
 	/**@brief   OS dependent lock/unlock functions.*/
 	const struct ext4_lock *os_locks;
@@ -431,20 +431,20 @@ char* _strdup(const char* s) {
     }
 
     // 4. 拷贝内容（包含 \0）
-    _memcpy(new_str, s, len + 1);
+    __memcpy(new_str, s, len + 1);
 
     return new_str;
 }
-int32_t ext4_mount(const char *dev_name, const char *mount_point,
+int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 	       bool read_only)
 {
 	int32_t r;
 	uint32_t bsize;
 	struct ext4_bcache *bc = nullptr;
-	struct ext4_blockdev *bd = nullptr;
+	//struct ext4_blockdev *bd = nullptr;
 	struct ext4_mountpoint *mp = nullptr;
 
-	ext4_assert(mount_point && dev_name);
+	ext4_assert(mount_point && bd);
 
 	//size_t mp_len = strlen(mount_point);
 
@@ -462,7 +462,7 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
 			break;
 		}
 	} */
-    bd = ext4_blockdev_get(dev_name, 0);
+    //bd = ext4_blockdev_get(dev_name, 0);
     //bd = hashmap_get(HMap, dev_name);
 
     debugpln("HIT!(0)");
@@ -492,21 +492,22 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
     struct __hmap_s_mp *hsmp = (struct __hmap_s_mp *)hashmap_get(HMapS_MP, 
                                 &(struct __hmap_s_mp){.MPName = (char*)mount_point});
 
-    // 2. 如果不存在，则初始化并存入
     if (!hsmp) {
-        struct __hmap_s_mp new_entry;
-        _memset(&new_entry, 0, sizeof(new_entry));
-        new_entry.MPName = _strdup(mount_point);
-        
-        // 存入哈希表（哈希表内部会 memcpy 整个 new_entry）
-        hashmap_set(HMapS_MP, &new_entry);
+        // 2. 必须为 entry 分配持久内存，或者确保 hashmap 内部执行了拷贝
+        struct __hmap_s_mp *new_entry = (struct __hmap_s_mp *)kmalloc(sizeof(struct __hmap_s_mp));
+        _memset(new_entry, 0, sizeof(struct __hmap_s_mp));
 
-        // 重新获取，确保我们拿到的指针是指向哈希表内部空间的
-        hsmp = (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &new_entry);
+        new_entry->MPName = _strdup(mount_point);
+        
+        // 假设你的 hashmap 存储的是指针
+        hashmap_set(HMapS_MP, new_entry);
+        hsmp = new_entry;
     }
 
-    if (!hsmp) return ENOMEM;
-    mp = &hsmp->MP; // 此时 mp 指向哈希表管理的堆内存，安全稳定
+    // 3. 修正 mp 赋值
+    mp = &hsmp->MP; 
+    // 不要重复 kmalloc，strdup 内部已经做了一次 kmalloc！
+    mp->name = _strdup(mount_point);
 
 	if (!mp)
 		return ENOMEM;
@@ -3424,12 +3425,13 @@ bool ext4_kernel_init(const char* devname,const char* mpname){
     HMapS_MP = hashmap_new(sizeof(struct __hmap_s_mp), 16,0,0,
         __hmap_s_mp_hash, __hmap_s_mp_compare, nullptr, nullptr);
 
-    uint32_t r = ext4_device_register(ext4_blockdev_get(devname,0), devname);
+    struct ext4_blockdev *p = ext4_blockdev_get(devname,0);
+    /* uint32_t r = ext4_device_register(p, devname);
 	if (r != EOK) {
 		kerror("ext4_device_register: rc = %d\n", r);
-	}
+	} */
 
-	r = ext4_mount(devname, mpname, false);
+	uint32_t r = ext4_mount(p, mpname, false);
 	if (r != EOK){kerror("ext4_mount: rc = %d\n", r);hcf();}
     kpok("EXT4 MOUNTED!\n");
     
