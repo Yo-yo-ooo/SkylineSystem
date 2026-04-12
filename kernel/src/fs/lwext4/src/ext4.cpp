@@ -507,7 +507,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
     // 3. 修正 mp 赋值
     mp = &hsmp->MP; 
     // 不要重复 kmalloc，strdup 内部已经做了一次 kmalloc！
-    mp->name = _strdup(mount_point);
+    mp->name = hsmp->MPName;
 
 	if (!mp)
 		return ENOMEM;

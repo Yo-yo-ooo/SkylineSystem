@@ -118,7 +118,7 @@ int32_t ext4_block_init(struct ext4_blockdev *bdev)
 		bdev->bdif->ph_refctr++;
 		return EOK;
 	}
-
+    kinfoln("%p",bdev->bdif->open);
 	/*Low level block init*/
 	rc = bdev->bdif->open(bdev);
 	if (rc != EOK)
