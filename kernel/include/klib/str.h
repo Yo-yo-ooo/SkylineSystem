@@ -9,7 +9,7 @@ extern "C"{
 
 uint8_t strcmp(const char *cs, const char *ct);
 char *strtok(char *str, const char *delim);
-char* strchr(char* str, int32_t c);
+char* strchr(const char* str, int32_t c);
 char *strcpy(char *strDest, const char *strSrc);
 int32_t strncmp(const char* a, const char* b, size_t n);
 char *strncpy(char *dest, const char *src, size_t n);

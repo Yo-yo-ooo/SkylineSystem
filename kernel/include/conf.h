@@ -62,7 +62,7 @@ COMMON: 0:FALSE
 #define VFS_MAX_NAME_LEN    36
 #define VFS_BLOCK_SIZE      512
 
-//#define _SYS_DEBUG_OUT
+#define _SYS_DEBUG_OUT
 
 #define CONFIG_USE_DESKTOP_SUBSYS
 #define MAX_CPU 128

@@ -86,7 +86,7 @@ int32_t sprintf_(char* buffer, const char* format, ...);
 
 
 #ifdef _SYS_DEBUG_OUT
-int32_t debugpln(const char* format, ...);
+#define debugpln(...) printf_("[\033[38;2;255;0;255mDEBUG\033[0m] " __VA_ARGS__);printf_("\n")
 #else 
 #define debugpln
 #endif

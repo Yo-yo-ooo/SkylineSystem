@@ -132,7 +132,7 @@ struct ext4_mountpoint *s_mp;
 
 struct __hmap_s_mp{
     char *MPName;
-    struct ext4_mountpoint *MP;
+    struct ext4_mountpoint MP;
 };
 
 static int __hmap_s_mp_compare(const void* a,const void* b){
@@ -180,6 +180,8 @@ int32_t ext4_device_register(struct ext4_blockdev *bd,
 			return EOK;
 		}
 	} */
+
+    //ext4_blockdev_get(dev_name, bd);
 
 
     return EOK;
@@ -424,13 +426,13 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
 
 	ext4_assert(mount_point && dev_name);
 
-	size_t mp_len = strlen(mount_point);
+	//size_t mp_len = strlen(mount_point);
 
-	if (mp_len > CONFIG_EXT4_MAX_MP_NAME)
-		return EINVAL;
+	//if (mp_len > CONFIG_EXT4_MAX_MP_NAME)
+	//	return EINVAL;
 
-	if (mount_point[mp_len - 1] != '/')
-		return ENOTSUP; // return 95;
+	//if (mount_point[mp_len - 1] != '/')
+	//	return ENOTSUP; // return 95;
 
 	/* for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
 		if (!strcmp(dev_name, s_bdevices[i].name)) {
@@ -461,9 +463,11 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
             return EOK;
         }
 	} */
+   
+    hashmap_set(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point,.MP = (struct ext4_mountpoint){0}});
     struct __hmap_s_mp *hsmp = 
-            hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? hsmp->MP : nullptr;
+        hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    mp = hsmp ? &hsmp->MP : nullptr;
 
 	if (!mp)
 		return ENOMEM;
@@ -527,7 +531,7 @@ int32_t ext4_umount(const char *mount_point)
 	} */
     struct __hmap_s_mp *hsmp = 
             hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? hsmp->MP : nullptr;
+    mp = hsmp ? &hsmp->MP : nullptr;
 
 	if (!mp)
 		return ENODEV;
@@ -547,6 +551,33 @@ Finish:
 	return r;
 }
 
+static char* GetMountPointName(const char* path) {
+    if (!path || *path != '/') return nullptr;
+
+    const char* start = path + 1; // 跳过第一个 '/'
+    if (*start == '\0' || *start == '/') return nullptr;
+
+    // 寻找第二个 '/'
+    const char* end = strchr(start, '/');
+
+    size_t len;
+    if (end) {
+        len = end - start; // 两个 '/' 之间的长度
+    } else {
+        len = strlen(start); // 路径只有一级，如 "/mp"
+    }
+
+    // 分配内存
+    char* mp_name = (char*)kmalloc(len + 1);
+    if (!mp_name) return nullptr;
+
+    // 拷贝内容
+    __memcpy(mp_name, start, len);
+    mp_name[len] = '\0';
+
+    return mp_name;
+}
+
 static struct ext4_mountpoint *ext4_get_mount(const char *path)
 {/* 
 	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
@@ -557,9 +588,10 @@ static struct ext4_mountpoint *ext4_get_mount(const char *path)
 		if (!strncmp(s_mp[i].name, path, strlen(s_mp[i].name)))
 			return &s_mp[i];
 	} */
+
     struct __hmap_s_mp *hsmp = 
-        hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    ext4_mountpoint* mp = hsmp ? hsmp->MP : nullptr;
+        hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
+    ext4_mountpoint* mp = hsmp ? &hsmp->MP : nullptr;
     return mp;
 
 	return NULL;
@@ -828,7 +860,7 @@ int32_t ext4_mount_setup_locks(const char *mount_point,
 
     struct __hmap_s_mp *hsmp = 
         hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? hsmp->MP : nullptr;
+    mp = hsmp ? &hsmp->MP : nullptr;
     
 	if (!mp)
 		return ENOENT;
