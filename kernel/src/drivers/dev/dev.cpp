@@ -130,23 +130,23 @@ namespace Dev{
     }
 
 
-    VDL GetSDEV(const char *Name){
+    VDL* GetSDEV(const char *Name){
         spinlock_lock(&dev_manager_lock);
         DevStrSearch* search = (DevStrSearch*)hashmap_get(StrMap, &(DevStrSearch){.name = Name});
         spinlock_unlock(&dev_manager_lock);
         if(search)
-            return *search->dev;
-        return (VDL){0};
+            return search->dev;
+        return nullptr;
     }
 
-    VDL GetSDEV(VsDevType Type, uint32_t idx){
+    VDL* GetSDEV(VsDevType Type, uint32_t idx){
         DevManKey key = {.type = Type, .index = idx};
         spinlock_lock(&dev_manager_lock);
         DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &key);
         spinlock_unlock(&dev_manager_lock);
         if(ThisEntry)
-            return *ThisEntry->dev;
-        return (VDL){0};
+            return ThisEntry->dev;
+        return nullptr;
     }
 
 

@@ -113,6 +113,8 @@ int32_t ext4_block_init(struct ext4_blockdev *bdev)
 		   bdev->bdif->close &&
 		   bdev->bdif->bread &&
 		   bdev->bdif->bwrite);
+    kinfo("OFFSET bdif: %d\n", offsetof(struct ext4_blockdev, bdif));
+    kinfo("OFFSET DriverType: %d\n", offsetof(struct ext4_blockdev, DriverType));
 
 	if (bdev->bdif->ph_refctr) {
 		bdev->bdif->ph_refctr++;

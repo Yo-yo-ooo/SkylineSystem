@@ -27,7 +27,7 @@ uint8_t IdentifyMBR(VsDevType DriverType,uint32_t DriverID){
     //if(DriverID > Dev::vsdev_list_idx)
     //    return 1; //DriverID ERR
     
-    DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
+    //DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
     Dev::SetSDev(DriverType, DriverID);
     if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == Dev::RW_ERROR)
@@ -81,7 +81,7 @@ uint8_t GetPartitionStart(VsDevType DriverType,uint32_t DriverID,uint32_t Partit
     //if(DriverID > Dev::vsdev_list_idx)
     //    return 1; //DriverID ERR
     
-    DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
+    //DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
     uint32_t buffer;
     Dev::SetSDev(DriverType, DriverID);
@@ -122,7 +122,7 @@ uint8_t GetPartitionEnd(VsDevType DriverType,uint32_t DriverID,uint32_t Partitio
     //if(DriverID > Dev::vsdev_list_idx)
     //    return 1; //DriverID ERR
     
-    DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
+    //DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
     uint32_t buffer;
     Dev::SetSDev(DriverType, DriverID);
@@ -168,7 +168,7 @@ uint8_t GetPartitionCount(VsDevType DriverType, uint32_t DriverID){
     //if(DriverID > Dev::vsdev_list_idx)
     //    return 1; //DriverID ERR
     
-    DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
+    //DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
     MBR_DPT dpt; 
     uint32_t buffer;
     Dev::SetSDev(DriverType, DriverID);

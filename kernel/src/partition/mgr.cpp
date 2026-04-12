@@ -31,7 +31,7 @@ namespace PartitionManager
     uint8_t CurPartition = 0;
     uint64_t CurPartitionStart = 0;
     uint64_t CurPartitionEnd = 0;
-    VDL CurDevice;
+    VDL* CurDevice;
 
     void SetCurPartition(VsDevType DriverType,uint32_t DriverID, uint8_t partitionID){
         CurDriverType = DriverType;
@@ -54,8 +54,8 @@ namespace PartitionManager
     uint8_t Read(uint64_t lba, uint32_t SectorCount, void* Buffer){
         
 #ifdef USE_VIRT_IMAGE
-        return CurDevice.ops.Read(
-                CurDevice.classp,
+        return CurDevice->ops.Read(
+                CurDevice->classp,
                 lba,SectorCount,Buffer
         );
 #else
@@ -65,8 +65,8 @@ namespace PartitionManager
             kerrorln("Address > CurPartitionEnd");
             return false;
         }else{
-            if(CurDevice.ops.Read(
-                CurDevice.classp,
+            if(CurDevice->ops.Read(
+                CurDevice->classp,
                 (PartitionManager::CurPartitionStart) / 512 + lba,Count,Buffer
             ) != Dev::RW_OK)
                 return true;
@@ -77,8 +77,8 @@ namespace PartitionManager
     uint8_t Write(uint64_t lba, uint32_t SectorCount, void* Buffer){
         
 #ifdef USE_VIRT_IMAGE
-        return CurDevice.ops.Write(
-                CurDevice.classp,
+        return CurDevice->ops.Write(
+                CurDevice->classp,
                 lba,SectorCount,Buffer
         );
 #else
@@ -88,8 +88,8 @@ namespace PartitionManager
             kerrorln("Address > CurPartitionEnd");
             return false;
         }else{
-            return CurDevice.ops.Write(
-                CurDevice.classp,
+            return CurDevice->ops.Write(
+                CurDevice->classp,
                 (PartitionManager::CurPartitionStart) / 512 + lba,Count,Buffer
             );
         }
@@ -99,8 +99,8 @@ namespace PartitionManager
     uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer){
         
 #ifdef USE_VIRT_IMAGE
-        return CurDevice.ops.ReadBytes(
-                CurDevice.classp,
+        return CurDevice->ops.ReadBytes(
+                CurDevice->classp,
                 address,Count,Buffer);
         
 #else
@@ -108,8 +108,8 @@ namespace PartitionManager
             kerrorln("Address > CurPartitionEnd");
             return false;
         }else{
-            if(CurDevice.ops.ReadBytes(
-                CurDevice.classp,
+            if(CurDevice->ops.ReadBytes(
+                CurDevice->classp,
                 PartitionManager::CurPartitionStart + address,Count,Buffer
             ) != Dev::RW_OK)
                 return true;
@@ -120,8 +120,8 @@ namespace PartitionManager
     uint8_t WriteBytes(uint64_t address, uint32_t Count, void* Buffer){
         
 #ifdef USE_VIRT_IMAGE
-        return CurDevice.ops.WriteBytes(
-                CurDevice.classp,
+        return CurDevice->ops.WriteBytes(
+                CurDevice->classp,
                 address,Count,Buffer
         );
 #else
@@ -129,8 +129,8 @@ namespace PartitionManager
             kerrorln("Address > CurPartitionEnd");
             return false;
         }else{
-            if(CurDevice.ops.WriteBytes(
-                CurDevice.classp,
+            if(CurDevice->ops.WriteBytes(
+                CurDevice->classp,
                 PartitionManager::CurPartitionStart + address,Count,Buffer
             ) != Dev::RW_OK)
                 return true;
@@ -142,7 +142,7 @@ namespace PartitionManager
     uint64_t GetMaxSectorCount(){
         
 #ifdef USE_VIRT_IMAGE
-        return CurDevice.ops.GetMaxSectorCount(CurDevice.classp);
+        return CurDevice->ops.GetMaxSectorCount(CurDevice->classp);
 #else
         return GetPartitionSize(CurDriver,CurPartition) / 512 + 1;
 #endif

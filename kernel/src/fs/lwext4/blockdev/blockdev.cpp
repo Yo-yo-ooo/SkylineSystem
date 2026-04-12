@@ -74,7 +74,7 @@ from the VsDev "namespace".
 
 /**********************BLOCKDEV INTERFACE**************************************/
 
-static VDL ThisInfo = {0};
+//static VDL ThisInfo = {0};
 
 /******************************************************************************/
 
@@ -82,10 +82,10 @@ static VDL ThisInfo = {0};
 static int32_t blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
-    ThisInfo = Dev::GetSDEV((VsDevType)bdev->DriverType,(uint32_t)bdev->DriverIDX);
+    VDL* ThisInfo = Dev::GetSDEV((VsDevType)bdev->DriverType,(uint32_t)bdev->DriverIDX);
     bdev->part_offset = 0;
     bdev->bdif->ph_bsize = 512;
-    bdev->part_size = ThisInfo.ops.GetMaxSectorCount(ThisInfo.classp) * 512;
+    bdev->part_size = ThisInfo->ops.GetMaxSectorCount(ThisInfo->classp) * 512;
     bdev->bdif->ph_bcnt = bdev->part_size / bdev->bdif->ph_bsize;
 	return EOK;
 }
@@ -154,7 +154,7 @@ static int32_t blockdev_unlock(struct ext4_blockdev *bdev)
     spinlock_unlock(&bdev->lock);
 
 	return EOK;
-}
+}/* 
 static uint8_t blockdev_ph_bbuf[(PAGE_SIZE)]; 
 static struct ext4_blockdev_iface blockdev_iface = { 
     .open = blockdev_open, 
@@ -168,26 +168,48 @@ static struct ext4_blockdev_iface blockdev_iface = {
     .ph_bbuf = blockdev_ph_bbuf,}; 
 static struct ext4_blockdev blockdev = { 
     .bdif = &blockdev_iface, 
-    .part_offset = 0, .part_size = (0) * (512), };
+    .part_offset = 0, .part_size = (0) * (512), }; */
 /******************************************************************************/
 
+struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
+{
+    VDL* info = Dev::GetSDEV(mname);
+    if (info == nullptr || info->classp == nullptr) return nullptr; // 增加判空保护
 
-struct ext4_blockdev *ext4_blockdev_get(const char* mname,uint32_t wpart)
-{/* 
-    for(uint32_t i = 0;i < Dev::vsdev_list_idx;i++){
-        if(strcmp(Dev::DevList_[i].Name,mname) == 0){
-            ThisInfo = Dev::DevList_[i];
-            blockdev.block_reg_idx = i;
-            blockdev.wpart = wpart;
-            break;
-        }
-    } */
-    ThisInfo = Dev::GetSDEV(mname);
-    blockdev.DriverIDX = ThisInfo.idx;
-    blockdev.DriverType = ThisInfo.type;
-    blockdev.wpart = wpart;
+    // 1. 分配并清零 bdev
+    struct ext4_blockdev *bdev = (struct ext4_blockdev *)kmalloc(sizeof(struct ext4_blockdev));
+    if (!bdev) return nullptr;
+    _memset(bdev, 0, sizeof(struct ext4_blockdev));
 
-	return &blockdev;
+    // 2. 分配 iface
+    struct ext4_blockdev_iface *iface = (struct ext4_blockdev_iface *)kmalloc(sizeof(struct ext4_blockdev_iface));
+    if (!iface) { kfree(bdev); return nullptr; }
+
+    // 3. 初始化 iface 成员
+    iface->open    = blockdev_open;
+    debugpln("%p",blockdev_open);
+    iface->bread   = blockdev_bread;
+    iface->bwrite  = blockdev_bwrite;
+    iface->close   = blockdev_close;
+    iface->lock    = blockdev_lock;
+    iface->unlock  = blockdev_unlock;
+    iface->ph_bsize = 512;
+    iface->ph_bcnt  = 0;
+    // 动态分配 buffer
+    iface->ph_bbuf  = (uint8_t *)kmalloc(PAGE_SIZE); 
+    if (!iface->ph_bbuf) { kfree(iface); kfree(bdev); return nullptr; }
+
+    // 4. 组装 bdev (注意：这是你之前出错修复的地方，现在的赋值是正确的)
+    bdev->bdif = iface; 
+    bdev->DriverIDX = info->idx;
+    bdev->DriverType = info->type;
+    bdev->wpart = wpart;
+
+    // 5. 强烈建议在这里计算一次 part_size，避免 open 之前的检查失败
+    bdev->part_offset = 0;
+    bdev->part_size = (0) * 512;
+
+    return bdev;
 }
 /******************************************************************************/
 

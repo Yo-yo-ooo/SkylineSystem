@@ -141,7 +141,7 @@ static int __hmap_s_mp_compare(const void* a,const void* b){
 
 static uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t seed1){
     const struct __hmap_s_mp* entry = (const struct __hmap_s_mp*)item;
-    return hashmap_sip(&entry->MPName, strlen(entry->MPName), seed0, seed1);
+    return hashmap_sip(entry->MPName, strlen(entry->MPName), seed0, seed1);
 }
 
 static volatile struct hashmap* HMapS_MP = nullptr;
@@ -414,15 +414,35 @@ static int32_t ext4_unlink(struct ext4_mountpoint *mp,
 }
 
 /****************************************************************************/
+char* _strdup(const char* s) {
+    if (s == NULL) {
+        return NULL;
+    }
 
+    // 1. 获取字符串长度（不包含 \0）
+    size_t len = strlen(s);
+
+    // 2. 分配内存（必须 +1 用于存放 \0）
+    char* new_str = (char*)kmalloc(len + 1);
+
+    // 3. 检查分配是否成功（内核内存可能不足）
+    if (new_str == NULL) {
+        return NULL;
+    }
+
+    // 4. 拷贝内容（包含 \0）
+    _memcpy(new_str, s, len + 1);
+
+    return new_str;
+}
 int32_t ext4_mount(const char *dev_name, const char *mount_point,
 	       bool read_only)
 {
 	int32_t r;
 	uint32_t bsize;
-	struct ext4_bcache *bc;
-	struct ext4_blockdev *bd = 0;
-	struct ext4_mountpoint *mp = 0;
+	struct ext4_bcache *bc = nullptr;
+	struct ext4_blockdev *bd = nullptr;
+	struct ext4_mountpoint *mp = nullptr;
 
 	ext4_assert(mount_point && dev_name);
 
@@ -464,10 +484,29 @@ int32_t ext4_mount(const char *dev_name, const char *mount_point,
         }
 	} */
    
-    hashmap_set(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point,.MP = (struct ext4_mountpoint){0}});
+    /* hashmap_set(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point,.MP = (struct ext4_mountpoint){0}});
     struct __hmap_s_mp *hsmp = 
         hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? &hsmp->MP : nullptr;
+    mp = hsmp ? &hsmp->MP : nullptr; */
+    // 1. 尝试从哈希表获取
+    struct __hmap_s_mp *hsmp = (struct __hmap_s_mp *)hashmap_get(HMapS_MP, 
+                                &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+
+    // 2. 如果不存在，则初始化并存入
+    if (!hsmp) {
+        struct __hmap_s_mp new_entry;
+        _memset(&new_entry, 0, sizeof(new_entry));
+        new_entry.MPName = _strdup(mount_point);
+        
+        // 存入哈希表（哈希表内部会 memcpy 整个 new_entry）
+        hashmap_set(HMapS_MP, &new_entry);
+
+        // 重新获取，确保我们拿到的指针是指向哈希表内部空间的
+        hsmp = (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &new_entry);
+    }
+
+    if (!hsmp) return ENOMEM;
+    mp = &hsmp->MP; // 此时 mp 指向哈希表管理的堆内存，安全稳定
 
 	if (!mp)
 		return ENOMEM;
