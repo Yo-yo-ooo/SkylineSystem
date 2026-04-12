@@ -82,6 +82,7 @@ from the VsDev "namespace".
 static int32_t blockdev_open(struct ext4_blockdev *bdev)
 {
 	/*blockdev_open: skeleton*/
+    debugpln("blockdev_open: HIT!");
     VDL* ThisInfo = Dev::GetSDEV((VsDevType)bdev->DriverType,(uint32_t)bdev->DriverIDX);
     bdev->part_offset = 0;
     bdev->bdif->ph_bsize = 512;
