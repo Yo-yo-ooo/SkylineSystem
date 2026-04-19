@@ -390,7 +390,7 @@ namespace AHCI
         SATA_Ident test = Identifydrive();
         //uint32_t cap = (((uint32_t)test.cur_capacity1) << 16) + test.cur_capacity0;
         uint32_t cap = test.lba_capacity;
-        kinfoln("Max Sector Count: %d", cap);
+        //kinfoln("Max Sector Count: %d", cap);
         return (uint64_t)cap;
         //return cap;
     }

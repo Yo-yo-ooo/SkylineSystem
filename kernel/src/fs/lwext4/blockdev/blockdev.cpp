@@ -210,7 +210,7 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
     // 5. 强烈建议在这里计算一次 part_size，避免 open 之前的检查失败
     bdev->part_offset = 0;
     //kinfoln("HERE!!!");
-    //PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
+    PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
     bdev->part_size = PartitionManager::GetMaxSectorCount() * 512;
     //kinfoln("part_size: %llu", bdev->part_size);
 
