@@ -85,38 +85,45 @@ namespace Dev{
     uint32_t ThisDevIDX = 0;
     //DevManEntry* ThisEntry = nullptr;
 
-    void AddStorageDevice(VsDevType type, DevOPS ops,uint32_t SectorCount = 0,void* Class = nullptr){
-        VDL *DeviceInfo = kmalloc(sizeof(VDL));
-        if(type > MAX_TYPE_C)
-            return;
-        spinlock_lock(&dev_manager_lock);
-        DevManKey *p = hashmap_get(TIMap, &(DevManKey){.type = type});
+    void AddStorageDevice(VsDevType type, DevOPS ops, uint32_t SectorCount = 0, void* Class = nullptr) {
+        if(type > MAX_TYPE_C) return;
+
+        // 先分配好内存，减少在锁内部滞留的时间
+        VDL *DeviceInfo = (VDL*)kmalloc(sizeof(VDL));
+        if (!DeviceInfo) return; 
+
+        spinlock_lock(&dev_manager_lock); // 开启大锁，保证 Index 和 Map 的原子同步
+
+        // 1. 获取并更新索引
+        DevManKey key_lookup = {.type = type};
+        DevManKey *p = (DevManKey*)hashmap_get(TIMap, &key_lookup);
         uint32_t TypeIndex = p ? p->index : 0;
-        hashmap_set(TIMap, &(DevManKey){.type = type, .index = TypeIndex + 1});
-        spinlock_unlock(&dev_manager_lock);
         
+        DevManKey next_key = {.type = type, .index = TypeIndex + 1};
+        hashmap_set(TIMap, &next_key);
+
+        // 2. 初始化设备信息
         DeviceInfo->idx = TypeIndex;
-        //DeviceInfo->Name = (char*)kmalloc(strlen(TypeToString(type)) + strlen((char*)to_string((uint64_t)TypeIndex)) + 1);
-        //char* temp_str = StrCombine(TypeToString(type),to_string((uint64_t)TypeIndex));
-        DeviceInfo->Name = StrCombine(TypeToString(type),to_string((uint64_t)TypeIndex));
         DeviceInfo->type = type;
-        
-        if(Class != nullptr){
-            DeviceInfo->classp = Class;
-        }else{
-            DeviceInfo->classp = nullptr;
-        }
-        __memcpy(&DeviceInfo->ops,&ops,sizeof(DevOPS));
-        
-        spinlock_lock(&dev_manager_lock);
+        DeviceInfo->classp = Class;
         DeviceInfo->MaxSectorCount = SectorCount;
+        DeviceInfo->Name = StrCombine(TypeToString(type), to_string((uint64_t)TypeIndex));
+        
+        // 使用内核级拷贝，确保 ops 完整
+        __memcpy(&DeviceInfo->ops, &ops, sizeof(DevOPS));
+
+        // 3. 录入全局查找表
         hashmap_set(StrMap, &(DevStrSearch){.name = DeviceInfo->Name, .dev = DeviceInfo});
-        //TypeIndex++;
-        //hashmap_set(TIMap, &(DevManKey){.type = type, .index = TypeIndex});
-        hashmap_set(DevMan_Map, &(DevManEntry){.key = {.type = type, .index = TypeIndex}, .dev = DeviceInfo});
-        spinlock_unlock(&dev_manager_lock);
-        //kfree(temp_str);
-        debugpln("[AddStorageDevice]END");
+        
+        DevManEntry entry = {
+            .key = {.type = type, .index = TypeIndex}, 
+            .dev = DeviceInfo
+        };
+        hashmap_set(DevMan_Map, &entry);
+
+        spinlock_unlock(&dev_manager_lock); // 释放锁
+
+        debugpln("[AddStorageDevice] Registered: %s", DeviceInfo->Name);
     }
 
 

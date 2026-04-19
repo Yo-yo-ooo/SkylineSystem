@@ -92,11 +92,13 @@ void __init x86_64_init(void){
 
     if(!ext4_kernel_init("sata0","/mp/")){hcf();}
 
+    ext4_fs_test_all();
+
     Schedule::Install();
 
     proc_t *proc = Schedule::NewProcess(true);
 
-    
+    kinfoln("Creating syscalltest process...");
 
     char *argv[] = {(char*)"Test Main Thread"};
     char *envp[] = {nullptr};

@@ -22,7 +22,7 @@
 #pragma once
 
 #include <stdint.h>
-
+#pragma pack(push,1)
 namespace AHCI 
 {
     typedef struct SATA_Ident
@@ -151,3 +151,4 @@ namespace AHCI
         uint16_t   integrity;          /* Cheksum, Signature */
     } SATA_ident_t;
 }
+#pragma pack(pop)

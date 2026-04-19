@@ -189,7 +189,7 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
 
     // 3. 初始化 iface 成员
     iface->open    = blockdev_open;
-    debugpln("%p",blockdev_open);
+    //debugpln("%p",blockdev_open);
     iface->bread   = blockdev_bread;
     iface->bwrite  = blockdev_bwrite;
     iface->close   = blockdev_close;
@@ -209,7 +209,10 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
 
     // 5. 强烈建议在这里计算一次 part_size，避免 open 之前的检查失败
     bdev->part_offset = 0;
-    bdev->part_size = (0) * 512;
+    //kinfoln("HERE!!!");
+    //PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
+    bdev->part_size = PartitionManager::GetMaxSectorCount() * 512;
+    //kinfoln("part_size: %llu", bdev->part_size);
 
     return bdev;
 }

@@ -385,12 +385,14 @@ namespace AHCI
         return true;
     }
 
-    uint32_t Port::GetMaxSectorCount()
+    uint64_t Port::GetMaxSectorCount()
     {
         SATA_Ident test = Identifydrive();
         //uint32_t cap = (((uint32_t)test.cur_capacity1) << 16) + test.cur_capacity0;
         uint32_t cap = test.lba_capacity;
-        return cap;
+        kinfoln("Max Sector Count: %d", cap);
+        return (uint64_t)cap;
+        //return cap;
     }
 
     uint16_t Port::GetSectorSize()

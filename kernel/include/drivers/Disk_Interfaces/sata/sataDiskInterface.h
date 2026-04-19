@@ -43,6 +43,6 @@ public:
 
     bool ReadBytes(uint64_t address, uint64_t count, void* buffer);
     bool WriteBytes(uint64_t address, uint64_t count, void* buffer);
-    uint32_t GetMaxSectorCount();
+    uint64_t GetMaxSectorCount();
 };
 #endif

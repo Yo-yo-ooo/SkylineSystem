@@ -590,48 +590,30 @@ Finish:
 	mp->fs.bdev->fs = NULL;
 	return r;
 }
-
 static char* GetMountPointName(const char* path) {
-    // 1. 基本合法性检查
-    if (!path || path[0] != '/') {
-        return nullptr;
-    }
+    if (!path || path[0] != '/') return nullptr;
 
-    // 2. 处理开头可能存在的多个斜杠 (如 "///mp/...")
-    const char* first_valid_char = path;
-    while (*first_valid_char == '/') {
-        first_valid_char++;
-    }
-
-    // 如果路径只有斜杠 (如 "/")，无法满足 "/mp/" 格式
-    if (*first_valid_char == '\0') {
-        return nullptr;
-    }
-
-    // 3. 寻找第二个斜杠的位置
-    const char* second_slash = strchr(first_valid_char, '/');
+    // 找到第一个有效字符后的第一个 '/'
+    // 比如 "/mp/test" -> 找到 'p' 后面的那个 '/'
+    const char* p = path + 1;
+    while (*p && *p == '/') p++; // 跳过开头重复的斜杠，如 "//mp" -> 指向 "mp"
     
-    // 如果没找到第二个斜杠 (如 "/mp")，不符合你的返回 "/mp/" 的要求
-    if (!second_slash) {
-        return nullptr;
-    }
+    const char* second_slash = strchr(p, '/');
+    
+    // 如果是 "/mp" 这种没有结尾斜杠的，根据你的需求决定是否支持
+    // 如果必须有第二个斜杠才叫挂载点：
+    if (!second_slash) return nullptr;
 
-    // 4. 计算长度：从 path 开始到 second_slash 结束
-    // 示例: path -> "/mp/test"
-    // second_slash 指向 'p' 后的 '/'
-    // 长度 = (second_slash地址 - path地址) + 1 (为了包含末尾那个'/')
     size_t len = (size_t)(second_slash - path) + 1;
 
-    // 5. 分配内核内存
     char* mp_name = (char*)kmalloc(len + 1);
-    if (!mp_name) {
-        return nullptr; 
-    }
+    if (!mp_name) return nullptr; 
 
-    // 6. 拷贝并闭合字符串
     __memcpy(mp_name, path, len);
     mp_name[len] = '\0';
 
+    // 可以在这里做一个标准化：将 "///mp/" 变成 "/mp/"
+    // 或者在挂载查找逻辑里处理多斜杠情况
     return mp_name;
 }
 
@@ -3442,6 +3424,7 @@ bool ext4_kernel_init(const char* devname,const char* mpname){
     HMapS_MP = hashmap_new(sizeof(struct __hmap_s_mp), 16,0,0,
         __hmap_s_mp_hash, __hmap_s_mp_compare, nullptr, nullptr);
 
+    kinfoln("HERE!");
     struct ext4_blockdev *p = ext4_blockdev_get(devname,0);
     /* uint32_t r = ext4_device_register(p, devname);
 	if (r != EOK) {

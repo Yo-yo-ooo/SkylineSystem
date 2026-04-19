@@ -23,174 +23,121 @@
 #include <drivers/dev/dev.h>
 #include <mem/heap.h>
 
-uint8_t IdentifyMBR(VsDevType DriverType,uint32_t DriverID){
-    //if(DriverID > Dev::vsdev_list_idx)
-    //    return 1; //DriverID ERR
-    
-    //DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
+// 辅助宏：判断是否为 GPT 保护分区
+#define IS_GPT(dpt) ((dpt).PartitionTypeIndicator == 0xEE && (dpt).BootIndicator == 0x00)
+
+uint8_t IdentifyMBR(VsDevType DriverType, uint32_t DriverID) {
     MBR_DPT dpt; 
     Dev::SetSDev(DriverType, DriverID);
-    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == Dev::RW_ERROR)
+    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR)
         return 2;
-    if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
-        return 3;
-    }else{
-        return 0;
-    }
-    return 4;
+    
+    if(IS_GPT(dpt)) return 3; // GPT
+    return 0; // 传统 MBR
 }
 
 uint8_t GetPartitionSize(VsDevType DriverType, uint32_t DriverID, uint32_t PartitionID, uint64_t &PartitionSize) {
-    //if (DriverID > Dev::vsdev_list_idx) return 1;
-
     Dev::SetSDev(DriverType, DriverID);
     MBR_DPT dpt;
-    
-    // 读取 MBR 的第一个分区表项来检查是否为 GPT 保护分区
-    if (Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) 
-        return 2;
+    if (Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) return 2;
 
-    if (dpt.PartitionTypeIndicator == 0xEE) { // GPT 模式
+    if (IS_GPT(dpt)) {
         uint32_t entry_count;
-        // 从 GPT Header 读取分区表项总数
-        Dev::ReadBytes(MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &entry_count);
-        
+        // GPT Header 在 LBA 1 (512字节处)
+        Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &entry_count);
         if (PartitionID >= entry_count) return 4;
 
         GPT_PTE gptpte;
         if (Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + (PartitionID * 128), 128, &gptpte) == Dev::RW_ERROR)
             return 5;
 
-        // GPT 范围通常是闭区间 [Start, End]
+        if (gptpte.PartitionStart == 0) { PartitionSize = 0; return 0; }
         PartitionSize = (gptpte.PartitionEnd - gptpte.PartitionStart) + 1;
         return 0;
-    } else { // 传统 MBR 模式
+    } else {
         if (PartitionID >= MBR_PARTITION_MAX) return 6;
-
         MBR_DPT entry;
         if (Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + (PartitionID * 16), 16, &entry) == Dev::RW_ERROR)
             return 7;
-
         PartitionSize = entry.SectorsInPartition;
         return 0;
     }
 }
 
-
-uint8_t GetPartitionStart(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionStart){
-    //if(DriverID > Dev::vsdev_list_idx)
-    //    return 1; //DriverID ERR
-    
-    //DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
+// 注意这里加了 & 引用符号
+uint8_t GetPartitionStart(VsDevType DriverType, uint32_t DriverID, uint32_t PartitionID, uint64_t &PartitionStart) {
     MBR_DPT dpt; 
-    uint32_t buffer;
     Dev::SetSDev(DriverType, DriverID);
-    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
-        return 2;
-        //80
+    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) return 2;
 
-    if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
-        if(Dev::ReadBytes(MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET,4,&buffer) == false)
-            return 3;
-        if(PartitionID > buffer)
-            return 4;
+    if(IS_GPT(dpt)) {
+        uint32_t buffer;
+        Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &buffer);
+        if(PartitionID >= buffer) return 4;
+
         GPT_PTE gptpte;
-        if(Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + PartitionID * 128,
-                128,&gptpte) == false)
-                return 5;
+        if(Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + (PartitionID * 128), 128, &gptpte) == Dev::RW_ERROR)
+            return 5;
         PartitionStart = gptpte.PartitionStart;
-        return 0;
-    }else{
-
-        if(PartitionID > MBR_PARTITION_MAX)
-            return 6; //PartitionID ERR
-        
+    } else {
+        if(PartitionID >= MBR_PARTITION_MAX) return 6;
         MBR_DPT buffer2;
-        //Dev::SetSDev(DriverID);
-        if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + PartitionID * 16,
-            16,&buffer2) == false)
+        if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + (PartitionID * 16), 16, &buffer2) == Dev::RW_ERROR)
             return 7;
-        
-        //CHS To LBA : easy to R/W 
         PartitionStart = buffer2.StartLBA;
-        return 0;
     }
     return 0;
 }
 
-uint8_t GetPartitionEnd(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,uint64_t PartitionEnd){
-    //if(DriverID > Dev::vsdev_list_idx)
-    //    return 1; //DriverID ERR
-    
-    //DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
+// 注意这里加了 & 引用符号
+uint8_t GetPartitionEnd(VsDevType DriverType, uint32_t DriverID, uint32_t PartitionID, uint64_t &PartitionEnd) {
     MBR_DPT dpt; 
-    uint32_t buffer;
     Dev::SetSDev(DriverType, DriverID);
-    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
-        return 2;
-        //80
+    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) return 2;
 
-    if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
-        if(Dev::ReadBytes(MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET,4,&buffer) == false)
-            return 3;
-        if(PartitionID > buffer)
-            return 4;
+    if(IS_GPT(dpt)) {
+        uint32_t buffer;
+        Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &buffer);
+        if(PartitionID >= buffer) return 4;
+
         GPT_PTE gptpte;
-        if(Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + PartitionID * 128,
-                128,&gptpte) == false)
-                return 5;
+        if(Dev::ReadBytes(GPT_PARTITION_TABLE_OFFSET + (PartitionID * 128), 128, &gptpte) == Dev::RW_ERROR)
+            return 5;
         PartitionEnd = gptpte.PartitionEnd;
-        return 0;
-    }else{
-
-        if(PartitionID > MBR_PARTITION_MAX)
-            return 6; //PartitionID ERR
-            
-        MBR_DPT buffer2;
-        MBR_DPT buffer3;
-        //Dev::SetSDev(DriverID);
-        if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + PartitionID * 16,
-            16,&buffer2) == false)
-            return 7;
-
-        if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + PartitionID * 16,
-            16,&buffer3) == false)
+    } else {
+        if(PartitionID >= MBR_PARTITION_MAX) return 6;
+        MBR_DPT entry;
+        if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + (PartitionID * 16), 16, &entry) == Dev::RW_ERROR)
             return 7;
         
-        //CHS To LBA : easy to R/W 
-        PartitionEnd = buffer3.StartLBA - buffer2.StartLBA;
-        return 0;
+        // End = Start + Count - 1
+        if (entry.SectorsInPartition == 0) PartitionEnd = 0;
+        else PartitionEnd = entry.StartLBA + entry.SectorsInPartition - 1;
     }
     return 0;
 }
 
-uint8_t GetPartitionCount(VsDevType DriverType, uint32_t DriverID){
-    //if(DriverID > Dev::vsdev_list_idx)
-    //    return 1; //DriverID ERR
-    
-    //DevList ThisInfo = Dev::GetSDEV(DriverType, DriverID);
+uint8_t GetPartitionCount(VsDevType DriverType, uint32_t DriverID) {
     MBR_DPT dpt; 
-    uint32_t buffer;
     Dev::SetSDev(DriverType, DriverID);
-    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET,16,&dpt) == false)
-        return 2;
-    
+    if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) return 0;
 
-    if(dpt.PartitionTypeIndicator == 0xEE && dpt.BootIndicator == 0x00){//GPT
-        if(Dev::ReadBytes(MBR_TABLE_SIZE + GPT_HEADER_NUMBER_OF_PTE_OFFSET,4,&buffer) == false)
-            return 3;
-        else
-            return buffer;
-    }else{
-        for(uint8_t i = 0;i < MBR_PARTITION_MAX;i++){
+    if(IS_GPT(dpt)) {
+        uint32_t buffer;
+        // 简单返回分区表项总数（通常是128）
+        if(Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &buffer) == Dev::RW_ERROR)
+            return 0;
+        return (uint8_t)buffer;
+    } else {
+        uint8_t count = 0;
+        for(uint8_t i = 0; i < MBR_PARTITION_MAX; i++) {
             MBR_DPT buffer2;
-            if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + i * 16,
-                16,&buffer2) == false)
-                return 7;
-            if(buffer2.SectorsInPartition = NULL){
-                return i;
+            if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET + i * 16, 16, &buffer2) == Dev::RW_ERROR)
+                break;
+            if(buffer2.SectorsInPartition != 0) {
+                count++;
             }
         }
+        return count;
     }
-    return 0;
 }

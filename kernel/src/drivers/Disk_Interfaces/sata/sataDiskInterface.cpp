@@ -30,7 +30,7 @@
 #include <drivers/dev/dev.h>
 
 
-uint32_t SataDiskInterface::GetMaxSectorCount()
+uint64_t SataDiskInterface::GetMaxSectorCount()
 {
     return Port->GetMaxSectorCount();
 }
@@ -48,19 +48,44 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
     
     SectorCount = GetMaxSectorCount();
     
+    if(port == nullptr) return;
 
+    this->Port = port;
+    this->Port->buffer = (uint8_t*)(PMM::Request()); // 分配 4KB 物理页作为 DMA 缓冲区
     
+    this->SectorCount = GetMaxSectorCount();
+
+    // 1. 彻底清理栈上的结构体，防止 ioctl 等未定义指针包含随机值
     DevOPS ops;
-    ops.GetMaxSectorCount = nullptr;
-    ops.Read              = nullptr;ops.ReadBytes  = nullptr;
-    ops.Write             = nullptr;ops.WriteBytes = nullptr;
-    //_memset(&ops, 0, sizeof(DevOPS));
-    ops.Read = CFCast<decltype(ops.Read)>(&SataDiskInterface::FRegVsDEV_R);
-    ops.Write = CFCast<decltype(ops.Write)>(&SataDiskInterface::FRegVsDEV_W);
-    ops.ReadBytes = CFCast<decltype(ops.ReadBytes)>(&SataDiskInterface::FRegVsDEV_Rb);
-    ops.WriteBytes = CFCast<decltype(ops.WriteBytes)>(&SataDiskInterface::FRegVsDEV_Wb);
-    ops.GetMaxSectorCount = CFCast<decltype(ops.GetMaxSectorCount)>(&SataDiskInterface::GetMaxSectorCount);
-    Dev::AddStorageDevice(VsDevType::SATA, ops,SectorCount,this);
+    _memset(&ops, 0, sizeof(DevOPS));
+
+    // 2. 使用不捕获变量的 Lambda 进行适配 ([] 内严禁填 this)
+    ops.Read = [](void* i, uint64_t lba, uint32_t count, void* buf) -> uint8_t {
+        auto* self = static_cast<SataDiskInterface*>(i);
+        return self->Read(lba, count, buf) ? Dev::RW_OK : Dev::RW_ERROR;
+    };
+
+    ops.Write = [](void* i, uint64_t lba, uint32_t count, void* buf) -> uint8_t {
+        auto* self = static_cast<SataDiskInterface*>(i);
+        return self->Write(lba, count, buf) ? Dev::RW_OK : Dev::RW_ERROR;
+    };
+
+    ops.ReadBytes = [](void* i, uint64_t addr, uint32_t count, void* buf) -> uint8_t {
+        auto* self = static_cast<SataDiskInterface*>(i);
+        return self->ReadBytes(addr, count, buf) ? Dev::RW_OK : Dev::RW_ERROR;
+    };
+
+    ops.WriteBytes = [](void* i, uint64_t addr, uint32_t count, void* buf) -> uint8_t {
+        auto* self = static_cast<SataDiskInterface*>(i);
+        return self->WriteBytes(addr, count, buf) ? Dev::RW_OK : Dev::RW_ERROR;
+    };
+
+    ops.GetMaxSectorCount = [](void* i) -> uint64_t {
+        return static_cast<SataDiskInterface*>(i)->GetMaxSectorCount();
+    };
+
+    // 3. 注册设备，并将当前实例 (this) 作为私有数据传入
+    Dev::AddStorageDevice(VsDevType::SATA, ops, SectorCount, this);
     
 
 }
