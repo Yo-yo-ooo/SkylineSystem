@@ -29,13 +29,13 @@ namespace PartitionManager
     uint8_t CurPartition = 0;
     uint64_t CurPartitionStart = 0; // 单位：扇区 LBA
     uint64_t CurPartitionEnd = 0;   // 单位：扇区 LBA
-    VDL* CurDevice = nullptr;
+    //VDL* CurDevice = nullptr;
 
     void SetCurPartition(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID) {
         CurDriverType = DriverType;
         CurDriver = DriverID;
         CurPartition = partitionID;
-        CurDevice = Dev::GetSDEV(DriverType, DriverID);
+        //CurDevice = Dev::GetSDEV(DriverType, DriverID);
 
 #ifdef USE_VIRT_IMAGE
         return;
@@ -49,7 +49,7 @@ namespace PartitionManager
 
     uint8_t Read(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID,uint64_t lba, uint32_t SectorCount, void* Buffer) {
         //kinfoln("PartitionManager::Read: LBA=%llu, SectorCount=%u", lba, SectorCount);
-        CurDevice = Dev::GetSDEV(DriverType, DriverID);
+        VDL* CurDevice = Dev::GetSDEV(DriverType, DriverID);
         if (!CurDevice) return Dev::RW_ERROR;
 
 #ifdef USE_VIRT_IMAGE
@@ -75,7 +75,7 @@ namespace PartitionManager
     }
 
     uint8_t Write(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID,uint64_t lba, uint32_t SectorCount, void* Buffer) {
-        CurDevice = Dev::GetSDEV(DriverType, DriverID);
+        VDL* CurDevice = Dev::GetSDEV(DriverType, DriverID);
         if (!CurDevice) return Dev::RW_ERROR;
 
 #ifdef USE_VIRT_IMAGE
@@ -98,7 +98,7 @@ namespace PartitionManager
 #endif
     }
 
-    uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer) {
+    /* uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer) {
         if (!CurDevice) return Dev::RW_ERROR;
 
 #ifdef USE_VIRT_IMAGE
@@ -150,10 +150,10 @@ namespace PartitionManager
         else 
             return false;
 #endif
-    }
+    } */
 
     uint64_t GetMaxSectorCount(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID) {
-        CurDevice = Dev::GetSDEV(DriverType, DriverID);
+        VDL* CurDevice = Dev::GetSDEV(DriverType, DriverID);
 #ifdef USE_VIRT_IMAGE
         //uint64_t x = CurDevice->ops.GetMaxSectorCount(CurDevice->classp);
         //kinfoln("Max Sector Count:L: %d", x);

@@ -104,7 +104,7 @@ struct ext4_blockdev_iface {
 };
 
 /**@brief   Definition of the simple block device.*/
-struct ext4_blockdev {
+struct alignas(16) ext4_blockdev {
 	/**@brief Block device interface*/
 	struct ext4_blockdev_iface *bdif;
 

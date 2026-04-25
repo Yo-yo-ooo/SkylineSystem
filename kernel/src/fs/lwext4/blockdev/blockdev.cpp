@@ -178,7 +178,10 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
     if (info == nullptr || info->classp == nullptr) return nullptr; // 增加判空保护
 
     // 1. 分配并清零 bdev
-    struct ext4_blockdev *bdev = (struct ext4_blockdev *)kmalloc(sizeof(struct ext4_blockdev));
+    //struct ext4_blockdev *bdev = (struct ext4_blockdev *)kmalloc(sizeof(struct ext4_blockdev));
+    size_t size = sizeof(struct ext4_blockdev) + 15;
+    void *raw = kmalloc(size);
+    struct ext4_blockdev *bdev = (struct ext4_blockdev *)(((uintptr_t)raw + 15) & ~15);
     if (!bdev) return nullptr;
     _memset(bdev, 0, sizeof(struct ext4_blockdev));
 

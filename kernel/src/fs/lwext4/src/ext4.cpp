@@ -464,6 +464,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 	} */
     //bd = ext4_blockdev_get(dev_name, 0);
     //bd = hashmap_get(HMap, dev_name);
+    
 
     debugpln("HIT!(0)");
 	if (!bd){
@@ -491,6 +492,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
     // 1. 尝试从哈希表获取
     struct __hmap_s_mp *hsmp = (struct __hmap_s_mp *)hashmap_get(HMapS_MP, 
                                 &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    //kinfoln("%s",mount_point);
 
     if (!hsmp) {
         // 2. 必须为 entry 分配持久内存，或者确保 hashmap 内部执行了拷贝
@@ -614,6 +616,7 @@ static char* GetMountPointName(const char* path) {
 
     // 可以在这里做一个标准化：将 "///mp/" 变成 "/mp/"
     // 或者在挂载查找逻辑里处理多斜杠情况
+    //kinfoln("Extracted mount point name: %s", mp_name);
     return mp_name;
 }
 
@@ -631,9 +634,10 @@ static struct ext4_mountpoint *ext4_get_mount(const char *path)
     struct __hmap_s_mp *hsmp = 
         hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
     ext4_mountpoint* mp = hsmp ? &hsmp->MP : nullptr;
+    //kinfoln("%p",mp);
     return mp;
 
-	return NULL;
+	//return NULL;
 }
 
 __unused
@@ -3419,13 +3423,14 @@ Extra Function(Not in lwext4)
 Ext4_Kernel_INIT
 */
 
-bool ext4_kernel_init(const char* devname,const char* mpname){
+bool ext4_kernel_init(const char* devname,const char* mpname,uint32_t wpart){
 
-    HMapS_MP = hashmap_new(sizeof(struct __hmap_s_mp), 16,0,0,
-        __hmap_s_mp_hash, __hmap_s_mp_compare, nullptr, nullptr);
-
-    kinfoln("HERE!");
-    struct ext4_blockdev *p = ext4_blockdev_get(devname,0);
+    if(HMapS_MP == nullptr){
+        HMapS_MP = hashmap_new(sizeof(struct __hmap_s_mp), 16,0,0,
+            __hmap_s_mp_hash, __hmap_s_mp_compare, nullptr, nullptr);
+    }
+    //kinfoln("HERE!");
+    struct ext4_blockdev *p = ext4_blockdev_get(devname,wpart);
     /* uint32_t r = ext4_device_register(p, devname);
 	if (r != EOK) {
 		kerror("ext4_device_register: rc = %d\n", r);
@@ -3652,7 +3657,7 @@ Identify:
 #endif
 void ext4_fs_test_all(){
 
-    if(!ext4_kernel_init("sata0","/mp/")){hcf();}
+    if(!ext4_kernel_init("sata0","/mp/",0)){hcf();}
 
     test_lwext4_dir_ls("/mp/");
 

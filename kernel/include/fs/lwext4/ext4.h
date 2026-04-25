@@ -616,7 +616,7 @@ const ext4_direntry *ext4_dir_entry_next(ext4_dir *dir);
  * @param   dir Directory handle.*/
 void ext4_dir_entry_rewind(ext4_dir *dir);
 
-bool ext4_kernel_init(const char* devname,const char* mpname);
+bool ext4_kernel_init(const char* devname,const char* mpname,uint32_t wpart);
 char * ext4_entry_to_str(uint8_t type);
 bool test_lwext4_dir_test(int32_t len);
 void test_lwext4_dir_ls(char *path);
