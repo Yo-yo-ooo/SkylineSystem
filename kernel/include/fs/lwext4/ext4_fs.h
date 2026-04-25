@@ -54,7 +54,7 @@ struct ext4_fs {
 	bool read_only;
 
 	struct ext4_blockdev *bdev;
-	struct ext4_sblock sb;
+	struct ext4_sblock sb alignas(16);
 
 	uint64_t inode_block_limits[4];
 	uint64_t inode_blocks_per_level[4];

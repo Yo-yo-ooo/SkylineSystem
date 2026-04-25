@@ -47,7 +47,9 @@ namespace PartitionManager
 #endif
     }
 
-    uint8_t Read(uint64_t lba, uint32_t SectorCount, void* Buffer) {
+    uint8_t Read(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID,uint64_t lba, uint32_t SectorCount, void* Buffer) {
+        //kinfoln("PartitionManager::Read: LBA=%llu, SectorCount=%u", lba, SectorCount);
+        CurDevice = Dev::GetSDEV(DriverType, DriverID);
         if (!CurDevice) return Dev::RW_ERROR;
 
 #ifdef USE_VIRT_IMAGE
@@ -72,7 +74,8 @@ namespace PartitionManager
 #endif
     }
 
-    uint8_t Write(uint64_t lba, uint32_t SectorCount, void* Buffer) {
+    uint8_t Write(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID,uint64_t lba, uint32_t SectorCount, void* Buffer) {
+        CurDevice = Dev::GetSDEV(DriverType, DriverID);
         if (!CurDevice) return Dev::RW_ERROR;
 
 #ifdef USE_VIRT_IMAGE
@@ -149,7 +152,8 @@ namespace PartitionManager
 #endif
     }
 
-    uint64_t GetMaxSectorCount() {
+    uint64_t GetMaxSectorCount(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID) {
+        CurDevice = Dev::GetSDEV(DriverType, DriverID);
 #ifdef USE_VIRT_IMAGE
         //uint64_t x = CurDevice->ops.GetMaxSectorCount(CurDevice->classp);
         //kinfoln("Max Sector Count:L: %d", x);

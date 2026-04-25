@@ -39,11 +39,13 @@ namespace PartitionManager
     void SetCurPartition(VsDevType DriverType,uint32_t DriverID, uint8_t partitionID);
 
     //These function must do SetCurPartition First!
-    uint8_t Read(uint64_t lba, uint32_t SectorCount, void* Buffer);
-    uint8_t Write(uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t Read(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID,
+        uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t Write(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID,
+        uint64_t lba, uint32_t SectorCount, void* Buffer);
     uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
     uint8_t WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
-    uint64_t GetMaxSectorCount();
+    uint64_t GetMaxSectorCount(VsDevType DriverType, uint32_t DriverID, uint8_t partitionID);
 } // namespace PartitionOPS
 
 

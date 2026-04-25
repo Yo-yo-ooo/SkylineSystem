@@ -285,7 +285,8 @@ size_t	strlen(const char *__restrict__  s)
 	register const word_t		*w = (const word_t *)(((uintptr_t)s) & \
 									-((uintptr_t)(sizeof(word_t))));
 
-	register word_t	wi = *w;
+	register word_t	wi asm("rax");
+    wi = *w;
 
 	register word_t	m = ((word_t)-1 / 0xff) * 0x7f;
 

@@ -90,7 +90,7 @@ void __init x86_64_init(void){
 
     InitFunc("KEYBOARD(x86)",keyboard_init());
 
-    if(!ext4_kernel_init("sata0","/mp/")){hcf();}
+    //if(!ext4_kernel_init("sata0","/mp/")){hcf();}
 
     ext4_fs_test_all();
 

@@ -102,12 +102,12 @@ static int32_t blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t bl
     //ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
     //debugpln("blk_id: %d,blk_cnt: %d",blk_id,blk_cnt);
     //Dev::SetSDev(bdev->DriverType,bdev->DriverIDX);
-#ifdef USE_VIRT_IMAGE
+/* #ifdef USE_VIRT_IMAGE
     PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,0);
 #else
-    PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
-#endif
-    if(PartitionManager::Read(blk_id,blk_cnt, buf) == Dev::RW_OK){
+    //PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
+#endif */
+    if(PartitionManager::Read(bdev->DriverType, bdev->DriverIDX, bdev->wpart, blk_id, blk_cnt, buf) == Dev::RW_OK){
         return EOK;
     }else{
         debugpln("blockdev_bread HIT ERROR RETURN!");
@@ -116,7 +116,6 @@ static int32_t blockdev_bread(struct ext4_blockdev *bdev, void *buf, uint64_t bl
 	return EIO;
 }
 
-
 /******************************************************************************/
 static int32_t blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 			  uint64_t blk_id, uint32_t blk_cnt)
@@ -124,12 +123,12 @@ static int32_t blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 	/*blockdev_bwrite: skeleton*/
     //ThisInfo = Dev::GetSDEV(bdev->block_reg_idx);
     //Dev::SetSDev(bdev->DriverType,bdev->DriverIDX);
-#ifdef USE_VIRT_IMAGE
+/* #ifdef USE_VIRT_IMAGE
     PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,0);
 #else
     PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
-#endif
-    if(PartitionManager::Write(blk_id, blk_cnt, buf) == Dev::RW_OK)
+#endif */
+    if(PartitionManager::Write(bdev->DriverType, bdev->DriverIDX, bdev->wpart, blk_id, blk_cnt, buf) == Dev::RW_OK)
         return EOK;
     else
         return EIO;
@@ -210,8 +209,9 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
     // 5. 强烈建议在这里计算一次 part_size，避免 open 之前的检查失败
     bdev->part_offset = 0;
     //kinfoln("HERE!!!");
-    PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
-    bdev->part_size = PartitionManager::GetMaxSectorCount() * 512;
+    //PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
+    bdev->part_size = PartitionManager::GetMaxSectorCount(bdev->DriverType,
+            bdev->DriverIDX,bdev->wpart) * 512;
     //kinfoln("part_size: %llu", bdev->part_size);
 
     return bdev;
