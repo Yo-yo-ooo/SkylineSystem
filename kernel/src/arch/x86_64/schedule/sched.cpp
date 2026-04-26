@@ -391,7 +391,7 @@ namespace Schedule{
         thread->heap_size = 0;
 
         // Load ELF
-        static ext4_file f;
+        ext4_file f;
         ext4_fopen(&f,Path,"r");
         //kinfoln("%d",f.fsize);
         uint8_t *buffer = (uint8_t*)kmalloc(ext4_fsize(&f));

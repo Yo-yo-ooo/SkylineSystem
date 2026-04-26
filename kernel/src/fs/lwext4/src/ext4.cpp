@@ -637,7 +637,7 @@ static struct ext4_mountpoint *ext4_get_mount(const char *path)
     struct __hmap_s_mp *hsmp = 
         hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
     ext4_mountpoint* mp = hsmp ? &hsmp->MP : nullptr;
-    kinfoln("%p",mp);
+    //kinfoln("%p",mp);
     return mp;
 
 	//return NULL;
