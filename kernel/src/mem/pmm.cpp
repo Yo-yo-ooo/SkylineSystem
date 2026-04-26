@@ -62,47 +62,70 @@ namespace PMM {
 
     void Init() {
         pmm_memmap = memmap_request.response;
-        uint64_t page_count = 0;
-        
+        uint64_t max_phys_addr = 0;
+
+        // --- 阶段 1: 边界探测 (修复空洞越界的核心) ---
+        // 不能只累加 length，必须找到整个地址空间的物理上限
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            if (entry->length % PAGE_SIZE != 0) {
-                entry->length = (entry->length / PAGE_SIZE) * PAGE_SIZE;
+            uint64_t top = entry->base + entry->length;
+            if (top > max_phys_addr) {
+                max_phys_addr = top;
             }
-            page_count += entry->length;
         }
-        
-        pmm_bitmap_pages = page_count / PAGE_SIZE;
+
+        // 基于最大物理地址计算位图需要的页数
+        pmm_bitmap_pages = max_phys_addr / PAGE_SIZE;
         bitmap_size = ALIGN_UP(pmm_bitmap_pages / 8, PAGE_SIZE);
         bitmap_l1_size = ALIGN_UP((pmm_bitmap_pages / 64) / 8, PAGE_SIZE);
         uint64_t total_meta_size = bitmap_size + bitmap_l1_size;
-        
+
+        // --- 阶段 2: 元数据锚定 (自举分配) ---
+        bool meta_placed = false;
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            if (entry->length >= total_meta_size && entry->type == LIMINE_MEMMAP_USABLE) {
-                PMM::bitmap = HIGHER_HALF((uint8_t*)entry->base);
-                PMM::bitmap_l1 = (uint64_t*)((uint64_t)PMM::bitmap + bitmap_size);
-                
-                entry->length -= total_meta_size;
-                entry->base += total_meta_size;
-                
-                _memset((void*)PMM::bitmap, 0xFF, bitmap_size); 
+            
+            // 寻找一个足够大的可用区域来存放位图本身
+            if (entry->type == LIMINE_MEMMAP_USABLE && entry->length >= total_meta_size) {
+                PMM::bitmap = (uint8_t*)HIGHER_HALF(entry->base);
+                PMM::bitmap_l1 = (uint64_t*)((uintptr_t)PMM::bitmap + bitmap_size);
+
+                // 默认全标记为已占用 (1)，后续只释放 USABLE 区域
+                _memset((void*)PMM::bitmap, 0xFF, bitmap_size);
                 _memset((void*)PMM::bitmap_l1, 0xFF, bitmap_l1_size);
+
+                // 从内存图中扣除位图占用的空间
+                entry->base += total_meta_size;
+                entry->length -= total_meta_size;
+                
+                meta_placed = true;
                 break;
             }
         }
-        
+
+        if (!meta_placed) {
+            // 理论上不会发生，除非物理内存极小
+            Panic("PMM: Failed to allocate metadata bitmap!");
+        }
+
+        // --- 阶段 3: 状态同步 (标记可用物理页) ---
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
+            
+            // 只有明确标记为 USABLE 的区域才在位图中清零 (表示可用)
             if (entry->type == LIMINE_MEMMAP_USABLE) {
                 for (uint64_t j = 0; j < entry->length; j += PAGE_SIZE) {
-                    bitmap_clear_sync((entry->base + j) / PAGE_SIZE);
+                    uint64_t page_idx = (entry->base + j) / PAGE_SIZE;
+                    if (page_idx < pmm_bitmap_pages) {
+                        bitmap_clear_sync(page_idx);
+                    }
                 }
             }
         }
-        
-        bitmap_set_sync(0);
-        pmm_bitmap_start = (uint64_t)PMM::bitmap;
+
+        // --- 阶段 4: 安全收尾 ---
+        bitmap_set_sync(0); // 始终锁定物理页 0，防止 NULL 指针分配
+        pmm_bitmap_start = (uintptr_t)PMM::bitmap;
         pmm_bitmap_size = bitmap_size;
         bitmap_last_free = 1; 
     }
