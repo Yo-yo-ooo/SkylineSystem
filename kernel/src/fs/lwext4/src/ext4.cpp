@@ -130,7 +130,7 @@ struct ext4_mountpoint *s_mp;
 
 #include <klib/algorithm/hmap.h>
 
-struct __hmap_s_mp{
+struct alignas(16) __hmap_s_mp{
     char *MPName;
     struct ext4_mountpoint MP;
 };
@@ -442,7 +442,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 	uint32_t bsize;
 	struct ext4_bcache *bc = nullptr;
 	//struct ext4_blockdev *bd = nullptr;
-	struct ext4_mountpoint *mp = nullptr;
+	//struct ext4_mountpoint *mp = nullptr;
 
 	ext4_assert(mount_point && bd);
 
@@ -495,23 +495,21 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
     //kinfoln("%s",mount_point);
 
     if (!hsmp) {
-        // 2. 必须为 entry 分配持久内存，或者确保 hashmap 内部执行了拷贝
-        struct __hmap_s_mp *new_entry = (struct __hmap_s_mp *)kmalloc(sizeof(struct __hmap_s_mp));
-        _memset(new_entry, 0, sizeof(struct __hmap_s_mp));
+        // 必须为 entry 分配持久内存，或者确保 hashmap 内部执行了拷贝
+        /* struct __hmap_s_mp * */
+        hsmp = (struct __hmap_s_mp *)kmalloc(sizeof(struct __hmap_s_mp));
+        _memset(hsmp, 0, sizeof(struct __hmap_s_mp));
 
-        new_entry->MPName = _strdup(mount_point);
+        hsmp->MPName = _strdup(mount_point);
         
-        // 假设你的 hashmap 存储的是指针
-        hashmap_set(HMapS_MP, new_entry);
-        hsmp = new_entry;
+        //hashmap_set(HMapS_MP, hsmp);
     }
 
     // 3. 修正 mp 赋值
-    mp = &hsmp->MP; 
-    // 不要重复 kmalloc，strdup 内部已经做了一次 kmalloc！
-    mp->name = hsmp->MPName;
+    //mp = &hsmp->MP; 
+    //mp->name = hsmp->MPName;
 
-	if (!mp)
+	if (!((struct __hmap_s_mp *)(&hsmp->MP)))
 		return ENOMEM;
 
     debugpln("HIT!(1)");
@@ -520,16 +518,16 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 		return r;
     
     debugpln("HIT!(2)");
-	r = ext4_fs_init(&mp->fs, bd, read_only);
+	r = ext4_fs_init(&hsmp->MP.fs, bd, read_only);
 	if (r != EOK) {
 		ext4_block_fini(bd);
 		return r;
 	}
 
     debugpln("HIT!(3)");
-	bsize = ext4_sb_get_block_size(&mp->fs.sb);
+	bsize = ext4_sb_get_block_size(&hsmp->MP.fs.sb);
 	ext4_block_set_lb_size(bd, bsize);
-	bc = &mp->bc;
+	bc = &hsmp->MP.bc;
 
     debugpln("[MNT STEP] 2\n");
     //hcf();
@@ -547,14 +545,19 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 	/*Bind block cache to block device*/
 	r = ext4_block_bind_bcache(bd, bc);
 	if (r != EOK) {
+        kinfoln("BLOCK DO FINI SECTION");
 		ext4_bcache_cleanup(bc);
 		ext4_block_fini(bd);
 		ext4_bcache_fini_dynamic(bc);
 		return r;
 	}
 
-	bd->fs = &mp->fs;
-	mp->mounted = 1;
+	bd->fs = &hsmp->MP.fs;
+	//hsmp->MP.fs.bdev = bd;
+    hsmp->MP.mounted = 1;
+    hashmap_set(HMapS_MP, hsmp);
+    //bd->fs = &hsmp->MP.fs;
+
 	return r;
 }
 
@@ -634,7 +637,7 @@ static struct ext4_mountpoint *ext4_get_mount(const char *path)
     struct __hmap_s_mp *hsmp = 
         hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
     ext4_mountpoint* mp = hsmp ? &hsmp->MP : nullptr;
-    //kinfoln("%p",mp);
+    kinfoln("%p",mp);
     return mp;
 
 	//return NULL;
@@ -1701,13 +1704,14 @@ Finish:
 int32_t ext4_fopen(ext4_file *file, const char *path, const char *flags)
 {
 	struct ext4_mountpoint *mp = ext4_get_mount(path);
+    //kinfoln("%p",mp);
 	int32_t r;
 
 	if (!mp)
 		return ENOENT;
 
 	EXT4_MP_LOCK(mp);
-
+    //kinfoln("%p",mp->fs.bdev);
 	ext4_block_cache_write_back(mp->fs.bdev, 1);
 	r = ext4_generic_open(file, path, flags, true, 0, 0);
 	ext4_block_cache_write_back(mp->fs.bdev, 0);
