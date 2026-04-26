@@ -150,66 +150,22 @@ int32_t ext4_device_register(struct ext4_blockdev *bd,
 			 const char *dev_name)
 {
 	ext4_assert(bd && dev_name);
-/* 
-	if (strlen(dev_name) > CONFIG_EXT4_MAX_BLOCKDEV_NAME)
-		return EINVAL;
 
-    if(registed_blockdevs == 0){
-        s_bdevices = ext4_malloc(sizeof(struct ext4_block_devices) * CONFIG_EXT4_BLOCKDEVS_COUNT);
-        _memset(s_bdevices, 0, sizeof(struct ext4_block_devices) * CONFIG_EXT4_BLOCKDEVS_COUNT);
-    }
-    if(registed_mountpoints == 0){
-        s_mp = ext4_malloc(sizeof(struct ext4_mountpoint) * CONFIG_EXT4_MOUNTPOINTS_COUNT);
-        _memset(s_mp, 0, sizeof(struct ext4_mountpoint) * CONFIG_EXT4_MOUNTPOINTS_COUNT);
-    }
-    if((registed_blockdevs + 1) > CONFIG_EXT4_BLOCKDEVS_COUNT)
-        ext4_realloc(s_bdevices, sizeof(struct ext4_block_devices) * (registed_blockdevs + 1));
-    if((registed_mountpoints + 1) > CONFIG_EXT4_MOUNTPOINTS_COUNT)
-        ext4_realloc(s_mp, sizeof(struct ext4_block_devices) * (registed_mountpoints + 1));
-
-	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
-		if (!strcmp(s_bdevices[i].name, dev_name))
-			return EEXIST;
-	}
-
-	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
-		if (!s_bdevices[i].bd) {
-			strcpy(s_bdevices[i].name, dev_name);
-			s_bdevices[i].bd = bd;
-            registed_blockdevs++;
-			return EOK;
-		}
-	} */
-
-    //ext4_blockdev_get(dev_name, bd);
 
 
     return EOK;
-	//return ENOSPC;
-    
 }
 
 int32_t ext4_device_unregister(const char *dev_name)
 {
 	ext4_assert(dev_name);
-/* 
-	for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
-		if (strcmp(s_bdevices[i].name, dev_name))
-			continue;
 
-		_memset(&s_bdevices[i], 0, sizeof(s_bdevices[i]));
-		return EOK;
-	}
- */
     return EOK;
 	//return ENOENT;
 }
 
 int32_t ext4_device_unregister_all(void)
-{/* 
-	_memset(s_bdevices, 0, sizeof(s_bdevices));
-    kfree(s_bdevices);
- */
+{
 	return EOK;
 }
 
@@ -441,29 +397,9 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 	int32_t r;
 	uint32_t bsize;
 	struct ext4_bcache *bc = nullptr;
-	//struct ext4_blockdev *bd = nullptr;
-	//struct ext4_mountpoint *mp = nullptr;
 
 	ext4_assert(mount_point && bd);
 
-	//size_t mp_len = strlen(mount_point);
-
-	//if (mp_len > CONFIG_EXT4_MAX_MP_NAME)
-	//	return EINVAL;
-
-	//if (mount_point[mp_len - 1] != '/')
-	//	return ENOTSUP; // return 95;
-
-	/* for (size_t i = 0; i < CONFIG_EXT4_BLOCKDEVS_COUNT + registed_blockdevs; ++i) {
-		if (!strcmp(dev_name, s_bdevices[i].name)) {
-            //kinfo("DEV NAME: %s\n", dev_name);
-            //kinfo("s_bdevices[i].name: %s\n", s_bdevices[i].name);
-			bd = s_bdevices[i].bd;
-			break;
-		}
-	} */
-    //bd = ext4_blockdev_get(dev_name, 0);
-    //bd = hashmap_get(HMap, dev_name);
     
 
     debugpln("HIT!(0)");
@@ -472,24 +408,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
         return ENODEV;
     }
 
-	/* for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
-		if (!s_mp[i].mounted) {
-			strcpy(s_mp[i].name, mount_point);
-			mp = &s_mp[i];
-			break;
-		}
 
-		if (!strcmp(s_mp[i].name, mount_point)){
-			registed_mountpoints++;
-            return EOK;
-        }
-	} */
-   
-    /* hashmap_set(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point,.MP = (struct ext4_mountpoint){0}});
-    struct __hmap_s_mp *hsmp = 
-        hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? &hsmp->MP : nullptr; */
-    // 1. 尝试从哈希表获取
     struct __hmap_s_mp *hsmp = (struct __hmap_s_mp *)hashmap_get(HMapS_MP, 
                                 &(struct __hmap_s_mp){.MPName = (char*)mount_point});
     //kinfoln("%s",mount_point);
@@ -503,12 +422,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
         hsmp->MPName = _strdup(mount_point);
         hsmp->MP.name = hsmp->MPName;
         
-        //hashmap_set(HMapS_MP, hsmp);
     }
-
-    // 3. 修正 mp 赋值
-    //mp = &hsmp->MP; 
-    //mp->name = hsmp->MPName;
 
 	if (!((struct __hmap_s_mp *)(&hsmp->MP)))
 		return ENOMEM;
@@ -569,12 +483,7 @@ int32_t ext4_umount(const char *mount_point)
 	int32_t r;
 	struct ext4_mountpoint *mp = 0;
 
-	/* for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
-		if (!strcmp(s_mp[i].name, mount_point)) {
-			mp = &s_mp[i];
-			break;
-		}
-	} */
+	
     struct __hmap_s_mp *hsmp = 
             hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
     mp = hsmp ? &hsmp->MP : nullptr;
