@@ -355,7 +355,7 @@ static int32_t ext4_unlink(struct ext4_mountpoint *mp,
 	 * parent->dirty = true;
 	 */
     ext4_inode_set_change_inode_time(parent->inode, (uint32_t)RTC::ToUnixTime());
-    ext4_inode_set_modification_time(parent->inode, (uint32_t) RTC::ToUnixTime());
+    ext4_inode_set_modif_time(parent->inode, (uint32_t) RTC::ToUnixTime());
     parent->dirty = true;
 	/*
 	 * TODO: Update timestamp for inode.
