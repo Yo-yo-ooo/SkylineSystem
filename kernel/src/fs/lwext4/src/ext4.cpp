@@ -501,6 +501,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
         _memset(hsmp, 0, sizeof(struct __hmap_s_mp));
 
         hsmp->MPName = _strdup(mount_point);
+        hsmp->MP.name = hsmp->MPName;
         
         //hashmap_set(HMapS_MP, hsmp);
     }
@@ -637,7 +638,8 @@ static struct ext4_mountpoint *ext4_get_mount(const char *path)
     struct __hmap_s_mp *hsmp = 
         hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
     ext4_mountpoint* mp = hsmp ? &hsmp->MP : nullptr;
-    kinfoln("%p",mp);
+    //kinfoln("%p",mp);
+    //kinfoln("Name Of MP:%s",mp ? mp->name : "NULL");
     return mp;
 
 	//return NULL;
@@ -1097,6 +1099,7 @@ static int32_t ext4_generic_open2(ext4_file *f, const char *path, int32_t flags,
 	int32_t r;
 	int32_t len;
 	struct ext4_mountpoint *mp = ext4_get_mount(path);
+    //kinfoln("Addr Of MP: %p",mp);
 	struct ext4_dir_search_result result;
 	struct ext4_inode_ref ref;
 
@@ -1114,6 +1117,7 @@ static int32_t ext4_generic_open2(ext4_file *f, const char *path, int32_t flags,
 	f->flags = flags;
 
 	/*Skip mount point*/
+    //kinfoln("mp->name %s",mp->name);
 	path += strlen(mp->name);
 
 	if (name_off)
@@ -1128,6 +1132,7 @@ static int32_t ext4_generic_open2(ext4_file *f, const char *path, int32_t flags,
 		*parent_inode = ref.index;
 
 	len = ext4_path_check(path, &is_goal);
+    //kinfoln("PATH: %s, LEN: %d, IS_GOAL: %d", path, len, is_goal);
 	while (1) {
 
 		len = ext4_path_check(path, &is_goal);
@@ -1714,6 +1719,7 @@ int32_t ext4_fopen(ext4_file *file, const char *path, const char *flags)
     //kinfoln("%p",mp->fs.bdev);
 	ext4_block_cache_write_back(mp->fs.bdev, 1);
 	r = ext4_generic_open(file, path, flags, true, 0, 0);
+    //kinfoln("file->mp %p",file->mp);
 	ext4_block_cache_write_back(mp->fs.bdev, 0);
 
 	EXT4_MP_UNLOCK(mp);
@@ -1930,7 +1936,7 @@ int32_t ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
             }
         } else {
             /* Yes, we do. */
-            kinfoln("HIT CLEAR u8_buf");
+            //kinfoln("HIT CLEAR u8_buf");
             _memset(u8_buf, 0, len);
         }
 
