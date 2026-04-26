@@ -735,8 +735,25 @@ __ext4_fs_get_inode_ref(struct ext4_fs *fs, uint32_t index,
 			struct ext4_inode_ref *ref,
 			bool initialized)
 {
+    // 1. 检查超级块的幻数（Magic Number），ext4 应该是 0xEF53
+    uint16_t magic = ext4_get16(&fs->sb, magic);
+    kinfoln("Superblock Magic: 0x%x", magic); 
+
+    // 2. 打印超级块的内存地址，确认不是空指针或非法地址
+    kinfoln("SB Address: %p", &fs->sb);
+
 	/* Compute number of i-nodes, that fits in one data block */
 	uint32_t inodes_per_group = ext4_get32(&fs->sb, inodes_per_group);
+    kinfoln("inodes_per_group: %u", inodes_per_group);
+
+    // 假设 fs 是 struct ext4_fs *
+    uint32_t val_macro = ext4_get32(&fs->sb, inodes_per_group);
+    uint32_t val_direct = fs->sb.inodes_per_group; // 绕过宏直接读成员
+    uint32_t *val_ptr = (uint32_t *)((uint8_t *)&fs->sb + 0x28); // 强制硬编码偏移读
+
+    kinfoln("Macro Read: %u", val_macro);
+    kinfoln("Direct Read: %u", val_direct);
+    kinfoln("Pointer Read: %u", *val_ptr);
 
 	/*
 	 * Inode numbers are 1-based, but it is simpler to work with 0-based

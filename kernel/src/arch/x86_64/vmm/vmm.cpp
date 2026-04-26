@@ -335,18 +335,66 @@ namespace VMM{
         mapping->prev->next = mapping->next;
         PMM::Free(PHYSICAL((void*)mapping));
     }
+
     void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
         if (!page_count) return nullptr;
-        spinlock_lock(&pagemap->vma_lock);
+
         uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
+
+        // 1. 【VMA 阶段】在虚拟地址空间找一块连续的“领土”
+        // 这部分只需要 vma_lock，不需要关中断，也不需要 pmm_lock
+        spinlock_lock(&pagemap->vma_lock);
         uint64_t addr = VMM::Useless::InternalAlloc(pagemap, page_count, flags);
-        for(uint64_t i = 0;i < page_count;i++)
-            VMM::Map(pagemap, addr + (i * PAGE_SIZE), PMM::Request(), flags);
+        if (!addr) {
+            spinlock_unlock(&pagemap->vma_lock);
+            return nullptr;
+        }
+
+        // 2. 【PMM 阶段】为每一页获取物理内存
+        Interrupt::Mask(); // 保护 PCP 和 PMM 状态
+        cpu_t* cpu = this_cpu();
+
+        for (uint64_t i = 0; i < page_count; i++) {
+            void* phys_ptr = nullptr;
+
+            // 优先从当前 CPU 的 PCP 缓存拿
+            if (cpu && cpu->pmm_cache_count > 0) {
+                phys_ptr = cpu->pmm_cache[--cpu->pmm_cache_count];
+            } else {
+                // PCP 没货了，进全局 PMM 批发
+                spinlock_lock(&pmm_lock);
+                phys_ptr = PMM::GlobalRequestSingle();
+                
+                // 顺便给当前 CPU 补个货，这样下次循环就能走 PCP 分支了
+                if (phys_ptr && cpu) {
+                    while (cpu->pmm_cache_count < PMM_PCP_BATCH) {
+                        void* batch_page = PMM::GlobalRequestSingle();
+                        if (!batch_page) break;
+                        cpu->pmm_cache[cpu->pmm_cache_count++] = batch_page;
+                    }
+                }
+                spinlock_unlock(&pmm_lock);
+            }
+
+            // 如果物理内存真的耗尽了 (OOM)
+            if (!phys_ptr) {
+                // [TODO] 这里理想情况需要写回滚逻辑：释放已分配的页并清理 VMA
+                kerrorln("PMM: Out of memory during Alloc!");
+                break; 
+            }
+
+            // 3. 【VMM 阶段】建立映射
+            VMM::Map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)phys_ptr, flags);
+        }
+        
+        Interrupt::Unmask();
+
+        // 4. 【收尾】记录映射关系并解锁
         VMM::NewMapping(pagemap, addr, page_count, flags);
         spinlock_unlock(&pagemap->vma_lock);
-        return (void*)addr;
-    }
 
+        return (void*)addr; // 永远返回起始虚拟地址
+    }
     void Free(pagemap_t *pagemap, void *ptr){
         if (((uint64_t)ptr & 0xfff) != 0)
             return;
