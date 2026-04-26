@@ -164,6 +164,25 @@ namespace RTC
     int32_t Second, Minute, Hour, Day, Month, Year;
     unsigned long LastUpdateTime = 0;
 
+    uint32_t ToUnixTime(){
+        uint32_t y = Year;
+        uint32_t m = Month;
+        uint32_t d = Day;
+        uint32_t hh = Hour;
+        uint32_t mm = Minute;
+        uint32_t ss = Second;
+
+        if (m <= 2) {
+            y -= 1;
+            m += 12;
+        }
+
+        uint32_t unix_time = (365 * y) + (y / 4) - (y / 100) + (y / 400) + ((153 * m - 457) / 5) + d - 719469;
+        unix_time = unix_time * 24 * 3600 + hh * 3600 + mm * 60 + ss;
+
+        return unix_time;
+    }
+
     void UpdateTimeIfNeeded()
     {
         if (PIT::Inited)

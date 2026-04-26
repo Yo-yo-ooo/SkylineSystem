@@ -32,6 +32,7 @@ namespace RTC
 
     void read_rtc();
     void UpdateTimeIfNeeded();
+    uint32_t ToUnixTime();
 
 }
 
