@@ -66,7 +66,7 @@ syscall_lists[x] = sys_xxxx //! <---- it means some feature in this syscall does
 syscall_lists[x] = sys_xxxx //? <---- it means i don't know how to impl this syscall
 */
 void syscall_init() {
-
+    
     syscall_lists[7] = sys_gettid;
     syscall_lists[8] = sys_getpid;
     syscall_lists[9] = sys_exit;
@@ -74,6 +74,7 @@ void syscall_init() {
     syscall_lists[14] = sched_yield;
     syscall_lists[18] = sys_arch_prctl;
     syscall_lists[20] = sys_getrandom;
+    syscall_lists[21] = sys_dev_mmap;
     syscall_lists[23] = sys_fork;
     syscall_lists[24] = sys_dbgsout;
     syscall_lists[25] = sys_dev_getinfo;

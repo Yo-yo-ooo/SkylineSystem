@@ -24,23 +24,29 @@
 typedef struct FrameBuffer
 {
 	void* BaseAddress;
-	size_t BufferSize;
 	uint64_t Width;
 	uint64_t Height;
 	uint64_t PixelsPerScanLine;
 }Framebuffer;
 
-#define PROT_NONE 0
-#define PROT_READ 1
-#define PROT_WRITE 2
-#define PROT_EXEC 4
-#define MAP_SHARED 1
 
 int main(){
     const char *msg = "Hello, World!";
     FrameBuffer fb;
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
-    syscall(9, 0, 0, 0, 0, 0, 0); // Get device info
+    syscall(25, 6/*FrameBuffer Type*/, 0/*Fb IDX*/, (uint64_t)&fb, 0, 0, 0); // Get Fb Info
+    uint64_t FbAddr = syscall(21, 6/*FrameBuffer Type*/, 0/*Fb IDX*/, 0, 0, 0, 0); // Map Fb
+    
+    // Now we can use fb to draw something on the screen, for example, fill the
+    // screen with red color:
+    uint32_t *pixels = (uint32_t *)FbAddr;
+    fb.BaseAddress = (void*)FbAddr;
+    for (uint64_t y = 0; y < fb.Height; y++) {
+        for (uint64_t x = 0; x < fb.Width; x++) {
+            pixels[y * fb.PixelsPerScanLine + x] = 0xff800000; // ARGB: Red
+        }
+    }
+    syscall(9, 0, 0, 0, 0, 0, 0); // Exit
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
     
     while (true);

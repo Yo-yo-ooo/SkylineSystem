@@ -57,8 +57,14 @@ uint64_t sys_dev_getinfo(
     GENERATE_IGN3()
 ){
     IGNV_3();
-    //return Dev::FindDevice((VsDevType)DevType,(uint32_t)DevIDX).classp;
-    __memcpy((void*)UserDesc,
-        (void*)Dev::FindDevice((VsDevType)DevType,(uint32_t)DevIDX).DescBaseAddr,
-        Dev::FindDevice((VsDevType)DevType,(uint32_t)DevIDX).DescLength);
+    VDL dev = Dev::FindDevice((VsDevType)DevType, (uint32_t)DevIDX);
+    if (dev.DescLength == 0 || dev.DescBaseAddr == 0)
+        return -1; // 设备不存在
+    if (UserDesc == 0)
+        return -2; // 无效指针
+    if(is_user_address(UserDesc) == false)
+        return -3; // 只能写入用户态地址
+    else
+        __memcpy((void*)UserDesc, (void*)dev.DescBaseAddr, dev.DescLength);
+    return 0; // 成功
 }

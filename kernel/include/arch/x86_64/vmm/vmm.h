@@ -68,7 +68,10 @@
 #define PTE_FLAGS(x) (typeof(x))((uint64_t)x & 0xfff0000000000fff)
 
 #define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
-
+static inline bool is_user_address(uint64_t addr){
+    // 用户态地址 < 0xFFFF800000000000
+    return addr < 0xFFFF800000000000;
+}
 typedef struct vma_region_t {
     uint64_t start;
     uint64_t page_count;
@@ -127,6 +130,7 @@ namespace VMM{
     void RemoveMapping(vm_mapping_t *mapping);
 
     void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user);
+    void *EAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
     void Free(pagemap_t *pagemap, void *ptr);
 
     pagemap_t *Fork(pagemap_t *parent);

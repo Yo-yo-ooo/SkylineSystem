@@ -173,7 +173,7 @@ namespace Schedule{
             : "r"((uint64_t)&cpu->exit_stack[4096]), "r"(curr_proc), "r"(cpu), "r"(&FinalizeProcExit)
             : "memory", "rdi", "rsi"   // 声明污染了 RDI 和 RSI
         );
-
+               
         // 如果代码执行到了这里，说明宇宙物理法则被打破了
         while(1) { asm volatile("hlt"); }
     }

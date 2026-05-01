@@ -92,6 +92,8 @@ void __init x86_64_init(void){
 
     if(!ext4_kernel_init("sata0","/mp/",0)){hcf();}
 
+    FrameBufferDevice::Init();
+
     //ext4_fs_test_all();
 
     Schedule::Install();

@@ -51,7 +51,7 @@ struct DevInfo_Entry {
 
 // ---------------- 全局 Hashmap 指针 ----------------
 
-static struct hashmap *Type2DeviceOPS_Map = nullptr;
+//static struct hashmap *Type2DeviceOPS_Map = nullptr;
 static struct hashmap *DeviceCount_Map = nullptr;
 static struct hashmap *DeviceInfos_Map = nullptr;
 
@@ -91,10 +91,10 @@ namespace Dev {
 
     // 内部懒加载初始化函数
     static void EnsureInitialized() {
-        if (!Type2DeviceOPS_Map) {
+        /* if (!Type2DeviceOPS_Map) {
             Type2DeviceOPS_Map = hashmap_new(sizeof(DevOPS_Entry), 16, 0, 0, 
                                              dev_type_hash, dev_type_compare, nullptr, nullptr);
-        }
+        } */
         if (!DeviceCount_Map) {
             DeviceCount_Map = hashmap_new(sizeof(DevCount_Entry), 16, 0, 0, 
                                           dev_type_hash, dev_type_compare, nullptr, nullptr);
@@ -109,12 +109,12 @@ namespace Dev {
         // spinlock_lock(&DeviceInfo.lock);
         EnsureInitialized();
 
-        // 1. 注册或更新设备操作集 OPS
+        /* // 1. 注册或更新设备操作集 OPS
         DevOPS_Entry lookup_ops = { DeviceType, {} };
         if (!hashmap_get(Type2DeviceOPS_Map, &lookup_ops)) {
             DevOPS_Entry new_ops_entry = { DeviceType, OPS };
             hashmap_set(Type2DeviceOPS_Map, &new_ops_entry);
-        }
+        } */
 
         // 2. 获取并分配当前设备的 Index (替代 vector::push_back)
         uint32_t current_index = 0;
@@ -135,6 +135,8 @@ namespace Dev {
         new_info_entry.key.type = DeviceType;
         new_info_entry.key.index = current_index;
         new_info_entry.dev = DeviceInfo;
+        new_info_entry.dev.ops = OPS; // 直接在 VDL 中设置 OPS，避免额外的 OPS 表和查询
+        new_info_entry.dev.Name = StrCombine(TypeToString(DeviceType), to_string((uint64_t)current_index));
         hashmap_set(DeviceInfos_Map, &new_info_entry);
 
         // spinlock_unlock(&DeviceInfo.lock);
@@ -162,35 +164,32 @@ namespace Dev {
 
     uint8_t DeviceRead(VsDevType DeviceType, uint32_t DevIDX, size_t offset, void* Buffer, size_t nbytes) {
         EnsureInitialized();
-        DevOPS_Entry lookup_ops = { DeviceType, {} };
-        DevOPS_Entry *ops_ptr = (DevOPS_Entry*)hashmap_get(Type2DeviceOPS_Map, &lookup_ops);
         
-        if (!ops_ptr) return false;
-        DevOPS curr_operation = ops_ptr->ops;
+        VDL dev = FindDevice(DeviceType, DevIDX);
 
-        if (curr_operation.ReadBytes != nullptr) {
-            return curr_operation.ReadBytes(
-                FindDevice(DeviceType, DevIDX).classp,
+        if (dev.ops.ReadBytes != nullptr) {
+            return dev.ops.ReadBytes(
+                dev.classp,
                 offset,
                 nbytes,
                 Buffer
             );
-        } else if (curr_operation.ReadBytes_ != nullptr) {
-            return curr_operation.ReadBytes_(
+        } else if (dev.ops.ReadBytes_ != nullptr) {
+            return dev.ops.ReadBytes_(
                 offset,
                 nbytes,
                 Buffer
             );
-        } else if (curr_operation.Read == nullptr) {
+        } else if (dev.ops.Read == nullptr) {
             if (nbytes == 0) return true;
-            VDL dev = FindDevice(DeviceType, DevIDX);
+            //VDL dev = FindDevice(DeviceType, DevIDX);
             if (offset + nbytes > dev.MaxSectorCount * 512) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);
             _memset(buffer2, 0, tempSectorCount * 512);
 
-            if (!curr_operation.Read_((offset / 512), tempSectorCount, buffer2)) {
+            if (!dev.ops.Read_((offset / 512), tempSectorCount, buffer2)) {
                 uint16_t offset_ = offset % 512;
                 for (uint64_t i = 0; i < nbytes; i++)
                     ((uint8_t*)Buffer)[i] = buffer2[i + offset_];
@@ -205,8 +204,8 @@ namespace Dev {
                     
             kfree(buffer2);
             return true;
-        } else if (curr_operation.Read_ == nullptr) {
-            VDL dev = FindDevice(DeviceType, DevIDX);
+        } else if (dev.ops.Read_ == nullptr) {
+            //VDL dev = FindDevice(DeviceType, DevIDX);
             if (nbytes == 0) return true;
             if (offset + nbytes > dev.MaxSectorCount * 512) return false;
             
@@ -214,7 +213,7 @@ namespace Dev {
             uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);
             _memset(buffer2, 0, tempSectorCount * 512);
 
-            if (!curr_operation.Read(dev.classp, (offset / 512), tempSectorCount, buffer2)) {
+            if (!dev.ops.Read(dev.classp, (offset / 512), tempSectorCount, buffer2)) {
                 uint16_t offset_ = offset % 512;
                 for (uint64_t i = 0; i < nbytes; i++)
                     ((uint8_t*)Buffer)[i] = buffer2[i + offset_];
@@ -235,28 +234,30 @@ namespace Dev {
 
     uint8_t DeviceWrite(VsDevType DeviceType, uint32_t DevIDX, size_t offset, void* Buffer, size_t nbytes) {
         EnsureInitialized();
-        DevOPS_Entry lookup_ops = { DeviceType, {} };
-        DevOPS_Entry *ops_ptr = (DevOPS_Entry*)hashmap_get(Type2DeviceOPS_Map, &lookup_ops);
-        
-        if (!ops_ptr) return false;
-        DevOPS curr_operation = ops_ptr->ops;
+        //DevOPS_Entry lookup_ops = { DeviceType, {} };
+        //DevOPS_Entry *ops_ptr = (DevOPS_Entry*)hashmap_get(Type2DeviceOPS_Map, &lookup_ops);
 
-        if (curr_operation.WriteBytes != nullptr) {
-            return curr_operation.WriteBytes(
-                FindDevice(DeviceType, DevIDX).classp,
+        VDL dev = FindDevice(DeviceType, DevIDX);
+        
+        //if (!ops_ptr) return false;
+        //DevOPS dev.ops = ops_ptr->ops;
+
+        if (dev.ops.WriteBytes != nullptr) {
+            return dev.ops.WriteBytes(
+                dev.classp,
                 offset,
                 nbytes,
                 Buffer
             );
-        } else if (curr_operation.WriteBytes_ != nullptr) {
-            return curr_operation.WriteBytes_(
+        } else if (dev.ops.WriteBytes_ != nullptr) {
+            return dev.ops.WriteBytes_(
                 offset,
                 nbytes,
                 Buffer
             );
-        } else if (curr_operation.Read_ == nullptr) {
+        } else if (dev.ops.Read_ != nullptr) {
             if (nbytes == 0) return true;
-            VDL dev = FindDevice(DeviceType, DevIDX);
+            //VDL dev = FindDevice(DeviceType, DevIDX);
             if (offset + nbytes > dev.MaxSectorCount * 512) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
@@ -264,7 +265,7 @@ namespace Dev {
 
             if (tempSectorCount == 1) {
                 _memset(buffer2, 0, 512);
-                if (!curr_operation.Read(dev.classp, (offset / 512), 1, buffer2)) {
+                if (!dev.ops.Read(dev.classp, (offset / 512), 1, buffer2)) {
                     kfree(buffer2);
                     return false;
                 }
@@ -273,7 +274,7 @@ namespace Dev {
                 for (uint64_t i = 0; i < nbytes; i++)
                     buffer2[i + offset_] = ((uint8_t*)Buffer)[i];
 
-                if (!curr_operation.Write(dev.classp, (offset / 512), 1, buffer2)) {
+                if (!dev.ops.Write(dev.classp, (offset / 512), 1, buffer2)) {
                     kfree(buffer2);
                     return false;
                 }
@@ -283,7 +284,7 @@ namespace Dev {
                 uint64_t addrOffset = 0;
                 {
                     _memset(buffer2, 0, 512);
-                    if (!curr_operation.Read(dev.classp, (offset / 512), 1, buffer2)) {
+                    if (!dev.ops.Read(dev.classp, (offset / 512), 1, buffer2)) {
                         kfree(buffer2);
                         return false;
                     }
@@ -297,14 +298,14 @@ namespace Dev {
                     for (uint64_t i = 0; i < specialCount; i++)
                         buffer2[i + offset_] = ((uint8_t*)Buffer)[i];
 
-                    if (!curr_operation.Write(dev.classp, (offset / 512), 1, buffer2)) {
+                    if (!dev.ops.Write(dev.classp, (offset / 512), 1, buffer2)) {
                         kfree(buffer2);
                         return false;
                     }
                 }
                 {
                     _memset(buffer2, 0, 512);
-                    if (!curr_operation.Read(dev.classp, ((offset + nbytes) / 512), 1, buffer2)) {
+                    if (!dev.ops.Read(dev.classp, ((offset + nbytes) / 512), 1, buffer2)) {
                         kfree(buffer2);
                         return false;
                     }
@@ -316,7 +317,7 @@ namespace Dev {
                     for (int64_t i = 0; i < specialCount; i++)
                         buffer2[i] = ((uint8_t*)Buffer)[i + blehus];
 
-                    if (!curr_operation.Write(dev.classp, ((offset + nbytes) / 512), 1, buffer2)) {
+                    if (!dev.ops.Write(dev.classp, ((offset + nbytes) / 512), 1, buffer2)) {
                         kfree(buffer2);
                         return false;
                     }
@@ -325,7 +326,7 @@ namespace Dev {
                     uint64_t newSectorCount = newCount / 512;
                     if (newSectorCount != 0) {
                         uint64_t newSectorStartId = newAddr / 512;
-                        if (!curr_operation.Write(dev.classp, newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset))) {
+                        if (!dev.ops.Write(dev.classp, newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset))) {
                             kfree(buffer2);
                             return false;
                         }
@@ -334,9 +335,9 @@ namespace Dev {
             }
             kfree(buffer2);
             return true;
-        } else if (curr_operation.Read == nullptr) {
+        } else if (dev.ops.Read != nullptr) {
             if (nbytes == 0) return true;
-            VDL dev = FindDevice(DeviceType, DevIDX);
+            //VDL dev = FindDevice(DeviceType, DevIDX);
             if (offset + nbytes > dev.MaxSectorCount * 512) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
@@ -344,7 +345,7 @@ namespace Dev {
 
             if (tempSectorCount == 1) {
                 _memset(buffer2, 0, 512);
-                if (!curr_operation.Read_((offset / 512), 1, buffer2)) {
+                if (!dev.ops.Read_((offset / 512), 1, buffer2)) {
                     kfree(buffer2);
                     return false;
                 }
@@ -353,7 +354,7 @@ namespace Dev {
                 for (uint64_t i = 0; i < nbytes; i++)
                     buffer2[i + offset_] = ((uint8_t*)Buffer)[i];
 
-                if (!curr_operation.Write_((offset / 512), 1, buffer2)) {
+                if (!dev.ops.Write_((offset / 512), 1, buffer2)) {
                     kfree(buffer2);
                     return false;
                 }
@@ -363,7 +364,7 @@ namespace Dev {
                 uint64_t addrOffset = 0;
                 {
                     _memset(buffer2, 0, 512);
-                    if (!curr_operation.Read_((offset / 512), 1, buffer2)) {
+                    if (!dev.ops.Read_((offset / 512), 1, buffer2)) {
                         kfree(buffer2);
                         return false;
                     }
@@ -377,14 +378,14 @@ namespace Dev {
                     for (uint64_t i = 0; i < specialCount; i++)
                         buffer2[i + offset_] = ((uint8_t*)Buffer)[i];
 
-                    if (!curr_operation.Write_((offset / 512), 1, buffer2)) {
+                    if (!dev.ops.Write_((offset / 512), 1, buffer2)) {
                         kfree(buffer2);
                         return false;
                     }
                 }
                 {
                     _memset(buffer2, 0, 512);
-                    if (!curr_operation.Read_(((offset + nbytes) / 512), 1, buffer2)) {
+                    if (!dev.ops.Read_(((offset + nbytes) / 512), 1, buffer2)) {
                         kfree(buffer2);
                         return false;
                     }
@@ -396,7 +397,7 @@ namespace Dev {
                     for (int64_t i = 0; i < specialCount; i++)
                         buffer2[i] = ((uint8_t*)Buffer)[i + blehus];
 
-                    if (!curr_operation.Write_(((offset + nbytes) / 512), 1, buffer2)) {
+                    if (!dev.ops.Write_(((offset + nbytes) / 512), 1, buffer2)) {
                         kfree(buffer2);
                         return false;
                     }
@@ -405,7 +406,7 @@ namespace Dev {
                     uint64_t newSectorCount = newCount / 512;
                     if (newSectorCount != 0) {
                         uint64_t newSectorStartId = newAddr / 512;
-                        if (!curr_operation.Write_(newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset))) {
+                        if (!dev.ops.Write_(newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset))) {
                             kfree(buffer2);
                             return false;
                         }
@@ -419,12 +420,13 @@ namespace Dev {
     }
 
     uint64_t DeviceMemoryMap(VsDevType DeviceType, uint32_t DevIDX, uint64_t length, uint64_t prot, uint64_t offset, uint64_t VADDR) {
-        EnsureInitialized();
-        DevOPS_Entry lookup_ops = { DeviceType, {} };
-        DevOPS_Entry *ops_ptr = (DevOPS_Entry*)hashmap_get(Type2DeviceOPS_Map, &lookup_ops);
-        
-        if (ops_ptr && ops_ptr->ops.MemoryMap != nullptr) {
-            return ops_ptr->ops.MemoryMap(
+        //EnsureInitialized();
+        /* DevOPS_Entry lookup_ops = { DeviceType, {} };
+        DevOPS_Entry *ops_ptr = (DevOPS_Entry*)hashmap_get(Type2DeviceOPS_Map, &lookup_ops); */
+        VDL dev = Dev::FindDevice(DeviceType, DevIDX); // 确保设备存在，虽然后续操作可能不直接使用设备信息
+        //kinfoln("DeviceMemoryMap called for %s", dev.Name);
+        if (dev.ops.MemoryMap != nullptr) {
+            return dev.ops.MemoryMap(
                 length,
                 prot,
                 offset,

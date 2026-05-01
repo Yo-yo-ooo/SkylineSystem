@@ -335,6 +335,8 @@ namespace Dev{
             case NVME:return "nvme";
             case SAS:return "sas";
             case Undefined:return "UNDEF";
+            case FrameBuffer:return "fb";
+            default:return "UNDEF";
         }
     }
 
