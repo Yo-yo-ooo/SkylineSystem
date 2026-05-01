@@ -8,6 +8,7 @@ COMMON: 0:FALSE
 
 #define PCI_LIST_MAX 128
 
+#define CONFIG_VMM_5LVL_MAP 0
 
 #if NOT_COMPILE_X86MEM == 1
 

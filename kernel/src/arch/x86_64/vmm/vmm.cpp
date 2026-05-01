@@ -21,6 +21,7 @@
 */
 #include <limine.h>
 #include <arch/x86_64/allin.h>
+#include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 
 
@@ -30,17 +31,23 @@ static volatile struct limine_executable_address_request limine_executable_addre
     .revision = 0
 };
 
+#if CONFIG_VMM_5LVL_MAP == 1
+#define REQ_TOP_LVL LIMINE_PAGING_MODE_X86_64_5LVL
+#else
+#define REQ_TOP_LVL LIMINE_PAGING_MODE_X86_64_4LVL
+#endif
+
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_paging_mode_request paging_mode_request = {
     .id = LIMINE_PAGING_MODE_REQUEST_ID,
     .revision = 0,
-    .mode = LIMINE_PAGING_MODE_X86_64_5LVL,
-    .max_mode = LIMINE_PAGING_MODE_X86_64_5LVL,
+    .mode = REQ_TOP_LVL,
+    .max_mode = REQ_TOP_LVL,
     .min_mode = LIMINE_PAGING_MODE_X86_64_MIN
 };
 
 static volatile bool IsPM5LVL = 
-    (paging_mode_request.response->mode == LIMINE_PAGING_MODE_X86_64_5LVL);
+    (paging_mode_request.response->mode == REQ_TOP_LVL);
 
 extern volatile spinlock_t pmm_lock;
 #define PHYS_BASE(x) (x - executable_vaddr + executable_paddr)
@@ -78,11 +85,13 @@ namespace VMM{
 
         uint64_t GetPhysicsFlags(pagemap_t *pagemap, uint64_t vaddr) {
             uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
+#if CONFIG_VMM_5LVL_MAP == 1
             if(IsPM5LVL){
                 pml4 = (uint64_t*)pagemap->toplvl[PML5E(vaddr)];
                 if(!PAGE_EXISTS(pml4))return 0;
                 pml4 = HIGHER_HALF(PTE_MASK(pml4));
             }
+#endif
             uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
             if (!PAGE_EXISTS(pdpt)) return 0;
             pdpt = HIGHER_HALF(PTE_MASK(pdpt));
@@ -134,9 +143,10 @@ namespace VMM{
         kernel_pagemap->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
         kernel_pagemap->vma_head = nullptr;
         _memset(kernel_pagemap->toplvl, 0, PAGE_SIZE);
+#if CONFIG_VMM_5LVL_MAP == 1
         if(IsPM5LVL)
             kinfoln("THIS CPU SUPPORT 5 LVL PAGING!");
-
+#endif
         //uint64_t first_free_addr = pmm_memmap->entries[0]->base + PMM::pmm_bitmap_pages * PAGE_SIZE;
         VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(0x100000000000), 1);
 
@@ -180,12 +190,14 @@ namespace VMM{
 
         //There!
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
+#if CONFIG_VMM_5LVL_MAP == 1
         if(IsPM5LVL){
             pml4 = (uint64_t*)pagemap->toplvl[PML5E(vaddr)];
                 if (!PAGE_EXISTS(pml4))
                 pml4 = VMM::Useless::NewLevel(pagemap->toplvl, PML5E(vaddr));
             pml4 = HIGHER_HALF(PTE_MASK(pml4));
         }
+#endif
 
         uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
         if (!PAGE_EXISTS(pdpt))
@@ -212,11 +224,13 @@ namespace VMM{
 
     void Unmap(pagemap_t *pagemap, uint64_t vaddr){
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
+#if CONFIG_VMM_5LVL_MAP == 1
         if(IsPM5LVL){
             pml4 = (uint64_t*)pagemap->toplvl[PML5E(vaddr)];
             if (!PAGE_EXISTS(pml4)) return;
             pml4 = HIGHER_HALF(PTE_MASK(pml4));
         }
+#endif
         uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
         if (!PAGE_EXISTS(pdpt)) return;
         pdpt = HIGHER_HALF(PTE_MASK(pdpt));
