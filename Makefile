@@ -147,7 +147,7 @@ edk2-ovmf:
 
 limine/limine:
 	rm -rf limine
-	git clone https://github.com/limine-bootloader/limine.git --branch=v10.x-binary --depth=1
+	git clone https://github.com/limine-bootloader/limine.git --branch=v11.x-binary --depth=1
 	$(MAKE) -C limine
 	git clone https://github.com/limine-bootloader/limine-protocol
 	cp -f ./limine-protocol/include/limine.h ./kernel/src
