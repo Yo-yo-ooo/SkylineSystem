@@ -32,18 +32,21 @@
 namespace Schedule{
     void FreeThreadResources(thread_t *thread){
         if(thread->heap != nullptr)
-            kfree(thread->heap);
-
+            VMM::Free(thread->pagemap, thread->heap);
         kinfoln("Thread Heap Freed!");
+
         if(thread->fx_area)
             VMM::Free(kernel_pagemap, thread->fx_area);
         kinfoln("Thread FX Area freeed!");
+
         if(thread->stack)
-            VMM::Free(kernel_pagemap,thread->stack);
+            VMM::Free(kernel_pagemap, thread->stack);
         kinfoln("Thread Stack freeed!");
+
         if(thread->sig_stack)
-            VMM::Free(kernel_pagemap,thread->sig_stack);
+            VMM::Free(kernel_pagemap, thread->sig_stack);
         kinfoln("Thread Signal Stack freeed!");
+        
         kinfoln("Thread Res All freeed!");
     }
 
@@ -128,11 +131,51 @@ namespace Schedule{
         VMM::DestroyPM(proc->pagemap);
     }
 
-    void Exit(int32_t code){
-        LAPIC::StopTimer();
-        Schedule::DeleteProc(Schedule::this_proc());
-        this_cpu()->current_thread = nullptr;
+    // ====================================================================
+    // 运行在 exit_stack 上的收尾函数
+    // 此时旧的 thread->stack 和 proc->pagemap 都可以被安全炸毁
+    // ====================================================================
+    static void FinalizeProcExit(proc_t *proc, cpu_t *cpu) {
+        // 彻底销毁进程的一切资源
+        Schedule::DeleteProc(proc);
+        
+        cpu->current_thread = nullptr;
         kinfoln("Delete PROC!");
-        LAPIC::IPI(this_cpu()->id, SCHED_VEC + 1);
+        
+        // 触发调度中断，强制离开 exit_stack，加载新线程
+        LAPIC::IPI(cpu->id, SCHED_VEC + 1);
+        
+        // 等待 IPI 响应，永远不会往下执行
+        while(true) { asm volatile("hlt"); }
+    }
+
+    void Exit(int32_t code){
+        asm volatile("cli");    // 必须关中断，保证切换过程绝对原子
+        LAPIC::StopTimer();
+
+        proc_t *curr_proc = Schedule::this_proc();
+        thread_t *curr_thread = Schedule::this_thread();
+        cpu_t *cpu = this_cpu();
+
+        curr_thread->state = THREAD_ZOMBIE;
+        curr_thread->exit_code = code;
+
+        // 切入内核全局页表，脱离对 proc->pagemap 的依赖
+        VMM::SwitchPageMap(kernel_pagemap);
+
+        // 内联汇编强行切换栈指针，跳出当前 thread->stack
+        // 前提：确保你的 cpu_t 结构体中已经定义了 exit_stack_top
+        asm volatile (
+            "mov %0, %%rsp \n\t"       // 将 RSP 指向 cpu->exit_stack_top
+            "mov %1, %%rdi \n\t"       // rdi = 参数1: curr_proc
+            "mov %2, %%rsi \n\t"       // rsi = 参数2: cpu
+            "call *%3      \n\t"       // 间接调用 FinalizeProcExit
+            :
+            : "r"((uint64_t)&cpu->exit_stack[4096]), "r"(curr_proc), "r"(cpu), "r"(&FinalizeProcExit)
+            : "memory", "rdi", "rsi"   // 声明污染了 RDI 和 RSI
+        );
+
+        // 如果代码执行到了这里，说明宇宙物理法则被打破了
+        while(1) { asm volatile("hlt"); }
     }
 }

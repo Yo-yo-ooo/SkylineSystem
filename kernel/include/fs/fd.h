@@ -41,25 +41,15 @@ enum FSType : uint8_t{
     FS_FATFS = 2,
 };
 
-/*
-Device type list:
-0 - Reserved
-1 - Framebuffer
-
-*/
-
 typedef struct FileDesc{
     size_t off;
     int32_t flags;
     char* path;
     size_t size;
-    ext4_file f;
-    bool IsSpecial; //Is/NOT special device (eg.Framebuffer)
     uint32_t Type; //file type
-    void *RSVD;
     FSType FsType;
-    VsDevType DevType;
-    uint32_t dev_idx;
+    void *MetaData; //FS File Meta Data
+    size_t MetaDataSize;
 } fd_t;
 
 struct FSOps{
@@ -69,8 +59,6 @@ struct FSOps{
     int32_t (*close)(fd_t* fsd);
     int32_t (*open)(fd_t* fsd, const char* path, int32_t flags);
 };
-
-extern volatile struct FSOps FileSystemOps[256];
 
 
 int32_t ReadFile(fd_t* fsd, void *buf, size_t count);

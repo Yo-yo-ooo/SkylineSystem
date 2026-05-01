@@ -90,6 +90,8 @@ typedef struct cpu_t{
     uint32_t pmm_cache_count;
 
     cpu_overloadable_functions_t OverLoadableFuncs;
+
+    alignas(16) uint8_t exit_stack[4096];
 } cpu_t;
 
 constexpr uint64_t ININTR_OFF = offsetof(cpu_t, InIntr);
