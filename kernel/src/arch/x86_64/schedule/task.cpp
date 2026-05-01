@@ -33,21 +33,21 @@ namespace Schedule{
     void FreeThreadResources(thread_t *thread){
         if(thread->heap != nullptr)
             VMM::Free(thread->pagemap, thread->heap);
-        kinfoln("Thread Heap Freed!");
+        debugpln("Thread Heap Freed!");
 
         if(thread->fx_area)
             VMM::Free(kernel_pagemap, thread->fx_area);
-        kinfoln("Thread FX Area freeed!");
+        debugpln("Thread FX Area freeed!");
 
         if(thread->stack)
             VMM::Free(kernel_pagemap, thread->stack);
-        kinfoln("Thread Stack freeed!");
+        debugpln("Thread Stack freeed!");
 
         if(thread->sig_stack)
             VMM::Free(kernel_pagemap, thread->sig_stack);
-        kinfoln("Thread Signal Stack freeed!");
+        debugpln("Thread Signal Stack freeed!");
         
-        kinfoln("Thread Res All freeed!");
+        debugpln("Thread Res All freeed!");
     }
 
     void DeleteThread(cpu_t *cpu, thread_t *thread) {
@@ -140,7 +140,7 @@ namespace Schedule{
         Schedule::DeleteProc(proc);
         
         cpu->current_thread = nullptr;
-        kinfoln("Delete PROC!");
+        debugpln("Delete PROC!");
         
         // 触发调度中断，强制离开 exit_stack，加载新线程
         LAPIC::IPI(cpu->id, SCHED_VEC + 1);
@@ -164,7 +164,6 @@ namespace Schedule{
         VMM::SwitchPageMap(kernel_pagemap);
 
         // 内联汇编强行切换栈指针，跳出当前 thread->stack
-        // 前提：确保你的 cpu_t 结构体中已经定义了 exit_stack_top
         asm volatile (
             "mov %0, %%rsp \n\t"       // 将 RSP 指向 cpu->exit_stack_top
             "mov %1, %%rdi \n\t"       // rdi = 参数1: curr_proc
