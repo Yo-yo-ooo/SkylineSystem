@@ -140,7 +140,7 @@ namespace Schedule{
         Schedule::DeleteProc(proc);
         
         cpu->current_thread = nullptr;
-        debugpln("Delete PROC!");
+        kinfoln("Delete PROC %d", proc->id);
         
         // 触发调度中断，强制离开 exit_stack，加载新线程
         LAPIC::IPI(cpu->id, SCHED_VEC + 1);
