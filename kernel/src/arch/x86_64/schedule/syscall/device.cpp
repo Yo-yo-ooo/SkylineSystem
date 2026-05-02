@@ -57,6 +57,7 @@ uint64_t sys_dev_getinfo(
     GENERATE_IGN3()
 ){
     IGNV_3();
+    uint64_t paddrud = VMM::GetPhysics(Schedule::this_proc()->pagemap, UserDesc) + hhdm_offset;
     VDL dev = Dev::FindDevice((VsDevType)DevType, (uint32_t)DevIDX);
     if (dev.DescLength == 0 || dev.DescBaseAddr == 0)
         return -1; // 设备不存在
@@ -64,7 +65,11 @@ uint64_t sys_dev_getinfo(
         return -2; // 无效指针
     if(is_user_address(UserDesc) == false)
         return -3; // 只能写入用户态地址
-    else
-        __memcpy((void*)UserDesc, (void*)dev.DescBaseAddr, dev.DescLength);
+    else{
+        kinfoln("Device Info: Type=%d, IDX=%d, Name=%s, DescBaseAddr=0x%X, DescLength=%u",
+            dev.type, dev.idx, dev.Name, dev.DescBaseAddr, dev.DescLength);
+        __memcpy((void*)paddrud, (void*)dev.DescBaseAddr, dev.DescLength);
+        
+    }
     return 0; // 成功
 }

@@ -24,6 +24,7 @@
 typedef struct FrameBuffer
 {
 	void* BaseAddress;
+	size_t BufferSize;
 	uint64_t Width;
 	uint64_t Height;
 	uint64_t PixelsPerScanLine;
@@ -43,7 +44,7 @@ int main(){
     fb.BaseAddress = (void*)FbAddr;
     for (uint64_t y = 0; y < fb.Height; y++) {
         for (uint64_t x = 0; x < fb.Width; x++) {
-            pixels[y * fb.PixelsPerScanLine + x] = 0xff800000; // ARGB: Red
+            pixels[y * fb.PixelsPerScanLine + x] = 0xffffffff;
         }
     }
     syscall(9, 0, 0, 0, 0, 0, 0); // Exit
