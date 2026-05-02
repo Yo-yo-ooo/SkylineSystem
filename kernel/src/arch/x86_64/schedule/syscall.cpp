@@ -78,6 +78,7 @@ void syscall_init() {
     syscall_lists[23] = sys_fork;
     syscall_lists[24] = sys_dbgsout;
     syscall_lists[25] = sys_dev_getinfo;
+    syscall_lists[26] = sys_dev_ioctl;
     
 
     uint64_t efer = rdmsr(IA32_EFER);

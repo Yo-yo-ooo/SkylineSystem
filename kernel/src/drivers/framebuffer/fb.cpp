@@ -50,7 +50,20 @@ namespace FrameBufferDevice{
         }
         spinlock_unlock(&pm->vma_lock);
         kinfoln("Framebuffer mapped to VADDR: 0x%X, length: %lu bytes", VADDR, fb_siz);
-        return VADDR;
+        return VADDR; 
+    }
+
+    uint64_t ioctl(uint64_t cmd,uint64_t arg){
+        switch (cmd)
+        {
+        case 0:return Fb->BaseAddress;
+        case 1:return Fb->BufferSize;
+        case 2:return Fb->Height;
+        case 3:return Fb->PixelsPerScanLine;
+        case 4:return Fb->Width;
+        default:
+            break;
+        }
     }
 
     void Init(){
@@ -61,6 +74,8 @@ namespace FrameBufferDevice{
         FrameBuffer.DescLength = sizeof(Framebuffer);
         DevOPS ops = {0};
         ops.MemoryMap = FrameBufferDevice::MemoryMap;
+        ops.ioctl = FrameBufferDevice::ioctl;
+        kinfoln("FBBADDR %X",Fb->BaseAddress);
         Dev::AddDevice(FrameBuffer,VsDevType::FrameBuffer,ops);
     }
 }

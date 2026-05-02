@@ -51,6 +51,14 @@ uint64_t length,uint64_t prot,uint64_t offset,uint64_t VADDR){
     );
 }
 
+uint64_t sys_dev_ioctl(
+    uint64_t DevType,uint64_t DevIDX,uint64_t cmd,uint64_t arg,
+        GENERATE_IGN2()){
+    IGNV_2();
+    VDL dev = Dev::FindDevice((VsDevType)DevType, (uint32_t)DevIDX);
+    return dev.ops.ioctl(cmd,arg);
+}
+
 //This function mainly get informathion desc base address of device
 uint64_t sys_dev_getinfo(
     uint64_t DevType,uint64_t DevIDX,uint64_t UserDesc,
@@ -65,11 +73,8 @@ uint64_t sys_dev_getinfo(
         return -2; // 无效指针
     if(is_user_address(UserDesc) == false)
         return -3; // 只能写入用户态地址
-    else{
-        kinfoln("Device Info: Type=%d, IDX=%d, Name=%s, DescBaseAddr=0x%X, DescLength=%u",
-            dev.type, dev.idx, dev.Name, dev.DescBaseAddr, dev.DescLength);
-        __memcpy((void*)paddrud, (void*)dev.DescBaseAddr, dev.DescLength);
-        
-    }
+    else
+        VMM::UserAccess::CopyToUser(Schedule::this_proc()->pagemap, UserDesc, &dev.DescBaseAddr, dev.DescLength);
+    
     return 0; // 成功
 }

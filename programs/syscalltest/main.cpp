@@ -21,27 +21,58 @@
 */
 #include "syscall.h"
 
-typedef struct FrameBuffer
+typedef struct alignas(16) FrameBuffer
 {
 	void* BaseAddress;
-	size_t BufferSize;
+	uint64_t BufferSize;
 	uint64_t Width;
 	uint64_t Height;
 	uint64_t PixelsPerScanLine;
 }Framebuffer;
 
 
+char intTo_stringOutput[128];
+const char *to_string(uint64_t value)
+{
+    uint8_t size = 0;
+    uint64_t sizetest = value;
+    while (sizetest / 10 > 0)
+    {
+        sizetest /= 10;
+        size++;
+    }
+
+    uint8_t index = 0;
+    while (value / 10 > 0)
+    {
+        uint8_t remainder = value % 10;
+        value /= 10;
+        intTo_stringOutput[size - index] = remainder + '0';
+        index++;
+    }
+    uint8_t remainder = value % 10;
+    intTo_stringOutput[size - index] = remainder + '0';
+    intTo_stringOutput[size + 1] = 0;
+    intTo_stringOutput[size + 2] = 0;
+    return intTo_stringOutput;
+}
+
 int main(){
     const char *msg = "Hello, World!";
     FrameBuffer fb;
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
-    syscall(25, 6/*FrameBuffer Type*/, 0/*Fb IDX*/, (uint64_t)&fb, 0, 0, 0); // Get Fb Info
+    //syscall(25, 6/*FrameBuffer Type*/, 0/*Fb IDX*/, (uint64_t)&fb, 0, 0, 0); // Get Fb Info
     uint64_t FbAddr = syscall(21, 6/*FrameBuffer Type*/, 0/*Fb IDX*/, 0, 0, 0, 0); // Map Fb
-    
+    fb.BaseAddress = (void*)syscall(26,6,0,0,0,0,0);
+    fb.BufferSize = syscall(26,6,0,1,0,0,0);
+    fb.Height = syscall(26,6,0,2,0,0,0);
+    fb.PixelsPerScanLine = syscall(26,6,0,3,0,0,0);
+    fb.Width = syscall(26,6,0,4,0,0,0);
     // Now we can use fb to draw something on the screen, for example, fill the
     // screen with red color:
     uint32_t *pixels = (uint32_t *)FbAddr;
-    fb.BaseAddress = (void*)FbAddr;
+    syscall(24,(long)to_string(fb.Height),128,0,0,0,0);
+    syscall(24,(long)to_string(fb.BufferSize),128,0,0,0,0);
     for (uint64_t y = 0; y < fb.Height; y++) {
         for (uint64_t x = 0; x < fb.Width; x++) {
             pixels[y * fb.PixelsPerScanLine + x] = 0xffffffff;

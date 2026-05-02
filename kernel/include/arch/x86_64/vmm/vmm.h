@@ -100,7 +100,20 @@ extern volatile pagemap_t *kernel_pagemap;
 
 namespace VMM{
     
-
+    namespace UserAccess {
+        
+        /**
+         * @brief 将内核数据安全地拷贝到当前用户进程的虚拟地址空间
+         * 
+         * @param pagemap  当前进程的页表指针
+         * @param u_dest   用户态目标虚拟地址
+         * @param k_src    内核态源数据地址
+         * @param len      拷贝长度
+         * @return true    拷贝成功
+         * @return false   发生错误（地址非法、未映射或越界）
+         */
+        void CopyToUser(pagemap_t* pagemap, uint64_t u_dest, const void* k_src, uint64_t len);
+    }
     namespace Useless
     {
         uint64_t *NewLevel(uint64_t *level, uint64_t entry);

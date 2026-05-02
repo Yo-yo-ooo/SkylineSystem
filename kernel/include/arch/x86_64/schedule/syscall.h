@@ -144,7 +144,9 @@ uint64_t length,uint64_t prot,uint64_t offset,uint64_t VADDR);
 uint64_t sys_dev_getinfo(
     uint64_t DevType,uint64_t DevIDX,uint64_t UserDesc,
     GENERATE_IGN3());
-
+uint64_t sys_dev_ioctl(
+    uint64_t DevType,uint64_t DevIDX,uint64_t cmd,uint64_t arg,
+        GENERATE_IGN2());
 uint64_t sys_dbgsout(uint64_t CharsAddr,uint64_t OutSize,GENERATE_IGN4());
 }
 #endif

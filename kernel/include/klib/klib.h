@@ -35,7 +35,6 @@
 #include <klib/types.h>
 #include <klib/list.h>
 #include <klib/cstr.h>
-#include <klib/utf8.h>
 #include <klib/fifo.h>
 #include <klib/serial.h>
 #include <klib/ctype.h>
