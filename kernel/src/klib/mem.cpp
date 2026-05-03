@@ -111,7 +111,7 @@ void _memcpy(void* src, void* dest, uint64_t size){
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
-    if(size >= 79872 && cpu->SupportSSE4_2){
+    if(size >= 256 && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
@@ -121,7 +121,7 @@ void _memcpy(void* src, void* dest, uint64_t size){
         return;
     }
 #endif
-#else defined(__aarch64__)
+#elif defined(__aarch64__)
     NEON_MEMCPY(dest,src,size);
     return;
 #endif 
@@ -150,7 +150,7 @@ void _memset(void* dest, uint8_t value, uint64_t size){
         return;
     }
 #endif
-#else defined(__aarch64__)
+#elif defined(__aarch64__)
     NEON_MEMSET(dest,value,size);
     return;
 #endif
