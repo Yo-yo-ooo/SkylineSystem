@@ -57,6 +57,7 @@ asm volatile("" ::: "memory");
 Prevent the compiler from moving the code from the back to the front
 */
 #define XFXSAVE_CAS do{\
+        asm volatile("cli"); \
         cpu->preempt_count++; \    
         asm volatile("" ::: "memory"); \ 
         if(cpu->SupportXSAVE){ \
@@ -83,6 +84,7 @@ asm volatile("" ::: "memory");
 Prevent the compiler from moving previous code to the end
 */
 #define XFXSAVE_CASB do{\
+        asm volatile("sfence" ::: "memory"); \
         if(cpu->SupportXSAVE){ \
             if(cpu->SupportXSAVEOPT) \
                 asm volatile("xsaveopt %0" : : "m"(*cpu->KernelXsaveSpace), "a"(UINT32_MAX), "d"(UINT32_MAX) : "memory"); \
@@ -97,6 +99,7 @@ Prevent the compiler from moving previous code to the end
         } \
         asm volatile("" ::: "memory"); \ 
         cpu->preempt_count--; \
+        asm volatile("sti"); \
     }while(0);
 
 #endif 
@@ -111,7 +114,7 @@ void _memcpy(void* src, void* dest, uint64_t size){
     cpu_t *cpu = this_cpu();
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
-    if(size >= 256 && cpu->SupportSSE4_2){
+    if(size >= 79872 && cpu->SupportSSE4_2){
         int8_t *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
