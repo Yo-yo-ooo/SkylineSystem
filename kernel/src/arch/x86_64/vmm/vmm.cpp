@@ -291,8 +291,9 @@ namespace VMM{
         pagemap->vm_mappings = nullptr;
         pagemap->vma_lock = 0;
         pagemap->vma_head = nullptr;
-        for (uint64_t i = 256; i < 512; i++)
-            pagemap->toplvl[i] = kernel_pagemap->toplvl[i];
+        __memcpy(&pagemap->toplvl[256], 
+            &kernel_pagemap->toplvl[256], 
+            (512 - 256) * sizeof(uint64_t));  // 256 * 8 = 2048 字节
         // The vma root is defined after the pagemap is created
         // I wont put it here because the starting address
         // might vary from page map to page map (for example, in an ELF it might be
