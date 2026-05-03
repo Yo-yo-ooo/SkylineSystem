@@ -1,84 +1,5 @@
-/*
-* SPDX-License-Identifier: GPL-2.0-only
-* File: basicdraw.cpp
-* Copyright (C) 2026 Yo-yo-ooo
-*
-* This file is part of SkylineSystem.
-*
-* SkylineSystem is free software; you can redistribute it and/or modify
-* it under the terms of the GNU General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License
-* along with this program; if not, write to the Free Software
-* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
-*/
-#include <desktop/basicdraw/basicdraw.h>
+#include <gui/basicdraw.h>
 
-#ifdef CONFIG_USE_DESKTOP_SUBSYS
-
-extern "C" {
-//freestanding cpu features functions
-func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n);
-func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n);
-func_optimize(3) int32_t memcmp_fscpuf(const void *left, const void *right, size_t len);
-func_optimize(3) void bzero(void *dst, size_t n);
-}
-
-func_optimize(3) void *memset32_fscpuf(void *dst, const int32_t val, size_t n){
-    void *ret = dst;
-
-#if defined(__x86_64__)
-    // 针对 x86_64 的极致优化
-    // 'n' 在这里代表像素数量 (Pixels)，即 4-byte units
-    if (n > 0) {
-        asm volatile (
-            "cld\n"
-            "rep stosl"  // 使用 stosl (Double-word) 填充 32 位值
-            : "+D"(dst), "+c"(n)
-            : "a"(val)
-            : "memory"
-        );
-    }
-
-#elif defined(__aarch64__)
-    // 针对 AArch64 的优化：使用 STP (Store Pair) 指令
-    uint64_t color64 = ((uint64_t)val << 32) | val;
-    
-    // 每次处理 4 个像素 (16 字节)
-    while (n >= 4) {
-        asm volatile (
-            "stp %0, %0, [%1], #16" 
-            : : "r"(color64), "r"(dst) : "memory"
-        );
-        n -= 4;
-        dst = (uint32_t*)dst + 4;
-    }
-    
-    // 处理剩余像素
-    while (n--) {
-        *(uint32_t *)dst = val;
-        dst = (uint32_t*)dst + 1;
-    }
-
-#else
-    // 基础兜底逻辑
-    uint32_t *p = (uint32_t *)dst;
-    while (n--) {
-        *p++ = val;
-    }
-#endif
-
-    return ret;
-
-    return ret;
-}
 
 void BasicDraw::ClearScreen(uint32_t Color){
     uint64_t fbBase = (uint64_t)this->FrameBuf->BaseAddress;
@@ -104,7 +25,9 @@ void BasicDraw::DrawHLine(uint64_t X, uint64_t Y, uint64_t Width, uint32_t Color
     
     uint32_t* p = (uint32_t*)FrameBuf->BaseAddress + (Y * FrameBuf->PixelsPerScanLine);
     // 使用快速填充
-    memset32_fscpuf(&p[startX], Color, (endX - startX));
+    //memset32_fscpuf(&p[startX], Color, (endX - startX));
+    for(uint32_t i = startX;i < endX;i++)
+        p[i] = Color;
 }
 
 void BasicDraw::DrawRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint32_t Color, bool Fill) {
@@ -275,36 +198,58 @@ void BasicDraw::DrawRoundedRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, 
         DrawVLine(X + W - 1, Y + R, H - 2 * R, Color); // 右边
     }
 }
-
-void BasicDraw::DrawProportionalUI() {
-    // 1. 获取屏幕实时尺寸
-    uint64_t sw = this->FrameBuf->Width;
-    uint64_t sh = this->FrameBuf->Height;
-
-    // 2. 根据比例计算尺寸 (使用整数运算防止浮点开销)
-    // 宽度 = 40%, 高度 = 50%
-    uint64_t rectW = (sw * 40) / 100;
-    uint64_t rectH = (sh * 50) / 100;
-    
-    // 3. 计算居中坐标
-    uint64_t x = (sw - rectW) / 2;
-    uint64_t y = (sh - rectH) / 2;
-
-    // 4. 计算自适应圆角半径 (设为宽度的 1/20, 即 5%)
-    uint64_t radius = rectW / 20;
-
-    // 5. 绘制
-    uint32_t darkBg = 0x1A1A1A;     // 极深灰
-    uint32_t cardColor = 0x2D2D2D;  // 稍微浅一点的灰色卡片
-    uint32_t accent = 0x0078D7;     // 蓝色高亮边框
-
-    this->ClearScreen(darkBg);
-    
-    // 画阴影/背景卡片
-    this->DrawRoundedRect(x, y, rectW, rectH, radius, cardColor, true);
-    
-    // 画一个 2 像素宽的外边框（通过两次绘制实现）
-    this->DrawRoundedRect(x, y, rectW, rectH, radius, accent, false);
+// 辅助函数：计算定点数平方根（牛顿迭代法，避免浮点数开销）
+// 适用于内核环境中不支持浮点运算的情况
+static uint64_t IntegerSqrt(uint64_t n) {
+    if (n <= 1) return n;
+    uint64_t x0 = n / 2;
+    uint64_t x1 = (x0 + n / x0) / 2;
+    while (x1 < x0) {
+        x0 = x1;
+        x1 = (x0 + n / x0) / 2;
+    }
+    return x0;
 }
 
-#endif
+void BasicDraw::DrawProportionalUI() {
+    uint64_t W = FrameBuf->Width;
+    uint64_t H = FrameBuf->Height;
+    
+    // 缩放因子（以 1920×1080 为基准）
+    float scaleX = (float)W / 1920.0f;
+    float scaleY = (float)H / 1080.0f;
+    float scale = (scaleX + scaleY) / 2.0f;
+
+    // ---------- 辅助：用 DrawRoundedRect 填充完整圆形 ----------
+    auto FillCircle = [&](uint64_t cx, uint64_t cy, uint64_t r, uint32_t color) {
+        uint64_t d = r * 2;
+        DrawRoundedRect(cx - r, cy - r, d, d, r, color, true);
+    };
+
+    // ========== 1. 渐变背景（从上到下：深蓝 → 浅蓝） ==========
+    // 逐行改变颜色，模拟垂直渐变
+    uint32_t topColor    = 0x003366; // 顶部深蓝
+    uint32_t bottomColor = 0x0078D4; // 底部亮蓝
+
+    for (uint64_t y = 0; y < H; y++) {
+        // 线性插值：t 从 0（顶部）到 1（底部）
+        float t = (float)y / (float)H;
+        uint8_t r = (uint8_t)(((topColor >> 16) & 0xFF) * (1.0f - t) + ((bottomColor >> 16) & 0xFF) * t);
+        uint8_t g = (uint8_t)(((topColor >> 8)  & 0xFF) * (1.0f - t) + ((bottomColor >> 8)  & 0xFF) * t);
+        uint8_t b = (uint8_t)((topColor & 0xFF) * (1.0f - t) + (bottomColor & 0xFF) * t);
+        uint32_t color = (r << 16) | (g << 8) | b;
+        DrawHLine(0, y, W, color);
+    }
+
+    // ========== 2. 装饰性光斑（模拟 Win11 右下角光晕） ==========
+    uint64_t glowR = (uint64_t)(300.0f * scale);
+    uint64_t glowX = W - glowR / 2;
+    uint64_t glowY = H - glowR / 2;
+
+    // 大光斑（半透明青蓝）
+    //FillCircle(glowX, glowY, glowR, 0x3399FF);
+    // 中心亮斑
+    //FillCircle(glowX, glowY, (uint64_t)(glowR * 0.7f), 0x66B2FF);
+    // 高光点
+    //FillCircle(glowX, glowY, (uint64_t)(glowR * 0.3f), 0x99CCFF);
+}

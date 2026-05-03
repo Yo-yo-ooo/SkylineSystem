@@ -33,7 +33,7 @@
 #include <arch/x86_64/drivers/hpet/hpet.h>
 #include <drivers/framebuffer/fb.h>
 #include <klib/renderer/rnd.h>
-#include <desktop/basicdraw/basicdraw.h>
+//#include <desktop/basicdraw/basicdraw.h>
 #include <arch/x86_64/atomic/atomic_arch.h>
 
 #define PIC1_COMMAND 0x20

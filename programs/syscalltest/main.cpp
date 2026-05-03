@@ -21,7 +21,7 @@
 */
 #include <syscall.h>
 #include <gui/fb.h>
-
+#include <gui/basicdraw.h>
 
 char intTo_stringOutput[128];
 const char *to_string(uint64_t value)
@@ -55,17 +55,15 @@ int main(){
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
     uint64_t FbAddr = MapFB();
     fb = GetFBInfo();
-    // Now we can use fb to draw something on the screen, for example, fill the
-    // screen with red color:
-    uint32_t *pixels = (uint32_t *)FbAddr;
-    syscall(24,(long)to_string(fb.Height),128,0,0,0,0);
-    syscall(24,(long)to_string(fb.BufferSize),128,0,0,0,0);
-    pixels[0] = 0xffffffff;
-    for (uint64_t y = 0; y < fb.Height; y++) {
-        for (uint64_t x = 0; x < fb.Width; x++) {
-            pixels[y * fb.PixelsPerScanLine + x] = 0xffffffff;
-        }
-    } 
+    fb.BaseAddress = (void*)FbAddr;
+    
+    BasicDraw bd(&fb);
+     // 绘制自适应UI
+    bd.DrawProportionalUI();
+
+    while (true);
+    
+
     syscall(9, 0, 0, 0, 0, 0, 0); // Exit
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
     

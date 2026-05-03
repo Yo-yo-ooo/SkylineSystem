@@ -64,8 +64,6 @@ COMMON: 0:FALSE
 #define VFS_BLOCK_SIZE      512
 
 //#define _SYS_DEBUG_OUT
-
-#define CONFIG_USE_DESKTOP_SUBSYS
 #define MAX_CPU 128
 
 
