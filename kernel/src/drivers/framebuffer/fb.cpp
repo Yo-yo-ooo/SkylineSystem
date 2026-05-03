@@ -38,23 +38,13 @@ namespace FrameBufferDevice{
 
         spinlock_lock(&pm->vma_lock);
         VADDR = VMM::Useless::InternalAlloc(pm, pages, 
-            VMM_FLAGS_USERMODE | VMM_FLAGS_MMIO);
+            MM_USER | VMM_FLAGS_MMIO);
         spinlock_unlock(&pm->vma_lock);
-
-        for(uint64_t i = 0; i < pages; i++){
-            uint64_t paddr = ((uint64_t)Fb->BaseAddress + i * PAGE_SIZE) & 0x000FFFFFFFFFFFFFULL;
-            uint64_t cur_vaddr = VADDR + i * PAGE_SIZE;
-
-            VMM::Map(pm, cur_vaddr, paddr, 
-                VMM_FLAGS_USERMODE | VMM_FLAGS_MMIO);
-
-            mmu_invlpg(cur_vaddr);
-        }
-
-        // 记得加上
+        VMM::MapRange(pm,VADDR,PHYSICAL(Fb->BaseAddress),MM_USER | VMM_FLAGS_MMIO,pages);
         VMM::NewMapping(pm, VADDR, pages, 
-            VMM_FLAGS_USERMODE | VMM_FLAGS_MMIO);
-
+            MM_USER | VMM_FLAGS_MMIO);
+        uint64_t check_pte = VMM::Useless::GetPhysicsFlags(pm, VADDR);
+        kinfoln("VADDR: 0x%X -> PTE Value: 0x%llX", VADDR, check_pte);
         kinfoln("Framebuffer mapped to VADDR: 0x%X", VADDR);
         return (VADDR); 
     }

@@ -66,8 +66,15 @@
 #define PDE(x) ((x >> 21) & 0x1ff)
 #define PTE(x) ((x >> 12) & 0x1ff)
 
-#define PTE_MASK(x) (typeof(x))((uint64_t)x & 0x000ffffffffff000)
-#define PTE_FLAGS(x) (typeof(x))((uint64_t)x & 0xfff0000000000fff)
+// 物理地址掩码：只保留 12-51 位 (支持到 52 位物理地址线)
+#define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
+
+// 标志位掩码：只保留 0-11 位 和 63 位 (NX)
+// 屏蔽掉 52-62 位的保留位
+#define PTE_FLAGS_MASK 0x8000000000000FFFULL 
+
+#define PTE_MASK(x) (typeof(x))((uint64_t)x & PTE_ADDR_MASK)
+#define PTE_FLAGS(x) (typeof(x))((uint64_t)x & PTE_FLAGS_MASK)
 
 #define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
 static inline bool is_user_address(uint64_t addr){

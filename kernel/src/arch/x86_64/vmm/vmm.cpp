@@ -204,7 +204,6 @@ namespace VMM{
 
 
     void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags){
-
         //There!
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
 #if CONFIG_VMM_5LVL_MAP == 1
@@ -230,8 +229,7 @@ namespace VMM{
         if (!PAGE_EXISTS(pt))
             pt = VMM::Useless::NewLevel(pd, PDE(vaddr));
         pt = HIGHER_HALF(PTE_MASK(pt));
-
-        pt[PTE(vaddr)] = paddr | flags;
+        pt[PTE(vaddr)] = (paddr & 0x000FFFFFFFFFF000ULL) | (flags & 0x8000000000000FFFULL);
     }
 
     void Map(uint64_t vaddr, uint64_t paddr){
@@ -585,8 +583,20 @@ namespace VMM{
     uint32_t HandlePF(context_t *ctx){
         // Check if the fault was a CoW fault, or if it was truly just a page fault.
         uint64_t cr2 = 0;
-        thread_t *t = Schedule::this_thread();
         __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
+
+        // 关键信息：解析 Error Code 位
+        bool p  = ctx->error_code & (1 << 0); // Presence: 0=不存在, 1=权限问题
+        bool wr = ctx->error_code & (1 << 1); // Write: 0=读, 1=写
+        bool us = ctx->error_code & (1 << 2); // User: 0=内核, 1=用户
+
+        kinfoln("[#PF] Addr: 0x%p | RIP: 0x%p | Cause: %s %s in %s mode",
+                cr2, ctx->rip, 
+                p ? "Protection-Violation" : "Non-Present",
+                wr ? "(Write)" : "(Read)",
+                us ? "User" : "Kernel");
+        thread_t *t = Schedule::this_thread();
+        //__asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
         kinfoln("Handle PF Addr %llu",cr2);
         if (!smp_started || !this_cpu() || !t) {
             kerror("Page fault on 0x%p, Should NOT continue.\n", cr2);
