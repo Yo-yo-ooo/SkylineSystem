@@ -31,26 +31,32 @@ namespace FrameBufferDevice{
         uint64_t length,uint64_t prot,
         uint64_t offset,uint64_t VADDR
     ){
-        //kinfoln("Called dev.ops.MMAP");
-        uint64_t fb_siz = Fb->BufferSize; // Assuming 32 bits per pixel
+        uint64_t fb_siz = Fb->BufferSize;
         kinfoln("FB Base Address: 0x%X, Size: %lu bytes", Fb->BaseAddress, fb_siz);
         pagemap_t *pm = Schedule::this_proc()->pagemap;
         uint64_t pages = DIV_ROUND_UP(fb_siz, PAGE_SIZE);
-        //VADDR = VMM::EAlloc(pm, pages, VMM_FLAG_USER | VMM_FLAG_READWRITE | VMM_FLAG_CACHE_DISABLE);
+
         spinlock_lock(&pm->vma_lock);
-        VADDR = VMM::Useless::InternalAlloc(pm, pages, VMM_FLAG_USER | VMM_FLAG_READWRITE | VMM_FLAG_CACHE_DISABLE);
-        for(uint64_t i = 0; i < pages; i++){
-            uint64_t paddr = ((uint64_t)Fb->BaseAddress + i * PAGE_SIZE);
-            uint64_t cur_vaddr = VADDR + i * PAGE_SIZE;
-            //kinfoln("Mapping FB page: VADDR=0x%X PADDR=0x%X", cur_vaddr, paddr);
-            VMM::Map(pm, cur_vaddr, paddr, 
-                    VMM_FLAG_USER | 
-                    VMM_FLAG_READWRITE | 
-                    VMM_FLAG_CACHE_DISABLE);
-        }
+        VADDR = VMM::Useless::InternalAlloc(pm, pages, 
+            VMM_FLAGS_USERMODE | VMM_FLAGS_MMIO);
         spinlock_unlock(&pm->vma_lock);
-        kinfoln("Framebuffer mapped to VADDR: 0x%X, length: %lu bytes", VADDR, fb_siz);
-        return VADDR; 
+
+        for(uint64_t i = 0; i < pages; i++){
+            uint64_t paddr = ((uint64_t)Fb->BaseAddress + i * PAGE_SIZE) & 0x000FFFFFFFFFFFFFULL;
+            uint64_t cur_vaddr = VADDR + i * PAGE_SIZE;
+
+            VMM::Map(pm, cur_vaddr, paddr, 
+                VMM_FLAGS_USERMODE | VMM_FLAGS_MMIO);
+
+            mmu_invlpg(cur_vaddr);
+        }
+
+        // 记得加上
+        VMM::NewMapping(pm, VADDR, pages, 
+            VMM_FLAGS_USERMODE | VMM_FLAGS_MMIO);
+
+        kinfoln("Framebuffer mapped to VADDR: 0x%X", VADDR);
+        return (VADDR); 
     }
 
     uint64_t ioctl(uint64_t cmd,uint64_t arg){

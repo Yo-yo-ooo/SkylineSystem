@@ -136,7 +136,24 @@ namespace VMM{
 
 
     void Init(){
-        
+        uint64_t pat = 0;
+        // PA0 (PCD=0, PWT=0): WB (WriteBack)
+        pat |= (0 << 0);
+        // PA1 (PCD=0, PWT=1): WT (WriteThrough)
+        pat |= (1 << 8);
+        // PA2 (PCD=1, PWT=0): UC- (Uncached Minus)
+        pat |= (4 << 16);
+        // PA3 (PCD=1, PWT=1): UC (Strong Uncached)
+        pat |= (6 << 24);
+        // PA4: WP (WriteProtect)
+        pat |= (5 << 32);
+        // PA5: WC (WriteCombining) 
+        pat |= (1 << 40);
+        // PA6/PA7: 保留 (Unspecified)
+        pat |= (7 << 48);
+        pat |= (7 << 56);
+
+        wrmsr(0x277, pat);
 
         struct limine_executable_address_response *executable_address = limine_executable_address.response;
         kernel_pagemap = HIGHER_HALF((pagemap_t*)PMM::Request());
@@ -218,7 +235,7 @@ namespace VMM{
     }
 
     void Map(uint64_t vaddr, uint64_t paddr){
-        VMM::Map(kernel_pagemap,vaddr,paddr, MM_WRITE | MM_WRITE);
+        VMM::Map(kernel_pagemap,vaddr,paddr, MM_READ | MM_WRITE);
     }
 
 
@@ -570,6 +587,7 @@ namespace VMM{
         uint64_t cr2 = 0;
         thread_t *t = Schedule::this_thread();
         __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
+        kinfoln("Handle PF Addr %llu",cr2);
         if (!smp_started || !this_cpu() || !t) {
             kerror("Page fault on 0x%p, Should NOT continue.\n", cr2);
             return 1; // Should NOT continue execution.
@@ -579,6 +597,7 @@ namespace VMM{
         pagemap_t *pagemap = t->pagemap;
         uint64_t page = VMM::Useless::GetPhysicsFlags(pagemap, fault_addr);
         uint64_t old_phys = PTE_MASK(page);
+        kinfoln("Page %llu",page);
         if (!old_phys) {
             kerror("Page fault on thread (0x%p).\n", cr2);
             kerrorln("Segmentation fault (core undumped)");

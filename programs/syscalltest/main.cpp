@@ -73,11 +73,12 @@ int main(){
     uint32_t *pixels = (uint32_t *)FbAddr;
     syscall(24,(long)to_string(fb.Height),128,0,0,0,0);
     syscall(24,(long)to_string(fb.BufferSize),128,0,0,0,0);
-    for (uint64_t y = 0; y < fb.Height; y++) {
+    pixels[0] = 0xffffffff;
+    /* for (uint64_t y = 0; y < fb.Height; y++) {
         for (uint64_t x = 0; x < fb.Width; x++) {
             pixels[y * fb.PixelsPerScanLine + x] = 0xffffffff;
         }
-    }
+    } */
     syscall(9, 0, 0, 0, 0, 0, 0); // Exit
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
     

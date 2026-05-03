@@ -46,6 +46,8 @@
 #define VMM_FLAG_CACHE_DISABLE  (1 << 4)        /* PCD */
 #define VMM_FLAG_PAT            (1 << 7)        /* PAT */
 
+#define PTE_MMIO (1 << 9)
+
 #define VMM_FLAGS_DEFAULT       (VMM_FLAG_PRESENT | VMM_FLAG_READWRITE)
 
 /* According to Intel's manual, only when CACHE_DISABLE and WRITETHROUGH
