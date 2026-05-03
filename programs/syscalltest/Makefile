@@ -3,19 +3,21 @@ BINDIR = ../bin
 
 include ../../gdef.mk
 
-CFILES += $(shell  find -L * -type f -name '*.c' | LC_ALL=C sort)
-ASFILES += $(shell  find -L * -type f -name '*.S' | LC_ALL=C sort)
-CPPFILES += $(shell  find -L * -type f -name '*.cpp' | LC_ALL=C sort)
+CFILES += $(shell  find  . -type f -name '*.c' | LC_ALL=C sort)
+ASFILES += $(shell  find  . -type f -name '*.S' | LC_ALL=C sort)
+CPPFILES += $(shell  find  . -type f -name '*.cpp' | LC_ALL=C sort)
+
 
 LD = ld
 CC = gcc
 CXX = g++
 AS = as
 
-LDFLAGS  = --gc-sections  -entry=main -static -nostdlib \
+LDFLAGS  =   -entry=main -static -nostdlib \
     -m elf_x86_64 -z noexecstack
 
 CFLAGS    = -nostdlib -nostdinc -I../../kernel/freestnd-c-hdrs/$(BUILD_ARCH)/include \
+	-I./include -I.\
 	-ffreestanding -fshort-wchar -mno-red-zone \
  	-fno-omit-frame-pointer -fno-exceptions \
 	-ffunction-sections -fdata-sections -O0 -m64 -static -g3

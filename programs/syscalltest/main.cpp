@@ -19,16 +19,8 @@
 * along with this program; if not, write to the Free Software
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
-#include "syscall.h"
-
-typedef struct alignas(16) FrameBuffer
-{
-	void* BaseAddress;
-	uint64_t BufferSize;
-	uint64_t Width;
-	uint64_t Height;
-	uint64_t PixelsPerScanLine;
-}Framebuffer;
+#include <syscall.h>
+#include <gui/fb.h>
 
 
 char intTo_stringOutput[128];
@@ -61,13 +53,8 @@ int main(){
     const char *msg = "Hello, World!";
     FrameBuffer fb;
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
-    //syscall(25, 6/*FrameBuffer Type*/, 0/*Fb IDX*/, (uint64_t)&fb, 0, 0, 0); // Get Fb Info
-    uint64_t FbAddr = syscall(21, 6/*FrameBuffer Type*/, 0/*Fb IDX*/, 0, 0, 0, 0); // Map Fb
-    fb.BaseAddress = (void*)syscall(26,6,0,0,0,0,0);
-    fb.BufferSize = syscall(26,6,0,1,0,0,0);
-    fb.Height = syscall(26,6,0,2,0,0,0);
-    fb.PixelsPerScanLine = syscall(26,6,0,3,0,0,0);
-    fb.Width = syscall(26,6,0,4,0,0,0);
+    uint64_t FbAddr = MapFB();
+    fb = GetFBInfo();
     // Now we can use fb to draw something on the screen, for example, fill the
     // screen with red color:
     uint32_t *pixels = (uint32_t *)FbAddr;
