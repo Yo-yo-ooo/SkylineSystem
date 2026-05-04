@@ -21,27 +21,26 @@
 */
 
 #include <math.h>
-//#include <stdint.h>
 
-float sqrt(float x){
-#ifndef __x86_64__
-    long i;
+float sqrt(float x) {
+#ifdef __x86_64__
+    float buf;
+    __asm__ __volatile__ ("sqrtss %1, %0" : "=x"(buf) : "x"(x));
+    return buf;
+#else
+    uint32_t i; // 显式使用 32 位无符号整数
     float x2, y;
     const float threehalfs = 1.5F;
 
     x2 = x * 0.5F;
     y = x;
-    i = *(long*)&y;                       // evil floating point bit level hacking（邪恶的浮点数位运算黑科技）
-    i = 0x5f375a86 - (i >> 1);               // what the fuck?（这是什么鬼？）
-    y = *(float*)&i;
-    y = y * (threehalfs - (x2 * y * y));   // 1st iteration （第一次迭代）
-    y  = y * ( threehalfs - ( x2 * y * y ) );   // 2nd iteration, this can be removed（第二次迭代，可以删除）
-
-    return 1/y;
-#else
-    float buf;
-    __asm__ __volatile__ ("sqrtss %1, %0" : "=x"(buf) : "x"(x));
-    return buf;
+    // 使用 union 或 memcpy 避开严格别名规则 (Strict Aliasing)
+    union { float f; uint32_t i; } conv = { .f = y };
+    conv.i = 0x5f375a86 - (conv.i >> 1);
+    y = conv.f;
+    
+    y = y * (threehalfs - (x2 * y * y)); // 1st iteration
+    return 1.0F / y;
 #endif
 }
 

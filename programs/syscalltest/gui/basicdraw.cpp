@@ -1,11 +1,11 @@
 #include <gui/basicdraw.h>
-
-float sqrt(float x){
+#include <math.h>
+/* float sqrt(float x){
     float buf;
     __asm__ __volatile__ ("sqrtss %1, %0" : "=x"(buf) : "x"(x));
     return buf;
 }
-
+ */
 
 // ===================== 修复BUG后的基础绘图函数 =====================
 void BasicDraw::ClearScreen(uint32_t Color){
@@ -185,7 +185,7 @@ static uint64_t IntegerSqrt(uint64_t n) {
     return x0;
 }
 
-float sin(float x){
+/* float sin(float x){
     float ans;
     asm volatile("fsin" : "=t"(ans) : "0"(x));
     return ans;
@@ -200,7 +200,7 @@ float cos(float x){
     asm volatile("fcos" : "=t"(ans) : "0"(x));
     return ans;
 #endif
-}
+} */
 // 替代 float atan2f(float y, float x)
 float atan2(float y, float x) {
     float res;

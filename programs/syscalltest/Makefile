@@ -14,10 +14,10 @@ CXX = g++
 AS = as
 
 LDFLAGS  =   -entry=main -static -nostdlib \
-    -m elf_x86_64 -z noexecstack
+    -m elf_x86_64 -z noexecstack 
 
 CFLAGS    = -nostdlib -nostdinc -I../../kernel/freestnd-c-hdrs/$(BUILD_ARCH)/include \
-	-I./include -I.\
+	-I./include -I. -I../../lib/include/stdc\
 	-ffreestanding -fshort-wchar -mno-red-zone \
  	-fno-omit-frame-pointer -fno-exceptions \
 	-ffunction-sections -fdata-sections -O0 -m64 -static -g3
@@ -31,7 +31,7 @@ all: $(BINDIR)/syscalltest.elf
 
 $(BINDIR)/syscalltest.elf: Makefile $(OBJ)
 	mkdir -p "$$(dirname $@)"
-	$(LD) $(LDFLAGS) -o $@ $(OBJ)
+	$(LD) $(LDFLAGS) -o $@ $(OBJ) -L../../lib/bin -l:lib.a
 
 # Compilation rules for *.c files.
 $(OBJDIR)/%.c.o: ./%.c Makefile
