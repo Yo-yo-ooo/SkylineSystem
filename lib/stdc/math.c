@@ -1,5 +1,5 @@
-#include <stdc/math.h>
-#include <stdint.h>
+#include <math.h>
+//#include <stdint.h>
 
 float sqrt(float x){
 #ifndef __x86_64__

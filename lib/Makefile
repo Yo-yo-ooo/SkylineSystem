@@ -2,11 +2,11 @@
 # SkylineSystem 库 Makefile
 # 输出规范：obj/ 放中间文件，bin/ 放最终库
 # ==============================================
-
+include ../gdef.mk
 # 工具链定义
-CC      = x86_64-elf-gcc
-AR      = x86_64-elf-ar
-RANLIB  = x86_64-elf-ranlib
+CC      = gcc
+AR      = ar
+RANLIB  = ranlib
 
 # 目录定义
 SRCDIRS = base init stdc stl
@@ -16,11 +16,11 @@ BINDIR  = bin
 
 # 编译选项
 CFLAGS  = -m64 -ffreestanding -fno-stack-protector -fno-pic -fno-pie
-CFLAGS += -Wall -Wextra -Werror -O2 -g
+CFLAGS += -Wall -Wextra -Werror -O2 -g -I./include/stdc -I../kernel/freestnd-c-hdrs/$(BUILD_ARCH)
 CFLAGS += -I./$(INCDIR)
 
 # 输出文件
-TARGET  = $(BINDIR)/libkernel.a
+TARGET  = $(BINDIR)/lib.a
 
 # 自动递归查找源文件
 C_SRCS  = $(shell find $(SRCDIRS) -name "*.c")

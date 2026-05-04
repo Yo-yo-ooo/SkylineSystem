@@ -3,6 +3,8 @@
 /ovmf
 /edk2-ovmf
 /limine-protocol
+/lib/bin
+/lib/obj
 *.iso
 *.hdd
 .vscode/
