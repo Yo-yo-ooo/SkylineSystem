@@ -1,6 +1,8 @@
 # ==============================================
 # SkylineSystem 库 Makefile
 # 输出规范：obj/ 放中间文件，bin/ 放最终库
+# This Makefile is a make rule for SkylineSystem User Library
+# This Makefile Cannot use to link Kernel Object!
 # ==============================================
 include ../gdef.mk
 # 工具链定义
