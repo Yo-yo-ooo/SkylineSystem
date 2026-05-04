@@ -281,4 +281,5 @@ void BasicDraw::DrawProportionalUI() {
             PutPixel(x, y, 0xFF000000 | (r << 16) | (g << 8) | b);
         }
     }
+   
 }
