@@ -161,9 +161,6 @@ kernel-deps:
 .PHONY: kernel
 kernel: kernel-deps
 	@echo "Start Building Kernel!"
-ifeq ($(NOT_COMPILE_X86MEM),0)
-	$(MAKE) -C x86mem
-endif
 	$(MAKE) -C kernel
 
 $(IMAGE_NAME).iso: limine/limine kernel
@@ -243,6 +240,7 @@ clean:
 	@$(MAKE) -C kernel clean
 	@$(MAKE) -C programs clean
 	@$(MAKE) -C saf clean
+	@$(MAKE) -C lib clean
 	rm -rf iso_root *.iso *.hdd
 
 .PHONY: distclean
@@ -255,13 +253,16 @@ cm:
 	@$(MAKE) clean 
 	@$(MAKE) -C saf
 ifeq ($(KARCH),x86_64)
-	
+ifeq ($(NOT_COMPILE_X86MEM),0)
+	$(MAKE) -C x86mem
+endif
 	@qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
 	@qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
 	dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2
 	@mkfs.ext4 \
 	-O ^metadata_csum \
 	./$(PROGRAM_IMAGE_NAME).img
+	@$(MAKE) -C lib
 	@$(MAKE) -C programs
 endif
 	@$(MAKE) -j$(shell nproc)

@@ -42,6 +42,11 @@ char* strcat(char* dest, const char* source);
 size_t strlen(const char*__restrict__  str);
 int32_t atoi(char *str);
 
+void *memcpy(void *str1, const void *str2, size_t n);
+void *memset(void *str, int c, size_t n);
+void *memmove(void *str1, const void *str2, size_t n);
+
+
 #ifdef __cplusplus
 }
 #endif

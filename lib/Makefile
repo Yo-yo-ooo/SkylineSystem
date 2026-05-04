@@ -15,9 +15,11 @@ OBJDIR  = obj
 BINDIR  = bin
 
 # 编译选项
-CFLAGS  = -m64 -ffreestanding -fno-stack-protector -fno-pic -fno-pie
-CFLAGS += -Wall -Wextra -Werror -O2 -g -I./include/stdc -I../kernel/freestnd-c-hdrs/$(BUILD_ARCH)
+CFLAGS  = -m64 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -nostdinc
+CFLAGS += -Wall -Wextra -Werror -O2 -g -I./include/stdc -I../kernel/freestnd-c-hdrs/$(BUILD_ARCH)/include
 CFLAGS += -I./$(INCDIR)
+
+
 
 # 输出文件
 TARGET  = $(BINDIR)/lib.a
@@ -29,6 +31,14 @@ S_SRCS  = $(shell find $(SRCDIRS) -name "*.S")
 # 生成对应的 .o 文件路径（统一放到 obj/ 下）
 OBJS    = $(patsubst %.c, $(OBJDIR)/%.o, $(C_SRCS))
 OBJS   += $(patsubst %.S, $(OBJDIR)/%.o, $(S_SRCS))
+
+ifeq ($(BUILD_ARCH),x86_64)
+CFLAGS += -DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM)
+ifeq ($(NOT_COMPILE_X86MEM),0)
+CFLAGS += -I../x86mem
+OBJS += ../x86mem/memcpy.o ../x86mem/memmove.o ../x86mem/memset.o ../x86mem/memcmp.o
+endif
+endif
 
 # 生成依赖文件
 DEPS    = $(OBJS:.o=.d)
@@ -49,7 +59,7 @@ $(TARGET): $(OBJS)
 $(OBJDIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	@echo "CC      $<"
-	@$(CC) $(CFLAGS) -MMD -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -c $< -o $@
 
 # 编译汇编文件
 $(OBJDIR)/%.o: %.S

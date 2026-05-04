@@ -71,7 +71,7 @@ void * memset_large_4B_a(void *dest, const uint32_t val, size_t numbytes_div_4);
 void * memset_large_4B_as(void *dest, const uint32_t val, size_t numbytes_div_4);
 
 // Scalar
-void * memset (void *dest, uint8_t val, size_t len); // 1 byte
+void * memset_fpx86 (void *dest, uint8_t val, size_t len); // 1 byte
 void * memset_16bit(void *dest, uint16_t val, size_t len); // 2 bytes
 void * memset_32bit(void *dest, uint32_t val, size_t len); // 4 bytes
 void * memset_64bit(void *dest, uint64_t val, size_t len); // 8 bytes
