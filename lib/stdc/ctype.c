@@ -1,6 +1,6 @@
 /*
 * SPDX-License-Identifier: GPL-2.0-only
-* File: ctype.cpp
+* File: ctype.c
 * Copyright (C) 2026 Yo-yo-ooo
 *
 * This file is part of SkylineSystem.
