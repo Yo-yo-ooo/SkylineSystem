@@ -1,18 +1,26 @@
 #include <gui/basicdraw.h>
 
+float sqrt(float x){
+    float buf;
+    __asm__ __volatile__ ("sqrtss %1, %0" : "=x"(buf) : "x"(x));
+    return buf;
+}
 
+
+// ===================== 修复BUG后的基础绘图函数 =====================
 void BasicDraw::ClearScreen(uint32_t Color){
     uint64_t fbBase = (uint64_t)this->FrameBuf->BaseAddress;
     uint64_t pxlsPerScanline = this->FrameBuf->PixelsPerScanLine;
     uint64_t fbHeight = this->FrameBuf->Height;
 
-    for (int64_t y = 0; y < this->FrameBuf->Height; y++)
-        for (int64_t x = 0; x < this->FrameBuf->Width; x++)
+    for (uint64_t y = 0; y < fbHeight; y++)
+        for (uint64_t x = 0; x < this->FrameBuf->Width; x++)
             *((uint32_t*)(fbBase + 4 * (x + pxlsPerScanline * y))) = Color; 
 }
 
+// 修复：边界判断错误（>= 而非 >）
 void BasicDraw::PutPixel(uint64_t X,uint64_t Y,uint32_t Color){
-    if(X > this->FrameBuf->Width || Y > this->FrameBuf->Height)
+    if(X >= this->FrameBuf->Width || Y >= this->FrameBuf->Height)
         return;
     uint32_t *PPtr = (uint32_t*)this->FrameBuf->BaseAddress;
     PPtr[Y * this->FrameBuf->PixelsPerScanLine + X] = Color;
@@ -24,9 +32,7 @@ void BasicDraw::DrawHLine(uint64_t X, uint64_t Y, uint64_t Width, uint32_t Color
     uint64_t endX = (X + Width > FrameBuf->Width) ? FrameBuf->Width : X + Width;
     
     uint32_t* p = (uint32_t*)FrameBuf->BaseAddress + (Y * FrameBuf->PixelsPerScanLine);
-    // 使用快速填充
-    //memset32_fscpuf(&p[startX], Color, (endX - startX));
-    for(uint32_t i = startX;i < endX;i++)
+    for(uint64_t i = startX;i < endX;i++)
         p[i] = Color;
 }
 
@@ -36,7 +42,6 @@ void BasicDraw::DrawRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint32_
             DrawHLine(X, Y + i, W, Color);
         }
     } else {
-        // 画四条边
         DrawHLine(X, Y, W, Color);
         DrawHLine(X, Y + H - 1, W, Color);
         DrawVLine(X, Y, H, Color);
@@ -45,10 +50,10 @@ void BasicDraw::DrawRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint32_
 }
 
 void BasicDraw::DrawLine(int64_t x0, int64_t y0, int64_t x1, int64_t y1, uint32_t Color) {
-    // 自实现简单的 abs 逻辑
-    int64_t dx = (x1 - x0 > 0) ? (x1 - x0) : (x0 - x1);
-    int64_t dy = (y1 - y0 > 0) ? (y0 - y1) : (y1 - y0); // 注意 dy 在 Bresenham 算法中通常取负数
-    
+    int64_t dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
+    int64_t dy = (y1 > y0) ? (y1 - y0) : (y0 - y1);
+    dy = -dy; 
+
     int64_t sx = (x0 < x1) ? 1 : -1;
     int64_t sy = (y0 < y1) ? 1 : -1;
     
@@ -56,73 +61,50 @@ void BasicDraw::DrawLine(int64_t x0, int64_t y0, int64_t x1, int64_t y1, uint32_
     int64_t e2;
 
     while (true) {
-        PutPixel(x0, y0, Color);
-        
+        if(x0 >=0 && y0 >=0) PutPixel((uint64_t)x0, (uint64_t)y0, Color);
         if (x0 == x1 && y0 == y1) break;
         
         e2 = 2 * err;
-        
-        if (e2 >= dy) { 
-            err += dy; 
-            x0 += sx; 
-        }
-        
-        if (e2 <= dx) { 
-            err += dx; 
-            y0 += sy; 
-        }
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
     }
 }
 
 void BasicDraw::DrawVLine(uint64_t X, uint64_t Y, uint64_t Height, uint32_t Color) {
-    // 1. 边界检查：确保起点在屏幕内
     if (X >= FrameBuf->Width || Y >= FrameBuf->Height) return;
-
-    // 2. 裁剪：如果高度超过屏幕底部，截断它
     uint64_t endY = Y + Height;
-    if (endY > FrameBuf->Height) {
-        endY = FrameBuf->Height;
-    }
+    if (endY > FrameBuf->Height) endY = FrameBuf->Height;
 
-    // 3. 计算起始指针
-    // 指向第 Y 行，第 X 个像素
     uint32_t* p = (uint32_t*)FrameBuf->BaseAddress + (Y * FrameBuf->PixelsPerScanLine + X);
-    
-    // 4. 步进跨度 (Stride)
-    // 每一行需要跳过的像素数正是 PixelsPerScanLine
     uint64_t stride = FrameBuf->PixelsPerScanLine;
 
-    // 5. 循环绘制
     for (uint64_t i = Y; i < endY; i++) {
-        *p = Color;   // 画当前像素
-        p += stride;  // 跳到下一行的相同 X 位置
+        *p = Color;
+        p += stride;
     } 
 }
 
 void BasicDraw::DrawWindow(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, const char* Title) {
-    // 1. 绘制窗口背景 (浅灰色 0xC6C6C6)
     for (uint64_t i = 0; i < H; i++) {
         DrawHLine(X, Y + i, W, 0xC6C6C6);
     }
 
-    // 2. 绘制标题栏 (深蓝色 0x000080)
     uint64_t titleHeight = 25;
     for (uint64_t i = 0; i < titleHeight; i++) {
         DrawHLine(X + 2, Y + 2 + i, W - 4, 0x000080);
     }
 
-    // 3. 绘制立体边框 (模拟 3D 阴影)
-    DrawHLine(X, Y, W, 0xFFFFFFFF);         // 顶边白
-    DrawVLine(X, Y, H, 0xFFFFFFFF);         // 左边白
-    DrawHLine(X, Y + H - 1, W, 0x404040);   // 底边深灰
-    DrawVLine(X + W - 1, Y, H, 0x404040);   // 右边深灰
+    DrawHLine(X, Y, W, 0xFFFFFFFF);
+    DrawVLine(X, Y, H, 0xFFFFFFFF);
+    DrawHLine(X, Y + H - 1, W, 0x404040);
+    DrawVLine(X + W - 1, Y, H, 0x404040);
 }
 
 void BasicDraw::DrawCircle(uint64_t xc, uint64_t yc, uint64_t r, uint32_t Color) {
-    int64_t x = 0, y = r;
-    int64_t d = 3 - 2 * r;
+    int64_t x = 0, y = (int64_t)r;
+    int64_t d = 3 - 2 * (int64_t)r;
 
-    auto draw8Points = [&](uint64_t xc, uint64_t yc, uint64_t x, uint64_t y) {
+    auto draw8Points = [&](uint64_t xc, uint64_t yc, int64_t x, int64_t y) {
         PutPixel(xc + x, yc + y, Color); PutPixel(xc - x, yc + y, Color);
         PutPixel(xc + x, yc - y, Color); PutPixel(xc - x, yc - y, Color);
         PutPixel(xc + y, yc + x, Color); PutPixel(xc - y, yc + x, Color);
@@ -140,38 +122,33 @@ void BasicDraw::DrawCircle(uint64_t xc, uint64_t yc, uint64_t r, uint32_t Color)
         }
     }
 }
+
 void BasicDraw::DrawRoundedRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint64_t R, uint32_t Color, bool Fill) {
-    // 基础安全检查：防止半径过大导致图形畸变
     if (R * 2 > W) R = W / 2;
     if (R * 2 > H) R = H / 2;
-    if (R == 0) { // 半径为0时退化为普通矩形
+    if (R == 0) {
         DrawRect(X, Y, W, H, Color, Fill);
         return;
     }
 
     int64_t x = 0;
-    int64_t y = R;
-    int64_t d = 3 - 2 * R;
+    int64_t y = (int64_t)R;
+    int64_t d = 3 - 2 * (int64_t)R;
 
-    // 绘制四个圆角
     while (y >= x) {
         if (Fill) {
-            // 利用你的 DrawHLine (调用了快速 memset)
-            // 填充顶部两个圆角之间的缝隙
             DrawHLine(X + R - x, Y + R - y, W - 2 * R + 2 * x, Color);
             DrawHLine(X + R - y, Y + R - x, W - 2 * R + 2 * y, Color);
-            // 填充底部两个圆角之间的缝隙
             DrawHLine(X + R - x, Y + H - R + y - 1, W - 2 * R + 2 * x, Color);
             DrawHLine(X + R - y, Y + H - R + x - 1, W - 2 * R + 2 * y, Color);
         } else {
-            // 仅仅是描边
-            PutPixel(X + R - x, Y + R - y, Color); // 左上
+            PutPixel(X + R - x, Y + R - y, Color);
             PutPixel(X + R - y, Y + R - x, Color);
-            PutPixel(X + W - R + x - 1, Y + R - y, Color); // 右上
+            PutPixel(X + W - R + x - 1, Y + R - y, Color);
             PutPixel(X + W - R + y - 1, Y + R - x, Color);
-            PutPixel(X + R - x, Y + H - R + y - 1, Color); // 左下
+            PutPixel(X + R - x, Y + H - R + y - 1, Color);
             PutPixel(X + R - y, Y + H - R + x - 1, Color);
-            PutPixel(X + W - R + x - 1, Y + H - R + y - 1, Color); // 右下
+            PutPixel(X + W - R + x - 1, Y + H - R + y - 1, Color);
             PutPixel(X + W - R + y - 1, Y + H - R + x - 1, Color);
         }
 
@@ -184,22 +161,19 @@ void BasicDraw::DrawRoundedRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, 
         x++;
     }
 
-    // 绘制中间的主体部分
     if (Fill) {
-        // 这一部分是圆弧中间没有覆盖到的矩形区域
         for (uint64_t i = R; i < H - R; i++) {
             DrawHLine(X, Y + i, W, Color);
         }
     } else {
-        // 描边模式：连接四条直线边
-        DrawHLine(X + R, Y, W - 2 * R, Color);         // 顶边
-        DrawHLine(X + R, Y + H - 1, W - 2 * R, Color); // 底边
-        DrawVLine(X, Y + R, H - 2 * R, Color);         // 左边
-        DrawVLine(X + W - 1, Y + R, H - 2 * R, Color); // 右边
+        DrawHLine(X + R, Y, W - 2 * R, Color);
+        DrawHLine(X + R, Y + H - 1, W - 2 * R, Color);
+        DrawVLine(X, Y + R, H - 2 * R, Color);
+        DrawVLine(X + W - 1, Y + R, H - 2 * R, Color);
     }
 }
+
 // 辅助函数：计算定点数平方根（牛顿迭代法，避免浮点数开销）
-// 适用于内核环境中不支持浮点运算的情况
 static uint64_t IntegerSqrt(uint64_t n) {
     if (n <= 1) return n;
     uint64_t x0 = n / 2;
@@ -210,46 +184,48 @@ static uint64_t IntegerSqrt(uint64_t n) {
     }
     return x0;
 }
-
 void BasicDraw::DrawProportionalUI() {
     uint64_t W = FrameBuf->Width;
     uint64_t H = FrameBuf->Height;
+    if (W == 0 || H == 0) return;
     
-    // 缩放因子（以 1920×1080 为基准）
+    // 缩放因子（以1920×1080为基准）
     float scaleX = (float)W / 1920.0f;
     float scaleY = (float)H / 1080.0f;
     float scale = (scaleX + scaleY) / 2.0f;
 
-    // ---------- 辅助：用 DrawRoundedRect 填充完整圆形 ----------
-    auto FillCircle = [&](uint64_t cx, uint64_t cy, uint64_t r, uint32_t color) {
-        uint64_t d = r * 2;
-        DrawRoundedRect(cx - r, cy - r, d, d, r, color, true);
-    };
+    uint64_t cx = W / 2;
+    uint64_t cy = H / 2;
 
-    // ========== 1. 渐变背景（从上到下：深蓝 → 浅蓝） ==========
-    // 逐行改变颜色，模拟垂直渐变
-    uint32_t topColor    = 0x003366; // 顶部深蓝
-    uint32_t bottomColor = 0x0078D4; // 底部亮蓝
-
+    // ========== 1. 量子隧道径向渐变背景 ==========
+    float maxDist = sqrt((float)(cx*cx + cy*cy));
     for (uint64_t y = 0; y < H; y++) {
-        // 线性插值：t 从 0（顶部）到 1（底部）
-        float t = (float)y / (float)H;
-        uint8_t r = (uint8_t)(((topColor >> 16) & 0xFF) * (1.0f - t) + ((bottomColor >> 16) & 0xFF) * t);
-        uint8_t g = (uint8_t)(((topColor >> 8)  & 0xFF) * (1.0f - t) + ((bottomColor >> 8)  & 0xFF) * t);
-        uint8_t b = (uint8_t)((topColor & 0xFF) * (1.0f - t) + (bottomColor & 0xFF) * t);
-        uint32_t color = (r << 16) | (g << 8) | b;
-        DrawHLine(0, y, W, color);
+        for (uint64_t x = 0; x < W; x++) {
+            float dx = (float)x - (float)cx;
+            float dy = (float)y - (float)cy;
+            float dist = sqrt(dx*dx + dy*dy);
+            float t = dist / maxDist;
+            
+            // 四色量子渐变：黑→深紫→品红→亮青
+            uint8_t r, g, b;
+            if (t < 0.33f) {
+                float t2 = t / 0.33f;
+                r = (uint8_t)(0x00 * (1.0f - t2) + 0x2D * t2);
+                g = (uint8_t)(0x00 * (1.0f - t2) + 0x00 * t2);
+                b = (uint8_t)(0x00 * (1.0f - t2) + 0x5B * t2);
+            } else if (t < 0.66f) {
+                float t2 = (t - 0.33f) / 0.33f;
+                r = (uint8_t)(0x2D * (1.0f - t2) + 0xFF * t2);
+                g = (uint8_t)(0x00 * (1.0f - t2) + 0x00 * t2);
+                b = (uint8_t)(0x5B * (1.0f - t2) + 0xFF * t2);
+            } else {
+                float t2 = (t - 0.66f) / 0.34f;
+                r = (uint8_t)(0xFF * (1.0f - t2) + 0x00 * t2);
+                g = (uint8_t)(0x00 * (1.0f - t2) + 0xFF * t2);
+                b = (uint8_t)(0xFF * (1.0f - t2) + 0xFF * t2);
+            }
+            
+            PutPixel(x, y, 0xFF000000 | (r << 16) | (g << 8) | b);
+        }
     }
-
-    // ========== 2. 装饰性光斑（模拟 Win11 右下角光晕） ==========
-    uint64_t glowR = (uint64_t)(300.0f * scale);
-    uint64_t glowX = W - glowR / 2;
-    uint64_t glowY = H - glowR / 2;
-
-    // 大光斑（半透明青蓝）
-    //FillCircle(glowX, glowY, glowR, 0x3399FF);
-    // 中心亮斑
-    //FillCircle(glowX, glowY, (uint64_t)(glowR * 0.7f), 0x66B2FF);
-    // 高光点
-    //FillCircle(glowX, glowY, (uint64_t)(glowR * 0.3f), 0x99CCFF);
 }
