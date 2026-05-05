@@ -216,119 +216,117 @@ float atan2(float y, float x) {
     return res;
 }
 
+// ===================== 简单伪随机数（无标准库依赖） =====================
+static uint32_t g_seed = 123456789;
+
+static uint32_t RandomU32() {
+    g_seed = g_seed * 1103515245 + 12345;
+    return g_seed;
+}
+
+// 返回 [min, max] 范围内的整数
+static int RandomRange(int min, int max) {
+    if (min > max) { int t = min; min = max; max = t; }
+    uint32_t range = (uint32_t)(max - min + 1);
+    return min + (int)(RandomU32() % range);
+}
+
+// 随机 0~255 颜色分量
+static uint8_t RandomByte() {
+    return (uint8_t)(RandomU32() & 0xFF);
+}
+
+// ===================== 扫描线填充三角形 =====================
+void BasicDraw::FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, uint32_t color) {
+    // 按 y 排序顶点 (y0 <= y1 <= y2)
+    if (y0 > y1) { int tx = x0; x0 = x1; x1 = tx; int ty = y0; y0 = y1; y1 = ty; }
+    if (y0 > y2) { int tx = x0; x0 = x2; x2 = tx; int ty = y0; y0 = y2; y2 = ty; }
+    if (y1 > y2) { int tx = x1; x1 = x2; x2 = tx; int ty = y1; y1 = y2; y2 = ty; }
+
+    // 高度为0直接画线
+    if (y2 - y0 == 0) {
+        DrawHLine(x0 < x1 ? (x0 < x2 ? x0 : x2) : (x1 < x2 ? x1 : x2), y0,
+                  __builtin_fabs((x0 > x1 ? (x0 > x2 ? x0 : x2) : (x1 > x2 ? x1 : x2)) -
+                      (x0 < x1 ? (x0 < x2 ? x0 : x2) : (x1 < x2 ? x1 : x2))) + 1, color);
+        return;
+    }
+
+    int totalHeight = y2 - y0;
+    for (int y = y0; y <= y2; y++) {
+        int secondHalf = (y > y1 || y1 == y0) ? 1 : 0;
+        int segmentHeight = secondHalf ? (y2 - y1) : (y1 - y0);
+        if (segmentHeight == 0) continue; // 防止除零
+
+        float alpha = (float)(y - y0) / totalHeight;
+        float beta  = (float)(secondHalf ? (y - y1) : (y - y0)) / (segmentHeight > 0 ? segmentHeight : 1);
+
+        int A = x0 + (int)((x2 - x0) * alpha);
+        int B = secondHalf ? (x1 + (int)((x2 - x1) * beta)) : (x0 + (int)((x1 - x0) * beta));
+
+        if (A > B) { int temp = A; A = B; B = temp; }
+
+        // 边界修正，确保不超出屏幕
+        if (y < 0 || y >= (int)FrameBuf->Height) continue;
+        if (A >= (int)FrameBuf->Width) continue;
+        if (B < 0) continue;
+        if (A < 0) A = 0;
+        if (B >= (int)FrameBuf->Width) B = (int)FrameBuf->Width - 1;
+
+        DrawHLine((uint64_t)A, (uint64_t)y, (uint64_t)(B - A + 1), color);
+    }
+}
+static int clamp(int v, int min, int max) {
+    if (v < min) return min;
+    if (v > max) return max;
+    return v;
+}
+// 生成随机颜色（全不透明）
+uint32_t RandomColor() {
+    // 从预定义的几个主色调中随机抽取，并微调亮度
+    uint32_t palette[] = {
+        0xFF3A2E6B, // 深蓝紫
+        0xFF5B3A8C, // 紫
+        0xFF2E5A7A, // 深青
+        0xFFB8457D, // 粉紫
+        0xFF2D4A7A, // 蓝
+        0xFF9B4B83  // 品红
+    };
+    uint32_t base = palette[RandomU32() % 6];
+    int r = (base >> 16) & 0xFF;
+    int g = (base >> 8) & 0xFF;
+    int b = base & 0xFF;
+    r = clamp(r + RandomRange(-10, 30), 0, 255);
+    g = clamp(g + RandomRange(-10, 30), 0, 255);
+    b = clamp(b + RandomRange(-10, 30), 0, 255);
+    return (0xFF << 24) | (r << 16) | (g << 8) | b;
+}
+
 void BasicDraw::DrawProportionalUI() {
+    int tileSize = 64;
     uint64_t w = FrameBuf->Width;
     uint64_t h = FrameBuf->Height;
 
-    float fw = (float)w;
-    float fh = (float)h;
+    for (uint64_t y = 0; y < h; y += tileSize) {
+        uint64_t curH = (y + tileSize > h) ? (h - y) : tileSize;
+        for (uint64_t x = 0; x < w; x += tileSize) {
+            uint64_t curW = (x + tileSize > w) ? (w - x) : tileSize;
+            uint64_t x2 = x + curW, y2 = y + curH;
 
-    for (uint64_t y = 0; y < h; y++) {
-        uint32_t* row = (uint32_t*)FrameBuf->BaseAddress + (y * FrameBuf->PixelsPerScanLine);
-        float fy = (float)y / fh;   // 0~1
+            // 限制调色板，避免过于刺眼的纯色
+            uint32_t c1 = RandomColor();
+            uint32_t c2 = RandomColor();
+            float alpha = 0.7f;
+            // 应用透明度（alpha 0~1，0全透，1全不透明）
+            c1 = (uint32_t)(alpha * 255) << 24 | (c1 & 0x00FFFFFF);
+            c2 = (uint32_t)(alpha * 255) << 24 | (c2 & 0x00FFFFFF);
 
-        for (uint64_t x = 0; x < w; x++) {
-            float fx = (float)x / fw;   // 0~1
-
-            // ====== 1. 深蓝背景色 ======
-            float r = 0.02f;
-            float g = 0.08f;
-            float b = 0.20f;
-
-            // ====== 2. 主球体（圆心偏左、偏上） ======
-            // 球心坐标
-            float cx = 0.30f, cy = 0.40f;
-            float radius = 0.70f;
-
-            float dx = fx - cx;
-            float dy = fy - cy;
-            float dist = sqrt(dx*dx + dy*dy);
-            float dist_normal = dist / radius;  // 越靠近0在球心
-
-            // 球体范围（0-1之间，外围为0）
-            float sphere = 1.0f - (dist / radius);
-            if (sphere < 0.0f) sphere = 0.0f;
-            float sphere_smooth = sphere * sphere; // 让衰减平滑
-
-            // 球体颜色（中心亮蓝 -> 边缘深蓝紫）
-            float blue_r = 0.05f + 0.35f * sphere_smooth;
-            float blue_g = 0.10f + 0.55f * sphere_smooth;
-            float blue_b = 0.40f + 0.50f * sphere_smooth;
-
-            // 混合球体到背景
-            r = r + (blue_r - r) * sphere_smooth * 0.95f;
-            g = g + (blue_g - g) * sphere_smooth * 0.95f;
-            b = b + (blue_b - b) * sphere_smooth * 0.95f;
-
-            // ====== 3. 右侧紫红色发光 (球体右侧和右下) ======
-            float purple_cx = 0.85f, purple_cy = 0.70f;
-            float purple_radius = 0.60f;
-            
-            float pdx = fx - purple_cx;
-            float pdy = fy - purple_cy;
-            float pdist = sqrt(pdx*pdx + pdy*pdy);
-            float pdist_norm = pdist / purple_radius;
-            float purple = 1.0f - pdist_norm;
-            if (purple < 0.0f) purple = 0.0f;
-            purple = purple * purple * 1.2f; // 强发光
-
-            float purple_r = 0.55f + 0.40f * purple;
-            float purple_g = 0.05f + 0.30f * purple;
-            float purple_b = 0.45f + 0.40f * purple;
-
-            // 紫色叠加，外部影响更大（让球体边缘带紫）
-            float purpleFactor = (1.0f - sphere_smooth * 0.8f) * purple * 0.8f;
-            r = r + (purple_r - r) * purpleFactor;
-            g = g + (purple_g - g) * purpleFactor;
-            b = b + (purple_b - b) * purpleFactor;
-
-            // ====== 4. 左侧青蓝环境光 ======
-            float tealFactor = (1.0f - fx) * 0.25f * (1.0f - (fy - 0.5f)*(fy - 0.5f)*3.0f);
-            if (tealFactor < 0.0f) tealFactor = 0.0f;
-            r += 0.05f * tealFactor;
-            g += 0.25f * tealFactor;
-            b += 0.35f * tealFactor;
-
-            // ====== 5. 底部亮边（粉白霓虹高光） ======
-            float glowY = 0.92f;
-            float glowX = 0.35f;  // 底部发光大概在水平这个位置
-            float glowWidth = 0.45f;
-            
-            float gdx = fx - glowX;
-            float gdy = fy - glowY;
-            float gdist = sqrt(gdx*gdx + gdy*gdy);
-            float glow = 1.0f - gdist / glowWidth;
-            if (glow < 0.0f) glow = 0.0f;
-            glow = glow * glow * 2.5f;
-
-            // 粉白颜色
-            float glow_r = 0.95f * glow;
-            float glow_g = 0.70f * glow;
-            float glow_b = 0.80f * glow;
-
-/*             // 叠加底部发光的（注意只影响底部和中间区域）
-            float glowFactor = glow * (1.0f - fy*0.5f);
-            if (glowFactor > 1.0f) glowFactor = 1.0f;
-            r = r + (glow_r - r) * glowFactor;
-            g = g + (glow_g - g) * glowFactor;
-            b = b + (glow_b - b) * glowFactor; */
-
-            // ====== 6. 上方微弱的暗色柔和边缘 ======
-            float topFade = fy * fy * 0.2f;
-            r -= 0.02f * topFade;
-            g -= 0.05f * topFade;
-            b -= 0.10f * topFade;
-
-            // ====== 7. 保护边界 [0,1] ======
-            if (r < 0.0f) r = 0.0f;  if (r > 1.0f) r = 1.0f;
-            if (g < 0.0f) g = 0.0f;  if (g > 1.0f) g = 1.0f;
-            if (b < 0.0f) b = 0.0f;  if (b > 1.0f) b = 1.0f;
-
-            // ====== 8. 转成 ARGB 写入 ======
-            uint8_t rr = (uint8_t)(r * 255.0f);
-            uint8_t gg = (uint8_t)(g * 255.0f);
-            uint8_t bb = (uint8_t)(b * 255.0f);
-            row[x] = (0xFF << 24) | (rr << 16) | (gg << 8) | bb;
+            if (RandomU32() & 1) {
+                FillTriangle((int)x, (int)y, (int)x2, (int)y, (int)x, (int)y2, c1);
+                FillTriangle((int)x2, (int)y, (int)x2, (int)y2, (int)x, (int)y2, c2);
+            } else {
+                FillTriangle((int)x, (int)y, (int)x2, (int)y, (int)x2, (int)y2, c1);
+                FillTriangle((int)x, (int)y, (int)x, (int)y2, (int)x2, (int)y2, c2);
+            }
         }
     }
 }
