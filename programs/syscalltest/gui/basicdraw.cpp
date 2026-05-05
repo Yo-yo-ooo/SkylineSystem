@@ -215,67 +215,81 @@ float atan2(float y, float x) {
     );
     return res;
 }
+
 void BasicDraw::DrawProportionalUI() {
     uint64_t W = FrameBuf->Width;
     uint64_t H = FrameBuf->Height;
     if (W == 0 || H == 0) return;
-    
-    float scaleX = (float)W / 1920.0f;
-    float scaleY = (float)H / 1080.0f;
-    float scale = (scaleX + scaleY) / 2.0f;
 
     uint64_t cx = W / 2;
     uint64_t cy = H / 2;
-    
-    // 预计算部分常数（提高一点点性能）
     float maxDist = sqrt((float)(cx*cx) + (float)(cy*cy));
 
-    // ========== 1. 模拟 Win11 Bloom 的彩色背景 ==========
+    // 循环绘制每一个像素
     for (uint64_t y = 0; y < H; y++) {
         for (uint64_t x = 0; x < W; x++) {
             float dx = (float)x - (float)cx;
             float dy = (float)y - (float)cy;
             float dist = sqrt(dx*dx + dy*dy);
-            float angle = atan2(dy, dx);
-            
-            // --- 核心改动 1: 把黑白切割改为平滑过渡 ---
-            // 原代码: pattern > 0 ? 0xFF : 0x00  (很硬)
-            float pattern = sin(dist * 0.02f + angle * 4.0f); 
-            // 平滑灰度: 将 [-1,1] 映射到 [0,1]
-            float smoothing = (pattern + 1.0f) * 0.5f; 
+            float angle = atan2(dy, dx); // 当前像素相对于中心的角度
 
-            // --- 核心改动 2: 从纯灰度变成 Win11 彩色 ---
-            // 根据角度分配不同的色调：品红 -> 紫色 -> 青色 -> 粉红
-            float hueAngle = angle + 1.57f; // 偏移角度让配色更自然
-            
-            // 用 sin 生成柔和的 RGB 分量
-            float r = sin(hueAngle) * 0.5f + 0.5f;
-            float g = sin(hueAngle + 2.094f) * 0.5f + 0.5f; // +120度
-            float b = sin(hueAngle + 4.189f) * 0.5f + 0.5f; // +240度
-            
-            // 混合：让灰度值决定彩色亮度 (越亮的地方彩色越饱和)
-            uint8_t finalR = (uint8_t)(smoothing * r * 255.0f);
-            uint8_t finalG = (uint8_t)(smoothing * g * 255.0f);
-            uint8_t finalB = (uint8_t)(smoothing * b * 255.0f);
+            // 距离中心的比例 (0~1)
+            float t = dist / maxDist;
 
-            // --- 核心改动 3: 中心发光 + 正圆边缘渐暗 ---
-            float edgeFade = dist / (maxDist * 0.85f); // 85% 距离处开始渐黑
-            if (edgeFade > 1.0f) edgeFade = 1.0f;
-            
-            // 让中心区域更亮 (发光效果)
-            float glow = 1.0f - (dist / (maxDist * 0.3f)); 
+            // ---- 核心颜色计算公式 ----
+            // 利用角度偏移产生 "花瓣" 形状的流线感
+            // 这里混合了 3 种 Win11 常用主色：深青蓝、品红、暖金
+            float r, g, b;
+
+            // 1. 基底：深蓝紫色 (基础深色背景)
+            float baseR = 0.05f; 
+            float baseG = 0.05f;
+            float baseB = 0.10f;
+
+            // 2. 流线 1 (品红/粉)：cos(angle * 2) 会产生对称的两片花瓣，分别从中心指向两侧
+            float flow1 = cos(angle * 2.0f + 0.5f) * 0.5f + 0.5f;
+            flow1 *= (1.0f - t) * (1.0f - t); // 越靠近中心越亮
+            r += flow1 * 0.5f; 
+            b += flow1 * 0.4f;
+
+            // 3. 流线 2 (亮青/蓝)：偏移角度使得另一片花瓣
+            float flow2 = cos(angle * 2.0f - 1.2f) * 0.5f + 0.5f;
+            flow2 *= (1.0f - t) * 0.8f;
+            b += flow2 * 0.6f; 
+            g += flow2 * 0.4f;
+
+            // 4. 流线 3 (暖金/散射光芒)：在更外围提供补充色
+            float flow3 = sin(angle * 3.0f) * 0.5f + 0.5f;
+            flow3 *= t; // 在边缘更加明显
+            r += flow3 * 0.15f;
+            g += flow3 * 0.10f;
+
+            // 5. 中央光晕 (始终加亮中心，模仿 Win11 的聚光效果)
+            float glow = 1.0f - t;
             if (glow < 0.0f) glow = 0.0f;
+            glow = glow * glow * 0.3f; // 中心高强度发光
+            r += glow * 0.3f;
+            g += glow * 0.3f;
+            b += glow * 0.3f;
+
+            // 6. 边缘衰减 (让四周最终变成均匀的深色)
+            float edgeFade = 1.0f - t * 1.2f;
+            if (edgeFade < 0.0f) edgeFade = 0.0f;
+            r = r * edgeFade;
+            g = g * edgeFade;
+            b = b * edgeFade;
+
+            // 限制范围并转换为 0~255
+            if (r > 1.0f) r = 1.0f;
+            if (g > 1.0f) g = 1.0f;
+            if (b > 1.0f) b = 1.0f;
             
-            // 合成最终亮度 (边缘渐暗 + 中心发光)
-            float finalBrightness = (1.0f - edgeFade) + glow * 0.5f;
-            if (finalBrightness > 1.0f) finalBrightness = 1.0f;
+            uint8_t R = (uint8_t)(r * 255.0f);
+            uint8_t G = (uint8_t)(g * 255.0f);
+            uint8_t B = (uint8_t)(b * 255.0f);
 
-            finalR = (uint8_t)(finalR * finalBrightness);
-            finalG = (uint8_t)(finalG * finalBrightness);
-            finalB = (uint8_t)(finalB * finalBrightness);
-
-            // 输出颜色 (0xFF 是不透明 + RGB)
-            PutPixel(x, y, 0xFF000000 | (finalR << 16) | (finalG << 8) | finalB);
+            // 最终颜色 (0xFF 是不透明)
+            PutPixel(x, y, 0xFF000000 | (R << 16) | (G << 8) | B);
         }
     }
 }
