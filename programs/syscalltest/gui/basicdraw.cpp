@@ -217,79 +217,118 @@ float atan2(float y, float x) {
 }
 
 void BasicDraw::DrawProportionalUI() {
-    uint64_t W = FrameBuf->Width;
-    uint64_t H = FrameBuf->Height;
-    if (W == 0 || H == 0) return;
+    uint64_t w = FrameBuf->Width;
+    uint64_t h = FrameBuf->Height;
 
-    uint64_t cx = W / 2;
-    uint64_t cy = H / 2;
-    float maxDist = sqrt((float)(cx*cx) + (float)(cy*cy));
+    float fw = (float)w;
+    float fh = (float)h;
 
-    // 循环绘制每一个像素
-    for (uint64_t y = 0; y < H; y++) {
-        for (uint64_t x = 0; x < W; x++) {
-            float dx = (float)x - (float)cx;
-            float dy = (float)y - (float)cy;
+    for (uint64_t y = 0; y < h; y++) {
+        uint32_t* row = (uint32_t*)FrameBuf->BaseAddress + (y * FrameBuf->PixelsPerScanLine);
+        float fy = (float)y / fh;   // 0~1
+
+        for (uint64_t x = 0; x < w; x++) {
+            float fx = (float)x / fw;   // 0~1
+
+            // ====== 1. 深蓝背景色 ======
+            float r = 0.02f;
+            float g = 0.08f;
+            float b = 0.20f;
+
+            // ====== 2. 主球体（圆心偏左、偏上） ======
+            // 球心坐标
+            float cx = 0.30f, cy = 0.40f;
+            float radius = 0.70f;
+
+            float dx = fx - cx;
+            float dy = fy - cy;
             float dist = sqrt(dx*dx + dy*dy);
-            float angle = atan2(dy, dx); // 当前像素相对于中心的角度
+            float dist_normal = dist / radius;  // 越靠近0在球心
 
-            // 距离中心的比例 (0~1)
-            float t = dist / maxDist;
+            // 球体范围（0-1之间，外围为0）
+            float sphere = 1.0f - (dist / radius);
+            if (sphere < 0.0f) sphere = 0.0f;
+            float sphere_smooth = sphere * sphere; // 让衰减平滑
 
-            // ---- 核心颜色计算公式 ----
-            // 利用角度偏移产生 "花瓣" 形状的流线感
-            // 这里混合了 3 种 Win11 常用主色：深青蓝、品红、暖金
-            float r, g, b;
+            // 球体颜色（中心亮蓝 -> 边缘深蓝紫）
+            float blue_r = 0.05f + 0.35f * sphere_smooth;
+            float blue_g = 0.10f + 0.55f * sphere_smooth;
+            float blue_b = 0.40f + 0.50f * sphere_smooth;
 
-            // 1. 基底：深蓝紫色 (基础深色背景)
-            float baseR = 0.05f; 
-            float baseG = 0.05f;
-            float baseB = 0.10f;
+            // 混合球体到背景
+            r = r + (blue_r - r) * sphere_smooth * 0.95f;
+            g = g + (blue_g - g) * sphere_smooth * 0.95f;
+            b = b + (blue_b - b) * sphere_smooth * 0.95f;
 
-            // 2. 流线 1 (品红/粉)：cos(angle * 2) 会产生对称的两片花瓣，分别从中心指向两侧
-            float flow1 = cos(angle * 2.0f + 0.5f) * 0.5f + 0.5f;
-            flow1 *= (1.0f - t) * (1.0f - t); // 越靠近中心越亮
-            r += flow1 * 0.5f; 
-            b += flow1 * 0.4f;
-
-            // 3. 流线 2 (亮青/蓝)：偏移角度使得另一片花瓣
-            float flow2 = cos(angle * 2.0f - 1.2f) * 0.5f + 0.5f;
-            flow2 *= (1.0f - t) * 0.8f;
-            b += flow2 * 0.6f; 
-            g += flow2 * 0.4f;
-
-            // 4. 流线 3 (暖金/散射光芒)：在更外围提供补充色
-            float flow3 = sin(angle * 3.0f) * 0.5f + 0.5f;
-            flow3 *= t; // 在边缘更加明显
-            r += flow3 * 0.15f;
-            g += flow3 * 0.10f;
-
-            // 5. 中央光晕 (始终加亮中心，模仿 Win11 的聚光效果)
-            float glow = 1.0f - t;
-            if (glow < 0.0f) glow = 0.0f;
-            glow = glow * glow * 0.3f; // 中心高强度发光
-            r += glow * 0.3f;
-            g += glow * 0.3f;
-            b += glow * 0.3f;
-
-            // 6. 边缘衰减 (让四周最终变成均匀的深色)
-            float edgeFade = 1.0f - t * 1.2f;
-            if (edgeFade < 0.0f) edgeFade = 0.0f;
-            r = r * edgeFade;
-            g = g * edgeFade;
-            b = b * edgeFade;
-
-            // 限制范围并转换为 0~255
-            if (r > 1.0f) r = 1.0f;
-            if (g > 1.0f) g = 1.0f;
-            if (b > 1.0f) b = 1.0f;
+            // ====== 3. 右侧紫红色发光 (球体右侧和右下) ======
+            float purple_cx = 0.85f, purple_cy = 0.70f;
+            float purple_radius = 0.60f;
             
-            uint8_t R = (uint8_t)(r * 255.0f);
-            uint8_t G = (uint8_t)(g * 255.0f);
-            uint8_t B = (uint8_t)(b * 255.0f);
+            float pdx = fx - purple_cx;
+            float pdy = fy - purple_cy;
+            float pdist = sqrt(pdx*pdx + pdy*pdy);
+            float pdist_norm = pdist / purple_radius;
+            float purple = 1.0f - pdist_norm;
+            if (purple < 0.0f) purple = 0.0f;
+            purple = purple * purple * 1.2f; // 强发光
 
-            // 最终颜色 (0xFF 是不透明)
-            PutPixel(x, y, 0xFF000000 | (R << 16) | (G << 8) | B);
+            float purple_r = 0.55f + 0.40f * purple;
+            float purple_g = 0.05f + 0.30f * purple;
+            float purple_b = 0.45f + 0.40f * purple;
+
+            // 紫色叠加，外部影响更大（让球体边缘带紫）
+            float purpleFactor = (1.0f - sphere_smooth * 0.8f) * purple * 0.8f;
+            r = r + (purple_r - r) * purpleFactor;
+            g = g + (purple_g - g) * purpleFactor;
+            b = b + (purple_b - b) * purpleFactor;
+
+            // ====== 4. 左侧青蓝环境光 ======
+            float tealFactor = (1.0f - fx) * 0.25f * (1.0f - (fy - 0.5f)*(fy - 0.5f)*3.0f);
+            if (tealFactor < 0.0f) tealFactor = 0.0f;
+            r += 0.05f * tealFactor;
+            g += 0.25f * tealFactor;
+            b += 0.35f * tealFactor;
+
+            // ====== 5. 底部亮边（粉白霓虹高光） ======
+            float glowY = 0.92f;
+            float glowX = 0.35f;  // 底部发光大概在水平这个位置
+            float glowWidth = 0.45f;
+            
+            float gdx = fx - glowX;
+            float gdy = fy - glowY;
+            float gdist = sqrt(gdx*gdx + gdy*gdy);
+            float glow = 1.0f - gdist / glowWidth;
+            if (glow < 0.0f) glow = 0.0f;
+            glow = glow * glow * 2.5f;
+
+            // 粉白颜色
+            float glow_r = 0.95f * glow;
+            float glow_g = 0.70f * glow;
+            float glow_b = 0.80f * glow;
+
+/*             // 叠加底部发光的（注意只影响底部和中间区域）
+            float glowFactor = glow * (1.0f - fy*0.5f);
+            if (glowFactor > 1.0f) glowFactor = 1.0f;
+            r = r + (glow_r - r) * glowFactor;
+            g = g + (glow_g - g) * glowFactor;
+            b = b + (glow_b - b) * glowFactor; */
+
+            // ====== 6. 上方微弱的暗色柔和边缘 ======
+            float topFade = fy * fy * 0.2f;
+            r -= 0.02f * topFade;
+            g -= 0.05f * topFade;
+            b -= 0.10f * topFade;
+
+            // ====== 7. 保护边界 [0,1] ======
+            if (r < 0.0f) r = 0.0f;  if (r > 1.0f) r = 1.0f;
+            if (g < 0.0f) g = 0.0f;  if (g > 1.0f) g = 1.0f;
+            if (b < 0.0f) b = 0.0f;  if (b > 1.0f) b = 1.0f;
+
+            // ====== 8. 转成 ARGB 写入 ======
+            uint8_t rr = (uint8_t)(r * 255.0f);
+            uint8_t gg = (uint8_t)(g * 255.0f);
+            uint8_t bb = (uint8_t)(b * 255.0f);
+            row[x] = (0xFF << 24) | (rr << 16) | (gg << 8) | bb;
         }
     }
 }
