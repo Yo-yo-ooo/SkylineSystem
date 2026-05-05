@@ -224,62 +224,58 @@ void BasicDraw::DrawProportionalUI() {
     float scaleY = (float)H / 1080.0f;
     float scale = (scaleX + scaleY) / 2.0f;
 
-    auto FillCircle = [&](uint64_t cx, uint64_t cy, uint64_t r, uint32_t color) {
-        uint64_t d = r * 2;
-        DrawRoundedRect(cx - r, cy - r, d, d, r, color, true);
-    };
-
     uint64_t cx = W / 2;
     uint64_t cy = H / 2;
-    float maxDist = sqrt((float)(cx*cx + cy*cy));
+    
+    // 预计算部分常数（提高一点点性能）
+    float maxDist = sqrt((float)(cx*cx) + (float)(cy*cy));
 
-    // ========== 高亮度版：量子漩涡背景 ==========
+    // ========== 1. 模拟 Win11 Bloom 的彩色背景 ==========
     for (uint64_t y = 0; y < H; y++) {
         for (uint64_t x = 0; x < W; x++) {
             float dx = (float)x - (float)cx;
             float dy = (float)y - (float)cy;
             float dist = sqrt(dx*dx + dy*dy);
             float angle = atan2(dy, dx);
-            float t = dist / maxDist;
+            
+            // --- 核心改动 1: 把黑白切割改为平滑过渡 ---
+            // 原代码: pattern > 0 ? 0xFF : 0x00  (很硬)
+            float pattern = sin(dist * 0.02f + angle * 4.0f); 
+            // 平滑灰度: 将 [-1,1] 映射到 [0,1]
+            float smoothing = (pattern + 1.0f) * 0.5f; 
 
-            // 1. 漩涡旋转因子（更亮的对比度）
-            float swirl = sin(dist * 0.025f + angle * 3.0f);
-            float swirlFactor = (swirl + 1.0f) * 0.5f;
+            // --- 核心改动 2: 从纯灰度变成 Win11 彩色 ---
+            // 根据角度分配不同的色调：品红 -> 紫色 -> 青色 -> 粉红
+            float hueAngle = angle + 1.57f; // 偏移角度让配色更自然
+            
+            // 用 sin 生成柔和的 RGB 分量
+            float r = sin(hueAngle) * 0.5f + 0.5f;
+            float g = sin(hueAngle + 2.094f) * 0.5f + 0.5f; // +120度
+            float b = sin(hueAngle + 4.189f) * 0.5f + 0.5f; // +240度
+            
+            // 混合：让灰度值决定彩色亮度 (越亮的地方彩色越饱和)
+            uint8_t finalR = (uint8_t)(smoothing * r * 255.0f);
+            uint8_t finalG = (uint8_t)(smoothing * g * 255.0f);
+            uint8_t finalB = (uint8_t)(smoothing * b * 255.0f);
 
-            // 2. 量子四色渐变（基础亮度提高）
-            uint8_t r, g, b;
-            if (t < 0.33f) {
-                float t2 = t / 0.33f;
-                r = (uint8_t)(0x10 * (1.0f - t2) + 0x4D * t2);
-                g = (uint8_t)(0x10 * (1.0f - t2) + 0x20 * t2);
-                b = (uint8_t)(0x20 * (1.0f - t2) + 0x8B * t2);
-            } else if (t < 0.66f) {
-                float t2 = (t - 0.33f) / 0.33f;
-                r = (uint8_t)(0x4D * (1.0f - t2) + 0xFF * t2);
-                g = (uint8_t)(0x20 * (1.0f - t2) + 0x40 * t2);
-                b = (uint8_t)(0x8B * (1.0f - t2) + 0xFF * t2);
-            } else {
-                float t2 = (t - 0.66f) / 0.34f;
-                r = (uint8_t)(0xFF * (1.0f - t2) + 0x40 * t2);
-                g = (uint8_t)(0x40 * (1.0f - t2) + 0xFF * t2);
-                b = (uint8_t)(0xFF * (1.0f - t2) + 0xFF * t2);
-            }
-
-            // 3. 漩涡叠加（亮度大幅提高：0.85~1.0）
-            r = (uint8_t)(r * (0.85f + swirlFactor * 0.15f));
-            g = (uint8_t)(g * (0.85f + swirlFactor * 0.15f));
-            b = (uint8_t)(b * (0.85f + swirlFactor * 0.15f));
-
-            // 4. 边缘渐暗（大幅减轻，只暗一点点）
-            float edgeFade = dist / (maxDist * 0.95f);
+            // --- 核心改动 3: 中心发光 + 正圆边缘渐暗 ---
+            float edgeFade = dist / (maxDist * 0.85f); // 85% 距离处开始渐黑
             if (edgeFade > 1.0f) edgeFade = 1.0f;
-            float fade = 1.0f - edgeFade * 0.3f; // 只暗30%
-            r = (uint8_t)(r * fade);
-            g = (uint8_t)(g * fade);
-            b = (uint8_t)(b * fade);
+            
+            // 让中心区域更亮 (发光效果)
+            float glow = 1.0f - (dist / (maxDist * 0.3f)); 
+            if (glow < 0.0f) glow = 0.0f;
+            
+            // 合成最终亮度 (边缘渐暗 + 中心发光)
+            float finalBrightness = (1.0f - edgeFade) + glow * 0.5f;
+            if (finalBrightness > 1.0f) finalBrightness = 1.0f;
 
-            PutPixel(x, y, 0xFF000000 | (r << 16) | (g << 8) | b);
+            finalR = (uint8_t)(finalR * finalBrightness);
+            finalG = (uint8_t)(finalG * finalBrightness);
+            finalB = (uint8_t)(finalB * finalBrightness);
+
+            // 输出颜色 (0xFF 是不透明 + RGB)
+            PutPixel(x, y, 0xFF000000 | (finalR << 16) | (finalG << 8) | finalB);
         }
     }
-   
 }
