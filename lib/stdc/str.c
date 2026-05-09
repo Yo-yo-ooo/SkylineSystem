@@ -246,6 +246,8 @@ strchr (const char *s, int32_t c_in)
 }
 
 char *strcpy(char *strDest, const char *strSrc){
+    if (strDest == NULL || strSrc == NULL)
+        return strDest;
     char *address = strDest;
     while( (*strDest++ = * strSrc++) != '\0' ) 
          ;
