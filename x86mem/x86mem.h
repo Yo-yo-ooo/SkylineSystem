@@ -46,11 +46,11 @@ void * AVX_memcpy(void *dest, void *src, size_t numbytes);
 void * AVX_memset(void *dest, const uint8_t val, size_t numbytes);
 int AVX_memcmp(const void *str1, const void *str2, size_t numbytes, int equality);
 
-int memcmp_fpx86 (const void *str1, const void *str2, size_t count);
+/* int memcmp_fpx86 (const void *str1, const void *str2, size_t count);
 void * memset_fpx86 (void *dest, const uint8_t val, size_t len);
 void * memmove_fpx86 (void *dest, const void *src, size_t len);
-void * memcpy_fpx86 (void *dest, const void *src, size_t len);
-
+void * memcpy_fpx86 (void *dest, const void *src, size_t len); */
+/* 
 // Numbytes_div_4 is total number of bytes / 4 (since they only do 4 at a time).
 void * AVX_memset_4B(void *dest, const uint32_t val, size_t numbytes_div_4);
 
@@ -404,7 +404,7 @@ int memcmp_512bit_eq_u(const void *str1, const void *str2, size_t count);
 int memcmp_512bit_a(const void *str1, const void *str2, size_t count);
 int memcmp_512bit_eq_a(const void *str1, const void *str2, size_t count);
 #endif
-// END MEMCMP
+// END MEMCMP */
 
 #ifdef __cplusplus
 }

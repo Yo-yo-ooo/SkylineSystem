@@ -3,9 +3,11 @@
 #include "./x86mem.h"
 
 #ifdef __x86_64__
-
+static void * memset_zeroes(void *dest, size_t numbytes);
+static void * memset_zeroes_a(void *dest, size_t numbytes);
+static void * memset_zeroes_as(void *dest, size_t numbytes);
 #undef BYTE_ALIGNMENT
-void * memset_fpx86 (void *dest, const uint8_t val, size_t len)
+static void * memset_fpx86 (void *dest, const uint8_t val, size_t len)
 {
   uint8_t *ptr = (uint8_t*)dest;
 
@@ -52,7 +54,7 @@ void * memset_fpx86 (void *dest, const uint8_t val, size_t len)
 // 16-bit (2 bytes at a time)
 // Len is (# of total bytes/2), so it's "# of 16-bits"
 
-void * memset_16bit(void *dest, const uint16_t val, size_t len)
+static void * memset_16bit(void *dest, const uint16_t val, size_t len)
 {
   uint16_t *ptr = (uint16_t*)dest;
 
@@ -67,7 +69,7 @@ void * memset_16bit(void *dest, const uint16_t val, size_t len)
 // 32-bit (4 bytes at a time - 1 pixel in a 32-bit linear frame buffer)
 // Len is (# of total bytes/4), so it's "# of 32-bits"
 
-void * memset_32bit(void *dest, const uint32_t val, size_t len)
+static void * memset_32bit(void *dest, const uint32_t val, size_t len)
 {
   uint32_t *ptr = (uint32_t*)dest;
 
@@ -82,7 +84,7 @@ void * memset_32bit(void *dest, const uint32_t val, size_t len)
 // 64-bit (8 bytes at a time - 2 pixels in a 32-bit linear frame buffer)
 // Len is (# of total bytes/8), so it's "# of 64-bits"
 
-void * memset_64bit(void *dest, const uint64_t val, size_t len)
+static void * memset_64bit(void *dest, const uint64_t val, size_t len)
 {
   uint64_t *ptr = (uint64_t*)dest;
 
@@ -101,7 +103,7 @@ void * memset_64bit(void *dest, const uint64_t val, size_t len)
 // SSE2 (128-bit, 16 bytes at a time - 4 pixels in a 32-bit linear frame buffer)
 // Len is (# of total bytes/16), so it's "# of 128-bits"
 
-void * memset_128bit_u(void *dest, const __m128i_u val, size_t len)
+static void * memset_128bit_u(void *dest, const __m128i_u val, size_t len)
 {
   __m128i_u *ptr = (__m128i_u*)dest;
 
@@ -114,7 +116,7 @@ void * memset_128bit_u(void *dest, const __m128i_u val, size_t len)
 }
 
 // 32 bytes
-void * memset_128bit_32B_u(void *dest, const __m128i_u val, size_t len)
+static void * memset_128bit_32B_u(void *dest, const __m128i_u val, size_t len)
 {
   __m128i_u *ptr = (__m128i_u*)dest;
 
@@ -128,7 +130,7 @@ void * memset_128bit_32B_u(void *dest, const __m128i_u val, size_t len)
 }
 
 // 64 bytes
-void * memset_128bit_64B_u(void *dest, const __m128i_u val, size_t len)
+static void * memset_128bit_64B_u(void *dest, const __m128i_u val, size_t len)
 {
   __m128i_u *ptr = (__m128i_u*)dest;
 
@@ -144,7 +146,7 @@ void * memset_128bit_64B_u(void *dest, const __m128i_u val, size_t len)
 }
 
 // 128 bytes
-void * memset_128bit_128B_u(void *dest, const __m128i_u val, size_t len)
+static void * memset_128bit_128B_u(void *dest, const __m128i_u val, size_t len)
 {
   __m128i_u *ptr = (__m128i_u*)dest;
 
@@ -164,7 +166,7 @@ void * memset_128bit_128B_u(void *dest, const __m128i_u val, size_t len)
 }
 
 // 256 bytes
-void * memset_128bit_256B_u(void *dest, const __m128i_u val, size_t len)
+static void * memset_128bit_256B_u(void *dest, const __m128i_u val, size_t len)
 {
   __m128i_u *ptr = (__m128i_u*)dest;
 
@@ -201,7 +203,7 @@ void * memset_128bit_256B_u(void *dest, const __m128i_u val, size_t len)
 
 #ifdef __AVX__
 
-void * memset_256bit_u(void *dest, const __m256i_u val, size_t len)
+static void * memset_256bit_u(void *dest, const __m256i_u val, size_t len)
 {
   __m256i_u *ptr = (__m256i_u*)dest;
 
@@ -214,7 +216,7 @@ void * memset_256bit_u(void *dest, const __m256i_u val, size_t len)
 }
 
 // 64 bytes
-void * memset_256bit_64B_u(void *dest, const __m256i_u val, size_t len)
+static void * memset_256bit_64B_u(void *dest, const __m256i_u val, size_t len)
 {
   __m256i_u *ptr = (__m256i_u*)dest;
 
@@ -228,7 +230,7 @@ void * memset_256bit_64B_u(void *dest, const __m256i_u val, size_t len)
 }
 
 // 128 bytes
-void * memset_256bit_128B_u(void *dest, const __m256i_u val, size_t len)
+static void * memset_256bit_128B_u(void *dest, const __m256i_u val, size_t len)
 {
   __m256i_u *ptr = (__m256i_u*)dest;
 
@@ -244,7 +246,7 @@ void * memset_256bit_128B_u(void *dest, const __m256i_u val, size_t len)
 }
 
 // 256 bytes
-void * memset_256bit_256B_u(void *dest, const __m256i_u val, size_t len)
+static void * memset_256bit_256B_u(void *dest, const __m256i_u val, size_t len)
 {
   __m256i_u *ptr = (__m256i_u*)dest;
 
@@ -264,7 +266,7 @@ void * memset_256bit_256B_u(void *dest, const __m256i_u val, size_t len)
 }
 
 // 512 bytes
-void * memset_256bit_512B_u(void *dest, const __m256i_u val, size_t len)
+static void * memset_256bit_512B_u(void *dest, const __m256i_u val, size_t len)
 {
   __m256i_u *ptr = (__m256i_u*)dest;
 
@@ -299,7 +301,7 @@ void * memset_256bit_512B_u(void *dest, const __m256i_u val, size_t len)
 
 #ifdef __AVX512F__
 
-void * memset_512bit_u(void *dest, const __m512i_u val, size_t len)
+static void * memset_512bit_u(void *dest, const __m512i_u val, size_t len)
 {
   __m512i_u *ptr = (__m512i_u*)dest;
 
@@ -312,7 +314,7 @@ void * memset_512bit_u(void *dest, const __m512i_u val, size_t len)
 }
 
 // 128 bytes
-void * memset_512bit_128B_u(void *dest, const __m512i_u val, size_t len)
+static void * memset_512bit_128B_u(void *dest, const __m512i_u val, size_t len)
 {
   __m512i_u *ptr = (__m512i_u*)dest;
 
@@ -326,7 +328,7 @@ void * memset_512bit_128B_u(void *dest, const __m512i_u val, size_t len)
 }
 
 // 256 bytes
-void * memset_512bit_256B_u(void *dest, const __m512i_u val, size_t len)
+static void * memset_512bit_256B_u(void *dest, const __m512i_u val, size_t len)
 {
   __m512i_u *ptr = (__m512i_u*)dest;
 
@@ -342,7 +344,7 @@ void * memset_512bit_256B_u(void *dest, const __m512i_u val, size_t len)
 }
 
 // 512 bytes
-void * memset_512bit_512B_u(void *dest, const __m512i_u val, size_t len)
+static void * memset_512bit_512B_u(void *dest, const __m512i_u val, size_t len)
 {
   __m512i_u *ptr = (__m512i_u*)dest;
 
@@ -362,7 +364,7 @@ void * memset_512bit_512B_u(void *dest, const __m512i_u val, size_t len)
 }
 
 // 1024 bytes, or 1 kB
-void * memset_512bit_1kB_u(void *dest, const __m512i_u val, size_t len)
+static void * memset_512bit_1kB_u(void *dest, const __m512i_u val, size_t len)
 {
   __m512i_u *ptr = (__m512i_u*)dest;
 
@@ -390,7 +392,7 @@ void * memset_512bit_1kB_u(void *dest, const __m512i_u val, size_t len)
 }
 
 // 2048 bytes, or 2 kB
-void * memset_512bit_2kB_u(void *dest, const __m512i_u val, size_t len)
+static void * memset_512bit_2kB_u(void *dest, const __m512i_u val, size_t len)
 {
   __m512i_u *ptr = (__m512i_u*)dest;
 
@@ -434,7 +436,7 @@ void * memset_512bit_2kB_u(void *dest, const __m512i_u val, size_t len)
 }
 
 // 4096 bytes, or 4 kB, also 1 page
-void * memset_512bit_4kB_u(void *dest, const __m512i_u val, size_t len)
+static void * memset_512bit_4kB_u(void *dest, const __m512i_u val, size_t len)
 {
   __m512i_u *ptr = (__m512i_u*)dest;
 
@@ -518,7 +520,7 @@ void * memset_512bit_4kB_u(void *dest, const __m512i_u val, size_t len)
 // SSE2 (128-bit, 16 bytes at a time - 4 pixels in a 32-bit linear frame buffer)
 // Len is (# of total bytes/16), so it's "# of 128-bits"
 
-void * memset_128bit_a(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_a(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -531,7 +533,7 @@ void * memset_128bit_a(void *dest, const __m128i val, size_t len)
 }
 
 // 32 bytes
-void * memset_128bit_32B_a(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_32B_a(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -545,7 +547,7 @@ void * memset_128bit_32B_a(void *dest, const __m128i val, size_t len)
 }
 
 // 64 bytes
-void * memset_128bit_64B_a(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_64B_a(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -561,7 +563,7 @@ void * memset_128bit_64B_a(void *dest, const __m128i val, size_t len)
 }
 
 // 128 bytes
-void * memset_128bit_128B_a(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_128B_a(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -581,7 +583,7 @@ void * memset_128bit_128B_a(void *dest, const __m128i val, size_t len)
 }
 
 // 256 bytes
-void * memset_128bit_256B_a(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_256B_a(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -618,7 +620,7 @@ void * memset_128bit_256B_a(void *dest, const __m128i val, size_t len)
 
 #ifdef __AVX__
 
-void * memset_256bit_a(void *dest, const __m256i val, size_t len)
+static void * memset_256bit_a(void *dest, const __m256i val, size_t len)
 {
   __m256i *ptr = (__m256i*)dest;
 
@@ -631,7 +633,7 @@ void * memset_256bit_a(void *dest, const __m256i val, size_t len)
 }
 
 // 64 bytes
-void * memset_256bit_64B_a(void *dest, const __m256i val, size_t len)
+static void * memset_256bit_64B_a(void *dest, const __m256i val, size_t len)
 {
   __m256i *ptr = (__m256i*)dest;
 
@@ -645,7 +647,7 @@ void * memset_256bit_64B_a(void *dest, const __m256i val, size_t len)
 }
 
 // 128 bytes
-void * memset_256bit_128B_a(void *dest, const __m256i val, size_t len)
+static void * memset_256bit_128B_a(void *dest, const __m256i val, size_t len)
 {
   __m256i *ptr = (__m256i*)dest;
 
@@ -661,7 +663,7 @@ void * memset_256bit_128B_a(void *dest, const __m256i val, size_t len)
 }
 
 // 256 bytes
-void * memset_256bit_256B_a(void *dest, const __m256i val, size_t len)
+static void * memset_256bit_256B_a(void *dest, const __m256i val, size_t len)
 {
   __m256i *ptr = (__m256i*)dest;
 
@@ -681,7 +683,7 @@ void * memset_256bit_256B_a(void *dest, const __m256i val, size_t len)
 }
 
 // 512 bytes
-void * memset_256bit_512B_a(void *dest, const __m256i val, size_t len)
+static void * memset_256bit_512B_a(void *dest, const __m256i val, size_t len)
 {
   __m256i *ptr = (__m256i*)dest;
 
@@ -716,7 +718,7 @@ void * memset_256bit_512B_a(void *dest, const __m256i val, size_t len)
 
 #ifdef __AVX512F__
 
-void * memset_512bit_a(void *dest, const __m512i val, size_t len)
+static void * memset_512bit_a(void *dest, const __m512i val, size_t len)
 {
   __m512i *ptr = (__m512i*)dest;
 
@@ -729,7 +731,7 @@ void * memset_512bit_a(void *dest, const __m512i val, size_t len)
 }
 
 // 128 bytes
-void * memset_512bit_128B_a(void *dest, const __m512i val, size_t len)
+static void * memset_512bit_128B_a(void *dest, const __m512i val, size_t len)
 {
   __m512i *ptr = (__m512i*)dest;
 
@@ -743,7 +745,7 @@ void * memset_512bit_128B_a(void *dest, const __m512i val, size_t len)
 }
 
 // 256 bytes
-void * memset_512bit_256B_a(void *dest, const __m512i val, size_t len)
+static void * memset_512bit_256B_a(void *dest, const __m512i val, size_t len)
 {
   __m512i *ptr = (__m512i*)dest;
 
@@ -759,7 +761,7 @@ void * memset_512bit_256B_a(void *dest, const __m512i val, size_t len)
 }
 
 // 512 bytes
-void * memset_512bit_512B_a(void *dest, const __m512i val, size_t len)
+static void * memset_512bit_512B_a(void *dest, const __m512i val, size_t len)
 {
   __m512i *ptr = (__m512i*)dest;
 
@@ -779,7 +781,7 @@ void * memset_512bit_512B_a(void *dest, const __m512i val, size_t len)
 }
 
 // 1024 bytes, or 1 kB
-void * memset_512bit_1kB_a(void *dest, const __m512i val, size_t len)
+static void * memset_512bit_1kB_a(void *dest, const __m512i val, size_t len)
 {
   __m512i *ptr = (__m512i*)dest;
 
@@ -807,7 +809,7 @@ void * memset_512bit_1kB_a(void *dest, const __m512i val, size_t len)
 }
 
 // 2048 bytes, or 2 kB
-void * memset_512bit_2kB_a(void *dest, const __m512i val, size_t len)
+static void * memset_512bit_2kB_a(void *dest, const __m512i val, size_t len)
 {
   __m512i *ptr = (__m512i*)dest;
 
@@ -851,7 +853,7 @@ void * memset_512bit_2kB_a(void *dest, const __m512i val, size_t len)
 }
 
 // 4096 bytes, or 4 kB, also 1 page
-void * memset_512bit_4kB_a(void *dest, const __m512i val, size_t len)
+static void * memset_512bit_4kB_a(void *dest, const __m512i val, size_t len)
 {
   __m512i *ptr = (__m512i*)dest;
 
@@ -935,7 +937,7 @@ void * memset_512bit_4kB_a(void *dest, const __m512i val, size_t len)
 
 // If non-temporal stores are needed, then it's a big transfer
 
-void * memset_128bit_as(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_as(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -949,7 +951,7 @@ void * memset_128bit_as(void *dest, const __m128i val, size_t len)
 }
 
 // 32 bytes
-void * memset_128bit_32B_as(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_32B_as(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -964,7 +966,7 @@ void * memset_128bit_32B_as(void *dest, const __m128i val, size_t len)
 }
 
 // 64 bytes
-void * memset_128bit_64B_as(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_64B_as(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -981,7 +983,7 @@ void * memset_128bit_64B_as(void *dest, const __m128i val, size_t len)
 }
 
 // 128 bytes
-void * memset_128bit_128B_as(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_128B_as(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -1002,7 +1004,7 @@ void * memset_128bit_128B_as(void *dest, const __m128i val, size_t len)
 }
 
 // 256 bytes
-void * memset_128bit_256B_as(void *dest, const __m128i val, size_t len)
+static void * memset_128bit_256B_as(void *dest, const __m128i val, size_t len)
 {
   __m128i *ptr = (__m128i*)dest;
 
@@ -1367,7 +1369,7 @@ void * memset_512bit_4kB_as(void *dest, const __m512i val, size_t len)
 //-----------------------------------------------------------------------------
 
 // Set arbitrarily large amounts of a single byte
-void * memset_large(void *dest, const uint8_t val, size_t numbytes)
+static void * memset_large(void *dest, const uint8_t val, size_t numbytes)
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
 
@@ -1539,7 +1541,7 @@ void * memset_large(void *dest, const uint8_t val, size_t numbytes)
 
 // Set arbitrarily large amounts of a single byte
 // Aligned version
-void * memset_large_a(void *dest, const uint8_t val, size_t numbytes)
+static void * memset_large_a(void *dest, const uint8_t val, size_t numbytes)
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
 
@@ -1711,7 +1713,7 @@ void * memset_large_a(void *dest, const uint8_t val, size_t numbytes)
 
 // Set arbitrarily large amounts of a single byte
 // Aligned, streaming version
-void * memset_large_as(void *dest, const uint8_t val, size_t numbytes)
+static void * memset_large_as(void *dest, const uint8_t val, size_t numbytes)
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
 
@@ -1882,7 +1884,7 @@ void * memset_large_as(void *dest, const uint8_t val, size_t numbytes)
 } // END MEMSET LARGE, ALIGNED, STREAMING
 
 // Set arbitrarily large amounts of only zeroes
-void * memset_zeroes(void *dest, size_t numbytes) // Worst-case scenario: 127 bytes
+static void * memset_zeroes(void *dest, size_t numbytes) // Worst-case scenario: 127 bytes
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
   size_t offset = 0;
@@ -2068,7 +2070,7 @@ void * memset_zeroes(void *dest, size_t numbytes) // Worst-case scenario: 127 by
 
 // Set arbitrarily large amounts of only zeroes
 // Aligned version
-void * memset_zeroes_a(void *dest, size_t numbytes) // Worst-case scenario: 127 bytes
+static void * memset_zeroes_a(void *dest, size_t numbytes) // Worst-case scenario: 127 bytes
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
   size_t offset = 0;
@@ -2254,7 +2256,7 @@ void * memset_zeroes_a(void *dest, size_t numbytes) // Worst-case scenario: 127 
 
 // Set arbitrarily large amounts of only zeroes
 // Aligned, streaming version
-void * memset_zeroes_as(void *dest, size_t numbytes) // Worst-case scenario: 127 bytes
+static void * memset_zeroes_as(void *dest, size_t numbytes) // Worst-case scenario: 127 bytes
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
   size_t offset = 0;
@@ -2440,7 +2442,7 @@ void * memset_zeroes_as(void *dest, size_t numbytes) // Worst-case scenario: 127
 
 // Set arbitrarily large amounts of 4-byte values
 // numbytes_div_4 is total number of bytes / 4 (since this is 4 bytes at a time)
-void * memset_large_4B(void *dest, const uint32_t val, size_t numbytes_div_4)
+static void * memset_large_4B(void *dest, const uint32_t val, size_t numbytes_div_4)
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
   size_t offset = 0; // Offset size needs to match the size of a pointer
@@ -2606,7 +2608,7 @@ void * memset_large_4B(void *dest, const uint32_t val, size_t numbytes_div_4)
 // Set arbitrarily large amounts of 4-byte values
 // numbytes_div_4 is total number of bytes / 4 (since this is 4 bytes at a time)
 // Aligned version
-void * memset_large_4B_a(void *dest, const uint32_t val, size_t numbytes_div_4)
+static void * memset_large_4B_a(void *dest, const uint32_t val, size_t numbytes_div_4)
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
   size_t offset = 0; // Offset size needs to match the size of a pointer
@@ -2772,7 +2774,7 @@ void * memset_large_4B_a(void *dest, const uint32_t val, size_t numbytes_div_4)
 // Set arbitrarily large amounts of 4-byte values
 // numbytes_div_4 is total number of bytes / 4 (since this is 4 bytes at a time)
 // Aligned, streaming version
-void * memset_large_4B_as(void *dest, const uint32_t val, size_t numbytes_div_4)
+static void *memset_large_4B_as(void *dest, const uint32_t val, size_t numbytes_div_4)
 {
   void * returnval = dest; // Memset is supposed to return the initial destination
   size_t offset = 0; // Offset size needs to match the size of a pointer
@@ -3035,7 +3037,7 @@ void * AVX_memset(void *dest, const uint8_t val, size_t numbytes)
 // Numbytes_div_4 is total number of bytes / 4.
 // Also, the destination address can, at worst, only be misaligned from the
 // cacheline by a value that is a multiple of 4 bytes.
-void * AVX_memset_4B(void *dest, const uint32_t val, size_t numbytes_div_4)
+static void * AVX_memset_4B(void *dest, const uint32_t val, size_t numbytes_div_4)
 {
   void * returnval = dest;
 

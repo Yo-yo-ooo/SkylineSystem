@@ -282,22 +282,45 @@ static int clamp(int v, int min, int max) {
 }
 // 生成随机颜色（全不透明）
 uint32_t RandomColor() {
-    // 从预定义的几个主色调中随机抽取，并微调亮度
+    // 扩展色板 —— 20 种暗调高级色
     uint32_t palette[] = {
-        0xFF3A2E6B, // 深蓝紫
-        0xFF5B3A8C, // 紫
-        0xFF2E5A7A, // 深青
-        0xFFB8457D, // 粉紫
-        0xFF2D4A7A, // 蓝
-        0xFF9B4B83  // 品红
+        // 冷色系
+        0xFF1A1C3B, // 深海军蓝
+        0xFF2A2E5A, // 暗蓝
+        0xFF3A2E6B, // 深蓝紫 (原)
+        0xFF4B3A7C, // 紫罗兰
+        0xFF5B3A8C, // 紫 (原)
+        0xFF1E3A5F, // 深海蓝
+        0xFF1B4A6F, // 暗青
+        0xFF2E5A7A, // 深青 (原)
+        // 冷暖过渡
+        0xFF5C4A6E, // 灰紫
+        0xFF6B4A7A, // 淡紫
+        0xFF7A4A5C, // 紫红
+        0xFF8B4556, // 暗玫瑰
+        // 暖色系
+        0xFF9B4B83, // 品红 (原)
+        0xFFB8457D, // 粉紫 (原)
+        0xFFB84B4B, // 暗红
+        0xFFC05A3A, // 砖红
+        0xFFC06A2E, // 暗橙
+        0xFFB07A25, // 暗琥珀
+        0xFF8C6B3A, // 古铜
+        0xFF6B5A4A  // 深褐
     };
-    uint32_t base = palette[RandomU32() % 6];
+
+    // 随机选中一个基础色
+    uint32_t base = palette[RandomU32() % (sizeof(palette) / sizeof(palette[0]))];
+
     int r = (base >> 16) & 0xFF;
     int g = (base >> 8) & 0xFF;
     int b = base & 0xFF;
-    r = clamp(r + RandomRange(-10, 30), 0, 255);
-    g = clamp(g + RandomRange(-10, 30), 0, 255);
-    b = clamp(b + RandomRange(-10, 30), 0, 255);
+
+    // 轻微随机偏移，保留颜色间的微妙差异
+    r = clamp(r + RandomRange(-10, 20), 0, 255);
+    g = clamp(g + RandomRange(-10, 20), 0, 255);
+    b = clamp(b + RandomRange(-10, 20), 0, 255);
+
     return (0xFF << 24) | (r << 16) | (g << 8) | b;
 }
 
