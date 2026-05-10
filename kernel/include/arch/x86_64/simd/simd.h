@@ -1,0 +1,49 @@
+/*
+* SPDX-License-Identifier: GPL-2.0-only
+* File: simd.h
+* Copyright (C) 2026 Yo-yo-ooo
+*
+* This file is part of SkylineSystem.
+*
+* SkylineSystem is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+*/
+#pragma once
+#ifndef x86MEM_ENABLE_H
+#define x86MEM_ENABLE_H
+
+#include <stdint.h>
+#include <stddef.h>
+#include <klib/kio.h>
+
+extern "C++" {
+
+#ifdef __x86_64__
+
+
+void simd_cpu_init(cpu_t *cpu);
+
+void StoreSIMDState_V0(char* area,uint32_t Lo,uint32_t Hi);
+void StoreSIMDState_V1(char* area,uint32_t Lo,uint32_t Hi);
+void StoreSIMDState_V2(char* area,uint32_t Lo,uint32_t Hi);
+void LoadSIMDState_V0(char* area,uint32_t Lo,uint32_t Hi);
+void LoadSIMDState_V1(char* area,uint32_t Lo,uint32_t Hi);
+
+#else
+#error "You include x86_64 ARCH file,but your ARCH not x86_64"
+#endif
+
+}
+
+#endif

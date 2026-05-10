@@ -1,0 +1,59 @@
+OBJDIR = ../object
+BINDIR = ../bin
+
+include ../../gdef.mk
+
+CFILES += $(shell  find  . -type f -name '*.c' | LC_ALL=C sort)
+ASFILES += $(shell  find  . -type f -name '*.S' | LC_ALL=C sort)
+CPPFILES += $(shell  find  . -type f -name '*.cpp' | LC_ALL=C sort)
+
+
+LD = ld
+CC = gcc
+CXX = g++
+AS = as
+
+LDFLAGS  =   -entry=main -static -nostdlib \
+    -m elf_x86_64 -z noexecstack 
+
+CFLAGS    = -nostdlib -nostdinc -I../../kernel/freestnd-c-hdrs/$(BUILD_ARCH)/include \
+	-I./include -I. -I../../lib/include/stdc\
+	-ffreestanding -fshort-wchar -mno-red-zone \
+ 	-fno-omit-frame-pointer -fno-exceptions \
+	-ffunction-sections -fdata-sections -O0 -m64 -static -g3
+
+CPPFLAGS  = $(CFLAGS) -std=gnu++20 -fno-threadsafe-statics 
+
+override OBJ := $(addprefix $(OBJDIR)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(CPPFILES:.cpp=.cpp.o))
+
+.PHONY: all
+all: $(BINDIR)/syscalltest.elf
+
+$(BINDIR)/syscalltest.elf: Makefile $(OBJ)
+	mkdir -p "$$(dirname $@)"
+	$(LD) $(LDFLAGS) -o $@ $(OBJ) -L../../lib/bin -l:lib.a
+
+# Compilation rules for *.c files.
+$(OBJDIR)/%.c.o: ./%.c Makefile
+	@echo C $<
+	mkdir -p "$$(dirname $@)"
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Compilation rules for *.S files.
+$(OBJDIR)/%.S.o: ./%.S Makefile
+	@echo GAS $<
+	mkdir -p "$$(dirname $@)"
+	$(AS) -o $@ $<
+
+$(OBJDIR)/%.s.o: ./%.s Makefile
+	echo GAS $<
+	mkdir -p "$$(dirname $@)"
+	$(AS) -o $@ $<
+
+$(OBJDIR)/%.cpp.o: ./%.cpp Makefile
+	echo C++ $<
+	mkdir -p "$$(dirname $@)"
+	$(CXX) $(CPPFLAGS)  -c $< -o $@
+
+clean:
+	rm -rf $(OBJDIR) $(BINDIR)

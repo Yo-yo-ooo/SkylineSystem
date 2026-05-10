@@ -1,0 +1,337 @@
+/*
+* SPDX-License-Identifier: GPL-2.0-only
+* File: main.cpp
+* Copyright (C) 2026 Yo-yo-ooo
+*
+* This file is part of SkylineSystem.
+*
+* SkylineSystem is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+*/
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#include <limine.h>
+
+#include <print/e9print.h>
+#include <flanterm/flanterm.h>
+#include <flanterm/backends/fb.h>
+#include <klib/klib.h>
+#include <mem/pmm.h>
+#include <klib/renderer/fb.h>
+#include <klib/renderer/rnd.h>
+
+#if defined (__x86_64__)
+extern void __init x86_64_init(void);
+#elif defined(__aarch64__)
+extern void aarch64_init(void);
+#endif
+
+
+// Set the base revision to 2, this is recommended as this is the latest
+// base revision described by the Limine boot protocol specification.
+// See specification for further info.
+
+__attribute__((used, section(".limine_requests")))
+static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
+
+#if LIMINE_API_REVISION < 3
+#error "UNSUPPORT LOW LEVEL LIMINE API REVISION"
+#endif
+
+// The Limine requests can be placed anywhere, but it is important that
+// the compiler does not optimise them away, so, usually, they should
+// be made volatile or equivalent, _and_ they should be accessed at least
+// once or marked as used with the "used" attribute as done here.
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_framebuffer_request framebuffer_request = {
+    .id = LIMINE_FRAMEBUFFER_REQUEST_ID,
+    .revision = 0
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_rsdp_request rsdp_request = {
+  .id = LIMINE_RSDP_REQUEST_ID,
+  .revision = 0
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_hhdm_request hhdm_request = {
+    .id = LIMINE_HHDM_REQUEST_ID,
+    .revision = 0
+};
+
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_date_at_boot_request boot_time_request = {
+    .id = LIMINE_DATE_AT_BOOT_REQUEST_ID,
+    .revision = 0
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_module_request module_request = {
+    .id = LIMINE_MODULE_REQUEST_ID,
+    .revision = 0
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_mp_request limine_mp = {
+    .id = LIMINE_MP_REQUEST_ID,
+    .revision = 0
+};
+
+
+// Finally, define the start and end markers for the Limine requests.
+// These can also be moved anywhere, to any .c file, as seen fit.
+
+__attribute__((used, section(".limine_requests_start")))
+static volatile uint64_t limine_requests_start_marker[] = LIMINE_REQUESTS_START_MARKER;
+
+__attribute__((used, section(".limine_requests_end")))
+static volatile uint64_t limine_requests_end_marker[] = LIMINE_REQUESTS_END_MARKER;
+
+
+bool checkStringEndsWith(const char* str, const char* end)
+{
+    const char* _str = str;
+    const char* _end = end;
+
+    while(*str != 0)
+        str++;
+    str--;
+
+    while(*end != 0)
+        end++;
+    end--;
+
+    while (true)
+    {
+        if (*str != *end)
+            return false;
+
+        str--;
+        end--;
+
+        if (end == _end || (str == _str && end == _end))
+            return true;
+
+        if (str == _str)
+            return false;
+    }
+
+    return true;
+}
+
+
+
+limine_file* getFile(const char* name)
+{
+    limine_module_response *module_response = module_request.response;
+    for (size_t i = 0; i < module_response->module_count; i++) {
+        limine_file *f = module_response->modules[i];
+        if (checkStringEndsWith(f->path, name))
+            return f;
+    }
+    return NULL;
+}
+
+struct flanterm_context* ft_ctx = NULL;
+
+void FT_Clear(){
+    flanterm_clear(ft_ctx);
+}
+
+volatile uint64_t hhdm_offset = 0;
+volatile uint64_t paging_mode = 0;
+volatile uint64_t RSDP_ADDR = 0;
+volatile uint32_t bsp_lapic_id = 0;
+volatile uint64_t smp_cpu_count = 0;
+
+volatile struct limine_framebuffer *fb;
+
+volatile struct limine_mp_response *mp_response;
+
+Framebuffer FB;
+Framebuffer *Fb;
+
+// Extern declarations for global constructors array.
+extern void (*__init_array[])();
+extern void (*__init_array_end[])();
+#ifdef __x86_64__
+uint32_t smp_bsp_cpu;
+#endif
+// The following will be our kernel's entry point.
+// If renaming kmain() to something else, make sure to change the
+// linker script accordingly.
+extern "C" void kmain(void) {
+    // Ensure the bootloader actually understands our base revision (see spec).
+    if (LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision) == false) {
+        hcf();
+    }
+
+    // Call global constructors.
+    for (size_t i = 0; &__init_array[i] != __init_array_end; i++) {
+        __init_array[i]();
+    }
+
+    // Ensure we got a framebuffer.
+    if (framebuffer_request.response == NULL
+     || framebuffer_request.response->framebuffer_count < 1) {
+        hcf();
+    }
+
+    // Fetch the first framebuffer.
+    fb = framebuffer_request.response->framebuffers[0];
+    FB.BaseAddress = fb->address;
+    FB.Width = fb->width;
+    FB.Height = fb->height;
+    FB.PixelsPerScanLine = fb->pitch / 4;
+    FB.BufferSize = fb->pitch * fb->height;
+
+    Fb = &FB;
+
+    uint32_t default_bg = 0xFF000000;
+    uint32_t default_fg = 0xFFFFFFFF;
+
+    ft_ctx = flanterm_fb_init(
+        NULL,
+        NULL,
+        static_cast<uint32_t*>(fb->address), fb->width, fb->height, fb->pitch,
+        fb->red_mask_size, fb->red_mask_shift,
+        fb->green_mask_size, fb->green_mask_shift,
+        fb->blue_mask_size, fb->blue_mask_shift,
+        NULL,
+        NULL, NULL,
+        &default_bg, &default_fg,
+        NULL, NULL,
+        NULL, 0, 0, 1,
+        0, 0,
+        0
+    );
+
+    if(hhdm_request.response == NULL) {
+        kerror("Can not get (limine hhdm request)->response\n");
+        hcf();
+    }
+    hhdm_offset = hhdm_request.response->offset;
+
+
+    
+    if(boot_time_request.response == NULL) {
+        kerror("Can not get (limine boot_time_request)->response\n");
+        hcf();
+    }
+
+    if(rsdp_request.response == NULL){
+        kerror("ACPI::Init(): RSDP request is NULL.\n");
+    }
+    RSDP_ADDR = (rsdp_request.response->address);
+
+    mp_response = limine_mp.response;
+    smp_cpu_count = mp_response->cpu_count;
+    if (mp_response->cpu_count > MAX_CPU) {
+        kerror("The system has more CPUs (%d) than allowed. Change MAX_CPU on smp.h\n", mp_response->cpu_count);
+        hcf();
+    }
+
+    kinfo("Starting kernel...\n");
+    kinfo("Boot SkylineSystem kernel time: %ld\n", boot_time_request.response->timestamp);
+
+#ifdef __x86_64__
+    smp_bsp_cpu = mp_response->bsp_lapic_id;
+    x86_64_init();
+#elif defined(__aarch64__)
+    aarch64_init();
+#endif
+
+    hcf();
+}
+
+
+extern "C" {
+
+void *memcpy(void *dest, const void *src, size_t n) {
+    uint8_t *pdest = static_cast<uint8_t *>(dest);
+    const uint8_t *psrc = static_cast<const uint8_t *>(src);
+
+    for (size_t i = 0; i < n; i++) {
+        pdest[i] = psrc[i];
+    }
+
+    return dest;
+}
+
+void *memset(void *s, int32_t c, size_t n) {
+    uint8_t* p = static_cast<uint8_t*>(s);
+    int32_t c_ = static_cast<int32_t>(c);
+    uint8_t x = c_ & 0xff;
+    size_t sz = static_cast<size_t>(n);
+    size_t leftover = sz & 0x7;
+
+    /* Catch the pathological case of 0. */
+    if (!sz)
+        return s;
+
+    /* To understand what's going on here, take a look at the original
+     * bytewise_memset and consider unrolling the loop. For this situation
+     * we'll unroll the loop 8 times (assuming a 32-bit architecture). Choosing
+     * the level to which to unroll the loop can be a fine art...
+     */
+    sz = (sz + 7) >> 3;
+    switch (leftover) {
+        case 0: do { *p++ = x;
+        case 7:      *p++ = x;
+        case 6:      *p++ = x;
+        case 5:      *p++ = x;
+        case 4:      *p++ = x;
+        case 3:      *p++ = x;
+        case 2:      *p++ = x;
+        case 1:      *p++ = x;
+                } while (--sz > 0);
+    }
+    return s;
+}
+
+void *memmove(void *dest, const void *src, size_t n) {
+    uint8_t *pdest = static_cast<uint8_t *>(dest);
+    const uint8_t *psrc = static_cast<const uint8_t *>(src);
+
+    if (src > dest) {
+        for (size_t i = 0; i < n; i++) {
+            pdest[i] = psrc[i];
+        }
+    } else if (src < dest) {
+        for (size_t i = n; i > 0; i--) {
+            pdest[i-1] = psrc[i-1];
+        }
+    }
+
+    return dest;
+}
+
+int32_t memcmp(const void *s1, const void *s2, size_t n) {
+    const uint8_t *p1 = static_cast<const uint8_t *>(s1);
+    const uint8_t *p2 = static_cast<const uint8_t *>(s2);
+
+    for (size_t i = 0; i < n; i++) {
+        if (p1[i] != p2[i]) {
+            return p1[i] < p2[i] ? -1 : 1;
+        }
+    }
+
+    return 0;
+}
+
+}

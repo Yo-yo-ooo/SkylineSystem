@@ -1,0 +1,143 @@
+/*
+* SPDX-License-Identifier: GPL-2.0-only
+* File: sched.h
+* Copyright (C) 2026 Yo-yo-ooo
+*
+* This file is part of SkylineSystem.
+*
+* SkylineSystem is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+*/
+#pragma once
+
+#include <klib/klib.h>
+
+#include <arch/x86_64/interrupt/idt.h>
+#include <arch/x86_64/smp/smp.h>
+#include <arch/x86_64/schedule/signal.h>
+
+extern "C++" {
+
+#define SCHED_VEC 48
+
+#define THREAD_ZOMBIE 0
+#define THREAD_RUNNING 1
+#define THREAD_BLOCKED 2
+#define THREAD_SLEEPING 3
+
+#define TFLAGS_WAITING 1
+#define TFLAGS_PREEMPTED 2
+
+#define SCHED_PREEMPTION_MAX 16
+
+typedef struct proc_t proc_t;
+#include <fs/fd.h>
+
+typedef struct thread_t {
+    uint64_t thread_stack; // GS+0
+    uint64_t kernel_rsp;   // GS+8
+
+    uint64_t id;
+    uint32_t cpu_num;
+    uint32_t priority;
+    uint32_t preempt_count;
+    uint64_t kernel_stack;
+    int32_t state;
+    uint64_t stack;
+    context_t ctx;
+    uint64_t fs;
+    bool user;
+    uint64_t sig_deliver;
+    uint64_t sig_mask;
+    context_t sig_ctx;
+    uint64_t sig_stack;
+    uint64_t sig_fs;
+    volatile pagemap_t *pagemap;
+    uint64_t exit_code;
+    uint64_t flags;
+    uint64_t waiting_status;
+    char *fx_area;
+    struct thread_t *next;
+    struct thread_t *prev;
+    struct thread_t *list_next; // In the cpu thread list
+    struct thread_t *list_prev;
+    struct proc_t *parent;
+    uint64_t sleeping_time;
+
+    void* heap;//data segment
+    uint64_t heap_size;
+    
+
+    bool IsForkThread;
+} thread_t;
+
+typedef struct proc_t {
+    uint64_t id;
+    sigaction_t sig_handlers[64];
+    thread_t *threads;
+    pagemap_t *pagemap;
+    struct proc_t *parent; // In case of fork
+    struct proc_t *children;
+    struct proc_t *sibling;
+    fd_t *fd_table[256];
+    int32_t fd_count;
+} proc_t;
+
+typedef struct procl{
+    proc_t *proc;
+}procl_t;
+
+namespace Schedule{
+    extern uint64_t sched_pid;
+    extern uint64_t procl_count;
+    extern procl_t *sched_proclist;
+
+    namespace Internal{
+        void Switch(context_t *ctx);
+        void Preempt(context_t *ctx);
+
+        void ProcessAddThread(proc_t *parent, thread_t *thread);
+        
+        void AddThread(cpu_t *cpu, thread_t *thread);
+
+        uint8_t Demote(cpu_t *cpu, thread_t *thread);
+    }
+
+    namespace Signal{
+        int32_t Raise(proc_t *process, int32_t signal);
+        void DefaultHandler(int32_t signal);
+    }
+
+    void Init();
+    void Install();
+
+    proc_t *NewProcess(bool user);
+    void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]);
+    thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry);
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]);
+    thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame);
+    proc_t *ForkProcess();
+    thread_t *this_thread();
+    proc_t *this_proc();
+    void Exit(int32_t code);
+    void Yield();
+    void PAUSE();
+    void Resume();
+
+    void DeleteThread(cpu_t *cpu, thread_t *thread);
+    void DeleteProc(proc_t *proc);
+    void FreeThreadResources(thread_t *thread);
+}
+
+}

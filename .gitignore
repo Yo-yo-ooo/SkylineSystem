@@ -1,0 +1,13 @@
+/kernel-deps
+/limine
+/ovmf
+/edk2-ovmf
+/limine-protocol
+/lib/bin
+/lib/obj
+*.iso
+*.hdd
+.vscode/
+*.img
+a.out
+a.si4project/

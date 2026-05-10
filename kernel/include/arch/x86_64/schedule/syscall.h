@@ -1,0 +1,152 @@
+/*
+* SPDX-License-Identifier: GPL-2.0-only
+* File: syscall.h
+* Copyright (C) 2026 Yo-yo-ooo
+*
+* This file is part of SkylineSystem.
+*
+* SkylineSystem is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+*/
+#pragma once
+
+#ifndef _SYSCALL_H
+#define _SYSCALL_H
+
+#include <stdint.h>
+#include <stddef.h>
+
+extern "C++" {
+
+typedef struct context_t context_t;
+
+
+
+typedef struct syscall_args{
+    void* arg1;
+    void* arg2;
+    void* arg3;
+    void* arg4;
+    void* arg5;
+    void* arg6;
+    context_t* r;
+} syscall_args;
+
+
+typedef struct syscall_frame_t{
+    uint64_t r15;
+    uint64_t r14;
+    uint64_t r13;
+    uint64_t r12;
+    uint64_t r11;
+    uint64_t r10;
+    uint64_t r9;
+    uint64_t r8;
+    uint64_t rdi;
+    uint64_t rsi;
+    uint64_t rbp;
+    uint64_t rbx;
+    uint64_t rdx;
+    uint64_t rcx;
+    uint64_t rax;
+    uint64_t int_no;
+    uint64_t error_code;
+    uint64_t rip;
+    uint64_t cs;
+    uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
+    uint64_t kernel_stack;
+} syscall_frame_t;
+
+uint64_t sys_fork(syscall_frame_t *frame);
+
+typedef int64_t time_t;
+typedef int64_t suseconds_t;
+
+
+#define IA32_EFER  0xC0000080
+#define IA32_STAR  0xC0000081
+#define IA32_LSTAR 0xC0000082
+#define IA32_CSTAR 0xC0000083
+#define IA32_XSS   0x00000DA0
+
+void syscall_init();
+
+#define GENERATE_IGN2() uint64_t ign_0,uint64_t ign_1
+#define GENERATE_IGN3() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2
+#define GENERATE_IGN4() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,\
+                        uint64_t ign_3
+#define GENERATE_IGN5() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,\
+                        uint64_t ign_3,uint64_t ign_4
+#define GENERATE_IGN6() uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,\
+                        uint64_t ign_3,uint64_t ign_4,uint64_t ign_5
+#define IGNV_2() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);
+#define IGNV_3() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2)
+#define IGNV_4() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);\
+                IGNORE_VALUE(ign_3)
+#define IGNV_5() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);\
+                IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4)
+#define IGNV_6() IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);\
+                IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);IGNORE_VALUE(ign_5)
+
+typedef uint64_t (syscall_function)(uint64_t,uint16_t,uint64_t,uint64_t,uint64_t,uint64_t);
+
+uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+int64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_fopen(uint64_t path, uint64_t flags, uint64_t mode, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_getpid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
+    uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
+uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t prot, \
+    uint64_t flags, uint64_t fd,uint64_t offset);
+uint64_t sys_munmap(uint64_t addr, uint64_t length, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
+uint64_t sys_brk(uint64_t addr, \
+    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,uint64_t ign_3,uint64_t ign_4);
+uint64_t sys_exit(uint64_t code,uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4);
+uint64_t sys_time(uint64_t tloc,uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4);
+uint64_t sched_yield(uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
+uint64_t sys_arch_prctl(uint64_t op, uint64_t extra,uint64_t ign_0, uint64_t ign_1, \
+    uint64_t ign_2,uint64_t ign_3);
+uint64_t sys_gettid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
+    uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
+uint64_t sys_getrandom(uint64_t buf, uint64_t size, uint64_t flags,
+    uint64_t IGN_0,uint64_t IGN_1,uint64_t IGN_3);
+uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5());
+uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4());
+uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, uint64_t ign_0, 
+    uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
+
+
+uint64_t sys_dev_mmap(uint64_t DevType,uint64_t DevIDX,
+uint64_t length,uint64_t prot,uint64_t offset,uint64_t VADDR);
+uint64_t sys_dev_getinfo(
+    uint64_t DevType,uint64_t DevIDX,uint64_t UserDesc,
+    GENERATE_IGN3());
+uint64_t sys_dev_ioctl(
+    uint64_t DevType,uint64_t DevIDX,uint64_t cmd,uint64_t arg,
+        GENERATE_IGN2());
+uint64_t sys_dbgsout(uint64_t CharsAddr,uint64_t OutSize,GENERATE_IGN4());
+}
+#endif

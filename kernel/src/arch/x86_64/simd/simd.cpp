@@ -1,0 +1,202 @@
+/*
+* SPDX-License-Identifier: GPL-2.0-only
+* File: simd.cpp
+* Copyright (C) 2026 Yo-yo-ooo
+*
+* This file is part of SkylineSystem.
+*
+* SkylineSystem is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+*/
+
+#include <klib/klib.h>
+
+#include <stdint.h>
+#include <arch/x86_64/cpu.h>
+#include <mem/heap.h>
+#include <mem/pmm.h>
+#include <arch/x86_64/smp/smp.h>
+#include <arch/x86_64/simd/simd.h>
+#include <arch/x86_64/simd/xsave.h>
+#include "../../../../../x86mem/x86mem.h"
+uint32_t MaxXsaveSize = 0;
+
+void simd_xsave_init(void)
+{
+
+    kinfoln("DO XSAVE INIT");
+    uint64_t cr4 = cr4_read() | CR4_XSAVE_ENABLE;
+    asm volatile("mov %0, %%cr4" : : "r"(cr4));
+
+    wrmsr(IA32_MSR_XFD, XSAVE_FEAT_XFD_MASK);
+
+    xsave_feat_mask_t xsave_supervisor_features =
+        __XSAVE_FEAT_MASK(XSAVE_FEAT_X87)
+      | __XSAVE_FEAT_MASK(XSAVE_FEAT_SSE)
+      | __XSAVE_FEAT_MASK(XSAVE_FEAT_CET_USER)
+      | __XSAVE_FEAT_MASK(XSAVE_FEAT_CET_SUPERVISOR);
+
+    uint64_t rax, rbx, rcx, rdx;
+    cpuid(13/*CPUID_GET_FEATURES_XSAVE*/,
+              /*subleaf=*/0,
+              &rax,
+              &rbx,
+              &rcx,
+              &rdx);
+    
+    uint64_t flags = __XSAVE_FEAT_MASK(XSAVE_FEAT_X87) 
+    | __XSAVE_FEAT_MASK(XSAVE_FEAT_SSE);
+    xsave_feat_mask_t xsave_user_features = ((uint64_t)rdx << 32 | rax);
+
+    if(cpuid_is_avx_avail()){
+        xsave_user_features |= __XSAVE_FEAT_MASK(XSAVE_FEAT_AVX);
+        flags |= __XSAVE_FEAT_MASK(XSAVE_FEAT_AVX);
+        if(cpuid_is_avx512_avail()){
+            flags = flags
+            | __XSAVE_FEAT_MASK(XSAVE_FEAT_AVX_512_OPMASK) 
+            | __XSAVE_FEAT_MASK(XSAVE_FEAT_AVX_512_ZMM_HI256) 
+            | __XSAVE_FEAT_MASK(XSAVE_FEAT_AVX_512_HI16_ZMM);
+        }
+    }
+    xsave_user_features &= flags;
+
+    xsave_set_supervisor_features(xsave_supervisor_features);
+    kinfoln("Read xcr0");
+    const uint64_t xcr = read_xcr(XCR_XSTATE_FEATURES_ENABLED);
+    kinfoln("Write to xcr0");
+    write_xcr(XCR_XSTATE_FEATURES_ENABLED, xcr | xsave_user_features);
+
+    return;
+}
+
+static spinlock_t simd_lock = 0;
+
+void simd_cpu_init(cpu_t *cpu)
+{
+    uint8_t i = 0;
+    cr0_write(cr0_read() & ~((uint64_t)CR0_EMULATION));
+    cr0_write(cr0_read() | CR0_MONITOR_CO_PROCESSOR | CR0_NUMERIC_ERROR_ENABLE);
+
+    cr4_write(cr4_read() | CR4_FXSR_ENABLE | CR4_SIMD_EXCEPTION);
+
+    if (cpuid_is_xsave_avail())
+    {
+        simd_xsave_init();
+        asm volatile("xgetbv" : "=a"(cpu->XsaveMaskLo), "=d"(cpu->XsaveMaskHi) : "c"(0));
+        uint32_t eax, ebx, ecx, edx;
+        uint32_t leaf = 0x0D;
+        uint32_t subleaf = 0;
+
+        // 调用 CPUID (EAX=0Dh, ECX=0)
+        asm volatile("cpuid"
+                    : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                    : "a"(leaf), "c"(subleaf));
+        //MaxXsaveSize = ebx;
+        cpu->XsaveSize = ebx;
+        spinlock_lock(&simd_lock);
+        if(ebx > MaxXsaveSize)
+            MaxXsaveSize = ebx;
+        spinlock_unlock(&simd_lock);
+        cpu->KernelXsaveSpace = (int8_t*)VMM::Alloc(kernel_pagemap,DIV_ROUND_UP(ebx,PAGE_SIZE),false);
+        _memset(cpu->KernelXsaveSpace,0,ebx);
+        asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
+        
+        asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0xD), "c"(1));
+        cpu->SupportXSAVEOPT = (eax & (1 << 0));
+        if(cpu->SupportXSAVEOPT)
+            cpu->OverLoadableFuncs.StoreSIMDState = StoreSIMDState_V2;
+        else           
+            cpu->OverLoadableFuncs.StoreSIMDState = StoreSIMDState_V1;
+        cpu->OverLoadableFuncs.LoadSIMDState = LoadSIMDState_V1;
+    }else{
+        cpu->OverLoadableFuncs.StoreSIMDState = StoreSIMDState_V0;
+        cpu->OverLoadableFuncs.LoadSIMDState = LoadSIMDState_V0;
+    }
+    
+    
+
+    asm volatile("fninit");
+
+    kpok("cpu simd:");
+    if (cpuid_is_xsave_avail()){
+        kprintf("xsave ");i++;
+        cpu->SupportXSAVE = true;
+    }
+    if (cpuid_is_avx_avail()){
+        kprintf("avx ");i++;
+        cpu->SupportAVX = true;
+        if((cpu->SupportAVX2 = cpuid_is_avx2_avail()))
+            kprintf("avx2 ");
+    }
+    if (cpuid_is_avx512_avail()){
+        kprintf("avx512 ");i++;
+        cpu->SupportAVX512 = true;
+    }
+    if(cpuid_is_sse4_2_avail()){
+        kprintf("sse4.2 ");i++;
+        cpu->SupportSSE4_2 = true;
+    }
+    kprintf("enabled\n");
+    if(i > 0)
+        cpu->SupportSIMD = true;
+    else
+        cpu->SupportSIMD = false;
+
+    if (cpu->SupportAVX512 && MEMOPS_SupportV3) {
+        cpu->OverLoadableFuncs.MemcpyCore   = AVX_memcpyV3;
+        cpu->OverLoadableFuncs.MemmoveCore  = AVX_memmoveV3;
+        cpu->OverLoadableFuncs.MemsetCore   = AVX_memsetV3;
+        cpu->OverLoadableFuncs.MemcmpCore   = AVX_memcmpV3;
+    } 
+    else if (cpu->SupportAVX2 && MEMOPS_SupportV2) {
+        cpu->OverLoadableFuncs.MemcpyCore   = AVX_memcpyV2;
+        cpu->OverLoadableFuncs.MemmoveCore  = AVX_memmoveV2;
+        cpu->OverLoadableFuncs.MemsetCore   = AVX_memsetV2;
+        cpu->OverLoadableFuncs.MemcmpCore   = AVX_memcmpV2;
+    }
+    else if (cpu->SupportAVX && MEMOPS_SupportV1) {
+        cpu->OverLoadableFuncs.MemcpyCore   = AVX_memcpyV1;
+        cpu->OverLoadableFuncs.MemmoveCore  = AVX_memmoveV1;
+        cpu->OverLoadableFuncs.MemsetCore   = AVX_memsetV1;
+        cpu->OverLoadableFuncs.MemcmpCore   = AVX_memcmpV1;
+    }
+    else {
+        cpu->OverLoadableFuncs.MemcpyCore   = AVX_memcpyV0;
+        cpu->OverLoadableFuncs.MemmoveCore  = AVX_memmoveV0;
+        cpu->OverLoadableFuncs.MemsetCore   = AVX_memsetV0;
+        cpu->OverLoadableFuncs.MemcmpCore   = AVX_memcmpV0;
+    }
+}
+
+
+void StoreSIMDState_V0(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("fxsave (%0)" : : "r"(area) : "memory");
+}
+
+void StoreSIMDState_V1(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("xsave %0" : : "m"(*area), "a"(Lo), "d"(Hi) : "memory");
+}
+
+void StoreSIMDState_V2(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("xsaveopt %0" : : "m"(*area), "a"(Lo), "d"(Hi) : "memory");
+}
+
+void LoadSIMDState_V0(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("fxrstor (%0)" : : "r"(area) : "memory");
+}
+
+void LoadSIMDState_V1(char* area,uint32_t Lo,uint32_t Hi){
+    asm volatile("xrstor %0" : : "m"(*area), "a"(Lo), "d"(Hi) : "memory");
+}
+

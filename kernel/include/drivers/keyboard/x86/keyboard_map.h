@@ -1,0 +1,142 @@
+/*
+* SPDX-License-Identifier: GPL-2.0-only
+* File: keyboard_map.h
+* Copyright (C) 2026 Yo-yo-ooo
+*
+* This file is part of SkylineSystem.
+*
+* SkylineSystem is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation; either version 2 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program; if not, write to the Free Software
+* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+*/
+#pragma once
+#ifdef __x86_64__
+#include <klib/klib.h>
+
+constexpr u8 kb_map_keys[] = {
+    0, 0, '1', '2', '3', '4', '5', '6', '7', '8',     /* 9 */
+    '9', '0', '-', '=', '\b',                         /* Backspace */
+    '\t',                                             /* Tab */
+    'q', 'w', 'e', 'r',                               /* 19 */
+    't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',     /* Enter key */
+    0,                                                /* 29   - Control */
+    'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', /* 39 */
+    '\'', '`', 0,                                     /* Left shift */
+    '\\', 'z', 'x', 'c', 'v', 'b', 'n',               /* 49 */
+    'm', ',', '.', '/', 0,                            /* Right shift */
+    '*',
+    0,   /* Alt */
+    ' ', /* Space bar */
+    0,   /* Caps lock */
+    0,   /* 59 - F1 key ... > */
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, /* < ... F10 */
+    0, /* 69 - Num lock*/
+    0, /* Scroll Lock */
+    0, /* Home key */
+    0, /* Up Arrow */
+    0, /* Page Up */
+    '-',
+    0, /* Left Arrow */
+    0,
+    0, /* Right Arrow */
+    '+',
+    0, /* 79 - End key*/
+    0, /* Down Arrow */
+    0, /* Page Down */
+    0, /* Insert Key */
+    0, /* Delete Key */
+    0, 0, 0,
+    0, /* F11 Key */
+    0, /* F12 Key */
+    0, /* All other keys are undefined */
+};
+
+constexpr u8 kb_map_keys_shift[] = {
+    0, 27, '!', '@', '#', '$', '%', '^', '&', '*',
+    '(', ')', '_', '+', '\b',
+    '\t',
+    'Q', 'W', 'E', 'R',
+    'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n',
+    0,
+    'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':',
+    '"', '~', 0,
+    '|', 'Z', 'X', 'C', 'V', 'B', 'N',
+    'M', '<', '>', '?', 0,
+    '*',
+    0,
+    ' ',
+    0,
+    0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    '-',
+    0,
+    0,
+    0,
+    '+',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0, 0, 0,
+    0,
+    0,
+    0};
+
+constexpr u8 kb_map_keys_caps[] = {
+    0, 27, '1', '2', '3', '4', '5', '6', '7', '8',
+    '9', '0', '-', '=', '\b',
+    '\t',
+    'Q', 'W', 'E', 'R',
+    'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\n',
+    0,
+    'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';',
+    '\'', '`', 0,
+    '\\', 'Z', 'X', 'C', 'V', 'B', 'N',
+    'M', ',', '.', '/', 0,
+    '*',
+    0,
+    ' ',
+    0,
+    0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    '-',
+    0,
+    0,
+    0,
+    '+',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0, 0, 0,
+    0,
+    0,
+    0};
+#else
+
+#endif
