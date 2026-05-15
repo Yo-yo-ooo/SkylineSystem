@@ -91,8 +91,8 @@ namespace PMM {
                 PMM::bitmap_l1 = (uint64_t*)((uintptr_t)PMM::bitmap + bitmap_size);
 
                 // 默认全标记为已占用 (1)，后续只释放 USABLE 区域
-                _memset((void*)PMM::bitmap, 0xFF, bitmap_size);
-                _memset((void*)PMM::bitmap_l1, 0xFF, bitmap_l1_size);
+                memset_fscpuf((void*)PMM::bitmap, 0xFF, bitmap_size);
+                memset_fscpuf((void*)PMM::bitmap_l1, 0xFF, bitmap_l1_size);
 
                 // 从内存图中扣除位图占用的空间
                 entry->base += total_meta_size;
