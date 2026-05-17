@@ -25,6 +25,11 @@
 #include <x86mem.h>
 #endif
 
+void *(*memcpyC)(void *str1, const void *str2, size_t n);
+void *(*memsetC)(void *str, int c, size_t n);
+void *(*memmoveC)(void *str1, const void *str2, size_t n);
+int (*memcmpC)(const void *str1, const void *str2, size_t n);
+
 #if !defined(func_optimize)
     #if __has_attribute(optimize) && defined(DEBUG) && !defined(RELEASE)
         #define func_optimize(n) __attribute__((optimize(n)))
@@ -572,36 +577,36 @@ func_optimize(3) void bzero(void *dst, size_t n) {
 }
 
 void *memcpy(void *str1, const void *str2, size_t n){
-/* #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
-    return AVX_memcpy(str1,(void*)str2,n);
+#if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
+    return memcpyC(str1,(void*)str2,n);
 #else
     return memcpy_fscpuf(str1,str2,n);
-#endif */
+#endif 
 return memcpy_fscpuf(str1,str2,n);
 }
 
 void *memset(void *str, int c, size_t n){
-/* #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
-    return AVX_memset(str,c,n);
+#if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
+    return memsetC(str,c,n);
 #else
     return memset_fscpuf(str,c,n);
-#endif */
+#endif 
 return memset_fscpuf(str,c,n);
 }
 
 void *memmove(void *str1, const void *str2, size_t n){
-/* #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
-    return AVX_memmove(str1,(void*)str2,n);
+#if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
+    memmoveC(str1,(void*)str2,n);
 #else
     return memmove_fscpuf(str1,str2,n);
-#endif */
+#endif 
 return memmove_fscpuf(str1,str2,n);
 }
 int memcmp(const void *str1, const void *str2, size_t n){
-/* #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
-    return AVX_memcmp(str1,str2,n,1);
+#if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
+    return memcmpC(str1,str2,n);
 #else
     return memcmp_fscpuf(str1,str2,n);
-#endif */
+#endif
 return memcmp_fscpuf(str1,str2,n);
 }

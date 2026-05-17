@@ -11,7 +11,7 @@ AR      = ar
 RANLIB  = ranlib
 
 # 目录定义
-SRCDIRS = base init stdc stl
+SRCDIRS = init stdc stl
 INCDIR  = include
 OBJDIR  = obj
 BINDIR  = bin
@@ -29,6 +29,10 @@ TARGET  = $(BINDIR)/lib.a
 # 自动递归查找源文件
 C_SRCS  = $(shell find $(SRCDIRS) -name "*.c")
 S_SRCS  = $(shell find $(SRCDIRS) -name "*.S")
+
+C_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.c")
+S_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.S")
+S_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.s")
 
 # 生成对应的 .o 文件路径（统一放到 obj/ 下）
 OBJS    = $(patsubst %.c, $(OBJDIR)/%.o, $(C_SRCS))
