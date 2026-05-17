@@ -596,7 +596,7 @@ void *memset(void *str, int c, size_t n){
 
 void *memmove(void *str1, const void *str2, size_t n){
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
-    memmoveC(str1,(void*)str2,n);
+    return memmoveC(str1,(void*)str2,n);
 #else
     return memmove_fscpuf(str1,str2,n);
 #endif 
