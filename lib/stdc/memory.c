@@ -582,7 +582,7 @@ void *memcpy(void *str1, const void *str2, size_t n){
 #else
     return memcpy_fscpuf(str1,str2,n);
 #endif 
-return memcpy_fscpuf(str1,str2,n);
+//return memcpy_fscpuf(str1,str2,n);
 }
 
 void *memset(void *str, int c, size_t n){
@@ -591,7 +591,7 @@ void *memset(void *str, int c, size_t n){
 #else
     return memset_fscpuf(str,c,n);
 #endif 
-return memset_fscpuf(str,c,n);
+//return memset_fscpuf(str,c,n);
 }
 
 void *memmove(void *str1, const void *str2, size_t n){
@@ -600,7 +600,7 @@ void *memmove(void *str1, const void *str2, size_t n){
 #else
     return memmove_fscpuf(str1,str2,n);
 #endif 
-return memmove_fscpuf(str1,str2,n);
+//return memmove_fscpuf(str1,str2,n);
 }
 int memcmp(const void *str1, const void *str2, size_t n){
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
@@ -608,5 +608,5 @@ int memcmp(const void *str1, const void *str2, size_t n){
 #else
     return memcmp_fscpuf(str1,str2,n);
 #endif
-return memcmp_fscpuf(str1,str2,n);
+//return memcmp_fscpuf(str1,str2,n);
 }
