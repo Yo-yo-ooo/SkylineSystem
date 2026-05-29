@@ -44,7 +44,7 @@ extern volatile uint64_t RSDP_ADDR;
 
 #define PAGE_SIZE 4096
 
-#define DIV_ROUND_UP(x, y) (x + (y - 1)) / y
+#define DIV_ROUND_UP(x, y) (((x) + ((y) - 1)) / (y))
 #define ALIGN_UP(x, y)     DIV_ROUND_UP(x, y) * y
 #define ALIGN_DOWN(x, y)   ((x / y) * y)
 
