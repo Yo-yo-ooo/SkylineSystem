@@ -22,25 +22,41 @@
 #include <private/alloc/alloc.h>
 #include <stdc/string.h>
 
-extern uint64_t SizeClassTable[59][3];
-
-
-#define ALIGN_NEXT_POW2_64(size) \
-    ((size) <= 64ULL ? 64ULL : (1ULL << (64 - __builtin_clzll((uint64_t)((size) - 1)))))
-#define GET_POW2_64(AlignedSize) (63 - __builtin_clzll(AlignedSize))
-
-
+extern uint64_t SizeClassTable[75][3];
+void LessCore(void* x,uint64_t y){(void)x;(void)y;return;}
 void* MoreCore(uint64_t PageCount){(void)PageCount;/*Not IMPLED YET...*/return NULL;}
+
+/*
+ * 【极致 O(1) 亚规格定位引擎】
+ * 对于 <= 2MB 的对象，提取最高位 k，并利用次高位判定是否落入 1.5x 亚规格区间。
+ * 对于 > 2MB 的对象，平滑过渡回原生 2 的幂次方。
+ */
+static inline int GetSizeClassIndex(size_t size) {
+    if (size <= 32) return 0;
+    
+    uint64_t s = size - 1;
+    uint32_t k = 63 - __builtin_clzll(s); // 获取最高有效位位置 (0-indexed)
+    
+    if (size <= 2097152ULL) { // <= 2MB
+        // 提取次高有效位。若次高位为 0，落入 x.5 亚规格；若为 1，落入 2^n 主规格。
+        uint32_t second_bit = (s >> (k - 1)) & 1;
+        return ((k - 5) * 2) + 1 + second_bit;
+    } else {
+        // > 2MB (不再包含亚规格，直接线性映射)
+        return k + 12; 
+    }
+}
+
+
+
 
 #define DIV_ROUND_UP(x, y) (((x) + ((y) - 1)) / (y))
 
 void* malloc(size_t size) {
     if (size == 0 || size > 9223372036854775808ULL) return NULL;
 
-    // 1. 锁定内存规格 (Size Class)
-    uint64_t aligned_size = (size <= 32) ? 32 : ALIGN_NEXT_POW2_64(size);
-    int idx = GET_POW2_64(aligned_size) - 5; 
-    if (idx < 0) idx = 0;
+    // 1. 极速锁定内存规格 (Size Class) - 全面兼容亚规格
+    int idx = GetSizeClassIndex(size);
     
     uint64_t size_class   = SizeClassTable[idx][0];
     uint64_t region_size  = SizeClassTable[idx][2]; 
@@ -53,6 +69,14 @@ void* malloc(size_t size) {
 
     while (mcb) {
         if (mcb->is_full == 0) break; 
+        if ((mcb->next != 0) && (((MainControlBlock_t*)mcb->next)->rem_scb_count) == 2014) {
+            MainControlBlock_t* empty_mcb = (MainControlBlock_t*)mcb->next;
+            // 从链表中摘除
+            mcb->next = empty_mcb->next; 
+            // 真正交还给系统
+            LessCore(empty_mcb, 4); 
+            continue; 
+        }
         prev_mcb = mcb;
         mcb = (MainControlBlock_t*)mcb->next; 
     }
@@ -103,8 +127,7 @@ void* malloc(size_t size) {
 
             uint64_t raw_region_size = SizeClassTable[idx][2];
             
-            // 【安全修正】：由于每个槽位都必须容纳 [64B元数据 + 数据载荷]
-            // 为了防止应用层越界写穿相邻元数据，连续物理区的大小需要加入元数据预留
+            // 【安全修正】：连续物理区的大小需要加入元数据预留
             uint64_t step_size = size_class + sizeof(AllocBlock_t);
             uint64_t total_objects = raw_region_size / step_size; 
             uint64_t actual_alloc_size = total_objects * step_size;
@@ -127,12 +150,10 @@ void* malloc(size_t size) {
             uint64_t last_word = scb->bit_tail / 64;
             uint64_t last_bit = scb->bit_tail % 64;
             if (last_word < 2043) {
-                // 从last_word+1到2043的所有字都标记为全1
                 for (uint64_t i = last_word + 1; i < 2044; i++) {
                     scb->bitmap[i] = 0xFFFFFFFFFFFFFFFFULL;
                 }
             }
-            // 最后一个字中超出last_bit的位标记为1
             scb->bitmap[last_word] |= 0xFFFFFFFFFFFFFFFFULL << (last_bit + 1);
             mcb->list_base[scb_idx] = (uint64_t)scb;
         }
@@ -156,11 +177,9 @@ void* malloc(size_t size) {
 
         if (obj_idx == 0xFFFFFFFFFFFFFFFFULL) return NULL; 
 
-        // 【安全对齐修正】：步进跨度包含了 64 字节的元数据芯片头
         uint64_t step_stride = size_class + sizeof(AllocBlock_t);
         uint64_t slot_start_addr = scb->list_base + (obj_idx * step_stride);
 
-        // 【关键注入】精准卡死新版复合匿名变量结构体
         AllocBlock_t* header = (AllocBlock_t*)slot_start_addr;
         header->AllocSizeAligned     = size_class;
         header->AllocSizeUnAligned   = size;
@@ -168,9 +187,8 @@ void* malloc(size_t size) {
         header->AllocPtrBaseAddress  = slot_start_addr + sizeof(AllocBlock_t); 
         header->Magic                = ALLOC_BLOCK_MAGIC;
         
-        // 完美适配你发来的最新结构体定义：
-        header->BitMapBitLocation.SCBBitLocation = obj_idx; // 封存次级块位图坐标
-        header->BitMapBitLocation.MCBBitLocation = scb_idx; // 封存顶级块插槽坐标
+        header->BitMapBitLocation.SCBBitLocation = obj_idx; 
+        header->BitMapBitLocation.MCBBitLocation = scb_idx; 
         
         header->BitMapBase           = (uint64_t)scb;
         header->MCBAddr              = (uint64_t)mcb;
@@ -212,9 +230,8 @@ void* malloc(size_t size) {
             }
         }
 
-        if (obj_idx >= 2014) return NULL; // 越界防线
+        if (obj_idx >= 2014) return NULL; 
 
-        // 大对象分配：size_class + 64B 元数据头
         uint64_t total_large_size = size_class + sizeof(AllocBlock_t);
         uint64_t pages_needed = (total_large_size + 4095) / 4096;
         void* page_start = MoreCore(pages_needed);
@@ -227,7 +244,6 @@ void* malloc(size_t size) {
         header->AllocPtrBaseAddress  = (uint64_t)page_start + sizeof(AllocBlock_t);
         header->Magic                = ALLOC_BLOCK_MAGIC;
         
-        // 大对象元数据注入
         header->BitMapBitLocation.SCBBitLocation = obj_idx;
         header->BitMapBitLocation.MCBBitLocation = scb_idx;
         
@@ -245,7 +261,7 @@ void* malloc(size_t size) {
     }
 
     // --------------------------------------------------------------------
-    // Tier 3: 级联状态逆向反馈 (彻底去除 for 循环，达成绝对 O(1))
+    // Tier 3: 级联状态逆向反馈
     // --------------------------------------------------------------------
     if (is_scb_full) {
         int mcb_word = scb_idx / 64;
@@ -254,7 +270,7 @@ void* malloc(size_t size) {
 
         mcb->rem_scb_count--;
         if (mcb->rem_scb_count == 0) {
-            mcb->is_full = 1; // 完美 $O(1)$ 判定满载，告别循环扫描！
+            mcb->is_full = 1; 
         }
     }
 
@@ -262,99 +278,77 @@ void* malloc(size_t size) {
 }
 
 
-void LessCore(void* x,uint64_t y){(void)x;(void)y;return;}
 
 #define SKYLINE_MAX_LEGAL_ADDR  0x00007FFFFFFFFFFFULL 
 
-// 安全断言宏：一旦条件不满足，立刻触发内核 Panic，御敌于国门之外
 #define ALLOCTOR_SECURITY_ASSERT(cond) \
     do { if (!(cond)) { return; } } while(0)
 
 void free(void* ptr) {
     if (!ptr) return;
 
-    // 1. 【倒车雷达】精准向低地址回退 64 字节，瞬间捕获对齐的元数据芯片
     AllocBlock_t* header = (AllocBlock_t*)((uint64_t)ptr - sizeof(AllocBlock_t));
 
-    // ============================================================================
-    // 【硬件级边界与自校验防御】
-    // ============================================================================
-    // 校验点 1：自引用指针校验，防止野指针误释放或恶意应用伪造指针
     ALLOCTOR_SECURITY_ASSERT(header->AllocPtrBaseAddress == (uint64_t)ptr);
-    
-    // 校验点 2：控制块核心指针范围校验，御敌于未然
     ALLOCTOR_SECURITY_ASSERT(header->BitMapBase > 0 && header->BitMapBase < SKYLINE_MAX_LEGAL_ADDR);
     ALLOCTOR_SECURITY_ASSERT(header->MCBAddr > 0 && header->MCBAddr < SKYLINE_MAX_LEGAL_ADDR);
     ALLOCTOR_SECURITY_ASSERT(header->Magic == ALLOC_BLOCK_MAGIC);
 
-    // 2. 暴力提取元数据芯片内固化的状态信息（零查表，零计算延迟）
     uint64_t size_class   = header->AllocSizeAligned;
-    uint32_t obj_bit_loc  = header->BitMapBitLocation.SCBBitLocation; // 对象在次级块位图中的 bit 位置
-    uint32_t mcb_slot     = header->BitMapBitLocation.MCBBitLocation; // 次级块在主控制块阵列中的插槽位置
+    uint32_t obj_bit_loc  = header->BitMapBitLocation.SCBBitLocation; 
+    uint32_t mcb_slot     = header->BitMapBitLocation.MCBBitLocation; 
     
     uint64_t scb_addr     = header->BitMapBase;
     uint64_t mcb_addr     = header->MCBAddr;
     uint64_t block_addr   = header->BlockAddr; 
 
-    // 反推 SizeClassTable 索引以区分配属通道
-    int idx = GET_POW2_64(size_class) - 5;
-    if (idx < 0) idx = 0;
+    int idx = GetSizeClassIndex(size_class);
 
-    // 解析次级块位图的具体 uint64_t 索引与比特偏移
     uint32_t word_idx = obj_bit_loc / 64;
     uint32_t bit_idx  = obj_bit_loc % 64;
 
     MainControlBlock_t* mcb = (MainControlBlock_t*)mcb_addr;
 
-    // ============================================================================
-    // 3. 核心分流释放引擎
-    // ============================================================================
     if (SizeClassTable[idx][2] != 0) {
-        // ---------------------------------------------------
-        // 分支 A：小对象极速释放流
-        // ---------------------------------------------------
         SecondControlBlock_t* scb = (SecondControlBlock_t*)scb_addr;
-        ALLOCTOR_SECURITY_ASSERT(obj_bit_loc <= scb->bit_tail); // 不能超过SCB的最大对象索引
+        ALLOCTOR_SECURITY_ASSERT(obj_bit_loc <= scb->bit_tail); 
         
-        // 精准擦除占用标志位，回补可用计数
         if (!(scb->bitmap[word_idx] & (1ULL << bit_idx))) {
             return;
         }
         scb->bitmap[word_idx] &= ~(1ULL << bit_idx);
         scb->rem_count++; 
 
-        // 级联解冻逻辑：由于刚才有人归还了内存，如果次级块原本处于满载状态，必须通知中央大脑
         if (scb->is_full != 0) {
             scb->is_full = 0; 
 
-            // 【神来之笔】：直接用元数据里封存的 mcb_slot，彻底干掉任何地址减法与除法指令！
             int mcb_word = mcb_slot / 64;
             int mcb_bit  = mcb_slot % 64;
             
-            // 判定中央大脑原本是不是绝对满载
             if (mcb->is_full != 0) {
                 mcb->is_full = 0;
             }
 
-            // 在中央大脑位图中将当前 SCB 的位置清零（标记为可用）
             mcb->bitmap[mcb_word] &= ~(1ULL << mcb_bit);
-            
-            // 恢复中央大脑的有效子节点计数
             mcb->rem_scb_count++; 
         }
+
+        
+        if(scb->rem_count == 2014) {
+            mcb->list_base[mcb_slot] = 0;  // <-- 极度关键：防止 UAF
+            LessCore(scb, 4);
+        }
+        return;
     } 
     else {
-        // ---------------------------------------------------
-        // 分支 B：大对象极速释放流
-        // ---------------------------------------------------
         LargeSecondControlBlock_t* l_scb = (LargeSecondControlBlock_t*)scb_addr;
-        ALLOCTOR_SECURITY_ASSERT(obj_bit_loc < 2014); // LSCB最多只有2014个大对象插槽
+        ALLOCTOR_SECURITY_ASSERT(obj_bit_loc < 2014); 
         
-        // 大对象的控制位统一存放在 bitmap[0]
         l_scb->bitmap[word_idx] &= ~(1ULL << bit_idx);
         l_scb->rem_count++; 
 
-        // 级联解冻逻辑
+        
+
         if (l_scb->is_full != 0) {
             l_scb->is_full = 0; 
 
@@ -369,19 +363,22 @@ void free(void* ptr) {
             mcb->rem_scb_count++;
         }
 
-        // 清空二级块指针阵列中的槽位，防止悬空指针
         l_scb->list_base[obj_bit_loc] = 0;
 
-        // 【大对象就地物理隔离】：向内核交还整片连续物理页
         uint64_t total_large_size = size_class + sizeof(AllocBlock_t);
         uint64_t pages_needed = (total_large_size + 4095) / 4096;
         LessCore((void*)block_addr, pages_needed);
+
+        if(l_scb->rem_count == 2014) {
+            mcb->list_base[mcb_slot] = 0;  // <-- 极度关键：防止 UAF
+            LessCore(l_scb, 4);
+        }
+        return;
     }
 }
 
 void* calloc(size_t nmemb, size_t size) {
     size_t total_size;
-    // 检查乘法溢出
     if (nmemb != 0 && size > SIZE_MAX / nmemb) {
         return NULL;
     }
@@ -403,12 +400,10 @@ void* realloc(void* ptr, size_t size) {
     
     AllocBlock_t* header = (AllocBlock_t*)((uint64_t)ptr - sizeof(AllocBlock_t));
     if (header->AllocSizeAligned >= size) {
-        // 现有块足够大，直接返回
         header->AllocSizeUnAligned = size;
         return ptr;
     }
     
-    // 分配新块并复制数据
     void* new_ptr = malloc(size);
     if (new_ptr) {
         memcpy(new_ptr, ptr, header->AllocSizeUnAligned);

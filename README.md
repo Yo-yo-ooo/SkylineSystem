@@ -95,7 +95,6 @@ file kernel
 * [Arty3](https://github.com/Arty3)
 * 人造人(qq:1440332527)
 
-[//]: (https://github.com/asterd-og/)
 
 ## Connect
 

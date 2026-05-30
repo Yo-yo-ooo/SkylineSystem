@@ -58,6 +58,8 @@ PACK(typedef struct {
     uint64_t rem_count;
 }) LargeSecondControlBlock_t;
 
+const uint64_t x = sizeof(LargeSecondControlBlock_t);
+
 
 //主管理链表
 //管理SecondControlBlock
