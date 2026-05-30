@@ -34,7 +34,8 @@ void* MoreCore(uint64_t PageCount){(void)PageCount;/*Not IMPLED YET...*/return N
 
 #define DIV_ROUND_UP(x, y) (((x) + ((y) - 1)) / (y))
 
-void* malloc(size_t size) {if (size == 0 || size > 9223372036854775808ULL) return NULL;
+void* malloc(size_t size) {
+    if (size == 0 || size > 9223372036854775808ULL) return NULL;
 
     // 1. 锁定内存规格 (Size Class)
     uint64_t aligned_size = (size <= 32) ? 32 : ALIGN_NEXT_POW2_64(size);
