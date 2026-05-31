@@ -41,20 +41,21 @@ typedef struct AllocBlock{
 
 
 PACK(typedef struct {
-    uint64_t bitmap[2044];      // 16352 字节：提供 130,816 个分配位
-    uint64_t is_full;           // 8 字节：[全新改动] 0 表示没满，0xFFFFFFFFFFFFFFFF 表示彻底满了
-    uint64_t list_base;         // 8 字节：起始虚拟基地址
-    uint64_t bit_tail;          // 8 字节：最后一个有效比特位索引
+    alignas(8) uint64_t bitmap[2044];      // 提供 130,816 个分配位
+    uint64_t is_full;           // [全新改动] 0 表示没满，0xFFFFFFFFFFFFFFFF 表示彻底满了
+    uint64_t list_base;         // 起始虚拟基地址
+    uint64_t bit_tail;          // 最后一个有效比特位索引
     uint64_t rem_count;          
 }) SecondControlBlock_t;
 
 
 
+
 PACK(typedef struct {
-    uint64_t bitmap[32];        // 256 字节：32组位图
-    uint8_t  is_full;           // 1 字节：[全新改动] 0表示没满，1表示满了
-    uint8_t  padding[7];        // 7 字节：严格对齐填充，保证下面的指针数组 8 字节对齐
-    uint64_t list_base[2014];   // 16112 字节：2014个独立大对象虚拟地址插槽 (献祭了1个)
+    alignas(8) uint64_t bitmap[32];        // 32组位图
+    uint8_t  is_full;           // [全新改动] 0表示没满，1表示满了
+    uint8_t  padding[7];        // 严格对齐填充，保证下面的指针数组 8 字节对齐
+    uint64_t list_base[2014];   // 2014个独立大对象虚拟地址插槽 (献祭了1个)
     uint64_t rem_count;
 }) LargeSecondControlBlock_t;
 
@@ -64,9 +65,10 @@ const uint64_t x = sizeof(LargeSecondControlBlock_t);
 //主管理链表
 //管理SecondControlBlock
 PACK(typedef struct {
-    uint64_t bitmap[32];        // 256 字节：32组位图
-    uint64_t list_base[2014];   // 16112 字节：2014个独立大对象虚拟地址插槽 (献祭了1个)
-    uint64_t next;              // 8 字节：死钉在 16376 字节偏置处的单链表指针
-    uint64_t rem_scb_count : 52;
-    uint8_t  is_full;           // 1 字节：[全新改动] 0表示没满，1表示满了
+    alignas(8) uint64_t bitmap[32];        // 32组位图
+    uint64_t list_base[2014];   // 2014个独立大对象虚拟地址插槽 (献祭了1个)
+    uint64_t next;              // 死钉在 16376 字节偏置处的单链表指针
+    uint32_t rem_scb_count;
+    uint8_t  is_full;           // [全新改动] 0表示没满，1表示满了
+    uint32_t padding : 20;
 }) MainControlBlock_t;
