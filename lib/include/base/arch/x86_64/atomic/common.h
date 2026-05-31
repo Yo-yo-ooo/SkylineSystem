@@ -15,12 +15,15 @@
         : "memory", "cc"); \
     __old; \
 })
-static inline __attribute__((always_inline)) void	*__a_cas_p(volatile void *p, void *t, void *s)
+static inline __attribute__((always_inline)) void *__a_cas_p(volatile void *p, void *t, void *s)
 {
-	__asm__("lock ; cmpxchg %3, %1"
-		: "=a"(t), "=m"(*(void *volatile *)p)
-		: "a"(t), "r"(s) : "memory" );
-	return (t);
+    __asm__ __volatile__(
+        "lock cmpxchg %3, %1"
+        : "+a"(t), "+m"(*(void *volatile *)p)
+        : "r"(s)
+        : "memory", "cc"
+    );
+    return t;
 }
 
 static inline __attribute__((always_inline)) uint32_t __a_fetch_addu32(volatile uint32_t *p, uint32_t v)
@@ -34,15 +37,16 @@ static inline __attribute__((always_inline)) uint32_t __a_fetch_addu32(volatile 
     return v;
 }
 
-static inline uint64_t __a_fetch_addu64(volatile uint64_t *p, uint64_t val)
+static inline __attribute__((always_inline)) uint64_t __a_fetch_addu64(volatile uint64_t *p, uint64_t val)
 {
     __asm__ volatile (
-            "lock ; xaddq %0, %1"
-            : "=r"(val), "=m"(*p)
-            :"0"(val) : "memory" );
-    return (val); // 返回加法执行前的值
+        "lock xaddq %0, %1"
+        : "+r"(val), "+m"(*p)
+        :
+        : "memory", "cc"
+    );
+    return val;
 }
-
 /* * 2. FETCH_SUB
  * x86 没有专用的 xsub，但加上一个负数等价于减法。
  * 利用二进制补码特性，将 val 取负后使用 xaddq 即可。
@@ -93,31 +97,23 @@ static inline __attribute__((always_inline)) void	__a_or_64(volatile uint64_t *p
 			: "=m"(*p) : "r"(v) : "memory" );
 }
 
-static inline uint64_t __a_and_64(volatile uint64_t *p, uint64_t v)
+static inline __attribute__((always_inline)) uint64_t __a_and_64(volatile uint64_t *p, uint64_t v)
 {
-    uint64_t old, new_val;
+    uint64_t old;
     
-    // 获取当前值
-    old = *p;
+    __asm__ __volatile__(
+        "1:\n\t"
+        "movq %1, %0\n\t"          // 加载当前值到old
+        "movq %0, %%r8\n\t"        // 保存原始值到r8
+        "andq %2, %0\n\t"          // 计算新值
+        "lock cmpxchgq %0, %1\n\t" // 尝试CAS
+        "jne 1b\n\t"               // 如果失败，重试
+        : "=&a"(old), "+m"(*p)
+        : "r"(v)
+        : "r8", "memory", "cc"
+    );
     
-    do {
-        new_val = old & v;
-        
-        /* * 使用 cmpxchgq：
-         * 如果 *p == old，则将 new_val 写入 *p，并将旧值更新到 old；
-         * 如果 *p != old，则将 *p 的当前值加载到 old。
-         * "a" 约束强制使用 RAX 寄存器，这是 cmpxchg 指令的要求。
-         */
-        __asm__ volatile (
-            "lock ; cmpxchgq %3, %1"
-            : "=a"(old), "+m"(*p)
-            : "a"(old), "r"(new_val)
-            : "memory", "cc"
-        );
-    } while (old != (old & v)); // 当 cmpxchg 成功时，循环结束
-    
-    return old; // 返回操作前的旧值
+    return old; // 返回操作前的原始值
 }
-
 
 #endif

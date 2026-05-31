@@ -43,12 +43,16 @@ static inline int GetSizeClassIndex(size_t size) {
     }
 }
 
+
+
 #define DIV_ROUND_UP(x, y) (((x) + ((y) - 1)) / (y))
 
 void* malloc(size_t size) {
     if (size == 0 || size > 9223372036854775808ULL) return NULL;
 
     int idx = GetSizeClassIndex(size);
+    if (idx < 0 || idx >= 75) return NULL; // 边界检查
+    
     uint64_t size_class   = SizeClassTable[idx][0];
     uint64_t region_size  = SizeClassTable[idx][2]; 
     void* allocated_ptr   = NULL;
@@ -63,17 +67,32 @@ void* malloc(size_t size) {
         MainControlBlock_t* prev_mcb = NULL; 
 
         while (mcb) {
-            if (mcb->is_full == 0) break; 
-            if ((mcb->next != 0) && (((MainControlBlock_t*)mcb->next)->rem_scb_count) == 2014) {
-                MainControlBlock_t* empty_mcb = (MainControlBlock_t*)mcb->next;
-                void* cas_res = __a_cas_p((volatile void*)&mcb->next, empty_mcb, (void*)empty_mcb->next);
-                if (cas_res == empty_mcb) {
-                    LessCore(empty_mcb, 4); 
+            // 脏读is_full标志，后续会有验证
+            uint64_t is_full = mcb->is_full;
+            if (is_full == 0) break; 
+            
+            // 脏读next指针
+            MainControlBlock_t* next_mcb = (MainControlBlock_t*)mcb->next;
+            
+            if (next_mcb != NULL) {
+                // 脏读rem_scb_count
+                uint32_t rem_scb_count = next_mcb->rem_scb_count;
+                if (rem_scb_count == 2014) {
+                    // 只有当可能需要操作时，才使用原子加载验证
+                    rem_scb_count = __atomic_load_n(&next_mcb->rem_scb_count, __ATOMIC_ACQUIRE);
+                    if (rem_scb_count == 2014) {
+                        void* cas_res = __a_cas_p((volatile void*)&mcb->next, next_mcb, (void*)next_mcb->next);
+                        if (cas_res == next_mcb) {
+                            LessCore(next_mcb, 4); 
+                        }
+                    }
+                    // 链表结构变动，从头开始重试
+                    continue;
                 }
-                continue; // 链表结构变动，立刻重试
             }
+            
             prev_mcb = mcb;
-            mcb = (MainControlBlock_t*)mcb->next; 
+            mcb = next_mcb; 
         }
 
         if (!mcb) {
@@ -143,10 +162,14 @@ void* malloc(size_t size) {
                 for (int i = 0; i < 2044; i++) scb->bitmap[i] = 0;
                 uint64_t last_word = scb->bit_tail / 64;
                 uint64_t last_bit = scb->bit_tail % 64;
-                if (last_word < 2043) {
-                    for (uint64_t i = last_word + 1; i < 2044; i++) scb->bitmap[i] = 0xFFFFFFFFFFFFFFFFULL;
+
+                for (uint64_t i = last_word + 1; i < 2044; i++) {
+                    scb->bitmap[i] = 0xFFFFFFFFFFFFFFFFULL;
                 }
-                scb->bitmap[last_word] |= 0xFFFFFFFFFFFFFFFFULL << (last_bit + 1);
+
+                if (last_bit < 63) {
+                    scb->bitmap[last_word] |= 0xFFFFFFFFFFFFFFFFULL << (last_bit + 1);
+                }
                 
                 // 【修改点】：原子安装 SCB。如果冲突，使用别人的并退还自己的内存。
                 void* actual = __a_cas_p((volatile void*)&mcb->list_base[scb_idx], NULL, scb);
@@ -203,7 +226,7 @@ void* malloc(size_t size) {
             uint64_t old_rem = __a_subu64(&scb->rem_count, 1); 
             if (old_rem == 1) { // 如果我是最后一个拿走内存的人
                 is_scb_full = 1;
-                scb->is_full = 0xFFFFFFFFFFFFFFFFULL; 
+                scb->is_full = 1; // 统一使用1表示满
             }
         } 
         // ---------------------------------------------------
@@ -254,8 +277,32 @@ void* malloc(size_t size) {
             uint64_t pages_needed = (total_large_size + 4095) / 4096;
             void* page_start = MoreCore(pages_needed);
             if (!page_start) {
-                // 致命内存不足：需要回滚刚抢到的 bitmap 位
-                __a_and_64(&l_scb->bitmap[obj_idx / 64], ~(1ULL << (obj_idx % 64)));
+                uint64_t word_idx = obj_idx / 64;
+                uint64_t bit_idx = obj_idx % 64;
+                uint64_t mask = 1ULL << bit_idx;
+                
+                // 快速检查：如果位已经被清除，直接返回
+                uint64_t old_val = __atomic_load_n(&l_scb->bitmap[word_idx], __ATOMIC_ACQUIRE);
+                if (!(old_val & mask)) {
+                    return NULL;
+                }
+                
+                // 进入CAS循环
+                uint64_t new_val;
+                while (1) {
+                    new_val = old_val & ~mask;
+                    uint64_t actual_old = A_CAS_U64_ASM(&l_scb->bitmap[word_idx], old_val, new_val);
+                    
+                    if (actual_old == old_val) {
+                        break;
+                    }
+                    
+                    old_val = actual_old;
+                    if (!(old_val & mask)) {
+                        break;
+                    }
+                }
+                
                 return NULL;
             }
 
@@ -270,7 +317,6 @@ void* malloc(size_t size) {
             header->BitMapBase           = (uint64_t)l_scb;
             header->MCBAddr              = (uint64_t)mcb;
 
-            l_scb->list_base[obj_idx] = (uint64_t)page_start;
             allocated_ptr = (void*)header->AllocPtrBaseAddress;
 
             uint64_t old_rem = __a_subu64(&l_scb->rem_count, 1);
@@ -278,6 +324,9 @@ void* malloc(size_t size) {
                 is_scb_full = 1;
                 l_scb->is_full = 1;
             }
+            
+            // 只有在确认分配成功后，才写入list_base
+            l_scb->list_base[obj_idx] = (uint64_t)page_start;
         }
 
         // --------------------------------------------------------------------
@@ -320,6 +369,8 @@ void free(void* ptr) {
     uint64_t block_addr   = header->BlockAddr; 
 
     int idx = GetSizeClassIndex(size_class);
+    if (idx < 0 || idx >= 75) return; // 边界检查
+    
     uint32_t word_idx = obj_bit_loc / 64;
     uint32_t bit_idx  = obj_bit_loc % 64;
 
@@ -343,17 +394,25 @@ void free(void* ptr) {
             int mcb_word = mcb_slot / 64;
             int mcb_bit  = mcb_slot % 64;
             
-            mcb->is_full = 0;
             __a_and_64(&mcb->bitmap[mcb_word], ~(1ULL << mcb_bit));
-            __a_fetch_addu32(&mcb->rem_scb_count, 1); 
+            uint32_t old_mcb_rem = __a_fetch_addu32(&mcb->rem_scb_count, 1); 
+            
+            // 只有当MCB从完全满(rem_scb_count=0)变为有一个空闲时，才标记为非满
+            if (old_mcb_rem == 0) {
+                mcb->is_full = 0;
+            }
         }
 
         // 当它变成完全空的时候 (即将从 2013 变成 2014)
         if(old_rem == 2013) {
-            // 利用 CAS 进行安全脱离，防止其它核心刚巧正在读取
-            void* actual = __a_cas_p((volatile void*)&mcb->list_base[mcb_slot], scb, NULL);
-            if (actual == scb) {
-                LessCore(scb, 4);
+            // 再次验证SCB是否真的完全空了
+            uint64_t current_rem = __atomic_load_n(&scb->rem_count, __ATOMIC_ACQUIRE);
+            if (current_rem == 2014) {
+                // 利用CAS进行安全脱离
+                void* actual = __a_cas_p((volatile void*)&mcb->list_base[mcb_slot], scb, NULL);
+                if (actual == scb) {
+                    LessCore(scb, 4);
+                }
             }
         }
         return;
@@ -381,15 +440,23 @@ void free(void* ptr) {
             int mcb_word = mcb_slot / 64;
             int mcb_bit  = mcb_slot % 64;
 
-            mcb->is_full = 0;
             __a_and_64(&mcb->bitmap[mcb_word], ~(1ULL << mcb_bit));
-            __a_fetch_addu32(&mcb->rem_scb_count, 1);
+            uint32_t old_mcb_rem = __a_fetch_addu32(&mcb->rem_scb_count, 1);
+            
+            // 只有当MCB从完全满变为有一个空闲时，才标记为非满
+            if (old_mcb_rem == 0) {
+                mcb->is_full = 0;
+            }
         }
 
         if(old_rem == 2013) {
-            void* actual = __a_cas_p((volatile void*)&mcb->list_base[mcb_slot], l_scb, NULL);
-            if (actual == l_scb) {
-                LessCore(l_scb, 4);
+            // 再次验证Large SCB是否真的完全空了
+            uint64_t current_rem = __atomic_load_n(&l_scb->rem_count, __ATOMIC_ACQUIRE);
+            if (current_rem == 2014) {
+                void* actual = __a_cas_p((volatile void*)&mcb->list_base[mcb_slot], l_scb, NULL);
+                if (actual == l_scb) {
+                    LessCore(l_scb, 4);
+                }
             }
         }
         return;
