@@ -22,6 +22,7 @@
 #include <gui/fb.h>
 #include <syscall.h>
 #include <gui/basicdraw.h>
+#include <stdlib.h>
 
 char intTo_stringOutput[128];
 const char *to_string(uint64_t value)
@@ -50,6 +51,8 @@ const char *to_string(uint64_t value)
 }
 
 int main(){
+    void* p = malloc(12);
+    free(p);
     const char *msg = "Hello, World!";
     FrameBuffer fb;
     syscall(24, (long)msg, 13, 0, 0, 0, 0);

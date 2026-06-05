@@ -25,6 +25,7 @@
 #include <base/arch/x86_64/atomic/common.h>
 #include <base/arch/x86_64/syscall.h>
 #endif
+#include <stdc/stdlib.h>
 #include <base/base.h>
 
 extern uint64_t SizeClassTable[75][3];
