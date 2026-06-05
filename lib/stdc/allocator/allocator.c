@@ -23,11 +23,19 @@
 #include <stdc/string.h>
 #ifdef __x86_64__
 #include <base/arch/x86_64/atomic/common.h>
+#include <base/arch/x86_64/syscall.h>
 #endif
+#include <base/base.h>
 
 extern uint64_t SizeClassTable[75][3];
-void LessCore(void* x,uint64_t y){(void)x;(void)y;return;}
-void* MoreCore(uint64_t PageCount){(void)PageCount;/*Not IMPLED YET...*/return NULL;}
+void LessCore(void* x,uint64_t y){(void)y;
+    munmap((uint64_t)x,0);
+}
+void* MoreCore(uint64_t PageCount){    
+    void* p = (void*)mmap(0,PageCount,2,0,0);
+    if(p != NULL) return p;
+    else return NULL;
+}
 
 //The QSBR Subsystem
 
@@ -78,7 +86,7 @@ static void push_deferred_large_scb(void* scb) {
 }
 
 static inline int qsbr_enter() {
-    uint32_t hash = (uint32_t)(__builtin_ia32_rdtsc() % QSBR_SLOTS);
+    uint32_t hash = (uint32_t)(rdtsc() % QSBR_SLOTS);
     __atomic_fetch_add(&qsbr_counters[hash].count, 1, __ATOMIC_ACQUIRE);
     return hash;
 }

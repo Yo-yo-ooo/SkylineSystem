@@ -34,7 +34,7 @@ S_SRCS  = $(shell find $(SRCDIRS) -name "*.S")
 C_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.c")
 S_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.S")
 
-# 生成对应的 .o 文件路径（统一放到 obj/ 下）
+
 OBJS    = $(patsubst %.c, $(OBJDIR)/%.c.o, $(C_SRCS))
 OBJS   += $(patsubst %.S, $(OBJDIR)/%.S.o, $(S_SRCS))
 

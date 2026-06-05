@@ -8,15 +8,15 @@ _start:
     # ----------------------------------------------------
     # 1. 阶段一：从内核摆好的 RSP 中提取 argc 和 argv
     # ----------------------------------------------------
-    mov rdi, [rsp]        # RDI = argc
-    lea rsi, [rsp + 8]    # RSI = argv
+   # mov rdi, [rsp]        # RDI = argc
+   # lea rsi, [rsp + 8]    # RSI = argv
 
     # 16字节栈对齐
-    and rsp, 0xFFFFFFFFFFFFFFF0
+   # and rsp, 0xFFFFFFFFFFFFFFF0
 
     # 把参数暂时保存到安全的地方（比如压入对齐后的栈），防止接下来的初始化冲爆寄存器
-    push rsi
-    push rdi
+    #push rsi
+    #push rdi
 
     # ----------------------------------------------------
     # 2. 阶段二：由 init.S 负责 Lib 库和全局变量的初始化
