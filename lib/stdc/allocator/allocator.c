@@ -36,57 +36,127 @@ void* MoreCore(uint64_t PageCount){(void)PageCount;/*Not IMPLED YET...*/return N
 #define QSBR_SLOTS 32
 typedef struct {
     volatile uint64_t count;
-    char padding[56]; // 强制缓存行对齐，彻底消除并发伪共享 (False Sharing)
+    char padding[56]; // 强制缓存行对齐，彻底消除并发伪共享
 } qsbr_slot_t;
 
 static qsbr_slot_t qsbr_counters[QSBR_SLOTS] __attribute__((aligned(64)));
-static volatile void* deferred_scb_list = NULL;
+// 替换原来的 deferred_scb_list
+static volatile void* deferred_small_scb_list = NULL;  // 小对象SCB队列
+static volatile void* deferred_large_scb_list = NULL;  // 大对象SCB队列
 static volatile uint32_t gc_lock = 0;
 
-// 高速无锁通行证，使用 rdtsc 硬件哈希极速打散竞争热点
+// 新增两个专用push函数，避免参数传递开销
+static void push_deferred_small_scb(void* scb) {
+    void* old_head;
+    do {
+        old_head = (void*)deferred_small_scb_list;
+        *(void**)scb = old_head;
+    } while (__a_cas_p(&deferred_small_scb_list, old_head, scb) != old_head);
+}
+
+static void push_deferred_large_scb(void* scb) {
+    void* old_head;
+    do {
+        old_head = (void*)deferred_large_scb_list;
+        *(void**)scb = old_head;
+    } while (__a_cas_p(&deferred_large_scb_list, old_head, scb) != old_head);
+}
+
 static inline int qsbr_enter() {
     uint32_t hash = (uint32_t)(__builtin_ia32_rdtsc() % QSBR_SLOTS);
-    __a_fetch_addu64(&qsbr_counters[hash].count, 1);
+    __atomic_fetch_add(&qsbr_counters[hash].count, 1, __ATOMIC_ACQUIRE);
     return hash;
 }
 
 static inline void qsbr_leave(int hash) {
-    __a_subu64(&qsbr_counters[hash].count, 1);
+    __atomic_sub_fetch(&qsbr_counters[hash].count, 1, __ATOMIC_RELEASE);
 }
 
-// 检查当前系统是否处于没有任何线程在分配器内部的“绝对安全静态点”
 static inline int is_quiescent() {
+    uint64_t snapshot[QSBR_SLOTS];
+    
+    // 第一次遍历：获取计数器快照
     for (int i = 0; i < QSBR_SLOTS; i++) {
-        if (__atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE) != 0) return 0;
+        snapshot[i] = __atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE);
     }
+    
+    // 全局全屏障：强制所有核心同步内存状态
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    
+    // 第二次遍历：验证计数器没有变化且全部为 0
+    for (int i = 0; i < QSBR_SLOTS; i++) {
+        uint64_t current = __atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE);
+        if (current != 0 || current != snapshot[i]) {
+            return 0;
+        }
+    }
+    
+    // 最终屏障：禁止回收操作重排序
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
     return 1;
 }
 
-// 侵入式链表暂存被废弃的 SCB（不额外申请任何内存）
-static void push_deferred_gc(volatile void** list_head, void* block) {
-    void* old_head;
-    do {
-        old_head = (void*)*list_head;
-        *(void**)block = old_head; // 复用被废弃元数据块的前 8 字节作为 Next 指针
-    } while (__a_cas_p(list_head, old_head, block) != old_head);
-}
 
-// 触发静态检查点垃圾回收，物理级释放内存
 static inline void try_gc() {
     uint32_t expected = 0;
     if (__atomic_compare_exchange_n(&gc_lock, &expected, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
-        if (is_quiescent()) {
-            void * scb_list = (void *)(uintptr_t)__atomic_exchange_n(&deferred_scb_list, NULL, __ATOMIC_ACQ_REL);
-            while (scb_list) {
-                void* next = *(void**)scb_list;
-                LessCore(scb_list, 4); // 此时绝对没有任何线程会访问到这里，安全呼叫内核释放
-                scb_list = next;
+        // 先交换剥离两个队列
+        void* small_list = (void*)(uintptr_t)__atomic_exchange_n(&deferred_small_scb_list, NULL, __ATOMIC_ACQ_REL);
+        void* large_list = (void*)(uintptr_t)__atomic_exchange_n(&deferred_large_scb_list, NULL, __ATOMIC_ACQ_REL);
+        
+        if (small_list || large_list) {
+            if (is_quiescent()) {
+                // 处理小对象SCB：释放数据区 + 释放SCB本身
+                while (small_list) {
+                    void* next = *(void**)small_list;
+                    SecondControlBlock_t* scb = (SecondControlBlock_t*)small_list;
+                    
+                    uint64_t total_objects = scb->bit_tail + 1;
+                    uint64_t total_size = total_objects * scb->step_size;
+                    uint64_t pages_needed = (total_size + 4095) / 4096;
+                    LessCore((void*)scb->list_base, pages_needed);
+                    
+                    LessCore(small_list, 4);
+                    small_list = next;
+                }
+                
+                // 处理大对象SCB：只释放SCB本身
+                while (large_list) {
+                    void* next = *(void**)large_list;
+                    LessCore(large_list, 4);
+                    large_list = next;
+                }
+            } else {
+                // 回滚小对象队列
+                if (small_list) {
+                    void* tail = small_list;
+                    while (*(void**)tail) {
+                        tail = *(void**)tail;
+                    }
+                    void* old_head;
+                    do {
+                        old_head = (void*)deferred_small_scb_list;
+                        *(void**)tail = old_head;
+                    } while (__a_cas_p(&deferred_small_scb_list, old_head, small_list) != old_head);
+                }
+                
+                // 回滚大对象队列
+                if (large_list) {
+                    void* tail = large_list;
+                    while (*(void**)tail) {
+                        tail = *(void**)tail;
+                    }
+                    void* old_head;
+                    do {
+                        old_head = (void*)deferred_large_scb_list;
+                        *(void**)tail = old_head;
+                    } while (__a_cas_p(&deferred_large_scb_list, old_head, large_list) != old_head);
+                }
             }
         }
         __atomic_store_n(&gc_lock, 0, __ATOMIC_RELEASE);
     }
 }
-
 static inline int GetSizeClassIndex(size_t size) {
     if (size <= 32) return 0;
     uint64_t s = size - 1;
@@ -104,7 +174,6 @@ static inline int GetSizeClassIndex(size_t size) {
 // ============================================================================
 // 内部逻辑：实际的分配与释放引擎
 // ============================================================================
-
 static void* _skyline_malloc_internal(size_t size) {
     if (size == 0 || size > 9223372036854775808ULL) return NULL;
 
@@ -116,19 +185,11 @@ static void* _skyline_malloc_internal(size_t size) {
     void* allocated_ptr   = NULL;
 
     while (!allocated_ptr) {
-        
-        // --------------------------------------------------------------------
-        // Tier 1: MCB 中央链表检索与无锁尾插
-        // --------------------------------------------------------------------
         MainControlBlock_t* mcb = (MainControlBlock_t*)SizeClassTable[idx][1];
         MainControlBlock_t* prev_mcb = NULL; 
 
         while (mcb) {
-            uint64_t is_full = mcb->is_full;
-            if (is_full == 0) break; 
-            
-            // [架构优化]: 取消 MCB 的 unlinking 逻辑。MCB 作为极小内存消耗的分配器骨架永远常驻，
-            // 彻底消灭了 MCB 级联解绑时的并发风暴和复杂 Race Condition。
+            if (mcb->is_full == 0) break; 
             prev_mcb = mcb;
             mcb = (MainControlBlock_t*)mcb->next; 
         }
@@ -136,7 +197,6 @@ static void* _skyline_malloc_internal(size_t size) {
         if (!mcb) {
             MainControlBlock_t* new_mcb = (MainControlBlock_t*)MoreCore(4); 
             if (!new_mcb) return NULL;
-
             new_mcb->is_full = 0;
             new_mcb->rem_scb_count = 2014; 
             for (int i = 0; i < 32; i++) new_mcb->bitmap[i] = 0;
@@ -152,7 +212,7 @@ static void* _skyline_malloc_internal(size_t size) {
             }
             
             if (actual != NULL) { 
-                LessCore(new_mcb, 4); // CAS 失败，内存从未公开暴露，立即 LessCore 是 100% 安全的
+                LessCore(new_mcb, 4);
                 CPU_RELAX();
                 continue; 
             }
@@ -173,28 +233,26 @@ static void* _skyline_malloc_internal(size_t size) {
             continue; 
         }
 
-        // ====================================================================
-        // Tier 2: 架构分流与无锁元数据注入
-        // ====================================================================
-        int is_scb_full = 0;
-
         if (region_size != 0) {
             SecondControlBlock_t* scb = (SecondControlBlock_t*)mcb->list_base[scb_idx];
 
             if (!scb) {
+                // 【性能架构改良】：合并冗余的 speculative 申请，直接依目标上限创建
+                uint64_t step_size = size_class + sizeof(AllocBlock_t);
+                uint64_t total_objects = region_size / step_size; 
+                if (total_objects > 130816) total_objects = 130816;
+
                 scb = (SecondControlBlock_t*)MoreCore(4); 
                 if (!scb) return NULL;
 
-                uint64_t step_size = size_class + sizeof(AllocBlock_t);
-                uint64_t total_objects = region_size / step_size; 
                 void* data_region = MoreCore(((total_objects * step_size) + 4095) / 4096); 
                 if (!data_region) { LessCore(scb, 4); return NULL; }
 
                 scb->is_full = 0;
                 scb->list_base = (uint64_t)data_region;
                 scb->bit_tail  = total_objects - 1;
-                if (scb->bit_tail > 130815) { scb->bit_tail = 130815; total_objects = 130816; }
-                scb->rem_count = total_objects; 
+                scb->rem_count = total_objects;
+                scb->step_size = step_size;  // 新增这行
 
                 for (int i = 0; i < 2044; i++) scb->bitmap[i] = 0;
                 uint64_t last_word = scb->bit_tail / 64;
@@ -203,7 +261,6 @@ static void* _skyline_malloc_internal(size_t size) {
                 for (uint64_t i = last_word + 1; i < 2044; i++) {
                     scb->bitmap[i] = 0xFFFFFFFFFFFFFFFFULL;
                 }
-
                 if (last_bit < 63) {
                     scb->bitmap[last_word] |= 0xFFFFFFFFFFFFFFFFULL << (last_bit + 1);
                 }
@@ -230,13 +287,14 @@ static void* _skyline_malloc_internal(size_t size) {
                     
                     uint64_t new_bitmap = current_bitmap | (1ULL << free_bit);
                     if (A_CAS_U64_ASM(&scb->bitmap[i], current_bitmap, new_bitmap) == current_bitmap) {
-                        // [关键修复]: Double-Check 逻辑脱轨检测。防止我们抢到了位，但 SCB 刚好被其他线程 Unlink。
                         if (__atomic_load_n((uint64_t*)&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE) != (uint64_t)scb) {
                             uint64_t rb_old, rb_new;
-                            do { // 状态脱离，回滚位图修改并安全重新大循环
+                            do { 
                                 rb_old = scb->bitmap[i];
                                 rb_new = rb_old & ~(1ULL << free_bit);
                             } while (A_CAS_U64_ASM(&scb->bitmap[i], rb_old, rb_new) != rb_old);
+                            // 【修复】：脱轨检测触发后，同步拉高控制变量，彻底刺穿终止外层 for 循环扫描
+                            i = scb_max_words; 
                             break; 
                         }
                         obj_idx = current_bit;
@@ -268,10 +326,16 @@ static void* _skyline_malloc_internal(size_t size) {
 
             allocated_ptr = (void*)header->AllocPtrBaseAddress;
 
-            uint64_t old_rem = __a_subu64(&scb->rem_count, 1); 
+            uint64_t old_rem = __a_subu32(&scb->rem_count, 1); 
             if (old_rem == 1) { 
-                is_scb_full = 1;
-                scb->is_full = 1; 
+                // 原子设置is_full为1，只有当它原来为0时才成功
+                if (__atomic_compare_exchange_n(&scb->is_full, &(uint64_t){0}, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+                    int mcb_word = scb_idx / 64;
+                    int mcb_bit  = scb_idx % 64;
+                    __a_or_64(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
+                    uint32_t old_mcb_rem = __a_subu32(&mcb->rem_scb_count, 1);
+                    if (old_mcb_rem == 1) mcb->is_full = 1;
+                }
             }
         } 
         else {
@@ -306,13 +370,14 @@ static void* _skyline_malloc_internal(size_t size) {
 
                     uint64_t new_bitmap = current_bitmap | (1ULL << free_bit);
                     if (A_CAS_U64_ASM(&l_scb->bitmap[i], current_bitmap, new_bitmap) == current_bitmap) {
-                        // [Double Check 保驾护航]
                         if (__atomic_load_n((uint64_t*)&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE) != (uint64_t)l_scb) {
                             uint64_t rb_old, rb_new;
                             do {
                                 rb_old = l_scb->bitmap[i];
                                 rb_new = rb_old & ~(1ULL << free_bit);
                             } while (A_CAS_U64_ASM(&l_scb->bitmap[i], rb_old, rb_new) != rb_old);
+                            // 【修复】：大对象脱轨刺穿
+                            i = 32; 
                             break;
                         }
                         obj_idx = current_bit;
@@ -335,7 +400,6 @@ static void* _skyline_malloc_internal(size_t size) {
                 uint64_t word_idx = obj_idx / 64;
                 uint64_t bit_idx = obj_idx % 64;
                 uint64_t mask = 1ULL << bit_idx;
-                
                 uint64_t old_val = __atomic_load_n(&l_scb->bitmap[word_idx], __ATOMIC_ACQUIRE);
                 if (!(old_val & mask)) return NULL;
                 
@@ -363,36 +427,28 @@ static void* _skyline_malloc_internal(size_t size) {
             header->MCBAddr              = (uint64_t)mcb;
 
             allocated_ptr = (void*)header->AllocPtrBaseAddress;
+            l_scb->list_base[obj_idx] = (uint64_t)page_start;
 
+            // allocator.c 中修改大对象分配逻辑
             uint64_t old_rem = __a_subu64(&l_scb->rem_count, 1);
             if (old_rem == 1) {
-                is_scb_full = 1;
-                l_scb->is_full = 1;
-            }
-            
-            l_scb->list_base[obj_idx] = (uint64_t)page_start;
-        }
-
-        // --------------------------------------------------------------------
-        // Tier 3: 级联状态逆向反馈
-        // --------------------------------------------------------------------
-        if (is_scb_full) {
-            int mcb_word = scb_idx / 64;
-            int mcb_bit  = scb_idx % 64;
-            __a_or_64(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
-            uint64_t old_mcb_rem = __a_subu32(&mcb->rem_scb_count, 1);
-            if (old_mcb_rem == 1) {
-                mcb->is_full = 1; 
+                // 原子设置is_full为1，只有当它原来为0时才成功
+                uint64_t expected = 0;
+                if (__atomic_compare_exchange_n(&l_scb->is_full, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+                    int mcb_word = scb_idx / 64;
+                    int mcb_bit  = scb_idx % 64;
+                    __a_or_64(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
+                    uint32_t old_mcb_rem = __a_subu32(&mcb->rem_scb_count, 1);
+                    if (old_mcb_rem == 1) mcb->is_full = 1;
+                }
             }
         }
     } 
-
     return allocated_ptr;
 }
 
 #define SKYLINE_MAX_LEGAL_ADDR  0x00007FFFFFFFFFFFULL 
 #define ALLOCTOR_SECURITY_ASSERT(cond) do { if (!(cond)) { return; } } while(0)
-
 static void _skyline_free_internal(void* ptr) {
     AllocBlock_t* header = (AllocBlock_t*)((uint64_t)ptr - sizeof(AllocBlock_t));
 
@@ -424,7 +480,7 @@ static void _skyline_free_internal(void* ptr) {
         uint64_t old_bitmap = __a_and_64(&scb->bitmap[word_idx], ~(1ULL << bit_idx));
         if (!(old_bitmap & (1ULL << bit_idx))) return; 
 
-        uint64_t old_rem = __a_fetch_addu64(&scb->rem_count, 1); 
+        uint64_t old_rem = __a_fetch_addu32(&scb->rem_count, 1); 
 
         if (old_rem == 0) {
             scb->is_full = 0; 
@@ -433,17 +489,18 @@ static void _skyline_free_internal(void* ptr) {
             
             __a_and_64(&mcb->bitmap[mcb_word], ~(1ULL << mcb_bit));
             uint32_t old_mcb_rem = __a_fetch_addu32(&mcb->rem_scb_count, 1); 
-            
             if (old_mcb_rem == 0) mcb->is_full = 0;
         }
 
-        if(old_rem == 2013) {
+        // 【修复】：根据 scb->bit_tail 动态推导并定义完全清空的阈值 target_rem
+        uint64_t target_rem = scb->bit_tail + 1;
+        // 小对象分支
+        if (old_rem == target_rem - 1) {
             uint64_t current_rem = __atomic_load_n(&scb->rem_count, __ATOMIC_ACQUIRE);
-            if (current_rem == 2014) {
+            if (current_rem == target_rem) {
                 void* actual = __a_cas_p((volatile void*)&mcb->list_base[mcb_slot], scb, NULL);
                 if (actual == scb) {
-                    // 解绑成功，压入 QSBR 延迟队列等待安全回收
-                    push_deferred_gc(&deferred_scb_list, scb);
+                    push_deferred_small_scb(scb);  // 压入小对象队列
                 }
             }
         }
@@ -457,7 +514,7 @@ static void _skyline_free_internal(void* ptr) {
         uint64_t pages_needed = (total_large_size + 4095) / 4096;
         
         l_scb->list_base[obj_bit_loc] = 0;
-        LessCore((void*)block_addr, pages_needed); // 大对象数据页不存在并发遍历，直接还给 OS，安全。
+        LessCore((void*)block_addr, pages_needed); 
 
         uint64_t old_bitmap = __a_and_64(&l_scb->bitmap[word_idx], ~(1ULL << bit_idx));
         if (!(old_bitmap & (1ULL << bit_idx))) return; 
@@ -471,17 +528,16 @@ static void _skyline_free_internal(void* ptr) {
 
             __a_and_64(&mcb->bitmap[mcb_word], ~(1ULL << mcb_bit));
             uint32_t old_mcb_rem = __a_fetch_addu32(&mcb->rem_scb_count, 1);
-            
             if (old_mcb_rem == 0) mcb->is_full = 0;
         }
 
-        if(old_rem == 2013) {
+        // 大对象分支
+        if (old_rem == 2013) {
             uint64_t current_rem = __atomic_load_n(&l_scb->rem_count, __ATOMIC_ACQUIRE);
             if (current_rem == 2014) {
                 void* actual = __a_cas_p((volatile void*)&mcb->list_base[mcb_slot], l_scb, NULL);
                 if (actual == l_scb) {
-                    // 解绑成功，压入 QSBR
-                    push_deferred_gc(&deferred_scb_list, l_scb);
+                    push_deferred_large_scb(l_scb);  // 压入大对象队列
                 }
             }
         }
@@ -527,6 +583,19 @@ void* realloc(void* ptr, size_t size) {
     
     AllocBlock_t* header = (AllocBlock_t*)((uint64_t)ptr - sizeof(AllocBlock_t));
     if (header->AllocSizeAligned >= size) {
+        // 如果缩小到另一个大小类，考虑重新分配
+        int new_idx = GetSizeClassIndex(size);
+        int old_idx = GetSizeClassIndex(header->AllocSizeAligned);
+        if ((new_idx < old_idx && header->AllocSizeAligned - size > 4096)
+        || (SizeClassTable[old_idx][2] == 0 && new_idx != old_idx)) {
+            // 节省的内存超过一页，重新分配
+            void* new_ptr = malloc(size);
+            if (new_ptr) {
+                memcpy(new_ptr, ptr, size);
+                free(ptr);
+                return new_ptr;
+            }
+        }
         header->AllocSizeUnAligned = size;
         return ptr;
     }

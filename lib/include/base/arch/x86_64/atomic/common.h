@@ -93,22 +93,21 @@ static inline __attribute__((always_inline)) void __a_or_64(volatile uint64_t *p
             : "+m"(*p) : "r"(v) : "memory", "cc" );
 }
 
+// atomic_common.h中替换__a_and_64实现
 static inline __attribute__((always_inline)) uint64_t __a_and_64(volatile uint64_t *p, uint64_t v)
 {
-    // [修复] 彻底重写 CAS 逻辑。保证 RAX (old) 始终与内存旧值匹配，使用临时寄存器计算新值。
-    uint64_t old = *p; 
-    uint64_t new_val;
+    uint64_t old;
     __asm__ __volatile__(
-        "1:\n\t"
-        "movq %0, %2\n\t"          // new_val = old
-        "andq %3, %2\n\t"          // new_val = old & v
-        "lock cmpxchgq %2, %1\n\t" // CAS: 比较 RAX(old) 与 *p, 相等则将 new_val 写入 *p
-        "jne 1b\n\t"               // 如果失败，RAX 会自动更新为 *p 的新值，直接循环
-        : "+a"(old), "+m"(*p), "=&r"(new_val)
+        "1: movq %1, %0\n\t"
+        "movq %0, %%r8\n\t"
+        "andq %2, %%r8\n\t"
+        "lock cmpxchgq %%r8, %1\n\t"
+        "jne 1b\n\t"
+        : "=&a"(old), "+m"(*p)
         : "r"(v)
-        : "memory", "cc"
+        : "r8", "memory", "cc"
     );
-    return old; // 完美返回修改前的原始值
+    return old;
 }
 
 #endif

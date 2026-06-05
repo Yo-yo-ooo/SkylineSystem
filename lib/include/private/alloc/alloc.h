@@ -39,24 +39,23 @@ typedef struct AllocBlock{
     uint64_t MCBAddr;
 }AllocBlock_t;
 
-
 PACK(typedef struct {
     alignas(8) uint64_t bitmap[2044];      // 提供 130,816 个分配位
-    uint64_t is_full;           // [全新改动] 0 表示没满，0xFFFFFFFFFFFFFFFF 表示彻底满了
-    uint64_t list_base;         // 起始虚拟基地址
-    uint64_t bit_tail;          // 最后一个有效比特位索引
-    uint64_t rem_count;          
+    uint64_t is_full;                      // 0 表示没满，1 表示彻底满了
+    uint64_t list_base;                    // 起始虚拟基地址
+    uint32_t bit_tail;                     // 最后一个有效比特位索引
+    uint32_t rem_count;                    // 剩余可用对象计数      
+    uint64_t step_size;
 }) SecondControlBlock_t;
 
 
 
 
 PACK(typedef struct {
-    alignas(8) uint64_t bitmap[32];        // 32组位图
-    uint8_t  is_full;           // [全新改动] 0表示没满，1表示满了
-    uint8_t  padding[7];        // 严格对齐填充，保证下面的指针数组 8 字节对齐
-    uint64_t list_base[2014];   // 2014个独立大对象虚拟地址插槽 (献祭了1个)
-    uint64_t rem_count;
+    alignas(8) uint64_t bitmap[32];        // 32组位图 (256字节)
+    uint64_t is_full;                      // 直接提升为 64 位，天然消除对齐空洞，业务逻辑无缝兼容
+    uint64_t list_base[2014];              // 2014个独立大对象虚拟地址插槽 (16112字节)
+    uint64_t rem_count;                    // 剩余计数 (8字节)
 }) LargeSecondControlBlock_t;
 
 const uint64_t x = sizeof(LargeSecondControlBlock_t);
@@ -65,10 +64,10 @@ const uint64_t x = sizeof(LargeSecondControlBlock_t);
 //主管理链表
 //管理SecondControlBlock
 PACK(typedef struct {
-    alignas(8) uint64_t bitmap[32];        // 32组位图
-    uint64_t list_base[2014];   // 2014个独立大对象虚拟地址插槽 (献祭了1个)
-    uint64_t next;              // 死钉在 16376 字节偏置处的单链表指针
-    uint32_t rem_scb_count;
-    uint8_t  is_full;           // [全新改动] 0表示没满，1表示满了
-    uint32_t padding : 20;
+    alignas(8) uint64_t bitmap[32];        // 32组位图 (256字节)
+    uint64_t list_base[2014];              // 2014个插槽 (16112字节)
+    uint64_t next;                         // 下一个 MCB 指针 (8字节)
+    uint32_t rem_scb_count;                // 剩余 SCB 计数 (4字节，保持给原子减法 __a_subu32 使用)
+    uint8_t  is_full;                      // 满了的状态位 (1字节)
+    uint8_t  padding[3];                   // 显式精准填充 3 字节，与上面的 4+1 凑成 8 字节完美收尾！
 }) MainControlBlock_t;
