@@ -85,29 +85,60 @@ static inline __attribute__((always_inline)) uint32_t __a_subu32(volatile uint32
     return res;
 }
 
-static inline __attribute__((always_inline)) void __a_or_64(volatile uint64_t *p, uint64_t v)
+static inline __attribute__((always_inline)) uint64_t __a_or_64(volatile uint64_t *p, uint64_t v)
 {
-    // [修复] 将 "=m" (只写) 修改为 "+m" (读写)，并显式指定 orq 指令和 cc 状态改变
-    __asm__ volatile (
-            "lock ; orq %1, %0"
-            : "+m"(*p) : "r"(v) : "memory", "cc" );
+    // 初始化旧值
+    uint64_t old_val = __atomic_load_n(p, __ATOMIC_RELAXED);
+    
+    while (1) {
+        uint64_t new_val = old_val | v;
+        
+        // 提前退出：如果位已存在，无需写操作
+        if (new_val == old_val) {
+            return old_val;
+        }
+        
+        // 使用 CAS 尝试写入
+        // success 使用 ACQ_REL 确保同步
+        // failure 使用 RELAXED 即可，因为 old_val 会被自动更新
+        if (__atomic_compare_exchange_n(p, &old_val, new_val, 
+                                        1, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+            return old_val;
+        }
+        // CAS 失败时，old_val 已自动更新为当前内存值，无需额外加载
+    }
 }
 
-// atomic_common.h中替换__a_and_64实现
+
 static inline __attribute__((always_inline)) uint64_t __a_and_64(volatile uint64_t *p, uint64_t v)
 {
     uint64_t old;
+    __asm__ __volatile__(
+        "movq %1, %0\n\t"
+        "lock andq %2, %1\n\t"
+        : "=r"(old), "+m"(*p)
+        : "r"(v)
+        : "memory", "cc"
+    );
+    return old;
+}
+
+static inline __attribute__((always_inline)) uint64_t __a_clear_bit(volatile uint64_t *p, uint64_t bit_mask)
+{
+    uint64_t old_val;
+    
     __asm__ __volatile__(
         "1: movq %1, %0\n\t"
         "movq %0, %%r8\n\t"
         "andq %2, %%r8\n\t"
         "lock cmpxchgq %%r8, %1\n\t"
         "jne 1b\n\t"
-        : "=&a"(old), "+m"(*p)
-        : "r"(v)
+        : "=&a"(old_val), "+m"(*p)
+        : "r"(~bit_mask)
         : "r8", "memory", "cc"
     );
-    return old;
+    
+    return old_val;
 }
 
 #endif
