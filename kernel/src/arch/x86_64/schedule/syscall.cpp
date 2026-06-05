@@ -70,7 +70,8 @@ void syscall_init() {
     syscall_lists[7] = sys_gettid;
     syscall_lists[8] = sys_getpid;
     syscall_lists[9] = sys_exit;
-    syscall_lists[13] = nullptr;
+    syscall_lists[12] = sys_munmap;
+    syscall_lists[13] = sys_mmap;
     syscall_lists[14] = sched_yield;
     syscall_lists[18] = sys_arch_prctl;
     syscall_lists[20] = sys_getrandom;

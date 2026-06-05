@@ -8,6 +8,7 @@ include ../gdef.mk
 # 工具链定义
 CC      = gcc
 AR      = ar
+AS 		= as
 RANLIB  = ranlib
 
 # 目录定义
@@ -32,17 +33,16 @@ S_SRCS  = $(shell find $(SRCDIRS) -name "*.S")
 
 C_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.c")
 S_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.S")
-S_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.s")
 
 # 生成对应的 .o 文件路径（统一放到 obj/ 下）
-OBJS    = $(patsubst %.c, $(OBJDIR)/%.o, $(C_SRCS))
-OBJS   += $(patsubst %.S, $(OBJDIR)/%.o, $(S_SRCS))
+OBJS    = $(patsubst %.c, $(OBJDIR)/%.c.o, $(C_SRCS))
+OBJS   += $(patsubst %.S, $(OBJDIR)/%.S.o, $(S_SRCS))
 
 ifeq ($(BUILD_ARCH),x86_64)
 CFLAGS += -DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM)
 ifeq ($(NOT_COMPILE_X86MEM),0)
 CFLAGS += -I../x86mem
-#OBJS += ../x86mem/memcpy.o ../x86mem/memmove.o ../x86mem/memset.o ../x86mem/memcmp.o
+OBJS += ../x86mem/memops.o
 endif
 endif
 
@@ -53,7 +53,7 @@ DEPS    = $(OBJS:.o=.d)
 # 主规则
 # ==============================================
 all: $(OBJDIR) $(BINDIR) $(TARGET)
-
+$(info $(OBJS))
 # 构建静态库
 $(TARGET): $(OBJS)
 	@echo "AR      $@"
@@ -61,17 +61,19 @@ $(TARGET): $(OBJS)
 	@$(RANLIB) $@
 	@echo "Library built: $@"
 
+# 编译汇编文件
+$(OBJDIR)/%.S.o: %.S
+	@mkdir -p $(dir $@)
+	@echo "AS      $<"
+	@$(CC) $(CFLAGS) -MMD -c $< -o $@
+
 # 编译 C 文件
-$(OBJDIR)/%.o: %.c
+$(OBJDIR)/%.c.o: %.c
 	@mkdir -p $(dir $@)
 	@echo "CC      $<"
 	$(CC) $(CFLAGS) -MMD -c $< -o $@
 
-# 编译汇编文件
-$(OBJDIR)/%.o: %.S
-	@mkdir -p $(dir $@)
-	@echo "AS      $<"
-	@$(CC) $(CFLAGS) -MMD -c $< -o $@
+
 
 # 创建目录
 $(OBJDIR):

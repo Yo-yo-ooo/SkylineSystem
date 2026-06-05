@@ -2,7 +2,7 @@
 .global _start
 .extern main
 .extern _init_runtime_and_global_variables
-
+.type _start,@function
 .section .text
 _start:
     # ----------------------------------------------------

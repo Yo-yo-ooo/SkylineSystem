@@ -115,8 +115,8 @@ uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 uint64_t sys_getpid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
     uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
-uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t prot, \
-    uint64_t flags, uint64_t fd,uint64_t offset);
+uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t mode, \
+    uint64_t flags,uint64_t offset);
 uint64_t sys_munmap(uint64_t addr, uint64_t length, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
 uint64_t sys_brk(uint64_t addr, \

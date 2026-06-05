@@ -27,39 +27,20 @@
 #include <klib/algorithm/queue.h>
 
 
-uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t prot, uint64_t flags, uint64_t fd,uint64_t offset) {
-    
-    proc_t *process = Schedule::this_proc();
-    pagemap_t *pagemap = process->pagemap;
-    
-    if(process->fd_table[fd]->path == NULL){
-        return -EINVAL;
+uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags,uint64_t offset) {
+    if(mode == 2){
+        return (uint64_t)VMM::Alloc(Schedule::this_thread()->pagemap,
+            length,true); 
     }
-    size_t pages = DIV_ROUND_UP(length, PAGE_SIZE);
-    
-    uint64_t flags_vm = 0;
-    if(prot & PROT_READ) flags_vm |= MM_READ;
-    if(prot & PROT_WRITE) flags_vm |= MM_WRITE;
-    if(prot & PROT_EXEC) flags_vm |= MM_NX;
-    flags_vm |= MM_USER;
-    spinlock_lock(&pagemap->vma_lock);
-    uint64_t Address = 0;
-    if(!addr){
-        Address = VMM::Useless::InternalAlloc(pagemap, pages, flags_vm);
-    }else{Address = (uint64_t)addr;}
-    for (int32_t i = 0; i < pages; i++)
-        VMM::Map(pagemap, Address + (i * PAGE_SIZE), (uint64_t)PMM::Request(), flags_vm);
-    VMM::NewMapping(pagemap, Address, pages, flags_vm);
-    spinlock_unlock(&pagemap->vma_lock);
-    if(flags & MAP_SHARED){
-        //ReadFile(process->fd_table[fd],Address,length);
+    if(mode == 3){
+        return (uint64_t)VMM::Alloc(Schedule::this_thread()->pagemap,
+            DIV_ROUND_UP(length,PAGE_SIZE),true);
     }
-    return Address;
 }
 
-uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t prot, \
-    uint64_t flags, uint64_t fd,uint64_t offset){
-    return sys_mmap_((void*)addr_,length,prot,flags,fd,offset);
+uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t mode, \
+    uint64_t flags,uint64_t offset){
+    return sys_mmap_((void*)addr_,length,mode,flags,offset);
 }
 
 uint64_t sys_munmap(uint64_t addr, uint64_t length, \
@@ -67,10 +48,7 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length, \
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     IGNORE_VALUE(ign_3);
     
-    size_t pages = DIV_ROUND_UP(length, PAGE_SIZE);
-    for (size_t i = 0; i < pages; i++) {
-        VMM::Unmap(Schedule::this_thread()->pagemap, (uint64_t)addr - i * PAGE_SIZE);
-    }
+    VMM::Free(Schedule::this_thread()->pagemap,addr);
     return 0;
 }
 extern "C" void mmu_invlpg(uint64_t vaddr);
