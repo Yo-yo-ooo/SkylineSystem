@@ -203,7 +203,7 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
     iface->ph_bbuf  = (uint8_t *)kmalloc(PAGE_SIZE); 
     if (!iface->ph_bbuf) { kfree(iface); kfree(bdev); return nullptr; }
 
-    // 4. 组装 bdev (注意：这是你之前出错修复的地方，现在的赋值是正确的)
+    // 4. 组装 bdev (注意：这是之前出错修复的地方，现在的赋值是正确的)
     bdev->bdif = iface; 
     bdev->DriverIDX = info->idx;
     bdev->DriverType = info->type;

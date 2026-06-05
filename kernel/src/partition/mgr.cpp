@@ -58,7 +58,7 @@ namespace PartitionManager
         // 边界检查：lba 是相对于分区的偏移
         if (lba + SectorCount > (CurPartitionEnd - CurPartitionStart + 1)) {
             kerrorln("Read: LBA out of partition range");
-            return true; // 保持你失败返回 true 的风格
+            return true; 
         }
 
         // 实际物理 LBA = 分区起始 LBA + 偏移 LBA

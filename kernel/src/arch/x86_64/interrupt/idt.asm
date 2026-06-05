@@ -79,7 +79,7 @@
     iretq
 %endmacro
 
-; 然后修改你的 stub 宏
+
 %macro isr_no_err_stub 1
 int_stub%+%1:
     push 0

@@ -104,7 +104,6 @@ static nodelist_t* make_node(char* path)
             // S_ISDIR 对应 DT_DIR, S_ISREG 对应 DT_REG
             if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) {
                 info("ignoring node %s with unknown type\n", fullpath);
-                // 执行你的逻辑（既不是目录也不是普通文件）
                 continue;
             }
         }

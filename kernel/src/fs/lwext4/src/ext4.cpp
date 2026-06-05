@@ -519,7 +519,7 @@ static char* GetMountPointName(const char* path) {
     
     const char* second_slash = strchr(p, '/');
     
-    // 如果是 "/mp" 这种没有结尾斜杠的，根据你的需求决定是否支持
+    // 如果是 "/mp" 这种没有结尾斜杠的，根据的需求决定是否支持
     // 如果必须有第二个斜杠才叫挂载点：
     if (!second_slash) return nullptr;
 
