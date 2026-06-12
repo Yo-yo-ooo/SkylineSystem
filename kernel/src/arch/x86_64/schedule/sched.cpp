@@ -29,10 +29,24 @@
 #include <arch/x86_64/simd/simd.h>
 #include <klib/algorithm/queue.h>
 #include <klib/algorithm/art.h>
+#include <arch/x86_64/atomic/atomic_arch.h>
+
+typedef struct UserTCB{
+    uint64_t id;
+    uint32_t cpu_num;
+    uint32_t priority;
+    uint32_t preempt_count;
+    int32_t state;
+    uint64_t stack;
+    context_t ctx;
+    uint64_t heap_size;
+    bool IsForkThread;
+    uint64_t UDefBlockAddr; //User-Defined TCB Address
+};
 
 static volatile art_tree *PID2ProcessTree;
 
-static volatile uint64_t sched_tid = 0;
+static uint64_t sched_tid = 0;
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap);
 void sched_idle(){
     while (true)
@@ -40,17 +54,28 @@ void sched_idle(){
 }
 
 static cpu_t *get_lw_cpu() {
-    cpu_t *cpu = nullptr;
-    for (int32_t i = 0; i < smp_last_cpu; i++) {
-        if (smp_cpu_list[i] == nullptr || i == smp_bsp_cpu) continue;
-        if (!cpu) {
-            cpu = smp_cpu_list[i];
+    cpu_t *lw_cpu = nullptr;
+    
+    for (int32_t i = 0; i <= smp_last_cpu; i++) {
+        cpu_t *cpu = smp_cpu_list[i];
+        if (cpu == nullptr) continue; 
+
+        if (!lw_cpu) {
+            lw_cpu = cpu;
             continue;
         }
-        if (smp_cpu_list[i]->thread_count < cpu->thread_count)
-            cpu = smp_cpu_list[i];
+
+        // 使用 *(volatile uint32_t*)& 强制编译器每次都去内存（或L1/L2缓存）中拿最新数据
+        // 这样既不用加锁拖慢 Fork 的速度，又能拿到极度接近真实情况的负载值
+        uint32_t current_count = *(volatile uint32_t*)&cpu->thread_count;
+        uint32_t lowest_count  = *(volatile uint32_t*)&lw_cpu->thread_count;
+
+        if (current_count < lowest_count)
+            lw_cpu = cpu;
     }
-    return cpu;
+    
+    // 保底机制：万一真的没找到（例如系统尚未完全初始化），返回当前核
+    return lw_cpu ? lw_cpu : this_cpu();
 }
 
 namespace Schedule{
@@ -113,15 +138,21 @@ namespace Schedule{
         }
 
         thread_t *Pick(cpu_t *cpu) {
+// [修复 1] 使用 retry 标签，彻底避免 Demote 后的双向链表遍历异常
+retry:
             for (uint32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
                 thread_queue_t *queue = &cpu->thread_queues[i];
                 if (!queue->head)
                     continue;
                 
-                // 替换 Pick 中的 do-while 逻辑
+                if (!queue->current) {
+                    queue->current = queue->head;
+                }
+
                 thread_t *start = queue->current;
                 thread_t *thread = start;
                 bool found = false;
+                
                 do {
                     thread_t *next = thread->list_next;
                     if (thread->state == THREAD_RUNNING) {
@@ -132,24 +163,21 @@ namespace Schedule{
                         }
                         thread->preempt_count++;
                         if (thread->preempt_count >= SCHED_PREEMPTION_MAX) {
-                            int32_t ret = Schedule::Internal::Demote(cpu, thread);
+                            Schedule::Internal::Demote(cpu, thread);
                             thread->preempt_count = 0;
                             thread->flags &= ~TFLAGS_PREEMPTED;
-                            if (ret == 1) {
-                                // 不能用简单的 break，因为我们要退出整个队列的寻找
-                                i = 0; // 重置优先级遍历
-                                break;
-                            }
+                            
+                            // 链表结构已被 Demote 破坏，立刻放弃当前遍历，从最高优先级重新开始
+                            goto retry; 
                         } else {
                             found = true;
                             break;
                         }
                     }
                     thread = next;
-                } while (thread != start); // <--- 关键！回到起点才算遍历完一圈
+                } while (thread != start && queue->head != nullptr); 
 
                 if (found) {
-                    //queue->current = thread->next;
                     queue->current = thread->list_next;
                     thread->flags &= ~TFLAGS_PREEMPTED;
                     return thread;
@@ -326,7 +354,7 @@ namespace Schedule{
 
     thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry){
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
-        thread->id = sched_tid++;
+        thread->id = __a_fetch_addu64(&sched_tid,1);
         thread->cpu_num = cpu_num;
         thread->parent = parent;
         thread->IsForkThread = false;
@@ -375,7 +403,7 @@ namespace Schedule{
 
     thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]){
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
-        thread->id = sched_tid++;
+        thread->id = __a_fetch_addu64(&sched_tid,1);
         thread->cpu_num = cpu_num;
         thread->parent = parent;
         thread->IsForkThread = false;
@@ -461,7 +489,7 @@ namespace Schedule{
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         cpu_t *cpu = get_lw_cpu();
         spinlock_lock(&cpu->sched_lock);
-        thread->id = sched_tid++;
+        thread->id = __a_fetch_addu64(&sched_tid,1);
         thread->cpu_num = cpu->id;
         thread->parent = proc;
         thread->IsForkThread = true;
@@ -566,7 +594,8 @@ namespace Schedule{
         LAPIC::StopTimer();
         Schedule::this_thread()->flags &= ~TFLAGS_PREEMPTED;
         Schedule::this_thread()->preempt_count = 0;
-        LAPIC::IPI(this_cpu()->id, SCHED_VEC + 1);
+        //LAPIC::IPI(this_cpu()->id, SCHED_VEC + 1);
+        asm volatile("int $49");
     }
 
     void PAUSE(){

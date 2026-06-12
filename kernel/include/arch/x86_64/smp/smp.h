@@ -99,8 +99,6 @@ typedef struct cpu_t{
 
     alignas(16) uint8_t exit_stack[4096];
 } cpu_t;
-
-constexpr uint64_t ININTR_OFF = offsetof(cpu_t, InIntr);
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);
 
 extern uint32_t smp_bsp_cpu;

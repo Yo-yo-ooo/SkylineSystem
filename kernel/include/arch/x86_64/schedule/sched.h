@@ -45,8 +45,8 @@ typedef struct proc_t proc_t;
 #include <fs/fd.h>
 
 typedef struct thread_t {
-    uint64_t thread_stack; // GS+0
-    uint64_t kernel_rsp;   // GS+8
+    uint64_t thread_stack; // RAX+0
+    uint64_t kernel_rsp;   // RAX+8
 
     uint64_t id;
     uint32_t cpu_num;

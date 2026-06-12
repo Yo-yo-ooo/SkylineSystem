@@ -22,6 +22,7 @@
 [extern idt_exception_handler]
 [extern this_cpu]
 [global idt_int_table]
+[extern CPU_ININTR_OFF]
 
 %macro pushaq 0
     push rax
@@ -59,22 +60,25 @@
     pop rax
 %endmacro
 
-%define OFFSET_CPU_ININTR 2684 
+
 
 %macro isr_common_logic 1
     pushaq
 
-    ; --- Set InIntr = true ---
+    ;--- Set InIntr = true ---
+    mov rcx, [rel CPU_ININTR_OFF]
     call this_cpu          ; return rax = cpu_t*
-    mov byte [rax + OFFSET_CPU_ININTR], 1
+    mov byte [rcx + rax], 1
 
     mov rdi, rsp           
     call idt_exception_handler
 
-    call this_cpu     
-    mov byte [rax + OFFSET_CPU_ININTR], 0
+    mov rcx, [rel CPU_ININTR_OFF]
+    call this_cpu          ; return rax = cpu_t*
+    mov byte [rcx + rax], 0
 
     popaq
+
     add rsp, 16
     iretq
 %endmacro

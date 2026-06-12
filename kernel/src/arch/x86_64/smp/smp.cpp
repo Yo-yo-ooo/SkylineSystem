@@ -27,6 +27,10 @@
 #include <arch/x86_64/simd/simd.h>
 #include<arch/x86_64/cpu/vf.h>
 
+// 把编译期偏移量赋值给全局变量，汇编可读取
+//extern "C" const uint64_t CPU_CURRENT_THREAD_OFF = offsetof(cpu_t,current_thread);
+extern "C" const uint64_t CPU_ININTR_OFF = offsetof(cpu_t,InIntr);
+
 cpu_t ZeroCPU = {0};
 cpu_t *smp_cpu_list[MAX_CPU] = {&ZeroCPU};
 volatile spinlock_t smp_lock = 0;
@@ -37,6 +41,7 @@ extern volatile struct limine_mp_response *mp_response;
 
 void smp_setup_kstack(cpu_t *cpu) {
     void *stack = (void*)VMM::Alloc(kernel_pagemap, 8, true);
+
     TSS::SetIST(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
     TSS::SetRSP(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
 }
@@ -82,11 +87,12 @@ void EnableFSGSBASE(cpu_t *cpu) {
 
 void smp_cpu_init(struct limine_mp_info *mp_info) {
     VMM::SwitchPageMap(kernel_pagemap);
-    spinlock_lock(&smp_lock);
     GDT::Init(mp_info->lapic_id);
     idt_reinit(mp_info->lapic_id);
+    spinlock_lock(&smp_lock);
     cpu_t *cpu = smp_cpu_list[mp_info->lapic_id];
     cpu->id = mp_info->lapic_id;
+    spinlock_unlock(&smp_lock);
     LAPIC::Init();
     cpu->lapic_ticks = LAPIC::InitTimer();
     cpu->pagemap = kernel_pagemap;
@@ -107,7 +113,8 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     fpu_init();
     simd_cpu_init(cpu);
     //EnableFSGSBASE(cpu);
-    
+    //wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
+    spinlock_lock(&smp_lock);
     kpok("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
     if (mp_info->lapic_id > smp_last_cpu) smp_last_cpu = mp_info->lapic_id;
