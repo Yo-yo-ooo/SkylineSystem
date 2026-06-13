@@ -60,8 +60,9 @@ typedef struct cpu_overloadable_functions_t{
 
 typedef void (*interrupt_handler_t)(context_t*);
 typedef struct cpu_t{
-    uint64_t kernel_stack;    // 偏移 0: 当前 CPU 的内核栈顶 (用于 syscall 入口)
-    uint64_t user_scratch;    // 偏移 8: 临时存放用户态 RSP (用于 syscall 入口)
+    struct cpu_t* self;          // 偏移 0：指向自身，this_cpu() 快速获取
+    uint64_t kernel_stack;       // 偏移 8：当前 CPU 内核栈顶（syscall 入口切栈用）
+    uint64_t user_scratch;       // 偏移 16：临时保存用户态 RSP
 
     uint32_t id;
     uint64_t lapic_ticks;

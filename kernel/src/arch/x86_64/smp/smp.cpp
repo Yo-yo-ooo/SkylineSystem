@@ -29,7 +29,7 @@
 
 // 把编译期偏移量赋值给全局变量，汇编可读取
 //extern "C" const uint64_t CPU_CURRENT_THREAD_OFF = offsetof(cpu_t,current_thread);
-extern "C" const uint64_t CPU_ININTR_OFF = offsetof(cpu_t,InIntr);
+//extern "C" const uint64_t CPU_ININTR_OFF = offsetof(cpu_t,InIntr);
 
 cpu_t ZeroCPU = {0};
 cpu_t *smp_cpu_list[MAX_CPU] = {&ZeroCPU};
@@ -113,7 +113,9 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     fpu_init();
     simd_cpu_init(cpu);
     //EnableFSGSBASE(cpu);
-    //wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
+    wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
+    // 交换 GS：此时 GS 切换为内核 cpu_t 基址，用户态 GS 初始为0
+    asm volatile("swapgs" ::: "memory");
     spinlock_lock(&smp_lock);
     kpok("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
@@ -139,7 +141,9 @@ void smp_init() {
     smp_setup_thread_queue(bsp_cpu);
     smp_setup_kstack(bsp_cpu);
     EnableFSGSBASE(bsp_cpu);
-    
+    wrmsr(KERNEL_GS_BASE, (uint64_t)bsp_cpu);
+    // 交换 GS：此时 GS 切换为内核 cpu_t 基址，用户态 GS 初始为0
+    asm volatile("swapgs" ::: "memory");
     //sse_enable();
     simd_cpu_init(bsp_cpu);
     kinfo("Detected %zu CPUs.\n", mp_response->cpu_count);

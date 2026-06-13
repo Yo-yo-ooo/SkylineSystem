@@ -61,6 +61,14 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
 #include <klib/algorithm/queue.h>
 extern "C" void syscall_entry();
 
+// RFLAGS 关键标志位
+#define RFLAGS_TF   (1 << 8)  // Trap Flag (单步调试)
+#define RFLAGS_IF   (1 << 9)  // Interrupt Flag (中断响应)
+#define RFLAGS_DF   (1 << 10) // Direction Flag (方向标志)
+#define RFLAGS_IOPL (3 << 12) // I/O Privilege Level
+#define RFLAGS_NT   (1 << 14) // Nested Task
+#define RFLAGS_AC   (1 << 18) // Alignment Check
+
 /*
 syscall_lists[x] = sys_xxxx //! <---- it means some feature in this syscall doesn't complete!
 syscall_lists[x] = sys_xxxx //? <---- it means i don't know how to impl this syscall
@@ -90,5 +98,7 @@ void syscall_init() {
     star |= ((uint64_t)0x13 << 48);
     wrmsr(IA32_STAR, star);
     wrmsr(IA32_LSTAR, (uint64_t)syscall_entry);
+    uint64_t fmask = RFLAGS_IF | RFLAGS_DF | RFLAGS_TF | RFLAGS_IOPL | RFLAGS_NT | RFLAGS_AC;
+    wrmsr(IA32_FMASK, fmask);
     kinfo("User INIT(syscall_init): enabled.\n");
 }

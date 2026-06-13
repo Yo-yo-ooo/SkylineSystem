@@ -219,10 +219,10 @@ retry:
             cpu->current_thread = next_thread;
             *ctx = next_thread->ctx;
             TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
-            
+            cpu->kernel_stack = next_thread->kernel_rsp;
             VMM::SwitchPageMap(next_thread->pagemap);
             cpu->OverLoadableFuncs.WRFSBASE(next_thread->fs);
-            wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
+            //wrmsr(KERNEL_GS_BASE, (uint64_t)next_thread);
             cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             spinlock_unlock(&cpu->sched_lock);
             uint64_t final_ticks = cpu->thread_queues[next_thread->priority].quantum;
@@ -573,9 +573,10 @@ retry:
         return proc;
     }
 
-    thread_t *this_thread(){
-        if (!this_cpu()) return nullptr;
-        return this_cpu()->current_thread;
+    thread_t* this_thread() {
+        cpu_t* cpu = this_cpu();
+        if (!cpu) return nullptr;
+        return cpu->current_thread;
     }
 
     proc_t *this_proc(){
