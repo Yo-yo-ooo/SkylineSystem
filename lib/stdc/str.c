@@ -39,6 +39,24 @@ char* strcat(char* dest, const char* source){
 	return dest;
 }
 
+char* strncat(char* dest, const char* source, size_t n){
+	if (dest == NULL || source == NULL){
+		return dest;
+	}
+	char* p = dest;
+	while (*p != '\0'){
+		p++;
+	}
+	while (*source != '\0' && n > 0){
+		*p = *source;
+		p++;
+		source++;
+		n--;
+	}
+	*p = '\0';
+	return dest;
+}
+
 uint8_t strcmp(const char *cs, const char *ct)
 {
     uint8_t c1, c2;
