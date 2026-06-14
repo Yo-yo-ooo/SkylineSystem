@@ -70,8 +70,11 @@ static uint64_t _InFile_clst2sect (	/* !=0:Sector number, 0:Failed (invalid clus
 	return fs_database + (uint64_t)fs_csize * clst;	/* Start sector number of the cluster */
 }
 
-#ifdef UnC
-FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image){
+
+FS_TYPE IdentifyFat(
+    VsDevType DriverType,uint32_t DriverID,
+    uint32_t PartitionID,bool Use_Virt_Image
+){
     uint64_t nclst;
     uint64_t PStart;
     uint8_t buffer[36];
@@ -81,8 +84,8 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image){
     if(Use_Virt_Image == true)
         PStart = 0;
     else{
-        Dev::SetSDev(DriverID);
-        if(GetPartitionStart(DriverID,PartitionID,PStart) != 0)
+        Dev::SetSDev(DriverType,DriverID);
+        if(GetPartitionStart(DriverType,DriverID,PartitionID,PStart) != 0)
             return {PARTITION_TYPE_UNKNOWN,5};
     }
     if(Dev::ReadBytes(PStart + 3,8,FSName) == false){
@@ -130,4 +133,3 @@ FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image){
         return {FST,0};
     }
 }
-#endif

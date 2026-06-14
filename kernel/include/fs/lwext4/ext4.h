@@ -623,7 +623,11 @@ void test_lwext4_dir_ls(char *path);
 int32_t ext4_verify_buf(const uint8_t *b, size_t len, uint8_t c);
 bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count);
 
-FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image);
+FS_TYPE IdentifyExtx(
+    VsDevType DriverType,uint32_t DriverID,
+    uint32_t PartitionID,
+    bool Use_Virt_Image
+);
 
 void ext4_fs_test_all();
 

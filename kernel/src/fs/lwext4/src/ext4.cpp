@@ -3539,19 +3539,24 @@ bool test_lwext4_file_test(uint8_t *rw_buff, uint32_t rw_size, uint32_t rw_count
     r = ext4_fclose(&f);
     return true;
 }
-#ifdef UnC
-FS_TYPE IdentifyExtx(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image){
+
+FS_TYPE IdentifyExtx(
+    VsDevType DriverType,uint32_t DriverID,
+    uint32_t PartitionID,
+    bool Use_Virt_Image
+){
     uint64_t PStart;
     if(Use_Virt_Image == true){
         PStart = 0;
         goto Identify;
     }
-    if(GetPartitionStart(DriverID,PartitionID,PStart)){
+
+    if(GetPartitionStart(DriverType,DriverID,PartitionID,PStart)){
         return {PARTITION_TYPE_UNKNOWN,5};
     }else{
 Identify:
         struct ext4_sblock sb;
-        Dev::SetSDev(DriverID);
+        Dev::SetSDev(DriverType,DriverID);
         if(Dev::ReadBytes(
             PStart + EXT4_SUPERBLOCK_OFFSET,
             EXT4_SUPERBLOCK_SIZE,&sb) == false)
@@ -3577,7 +3582,7 @@ Identify:
         }
     }
 }
-#endif
+
 void ext4_fs_test_all(){
 
     if(!ext4_kernel_init("sata0","/mp/",0)){hcf();}

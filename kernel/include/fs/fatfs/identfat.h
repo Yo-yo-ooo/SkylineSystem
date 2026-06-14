@@ -8,6 +8,7 @@
 
 #include <partition/mbrgpt.h>
 #include <partition/identfstype.h>
+#include <drivers/dev/dev.h>
 
 typedef struct FatFsDesc{
     FS_TYPE_ID FSType;
@@ -19,6 +20,6 @@ typedef struct FatFsDesc{
     uint64_t Size;
 }FF_DESC;
 
-FS_TYPE IdentifyFat(uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image);
+FS_TYPE IdentifyFat(VsDevType DriverType,uint32_t DriverID,uint32_t PartitionID,bool Use_Virt_Image);
 
 #endif
