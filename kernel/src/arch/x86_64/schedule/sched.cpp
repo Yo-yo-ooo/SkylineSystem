@@ -47,7 +47,11 @@ typedef struct UserTCB{
 static volatile art_tree *PID2ProcessTree;
 
 static uint64_t sched_tid = 0;
-extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap);
+extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap, 
+                  uint64_t *tls_offset = nullptr, 
+                  uint64_t *tls_memsz = nullptr, 
+                  uint64_t *tls_filesz = nullptr, 
+                  uint64_t *tls_align = nullptr);
 void sched_idle(){
     while (true)
     {Schedule::Yield();}
@@ -411,7 +415,6 @@ retry:
         thread->flags = 0;
         thread->priority = (priority > (THREAD_QUEUE_CNT - 1) ? (THREAD_QUEUE_CNT - 1) : priority);
 
-
         Schedule::Internal::ProcessAddThread(parent, thread);
 
         thread->sig_deliver = 0;
@@ -421,11 +424,13 @@ retry:
         // Load ELF
         static ext4_file f;
         ext4_fopen(&f,Path,"r");
-        //kinfoln("%d",f.fsize);
         uint8_t *buffer = (uint8_t*)kmalloc(ext4_fsize(&f));
         _memset(&thread->ctx,0,sizeof(context_t));
         ext4_fread(&f,buffer,ext4_fsize(&f),NULL);
-        thread->ctx.rip = elf_load(buffer, thread->pagemap); 
+        
+        // [修改 1] 接收 ELF 中的 TLS 参数
+        uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
+        thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align); 
         ext4_fclose(&f);
 
         cpu_t *cpu = get_cpu(cpu_num);
@@ -465,12 +470,35 @@ retry:
         Schedule::PrepareUserStack(thread, argc, argv, envp);
         thread->thread_stack = thread->ctx.rsp;
 
-        thread->fs = 0;
+        // [修改 2] 建立并初始化 TLS 内存
+        if (tls_memsz > 0) {
+            if (tls_align == 0) tls_align = 16;
+            
+            // 对齐计算：TLS实际占用空间 + 8字节的 TCB(存放自身指针)
+            uint64_t total_tls_size = ALIGN_UP(tls_memsz, tls_align) + 8;
+            uint64_t tls_pages = DIV_ROUND_UP(total_tls_size, PAGE_SIZE);
+            uint64_t tls_mem = (uint64_t)VMM::Alloc(thread->pagemap, tls_pages, true);
+            
+            uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
+            uint64_t tls_data_start = tcb_base - ALIGN_UP(tls_memsz, tls_align);
+            
+            // 切换到用户页表写入初始数据
+            VMM::SwitchPageMap(thread->pagemap);
+            __memcpy((void*)tls_data_start, (void*)(buffer + tls_offset), tls_filesz);
+            *(uint64_t*)tcb_base = tcb_base; // 设置 fs:0 指向自己
+            VMM::SwitchPageMap(kernel_pagemap); // 切回内核页表
+            
+            thread->fs = tcb_base;
+        } else {
+            thread->fs = 0;
+        }
+
+        // [修复] 释放 elf 缓存文件，防止内存泄漏
+        kfree(buffer);
 
         thread->state = THREAD_RUNNING;
         get_cpu(cpu_num)->has_runnable_thread = true;
 
-        //Schedule::Internal::AddThread(get_cpu(cpu_num), thread);
         cpu_t *target_cpu = get_cpu(cpu_num);
         spinlock_lock(&target_cpu->sched_lock);
         Schedule::Internal::AddThread(target_cpu, thread);

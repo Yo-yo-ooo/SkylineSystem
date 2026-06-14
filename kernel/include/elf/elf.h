@@ -60,6 +60,7 @@ namespace Elf64
     constexpr uint32_t PT_NOTE      = 4;
     constexpr uint32_t PT_SHLIB     = 5;
     constexpr uint32_t PT_PHDR      = 6;
+    constexpr uint32_t PT_TLS       = 7;
     constexpr uint32_t PT_LOOS      = 0x60000000;
     constexpr uint32_t PT_HIOS      = 0x6fffffff;
     constexpr uint32_t PT_LOPROC    = 0x70000000;
