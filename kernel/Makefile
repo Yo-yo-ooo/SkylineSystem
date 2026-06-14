@@ -72,7 +72,7 @@ override KCFLAGS += \
     -fno-PIC \
     -ffunction-sections \
     -fdata-sections \
-	-O0 \
+	-O2 \
 	-g3 \
 	-DLIMINE_API_REVISION=5 \
 	-fpermissive \

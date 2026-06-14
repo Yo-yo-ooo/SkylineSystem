@@ -5,6 +5,7 @@ include ../gdef.mk
 CFLAGS_x86mem = -ffreestanding -msse4.2 -O3 \
     -isystem ../kernel/freestnd-c-hdrs/x86_64/include \
     -nostdlib -nostdinc \
+	-falign-functions=32 -falign-loops=32 -falign-jumps=32 \
     -fpie -fomit-frame-pointer -fno-common -fno-zero-initialized-in-bss \
     -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
     -fno-stack-protector -fno-stack-check -fno-strict-aliasing \
