@@ -74,7 +74,7 @@ static volatile uint32_t gc_lock = 0;
 // ----------------------------------------------------------------------------
 static volatile uint32_t global_qsbr_slot_alloc = 0;
 
-static __thread int       tls_qsbr_slot = -1;
+static __thread int32_t       tls_qsbr_slot = -1;
 static __thread void* tls_small_scb_list = NULL;
 static __thread uint32_t  tls_pending_small_count = 0;
 static __thread void* tls_large_scb_list = NULL;
@@ -157,7 +157,7 @@ static void push_deferred_large_scb(void* scb) {
     }
 }
 
-static inline int qsbr_enter() {
+static inline int32_t qsbr_enter() {
     // [TLS优化]：取代原先昂贵的 rdtsc() 运算
     if (__builtin_expect(tls_qsbr_slot == -1, 0)) {
         tls_qsbr_slot = __atomic_fetch_add(&global_qsbr_slot_alloc, 1, __ATOMIC_RELAXED) % QSBR_SLOTS;
@@ -166,25 +166,25 @@ static inline int qsbr_enter() {
     return tls_qsbr_slot;
 }
 
-static inline void qsbr_leave(int slot) {
+static inline void qsbr_leave(int32_t slot) {
     __atomic_sub_fetch(&qsbr_counters[slot].count, 1, __ATOMIC_RELEASE);
 }
 
 // 核心优化：静止期检测替代全静止检测
-static inline int is_quiescent() {
+static inline int32_t is_quiescent() {
     uint64_t snapshot[QSBR_SLOTS];
     uint64_t generation = gc_generation;
     
-    for (int i = 0; i < QSBR_SLOTS; i++) {
+    for (int32_t i = 0; i < QSBR_SLOTS; i++) {
         snapshot[i] = __atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE);
     }
     
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     
-    for (int retry = 0; retry < 1000; retry++) {
-        int all_advanced = 1;
+    for (int32_t retry = 0; retry < 1000; retry++) {
+        int32_t all_advanced = 1;
         
-        for (int i = 0; i < QSBR_SLOTS; i++) {
+        for (int32_t i = 0; i < QSBR_SLOTS; i++) {
             uint64_t current = __atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE);
             if (current <= snapshot[i]) {
                 all_advanced = 0;
@@ -200,7 +200,7 @@ static inline int is_quiescent() {
             return 0;
         }
         
-        for (int i = 0; i < 1000; i++) {
+        for (int32_t i = 0; i < 1000; i++) {
             CPU_RELAX();
         }
     }
@@ -252,8 +252,8 @@ static inline void try_gc() {
     }
     
     uint64_t total_pending = pending_small_count + pending_large_count;
-    int max_retries = 10;
-    int pause_count = 1000;
+    int32_t max_retries = 10;
+    int32_t pause_count = 1000;
     
     if (total_pending > 100) {
         max_retries = 50;
@@ -264,13 +264,13 @@ static inline void try_gc() {
         pause_count = 20000;
     }
     
-    int gc_success = 0;
-    for (int retry = 0; retry < max_retries; retry++) {
+    int32_t gc_success = 0;
+    for (int32_t retry = 0; retry < max_retries; retry++) {
         if (is_quiescent()) {
             gc_success = 1;
             break;
         }
-        for (int i = 0; i < pause_count; i++) {
+        for (int32_t i = 0; i < pause_count; i++) {
             CPU_RELAX();
         }
     }
@@ -328,7 +328,7 @@ unlock:
     __atomic_store_n(&gc_lock, 0, __ATOMIC_RELEASE);
 }
 
-static inline int GetSizeClassIndex(size_t size) {
+static inline int32_t GetSizeClassIndex(size_t size) {
     if (size <= 32) return 0;
     uint64_t s = size - 1;
     uint32_t k = 63 - __builtin_clzll(s); 
@@ -348,7 +348,7 @@ static inline int GetSizeClassIndex(size_t size) {
 static void* _skyline_malloc_internal(size_t size) {
     if (size == 0 || size > 9223372036854775808ULL) return NULL;
 
-    int idx = GetSizeClassIndex(size);
+    int32_t idx = GetSizeClassIndex(size);
     if (idx < 0 || idx >= 75) return NULL;
     
     uint64_t size_class   = SizeClassTable[idx][0];
@@ -359,7 +359,7 @@ static void* _skyline_malloc_internal(size_t size) {
         MainControlBlock_t* mcb = NULL;
         MainControlBlock_t* prev_mcb = NULL;
         
-        for (int retry = 0; retry < 10; retry++) {
+        for (int32_t retry = 0; retry < 10; retry++) {
             mcb = (MainControlBlock_t*)SizeClassTable[idx][1];
             prev_mcb = NULL;
             
@@ -385,9 +385,9 @@ static void* _skyline_malloc_internal(size_t size) {
             if (!new_mcb) return NULL;
             new_mcb->is_full = 0;
             new_mcb->rem_scb_count = 2014; 
-            for (int i = 0; i < 32; i++) new_mcb->bitmap[i] = 0;
+            for (int32_t i = 0; i < 32; i++) new_mcb->bitmap[i] = 0;
             new_mcb->bitmap[31] = 0xFFFFFFFFFFFFFFFFULL << 30; 
-            for (int i = 0; i < 2014; i++) new_mcb->list_base[i] = 0;
+            for (int32_t i = 0; i < 2014; i++) new_mcb->list_base[i] = 0;
             new_mcb->next = 0; 
 
             void* actual;
@@ -406,7 +406,7 @@ static void* _skyline_malloc_internal(size_t size) {
         }
 
         uint64_t scb_idx = 0xFFFFFFFFFFFFFFFFULL;
-        for (int i = 0; i < 32; i++) {
+        for (int32_t i = 0; i < 32; i++) {
             uint64_t current_bitmap = mcb->bitmap[i]; 
             if (current_bitmap != 0xFFFFFFFFFFFFFFFFULL) {
                 scb_idx = i * 64 + __builtin_ctzll(~current_bitmap);
@@ -451,7 +451,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     scb->rem_count = total_objects;
                     scb->step_size = step_size;
 
-                    for (int i = 0; i < 2044; i++) scb->bitmap[i] = 0;
+                    for (int32_t i = 0; i < 2044; i++) scb->bitmap[i] = 0;
                     uint64_t last_word = scb->bit_tail / 64;
                     uint64_t last_bit = scb->bit_tail % 64;
 
@@ -482,7 +482,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     uint64_t current_bitmap = scb->bitmap[i];
                     if (current_bitmap == 0xFFFFFFFFFFFFFFFFULL) break; 
                     
-                    int free_bit = __builtin_ctzll(~current_bitmap);
+                    int32_t free_bit = __builtin_ctzll(~current_bitmap);
                     uint64_t current_bit = i * 64 + free_bit;
                     if (current_bit > scb->bit_tail) break; 
                     
@@ -529,8 +529,8 @@ static void* _skyline_malloc_internal(size_t size) {
             uint64_t old_rem = __a_subu32(&scb->rem_count, 1); 
             if (old_rem == 1) { 
                 if (__atomic_compare_exchange_n(&scb->is_full, &(uint64_t){0}, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-                    int mcb_word = scb_idx / 64;
-                    int mcb_bit  = scb_idx % 64;
+                    int32_t mcb_word = scb_idx / 64;
+                    int32_t mcb_bit  = scb_idx % 64;
                     __a_or_64(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
                     uint32_t old_mcb_rem = __a_subu32(&mcb->rem_scb_count, 1);
                     if (old_mcb_rem == 1) mcb->is_full = 1;
@@ -552,9 +552,9 @@ static void* _skyline_malloc_internal(size_t size) {
                     
                     l_scb->is_full = 0;
                     l_scb->rem_count = 2014; 
-                    for (int i = 0; i < 32; i++) l_scb->bitmap[i] = 0;
+                    for (int32_t i = 0; i < 32; i++) l_scb->bitmap[i] = 0;
                     l_scb->bitmap[31] = 0xFFFFFFFFFFFFFFFFULL << 30; 
-                    for (int i = 0; i < 2014; i++) l_scb->list_base[i] = 0;
+                    for (int32_t i = 0; i < 2014; i++) l_scb->list_base[i] = 0;
                     
                     __atomic_store_n(&mcb->list_base[scb_idx], l_scb, __ATOMIC_RELEASE);
                 } else {
@@ -569,12 +569,12 @@ static void* _skyline_malloc_internal(size_t size) {
             }
 
             uint64_t obj_idx = 0xFFFFFFFFFFFFFFFFULL;
-            for (int i = 0; i < 32; i++) {
+            for (int32_t i = 0; i < 32; i++) {
                 while (1) {
                     uint64_t current_bitmap = l_scb->bitmap[i];
                     if (current_bitmap == 0xFFFFFFFFFFFFFFFFULL) break;
                     
-                    int free_bit = __builtin_ctzll(~current_bitmap);
+                    int32_t free_bit = __builtin_ctzll(~current_bitmap);
                     uint64_t current_bit = i * 64 + free_bit;
                     if (current_bit >= 2014) break;
 
@@ -637,8 +637,8 @@ static void* _skyline_malloc_internal(size_t size) {
             if (old_rem == 1) {
                 uint64_t expected = 0;
                 if (__atomic_compare_exchange_n(&l_scb->is_full, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-                    int mcb_word = scb_idx / 64;
-                    int mcb_bit  = scb_idx % 64;
+                    int32_t mcb_word = scb_idx / 64;
+                    int32_t mcb_bit  = scb_idx % 64;
                     __a_or_64(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
                     uint32_t old_mcb_rem = __a_subu32(&mcb->rem_scb_count, 1);
                     if (old_mcb_rem == 1) mcb->is_full = 1;
@@ -668,7 +668,7 @@ static void _skyline_free_internal(void* ptr) {
     uint64_t mcb_addr     = header->MCBAddr;
     uint64_t block_addr   = header->BlockAddr; 
 
-    int idx = GetSizeClassIndex(size_class);
+    int32_t idx = GetSizeClassIndex(size_class);
     if (idx < 0 || idx >= 75) return; 
     
     uint32_t word_idx = obj_bit_loc / 64;
@@ -687,8 +687,8 @@ static void _skyline_free_internal(void* ptr) {
 
         if (old_rem == 0) {
             scb->is_full = 0; 
-            int mcb_word = mcb_slot / 64;
-            int mcb_bit  = mcb_slot % 64;
+            int32_t mcb_word = mcb_slot / 64;
+            int32_t mcb_bit  = mcb_slot % 64;
             
             __a_clear_bit(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
             uint32_t old_mcb_rem = __a_fetch_addu32(&mcb->rem_scb_count, 1); 
@@ -724,8 +724,8 @@ static void _skyline_free_internal(void* ptr) {
 
         if (old_rem == 0) {
             l_scb->is_full = 0; 
-            int mcb_word = mcb_slot / 64;
-            int mcb_bit  = mcb_slot % 64;
+            int32_t mcb_word = mcb_slot / 64;
+            int32_t mcb_bit  = mcb_slot % 64;
 
             __a_clear_bit(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
             uint32_t old_mcb_rem = __a_fetch_addu32(&mcb->rem_scb_count, 1);
@@ -750,7 +750,7 @@ static void _skyline_free_internal(void* ptr) {
 // ============================================================================
 
 void* malloc(size_t size) {
-    int qsbr_slot = qsbr_enter();
+    int32_t qsbr_slot = qsbr_enter();
     void* ptr = _skyline_malloc_internal(size);
     qsbr_leave(qsbr_slot);
     return ptr;
@@ -758,7 +758,7 @@ void* malloc(size_t size) {
 
 void free(void* ptr) {
     if (!ptr) return;
-    int qsbr_slot = qsbr_enter();
+    int32_t qsbr_slot = qsbr_enter();
     _skyline_free_internal(ptr);
     qsbr_leave(qsbr_slot);
     
@@ -781,8 +781,8 @@ void* realloc(void* ptr, size_t size) {
     
     AllocBlock_t* header = (AllocBlock_t*)((uint64_t)ptr - sizeof(AllocBlock_t));
     if (header->AllocSizeAligned >= size) {
-        int new_idx = GetSizeClassIndex(size);
-        int old_idx = GetSizeClassIndex(header->AllocSizeAligned);
+        int32_t new_idx = GetSizeClassIndex(size);
+        int32_t old_idx = GetSizeClassIndex(header->AllocSizeAligned);
         if ((new_idx < old_idx && header->AllocSizeAligned - size > 4096)
         || (SizeClassTable[old_idx][2] == 0 && new_idx != old_idx)) {
             void* new_ptr = malloc(size);
