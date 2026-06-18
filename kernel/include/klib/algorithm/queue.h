@@ -21,6 +21,7 @@ namespace Queue{
 
     queue_item_t *Append(queue_t *queue, void *data);
     void *Dequeue(queue_t *queue);
+    void Destroy(queue_t *queue);
 }
 #endif
 

@@ -52,4 +52,18 @@ namespace Queue{
         kfree(it);
         return data;
     }
+
+    void Destroy(queue_t *queue) {
+        if (!queue)
+            return;
+
+        queue_item_t *curr = queue->head;
+        while (curr) {
+            queue_item_t *next = curr->next;
+            kfree(curr);
+            curr = next;
+        }
+
+        kfree(queue);
+    }
 }

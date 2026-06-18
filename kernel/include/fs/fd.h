@@ -32,6 +32,7 @@
 
 #define O_EXEC O_PATH
 #define O_SEARCH O_PATH
+
 #include <fs/lwext4/ext4.h>
 #include <drivers/dev/dev.h>
 #include <klib/algorithm/hmap.h>
@@ -42,53 +43,35 @@ enum FSType : uint8_t{
     FS_FATFS = 2,
 };
 
-typedef struct FileDesc{
-    size_t off;
-    int32_t flags;
-    char* path;
-    size_t size;
-    uint32_t Type; //file type
-    FSType FsType;
-    void *MetaData; //FS File Meta Data
-    size_t MetaDataSize;
-} fd_t;
 
-struct FSOps{
-    int32_t (*write)(fd_t* fsd, const void *buf, size_t count);
-    int32_t (*read)(fd_t* fsd, void *buf, size_t count);
-    int32_t (*lseek)(fd_t* fsd, size_t offset, int32_t whence);
-    int32_t (*close)(fd_t* fsd);
-    int32_t (*open)(fd_t* fsd, const char* path, int32_t flags);
-};
-
-
-int32_t ReadFile(fd_t* fsd, void *buf, size_t count);
-int32_t WriteFile(fd_t* fsd, const void *buf, size_t count);
-int32_t LseekFile(fd_t* fsd, size_t offset, int32_t whence);
-int32_t CloseFile(fd_t* fsd);
-int32_t OpenFile(fd_t* fsd, const char* path, int32_t flags);
-
-/*
-fd_t->Type
-0:Generic File
-1:DIR
-2:socket
-3:block dev
-4:char dev
-5:pipe
-*/
 
 extern "C" char* GetMountPointName(const char* path);
-
-
 
 struct alignas(16) __hmap_s_mp{
     char *MPName;
     void* MP;
+    FSType FST;
 };
+
+typedef struct __hmap_s_fs{
+    int32_t (*write)(void* filedesc, const void *buf, size_t count);
+    int32_t (*read)(void* filedesc, void *buf, size_t count);
+    int32_t (*lseek)(void* filedesc, size_t offset, int32_t whence);
+    int32_t (*close)(void* filedesc);
+    int32_t (*open)(void* filedesc, const char* path, int32_t flags);
+    uint64_t (*fsize)(void *filedesc);
+}FS_PDESC; //File System public mamage desc
+
+typedef struct fd{
+    void *filedesc;
+}fd_t;
+
 
 extern "C" int32_t __hmap_s_mp_compare(const void* a,const void* b);
 extern "C" uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t seed1);
 extern "C" volatile struct hashmap* HMapS_MP;
+
+
+
 
 #endif

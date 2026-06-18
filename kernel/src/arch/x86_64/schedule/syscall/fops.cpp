@@ -29,80 +29,33 @@
 uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
-    if (!fd)
-        return -EBADF;
-    //FileSystemOps[fd->FsType].read(fd,(void*)buf,count);
-    fd->off += count;
-    return count;
+
 }
 
 uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    kinfo("Inside sys_fwrite, fd=%d, buf=0x%p\n", fd_idx, buf);
-    fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
-    if (!fd)
-        return -EBADF;
-    //int64_t written = FileSystemOps[fd->FsType].write(fd, (void*)buf, count);
-    //if (written > 0) fd->off += written;
-    //return written;
-    //return count;
+
 }
 
 int64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2){
-    fd_t *fd = Schedule::this_proc()->fd_table[fd_idx];
-    if (!fd)
-        return -EBADF;
-    //if(FileSystemOps[fd->FsType].lseek(fd,offset,whence) == EOK)
-     //   return offset;
-    else{return -1;}
+
 }
 
 
 uint64_t sys_fopen(uint64_t path, uint64_t flags, uint64_t mode, \
     GENERATE_IGN3()) {
-    IGNV_3();
-    proc_t *proc = Schedule::this_proc();
 
-    fd_t *fd = (fd_t*)kmalloc(sizeof(fd));
-    fd->flags = (int32_t)flags;
-    fd->off = 0;
-    fd->path = (char*)path;
-
-    
-    /* ext4_fopen(&fd->f,path,flags); */
-    //FileSystemOps[FSType::FS_EXT4].open(fd,(const char*)path,flags);
-    fd->FsType = FSType::FS_EXT4;
-    fd->Type = 0; //Generic File
-return_:
-    if (!fd) return (uint64_t)((int64_t)-1);
-    proc->fd_table[proc->fd_count++] = fd;
-    return proc->fd_count - 1;
 }
 
 uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5()){
     IGNV_5();
-    proc_t *proc = Schedule::this_proc();
-    if(fd >= (uint64_t)proc->fd_count)
-        return (uint64_t)((int64_t)-1);
-    else{
-        if(proc->fd_table[fd]->Type == 0){ //Generic File
-            //FileSystemOps[proc->fd_table[fd]->FsType].close(proc->fd_table[fd]);
-        }
-    }
-    proc->fd_table[fd] = nullptr;
-    return 0;
+
 }
 
 uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4()){
     IGNV_4();
-    if(ext4_dir_mk((const char*)path) != EOK)
-        return (uint64_t)((int64_t)-1);
-    if(mode != NULL)
-        if(ext4_mode_set(path,(uint32_t)mode) != EOK)
-        return (uint64_t)((int64_t)-1);
-    return 0;
+
 }
 

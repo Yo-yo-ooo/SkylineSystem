@@ -23,11 +23,7 @@
 #include <fs/lwext4/ext4.h>
 #include <klib/algorithm/hmap.h>
 
-struct _FileSystemDesc{
-    char *Name; //KeyWord
-    uint32_t NameSize;
-    struct FSOps fsops;
-};
+
 
 #include <klib/klib.h>
 #include <mem/heap.h>
@@ -73,3 +69,4 @@ extern "C" uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t 
 }
 
 extern "C" volatile struct hashmap* HMapS_MP = nullptr;
+

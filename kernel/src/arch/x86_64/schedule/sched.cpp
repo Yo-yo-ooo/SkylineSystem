@@ -274,7 +274,7 @@ retry:
         proc->children = proc->sibling = nullptr;
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         _memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
-        _memset(proc->fd_table, 0, 256 * 8);
+        //_memset(proc->fd_table, 0, 256 * 8);
         proc->fd_count = 4;
         return proc;
     }
@@ -587,7 +587,7 @@ retry:
         }
         proc->pagemap = VMM::Fork(parent->pagemap);
         __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
-        __memcpy(proc->fd_table, parent->fd_table, 256 * 8);
+        //__memcpy(proc->fd_table, parent->fd_table, 256 * 8);
         proc->fd_count = parent->fd_count;
         /* if(proc->id > procl_count){
             size_t size;

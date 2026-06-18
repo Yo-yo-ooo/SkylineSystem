@@ -41,7 +41,7 @@ void ff_memfree (
 
 #include <klib/mutex/mutex.h>
 
-mutex_t *Mutex[FF_VOLUMES + 1];
+static mutex_t *fs_mutex[FF_VOLUMES + 1] = {NULL};
 
 
 
@@ -53,16 +53,21 @@ mutex_t *Mutex[FF_VOLUMES + 1];
 /  fails with FR_INT_ERR.
 */
 
-int32_t ff_mutex_create (	/* Returns 1:Function succeeded or 0:Could not create the mutex */
+int32_t ff_mutex_create (
 	int32_t vol				/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
 )
 {
-    Mutex[vol] = MutexCreate();
-    if (!Mutex[vol])
+    // 边界校验
+    if (vol < 0 || vol >= FF_VOLUMES + 1)
         return 0;
-    return FR_INT_ERR;
-}
 
+    // 避免重复创建泄漏
+    if (fs_mutex[vol] != NULL)
+        return 1;
+
+    fs_mutex[vol] = MutexCreate();
+    return fs_mutex[vol] ? 1 : 0;
+}
 
 /*------------------------------------------------------------------------*/
 /* Delete a Mutex                                                         */
@@ -71,11 +76,19 @@ int32_t ff_mutex_create (	/* Returns 1:Function succeeded or 0:Could not create 
 /  semaphore of the volume created with ff_mutex_create function.
 */
 
-void ff_mutex_delete (	/* Returns 1:Function succeeded or 0:Could not delete due to an error */
+void ff_mutex_delete (
 	int32_t vol				/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
 )
 {
-    MutexRelease(Mutex[vol]);
+    // 边界校验
+    if (vol < 0 || vol >= FF_VOLUMES + 1)
+        return;
+
+    if (fs_mutex[vol] == NULL)
+        return;
+
+    MutexDestroy(fs_mutex[vol]);
+    fs_mutex[vol] = NULL;
 }
 
 
@@ -86,11 +99,16 @@ void ff_mutex_delete (	/* Returns 1:Function succeeded or 0:Could not delete due
 /  When a 0 is returned, the file function fails with FR_TIMEOUT.
 */
 
-int32_t ff_mutex_take (	/* Returns 1:Succeeded or 0:Timeout */
+int32_t ff_mutex_take (
 	int32_t vol			/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
 )
 {
-    MutexAcquire(Mutex[vol]);
+    if (vol < 0 || vol >= FF_VOLUMES + 1)
+        return 0;
+    if (fs_mutex[vol] == NULL)
+        return 0;
+
+    MutexAcquire(fs_mutex[vol]);
     return 1;
 }
 
@@ -106,7 +124,12 @@ void ff_mutex_give (
 	int32_t vol			/* Mutex ID: Volume mutex (0 to FF_VOLUMES - 1) or system mutex (FF_VOLUMES) */
 )
 {
-    MutexRelease(Mutex[vol]);
+    if (vol < 0 || vol >= FF_VOLUMES + 1)
+        return;
+    if (fs_mutex[vol] == NULL)
+        return;
+
+    MutexRelease(fs_mutex[vol]);
 }
 
 #endif	/* FF_FS_REENTRANT */

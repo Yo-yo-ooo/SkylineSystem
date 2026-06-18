@@ -16,4 +16,6 @@ typedef struct {
 mutex_t *MutexCreate();
 void MutexAcquire(mutex_t *mutex);
 void MutexRelease(mutex_t *mutex);
+void MutexDestroy(mutex_t *mutex);
+
 #endif

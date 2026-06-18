@@ -90,7 +90,6 @@ typedef struct proc_t {
     struct proc_t *parent; // In case of fork
     struct proc_t *children;
     struct proc_t *sibling;
-    fd_t *fd_table[256];
     int32_t fd_count;
 } proc_t;
 

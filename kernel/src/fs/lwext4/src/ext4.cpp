@@ -389,7 +389,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
         /* struct __hmap_s_mp * */
         hsmp = (struct __hmap_s_mp *)kmalloc(sizeof(struct __hmap_s_mp));
         _memset(hsmp, 0, sizeof(struct __hmap_s_mp));
-
+        hsmp->FST = FSType::FS_EXT4;
         hsmp->MPName = _strdup(mount_point);
         hsmp->MP = kmalloc(sizeof(struct ext4_mountpoint));
         ((struct ext4_mountpoint*)hsmp->MP)->name = hsmp->MPName;
@@ -474,9 +474,11 @@ int32_t ext4_umount(const char *mount_point)
 
 	ext4_bcache_cleanup(mp->fs.bdev->bc);
 	ext4_bcache_fini_dynamic(mp->fs.bdev->bc);
+    
+    hashmap_delete(HMapS_MP,(void*)mp);
     if(mp->name)
         kfree(mp->name);
-    hashmap_delete(HMapS_MP,(void*)mp);
+    kfree(hsmp);
 	r = ext4_block_fini(mp->fs.bdev);
 Finish:
 	mp->fs.bdev->fs = NULL;
