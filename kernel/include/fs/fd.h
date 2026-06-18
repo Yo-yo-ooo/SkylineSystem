@@ -34,6 +34,7 @@
 #define O_SEARCH O_PATH
 #include <fs/lwext4/ext4.h>
 #include <drivers/dev/dev.h>
+#include <klib/algorithm/hmap.h>
 
 enum FSType : uint8_t{
     FS_UNKOWN = 0,
@@ -76,5 +77,18 @@ fd_t->Type
 4:char dev
 5:pipe
 */
+
+extern "C" char* GetMountPointName(const char* path);
+
+
+
+struct alignas(16) __hmap_s_mp{
+    char *MPName;
+    void* MP;
+};
+
+extern "C" int32_t __hmap_s_mp_compare(const void* a,const void* b);
+extern "C" uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t seed1);
+extern "C" volatile struct hashmap* HMapS_MP;
 
 #endif

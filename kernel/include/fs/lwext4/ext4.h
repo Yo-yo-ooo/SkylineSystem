@@ -86,6 +86,8 @@ typedef struct ext4_file {
 	uint64_t fpos;
 } ext4_file;
 
+
+
 /*****************************DIRECTORY DESCRIPTOR***************************/
 
 /**@brief   Directory entry descriptor. */

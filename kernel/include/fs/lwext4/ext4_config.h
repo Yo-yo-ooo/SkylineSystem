@@ -140,8 +140,6 @@
 /**@brief   Maximum block device count*/
 #ifndef CONFIG_EXT4_BLOCKDEVS_COUNT
 #define CONFIG_EXT4_BLOCKDEVS_COUNT  16
-extern uint32_t registed_blockdevs;
-extern struct ext4_block_devices *s_bdevices;
 #endif
 
 /**@brief   Maximum mountpoint name*/

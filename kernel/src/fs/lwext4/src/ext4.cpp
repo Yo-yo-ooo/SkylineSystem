@@ -86,7 +86,7 @@
 	} while (0)
 
 /**@brief   Mount point descriptor.*/
-struct ext4_mountpoint {
+struct ext4_mountpoint{
 
 	/**@brief   Mount done flag.*/
 	bool mounted;
@@ -110,41 +110,8 @@ struct ext4_mountpoint {
 	struct ext4_bcache bc;
 };
 
-/**@brief   Block devices descriptor.*/
-struct ext4_block_devices {
 
-	/**@brief   Block device name.*/
-	char name[CONFIG_EXT4_MAX_BLOCKDEV_NAME + 1];
 
-	/**@brief   Block device handle.*/
-	struct ext4_blockdev *bd;
-};
-
-/**@brief   Block devices.*/
-uint32_t registed_blockdevs;
-struct ext4_block_devices *s_bdevices;
-
-/**@brief   Mountpoints.*/
-uint32_t registed_mountpoints;
-struct ext4_mountpoint *s_mp;
-
-#include <klib/algorithm/hmap.h>
-
-struct alignas(16) __hmap_s_mp{
-    char *MPName;
-    struct ext4_mountpoint MP;
-};
-
-static int __hmap_s_mp_compare(const void* a,const void* b){
-    return strcmp(((struct __hmap_s_mp*)a)->MPName,((struct __hmap_s_mp*)b)->MPName);
-}
-
-static uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t seed1){
-    const struct __hmap_s_mp* entry = (const struct __hmap_s_mp*)item;
-    return hashmap_sip(entry->MPName, strlen(entry->MPName), seed0, seed1);
-}
-
-static volatile struct hashmap* HMapS_MP = nullptr;
 
 int32_t ext4_device_register(struct ext4_blockdev *bd,
 			 const char *dev_name)
@@ -424,7 +391,8 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
         _memset(hsmp, 0, sizeof(struct __hmap_s_mp));
 
         hsmp->MPName = _strdup(mount_point);
-        hsmp->MP.name = hsmp->MPName;
+        hsmp->MP = kmalloc(sizeof(struct ext4_mountpoint));
+        ((struct ext4_mountpoint*)hsmp->MP)->name = hsmp->MPName;
         
     }
 
@@ -437,16 +405,19 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 		return r;
     
     debugpln("HIT!(2)");
-	r = ext4_fs_init(&hsmp->MP.fs, bd, read_only);
+
+    struct ext4_mountpoint *MOUNTP = (struct ext4_mountpoint*)hsmp->MP;
+
+	r = ext4_fs_init(&(MOUNTP->fs), bd, read_only);
 	if (r != EOK) {
 		ext4_block_fini(bd);
 		return r;
 	}
 
     debugpln("HIT!(3)");
-	bsize = ext4_sb_get_block_size(&hsmp->MP.fs.sb);
+	bsize = ext4_sb_get_block_size(&(MOUNTP->fs.sb));
 	ext4_block_set_lb_size(bd, bsize);
-	bc = &hsmp->MP.bc;
+	bc = &(MOUNTP->bc);
 
     debugpln("[MNT STEP] 2\n");
     //hcf();
@@ -471,9 +442,9 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 		return r;
 	}
 
-	bd->fs = &hsmp->MP.fs;
+	bd->fs = &(MOUNTP->fs);
 	//hsmp->MP.fs.bdev = bd;
-    hsmp->MP.mounted = 1;
+    MOUNTP->mounted = 1;
     hashmap_set(HMapS_MP, hsmp);
     //bd->fs = &hsmp->MP.fs;
 
@@ -490,7 +461,7 @@ int32_t ext4_umount(const char *mount_point)
 	
     struct __hmap_s_mp *hsmp = 
             hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? &hsmp->MP : nullptr;
+    mp = hsmp ? hsmp->MP : nullptr;
 
 	if (!mp)
 		return ENODEV;
@@ -503,54 +474,20 @@ int32_t ext4_umount(const char *mount_point)
 
 	ext4_bcache_cleanup(mp->fs.bdev->bc);
 	ext4_bcache_fini_dynamic(mp->fs.bdev->bc);
-
+    if(mp->name)
+        kfree(mp->name);
+    hashmap_delete(HMapS_MP,(void*)mp);
 	r = ext4_block_fini(mp->fs.bdev);
 Finish:
 	mp->fs.bdev->fs = NULL;
 	return r;
 }
-static char* GetMountPointName(const char* path) {
-    if (!path || path[0] != '/') return nullptr;
-
-    // 找到第一个有效字符后的第一个 '/'
-    // 比如 "/mp/test" -> 找到 'p' 后面的那个 '/'
-    const char* p = path + 1;
-    while (*p && *p == '/') p++; // 跳过开头重复的斜杠，如 "//mp" -> 指向 "mp"
-    
-    const char* second_slash = strchr(p, '/');
-    
-    // 如果是 "/mp" 这种没有结尾斜杠的，根据的需求决定是否支持
-    // 如果必须有第二个斜杠才叫挂载点：
-    if (!second_slash) return nullptr;
-
-    size_t len = (size_t)(second_slash - path) + 1;
-
-    char* mp_name = (char*)kmalloc(len + 1);
-    if (!mp_name) return nullptr; 
-
-    __memcpy(mp_name, path, len);
-    mp_name[len] = '\0';
-
-    // 可以在这里做一个标准化：将 "///mp/" 变成 "/mp/"
-    // 或者在挂载查找逻辑里处理多斜杠情况
-    //kinfoln("Extracted mount point name: %s", mp_name);
-    return mp_name;
-}
 
 static struct ext4_mountpoint *ext4_get_mount(const char *path)
-{/* 
-	for (size_t i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
-
-		if (!s_mp[i].mounted)
-			continue;
-
-		if (!strncmp(s_mp[i].name, path, strlen(s_mp[i].name)))
-			return &s_mp[i];
-	} */
-
+{
     struct __hmap_s_mp *hsmp = 
         hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
-    ext4_mountpoint* mp = hsmp ? &hsmp->MP : nullptr;
+    ext4_mountpoint* mp = hsmp ? hsmp->MP : nullptr;
     //kinfoln("%p",mp);
     //kinfoln("Name Of MP:%s",mp ? mp->name : "NULL");
     return mp;
@@ -812,16 +749,10 @@ int32_t ext4_mount_setup_locks(const char *mount_point,
 	uint32_t i;
 	struct ext4_mountpoint *mp = 0;
 
-	/* for (i = 0; i < CONFIG_EXT4_MOUNTPOINTS_COUNT + registed_mountpoints; ++i) {
-		if (!strcmp(s_mp[i].name, mount_point)) {
-			mp = &s_mp[i];
-			break;
-		}
-	} */
 
     struct __hmap_s_mp *hsmp = 
         hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? &hsmp->MP : nullptr;
+    mp = hsmp ? hsmp->MP : nullptr;
     
 	if (!mp)
 		return ENOENT;
