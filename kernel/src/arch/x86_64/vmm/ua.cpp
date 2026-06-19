@@ -43,23 +43,47 @@ namespace VMM {
 
             while (offset < len) {
                 uint64_t curr_u_vaddr = u_dest + offset;
-                
-                // 计算当前页内剩余可写空间 (核心跨页逻辑不能省)
                 size_t page_offset = curr_u_vaddr % PAGE_SIZE;
                 size_t remaining_in_page = PAGE_SIZE - page_offset;
                 size_t to_copy = (len - offset < remaining_in_page) ? (len - offset) : remaining_in_page;
 
-                // 盲查物理地址（绝对信任该虚拟地址已映射）
+                // 1. 获取物理地址并校验
                 uint64_t paddr = VMM::GetPhysics(pagemap, curr_u_vaddr);
+                if (paddr == 0) {
+                    // 此时 u_dest 对应的虚拟地址未映射，应标记为错误或直接 Panic
+                    // 在实际系统中，这里应该抛出异常或通过返回值返回 false
+                    return; 
+                }
 
-                uint64_t page_base_paddr = paddr & ~0xFFFULL; 
-
-                // 3. 计算准确的 HHDM 写入地址
-                void* hhdm_dest = (void*)(page_base_paddr + hhdm_offset + page_offset);
+                // 2. 转换到 HHDM
+                void* hhdm_dest = (void*)((paddr & ~0xFFFULL) + hhdm_offset + page_offset);
+                
+                // 3. 拷贝
                 __memcpy(hhdm_dest, src_ptr + offset, to_copy);
 
                 offset += to_copy;
             }
+        }
+
+        bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len) {
+            size_t offset = 0;
+            const uint8_t* u_src_ptr = (const uint8_t*)u_src;
+
+            while (offset < len) {
+                uint64_t curr_u_vaddr = (uint64_t)u_src_ptr + offset;
+                size_t page_offset = curr_u_vaddr % PAGE_SIZE;
+                size_t to_copy = min(len - offset, PAGE_SIZE - page_offset);
+
+                // 核心：获取用户态物理页并转换
+                uint64_t paddr = VMM::GetPhysics(pagemap, curr_u_vaddr);
+                if (paddr == 0) return false; // 地址未映射
+
+                void* hhdm_src = (void*)((paddr & ~0xFFFULL) + hhdm_offset + page_offset);
+                __memcpy((uint8_t*)k_dest + offset, hhdm_src, to_copy);
+
+                offset += to_copy;
+            }
+            return true;
         }
 
     } // namespace UserAccess

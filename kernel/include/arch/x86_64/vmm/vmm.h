@@ -79,8 +79,17 @@
 #define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
 static inline bool is_user_address(uint64_t addr){
     // 用户态地址 < 0xFFFF800000000000
-    return addr < 0xFFFF800000000000;
+    return __builtin_expect(addr < 0xFFFF800000000000, 1);
 }
+
+static inline bool is_user_buffer_valid(uint64_t addr, size_t count) {
+    // 检查是否存在溢出情况
+    if (addr > addr + count) return false; 
+    
+    // 检查起始和结束地址是否都在用户空间内
+    return (addr + count) <= 0xFFFF800000000000;
+}
+
 typedef struct vma_region_t {
     uint64_t start;
     uint64_t page_count;
@@ -122,6 +131,8 @@ namespace VMM{
          * @return false   发生错误（地址非法、未映射或越界）
          */
         void CopyToUser(pagemap_t* pagemap, uint64_t u_dest, const void* k_src, uint64_t len);
+
+        bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len);
     }
     namespace Useless
     {
@@ -160,6 +171,7 @@ namespace VMM{
     void DestroyPM(pagemap_t *pagemap);
 
     uint32_t HandlePF(context_t *ctx);
+
 
 }
 

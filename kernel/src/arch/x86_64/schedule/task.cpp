@@ -128,6 +128,7 @@ namespace Schedule{
             }
         }
         
+        fd_manager_destroy(proc->FDMan);
         VMM::DestroyPM(proc->pagemap);
     }
 

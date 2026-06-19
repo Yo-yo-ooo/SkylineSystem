@@ -68,8 +68,10 @@ struct alignas(16) __hmap_s_mp{
 };
 
 
-typedef struct fd{
+typedef struct FileDesc{
     void *filedesc;
+    FS_PDESC *FSOPS;
+    __hmap_s_mp *MP;
 }fd_t;
 
 
@@ -77,6 +79,46 @@ extern "C" int32_t __hmap_s_mp_compare(const void* a,const void* b,void *udata);
 extern "C" uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t seed1);
 extern "C" struct hashmap* HMapS_MP;
 __hmap_s_mp *GetMount(const char *path);
+
+#define FDS_PER_NODE 256
+
+// FD 链表节点 (移除 base_fd)
+typedef struct FDNode {
+    // 256 bits = 4 * 64 bits. 
+    // 位图：0 表示空闲，1 表示已分配
+    uint64_t bitmap[4];       
+    
+    // 实际存储的 FileDesc 数组 (256个)
+    fd_t fds[FDS_PER_NODE];   
+    
+    // 当前节点已分配的 FD 数量，用于快速跳过满载节点
+    uint32_t alloc_count;     
+    
+    // 链表指针
+    struct FDNode* next;      
+} fd_node_t;
+
+// FD 管理器 (增加了 max_fd)
+typedef struct FDManager {
+    fd_node_t* head;
+    
+    // 系统或进程当前分配出的最大 FD 编号
+    // 默认为 -1 (表示还没分配任何 FD)
+    int32_t max_fd;           
+    
+    // 如果有自旋锁，在这里定义
+    // spinlock_t lock;
+} fd_manager_t;
+
+#define PATH_MAX 4096
+
+extern "C" {
+    void fd_manager_init(fd_manager_t* manager);
+    int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr);
+    void fd_free(fd_manager_t* manager, int32_t fd);
+    fd_t* fd_get(fd_manager_t* manager, int32_t fd);
+    void fd_manager_destroy(fd_manager_t* manager);
+}
 
 void InitFFMAN();
 

@@ -275,6 +275,7 @@ retry:
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         _memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
         //_memset(proc->fd_table, 0, 256 * 8);
+        fd_manager_init(proc->FDMan);
         proc->fd_count = 4;
         return proc;
     }
@@ -440,7 +441,7 @@ retry:
             return;
         }
         uint64_t FSize = MP->FSOPS->fsize(FileDesc);
-        kinfoln("%llu",FSize);
+        //kinfoln("%llu",FSize);
         uint8_t *buffer = (uint8_t*)kmalloc(FSize);
         if (!buffer) {
             kfree(FileDesc); // 释放已分配内存防泄漏

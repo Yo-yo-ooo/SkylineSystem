@@ -91,6 +91,7 @@ typedef struct proc_t {
     struct proc_t *children;
     struct proc_t *sibling;
     int32_t fd_count;
+    fd_manager_t *FDMan;
 } proc_t;
 
 typedef struct procl{
