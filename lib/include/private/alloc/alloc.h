@@ -21,7 +21,7 @@
 */
 #include <stdint.h>
 #include <stddef.h>
-#include <private/defs.h>
+#include <base/defs.h>
 
 #define ALLOC_BLOCK_MAGIC 0x536B796C696E6521ULL // "Skyline!"
 
