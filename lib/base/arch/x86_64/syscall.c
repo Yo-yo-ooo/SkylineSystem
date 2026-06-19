@@ -3,6 +3,8 @@
 #include <base/arch/x86_64/syscalln.h>
 #include <base/arch/x86_64/syscall.h>
 
+
+
 long syscall(long number,long arg1,long arg2, long arg3,long arg4,long arg5,long arg6){
     register long rax asm("rax") = number;
     register long rdi asm("rdi") = arg1;
@@ -20,14 +22,22 @@ long syscall(long number,long arg1,long arg2, long arg3,long arg4,long arg5,long
     return rax;
 }
 
-uint64_t mmap(uint64_t addr,uint64_t length, uint64_t mode,
+uint64_t sys_mmap(uint64_t addr,uint64_t length, uint64_t mode,
 uint64_t flags,uint64_t offset){
     return syscall(SYSCALL_MMAP,addr,length,mode,flags,offset,0);    
 }
 
 
-uint64_t munmap(uint64_t addr,uint64_t length){
+uint64_t sys_munmap(uint64_t addr,uint64_t length){
     syscall(SYSCALL_MUNMAP,addr,length,0,0,0,0);    
     return 0;
 }
 
+uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count)
+{return syscall(SYSCALL_FREAD,fd_idx,buf,count,0,0,0);}
+uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count)
+{return syscall(SYSCALL_FWRITE,fd_idx,buf,count,0,0,0);}
+uint64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence)
+{return syscall(SYSCALL_FLSEEK,fd_idx,offset,whence,0,0,0);}
+uint64_t sys_fopen(uint64_t path, uint64_t flags, uint64_t mode)
+{return syscall(SYSCALL_FOPEN,path,flags,mode,0,0,0);}

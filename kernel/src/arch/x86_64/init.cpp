@@ -40,6 +40,7 @@
 #define PIC1_DATA 0x21
 #define PIC2_DATA 0xA1
 
+uint32_t PrintFSERIAL = 0;
 
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
@@ -98,6 +99,8 @@ void __init x86_64_init(void){
     //ext4_fs_test_all();
 
     Schedule::Install();
+
+    __a_store(&PrintFSERIAL,1);
 
     proc_t *proc = Schedule::NewProcess(true);
 

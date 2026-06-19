@@ -39,6 +39,9 @@
 #define MM_USER 4
 #define MM_NX (1ull << 63)
 
+#define MM_LARGE_2MB (1ULL << 7)   // x86_64 Page Size (PS) bit
+#define PAGE_SIZE_2MB 0x200000ULL  // 2MB in bytes
+
 #define VMM_FLAG_PRESENT        (1 << 0)        /* P   */
 #define VMM_FLAG_READWRITE      (1 << 1)        /* R/W */
 #define VMM_FLAG_USER           (1 << 2)        /* U/S */
@@ -163,7 +166,6 @@ namespace VMM{
     void RemoveMapping(vm_mapping_t *mapping);
 
     void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user);
-    void *EAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
     void Free(pagemap_t *pagemap, void *ptr);
 
     pagemap_t *Fork(pagemap_t *parent);

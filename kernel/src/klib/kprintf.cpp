@@ -60,11 +60,16 @@
 #include <print/e9print.h>
 
 static volatile spinlock_t ptf_lock = 0;
-
+extern uint32_t PrintFSERIAL;
 
 void _putchar(char character){
-    e9_putc(character);
+#if PRINT_INFORMATION_ == 0
     Serial::Write(character);
+#else
+    if(!PrintFSERIAL)
+        e9_putc(character);
+    Serial::Write(character);
+#endif
     return;
 }
 

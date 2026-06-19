@@ -1,6 +1,6 @@
 /*
 * SPDX-License-Identifier: GPL-2.0-only
-* File: new2.cpp
+* File: pmm.cpp
 * Copyright (C) 2026 Yo-yo-ooo
 *
 * This file is part of SkylineSystem.
@@ -60,12 +60,39 @@ namespace PMM {
         bitmap_clear((void*)PMM::bitmap_l1, bit / 64);
     }
 
+    // --- 批量提速核心 ---
+    static void bitmap_clear_range(uint64_t start_bit, uint64_t count) {
+        uint64_t current = start_bit;
+        while (current < start_bit + count) {
+            if (current % 64 == 0 && (start_bit + count - current) >= 64) {
+                ((uint64_t*)PMM::bitmap)[current / 64] = 0;
+                bitmap_clear((void*)PMM::bitmap_l1, current / 64);
+                current += 64;
+            } else {
+                bitmap_clear_sync(current);
+                current++;
+            }
+        }
+    }
+
+    static void bitmap_set_range(uint64_t start_bit, uint64_t count) {
+        uint64_t current = start_bit;
+        while (current < start_bit + count) {
+            if (current % 64 == 0 && (start_bit + count - current) >= 64) {
+                ((uint64_t*)PMM::bitmap)[current / 64] = 0xFFFFFFFFFFFFFFFF;
+                bitmap_set((void*)PMM::bitmap_l1, current / 64);
+                current += 64;
+            } else {
+                bitmap_set_sync(current);
+                current++;
+            }
+        }
+    }
+
     void Init() {
         pmm_memmap = memmap_request.response;
         uint64_t max_phys_addr = 0;
 
-        // --- 阶段 1: 边界探测 (修复空洞越界的核心) ---
-        // 不能只累加 length，必须找到整个地址空间的物理上限
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
             uint64_t top = entry->base + entry->length;
@@ -74,27 +101,21 @@ namespace PMM {
             }
         }
 
-        // 基于最大物理地址计算位图需要的页数
         pmm_bitmap_pages = max_phys_addr / PAGE_SIZE;
         bitmap_size = ALIGN_UP(pmm_bitmap_pages / 8, PAGE_SIZE);
         bitmap_l1_size = ALIGN_UP((pmm_bitmap_pages / 64) / 8, PAGE_SIZE);
         uint64_t total_meta_size = bitmap_size + bitmap_l1_size;
 
-        // --- 阶段 2: 元数据锚定 (自举分配) ---
         bool meta_placed = false;
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            
-            // 寻找一个足够大的可用区域来存放位图本身
             if (entry->type == LIMINE_MEMMAP_USABLE && entry->length >= total_meta_size) {
                 PMM::bitmap = (uint8_t*)HIGHER_HALF(entry->base);
                 PMM::bitmap_l1 = (uint64_t*)((uintptr_t)PMM::bitmap + bitmap_size);
 
-                // 默认全标记为已占用 (1)，后续只释放 USABLE 区域
                 memset_fscpuf((void*)PMM::bitmap, 0xFF, bitmap_size);
                 memset_fscpuf((void*)PMM::bitmap_l1, 0xFF, bitmap_l1_size);
 
-                // 从内存图中扣除位图占用的空间
                 entry->base += total_meta_size;
                 entry->length -= total_meta_size;
                 
@@ -104,30 +125,61 @@ namespace PMM {
         }
 
         if (!meta_placed) {
-            // 理论上不会发生，除非物理内存极小
             Panic("PMM: Failed to allocate metadata bitmap!");
         }
 
-        // --- 阶段 3: 状态同步 (标记可用物理页) ---
+        // 使用 bitmap_clear_range 极大加速状态同步
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            
-            // 只有明确标记为 USABLE 的区域才在位图中清零 (表示可用)
             if (entry->type == LIMINE_MEMMAP_USABLE) {
-                for (uint64_t j = 0; j < entry->length; j += PAGE_SIZE) {
-                    uint64_t page_idx = (entry->base + j) / PAGE_SIZE;
-                    if (page_idx < pmm_bitmap_pages) {
-                        bitmap_clear_sync(page_idx);
-                    }
+                uint64_t start_page = entry->base / PAGE_SIZE;
+                uint64_t page_count = entry->length / PAGE_SIZE;
+                
+                if (start_page < pmm_bitmap_pages) {
+                    uint64_t count = (start_page + page_count > pmm_bitmap_pages) 
+                                   ? (pmm_bitmap_pages - start_page) : page_count;
+                    bitmap_clear_range(start_page, count);
                 }
             }
         }
 
-        // --- 阶段 4: 安全收尾 ---
-        bitmap_set_sync(0); // 始终锁定物理页 0，防止 NULL 指针分配
+        bitmap_set_sync(0); 
         pmm_bitmap_start = (uintptr_t)PMM::bitmap;
         pmm_bitmap_size = bitmap_size;
         bitmap_last_free = 1; 
+    }
+
+    void* RequestHuge() {
+        spinlock_lock(&pmm_lock);
+        
+        uint64_t max_align_idx = pmm_bitmap_pages / 512;
+        
+        for (uint64_t i = 0; i < max_align_idx; i++) {
+            uint64_t base_idxL0 = i * 8; 
+            
+            bool is_free = true;
+            for (int j = 0; j < 8; j++) {
+                if (((uint64_t*)PMM::bitmap)[base_idxL0 + j] != 0) {
+                    is_free = false;
+                    break;
+                }
+            }
+            
+            if (is_free) {
+                for (int j = 0; j < 8; j++) {
+                    ((uint64_t*)PMM::bitmap)[base_idxL0 + j] = 0xFFFFFFFFFFFFFFFF;
+                    bitmap_set((void*)PMM::bitmap_l1, base_idxL0 + j); 
+                }
+                
+                uint64_t allocated_page_idx = i * 512;
+                bitmap_last_free = allocated_page_idx + 512;
+                spinlock_unlock(&pmm_lock);
+                return (void*)(allocated_page_idx * PAGE_SIZE);
+            }
+        }
+        
+        spinlock_unlock(&pmm_lock);
+        return nullptr; 
     }
 
     void* GlobalRequestSingle() {
@@ -210,7 +262,7 @@ namespace PMM {
             if (!bitmap_get((void*)PMM::bitmap, current_bit)) {
                 if (free_count == 0) start_bit = current_bit;
                 if (++free_count == n) {
-                    for (uint64_t i = start_bit; i < start_bit + n; i++) bitmap_set_sync(i);
+                    bitmap_set_range(start_bit, n);
                     bitmap_last_free = start_bit + n;
                     spinlock_unlock(&pmm_lock);
                     return (void*)(start_bit * PAGE_SIZE); 
@@ -253,9 +305,13 @@ namespace PMM {
 
         uint64_t start_bit = (uint64_t)ptr / PAGE_SIZE;
         spinlock_lock(&pmm_lock);
-        for (uint64_t i = 0; i < n; i++) bitmap_clear_sync(start_bit + i);
+        bitmap_clear_range(start_bit, n);
         if (start_bit < bitmap_last_free) bitmap_last_free = start_bit;
         spinlock_unlock(&pmm_lock);
+    }
+    
+    void FreeHuge(void *ptr) {
+        Free(ptr, 512); 
     }
 }
 
@@ -289,10 +345,39 @@ namespace PMM {
         bitmap_clear((void*)PMM::bitmap_l1, bit / 64);
     }
 
+    static void bitmap_clear_range(uint64_t start_bit, uint64_t count) {
+        uint64_t current = start_bit;
+        while (current < start_bit + count) {
+            if (current % 64 == 0 && (start_bit + count - current) >= 64) {
+                ((uint64_t*)PMM::bitmap)[current / 64] = 0;
+                bitmap_clear((void*)PMM::bitmap_l1, current / 64);
+                current += 64;
+            } else {
+                bitmap_clear_sync(current);
+                current++;
+            }
+        }
+    }
+
+    static void bitmap_set_range(uint64_t start_bit, uint64_t count) {
+        uint64_t current = start_bit;
+        while (current < start_bit + count) {
+            if (current % 64 == 0 && (start_bit + count - current) >= 64) {
+                ((uint64_t*)PMM::bitmap)[current / 64] = 0xFFFFFFFFFFFFFFFF;
+                bitmap_set((void*)PMM::bitmap_l1, current / 64);
+                current += 64;
+            } else {
+                bitmap_set_sync(current);
+                current++;
+            }
+        }
+    }
+
     void Init() {
         pmm_memmap = memmap_request.response;
-        uint64_t page_count = 0;
+        uint64_t max_phys_addr = 0;
         
+        // 此处修正为使用 max_phys_addr，兼容具有内存空洞(Holes)的通用架构设备
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
             if (entry->length % PAGE_SIZE != 0) {
@@ -300,10 +385,13 @@ namespace PMM {
                 kwarn("Memory map entry length is NOT divisible by the page size. \n");
                 entry->length = (entry->length / PAGE_SIZE) * PAGE_SIZE;
             }
-            page_count += entry->length;
+            uint64_t top = entry->base + entry->length;
+            if (top > max_phys_addr) {
+                max_phys_addr = top;
+            }
         }
         
-        pmm_bitmap_pages = page_count / PAGE_SIZE;
+        pmm_bitmap_pages = max_phys_addr / PAGE_SIZE;
         bitmap_size = ALIGN_UP(pmm_bitmap_pages / 8, PAGE_SIZE);
         bitmap_l1_size = ALIGN_UP((pmm_bitmap_pages / 64) / 8, PAGE_SIZE);
         uint64_t total_meta_size = bitmap_size + bitmap_l1_size;
@@ -326,8 +414,13 @@ namespace PMM {
         for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
             struct limine_memmap_entry *entry = pmm_memmap->entries[i];
             if (entry->type == LIMINE_MEMMAP_USABLE) {
-                for (uint64_t j = 0; j < entry->length; j += PAGE_SIZE) {
-                    bitmap_clear_sync((entry->base + j) / PAGE_SIZE);
+                uint64_t start_page = entry->base / PAGE_SIZE;
+                uint64_t page_count = entry->length / PAGE_SIZE;
+                
+                if (start_page < pmm_bitmap_pages) {
+                    uint64_t count = (start_page + page_count > pmm_bitmap_pages) 
+                                   ? (pmm_bitmap_pages - start_page) : page_count;
+                    bitmap_clear_range(start_page, count);
                 }
             }
         }
@@ -336,6 +429,38 @@ namespace PMM {
         pmm_bitmap_start = (uint64_t)PMM::bitmap;
         pmm_bitmap_size = bitmap_size;
         bitmap_last_free = 1; 
+    }
+
+    void* RequestHuge() {
+        spinlock_lock(&pmm_lock);
+        uint64_t max_align_idx = pmm_bitmap_pages / 512;
+        
+        for (uint64_t i = 0; i < max_align_idx; i++) {
+            uint64_t base_idxL0 = i * 8; 
+            
+            bool is_free = true;
+            for (int j = 0; j < 8; j++) {
+                if (((uint64_t*)PMM::bitmap)[base_idxL0 + j] != 0) {
+                    is_free = false;
+                    break;
+                }
+            }
+            
+            if (is_free) {
+                for (int j = 0; j < 8; j++) {
+                    ((uint64_t*)PMM::bitmap)[base_idxL0 + j] = 0xFFFFFFFFFFFFFFFF;
+                    bitmap_set((void*)PMM::bitmap_l1, base_idxL0 + j); 
+                }
+                
+                uint64_t allocated_page_idx = i * 512;
+                bitmap_last_free = allocated_page_idx + 512;
+                spinlock_unlock(&pmm_lock);
+                return (void*)(allocated_page_idx * PAGE_SIZE);
+            }
+        }
+        
+        spinlock_unlock(&pmm_lock);
+        return nullptr; 
     }
 
     static void* GlobalRequestSingle() {
@@ -402,7 +527,7 @@ namespace PMM {
             if (!bitmap_get((void*)PMM::bitmap, current_bit)) {
                 if (free_count == 0) start_bit = current_bit;
                 if (++free_count == n) {
-                    for (uint64_t i = start_bit; i < start_bit + n; i++) bitmap_set_sync(i);
+                    bitmap_set_range(start_bit, n);
                     bitmap_last_free = start_bit + n;
                     spinlock_unlock(&pmm_lock);
                     return (void*)(start_bit * PAGE_SIZE); 
@@ -422,9 +547,13 @@ namespace PMM {
         uint64_t start_bit = (uint64_t)ptr / PAGE_SIZE;
         
         spinlock_lock(&pmm_lock);
-        for (uint64_t i = 0; i < n; i++) bitmap_clear_sync(start_bit + i);
+        bitmap_clear_range(start_bit, n);
         if (start_bit < bitmap_last_free) bitmap_last_free = start_bit;
         spinlock_unlock(&pmm_lock);
+    }
+
+    void FreeHuge(void *ptr) {
+        Free(ptr, 512);
     }
 }
 #endif

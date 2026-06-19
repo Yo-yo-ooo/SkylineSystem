@@ -75,6 +75,12 @@ syscall_lists[x] = sys_xxxx //? <---- it means i don't know how to impl this sys
 */
 void syscall_init() {
     
+    syscall_lists[0] = sys_fopen;
+    syscall_lists[1] = sys_fwrite;
+    syscall_lists[2] = sys_fread;
+    syscall_lists[3] = sys_fclose;
+    syscall_lists[4] = sys_flseek;
+    
     syscall_lists[7] = sys_gettid;
     syscall_lists[8] = sys_getpid;
     syscall_lists[9] = sys_exit;

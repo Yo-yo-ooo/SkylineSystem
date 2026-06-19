@@ -1,11 +1,6 @@
 #include <gui/basicdraw.h>
 #include <math.h>
-/* float sqrt(float x){
-    float buf;
-    __asm__ __volatile__ ("sqrtss %1, %0" : "=x"(buf) : "x"(x));
-    return buf;
-}
- */
+#include <string.h>
 
 // ===================== 修复BUG后的基础绘图函数 =====================
 void BasicDraw::ClearScreen(uint32_t Color){
@@ -16,6 +11,7 @@ void BasicDraw::ClearScreen(uint32_t Color){
     for (uint64_t y = 0; y < fbHeight; y++)
         for (uint64_t x = 0; x < this->FrameBuf->Width; x++)
             *((uint32_t*)(fbBase + 4 * (x + pxlsPerScanline * y))) = Color; 
+    
 }
 
 // 修复：边界判断错误（>= 而非 >）
@@ -221,7 +217,8 @@ static uint32_t g_seed = 123456789;
 
 static uint32_t RandomU32() {
     g_seed = g_seed * 1103515245 + 12345;
-    return g_seed;
+    // 取高位，LCG 的高位比低位更随机
+    return (g_seed >> 16) & 0x7FFF; 
 }
 
 // 返回 [min, max] 范围内的整数

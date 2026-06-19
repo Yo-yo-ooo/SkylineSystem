@@ -100,7 +100,13 @@ namespace VMM{
             if (!PAGE_EXISTS(pd)) return 0;
             pd = HIGHER_HALF(PTE_MASK(pd));
 
-            uint64_t *pt = (uint64_t*)pd[PDE(vaddr)];
+            // Check if it's a 2MB Huge Page at the PDE level
+            uint64_t pde_val = pd[PDE(vaddr)];
+            if (pde_val & MM_LARGE_2MB) {
+                return pde_val;
+            }
+
+            uint64_t *pt = (uint64_t*)pde_val;
             if (!PAGE_EXISTS(pt)) return 0;
             pt = HIGHER_HALF(PTE_MASK(pt));
 
@@ -108,23 +114,30 @@ namespace VMM{
         }
 
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags) {
-            // Look for the first fit on the list.
+            // If it's a large page, force 2MB alignment, else 4KB alignment
+            uint64_t align_val = (flags & MM_LARGE_2MB) ? PAGE_SIZE_2MB : PAGE_SIZE;
+            uint64_t alloc_size = page_count * PAGE_SIZE; 
+            
             vma_region_t *region = pagemap->vma_head->next;
             uint64_t addr = 0;
+            
             if (region == pagemap->vma_head) {
-                addr = region->start + (region->page_count * PAGE_SIZE);
+                addr = ALIGN_UP(region->start + (region->page_count * PAGE_SIZE), align_val);
                 VMM::VMA::AddRegion(pagemap, addr, page_count, flags);
                 return addr;
             }
+            
             for (; region != pagemap->vma_head; region = region->next) {
                 if (region->next == pagemap->vma_head) {
-                    addr = region->start + (region->page_count * PAGE_SIZE);
+                    addr = ALIGN_UP(region->start + (region->page_count * PAGE_SIZE), align_val);
                     VMM::VMA::AddRegion(pagemap, addr, page_count, flags);
                     return addr;
                 }
                 uint64_t region_end = region->start + (region->page_count * PAGE_SIZE);
-                if (region->next->start >= region_end + (page_count * PAGE_SIZE)) {
-                    addr = region_end;
+                addr = ALIGN_UP(region_end, align_val);
+                
+                // Ensure there's enough space between this aligned address and the next region
+                if (region->next->start >= addr + alloc_size) {
                     region = VMM::VMA::InsertRegion(region, addr, page_count, flags);
                     return addr;
                 }
@@ -203,17 +216,16 @@ namespace VMM{
     }
 
 
-    void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags){
-        //There!
+    void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
-#if CONFIG_VMM_5LVL_MAP == 1
+    #if CONFIG_VMM_5LVL_MAP == 1
         if(IsPM5LVL){
             pml4 = (uint64_t*)pagemap->toplvl[PML5E(vaddr)];
-                if (!PAGE_EXISTS(pml4))
+            if (!PAGE_EXISTS(pml4))
                 pml4 = VMM::Useless::NewLevel(pagemap->toplvl, PML5E(vaddr));
             pml4 = HIGHER_HALF(PTE_MASK(pml4));
         }
-#endif
+    #endif
 
         uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
         if (!PAGE_EXISTS(pdpt))
@@ -224,6 +236,13 @@ namespace VMM{
         if (!PAGE_EXISTS(pd))
             pd = VMM::Useless::NewLevel(pdpt, PDPTE(vaddr));
         pd = HIGHER_HALF(PTE_MASK(pd));
+
+        // --- LARGE PAGE LOGIC ---
+        if (flags & MM_LARGE_2MB) {
+            // Stop here. Mask physical address to 2MB and apply flags (which include bit 7).
+            pd[PDE(vaddr)] = (paddr & 0x000FFFFFFFE00000ULL) | (flags & 0x8000000000000FFFULL);
+            return;
+        }
 
         uint64_t *pt = (uint64_t*)pd[PDE(vaddr)];
         if (!PAGE_EXISTS(pt))
@@ -253,6 +272,12 @@ namespace VMM{
         uint64_t *pd = (uint64_t*)pdpt[PDPTE(vaddr)];
         if (!PAGE_EXISTS(pd)) return;
         pd = HIGHER_HALF(PTE_MASK(pd));
+
+        // --- LARGE PAGE LOGIC ---
+        if (pd[PDE(vaddr)] & MM_LARGE_2MB) {
+            pd[PDE(vaddr)] = 0; // Clear the 2MB page entry
+            return;
+        }
 
         uint64_t *pt = (uint64_t*)pd[PDE(vaddr)];
         if (!PAGE_EXISTS(pt)) return;
@@ -367,36 +392,49 @@ namespace VMM{
     }
 
     void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
-        if (!page_count) return nullptr;
+        if (__builtin_expect(!page_count, 0)) return nullptr;
 
         uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
 
-        // 1. 【VMA 阶段】在虚拟地址空间找一块连续的“领土”
-        // 这部分只需要 vma_lock，不需要关中断，也不需要 pmm_lock
+        // 1. 分配虚拟地址空间
         spinlock_lock(&pagemap->vma_lock);
         uint64_t addr = VMM::Useless::InternalAlloc(pagemap, page_count, flags);
-        if (!addr) {
+        if (__builtin_expect(!addr, 0)) {
             spinlock_unlock(&pagemap->vma_lock);
             return nullptr;
         }
 
-        // 2. 【PMM 阶段】为每一页获取物理内存
-        Interrupt::Mask(); // 保护 PCP 和 PMM 状态
+        Interrupt::Mask(); // 关中断，严格保护 this_cpu() 和 PCP 缓存
         cpu_t* cpu = this_cpu();
+        uint64_t i = 0;
 
-        for (uint64_t i = 0; i < page_count; i++) {
+        // 2. 大页分配路径：倾向于成功
+        while ((page_count - i) >= 512) {
+            spinlock_lock(&pmm_lock);
+            void* phys_ptr = PMM::RequestHuge();
+            spinlock_unlock(&pmm_lock);
+
+            if (__builtin_expect(!!phys_ptr, 1)) {
+                VMM::Map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)phys_ptr, flags | MM_LARGE_2MB);
+                i += 512;
+            } else {
+                break; // 大页内存碎片化或耗尽，平滑退化为小页
+            }
+        }
+
+        // 3. 小页分配路径
+        for (; i < page_count; i++) {
             void* phys_ptr = nullptr;
 
-            // 优先从当前 CPU 的 PCP 缓存拿
-            if (cpu && cpu->pmm_cache_count > 0) {
+            // 优先路径：PCP 缓存命中
+            if (__builtin_expect(!!(cpu && cpu->pmm_cache_count > 0), 1)) {
                 phys_ptr = cpu->pmm_cache[--cpu->pmm_cache_count];
             } else {
-                // PCP 没货了，进全局 PMM 批发
+                // 次要路径：缓存为空，全局申请并预取 (Prefetch)
                 spinlock_lock(&pmm_lock);
                 phys_ptr = PMM::GlobalRequestSingle();
                 
-                // 顺便给当前 CPU 补个货，这样下次循环就能走 PCP 分支了
-                if (phys_ptr && cpu) {
+                if (__builtin_expect(!!(phys_ptr && cpu), 1)) {
                     while (cpu->pmm_cache_count < PMM_PCP_BATCH) {
                         void* batch_page = PMM::GlobalRequestSingle();
                         if (!batch_page) break;
@@ -406,85 +444,39 @@ namespace VMM{
                 spinlock_unlock(&pmm_lock);
             }
 
-            // 如果物理内存真的耗尽了 (OOM)
-            if (!phys_ptr) {
-                // [TODO] 这里理想情况需要写回滚逻辑：释放已分配的页并清理 VMA
-                kerrorln("PMM: Out of memory during Alloc!");
-                break; 
+            if (__builtin_expect(!phys_ptr, 0)) {
+                kerrorln("PMM: Out of memory at page %d (VA: 0x%lx)!", i, addr);
+                goto oom_rollback; // 触发 OOM 回滚
             }
-
-            // 3. 【VMM 阶段】建立映射
+            
             VMM::Map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)phys_ptr, flags);
         }
         
-        Interrupt::Unmask();
-
-        // 4. 【收尾】记录映射关系并解锁
-        VMM::NewMapping(pagemap, addr, page_count, flags);
-        spinlock_unlock(&pagemap->vma_lock);
-
-        return (void*)addr; // 永远返回起始虚拟地址
-    }
-
-    void *EAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags) {
-        if (!page_count) return nullptr;
-
-        //uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
-
-        // 1. 【VMA 阶段】在虚拟地址空间找一块连续的“领土”
-        // 这部分只需要 vma_lock，不需要关中断，也不需要 pmm_lock
-        spinlock_lock(&pagemap->vma_lock);
-        uint64_t addr = VMM::Useless::InternalAlloc(pagemap, page_count, flags);
-        if (!addr) {
-            spinlock_unlock(&pagemap->vma_lock);
-            return nullptr;
-        }
-
-        // 2. 【PMM 阶段】为每一页获取物理内存
-        Interrupt::Mask(); // 保护 PCP 和 PMM 状态
-        cpu_t* cpu = this_cpu();
-
-        for (uint64_t i = 0; i < page_count; i++) {
-            void* phys_ptr = nullptr;
-
-            // 优先从当前 CPU 的 PCP 缓存拿
-            if (cpu && cpu->pmm_cache_count > 0) {
-                phys_ptr = cpu->pmm_cache[--cpu->pmm_cache_count];
-            } else {
-                // PCP 没货了，进全局 PMM 批发
-                spinlock_lock(&pmm_lock);
-                phys_ptr = PMM::GlobalRequestSingle();
-                
-                // 顺便给当前 CPU 补个货，这样下次循环就能走 PCP 分支了
-                if (phys_ptr && cpu) {
-                    while (cpu->pmm_cache_count < PMM_PCP_BATCH) {
-                        void* batch_page = PMM::GlobalRequestSingle();
-                        if (!batch_page) break;
-                        cpu->pmm_cache[cpu->pmm_cache_count++] = batch_page;
-                    }
-                }
-                spinlock_unlock(&pmm_lock);
-            }
-
-            // 如果物理内存真的耗尽了 (OOM)
-            if (!phys_ptr) {
-                // [TODO] 这里理想情况需要写回滚逻辑：释放已分配的页并清理 VMA
-                kerrorln("PMM: Out of memory during Alloc!");
-                break; 
-            }
-
-            // 3. 【VMM 阶段】建立映射
-            VMM::Map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)phys_ptr, flags);
-        }
+        // 【核心优化】：物理分配和 CPU 缓存操作结束，尽早恢复中断响应
+        Interrupt::Unmask(); 
         
-        Interrupt::Unmask();
-
-        // 4. 【收尾】记录映射关系并解锁
+        // 建立最终的 VMA 映射记录（这部分通常只需要 vma_lock 保护即可）
         VMM::NewMapping(pagemap, addr, page_count, flags);
         spinlock_unlock(&pagemap->vma_lock);
 
-        return (void*)addr; // 永远返回起始虚拟地址
+        return (void*)addr; 
+
+    oom_rollback:
+        // 【核心优化】：内存泄漏防护
+        Interrupt::Unmask(); // 退出临界区前必须开中断
+        
+        // TODO: 实现回滚逻辑，释放已经成功分配的 0 到 i 个物理页，并清理虚拟地址空间
+        // 伪代码示例：
+        // if (i > 0) {
+        //     VMM::UnmapRange(pagemap, addr, i); // 解除页表映射并释放底层物理页
+        // }
+        // VMM::Useless::InternalFree(pagemap, addr, page_count); // 归还虚拟地址段
+
+        spinlock_unlock(&pagemap->vma_lock);
+        return nullptr;
     }
+
+    
 
     void Free(pagemap_t *pagemap, void *ptr){
         if (((uint64_t)ptr & 0xfff) != 0)

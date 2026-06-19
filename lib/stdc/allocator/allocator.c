@@ -37,10 +37,10 @@
 
 extern uint64_t SizeClassTable[75][3];
 void LessCore(void* x,uint64_t y){(void)y;
-    munmap((uint64_t)x,0);
+    sys_munmap((uint64_t)x,0);
 }
 void* MoreCore(uint64_t PageCount){    
-    void* p = (void*)mmap(0,PageCount,2,0,0);
+    void* p = (void*)sys_mmap(0,PageCount,2,0,0);
     if(p != NULL) return p;
     else return NULL;
 }
