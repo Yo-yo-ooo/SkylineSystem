@@ -111,26 +111,7 @@ typedef struct ext4_dir {
 
 /********************************MOUNT OPERATIONS****************************/
 
-/**@brief   Register block device.
- *
- * @param   bd Block device.
- * @param   dev_name Block device name.
- *
- * @return  Standard error code.*/
-int32_t ext4_device_register(struct ext4_blockdev *bd,
-			 const char *dev_name);
 
-/**@brief   Un-register block device.
- *
- * @param   dev_name Block device name.
- *
- * @return  Standard error code.*/
-int32_t ext4_device_unregister(const char *dev_name);
-
-/**@brief   Un-register all block devices.
- *
- * @return  Standard error code.*/
-int32_t ext4_device_unregister_all(void);
 
 /**@brief   Mount a block device with EXT4 partition to the mount point.
  *
@@ -315,6 +296,7 @@ int32_t ext4_frename(const char *path, const char *new_path);
  * @return  Standard error code.*/
 int32_t ext4_fopen(ext4_file *file, const char *path, const char *flags);
 
+
 /**@brief   Alternate file open function.
  *
  * @param   file  File handle.
@@ -323,6 +305,7 @@ int32_t ext4_fopen(ext4_file *file, const char *path, const char *flags);
  *
  * @return  Standard error code.*/
 int32_t ext4_fopen2(ext4_file *file, const char *path, int32_t flags);
+int32_t ext4_fopen_(void *file, const char *path,int32_t flags);
 
 /**@brief   File close function.
  *
@@ -330,6 +313,7 @@ int32_t ext4_fopen2(ext4_file *file, const char *path, int32_t flags);
  *
  * @return  Standard error code.*/
 int32_t ext4_fclose(ext4_file *file);
+int32_t ext4_fclose_(void *file);
 
 
 /**@brief   File truncate function.
@@ -349,6 +333,7 @@ int32_t ext4_ftruncate(ext4_file *file, uint64_t size);
  *
  * @return  Standard error code.*/
 int32_t ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt);
+int32_t ext4_fread_(void *file, void *buf, size_t size);
 
 /**@brief   Write data to file.
  *
@@ -359,6 +344,7 @@ int32_t ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt);
  *
  * @return  Standard error code.*/
 int32_t ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt);
+int32_t ext4_fwrite_(void *file, const void *buf, size_t size);
 
 /**@brief   File seek operation.
  *
@@ -370,7 +356,8 @@ int32_t ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt)
  *              @ref SEEK_END
  *
  * @return  Standard error code.*/
-int32_t ext4_fseek(ext4_file *file, int64_t offset, uint32_t origin);
+int32_t ext4_fseek(ext4_file *file, uint64_t offset, uint32_t origin);
+int32_t ext4_fseek_(void *file, uint64_t offset, uint32_t origin);
 
 /**@brief   Get file position.
  *
@@ -385,6 +372,7 @@ uint64_t ext4_ftell(ext4_file *file);
  *
  * @return  File size. */
 uint64_t ext4_fsize(ext4_file *file);
+uint64_t ext4_fsize_(void *file);
 
 
 /**@brief Get inode of file/directory/link.

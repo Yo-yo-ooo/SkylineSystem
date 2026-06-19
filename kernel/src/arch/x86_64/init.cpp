@@ -83,6 +83,7 @@ void __init x86_64_init(void){
     
 
     InitFunc("VsDev",Dev::Init());
+    InitFunc("File & MP MAN",InitFFMAN());
     //InitFunc("ATA",ATA::Init());
     if(ACPI::mcfg == NULL){PCI::DoPCIWithoutMCFG();}
     else{InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));}

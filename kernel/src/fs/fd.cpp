@@ -59,14 +59,48 @@ extern "C" char* GetMountPointName(const char* path) {
 
 
 
-extern "C" int32_t __hmap_s_mp_compare(const void* a,const void* b){
+extern "C" int32_t __hmap_s_mp_compare(const void* a,const void* b,void *udata){
     return strcmp(((struct __hmap_s_mp*)a)->MPName,((struct __hmap_s_mp*)b)->MPName);
 }
+
+
 
 extern "C" uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t seed1){
     const struct __hmap_s_mp* entry = (const struct __hmap_s_mp*)item;
     return hashmap_sip(entry->MPName, strlen(entry->MPName), seed0, seed1);
 }
 
-extern "C" volatile struct hashmap* HMapS_MP = nullptr;
 
+
+extern "C" struct hashmap* HMapS_MP = nullptr;
+
+void InitFFMAN(){
+    HMapS_MP = hashmap_new(sizeof(struct __hmap_s_mp), 16,0,0,
+        __hmap_s_mp_hash, __hmap_s_mp_compare, nullptr, nullptr);
+}
+spinlock_t hmap_mp_lock;
+static __hmap_s_mp *GetMount_NoLock(const char *path)
+{
+    if (!HMapS_MP || !path)
+        return nullptr;
+
+    char* mp_name = GetMountPointName(path);
+    if (!mp_name)
+        return nullptr;
+
+    struct __hmap_s_mp temp_key = { .MPName = mp_name };
+    __hmap_s_mp *hsmp = (__hmap_s_mp*)hashmap_get(HMapS_MP, &temp_key);
+
+    // 立刻释放提取的挂载名字符串，杜绝内存泄漏
+    kfree(mp_name);
+    return hsmp;
+}
+
+
+__hmap_s_mp *GetMount(const char *path)
+{
+    spinlock_lock(&hmap_mp_lock);
+    __hmap_s_mp *ret = GetMount_NoLock(path);
+    spinlock_unlock(&hmap_mp_lock);
+    return ret;
+}

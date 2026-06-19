@@ -111,30 +111,11 @@ struct ext4_mountpoint{
 };
 
 
-
-
-int32_t ext4_device_register(struct ext4_blockdev *bd,
-			 const char *dev_name)
-{
-	ext4_assert(bd && dev_name);
-
-
-
-    return EOK;
-}
-
-int32_t ext4_device_unregister(const char *dev_name)
-{
-	ext4_assert(dev_name);
-
-    return EOK;
-	//return ENOENT;
-}
-
-int32_t ext4_device_unregister_all(void)
-{
-	return EOK;
-}
+static FS_PDESC fs = {
+    .write = ext4_fwrite_,.read = ext4_fread_,
+    .lseek = ext4_fseek_,.close = ext4_fclose_,
+    .open = ext4_fopen_,.fsize = ext4_fsize_,.SIZEOF_FILE_DESC = sizeof(ext4_file)
+};
 
 /****************************************************************************/
 
@@ -390,6 +371,7 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
         hsmp = (struct __hmap_s_mp *)kmalloc(sizeof(struct __hmap_s_mp));
         _memset(hsmp, 0, sizeof(struct __hmap_s_mp));
         hsmp->FST = FSType::FS_EXT4;
+        hsmp->FSOPS = &fs;
         hsmp->MPName = _strdup(mount_point);
         hsmp->MP = kmalloc(sizeof(struct ext4_mountpoint));
         ((struct ext4_mountpoint*)hsmp->MP)->name = hsmp->MPName;
@@ -465,7 +447,9 @@ int32_t ext4_umount(const char *mount_point)
 
 	if (!mp)
 		return ENODEV;
-
+    char* mp_name = _strdup(mount_point);
+    struct __hmap_s_mp temp_key = {.MPName = mp_name};
+    __hmap_s_mp* entry;
 	r = ext4_fs_fini(&mp->fs);
 	if (r != EOK)
 		goto Finish;
@@ -475,10 +459,15 @@ int32_t ext4_umount(const char *mount_point)
 	ext4_bcache_cleanup(mp->fs.bdev->bc);
 	ext4_bcache_fini_dynamic(mp->fs.bdev->bc);
     
-    hashmap_delete(HMapS_MP,(void*)mp);
-    if(mp->name)
-        kfree(mp->name);
-    kfree(hsmp);
+    
+    entry = (__hmap_s_mp*)hashmap_delete(HMapS_MP, &temp_key);
+    kfree(mp_name);
+    if (entry) {
+        // 释放内部堆内存
+        kfree(entry->MPName);
+        kfree(entry->MP);
+        kfree(entry);
+    }
 	r = ext4_block_fini(mp->fs.bdev);
 Finish:
 	mp->fs.bdev->fs = NULL;
@@ -2051,7 +2040,7 @@ Finish:
 	return r;
 }
 
-int32_t ext4_fseek(ext4_file *file, int64_t offset, uint32_t origin)
+int32_t ext4_fseek(ext4_file *file, uint64_t offset, uint32_t origin)
 {
 	switch (origin) {
 	case SEEK_SET:
@@ -3279,18 +3268,14 @@ Extra Function(Not in lwext4)
 Ext4_Kernel_INIT
 */
 
+
+
 bool ext4_kernel_init(const char* devname,const char* mpname,uint32_t wpart){
 
-    if(HMapS_MP == nullptr){
-        HMapS_MP = hashmap_new(sizeof(struct __hmap_s_mp), 16,0,0,
-            __hmap_s_mp_hash, __hmap_s_mp_compare, nullptr, nullptr);
-    }
+    
     //kinfoln("HERE!");
     struct ext4_blockdev *p = ext4_blockdev_get(devname,wpart);
-    /* uint32_t r = ext4_device_register(p, devname);
-	if (r != EOK) {
-		kerror("ext4_device_register: rc = %d\n", r);
-	} */
+
 
 	uint32_t r = ext4_mount(p, mpname, false);
 	if (r != EOK){kerror("ext4_mount: rc = %d\n", r);hcf();}
@@ -3533,4 +3518,28 @@ void ext4_fs_test_all(){
 
 }
 
+
+
+int32_t ext4_fwrite_(void *file, const void *buf, size_t size){
+    return ext4_fwrite((ext4_file *)file,buf,size,nullptr);
+}
+
+int32_t ext4_fread_(void *file, void *buf, size_t size){
+    return ext4_fread((ext4_file *)file,buf,size,nullptr);
+}
+
+int32_t ext4_fseek_(void *file, uint64_t offset, uint32_t origin){
+    return ext4_fseek((ext4_file *)file,offset,origin);
+}
+
+uint64_t ext4_fsize_(void *file){
+    return ext4_fsize((ext4_file *)file);
+}
+int32_t ext4_fclose_(void *file){
+    return ext4_fclose((ext4_file *)file);
+}
+
+int32_t ext4_fopen_(void *file, const char *path,int32_t flags){
+    return ext4_fopen2((ext4_file *)file,path,flags);
+}
 

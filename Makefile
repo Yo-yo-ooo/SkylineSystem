@@ -291,7 +291,7 @@ mk:
 	cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
 	
 cmk:
-	@$(MAKE) clean
+	@$(MAKE) -C kernel clean
 	@$(MAKE) -j$(shell nproc)
 
 cmr:

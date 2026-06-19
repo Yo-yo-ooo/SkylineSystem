@@ -422,16 +422,43 @@ retry:
         thread->heap_size = 0;
 
         // Load ELF
-        static ext4_file f;
-        ext4_fopen(&f,Path,"r");
-        uint8_t *buffer = (uint8_t*)kmalloc(ext4_fsize(&f));
+        //ext4_file f;
+        //ext4_fopen(&f,Path,"r");
+        __hmap_s_mp *MP = GetMount(Path);
+        if(!MP){kerrorln("Cannot Find Mount Point!!!");return;}
+        uint64_t FileDescSize = MP->FSOPS->SIZEOF_FILE_DESC;
+        void *FileDesc = kmalloc(FileDescSize);
+        if (!FileDesc) {
+            kerrorln("kmalloc FileDesc failed");
+            return;
+        }
+        _memset(FileDesc,0,FileDescSize);
+        int32_t open_rc = MP->FSOPS->open(FileDesc,Path,O_RDONLY);
+        if(open_rc != 0){
+            kerrorln("open file failed, ret = %d", open_rc);
+            kfree(FileDesc); // 打开失败，释放文件描述符
+            return;
+        }
+        uint64_t FSize = MP->FSOPS->fsize(FileDesc);
+        kinfoln("%llu",FSize);
+        uint8_t *buffer = (uint8_t*)kmalloc(FSize);
+        if (!buffer) {
+            kfree(FileDesc); // 释放已分配内存防泄漏
+            kerrorln("kmalloc buffer failed");
+            return;
+        }
         _memset(&thread->ctx,0,sizeof(context_t));
-        ext4_fread(&f,buffer,ext4_fsize(&f),NULL);
+        MP->FSOPS->read(FileDesc,buffer,FSize);
+        //ext4_fread(&f,buffer,ext4_fsize(&f),NULL);
+        
         
         // [修改 1] 接收 ELF 中的 TLS 参数
         uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
         thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align); 
-        ext4_fclose(&f);
+        MP->FSOPS->close(FileDesc);
+        kfree(FileDesc);
+        //kfree(buffer);
+        //ext4_fclose(&f);
 
         cpu_t *cpu = get_cpu(cpu_num);
         // HEAP AREA ALLOC HERE
