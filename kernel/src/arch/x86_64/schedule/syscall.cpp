@@ -52,7 +52,7 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
     // 2. Get function pointer from syscall_lists
     auto func = syscall_lists[frame->rax];
 
-    //kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);
+    kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);
     frame->rax = func(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
 
     //kinfoln("Syscall returned %ld", frame->rax);

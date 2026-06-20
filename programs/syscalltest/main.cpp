@@ -60,19 +60,19 @@ int main(){
     fb.BaseAddress = (void*)FbAddr;
     
     BasicDraw bd(&fb);
-     // 绘制自适应UI
-    
-    
-
-    void *UIBase = malloc(fb.BufferSize);
+    // 绘制自适应UI
     bd.DrawProportionalUI();
-    syscall(24, (long)msg, 13, 0, 0, 0, 0);
-    memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
+    
 
-    FILE *fp = fopen("/mp/README.md","r");
+    void *UIBase = malloc(16);
+    
+    syscall(24, (long)msg, 13, 0, 0, 0, 0);
+    //memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
+
+    /* FILE *fp = fopen("/mp/README.md","r");
     char buf[25];
     fread(buf,25,1,fp);
-    syscall(24, (long)buf, 25, 0, 0, 0, 0);
+    syscall(24, (long)buf, 25, 0, 0, 0, 0); */
     
 
     while (true);
