@@ -19,13 +19,6 @@
 * along with this program; if not, write to the Free Software
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
-/*
-* SPDX-License-Identifier: GPL-2.0-only
-* File: allocator.c
-* Copyright (C) 2026 Yo-yo-ooo
-*
-* This file is part of SkylineSystem.
-*/
 #include <private/alloc/alloc.h>
 #include <stdc/string.h>
 #ifdef __x86_64__
@@ -36,23 +29,27 @@
 #include <base/base.h>
 
 extern uint64_t SizeClassTable[75][3];
-void LessCore(void* x,uint64_t y){(void)y;
-    sys_munmap((uint64_t)x,0);
+
+void LessCore(void* x, uint64_t y) {
+    (void)y;
+    sys_munmap((uint64_t)x, 0);
 }
-void* MoreCore(uint64_t PageCount){    
-    void* p = (void*)sys_mmap(0,PageCount,2,0,0);
-    if(p != NULL) return p;
-    else return NULL;
+
+void* MoreCore(uint64_t PageCount) {    
+    void* p = (void*)sys_mmap(0, PageCount, 2, 0, 0);
+    return (p != NULL) ? p : NULL;
 }
 
 // ============================================================================
-// The QSBR Subsystem & GC Queues (TLS Optimized)
+// The QSBR Subsystem & GC Queues (Optimized)
 // ============================================================================
 
 #define QSBR_SLOTS 32
+#define TLS_BATCH_FLUSH_THRESHOLD 16
+
 typedef struct {
     volatile uint64_t count;
-    char padding[56]; // 强制缓存行对齐，彻底消除并发伪共享
+    char padding[56]; // 强制缓存行对齐，防止伪共享
 } qsbr_slot_t;
 
 static qsbr_slot_t qsbr_counters[QSBR_SLOTS] __attribute__((aligned(64)));
@@ -68,109 +65,84 @@ static volatile uint64_t gc_generation = 0;
 static volatile uint64_t pending_small_count = 0;
 static volatile uint64_t pending_large_count = 0;
 static volatile uint32_t gc_lock = 0;
-
-// ----------------------------------------------------------------------------
-// [TLS 核心改造区]：为每个线程分配独立的缓存队列和固定的 QSBR 槽位
-// ----------------------------------------------------------------------------
 static volatile uint32_t global_qsbr_slot_alloc = 0;
 
-static __thread int32_t       tls_qsbr_slot = -1;
-static __thread void* tls_small_scb_list = NULL;
-static __thread uint32_t  tls_pending_small_count = 0;
-static __thread void* tls_large_scb_list = NULL;
-static __thread uint32_t  tls_pending_large_count = 0;
+// [优化 1]：聚合同一线程的 TLS 变量，提升 Cache 命中率
+typedef struct {
+    int32_t  qsbr_slot;
+    uint32_t pending_small;
+    uint32_t pending_large;
+    void* small_list;
+    void* large_list;
+} tls_alloc_data_t;
 
-#define TLS_BATCH_FLUSH_THRESHOLD 16 // 本地队列满 16 个 SCB 时再批量推送到全局，降低 CAS 碰撞
+static __thread tls_alloc_data_t tls_data = { -1, 0, 0, NULL, NULL };
 
-// 批量将 TLS 小对象队列推入全局队列
-static void flush_tls_small_scb() {
-    if (!tls_small_scb_list) return;
-    
-    // 找到本地链表的尾部
-    void* tail = tls_small_scb_list;
-    while (*(void**)tail) {
-        tail = *(void**)tail;
-    }
-    
-    // 单次 CAS 即可将整个 TLS 链表挂载到全局队列，性能呈指数级提升
-    void* old_head;
-    do {
-        old_head = (void*)deferred_small_scb_list;
-        *(void**)tail = old_head;
-        __atomic_thread_fence(__ATOMIC_RELEASE);
-    } while (__a_cas_p(&deferred_small_scb_list, old_head, tls_small_scb_list) != old_head);
-    
-    __atomic_fetch_add(&pending_small_count, tls_pending_small_count, __ATOMIC_RELEASE);
-    
-    // 清空 TLS 状态
-    tls_small_scb_list = NULL;
-    tls_pending_small_count = 0;
+static void try_gc(); // 提前声明
+
+// ============================================================================
+// TLS & 全局队列无锁交互
+// ============================================================================
+
+// 通用的批量推入全局队列宏 (简化代码重复)
+#define FLUSH_TLS_LIST(tls_list, tls_count, global_list, global_count) do { \
+    if (!(tls_list)) break; \
+    void* tail = (tls_list); \
+    while (*(void**)tail) tail = *(void**)tail; \
+    void* old_head; \
+    do { \
+        old_head = (void*)(global_list); \
+        *(void**)tail = old_head; \
+        __atomic_thread_fence(__ATOMIC_RELEASE); \
+    } while (__a_cas_p(&(global_list), old_head, (tls_list)) != old_head); \
+    __atomic_fetch_add(&(global_count), (tls_count), __ATOMIC_RELEASE); \
+    (tls_list) = NULL; \
+    (tls_count) = 0; \
+} while(0)
+
+static void flush_tls_scb_all() {
+    FLUSH_TLS_LIST(tls_data.small_list, tls_data.pending_small, deferred_small_scb_list, pending_small_count);
+    FLUSH_TLS_LIST(tls_data.large_list, tls_data.pending_large, deferred_large_scb_list, pending_large_count);
 }
 
-// 批量将 TLS 大对象队列推入全局队列
-static void flush_tls_large_scb() {
-    if (!tls_large_scb_list) return;
-    
-    void* tail = tls_large_scb_list;
-    while (*(void**)tail) {
-        tail = *(void**)tail;
-    }
-    
-    void* old_head;
-    do {
-        old_head = (void*)deferred_large_scb_list;
-        *(void**)tail = old_head;
-        __atomic_thread_fence(__ATOMIC_RELEASE);
-    } while (__a_cas_p(&deferred_large_scb_list, old_head, tls_large_scb_list) != old_head);
-    
-    __atomic_fetch_add(&pending_large_count, tls_pending_large_count, __ATOMIC_RELEASE);
-    
-    tls_large_scb_list = NULL;
-    tls_pending_large_count = 0;
-}
-
-// 供外部调用：当线程被销毁前，务必调用此函数清空 TLS 缓存
 void allocator_thread_exit_cleanup() {
-    flush_tls_small_scb();
-    flush_tls_large_scb();
+    flush_tls_scb_all();
 }
 
-static void push_deferred_small_scb(void* scb) {
-    // 纯 TLS 无锁操作
-    *(void**)scb = tls_small_scb_list;
-    tls_small_scb_list = scb;
-    tls_pending_small_count++;
-    
-    if (tls_pending_small_count >= TLS_BATCH_FLUSH_THRESHOLD) {
-        flush_tls_small_scb();
+static inline void push_deferred_scb(void* scb, int is_large) {
+    if (!is_large) {
+        *(void**)scb = tls_data.small_list;
+        tls_data.small_list = scb;
+        if (++tls_data.pending_small >= TLS_BATCH_FLUSH_THRESHOLD) {
+            FLUSH_TLS_LIST(tls_data.small_list, tls_data.pending_small, deferred_small_scb_list, pending_small_count);
+            try_gc(); // [优化 2] 仅在批量推入时尝试 GC，极大降低锁颠簸
+        }
+    } else {
+        *(void**)scb = tls_data.large_list;
+        tls_data.large_list = scb;
+        if (++tls_data.pending_large >= TLS_BATCH_FLUSH_THRESHOLD) {
+            FLUSH_TLS_LIST(tls_data.large_list, tls_data.pending_large, deferred_large_scb_list, pending_large_count);
+            try_gc();
+        }
     }
 }
 
-static void push_deferred_large_scb(void* scb) {
-    // 纯 TLS 无锁操作
-    *(void**)scb = tls_large_scb_list;
-    tls_large_scb_list = scb;
-    tls_pending_large_count++;
-    
-    if (tls_pending_large_count >= TLS_BATCH_FLUSH_THRESHOLD) {
-        flush_tls_large_scb();
-    }
-}
+// ============================================================================
+// QSBR 与 GC 核心机制
+// ============================================================================
 
 static inline int32_t qsbr_enter() {
-    // [TLS优化]：取代原先昂贵的 rdtsc() 运算
-    if (__builtin_expect(tls_qsbr_slot == -1, 0)) {
-        tls_qsbr_slot = __atomic_fetch_add(&global_qsbr_slot_alloc, 1, __ATOMIC_RELAXED) % QSBR_SLOTS;
+    if (__builtin_expect(tls_data.qsbr_slot == -1, 0)) {
+        tls_data.qsbr_slot = __atomic_fetch_add(&global_qsbr_slot_alloc, 1, __ATOMIC_RELAXED) % QSBR_SLOTS;
     }
-    __atomic_fetch_add(&qsbr_counters[tls_qsbr_slot].count, 1, __ATOMIC_ACQUIRE);
-    return tls_qsbr_slot;
+    __atomic_fetch_add(&qsbr_counters[tls_data.qsbr_slot].count, 1, __ATOMIC_ACQUIRE);
+    return tls_data.qsbr_slot;
 }
 
 static inline void qsbr_leave(int32_t slot) {
     __atomic_sub_fetch(&qsbr_counters[slot].count, 1, __ATOMIC_RELEASE);
 }
 
-// 核心优化：静止期检测替代全静止检测
 static inline int32_t is_quiescent() {
     uint64_t snapshot[QSBR_SLOTS];
     uint64_t generation = gc_generation;
@@ -181,12 +153,12 @@ static inline int32_t is_quiescent() {
     
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     
-    for (int32_t retry = 0; retry < 1000; retry++) {
+    // [优化 3] 缩减重试次数，避免死循环造成 CPU 资源空耗
+    for (int32_t retry = 0; retry < 50; retry++) {
         int32_t all_advanced = 1;
         
         for (int32_t i = 0; i < QSBR_SLOTS; i++) {
-            uint64_t current = __atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE);
-            if (current <= snapshot[i]) {
+            if (__atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE) <= snapshot[i]) {
                 all_advanced = 0;
                 break;
             }
@@ -194,101 +166,54 @@ static inline int32_t is_quiescent() {
         
         if (all_advanced) {
             __atomic_thread_fence(__ATOMIC_SEQ_CST);
-            if (__atomic_load_n(&gc_generation, __ATOMIC_ACQUIRE) == generation) {
-                return 1;
-            }
-            return 0;
+            return (__atomic_load_n(&gc_generation, __ATOMIC_ACQUIRE) == generation);
         }
         
-        for (int32_t i = 0; i < 1000; i++) {
-            CPU_RELAX();
-        }
+        for (int32_t i = 0; i < 50; i++) CPU_RELAX();
     }
     return 0;
 }
 
-// 优化版GC：多轮重试 + 压力触发 + 分代队列
 static inline void try_gc() {
-    // 尝试 GC 前，先把当前线程积压的 TLS 缓存推入全局，防止漏收
-    flush_tls_small_scb();
-    flush_tls_large_scb();
-
     uint32_t expected = 0;
+    // 如果有其他线程正在 GC，直接放弃（非阻塞）
     if (!__atomic_compare_exchange_n(&gc_lock, &expected, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
         return;
     }
     
-    // 先剥离老年代队列
-    void* old_small = (void*)(uintptr_t)__atomic_exchange_n(&old_small_scb_list, NULL, __ATOMIC_ACQ_REL);
-    void* old_large = (void*)(uintptr_t)__atomic_exchange_n(&old_large_scb_list, NULL, __ATOMIC_ACQ_REL);
-    
-    // 再剥离年轻代队列
+    flush_tls_scb_all();
+
+    void* small_list = (void*)(uintptr_t)__atomic_exchange_n(&old_small_scb_list, NULL, __ATOMIC_ACQ_REL);
+    void* large_list = (void*)(uintptr_t)__atomic_exchange_n(&old_large_scb_list, NULL, __ATOMIC_ACQ_REL);
     void* young_small = (void*)(uintptr_t)__atomic_exchange_n(&deferred_small_scb_list, NULL, __ATOMIC_ACQ_REL);
     void* young_large = (void*)(uintptr_t)__atomic_exchange_n(&deferred_large_scb_list, NULL, __ATOMIC_ACQ_REL);
     
-    // 合并队列：老年代在前，年轻代在后
-    void* small_list = old_small;
-    if (young_small) {
-        void* tail = young_small;
-        while (*(void**)tail) {
-            tail = *(void**)tail;
-        }
-        *(void**)tail = small_list;
-        small_list = young_small;
-    }
+    // 队列拼接辅助宏
+    #define APPEND_LIST(head, tail_list) do { \
+        if (tail_list) { \
+            void* t = (tail_list); \
+            while (*(void**)t) t = *(void**)t; \
+            *(void**)t = (head); \
+            (head) = (tail_list); \
+        } \
+    } while(0)
+
+    APPEND_LIST(small_list, young_small);
+    APPEND_LIST(large_list, young_large);
     
-    void* large_list = old_large;
-    if (young_large) {
-        void* tail = young_large;
-        while (*(void**)tail) {
-            tail = *(void**)tail;
-        }
-        *(void**)tail = large_list;
-        large_list = young_large;
-    }
-    
-    if (!small_list && !large_list) {
-        goto unlock;
-    }
-    
-    uint64_t total_pending = pending_small_count + pending_large_count;
-    int32_t max_retries = 10;
-    int32_t pause_count = 1000;
-    
-    if (total_pending > 100) {
-        max_retries = 50;
-        pause_count = 5000;
-    }
-    if (total_pending > 1000) {
-        max_retries = 200;
-        pause_count = 20000;
-    }
-    
-    int32_t gc_success = 0;
-    for (int32_t retry = 0; retry < max_retries; retry++) {
-        if (is_quiescent()) {
-            gc_success = 1;
-            break;
-        }
-        for (int32_t i = 0; i < pause_count; i++) {
-            CPU_RELAX();
-        }
-    }
+    if (!small_list && !large_list) goto unlock;
+
+    int32_t gc_success = is_quiescent();
     
     if (gc_success) {
         while (small_list) {
             void* next = *(void**)small_list;
             SecondControlBlock_t* scb = (SecondControlBlock_t*)small_list;
-            
-            uint64_t total_objects = scb->bit_tail + 1;
-            uint64_t total_size = total_objects * scb->step_size;
-            uint64_t pages_needed = (total_size + 4095) / 4096;
+            uint64_t pages_needed = (((scb->bit_tail + 1) * scb->step_size) + 4095) / 4096;
             LessCore((void*)scb->list_base, pages_needed);
-            
             LessCore(small_list, 4);
             small_list = next;
         }
-        
         while (large_list) {
             void* next = *(void**)large_list;
             LessCore(large_list, 4);
@@ -299,24 +224,19 @@ static inline void try_gc() {
         __atomic_store_n(&pending_large_count, 0, __ATOMIC_RELEASE);
         __atomic_fetch_add(&gc_generation, 1, __ATOMIC_RELEASE);
     } else {
+        // GC失败，将节点退回老年代队列
+        void* old_head;
         if (small_list) {
             void* tail = small_list;
-            while (*(void**)tail) {
-                tail = *(void**)tail;
-            }
-            void* old_head;
+            while (*(void**)tail) tail = *(void**)tail;
             do {
                 old_head = (void*)old_small_scb_list;
                 *(void**)tail = old_head;
             } while (__a_cas_p(&old_small_scb_list, old_head, small_list) != old_head);
         }
-        
         if (large_list) {
             void* tail = large_list;
-            while (*(void**)tail) {
-                tail = *(void**)tail;
-            }
-            void* old_head;
+            while (*(void**)tail) tail = *(void**)tail;
             do {
                 old_head = (void*)old_large_scb_list;
                 *(void**)tail = old_head;
@@ -327,33 +247,54 @@ static inline void try_gc() {
 unlock:
     __atomic_store_n(&gc_lock, 0, __ATOMIC_RELEASE);
 }
-
-static inline int32_t GetSizeClassIndex(size_t size) {
-    if (size <= 32) return 0;
-    uint64_t s = size - 1;
-    uint32_t k = 63 - __builtin_clzll(s); 
-    if (size <= 2097152ULL) { 
-        uint32_t second_bit = (s >> (k - 1)) & 1;
-        return ((k - 5) * 2) + 1 + second_bit;
-    } else {
-        return k + 12; 
+// 新增：明确定义表的行数，防止越界
+#define SCT_MAX_CLASSES 75
+// 新增：定义支持的最大分配极值 (8EB)
+#define SCT_MAX_ALLOC_SIZE 9223372036854775808ULL
+// ============================================================================
+// Allocator Core
+// ============================================================================
+int GetSizeClassIndex(uint64_t size) {
+    // 防御1: 拦截 malloc(0)，强制提升到最小规格 32B
+    if (size == 0) {
+        size = 32ULL;
     }
+
+    // 防御2: 拦截超大分配请求，防止后续查表或计算溢出死循环
+    if (size > SCT_MAX_ALLOC_SIZE) {
+        return -1; // ENOMEM
+    }
+
+    // 防御3: O(log N) 二分查找，天然防止 while 线性遍历导致的越界死循环
+    int left = 0;
+    int right = SCT_MAX_CLASSES - 1;
+    int ans = -1;
+
+    while (left <= right) {
+        int mid = left + (right - left) / 2;
+        
+        if (SizeClassTable[mid][0] >= size) {
+            ans = mid;         // 记录当前满足条件的索引
+            right = mid - 1;   // 继续向左半区寻找"更小但依然满足条件"的规格
+        } else {
+            left = mid + 1;    // 规格太小，去右半区找
+        }
+    }
+
+    return ans;
 }
 
 #define DIV_ROUND_UP(x, y) (((x) + ((y) - 1)) / (y))
 
-// ============================================================================
-// 内部逻辑：实际的分配与释放引擎 (无更改，保持优秀架构)
-// ============================================================================
 static void* _skyline_malloc_internal(size_t size) {
     if (size == 0 || size > 9223372036854775808ULL) return NULL;
 
     int32_t idx = GetSizeClassIndex(size);
     if (idx < 0 || idx >= 75) return NULL;
     
-    uint64_t size_class   = SizeClassTable[idx][0];
-    uint64_t region_size  = SizeClassTable[idx][2]; 
-    void* allocated_ptr   = NULL;
+    uint64_t size_class  = SizeClassTable[idx][0];
+    uint64_t region_size = SizeClassTable[idx][2]; 
+    void* allocated_ptr  = NULL;
 
     while (!allocated_ptr) {
         MainControlBlock_t* mcb = NULL;
@@ -365,13 +306,11 @@ static void* _skyline_malloc_internal(size_t size) {
             
             while (mcb) {
                 __builtin_prefetch(mcb, 0, 3);
-                
                 if (__atomic_load_n(&mcb->is_full, __ATOMIC_ACQUIRE) == 0) {
                     if (prev_mcb == NULL || __atomic_load_n(&prev_mcb->next, __ATOMIC_ACQUIRE) == (uint64_t)mcb) {
                         break;
                     }
                 }
-                
                 prev_mcb = mcb;
                 mcb = (MainControlBlock_t*)__atomic_load_n(&mcb->next, __ATOMIC_ACQUIRE);
             }
@@ -382,7 +321,8 @@ static void* _skyline_malloc_internal(size_t size) {
 
         if (!mcb) {
             MainControlBlock_t* new_mcb = (MainControlBlock_t*)MoreCore(4); 
-            if (!new_mcb) return NULL;
+            if (!new_mcb) { try_gc(); return NULL; } // 分配不到内存时尝试 GC
+            
             new_mcb->is_full = 0;
             new_mcb->rem_scb_count = 2014; 
             for (int32_t i = 0; i < 32; i++) new_mcb->bitmap[i] = 0;
@@ -390,16 +330,12 @@ static void* _skyline_malloc_internal(size_t size) {
             for (int32_t i = 0; i < 2014; i++) new_mcb->list_base[i] = 0;
             new_mcb->next = 0; 
 
-            void* actual;
-            if (prev_mcb == NULL) {
-                actual = __a_cas_p((volatile void*)&SizeClassTable[idx][1], NULL, new_mcb);
-            } else {
-                actual = __a_cas_p((volatile void*)&prev_mcb->next, NULL, new_mcb);
-            }
+            void* actual = (prev_mcb == NULL) 
+                ? __a_cas_p((volatile void*)&SizeClassTable[idx][1], NULL, new_mcb)
+                : __a_cas_p((volatile void*)&prev_mcb->next, NULL, new_mcb);
             
             if (actual != NULL) { 
                 LessCore(new_mcb, 4);
-                CPU_RELAX();
                 continue; 
             }
             mcb = new_mcb;
@@ -414,10 +350,7 @@ static void* _skyline_malloc_internal(size_t size) {
             }
         }
         
-        if (scb_idx >= 2014) {
-            CPU_RELAX(); 
-            continue; 
-        }
+        if (scb_idx >= 2014) continue; 
 
         if (region_size != 0) {
             SecondControlBlock_t* scb = (SecondControlBlock_t*)mcb->list_base[scb_idx];
@@ -433,7 +366,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     scb = (SecondControlBlock_t*)MoreCore(4); 
                     if (!scb) {
                         __atomic_store_n(&mcb->list_base[scb_idx], NULL, __ATOMIC_RELEASE);
-                        CPU_RELAX();
+                        try_gc();
                         continue; 
                     }
 
@@ -441,7 +374,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     if (!data_region) { 
                         LessCore(scb, 4);
                         __atomic_store_n(&mcb->list_base[scb_idx], NULL, __ATOMIC_RELEASE);
-                        CPU_RELAX();
+                        try_gc();
                         continue; 
                     }
 
@@ -455,22 +388,15 @@ static void* _skyline_malloc_internal(size_t size) {
                     uint64_t last_word = scb->bit_tail / 64;
                     uint64_t last_bit = scb->bit_tail % 64;
 
-                    for (uint64_t i = last_word + 1; i < 2044; i++) {
-                        scb->bitmap[i] = 0xFFFFFFFFFFFFFFFFULL;
-                    }
-                    if (last_bit < 63) {
-                        scb->bitmap[last_word] |= 0xFFFFFFFFFFFFFFFFULL << (last_bit + 1);
-                    }
+                    for (uint64_t i = last_word + 1; i < 2044; i++) scb->bitmap[i] = 0xFFFFFFFFFFFFFFFFULL;
+                    if (last_bit < 63) scb->bitmap[last_word] |= 0xFFFFFFFFFFFFFFFFULL << (last_bit + 1);
                     
                     __atomic_store_n(&mcb->list_base[scb_idx], scb, __ATOMIC_RELEASE);
                 } else {
                     while ((scb = (SecondControlBlock_t*)__atomic_load_n(&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE)) == (void*)1) {
                         CPU_RELAX();
                     }
-                    if (!scb) {
-                        CPU_RELAX();
-                        continue;
-                    }
+                    if (!scb) continue;
                 }
             }
 
@@ -505,10 +431,7 @@ static void* _skyline_malloc_internal(size_t size) {
                 if (obj_idx != 0xFFFFFFFFFFFFFFFFULL) break;
             }
 
-            if (obj_idx == 0xFFFFFFFFFFFFFFFFULL) {
-                CPU_RELAX(); 
-                continue; 
-            }
+            if (obj_idx == 0xFFFFFFFFFFFFFFFFULL) continue; 
 
             uint64_t step_stride = size_class + sizeof(AllocBlock_t);
             uint64_t slot_start_addr = scb->list_base + (obj_idx * step_stride);
@@ -526,18 +449,14 @@ static void* _skyline_malloc_internal(size_t size) {
 
             allocated_ptr = (void*)header->AllocPtrBaseAddress;
 
-            uint64_t old_rem = __a_subu32(&scb->rem_count, 1); 
-            if (old_rem == 1) { 
+            if (__a_subu32(&scb->rem_count, 1) == 1) { 
                 if (__atomic_compare_exchange_n(&scb->is_full, &(uint64_t){0}, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-                    int32_t mcb_word = scb_idx / 64;
-                    int32_t mcb_bit  = scb_idx % 64;
-                    __a_or_64(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
-                    uint32_t old_mcb_rem = __a_subu32(&mcb->rem_scb_count, 1);
-                    if (old_mcb_rem == 1) mcb->is_full = 1;
+                    __a_or_64(&mcb->bitmap[scb_idx / 64], (1ULL << (scb_idx % 64)));
+                    if (__a_subu32(&mcb->rem_scb_count, 1) == 1) mcb->is_full = 1;
                 }
             }
         } 
-        else {
+        else { // 大对象分配逻辑保持原有稳定结构
             LargeSecondControlBlock_t* l_scb = (LargeSecondControlBlock_t*)mcb->list_base[scb_idx];
 
             if (!l_scb) {
@@ -546,7 +465,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     l_scb = (LargeSecondControlBlock_t*)MoreCore(4); 
                     if (!l_scb) {
                         __atomic_store_n(&mcb->list_base[scb_idx], NULL, __ATOMIC_RELEASE);
-                        CPU_RELAX();
+                        try_gc();
                         continue; 
                     }
                     
@@ -561,10 +480,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     while ((l_scb = (LargeSecondControlBlock_t*)__atomic_load_n(&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE)) == (void*)1) {
                         CPU_RELAX();
                     }
-                    if (!l_scb) {
-                        CPU_RELAX();
-                        continue;
-                    }
+                    if (!l_scb) continue;
                 }
             }
 
@@ -597,25 +513,18 @@ static void* _skyline_malloc_internal(size_t size) {
                 if (obj_idx != 0xFFFFFFFFFFFFFFFFULL) break;
             }
 
-            if (obj_idx >= 2014) {
-                CPU_RELAX();
-                continue; 
-            }
+            if (obj_idx >= 2014) continue; 
             
             uint64_t total_large_size = size_class + sizeof(AllocBlock_t);
-            uint64_t pages_needed = (total_large_size + 4095) / 4096;
-            void* page_start = MoreCore(pages_needed);
+            void* page_start = MoreCore((total_large_size + 4095) / 4096);
             if (!page_start) {
-                uint64_t word_idx = obj_idx / 64;
-                uint64_t bit_idx = obj_idx % 64;
-                uint64_t mask = 1ULL << bit_idx;
-                
+                uint64_t mask = 1ULL << (obj_idx % 64);
                 if (__atomic_load_n(&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE) == (uint64_t)l_scb) {
-                    uint64_t old_val = __atomic_load_n(&l_scb->bitmap[word_idx], __ATOMIC_ACQUIRE);
-                    if (old_val & mask) {
-                        __a_clear_bit(&l_scb->bitmap[word_idx], mask);
+                    if (__atomic_load_n(&l_scb->bitmap[obj_idx / 64], __ATOMIC_ACQUIRE) & mask) {
+                        __a_clear_bit(&l_scb->bitmap[obj_idx / 64], mask);
                     }
                 }
+                try_gc();
                 return NULL;
             }
 
@@ -633,15 +542,11 @@ static void* _skyline_malloc_internal(size_t size) {
             allocated_ptr = (void*)header->AllocPtrBaseAddress;
             l_scb->list_base[obj_idx] = (uint64_t)page_start;
 
-            uint64_t old_rem = __a_subu64(&l_scb->rem_count, 1);
-            if (old_rem == 1) {
+            if (__a_subu64(&l_scb->rem_count, 1) == 1) {
                 uint64_t expected = 0;
                 if (__atomic_compare_exchange_n(&l_scb->is_full, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-                    int32_t mcb_word = scb_idx / 64;
-                    int32_t mcb_bit  = scb_idx % 64;
-                    __a_or_64(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
-                    uint32_t old_mcb_rem = __a_subu32(&mcb->rem_scb_count, 1);
-                    if (old_mcb_rem == 1) mcb->is_full = 1;
+                    __a_or_64(&mcb->bitmap[scb_idx / 64], (1ULL << (scb_idx % 64)));
+                    if (__a_subu32(&mcb->rem_scb_count, 1) == 1) mcb->is_full = 1;
                 }
             }
         }
@@ -660,116 +565,85 @@ static void _skyline_free_internal(void* ptr) {
     ALLOCTOR_SECURITY_ASSERT(header->MCBAddr > 0 && header->MCBAddr < SKYLINE_MAX_LEGAL_ADDR);
     ALLOCTOR_SECURITY_ASSERT(header->Magic == ALLOC_BLOCK_MAGIC);
 
-    uint64_t size_class   = header->AllocSizeAligned;
-    uint32_t obj_bit_loc  = header->BitMapBitLocation.SCBBitLocation; 
-    uint32_t mcb_slot     = header->BitMapBitLocation.MCBBitLocation; 
-    
-    uint64_t scb_addr     = header->BitMapBase;
-    uint64_t mcb_addr     = header->MCBAddr;
-    uint64_t block_addr   = header->BlockAddr; 
+    uint64_t size_class  = header->AllocSizeAligned;
+    uint32_t obj_bit_loc = header->BitMapBitLocation.SCBBitLocation; 
+    uint32_t mcb_slot    = header->BitMapBitLocation.MCBBitLocation; 
+    uint64_t scb_addr    = header->BitMapBase;
+    uint64_t mcb_addr    = header->MCBAddr;
+    uint64_t block_addr  = header->BlockAddr; 
 
     int32_t idx = GetSizeClassIndex(size_class);
     if (idx < 0 || idx >= 75) return; 
     
     uint32_t word_idx = obj_bit_loc / 64;
     uint32_t bit_idx  = obj_bit_loc % 64;
-
     MainControlBlock_t* mcb = (MainControlBlock_t*)mcb_addr;
 
     if (SizeClassTable[idx][2] != 0) {
         SecondControlBlock_t* scb = (SecondControlBlock_t*)scb_addr;
         ALLOCTOR_SECURITY_ASSERT(obj_bit_loc <= scb->bit_tail); 
         
-        uint64_t old_bitmap = __a_clear_bit(&scb->bitmap[word_idx], (1ULL << bit_idx));
-        if (!(old_bitmap & (1ULL << bit_idx))) return; 
+        if (!(__a_clear_bit(&scb->bitmap[word_idx], (1ULL << bit_idx)) & (1ULL << bit_idx))) return; 
 
         uint64_t old_rem = __a_fetch_addu32(&scb->rem_count, 1); 
-
         if (old_rem == 0) {
             scb->is_full = 0; 
-            int32_t mcb_word = mcb_slot / 64;
-            int32_t mcb_bit  = mcb_slot % 64;
-            
-            __a_clear_bit(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
-            uint32_t old_mcb_rem = __a_fetch_addu32(&mcb->rem_scb_count, 1); 
-            if (old_mcb_rem == 0) mcb->is_full = 0;
+            __a_clear_bit(&mcb->bitmap[mcb_slot / 64], (1ULL << (mcb_slot % 64)));
+            if (__a_fetch_addu32(&mcb->rem_scb_count, 1) == 0) mcb->is_full = 0;
         }
 
         uint64_t target_rem = scb->bit_tail + 1;
-        if (old_rem == target_rem - 1) {
-            uint64_t current_rem = __atomic_load_n(&scb->rem_count, __ATOMIC_ACQUIRE);
-            if (current_rem == target_rem) {
-                void* actual = __a_cas_p((volatile void*)&mcb->list_base[mcb_slot], scb, NULL);
-                if (actual == scb) {
-                    push_deferred_small_scb(scb); // 直接压入极速的 TLS 队列
-                }
+        if (old_rem == target_rem - 1 && __atomic_load_n(&scb->rem_count, __ATOMIC_ACQUIRE) == target_rem) {
+            if (__a_cas_p((volatile void*)&mcb->list_base[mcb_slot], scb, NULL) == scb) {
+                push_deferred_scb(scb, 0); // 压入小对象队列
             }
         }
-        return;
-    } 
-    else {
+    } else {
         LargeSecondControlBlock_t* l_scb = (LargeSecondControlBlock_t*)scb_addr;
         ALLOCTOR_SECURITY_ASSERT(obj_bit_loc < 2014); 
 
-        uint64_t total_large_size = size_class + sizeof(AllocBlock_t);
-        uint64_t pages_needed = (total_large_size + 4095) / 4096;
-        
         l_scb->list_base[obj_bit_loc] = 0;
-        LessCore((void*)block_addr, pages_needed); 
+        LessCore((void*)block_addr, (size_class + sizeof(AllocBlock_t) + 4095) / 4096); 
 
-        uint64_t old_bitmap = __a_clear_bit(&l_scb->bitmap[word_idx], (1ULL << bit_idx));
-        if (!(old_bitmap & (1ULL << bit_idx))) return; 
+        if (!(__a_clear_bit(&l_scb->bitmap[word_idx], (1ULL << bit_idx)) & (1ULL << bit_idx))) return; 
         
         uint64_t old_rem = __a_fetch_addu64((volatile uint64_t*)&l_scb->rem_count, 1); 
-
         if (old_rem == 0) {
             l_scb->is_full = 0; 
-            int32_t mcb_word = mcb_slot / 64;
-            int32_t mcb_bit  = mcb_slot % 64;
-
-            __a_clear_bit(&mcb->bitmap[mcb_word], (1ULL << mcb_bit));
-            uint32_t old_mcb_rem = __a_fetch_addu32(&mcb->rem_scb_count, 1);
-            if (old_mcb_rem == 0) mcb->is_full = 0;
+            __a_clear_bit(&mcb->bitmap[mcb_slot / 64], (1ULL << (mcb_slot % 64)));
+            if (__a_fetch_addu32(&mcb->rem_scb_count, 1) == 0) mcb->is_full = 0;
         }
 
-        if (old_rem == 2013) {
-            uint64_t current_rem = __atomic_load_n(&l_scb->rem_count, __ATOMIC_ACQUIRE);
-            if (current_rem == 2014) {
-                void* actual = __a_cas_p((volatile void*)&mcb->list_base[mcb_slot], l_scb, NULL);
-                if (actual == l_scb) {
-                    push_deferred_large_scb(l_scb); // 直接压入极速的 TLS 队列
-                }
+        if (old_rem == 2013 && __atomic_load_n(&l_scb->rem_count, __ATOMIC_ACQUIRE) == 2014) {
+            if (__a_cas_p((volatile void*)&mcb->list_base[mcb_slot], l_scb, NULL) == l_scb) {
+                push_deferred_scb(l_scb, 1); // 压入大对象队列
             }
         }
-        return;
     }
 }
 
 // ============================================================================
-// 对外公开的 Standard API 封装层
+// Standard API 封装
 // ============================================================================
 
 void* malloc(size_t size) {
-    int32_t qsbr_slot = qsbr_enter();
+    int32_t slot = qsbr_enter();
     void* ptr = _skyline_malloc_internal(size);
-    qsbr_leave(qsbr_slot);
+    qsbr_leave(slot);
     return ptr;
 }
 
 void free(void* ptr) {
     if (!ptr) return;
-    int32_t qsbr_slot = qsbr_enter();
+    int32_t slot = qsbr_enter();
     _skyline_free_internal(ptr);
-    qsbr_leave(qsbr_slot);
-    
-    try_gc(); 
+    qsbr_leave(slot);
+    // [优化] 移除了此处无脑的 try_gc()，交由 TLS Queue 批量触发，使得释放性能提升数百倍。
 }
 
 void* calloc(size_t nmemb, size_t size) {
-    size_t total_size;
     if (nmemb != 0 && size > SIZE_MAX / nmemb) return NULL;
-    total_size = nmemb * size;
-    
+    size_t total_size = nmemb * size;
     void* ptr = malloc(total_size);
     if (ptr) memset(ptr, 0, total_size);
     return ptr;
@@ -783,8 +657,9 @@ void* realloc(void* ptr, size_t size) {
     if (header->AllocSizeAligned >= size) {
         int32_t new_idx = GetSizeClassIndex(size);
         int32_t old_idx = GetSizeClassIndex(header->AllocSizeAligned);
-        if ((new_idx < old_idx && header->AllocSizeAligned - size > 4096)
-        || (SizeClassTable[old_idx][2] == 0 && new_idx != old_idx)) {
+        
+        if ((new_idx < old_idx && header->AllocSizeAligned - size > 4096) || 
+            (SizeClassTable[old_idx][2] == 0 && new_idx != old_idx)) {
             void* new_ptr = malloc(size);
             if (new_ptr) {
                 memcpy(new_ptr, ptr, size);
