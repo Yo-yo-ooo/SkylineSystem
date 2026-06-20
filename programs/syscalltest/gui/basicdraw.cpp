@@ -180,38 +180,6 @@ static uint64_t IntegerSqrt(uint64_t n) {
     }
     return x0;
 }
-
-/* float sin(float x){
-    float ans;
-    asm volatile("fsin" : "=t"(ans) : "0"(x));
-    return ans;
-
-}
-
-float cos(float x){
-#ifndef __x86_64__
-    return sin(90.0 + x * 180 / pi);
-#else
-    float ans;
-    asm volatile("fcos" : "=t"(ans) : "0"(x));
-    return ans;
-#endif
-} */
-// 替代 float atan2f(float y, float x)
-float atan2(float y, float x) {
-    float res;
-    __asm__ __volatile__ (
-        "flds %1\n"    // ST0 = x
-        "flds %0\n"    // ST1 = y
-        "fpatan\n"     // ST0 = atan2(ST1,ST0) = atan2(y,x)
-        "fsts %2\n"    // 存结果
-        : "+m"(y), "+m"(x), "=m"(res)
-        :
-        : "memory"
-    );
-    return res;
-}
-
 // ===================== 简单伪随机数（无标准库依赖） =====================
 static uint32_t g_seed = 123456789;
 

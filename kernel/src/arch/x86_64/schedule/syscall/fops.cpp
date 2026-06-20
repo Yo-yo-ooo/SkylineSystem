@@ -42,7 +42,12 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     if (!is_user_buffer_valid(buf, count)) {
         return -EFAULT; // Bad address
     }
-    return FD->FSOPS->read(FD->filedesc,buf,count);
+
+    size_t rcnt = 0;
+    int32_t status = FD->FSOPS->read(FD->filedesc, (void*)buf, count, &rcnt);
+    
+    if (status != 0) return (int64_t)status; // 返回负数错误码
+    return (int64_t)rcnt;
 }
 
 uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
@@ -58,7 +63,14 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     if (!is_user_buffer_valid(buf, count)) {
         return -EFAULT; // Bad address
     }
-    return FD->FSOPS->write(FD->filedesc,buf,count);
+
+    size_t wcnt = 0;
+    int32_t status = FD->FSOPS->write(FD->filedesc, (void*)buf, count, &wcnt);
+    
+    if (status != 0) return (int64_t)status; // 返回负数错误码
+    return (int64_t)wcnt;
+
+    //return FD->FSOPS->write(FD->filedesc,buf,count);
 }
 
 uint64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
@@ -92,7 +104,7 @@ static inline bool is_path_too_long(const char* kpath) {
 }
 
 
-uint64_t sys_fopen(uint64_t path, uint64_t flags, uint64_t mode, GENERATE_IGN3()) {
+uint64_t sys_fopen(uint64_t path, uint64_t flags,  GENERATE_IGN4()) {
     proc_t *proc = Schedule::this_proc();
 
     // 基础地址合法性校验

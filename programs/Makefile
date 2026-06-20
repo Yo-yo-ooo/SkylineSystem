@@ -11,6 +11,7 @@ all:
 	@echo "Copying programs to disk image..."
 	../saf/saf-make ./bin ./programs.saf -q
 	e2cp $(PROGRAM_BUILD_DIR)/syscalltest.elf ../$(PROGRAM_IMAGE_NAME).img:/
+	e2cp ./README.md ../$(PROGRAM_IMAGE_NAME).img:/
 
 clean:
 	$(MAKE) -C syscalltest clean

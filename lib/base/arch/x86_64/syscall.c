@@ -33,11 +33,13 @@ uint64_t sys_munmap(uint64_t addr,uint64_t length){
     return 0;
 }
 
-uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count)
+uint64_t sys_fread(int32_t fd_idx, uint64_t buf, uint64_t count)
 {return syscall(SYSCALL_FREAD,fd_idx,buf,count,0,0,0);}
-uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count)
+uint64_t sys_fwrite(int32_t fd_idx, uint64_t buf, uint64_t count)
 {return syscall(SYSCALL_FWRITE,fd_idx,buf,count,0,0,0);}
-uint64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence)
+uint64_t sys_flseek(int32_t fd_idx, uint64_t offset, uint64_t whence)
 {return syscall(SYSCALL_FLSEEK,fd_idx,offset,whence,0,0,0);}
-uint64_t sys_fopen(uint64_t path, uint64_t flags, uint64_t mode)
-{return syscall(SYSCALL_FOPEN,path,flags,mode,0,0,0);}
+uint64_t sys_fopen(uint64_t path, uint64_t flags)
+{return syscall(SYSCALL_FOPEN,path,flags,0,0,0,0);}
+uint64_t sys_fclose(int32_t fd)
+{return syscall(SYSCALL_FCLOSE,fd,0,0,0,0,0);}

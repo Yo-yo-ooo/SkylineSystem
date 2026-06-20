@@ -24,6 +24,7 @@
 #include <gui/basicdraw.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 char intTo_stringOutput[128];
 const char *to_string(uint64_t value)
@@ -35,7 +36,6 @@ const char *to_string(uint64_t value)
         sizetest /= 10;
         size++;
     }
-
     uint8_t index = 0;
     while (value / 10 > 0)
     {
@@ -64,7 +64,13 @@ int main(){
     bd.DrawProportionalUI();
 
     void *UIBase = malloc(fb.BufferSize);
+
     memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
+
+    FILE *fp = fopen("/mp/README.md","r");
+    char buf[25];
+    fread(buf,25,1,fp);
+    syscall(24, (long)buf, 25, 0, 0, 0, 0);
 
     while (true);
     

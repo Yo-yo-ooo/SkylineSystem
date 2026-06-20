@@ -20,8 +20,8 @@
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
-#ifndef _IAMGOD_LIBMATH_H_
-#define _IAMGOD_LIBMATH_H_
+#ifndef _LIBMATH_H_
+#define _LIBMATH_H_
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,8 +30,10 @@ extern "C" {
 float sqrt(float x);
 float sin(float x);
 float cos(float x);
+float fabs(float x);
+float atan(float x);
+float atan2(float y, float x);
 
-#define PI 3.141592653589793
 
 #ifdef __cplusplus
 }

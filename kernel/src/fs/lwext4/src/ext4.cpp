@@ -3520,12 +3520,12 @@ void ext4_fs_test_all(){
 
 
 
-int32_t ext4_fwrite_(void *file, const void *buf, size_t size){
-    return ext4_fwrite((ext4_file *)file,buf,size,nullptr);
+int32_t ext4_fwrite_(void *file, const void *buf, size_t size,size_t wcnt){
+    return ext4_fwrite((ext4_file *)file,buf,size,&wcnt);
 }
 
-int32_t ext4_fread_(void *file, void *buf, size_t size){
-    return ext4_fread((ext4_file *)file,buf,size,nullptr);
+int32_t ext4_fread_(void *file, void *buf, size_t size,size_t rcnt){
+    return ext4_fread((ext4_file *)file,buf,size,&rcnt);
 }
 
 int32_t ext4_fseek_(void *file, uint64_t offset, uint32_t origin){

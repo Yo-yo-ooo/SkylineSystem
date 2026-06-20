@@ -29,14 +29,17 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
+
 long syscall(long number,long arg1,long arg2,long arg3,long arg4,long arg5,long arg6);
 
 uint64_t sys_mmap(uint64_t addr,uint64_t length, uint64_t mode,uint64_t flags,uint64_t offset);
 uint64_t sys_munmap(uint64_t addr,uint64_t length);
-uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count);
-uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count);
-uint64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence);
-uint64_t sys_fopen(uint64_t path, uint64_t flags, uint64_t mode);
+uint64_t sys_fread(int32_t fd_idx, uint64_t buf, uint64_t count);
+uint64_t sys_fwrite(int32_t fd_idx, uint64_t buf, uint64_t count);
+uint64_t sys_flseek(int32_t fd_idx, uint64_t offset, uint64_t whence);
+uint64_t sys_fopen(uint64_t path, uint64_t flags);
+uint64_t sys_fclose(int32_t fd);
 
 #ifdef __cplusplus
 }

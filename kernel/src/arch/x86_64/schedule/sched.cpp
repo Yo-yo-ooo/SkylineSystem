@@ -449,7 +449,7 @@ retry:
             return;
         }
         _memset(&thread->ctx,0,sizeof(context_t));
-        MP->FSOPS->read(FileDesc,buffer,FSize);
+        MP->FSOPS->read(FileDesc,buffer,FSize,0);
         //ext4_fread(&f,buffer,ext4_fsize(&f),NULL);
         
         
