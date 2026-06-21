@@ -15,7 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-
+#include <nmmintrin.h> 
 
 #if defined(__AVX__) 
 #include "./avxintrin.h"
@@ -36,7 +36,7 @@
 extern "C"{
 #endif
 
-#include <nmmintrin.h> 
+
 //-----------------------------------------------------------------------------
 // Main Functions:
 //-----------------------------------------------------------------------------
