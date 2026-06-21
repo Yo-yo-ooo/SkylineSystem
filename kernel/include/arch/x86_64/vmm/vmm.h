@@ -164,6 +164,8 @@ namespace VMM{
     pagemap_t *SwitchPageMap(pagemap_t *pagemap);
     pagemap_t *NewPM();
 
+    bool SplitHugePage(pagemap_t *pagemap, uint64_t vaddr);
+
     namespace VMA{
         void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count);
         vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);

@@ -32,6 +32,8 @@ static volatile struct limine_memmap_request memmap_request = {
 volatile spinlock_t pmm_lock = 0;
 volatile struct limine_memmap_response* pmm_memmap = nullptr;
 
+volatile uint64_t huge_last_free = 0;  // 大页分配缓存指针
+
 #ifdef __x86_64__
 #include <arch/x86_64/smp/smp.h>
 
@@ -149,14 +151,21 @@ namespace PMM {
         bitmap_last_free = 1; 
     }
 
-    void* RequestHuge() {
+        void* RequestHuge() {
         spinlock_lock(&pmm_lock);
         
         uint64_t max_align_idx = pmm_bitmap_pages / 512;
-        
-        for (uint64_t i = 0; i < max_align_idx; i++) {
-            uint64_t base_idxL0 = i * 8; 
+        uint64_t start_idx = huge_last_free / 512;
+        bool wrapped = false;
+
+        for (uint64_t i = start_idx; ; i++) {
+            if (i >= max_align_idx) {
+                if (wrapped) break;
+                i = 0;
+                wrapped = true;
+            }
             
+            uint64_t base_idxL0 = i * 8; 
             bool is_free = true;
             for (int j = 0; j < 8; j++) {
                 if (((uint64_t*)PMM::bitmap)[base_idxL0 + j] != 0) {
@@ -172,6 +181,7 @@ namespace PMM {
                 }
                 
                 uint64_t allocated_page_idx = i * 512;
+                huge_last_free = allocated_page_idx + 512;
                 bitmap_last_free = allocated_page_idx + 512;
                 spinlock_unlock(&pmm_lock);
                 return (void*)(allocated_page_idx * PAGE_SIZE);
@@ -431,13 +441,21 @@ namespace PMM {
         bitmap_last_free = 1; 
     }
 
-    void* RequestHuge() {
+        void* RequestHuge() {
         spinlock_lock(&pmm_lock);
-        uint64_t max_align_idx = pmm_bitmap_pages / 512;
         
-        for (uint64_t i = 0; i < max_align_idx; i++) {
-            uint64_t base_idxL0 = i * 8; 
+        uint64_t max_align_idx = pmm_bitmap_pages / 512;
+        uint64_t start_idx = huge_last_free / 512;
+        bool wrapped = false;
+
+        for (uint64_t i = start_idx; ; i++) {
+            if (i >= max_align_idx) {
+                if (wrapped) break;
+                i = 0;
+                wrapped = true;
+            }
             
+            uint64_t base_idxL0 = i * 8; 
             bool is_free = true;
             for (int j = 0; j < 8; j++) {
                 if (((uint64_t*)PMM::bitmap)[base_idxL0 + j] != 0) {
@@ -453,6 +471,7 @@ namespace PMM {
                 }
                 
                 uint64_t allocated_page_idx = i * 512;
+                huge_last_free = allocated_page_idx + 512;
                 bitmap_last_free = allocated_page_idx + 512;
                 spinlock_unlock(&pmm_lock);
                 return (void*)(allocated_page_idx * PAGE_SIZE);
