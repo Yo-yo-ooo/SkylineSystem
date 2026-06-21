@@ -148,6 +148,8 @@ namespace VMM{
     }
     namespace Useless
     {
+        void FreePhysicalPages(pagemap_t *pagemap, uint64_t va_start, uint64_t va_end);
+        uint64_t InternalFree(pagemap_t *pagemap, uint64_t addr, uint64_t page_count);
         uint64_t *NewLevel(uint64_t *level, uint64_t entry);
         uint64_t GetPhysicsFlags(pagemap_t *pagemap, uint64_t vaddr);
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
@@ -167,6 +169,7 @@ namespace VMM{
     bool SplitHugePage(pagemap_t *pagemap, uint64_t vaddr);
 
     namespace VMA{
+        bool SplitRegion(vma_region_t *origin, uint64_t split_addr);
         void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count);
         vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
         vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags);

@@ -64,7 +64,7 @@ int main(){
     bd.DrawProportionalUI();
     
 
-    void *UIBase = malloc(16);
+    void *UIBase = malloc(fb.BufferSize);
     
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
     //memcpy(UIBase,fb.BaseAddress,fb.BufferSize);

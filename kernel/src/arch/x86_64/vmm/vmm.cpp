@@ -74,6 +74,27 @@ namespace VMM {
 
     namespace Useless
     {
+
+        void FreePhysicalPages(pagemap_t *pagemap, uint64_t va_start, uint64_t va_end) {
+            uint64_t va = va_start;
+            while (va < va_end) {
+                uint64_t pt_flags = GetPhysicsFlags(pagemap, va);
+                uint64_t pa = PTE_MASK(pt_flags);
+
+                if (pt_flags & MM_LARGE_2MB) {
+                    if (pa) PMM::FreeHuge((void*)pa);
+                    Unmap(pagemap, va);
+                    mmu_invlpg(va);
+                    va += PAGE_SIZE_2MB;
+                } else {
+                    if (pa) PMM::Free((void*)pa);
+                    Unmap(pagemap, va);
+                    mmu_invlpg(va);
+                    va += PAGE_SIZE;
+                }
+            }
+        }
+
         uint64_t InternalFree(pagemap_t *pagemap, uint64_t addr, uint64_t page_count) {
             if (!pagemap->vma_head) return -1;
             vma_region_t *region = pagemap->vma_head->next;
@@ -365,47 +386,6 @@ namespace VMM {
         return pagemap;
     }
 
-    namespace VMA
-    {
-        void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count){
-            vma_region_t *region = (vma_region_t*)HIGHER_HALF(PMM::Request());
-            region->start = start;
-            region->page_count = page_count;
-            region->flags = MM_READ | MM_WRITE;
-            region->next = region;
-            region->prev = region;
-            region->left = nullptr;          // [新增] Next-Fit 缓存初始为空
-            pagemap->vma_head = region;
-        }
-        vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags){
-            vma_region_t *region = (vma_region_t*)HIGHER_HALF(PMM::Request());
-            region->start = start;
-            region->page_count = page_count;
-            region->flags = flags;
-            region->prev = pagemap->vma_head->prev;
-            region->next = pagemap->vma_head;
-            pagemap->vma_head->prev->next = region;
-            pagemap->vma_head->prev = region;
-            return region;
-        }
-        vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags){
-            vma_region_t *region = (vma_region_t*)HIGHER_HALF(PMM::Request());
-            region->start = start;
-            region->page_count = page_count;
-            region->flags = flags;
-            region->prev = after;
-            region->next = after->next;
-            after->next->prev = region;
-            after->next = region;
-            return region;
-        }
-
-        void RemoveRegion(vma_region_t *region) {
-            region->next->prev = region->prev;
-            region->prev->next = region->next;
-            PMM::Free(PHYSICAL(region));
-        }
-    } // namespace VMA
 
     vm_mapping_t *NewMapping(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags){
         vm_mapping_t *mapping = (vm_mapping_t*)HIGHER_HALF(PMM::Request());
