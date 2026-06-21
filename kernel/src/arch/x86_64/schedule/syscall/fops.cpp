@@ -104,67 +104,66 @@ static inline bool is_path_too_long(const char* kpath) {
 }
 
 
-uint64_t sys_fopen(uint64_t path, uint64_t flags,  GENERATE_IGN4()) {
+// 辅助函数：安全地从用户态拷贝字符串 (遇到 \0 停止)，返回拷贝的字节数，失败返回负数
+static int64_t strncpy_from_user(char* dst, const char* src, size_t max_len, pagemap_t* pagemap) {
+    for (size_t i = 0; i < max_len; i++) {
+        // 这里必须按字节安全读取（假设你有相应的底层封装，如 SafeReadByte）
+        if (!VMM::UserAccess::CopyFromUser(pagemap, dst + i, (void*)(src + i), 1)) {
+            return -EFAULT; // 越界
+        }
+        if (dst[i] == '\0') {
+            return i; // 成功找到结尾
+        }
+    }
+    return -ENAMETOOLONG; // 超过 max_len 仍未找到 \0
+}
+
+uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
     proc_t *proc = Schedule::this_proc();
 
-    // 基础地址合法性校验
     if (!is_user_address(path)) { 
         return -EFAULT; 
     }
 
-    // 动态分配内核缓冲区，防止内核栈溢出
     char *kpath = (char *)kmalloc(PATH_MAX);
     if (!kpath) { 
-        return -ENOMEM; // 内存不足
+        return -ENOMEM; 
     }
 
-    // 安全地将路径从用户态拷贝到内核态 (最多拷 PATH_MAX 字节)
-    if (!VMM::UserAccess::CopyFromUser(proc->pagemap, kpath, (void*)path, PATH_MAX)) {
+    // [修复 1] 替换强制 PATH_MAX 拷贝为安全字符串拷贝
+    int64_t path_len = strncpy_from_user(kpath, (const char*)path, PATH_MAX, proc->pagemap);
+    if (path_len < 0) {
         kfree(kpath);
-        return -EFAULT; // 用户态地址存在未映射或越界
-    }
-    
-    if (is_path_too_long(kpath)) {
-        kfree(kpath);
-        return -ENAMETOOLONG; // 抛出错误：File name too long
+        return path_len; // 可能是 -EFAULT 或 -ENAMETOOLONG
     }
 
-    //  挂载点路由查找 (此时使用安全的内核 kpath)
     __hmap_s_mp *MP = GetMount(kpath);
     if (!MP) {
         kfree(kpath);
-        return -ENOENT; // 找不到挂载点或文件
+        return -ENOENT; 
     }
 
-    // ==========================================
-    // 以下是完成 fopen 的标准文件描述符分配逻辑
-    // ==========================================
-
-    // 在当前进程的 FD 管理器中分配一个空闲槽位
     fd_t *fd_struct;
     int32_t fd_idx = fd_alloc(proc->FDMan, &fd_struct);
     if (fd_idx < 0) {
         kfree(kpath);
-        return -EMFILE; // 错误：Too many open files (进程 FD 已用尽)
+        return -EMFILE; 
     }
 
-    // 初始化 FD 结构体，并调用底层文件系统真实的 open 函数
     fd_struct->FSOPS = MP->FSOPS;
     fd_struct->MP = MP;
     
-    // 假设底层 open 函数会将具体的文件控制块指针存入 fd_struct->filedesc
-    int32_t err = MP->FSOPS->open(fd_struct->filedesc, kpath, flags);
+    // [修复 2] 传递二级指针，让底层分配的文件描述符能够回写
+    // 注意：这要求你同步修改底层 MP->FSOPS->open 的参数定义！
+    int32_t err = MP->FSOPS->open(&(fd_struct->filedesc), kpath, flags);
 
-    // 路径解析完毕，可以释放内核态字符串内存了
     kfree(kpath); 
 
-    // 如果底层文件系统打开失败，必须回滚/回收刚分配的 FD
     if (err < 0) {
         fd_free(proc->FDMan, fd_idx);
-        return err; // 返回底层文件系统抛出的具体错误码
+        return err; 
     }
 
-    
     return (uint64_t)fd_idx;
 }
 

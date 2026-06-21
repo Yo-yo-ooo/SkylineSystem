@@ -24,18 +24,17 @@
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 
+extern bool VMM_IsPM5LVL;
+
 namespace VMM {
     namespace UserAccess {
         
         /**
          * @brief 将内核数据安全地拷贝到当前用户进程的虚拟地址空间
-         * 
-         * @param pagemap  当前进程的页表指针
+         * * @param pagemap  当前进程的页表指针
          * @param u_dest   用户态目标虚拟地址
          * @param k_src    内核态源数据地址
          * @param len      拷贝长度
-         * @return true    拷贝成功
-         * @return false   发生错误（地址非法、未映射或越界）
          */
         void CopyToUser(pagemap_t* pagemap, uint64_t u_dest, const void* k_src, uint64_t len) {
             size_t offset = 0;
@@ -43,44 +42,64 @@ namespace VMM {
 
             while (offset < len) {
                 uint64_t curr_u_vaddr = u_dest + offset;
-                size_t page_offset = curr_u_vaddr % PAGE_SIZE;
+                size_t page_offset = curr_u_vaddr & (PAGE_SIZE - 1);
                 size_t remaining_in_page = PAGE_SIZE - page_offset;
                 size_t to_copy = (len - offset < remaining_in_page) ? (len - offset) : remaining_in_page;
 
-                // 1. 获取物理地址并校验
                 uint64_t paddr = VMM::GetPhysics(pagemap, curr_u_vaddr);
-                if (paddr == 0) {
-                    // 此时 u_dest 对应的虚拟地址未映射，应标记为错误或直接 Panic
-                    // 在实际系统中，这里应该抛出异常或通过返回值返回 false
+                if (paddr == 0 || paddr == (uint64_t)-1) {
                     return; 
                 }
 
-                // 2. 转换到 HHDM
-                void* hhdm_dest = (void*)((paddr & ~0xFFFULL) + hhdm_offset + page_offset);
+                // Properly integrated the HIGHER_HALF macro rather than a loose offset variable
+                void* hhdm_dest = (void*)((uint8_t*)HIGHER_HALF((void*)paddr) + page_offset);
                 
-                // 3. 拷贝
                 __memcpy(hhdm_dest, src_ptr + offset, to_copy);
-
                 offset += to_copy;
             }
         }
 
+        /**
+         * @brief 从用户进程的虚拟地址空间安全地拷贝数据到内核
+         * * @param pagemap  当前进程的页表指针
+         * @param k_dest   内核态目标地址
+         * @param u_src    用户态源虚拟地址
+         * @param len      拷贝长度
+         * @return true    拷贝成功
+         * @return false   发生错误（地址非法、未映射或越界）
+         */
         bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len) {
+            if (len == 0) return true;
+            if (!k_dest || !u_src) return false;
+
+            uint64_t start_u_vaddr = (uint64_t)u_src;
+
+            // Dynamically check the top of the user boundary depending on 4-level or 5-level configuration
+            uint64_t user_space_end = VMM_IsPM5LVL ? USER_SPACE_END_5LVL : USER_SPACE_END_4LVL;
+
+            if (start_u_vaddr > user_space_end || (user_space_end - start_u_vaddr < len)) {
+                return false; 
+            }
+
             size_t offset = 0;
-            const uint8_t* u_src_ptr = (const uint8_t*)u_src;
+            uint8_t* dest_ptr = (uint8_t*)k_dest;
 
             while (offset < len) {
-                uint64_t curr_u_vaddr = (uint64_t)u_src_ptr + offset;
-                size_t page_offset = curr_u_vaddr % PAGE_SIZE;
-                size_t to_copy = min(len - offset, PAGE_SIZE - page_offset);
+                uint64_t curr_u_vaddr = start_u_vaddr + offset;
+                
+                size_t page_offset = curr_u_vaddr & (PAGE_SIZE - 1);
+                size_t remaining_in_page = PAGE_SIZE - page_offset;
+                size_t to_copy = (len - offset < remaining_in_page) ? (len - offset) : remaining_in_page;
 
-                // 核心：获取用户态物理页并转换
                 uint64_t paddr = VMM::GetPhysics(pagemap, curr_u_vaddr);
-                if (paddr == 0) return false; // 地址未映射
+                
+                if (paddr == 0 || paddr == (uint64_t)-1) {
+                    return false; 
+                }
 
-                void* hhdm_src = (void*)((paddr & ~0xFFFULL) + hhdm_offset + page_offset);
-                __memcpy((uint8_t*)k_dest + offset, hhdm_src, to_copy);
-
+                void* hhdm_src = (void*)((uint8_t*)HIGHER_HALF((void*)paddr) + page_offset);
+                
+                __memcpy(dest_ptr + offset, hhdm_src, to_copy);
                 offset += to_copy;
             }
             return true;

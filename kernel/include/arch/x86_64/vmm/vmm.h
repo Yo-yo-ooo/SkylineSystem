@@ -79,6 +79,12 @@
 #define PTE_MASK(x) (typeof(x))((uint64_t)x & PTE_ADDR_MASK)
 #define PTE_FLAGS(x) (typeof(x))((uint64_t)x & PTE_FLAGS_MASK)
 
+
+
+#define USER_SPACE_END_4LVL 0x00007FFFFFFFFFFF
+#define USER_SPACE_END_5LVL 0x00FEFFFFFFFFFFFF
+#define PAGE_MASK      0xFFFULL
+
 #define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
 static inline bool is_user_address(uint64_t addr){
     // 用户态地址 < 0xFFFF800000000000
@@ -99,8 +105,11 @@ typedef struct vma_region_t {
     uint64_t flags;
     struct vma_region_t *next;
     struct vma_region_t *prev;
+    struct vma_region_t *left; // Repurposed as Next-Fit cache pointer
 } vma_region_t;
 
+// Deprecated: Kept only for struct compatibility with existing pagemap_t headers.
+// The optimized VMM exclusively uses vma_region_t to eliminate duplicate tracking.
 typedef struct vm_mapping_t {
     uint64_t start;
     uint64_t page_count;
