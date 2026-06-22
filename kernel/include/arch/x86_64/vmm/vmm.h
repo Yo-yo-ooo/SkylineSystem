@@ -179,7 +179,10 @@ namespace VMM{
     vm_mapping_t *NewMapping(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
     void RemoveMapping(vm_mapping_t *mapping);
 
-    void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user);
+    void ReclaimMemory();
+    void PrintMemoryStats();
+
+    void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user, uint64_t extra_flags = 0);
     void Free(pagemap_t *pagemap, void *ptr);
 
     pagemap_t *Fork(pagemap_t *parent);

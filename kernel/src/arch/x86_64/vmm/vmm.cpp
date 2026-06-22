@@ -25,6 +25,11 @@
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 
+// [新增] 用于 Framebuffer 等强行避开大页分配的标志位
+#ifndef MM_FORCE_4K
+#define MM_FORCE_4K (1ULL << 62)
+#endif
+
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_executable_address_request limine_executable_address = {
     .id = LIMINE_EXECUTABLE_ADDRESS_REQUEST_ID,
@@ -46,7 +51,6 @@ static volatile struct limine_paging_mode_request paging_mode_request = {
     .min_mode = LIMINE_PAGING_MODE_X86_64_MIN
 };
 
-// Fixed to explicitly check for 5-level response, avoiding a bug if 4-level fallback occurs.
 bool VMM_IsPM5LVL = 
     (paging_mode_request.response && paging_mode_request.response->mode == LIMINE_PAGING_MODE_X86_64_5LVL);
 
@@ -74,7 +78,6 @@ namespace VMM {
 
     namespace Useless
     {
-
         void FreePhysicalPages(pagemap_t *pagemap, uint64_t va_start, uint64_t va_end) {
             uint64_t va = va_start;
             while (va < va_end) {
@@ -146,12 +149,10 @@ namespace VMM {
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags) {
             if (!pagemap->vma_head) return 0;
             
-            // [修复 1] 根据 flags 判断对齐粒度，不再只看 page_count
             bool need_huge_align = (flags & MM_LARGE_2MB) || (page_count >= 512);
             uint64_t align_val  = need_huge_align ? PAGE_SIZE_2MB : PAGE_SIZE;
             uint64_t alloc_size = page_count * PAGE_SIZE;
 
-            // [优化 1] 大分配快速路径：直接尾部追加，零遍历
             if (page_count >= 256) {
                 vma_region_t *tail = pagemap->vma_head->prev;
                 uint64_t addr = ALIGN_UP(tail->start + tail->page_count * PAGE_SIZE, align_val);
@@ -160,18 +161,26 @@ namespace VMM {
                 return addr;
             }
 
-            // [优化 2] Next-Fit：从上次分配位置开始
             vma_region_t *hint = pagemap->vma_head->left;
             if (!hint || hint == pagemap->vma_head)
                 hint = pagemap->vma_head;
 
             vma_region_t *region = hint;
+            bool looped_once = false;
+
+            // [优化 6] VMA Next-Fit 碎片优化：增加全遍历防碎片机制
             do {
                 vma_region_t *next = region->next;
                 uint64_t region_end = region->start + region->page_count * PAGE_SIZE;
                 uint64_t addr = ALIGN_UP(region_end, align_val);
 
                 if (next == pagemap->vma_head) {
+                    // 如果 Next-Fit 扫描到了尾部，但之前有空洞被跳过，则开启一次 First-Fit 兜底扫描
+                    if (!looped_once) {
+                        looped_once = true;
+                        region = pagemap->vma_head; 
+                        continue;
+                    }
                     vma_region_t *new_reg = VMM::VMA::AddRegion(pagemap, addr, page_count, flags);
                     pagemap->vma_head->left = new_reg;
                     return addr;
@@ -179,16 +188,41 @@ namespace VMM {
 
                 if (next->start >= addr + alloc_size) {
                     vma_region_t *new_reg = VMM::VMA::InsertRegion(region, addr, page_count, flags);
-                    pagemap->vma_head->left = new_reg;
+                    pagemap->vma_head->left = new_reg; // 保持 hint 在最新分配点
                     return addr;
                 }
 
                 region = next;
-            } while (region != hint);
+            } while (region != hint || looped_once);
 
             return 0;
         }
     } // namespace Useless
+
+    // [新增] 全局内存回收入口，UI 分配前可调用
+    void ReclaimMemory() {
+        cpu_t* cpu = this_cpu();
+        if(!cpu) return;
+        
+        spinlock_lock(&pmm_lock);
+        // 主动释放本核残留的 4K 碎片，给 PMM 组合大页的机会
+        while (cpu->pmm_cache_count > 0) {
+            PMM::Free(cpu->pmm_cache[--cpu->pmm_cache_count]);
+        }
+        spinlock_unlock(&pmm_lock);
+        kinfoln("VMM: Proactively reclaimed PCP cache for contiguous memory.");
+    }
+
+    // [新增] 调试辅助：全局内存统计接口
+    void PrintMemoryStats() {
+        // 假设 PMM 暴露了这两个外部统计接口
+        extern uint64_t pmm_free_4k_pages;
+        extern uint64_t pmm_free_2m_pages;
+        kinfoln("========== VMM Memory Stats ==========");
+        kinfoln("Free 4K Pages: %llu ( %llu MB )", pmm_free_4k_pages, (pmm_free_4k_pages * PAGE_SIZE) / 1024 / 1024);
+        kinfoln("Free 2M Pages: %llu ( %llu MB )", pmm_free_2m_pages, (pmm_free_2m_pages * PAGE_SIZE_2MB) / 1024 / 1024);
+        kinfoln("======================================");
+    }
 
     void Init(){
         uint64_t pat = 0;
@@ -268,14 +302,11 @@ namespace VMM {
             pd = VMM::Useless::NewLevel(pdpt, PDPTE(vaddr));
         pd = (uint64_t*)HIGHER_HALF(PTE_MASK((uint64_t)pd));
 
-        // --- 大页映射 + 对齐校验 ---
         if (flags & MM_LARGE_2MB) {
-            // [修复 2] 物理地址必须 2MB 对齐，否则降级为 4K 页
             if ((paddr & (PAGE_SIZE_2MB - 1)) != 0) {
-                flags &= ~MM_LARGE_2MB;   // 清除大页标志，降级走 4K 路径
+                flags &= ~MM_LARGE_2MB;   
                 goto small_page_fallback;
             }
-            // 物理地址掩码：保留 21~51 位（2MB 大页）
             pd[PDE(vaddr)] = (paddr & 0x000FFFFFFFE00000ULL) | (flags & 0x8000000000000FFFULL);
             return;
         }
@@ -328,7 +359,6 @@ namespace VMM {
     }
 
     void MapRange(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags, uint64_t count){
-        // [优化 3] 大页批量映射路径
         if ((flags & MM_LARGE_2MB) && 
             (vaddr & (PAGE_SIZE_2MB - 1)) == 0 && 
             (paddr & (PAGE_SIZE_2MB - 1)) == 0 &&
@@ -341,7 +371,6 @@ namespace VMM {
                     paddr + i * PAGE_SIZE_2MB, 
                     flags);
             }
-            // 剩余不足 512 页的部分，降级为 4K 页
             uint64_t remain = count % 512;
             if (remain > 0) {
                 uint64_t offset = huge_count * PAGE_SIZE_2MB;
@@ -356,7 +385,6 @@ namespace VMM {
             return;
         }
 
-        // 原 4K 逐页映射路径
         for (uint64_t i = 0; i < count; i++)
             VMM::Map(pagemap, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
     }
@@ -386,7 +414,6 @@ namespace VMM {
         return pagemap;
     }
 
-
     vm_mapping_t *NewMapping(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags){
         vm_mapping_t *mapping = (vm_mapping_t*)HIGHER_HALF(PMM::Request());
         mapping->start = start;
@@ -404,32 +431,26 @@ namespace VMM {
         return mapping;
     }
 
-    // [新增] 将指定虚拟地址处的 2MB 大页拆分为 512 个 4K 页
-    // 返回 true 表示拆分成功，false 表示原本就不是大页
     bool SplitHugePage(pagemap_t *pagemap, uint64_t vaddr) {
         uint64_t aligned_vaddr = ALIGN_DOWN(vaddr, PAGE_SIZE_2MB);
         
-        // 先检查是否真的是大页
         uint64_t pt_flags = VMM::Useless::GetPhysicsFlags(pagemap, aligned_vaddr);
         if (!(pt_flags & MM_LARGE_2MB)) {
-            return false;   // 已经是 4K 页了
+            return false;
         }
 
         uint64_t old_phys = PTE_MASK(pt_flags);
         uint64_t old_flags = PTE_FLAGS(pt_flags);
         uint64_t small_flags = (old_flags & ~MM_LARGE_2MB);
 
-        // 1. 分配一个新的页表页（PT）
         uint64_t *pt_phys = (uint64_t*)PMM::Request();
         uint64_t *pt_virt = (uint64_t*)HIGHER_HALF(pt_phys);
         _memset(pt_virt, 0, PAGE_SIZE);
 
-        // 2. 填充 512 个 PTE 条目，指向原来的物理内存（偏移递增）
         for (int i = 0; i < 512; i++) {
             pt_virt[i] = (old_phys + i * PAGE_SIZE) | small_flags;
         }
 
-        // 3. 替换 PDE：清除 PS 位，指向新的 PT
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
 #if CONFIG_VMM_5LVL_MAP == 1
         if(VMM_IsPM5LVL){
@@ -442,10 +463,8 @@ namespace VMM {
         uint64_t *pd = (uint64_t*)pdpt[PDPTE(aligned_vaddr)];
         pd = (uint64_t*)HIGHER_HALF(PTE_MASK((uint64_t)pd));
 
-        // 原子替换 PDE
         pd[PDE(aligned_vaddr)] = (uint64_t)pt_phys | (small_flags & 0xFFF);
 
-        // 4. 刷新 TLB
         for (int i = 0; i < 512; i++) {
             mmu_invlpg(aligned_vaddr + i * PAGE_SIZE);
         }
@@ -459,10 +478,11 @@ namespace VMM {
         PMM::Free(PHYSICAL(mapping));
     }
 
-    void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
+    void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user, uint64_t extra_flags = 0) {
         if (__builtin_expect(!page_count, 0)) return nullptr;
 
-        uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
+        uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0) | extra_flags;
+        bool force_4k = (flags & MM_FORCE_4K); // [修复 4] Framebuffer 等可强制 4K 绕开大页连续内存不足
 
         spinlock_lock(&pagemap->vma_lock);
         uint64_t addr = VMM::Useless::InternalAlloc(pagemap, page_count, flags);
@@ -475,16 +495,24 @@ namespace VMM {
         cpu_t* cpu = this_cpu();
         uint64_t i = 0;
 
-        while ((page_count - i) >= 512) {
+        while ((page_count - i) >= 512 && !force_4k) {
             spinlock_lock(&pmm_lock);
             void* phys_ptr = PMM::RequestHuge();
+            
+            // [修复 1] Alloc大页失败时：主动清空单页缓存回全局 PMM 并重试一次大页申请
+            if (!phys_ptr && cpu && cpu->pmm_cache_count > 0) {
+                while (cpu->pmm_cache_count > 0) {
+                    PMM::Free(cpu->pmm_cache[--cpu->pmm_cache_count]);
+                }
+                phys_ptr = PMM::RequestHuge(); // 兜底重试
+            }
             spinlock_unlock(&pmm_lock);
 
             if (__builtin_expect(!!phys_ptr, 1)) {
                 VMM::Map(pagemap, addr + (i * PAGE_SIZE), (uint64_t)phys_ptr, flags | MM_LARGE_2MB);
                 i += 512;
             } else {
-                break;
+                break; // 物理内存碎片化严重，降级到 4K 单页分配
             }
         }
 
@@ -524,6 +552,15 @@ namespace VMM {
 
     oom_rollback:
         Interrupt::Unmask();
+        
+        // [修复 5] OOM 回滚：先把本地 PCP 缓存同步退回 PMM，防止永久丢失
+        if (cpu && cpu->pmm_cache_count > 0) {
+            spinlock_lock(&pmm_lock);
+            while (cpu->pmm_cache_count > 0) {
+                PMM::Free(cpu->pmm_cache[--cpu->pmm_cache_count]);
+            }
+            spinlock_unlock(&pmm_lock);
+        }
         
         uint64_t j = 0;
         while (j < i) {
@@ -578,11 +615,8 @@ namespace VMM {
                     mmu_invlpg(virt_addr);
                 }
 
-                // ============================================================
-                // [优化 3] 释放前修正 Next-Fit 缓存，防止野指针
-                // ============================================================
                 if (pagemap->vma_head->left == region) {
-                    pagemap->vma_head->left = region->prev;   // 前移到前一个区域
+                    pagemap->vma_head->left = region->prev;
                 }
 
                 VMM::VMA::RemoveRegion(region);
@@ -615,15 +649,19 @@ namespace VMM {
                     uint64_t pt_flags = VMM::Useless::GetPhysicsFlags(parent, virt_addr);
                     uint64_t phys_addr = PTE_MASK(pt_flags);
 
+                    // [修复 3] Fork COW 大页处理缺失: 主动在拷贝前将 2MB 大页打散成 4K 处理
                     if (pt_flags & MM_LARGE_2MB) {
-                        VMM::Map(pagemap, virt_addr, phys_addr, new_flags | MM_LARGE_2MB);
-                        VMM::Map(parent, virt_addr, phys_addr, new_flags | MM_LARGE_2MB);
-                        i += 512;
-                    } else {
-                        VMM::Map(pagemap, virt_addr, phys_addr, new_flags);
-                        VMM::Map(parent, virt_addr, phys_addr, new_flags);
-                        i++;
+                        VMM::SplitHugePage(parent, virt_addr);
+                        
+                        // 重新获取打散后的 4K PTE 信息
+                        pt_flags = VMM::Useless::GetPhysicsFlags(parent, virt_addr);
+                        phys_addr = PTE_MASK(pt_flags);
                     }
+                    
+                    // 打散后统一步伐走 4K 的映射，后续触发的 COW Fault 将不再影响其他 511 个页面
+                    VMM::Map(pagemap, virt_addr, phys_addr, new_flags);
+                    VMM::Map(parent, virt_addr, phys_addr, new_flags);
+                    i++;
                 }
                 VMM::NewMapping(pagemap, mapping->start, mapping->page_count, page_flags);
                 mapping = mapping->next;
@@ -744,14 +782,12 @@ namespace VMM {
             return 1;
         }
 
-        // [修复 3] 写时复制 + 大页拆分
         if (wr && p) {
             uint64_t pt_flags = page;
             
-            // 如果是 2MB 大页，先拆分为 4K 页，再做 COW
+            // 如果是因为遗留机制等遇到未拆分大页的 COW，依然拆分拦截兜底
             if (pt_flags & MM_LARGE_2MB) {
                 VMM::SplitHugePage(pagemap, fault_addr);
-                // 拆分后重新获取 PTE 信息
                 page = VMM::Useless::GetPhysicsFlags(pagemap, fault_addr);
                 old_phys = PTE_MASK(page);
                 pt_flags = page;
@@ -772,7 +808,6 @@ namespace VMM {
             return 0;
         }
 
-        // 非写保护错误（真正的页错误）
         kerror("Page fault on thread (0x%p).\n", cr2);
         kerrorln("Segmentation fault (core undumped)");
         VMM::SwitchPageMap(restore);

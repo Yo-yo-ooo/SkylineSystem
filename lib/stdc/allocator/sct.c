@@ -25,6 +25,8 @@
 #define MB(x) ((x) * 1024ULL * 1024ULL)
 #define GB(x) ((x) * 1024ULL * 1024ULL * 1024ULL)
 
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
 /*
  * SizeClassTable 核心映射矩阵 (共 75 档)
  * [0]: Size (单元规格, 字节数)
@@ -32,7 +34,7 @@
  * [2]: RegionSize (配合申请的连续内存区大小。根据严格规则：>= 2MB 或是大对象时，此列必须置 0)
  */
 __attribute__((aligned(64)))
-uint64_t SizeClassTable[75][3] = {
+volatile uint64_t SizeClassTable[75][3] = {
     // ============================================================================
     // 1. 【小对象分界区】 (Size <= 2MB, RegionSize > 0)
     // 引入 1.5倍 步长的亚规格（Sub-classes），极大降低内存碎片
@@ -118,3 +120,6 @@ uint64_t SizeClassTable[75][3] = {
     { 4611686018427387904ULL, 0, 0 },
     { 9223372036854775808ULL, 0, 0 }  // 8EB 极限规格，封顶 (idx 74)
 };
+
+
+#pragma GCC pop_options

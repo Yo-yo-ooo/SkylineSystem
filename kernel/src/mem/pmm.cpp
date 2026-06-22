@@ -91,6 +91,24 @@ namespace PMM {
         }
     }
 
+    // --- GC: 将本地 CPU 的 PCP 缓存强制刷回全局位图 ---
+    static void FlushLocalCacheToGlobal() {
+        Interrupt::Mask();
+        cpu_t* cpu = this_cpu();
+        if (cpu && cpu->pmm_cache_count > 0) {
+            spinlock_lock(&pmm_lock);
+            while (cpu->pmm_cache_count > 0) {
+                uint64_t bit = (uint64_t)cpu->pmm_cache[--cpu->pmm_cache_count] / PAGE_SIZE;
+                bitmap_clear_sync(bit);
+                if (bit < bitmap_last_free) bitmap_last_free = bit;
+                uint64_t huge_align = bit & ~511ULL;
+                if (huge_align < huge_last_free) huge_last_free = huge_align;
+            }
+            spinlock_unlock(&pmm_lock);
+        }
+        Interrupt::Unmask();
+    }
+
     void Init() {
         pmm_memmap = memmap_request.response;
         uint64_t max_phys_addr = 0;
@@ -151,44 +169,48 @@ namespace PMM {
         bitmap_last_free = 1; 
     }
 
-        void* RequestHuge() {
-        spinlock_lock(&pmm_lock);
-        
+    void* RequestHuge() {
         uint64_t max_align_idx = pmm_bitmap_pages / 512;
-        uint64_t start_idx = huge_last_free / 512;
-        bool wrapped = false;
+        if (max_align_idx == 0) return nullptr;
 
-        for (uint64_t i = start_idx; ; i++) {
-            if (i >= max_align_idx) {
-                if (wrapped) break;
-                i = 0;
-                wrapped = true;
-            }
+        // 两阶段尝试：Attempt 0 正常分配，Attempt 1 为 GC 后重试
+        for (int attempt = 0; attempt < 2; attempt++) {
+            spinlock_lock(&pmm_lock);
+            uint64_t start_idx = huge_last_free / 512;
             
-            uint64_t base_idxL0 = i * 8; 
-            bool is_free = true;
-            for (int j = 0; j < 8; j++) {
-                if (((uint64_t*)PMM::bitmap)[base_idxL0 + j] != 0) {
-                    is_free = false;
-                    break;
-                }
-            }
-            
-            if (is_free) {
+            for (uint64_t count = 0; count < max_align_idx; count++) {
+                uint64_t i = (start_idx + count) % max_align_idx;
+                uint64_t base_idxL0 = i * 8; 
+                bool is_free = true;
+                
                 for (int j = 0; j < 8; j++) {
-                    ((uint64_t*)PMM::bitmap)[base_idxL0 + j] = 0xFFFFFFFFFFFFFFFF;
-                    bitmap_set((void*)PMM::bitmap_l1, base_idxL0 + j); 
+                    if (((uint64_t*)PMM::bitmap)[base_idxL0 + j] != 0) {
+                        is_free = false;
+                        break;
+                    }
                 }
                 
-                uint64_t allocated_page_idx = i * 512;
-                huge_last_free = allocated_page_idx + 512;
-                bitmap_last_free = allocated_page_idx + 512;
-                spinlock_unlock(&pmm_lock);
-                return (void*)(allocated_page_idx * PAGE_SIZE);
+                if (is_free) {
+                    for (int j = 0; j < 8; j++) {
+                        ((uint64_t*)PMM::bitmap)[base_idxL0 + j] = 0xFFFFFFFFFFFFFFFF;
+                        bitmap_set((void*)PMM::bitmap_l1, base_idxL0 + j); 
+                    }
+                    
+                    uint64_t allocated_page_idx = i * 512;
+                    huge_last_free = allocated_page_idx + 512;
+                    bitmap_last_free = allocated_page_idx + 512;
+                    spinlock_unlock(&pmm_lock);
+                    return (void*)(allocated_page_idx * PAGE_SIZE);
+                }
+            }
+            spinlock_unlock(&pmm_lock);
+
+            // 第一次分配失败，主动触发 GC 刷回当前核心 PCP 缓存
+            if (attempt == 0) {
+                FlushLocalCacheToGlobal();
             }
         }
         
-        spinlock_unlock(&pmm_lock);
         return nullptr; 
     }
 
@@ -225,65 +247,76 @@ namespace PMM {
     void* Request(uint64_t n = 1) {
         if (n == 0) return nullptr;
 
-        if (n == 1) {
-            Interrupt::Mask();
-            cpu_t* cpu = this_cpu(); 
-            if (cpu && cpu->pmm_cache_count > 0) {
-                return cpu->pmm_cache[--cpu->pmm_cache_count];
-            }
-            
-            spinlock_lock(&pmm_lock);
-            void* ret_page = GlobalRequestSingle(); 
-            
-            if (ret_page && cpu && cpu->pmm_cache_count < PMM_PCP_MAX) {
-                for (int i = 0; i < PMM_PCP_BATCH; i++) {
-                    if (cpu->pmm_cache_count >= PMM_PCP_MAX) break;
-                    void* cache_page = GlobalRequestSingle();
-                    if (!cache_page) break;
-                    cpu->pmm_cache[cpu->pmm_cache_count++] = cache_page;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            if (n == 1) {
+                Interrupt::Mask();
+                cpu_t* cpu = this_cpu(); 
+                if (cpu && cpu->pmm_cache_count > 0) {
+                    void* ret = cpu->pmm_cache[--cpu->pmm_cache_count];
+                    Interrupt::Unmask();
+                    return ret;
                 }
-            }
-            spinlock_unlock(&pmm_lock);
-            Interrupt::Unmask();
-            return ret_page;
-        }
-
-        spinlock_lock(&pmm_lock);
-        uint64_t start_bit = 0, free_count = 0;
-        uint64_t current_bit = bitmap_last_free;
-        bool wrapped = false;
-
-        while (true) {
-            if (current_bit >= pmm_bitmap_pages) {
-                if (wrapped) break;
-                current_bit = 0; wrapped = true; free_count = 0; continue;
-            }
-
-            uint64_t idxL1 = (current_bit / 64) / 64; 
-            if (free_count == 0 && (current_bit % 4096 == 0) && (idxL1 < (pmm_bitmap_pages/4096))) {
-                if (bitmap_l1[idxL1] == 0xFFFFFFFFFFFFFFFF) { current_bit += 4096; continue; }
-            }
-
-            uint64_t idx64 = current_bit / 64;
-            if (free_count == 0 && (current_bit % 64 == 0)) {
-                if (((uint64_t*)PMM::bitmap)[idx64] == 0xFFFFFFFFFFFFFFFF) { current_bit += 64; continue; }
-            }
-
-            if (!bitmap_get((void*)PMM::bitmap, current_bit)) {
-                if (free_count == 0) start_bit = current_bit;
-                if (++free_count == n) {
-                    bitmap_set_range(start_bit, n);
-                    bitmap_last_free = start_bit + n;
-                    spinlock_unlock(&pmm_lock);
-                    return (void*)(start_bit * PAGE_SIZE); 
+                
+                spinlock_lock(&pmm_lock);
+                void* ret_page = GlobalRequestSingle(); 
+                
+                if (ret_page && cpu && cpu->pmm_cache_count < PMM_PCP_MAX) {
+                    for (int i = 0; i < PMM_PCP_BATCH; i++) {
+                        if (cpu->pmm_cache_count >= PMM_PCP_MAX) break;
+                        void* cache_page = GlobalRequestSingle();
+                        if (!cache_page) break;
+                        cpu->pmm_cache[cpu->pmm_cache_count++] = cache_page;
+                    }
                 }
+                spinlock_unlock(&pmm_lock);
+                Interrupt::Unmask();
+                if (ret_page) return ret_page;
+
             } else {
-                free_count = 0;
+                spinlock_lock(&pmm_lock);
+                uint64_t start_bit = 0, free_count = 0;
+                uint64_t current_bit = bitmap_last_free;
+                bool wrapped = false;
+
+                while (true) {
+                    if (current_bit >= pmm_bitmap_pages) {
+                        if (wrapped) break;
+                        current_bit = 0; wrapped = true; free_count = 0; continue;
+                    }
+
+                    uint64_t idxL1 = (current_bit / 64) / 64; 
+                    if (free_count == 0 && (current_bit % 4096 == 0) && (idxL1 < (pmm_bitmap_pages/4096))) {
+                        if (bitmap_l1[idxL1] == 0xFFFFFFFFFFFFFFFF) { current_bit += 4096; continue; }
+                    }
+
+                    uint64_t idx64 = current_bit / 64;
+                    if (free_count == 0 && (current_bit % 64 == 0)) {
+                        if (((uint64_t*)PMM::bitmap)[idx64] == 0xFFFFFFFFFFFFFFFF) { current_bit += 64; continue; }
+                    }
+
+                    if (!bitmap_get((void*)PMM::bitmap, current_bit)) {
+                        if (free_count == 0) start_bit = current_bit;
+                        if (++free_count == n) {
+                            bitmap_set_range(start_bit, n);
+                            bitmap_last_free = start_bit + n;
+                            spinlock_unlock(&pmm_lock);
+                            return (void*)(start_bit * PAGE_SIZE); 
+                        }
+                    } else {
+                        free_count = 0;
+                    }
+                    current_bit++;
+                }
+                spinlock_unlock(&pmm_lock);
             }
-            current_bit++;
+
+            // Attempt 0 failed. Force GC then retry.
+            if (attempt == 0) {
+                FlushLocalCacheToGlobal();
+            }
         }
+
         kerror("PMM Out of contiguous memory (%lu pages)!\n", n);
-        spinlock_unlock(&pmm_lock);
         return nullptr;
     }
 
@@ -291,11 +324,12 @@ namespace PMM {
         if (!ptr || n == 0) return;
 
         if (n == 1) {
-            // [TODO] Add interrupt_disable() here
+            Interrupt::Mask(); // Add interrupt disable for atomic state
             cpu_t* cpu = this_cpu();
             if (cpu) {
                 if (cpu->pmm_cache_count < PMM_PCP_MAX) {
                     cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
+                    Interrupt::Unmask();
                     return;
                 }
                 
@@ -305,18 +339,27 @@ namespace PMM {
                     uint64_t bit = (uint64_t)cpu->pmm_cache[--cpu->pmm_cache_count] / PAGE_SIZE;
                     bitmap_clear_sync(bit);
                     if (bit < bitmap_last_free) bitmap_last_free = bit; 
+                    
+                    uint64_t huge_align = bit & ~511ULL;
+                    if (huge_align < huge_last_free) huge_last_free = huge_align;
                 }
                 spinlock_unlock(&pmm_lock);
                 
                 cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
+                Interrupt::Unmask();
                 return;
             }
+            Interrupt::Unmask();
         }
 
         uint64_t start_bit = (uint64_t)ptr / PAGE_SIZE;
         spinlock_lock(&pmm_lock);
         bitmap_clear_range(start_bit, n);
+        
         if (start_bit < bitmap_last_free) bitmap_last_free = start_bit;
+        uint64_t huge_align = start_bit & ~511ULL;
+        if (huge_align < huge_last_free) huge_last_free = huge_align;
+        
         spinlock_unlock(&pmm_lock);
     }
     
@@ -441,20 +484,18 @@ namespace PMM {
         bitmap_last_free = 1; 
     }
 
-        void* RequestHuge() {
+    void* RequestHuge() {
         spinlock_lock(&pmm_lock);
         
         uint64_t max_align_idx = pmm_bitmap_pages / 512;
+        if (max_align_idx == 0) {
+            spinlock_unlock(&pmm_lock);
+            return nullptr;
+        }
         uint64_t start_idx = huge_last_free / 512;
-        bool wrapped = false;
 
-        for (uint64_t i = start_idx; ; i++) {
-            if (i >= max_align_idx) {
-                if (wrapped) break;
-                i = 0;
-                wrapped = true;
-            }
-            
+        for (uint64_t count = 0; count < max_align_idx; count++) {
+            uint64_t i = (start_idx + count) % max_align_idx;
             uint64_t base_idxL0 = i * 8; 
             bool is_free = true;
             for (int j = 0; j < 8; j++) {
@@ -567,7 +608,11 @@ namespace PMM {
         
         spinlock_lock(&pmm_lock);
         bitmap_clear_range(start_bit, n);
+        
         if (start_bit < bitmap_last_free) bitmap_last_free = start_bit;
+        uint64_t huge_align = start_bit & ~511ULL;
+        if (huge_align < huge_last_free) huge_last_free = huge_align;
+        
         spinlock_unlock(&pmm_lock);
     }
 

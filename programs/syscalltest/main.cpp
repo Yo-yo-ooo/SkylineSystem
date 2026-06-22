@@ -59,14 +59,21 @@ int main(){
     fb = GetFBInfo();
     fb.BaseAddress = (void*)FbAddr;
     
-    BasicDraw bd(&fb);
+    BasicDraw bd((FrameBuffer*)&fb);
     // 绘制自适应UI
     bd.DrawProportionalUI();
     
+    syscall(24,(long)to_string(fb.BufferSize),256,0,0,0,0);
 
-    void *UIBase = malloc(fb.BufferSize);
+    uint64_t bufsz = __atomic_load_n(&fb.BufferSize, __ATOMIC_ACQUIRE);
+    size_t x = (size_t)fb.BufferSize;
+    syscall(24,(long)to_string(x),256,0,0,0,0);
+    void *UIBase = malloc(x);
     
-    syscall(24, (long)msg, 13, 0, 0, 0, 0);
+    if(UIBase == nullptr)
+        syscall(24, (long)"FAULT!", 7, 0, 0, 0, 0);//这里没有触发！！！    
+    
+    syscall(24, (long)msg, 13, 0, 0, 0, 0);//这里没有触发！！！
     //memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
 
     /* FILE *fp = fopen("/mp/README.md","r");
