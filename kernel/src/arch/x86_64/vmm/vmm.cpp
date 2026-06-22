@@ -213,17 +213,6 @@ namespace VMM {
         kinfoln("VMM: Proactively reclaimed PCP cache for contiguous memory.");
     }
 
-    // [新增] 调试辅助：全局内存统计接口
-    void PrintMemoryStats() {
-        // 假设 PMM 暴露了这两个外部统计接口
-        extern uint64_t pmm_free_4k_pages;
-        extern uint64_t pmm_free_2m_pages;
-        kinfoln("========== VMM Memory Stats ==========");
-        kinfoln("Free 4K Pages: %llu ( %llu MB )", pmm_free_4k_pages, (pmm_free_4k_pages * PAGE_SIZE) / 1024 / 1024);
-        kinfoln("Free 2M Pages: %llu ( %llu MB )", pmm_free_2m_pages, (pmm_free_2m_pages * PAGE_SIZE_2MB) / 1024 / 1024);
-        kinfoln("======================================");
-    }
-
     void Init(){
         uint64_t pat = 0;
         pat |= (0ULL << 0);

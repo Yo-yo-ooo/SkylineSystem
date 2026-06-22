@@ -180,7 +180,6 @@ namespace VMM{
     void RemoveMapping(vm_mapping_t *mapping);
 
     void ReclaimMemory();
-    void PrintMemoryStats();
 
     void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user, uint64_t extra_flags = 0);
     void Free(pagemap_t *pagemap, void *ptr);
