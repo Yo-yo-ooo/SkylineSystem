@@ -24,7 +24,7 @@
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 
-extern bool VMM_IsPM5LVL;
+extern volatile bool IsPM5LVL;
 
 namespace VMM {
     namespace UserAccess {
@@ -75,7 +75,7 @@ namespace VMM {
             uint64_t start_u_vaddr = (uint64_t)u_src;
 
             // Dynamically check the top of the user boundary depending on 4-level or 5-level configuration
-            uint64_t user_space_end = VMM_IsPM5LVL ? USER_SPACE_END_5LVL : USER_SPACE_END_4LVL;
+            uint64_t user_space_end = IsPM5LVL ? USER_SPACE_END_5LVL : USER_SPACE_END_4LVL;
 
             if (start_u_vaddr > user_space_end || (user_space_end - start_u_vaddr < len)) {
                 return false; 

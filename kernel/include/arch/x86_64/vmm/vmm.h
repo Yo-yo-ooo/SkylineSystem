@@ -39,9 +39,6 @@
 #define MM_USER 4
 #define MM_NX (1ull << 63)
 
-#define MM_LARGE_2MB (1ULL << 7)   // x86_64 Page Size (PS) bit
-#define PAGE_SIZE_2MB 0x200000ULL  // 2MB in bytes
-
 #define VMM_FLAG_PRESENT        (1 << 0)        /* P   */
 #define VMM_FLAG_READWRITE      (1 << 1)        /* R/W */
 #define VMM_FLAG_USER           (1 << 2)        /* U/S */
@@ -79,12 +76,6 @@
 #define PTE_MASK(x) (typeof(x))((uint64_t)x & PTE_ADDR_MASK)
 #define PTE_FLAGS(x) (typeof(x))((uint64_t)x & PTE_FLAGS_MASK)
 
-
-
-#define USER_SPACE_END_4LVL 0x00007FFFFFFFFFFF
-#define USER_SPACE_END_5LVL 0x00FEFFFFFFFFFFFF
-#define PAGE_MASK      0xFFFULL
-
 #define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
 static inline bool is_user_address(uint64_t addr){
     // 用户态地址 < 0xFFFF800000000000
@@ -105,11 +96,8 @@ typedef struct vma_region_t {
     uint64_t flags;
     struct vma_region_t *next;
     struct vma_region_t *prev;
-    struct vma_region_t *left; // Repurposed as Next-Fit cache pointer
 } vma_region_t;
 
-// Deprecated: Kept only for struct compatibility with existing pagemap_t headers.
-// The optimized VMM exclusively uses vma_region_t to eliminate duplicate tracking.
 typedef struct vm_mapping_t {
     uint64_t start;
     uint64_t page_count;
@@ -127,6 +115,10 @@ typedef struct {
 } pagemap_t;
 
 extern volatile pagemap_t *kernel_pagemap;
+
+#define USER_SPACE_END_4LVL 0x00007FFFFFFFFFFF
+#define USER_SPACE_END_5LVL 0x00FEFFFFFFFFFFFF
+#define PAGE_MASK      0xFFFULL
 
 namespace VMM{
     
@@ -148,8 +140,6 @@ namespace VMM{
     }
     namespace Useless
     {
-        void FreePhysicalPages(pagemap_t *pagemap, uint64_t va_start, uint64_t va_end);
-        uint64_t InternalFree(pagemap_t *pagemap, uint64_t addr, uint64_t page_count);
         uint64_t *NewLevel(uint64_t *level, uint64_t entry);
         uint64_t GetPhysicsFlags(pagemap_t *pagemap, uint64_t vaddr);
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
@@ -166,10 +156,7 @@ namespace VMM{
     pagemap_t *SwitchPageMap(pagemap_t *pagemap);
     pagemap_t *NewPM();
 
-    bool SplitHugePage(pagemap_t *pagemap, uint64_t vaddr);
-
     namespace VMA{
-        bool SplitRegion(vma_region_t *origin, uint64_t split_addr);
         void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count);
         vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
         vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags);
@@ -179,9 +166,8 @@ namespace VMM{
     vm_mapping_t *NewMapping(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
     void RemoveMapping(vm_mapping_t *mapping);
 
-    void ReclaimMemory();
-
-    void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user, uint64_t extra_flags = 0);
+    void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user);
+    void *EAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
     void Free(pagemap_t *pagemap, void *ptr);
 
     pagemap_t *Fork(pagemap_t *parent);

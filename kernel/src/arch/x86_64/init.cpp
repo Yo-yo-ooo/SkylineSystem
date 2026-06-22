@@ -105,6 +105,8 @@ void __init x86_64_init(void){
     proc_t *proc = Schedule::NewProcess(true);
 
     kinfoln("Creating syscalltest process...");
+    void *R = VMM::Alloc(kernel_pagemap,1000,false);
+    VMM::Free(kernel_pagemap,R);
     char *argv[] = {(char*)"Test Main Thread"};
     char *envp[] = {nullptr};
     thread_t *syscalltest = Schedule::NewThread(proc, 0, 0, 
