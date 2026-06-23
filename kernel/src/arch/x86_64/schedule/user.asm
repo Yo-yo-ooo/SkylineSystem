@@ -43,7 +43,6 @@ syscall_entry:
     push qword 0                     ; 错误码（占位）
     push qword 0                     ; 中断号（占位）
 
-    ; 保存通用寄存器 (严格对齐你 IDT 中的 pushaq 顺序)
     push rax
     push rcx
     push rdx
@@ -65,13 +64,9 @@ syscall_entry:
     
     ; 强制符合 C 语言 ABI 规范
     cld 
-    ; 注：此处一共压入了 7 + 15 = 22 个 8 字节 (176 字节)。
-    ; 176 是 16 的倍数，因此只要你的 [gs:8] 初始化时是 16 字节对齐的，
-    ; 这里的 RSP 天然对齐，无需额外执行 and rsp, ~15。
 
     call syscall_handler
 
-    ; 恢复通用寄存器 (严格对齐你 IDT 中的 popaq 顺序)
     pop r15
     pop r14
     pop r13

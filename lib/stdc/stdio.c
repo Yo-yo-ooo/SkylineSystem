@@ -13,19 +13,29 @@ FILE* fopen(const char* filename, const char* mode) {
 
     int32_t flags = 0;
 
-    // 解析 mode 字符串
-    if (strchr(mode, '+')) {
-        flags |= O_RDWR;
-    } else if (mode[0] == 'r') {
-        flags |= O_RDONLY;
-    } else {
-        flags |= O_WRONLY;
-    }
-
-    if (mode[0] == 'w') {
-        flags |= O_CREAT | O_TRUNC;
-    } else if (mode[0] == 'a') {
-        flags |= O_CREAT | O_APPEND;
+    
+    // 解析 mode 字符串的首字符，决定基本的读写和创建策略
+    switch (mode[0]) {
+        case 'r':
+            flags = O_RDONLY;  // 使用赋值 '=' 而不是 '|='
+            if (strchr(mode, '+')) {
+                flags = O_RDWR;
+            }
+            break;
+        case 'w':
+            flags = O_WRONLY | O_CREAT | O_TRUNC;
+            if (strchr(mode, '+')) {
+                flags = O_RDWR | O_CREAT | O_TRUNC;
+            }
+            break;
+        case 'a':
+            flags = O_WRONLY | O_CREAT | O_APPEND;
+            if (strchr(mode, '+')) {
+                flags = O_RDWR | O_CREAT | O_APPEND;
+            }
+            break;
+        default:
+            return NULL; // 首字符不是 r/w/a，属于非法模式
     }
 
     // 调用内核打开文件
@@ -47,7 +57,6 @@ FILE* fopen(const char* filename, const char* mode) {
 
 int32_t fclose(FILE *stream) {
     if (!stream) return -1;
-    // 如果你以后实现了 fwrite，这里还需要加上 fflush(stream) 把缓冲区写回内核
     int32_t res = sys_fclose(stream->fd);
     free(stream); // 解决内存泄漏
     return res;

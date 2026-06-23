@@ -107,7 +107,6 @@ static inline bool is_path_too_long(const char* kpath) {
 // 辅助函数：安全地从用户态拷贝字符串 (遇到 \0 停止)，返回拷贝的字节数，失败返回负数
 static int64_t strncpy_from_user(char* dst, const char* src, size_t max_len, pagemap_t* pagemap) {
     for (size_t i = 0; i < max_len; i++) {
-        // 这里必须按字节安全读取（假设你有相应的底层封装，如 SafeReadByte）
         if (!VMM::UserAccess::CopyFromUser(pagemap, dst + i, (void*)(src + i), 1)) {
             return -EFAULT; // 越界
         }
@@ -153,8 +152,6 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
     fd_struct->FSOPS = MP->FSOPS;
     fd_struct->MP = MP;
     
-    // [修复 2] 传递二级指针，让底层分配的文件描述符能够回写
-    // 注意：这要求你同步修改底层 MP->FSOPS->open 的参数定义！
     int32_t err = MP->FSOPS->open(&(fd_struct->filedesc), kpath, flags);
 
     kfree(kpath); 

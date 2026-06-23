@@ -76,8 +76,8 @@ int main(){
     syscall(24, (long)msg, 13, 0, 0, 0, 0);//这里没有触发！！！
     //memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
 
-    /* FILE *fp = fopen("/mp/README.md","r");
-    char buf[25];
+    FILE *fp = fopen("/mp/README.md","r");
+    /*char buf[25];
     fread(buf,25,1,fp);
     syscall(24, (long)buf, 25, 0, 0, 0, 0); */
     

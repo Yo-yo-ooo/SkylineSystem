@@ -106,8 +106,7 @@ typedef struct FDManager {
     // 默认为 -1 (表示还没分配任何 FD)
     int32_t max_fd;           
     
-    // 如果有自旋锁，在这里定义
-    // spinlock_t lock;
+    spinlock_t lock;
 } fd_manager_t;
 
 #define PATH_MAX 4096
