@@ -43,7 +43,7 @@ namespace FrameBufferDevice{
         VMM::MapRange(pm,VADDR,PHYSICAL(Fb->BaseAddress),MM_USER | VMM_FLAGS_MMIO,pages);
         VMM::NewMapping(pm, VADDR, pages, 
             MM_USER | VMM_FLAGS_MMIO);
-        uint64_t check_pte = VMM::Useless::GetPhysicsFlags(pm, VADDR);
+        uint64_t check_pte = VMM::Useless::GetPageInfo(pm, VADDR).flags;
         kinfoln("VADDR: 0x%X -> PTE Value: 0x%llX", VADDR, check_pte);
         kinfoln("Framebuffer mapped to VADDR: 0x%X", VADDR);
         return (VADDR); 

@@ -46,6 +46,9 @@
 #define VMM_FLAG_CACHE_DISABLE  (1 << 4)        /* PCD */
 #define VMM_FLAG_PAT            (1 << 7)        /* PAT */
 
+// x86_64 巨页 (Huge Page) 的 PS (Page Size) 位，用于区分大页与页目录指针
+#define VMM_PS_BIT              (1ULL << 7)
+
 #define PTE_MMIO (1 << 9)
 
 #define VMM_FLAGS_DEFAULT       (VMM_FLAG_PRESENT | VMM_FLAG_READWRITE)
@@ -140,15 +143,31 @@ namespace VMM{
     }
     namespace Useless
     {
+        // 保存页面详细信息的结构体，适配多级巨页
+        struct PageInfo {
+            uint64_t phys;  // 物理基址
+            uint64_t size;  // 页面大小 (4KB, 2MB, 1GB)
+            uint64_t flags; // 页表项标志位
+        };
+
         uint64_t *NewLevel(uint64_t *level, uint64_t entry);
-        uint64_t GetPhysicsFlags(pagemap_t *pagemap, uint64_t vaddr);
+        
+        // 替换原有的 GetPhysicsFlags，现在返回包含页面大小的 PageInfo
+        PageInfo GetPageInfo(pagemap_t *pagemap, uint64_t vaddr);
+        
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
     } // namespace Useless
 
     extern "C" void Init();
     
+    // 传统的 4KB 映射封装（兼容旧调用）
     void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
     void Map(uint64_t vaddr, uint64_t paddr);
+
+    // 显式指定页面大小的映射函数
+    void Map4K(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
+    void Map2M(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
+    void Map1G(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
 
     void Unmap(pagemap_t *pagemap, uint64_t vaddr);
     uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr);
