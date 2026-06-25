@@ -39,6 +39,11 @@
 #define MM_USER 4
 #define MM_NX (1ull << 63)
 
+
+#define PAGE_2MB (2ULL * 1024 * 1024)
+#define PAGE_1GB (1ULL * 1024 * 1024 * 1024)
+#define PAGE_2GB (2ULL * 1024 * 1024 * 1024)
+
 #define VMM_FLAG_PRESENT        (1 << 0)        /* P   */
 #define VMM_FLAG_READWRITE      (1 << 1)        /* R/W */
 #define VMM_FLAG_USER           (1 << 2)        /* U/S */
@@ -129,16 +134,34 @@ namespace VMM{
         
         /**
          * @brief 将内核数据安全地拷贝到当前用户进程的虚拟地址空间
-         * 
+         *
+         * - 校验用户态地址范围，防止越界访问内核空间
+         * - 自动处理 CoW 页（避免通过 HHDM 绕过用户页表写保护）
+         * - 感知 4K/2M/1G 页大小，减少 GetPageInfo 调用次数
+         *
          * @param pagemap  当前进程的页表指针
          * @param u_dest   用户态目标虚拟地址
          * @param k_src    内核态源数据地址
-         * @param len      拷贝长度
+         * @param len      拷贝长度（字节）
          * @return true    拷贝成功
-         * @return false   发生错误（地址非法、未映射或越界）
+         * @return false   地址非法 / 未映射 / 越界 / 权限不足
          */
-        void CopyToUser(pagemap_t* pagemap, uint64_t u_dest, const void* k_src, uint64_t len);
+        bool CopyToUser(pagemap_t* pagemap, uint64_t u_dest, const void* k_src, uint64_t len);
 
+        /**
+         * @brief 从用户进程的虚拟地址空间安全地拷贝数据到内核
+         *
+         * - 校验用户态地址范围
+         * - 感知 4K/2M/1G 页大小，减少 GetPageInfo 调用次数
+         * - 读取操作不会触发 CoW
+         *
+         * @param pagemap  当前进程的页表指针
+         * @param k_dest   内核态目标地址
+         * @param u_src    用户态源虚拟地址
+         * @param len      拷贝长度（字节）
+         * @return true    拷贝成功
+         * @return false   地址非法 / 未映射 / 越界
+         */
         bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len);
     }
     namespace Useless

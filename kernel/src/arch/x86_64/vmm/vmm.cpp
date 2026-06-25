@@ -24,9 +24,6 @@
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 
-#define PAGE_2MB (2ULL * 1024 * 1024)
-#define PAGE_1GB (1ULL * 1024 * 1024 * 1024)
-#define PAGE_2GB (2ULL * 1024 * 1024 * 1024)
 
 // x86_64 PS (Page Size) Bit
 #define VMM_PS_BIT (1ULL << 7)
@@ -529,7 +526,8 @@ namespace VMM{
                             vaddr += PAGE_2GB;
                         } else {
                             // 若不是2GB块，则按1GB释放（如果PMM支持1GB释放，这里调用Free2MB拆分，由于暂无Free1GB，暂用Free2MB逻辑兜底）
-                            PMM::Free2MB((void*)info.phys); 
+                            for(uint32_t j = 0;j < 512;j++)
+                                PMM::Free2MB((void*)info.phys); 
                             vaddr += PAGE_1GB;
                         }
                     } else if (info.size == PAGE_2MB) {
@@ -552,50 +550,64 @@ namespace VMM{
         spinlock_unlock(&pagemap->vma_lock);
     }
 
+
     pagemap_t *Fork(pagemap_t *parent){
         pagemap_t *restore = VMM::SwitchPageMap(kernel_pagemap);
         pagemap_t *pagemap = HIGHER_HALF((pagemap_t*)PMM::Request());
         pagemap->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
         _memset(pagemap->toplvl, 0, PAGE_SIZE);
+        // 只共享内核空间的顶层页表项
         for (uint64_t i = 256; i < 512; i++)
             pagemap->toplvl[i] = kernel_pagemap->toplvl[i];
             
         vm_mapping_t *mapping = parent->vm_mappings;
-        while (true) {
-            uint64_t vaddr = mapping->start;
-            uint64_t mapped = 0;
-            while (mapped < mapping->page_count) {
-                Useless::PageInfo info = VMM::Useless::GetPageInfo(parent, vaddr);
-                if (info.size == 0) break;
+        if (mapping) {
+            vm_mapping_t *start_mapping = mapping;
+            bool cont = true;
+            while (cont) {
+                // [关键修复 1] 只对用户空间的映射进行 CoW，绝不能碰内核空间！
+                if (mapping->start < HIGHER_HALF(0)) {
+                    uint64_t vaddr = mapping->start;
+                    uint64_t mapped = 0;
+                    while (mapped < mapping->page_count) {
+                        Useless::PageInfo info = VMM::Useless::GetPageInfo(parent, vaddr);
+                        if (info.size == 0) break;
 
-                uint64_t new_flags = info.flags & ~MM_WRITE;
-                new_flags |= (1ULL << 55); // CoW 标志
+                        uint64_t new_flags = info.flags & ~MM_WRITE;
+                        new_flags |= (1ULL << 55); // CoW 标志位
 
-                if (info.size == PAGE_1GB) {
-                    VMM::Map1G(pagemap, vaddr, info.phys, new_flags);
-                    VMM::Map1G(parent, vaddr, info.phys, new_flags);
-                    mapped += 262144;
-                } else if (info.size == PAGE_2MB) {
-                    VMM::Map2M(pagemap, vaddr, info.phys, new_flags);
-                    VMM::Map2M(parent, vaddr, info.phys, new_flags);
-                    mapped += 512;
-                } else {
-                    VMM::Map4K(pagemap, vaddr, info.phys, new_flags);
-                    VMM::Map4K(parent, vaddr, info.phys, new_flags);
-                    mapped += 1;
+                        if (info.size == PAGE_1GB) {
+                            VMM::Map1G(pagemap, vaddr, info.phys, new_flags);
+                            VMM::Map1G(parent, vaddr, info.phys, new_flags);
+                            mapped += 262144;
+                        } else if (info.size == PAGE_2MB) {
+                            VMM::Map2M(pagemap, vaddr, info.phys, new_flags);
+                            VMM::Map2M(parent, vaddr, info.phys, new_flags);
+                            mapped += 512;
+                        } else {
+                            VMM::Map4K(pagemap, vaddr, info.phys, new_flags);
+                            VMM::Map4K(parent, vaddr, info.phys, new_flags);
+                            mapped += 1;
+                        }
+                        vaddr += info.size;
+                    }
+                    VMM::NewMapping(pagemap, mapping->start, mapping->page_count, mapping->flags);
                 }
-                vaddr += info.size;
+                
+                mapping = mapping->next;
+                if (mapping == start_mapping) cont = false;
             }
-            VMM::NewMapping(pagemap, mapping->start, mapping->page_count, mapping->flags);
-            mapping = mapping->next;
-            if (mapping == parent->vm_mappings) break;
         }
 
         VMM::VMA::SetStart(pagemap, parent->vma_head->start, parent->vma_head->page_count);
         spinlock_lock(&parent->vma_lock);
         vma_region_t *region = parent->vma_head->next;
-        for (; region != parent->vma_head; region = region->next)
-            VMM::VMA::AddRegion(pagemap, region->start, region->page_count, region->flags);
+        for (; region != parent->vma_head; region = region->next) {
+            // [关键修复 2] 复制 VMA 区域时，跳过内核空间，避免 CleanPM 时误释放内核物理内存
+            if (region->start < HIGHER_HALF(0)) {
+                VMM::VMA::AddRegion(pagemap, region->start, region->page_count, region->flags);
+            }
+        }
         spinlock_unlock(&parent->vma_lock);
         
         VMM::SwitchPageMap(restore);
@@ -644,6 +656,7 @@ namespace VMM{
         PMM::Free(PHYSICAL(pagemap));
     }
 
+
     uint32_t HandlePF(context_t *ctx){
         uint64_t cr2 = 0;
         __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
@@ -657,6 +670,7 @@ namespace VMM{
                 p ? "Protection-Violation" : "Non-Present",
                 wr ? "(Write)" : "(Read)",
                 us ? "User" : "Kernel");
+                
         thread_t *t = Schedule::this_thread();
         if (!smp_started || !this_cpu() || !t) {
             kerror("Page fault on 0x%p, Should NOT continue.\n", cr2);
@@ -671,30 +685,46 @@ namespace VMM{
         uint64_t old_phys = info.phys;
         if (!old_phys) {
             kerrorln("Segmentation fault (core undumped)");
+            VMM::SwitchPageMap(restore); // [关键修复 3] 错误返回前必须恢复页表
             return 1;
         }
 
         uint64_t new_flags = info.flags;
-        new_flags &= ~(1ULL << 5);
+        new_flags &= ~(1ULL << 55); // [关键修复 4] 正确清除 CoW 软件标志位 (Bit 55)
         new_flags |= MM_WRITE;
 
-        // 针对巨页和普通页分别执行 CoW
-        if (info.size == PAGE_2MB) {
+        // 针对巨页和普通页分别执行 CoW，必须进行巨页边界对齐！
+        if (info.size == PAGE_1GB) {
+            uint64_t page_start = fault_addr & ~(PAGE_1GB - 1);
+            VMM::Unmap(pagemap, page_start); 
+            __asm__ volatile ("invlpg (%0)" : : "r"(page_start) : "memory");
+            
+            for (int j = 0; j < 512; j++) {
+                uint64_t v = page_start + j * PAGE_2MB;
+                uint64_t p = old_phys + j * PAGE_2MB;
+                uint64_t new_phys = (uint64_t)PMM::Request2MB();
+                if (!new_phys) {
+                    kerrorln("OOM during 1G CoW split");
+                    VMM::SwitchPageMap(restore);
+                    return 1;
+                }
+                __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)p), PAGE_2MB);
+                VMM::Map2M(pagemap, v, new_phys, new_flags);
+            }
+        } else if (info.size == PAGE_2MB) {
+            uint64_t page_start = fault_addr & ~(PAGE_2MB - 1);
             uint64_t new_phys = (uint64_t)PMM::Request2MB();
             __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)old_phys), PAGE_2MB);
-            VMM::Map2M(pagemap, fault_addr, new_phys, new_flags);
-        } else if (info.size == PAGE_1GB) {
-            // 1GB CoW 消耗较大，通常分配2GB拷贝
-            uint64_t new_phys = (uint64_t)PMM::Request2GB(); 
-            __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)old_phys), PAGE_1GB);
-            VMM::Map1G(pagemap, fault_addr, new_phys, new_flags);
+            VMM::Map2M(pagemap, page_start, new_phys, new_flags);
         } else {
             uint64_t new_phys = (uint64_t)PMM::Request();
             __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)old_phys), PAGE_SIZE);
             VMM::Map4K(pagemap, fault_addr, new_phys, new_flags);
         }
         
-        __asm__ volatile ("invlpg (%0)" : : "r"(fault_addr));
+        __asm__ volatile ("invlpg (%0)" : : "r"(fault_addr) : "memory");
+        
+        VMM::SwitchPageMap(restore); // [关键修复 5] 处理完毕恢复原页表
         return 0;
     }
 

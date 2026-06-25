@@ -128,12 +128,13 @@ void fd_manager_init(fd_manager_t* manager) {
 
 // 分配一个空闲的 FD
 int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
+    //kinfoln("ALLOCATING FD");
     spinlock_lock(&manager->lock); // 加锁
-
+    //kinfoln("ALLOCATING FD...");
     fd_node_t* curr = manager->head;
     fd_node_t* prev = nullptr;
     uint32_t node_index = 0; 
-
+    
     // 如果链表为空，创建第一个节点
     if (!curr) {
         manager->head = create_fd_node();
@@ -143,7 +144,7 @@ int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
             return -1; // ENOMEM
         }
     }
-
+    
     // 遍历链表寻找空闲位
     while (curr) {
         // alloc_count 提供快速判断，避免扫描满载节点的位图

@@ -275,6 +275,7 @@ retry:
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         _memset(proc->sig_handlers, 0, 64 * sizeof(sigaction_t));
         //_memset(proc->fd_table, 0, 256 * 8);
+        proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
         fd_manager_init(proc->FDMan);
         proc->fd_count = 4;
         return proc;

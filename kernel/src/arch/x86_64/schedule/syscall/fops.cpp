@@ -129,15 +129,18 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
         return -ENOMEM; 
     }
 
+
     // [修复 1] 替换强制 PATH_MAX 拷贝为安全字符串拷贝
     int64_t path_len = strncpy_from_user(kpath, (const char*)path, PATH_MAX, proc->pagemap);
     if (path_len < 0) {
+        kinfoln("sys_fopen free kpath(pathlen < 0)");
         kfree(kpath);
         return path_len; // 可能是 -EFAULT 或 -ENAMETOOLONG
     }
-
+    //kinfoln("KAPTH:%s",kpath);
     __hmap_s_mp *MP = GetMount(kpath);
     if (!MP) {
+        kinfoln("sys_fopen free kpath(!MP)");
         kfree(kpath);
         return -ENOENT; 
     }
