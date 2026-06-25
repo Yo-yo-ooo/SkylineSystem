@@ -27,7 +27,7 @@
 > * binutil
 > * xorriso
 > * make
-> * e2cp
+> * e2cp (ext2/3/4 tool)
 > Run with this command in the project root dir
 
 **You can build this project(x86_64 arch) with these commands:**
@@ -112,4 +112,4 @@ file kernel
 
 ## Connect
 
-**You can conect with e-mail <1218849168@qq.com>** 
+**You can connect with e-mail <1218849168@qq.com>** 
