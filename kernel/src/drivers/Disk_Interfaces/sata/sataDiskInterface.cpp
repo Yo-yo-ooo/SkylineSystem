@@ -120,69 +120,78 @@ u8 SataDiskInterface::FRegVsDEV_Rb(uint64_t address, uint64_t count, void* buffe
 
 bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
 {
-    
     debugpln("(SataDiskInterface::Read)HIT");
-    //osData.mainTerminalWindow->Log("This Interface: 0x{}", ConvertHexToString((uint64_t)this), Colors.yellow);
     uint8_t* buf = (uint8_t*)buffer;
     int32_t sectorCountDiv8 = ((sectorCount) / 8);
+    
+    // CPU 访问必须通过 HIGHER_HALF 转换为虚拟地址
+    void* hhdm_buffer = HIGHER_HALF((void*)Port->buffer);
+
     debugpln("(SataDiskInterface::Read)HIT 2");
     for (int32_t sect = 0; sect < sectorCountDiv8; sect++)
     {
-        _memset(Port->buffer, 0, 0x1000);
+        _memset(hhdm_buffer, 0, 0x1000);
         debugpln("(SataDiskInterface::Read)HIT 3");
+        // Port->Read 底层 DMA 使用物理地址 Port->buffer
         if (!Port->Read(sector, 8, Port->buffer))
         {
-            _memcpy(Port->buffer, buf, 0x1000);
-            
             debugpln("(SataDiskInterface::Read)HIT ERROR 1");
             return false;
         }
-        _memcpy(Port->buffer, buf, 0x1000);
+        __memcpy(buf, hhdm_buffer, 0x1000);
+        
         buf += 0x1000;
         sector += 8;
     }
 
-    _memset(Port->buffer, 0, ((sectorCount % 8) << 9));
-    if (!Port->Read(sector, sectorCount % 8, Port->buffer))
-    {
-        
-        _memcpy(Port->buffer, buf, ((sectorCount % 8) << 9));
-        debugpln("(SataDiskInterface::Read)HIT ERROR 2");
-        return false;
+    // 处理剩余不足 8 个扇区的部分
+    uint32_t remaining = sectorCount % 8;
+    if (remaining > 0) {
+        _memset(hhdm_buffer, 0, remaining << 9);
+        if (!Port->Read(sector, remaining, Port->buffer))
+        {
+            debugpln("(SataDiskInterface::Read)HIT ERROR 2");
+            return false;
+        }
+        __memcpy(buf, hhdm_buffer, remaining << 9);
     }
-    _memcpy(Port->buffer, buf, ((sectorCount % 8) << 9));
 
-    
     debugpln("(SataDiskInterface::Read)HIT OK!");
     return true;
 }
 
 bool SataDiskInterface::Write(uint64_t sector, uint32_t sectorCount, void* buffer)
 {
-    
     uint8_t* buf = (uint8_t*)buffer;
     int32_t sectorCountDiv8 = ((sectorCount) / 8);
+    
+    // CPU 访问必须通过 HIGHER_HALF 转换为虚拟地址
+    void* hhdm_buffer = HIGHER_HALF((void*)Port->buffer);
+
     for (int32_t sect = 0; sect < sectorCountDiv8; sect++)
     {
-        _memset(Port->buffer, 0, 0x1000);
-        _memcpy(buf, Port->buffer, 0x1000);
+        _memset(hhdm_buffer, 0, 0x1000);
+        __memcpy(hhdm_buffer, buf, 0x1000);
+        
         if (!Port->Write(sector, 8, Port->buffer))
         {
-            
             return false;
         }
         buf += 0x1000;
         sector += 8;
     }
 
-    _memset(Port->buffer, 0, ((sectorCount % 8) << 9));
-    _memcpy(buf, Port->buffer, ((sectorCount % 8) << 9));
-    if (!Port->Write(sector, sectorCount % 8, Port->buffer))
-    {
+    uint32_t remaining = sectorCount % 8;
+    if (remaining > 0) {
+        _memset(hhdm_buffer, 0, remaining << 9);
         
-        return false;
+        __memcpy(hhdm_buffer, buf, remaining << 9);
+        
+        if (!Port->Write(sector, remaining, Port->buffer))
+        {
+            return false;
+        }
     }
-    
     
     return true;
 }

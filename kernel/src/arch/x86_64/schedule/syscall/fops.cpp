@@ -26,7 +26,7 @@
 #include <mem/pmm.h>
 #include <fs/fd.h>
 
-
+extern volatile bool IsPM5LVL;
 uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
 uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
@@ -37,16 +37,20 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     
     if (count == 0) return 0;
     
-    if (!is_user_buffer_valid(buf, count)) {
-        return -EFAULT; 
-    }
+    // 1. 纯数学范围校验，确保不越界进内核高半区
+    uint64_t user_space_end = IsPM5LVL ? USER_SPACE_END_5LVL : USER_SPACE_END_4LVL;
+    if (buf >= user_space_end) return -EFAULT;
+    if (count > user_space_end - buf) return -EFAULT;
 
-    // 核心修复：使用固定大小的栈缓冲区或小块 kmalloc，避免大内存分配失败导致空指针崩溃
-    const size_t CHUNK_SIZE = 8192; // 每次 8KB
-    void *kbuf = kmalloc(CHUNK_SIZE);
-    if (!kbuf) {
-        return -ENOMEM; // 内存不足，安全返回错误
+    // [核心修复] 放弃 kmalloc！
+    // 因为 kmalloc 可能返回低地址，而在用户进程上下文中低地址未映射。
+    // 使用 PMM 分配物理页，强制通过 HIGHER_HALF (HHDM) 访问，确保在所有页表中都有效！
+    const size_t CHUNK_SIZE = PAGE_SIZE; // 4KB
+    uint64_t kbuf_phys = (uint64_t)PMM::Request();
+    if (!kbuf_phys) {
+        return -ENOMEM;
     }
+    void *kbuf = HIGHER_HALF((void*)kbuf_phys);
 
     size_t total_read = 0;
     while (total_read < count) {
@@ -56,31 +60,30 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         }
 
         size_t rcnt = 0;
-        // 向文件系统请求读取一小块
+        // 文件系统现在会写入 0xFFFF9000... 的高半区地址，绝对安全！
         int32_t status = FD->FSOPS->read(FD->filedesc, kbuf, to_read, &rcnt);
         
         if (status != 0) {
-            kfree(kbuf);
-            return (int64_t)status; // 返回负数错误码
+            PMM::Free((void*)kbuf_phys);
+            return (int64_t)status;
         }
 
         if (rcnt > 0) {
-            // 安全拷贝给用户态
+            // CopyToUser 会安全地把高半区的数据拷贝到用户空间，并自动处理按需分页
             if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf + total_read, kbuf, rcnt)) {
-                kfree(kbuf);
+                PMM::Free((void*)kbuf_phys);
                 return -EFAULT;
             }
             total_read += rcnt;
         }
 
-        // 如果读取到的比请求的少，说明到了文件末尾
         if (rcnt < to_read) {
-            break; 
+            break; // 到达文件末尾
         }
     }
 
-    kfree(kbuf);
-    kinfoln("READED %u bytes successfully!", total_read); // 现在这里一定会触发了
+    PMM::Free((void*)kbuf_phys);
+    kinfoln("READED %u bytes successfully!", total_read);
     return (int64_t)total_read;
 }
 
@@ -160,7 +163,7 @@ static int64_t strncpy_from_user(char* dst, const char* src, size_t max_len, pag
     }
     return -ENAMETOOLONG; // 超过 max_len 仍未找到 \0
 }
-
+extern void P(ext4_file *f);
 uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
     proc_t *proc = Schedule::this_proc();
 
@@ -202,6 +205,10 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
     _memset(fd_struct->filedesc,0,MP->FSOPS->SIZEOF_FILE_DESC);
     
     int32_t err = MP->FSOPS->open(fd_struct->filedesc, kpath, flags);
+
+    //ext4_file *f = (ext4_file*)fd_struct->filedesc;
+    //P(f);
+    
 
     //kinfoln("%d",MP->FSOPS->SIZEOF_FILE_DESC);
 

@@ -41,30 +41,31 @@ namespace AHCI
     {
         StopCMD();
 
-        void* newBase = (PMM::Request());
-        //VMM::Map(newBase, newBase);
-        hbaPort->commandListBase = (uint32_t)(uint64_t)newBase;
-        hbaPort->commandListBaseUpper = (uint32_t)((uint64_t)newBase >> 32);
-        _memset((void*)(uint64_t)hbaPort->commandListBase, 0, 1024);
+        // 1. Command List
+        uint64_t cmd_list_phys = (uint64_t)PMM::Request();
+        hbaPort->commandListBase = (uint32_t)cmd_list_phys;
+        hbaPort->commandListBaseUpper = (uint32_t)(cmd_list_phys >> 32);
+        // CPU 访问必须通过 HIGHER_HALF
+        _memset(HIGHER_HALF((void*)cmd_list_phys), 0, 1024);
 
-        void* fisBase = (PMM::Request());
-        //VMM::Map(fisBase, fisBase);
-        hbaPort->fisBaseAddress = (uint32_t)(uint64_t)fisBase;
-        hbaPort->fisBaseAddressUpper = (uint32_t)((uint64_t)fisBase >> 32);
-        _memset(fisBase, 0, 256);
+        // 2. FIS Base
+        uint64_t fis_phys = (uint64_t)PMM::Request();
+        hbaPort->fisBaseAddress = (uint32_t)fis_phys;
+        hbaPort->fisBaseAddressUpper = (uint32_t)(fis_phys >> 32);
+        // CPU 访问必须通过 HIGHER_HALF
+        _memset(HIGHER_HALF((void*)fis_phys), 0, 256);
         
-        HBACommandHeader* cmdHeader = (HBACommandHeader*)((uint64_t)hbaPort->commandListBase + ((uint64_t)hbaPort->commandListBaseUpper << 32));
+        HBACommandHeader* cmdHeader = (HBACommandHeader*)HIGHER_HALF((void*)cmd_list_phys);
 
         for (int32_t i = 0; i < 32; i++)
         {
             cmdHeader[i].prdtLength = 8;
 
-            void* cmdTableAddress = (PMM::Request());
-            //VMM::Map(cmdTableAddress, cmdTableAddress);
-            uint64_t address = (uint64_t)cmdTableAddress + (i << 8);
-            cmdHeader[i].commandTableBaseAddress = (uint32_t)(uint64_t)address;
-            cmdHeader[i].commandTableBaseAddressUpper = (uint32_t)((uint64_t)address >> 32);
-            _memset(cmdTableAddress, 0, 256);
+            uint64_t cmd_tbl_phys = (uint64_t)PMM::Request();
+            cmdHeader[i].commandTableBaseAddress = (uint32_t)cmd_tbl_phys;
+            cmdHeader[i].commandTableBaseAddressUpper = (uint32_t)(cmd_tbl_phys >> 32);
+            // CPU 访问必须通过 HIGHER_HALF
+            _memset(HIGHER_HALF((void*)cmd_tbl_phys), 0, 256);
         }
 
         StartCMD();
@@ -95,88 +96,54 @@ namespace AHCI
 
     SATA_Ident Port::Identifydrive()
     {
-        
         /***Make the Command Header***/
-        HBACommandHeader* cmdhead=(HBACommandHeader*)(uint64_t)hbaPort->commandListBase;//kmalloc(sizeof(HBA_CMD_HEADER));
-        //port->clb = (DWORD)cmdhead;
-        //cmdhead->commandFISLenght = 5;
-        //cmdhead->a=0;
-        //_memset(cmdhead, 0, sizeof(HBACommandHeader));
+        uint64_t cmd_list_phys = (uint64_t)hbaPort->commandListBase | ((uint64_t)hbaPort->commandListBaseUpper << 32);
+        HBACommandHeader* cmdhead = (HBACommandHeader*)HIGHER_HALF((void*)cmd_list_phys);
+        
         cmdhead->write = 0;
         cmdhead->prdtLength = 1;
-        //cmdhead->prefetchable = 1; //p
         cmdhead->clearBusy = 1;
-        
+        cmdhead->commandFISLenght = sizeof(FIS_REG_H2D) / sizeof(uint32_t); 
 
-        
-        cmdhead->commandFISLenght = sizeof(FIS_REG_H2D) / sizeof(uint32_t); // command FIS size
-        cmdhead->prdtLength = 1;
-        
-
-        
         /***Make the Command Table***/
-        HBACommandTable* cmdtbl = (HBACommandTable*)((uint64_t)cmdhead->commandTableBaseAddress);//(HBACommandTable*)PMM::Request();// kmalloc(sizeof(HBA_CMD_TBL));
-        //cmdhead->commandTableBaseAddress = (uint32_t)(uint64_t)cmdtbl;
+        uint64_t cmd_tbl_phys = (uint64_t)cmdhead->commandTableBaseAddress | ((uint64_t)cmdhead->commandTableBaseAddressUpper << 32);
+        HBACommandTable* cmdtbl = (HBACommandTable*)HIGHER_HALF((void*)cmd_tbl_phys);
         
-
-        
-        //_memset((void*)cmdtbl, 0, sizeof(HBACommandTable));
-        
-
-        
-        if (cmdtbl == nullptr || cmdtbl->prdtEntry == nullptr)
+        if (cmdtbl == nullptr)
         {
             SATA_Ident test;
-            
             return test;
         }
-        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)(uint64_t)HIGHER_HALF(PMM::Request());
-        //_memset((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress , 0, 0x1000);
-        //VMM::Map((void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress, (void*)(uint64_t)cmdtbl->prdtEntry[0].dataBaseAddress);
-        
 
-        
+        // 分配用于接收 IDENTIFY 数据的物理页
+        uint64_t ident_phys = (uint64_t)PMM::Request();
+        cmdtbl->prdtEntry[0].dataBaseAddress = (uint32_t)ident_phys;
+        cmdtbl->prdtEntry[0].dataBaseAddressUpper = (uint32_t)(ident_phys >> 32);
         cmdtbl->prdtEntry[0].byteCount = 0x200 - 1;
-        cmdtbl->prdtEntry[0].interruptOnCompletion = 1;   // interrupt when identify complete
-        uint32_t data_base = cmdtbl->prdtEntry[0].dataBaseAddress;
-        //_memset((void*)(uint64_t)data_base, 0, 4096);
-        
+        cmdtbl->prdtEntry[0].interruptOnCompletion = 1;
 
-
-        
         /***Make the IDENTIFY DEVICE h2d FIS***/
-        FIS_REG_H2D* cmdfis = (FIS_REG_H2D*)(uint64_t)cmdtbl->commandFIS;
-        //printf("cmdfis %x ",cmdfis);
-        _memset((void*)cmdfis,0,sizeof(FIS_REG_H2D));
+        FIS_REG_H2D* cmdfis = (FIS_REG_H2D*)(&cmdtbl->commandFIS);
+        _memset((void*)cmdfis, 0, sizeof(FIS_REG_H2D));
         cmdfis->fisType = FIS_TYPE_REG_H2D;
         cmdfis->commandControl = 1;
         cmdfis->command = ATA_CMD_IDENTIFY;
-        
-
         
         /***Send the Command***/
         hbaPort->commandIssue = 1;
 
         /***Wait for a reply***/
-        uint64_t s =  PIT::TimeSinceBootMS() + 3000;
-        //GlobalRenderer->Clear(Colors.green);
+        uint64_t s = PIT::TimeSinceBootMS() + 3000;
         while(PIT::TimeSinceBootMS() < s)
         {
             if(hbaPort->commandIssue == 0)
                 break;
         }
         
-        //if (PIT::TimeSinceBootMS() >= s)
-        //    GlobalRenderer->Clear(Colors.red);
+        // 通过虚拟地址读取数据
+        SATA_Ident test = *((SATA_Ident*)HIGHER_HALF((void*)ident_phys));
 
-        
-        uint32_t* baddr = (uint32_t*)(uint64_t)data_base;
-        SATA_Ident test = *((SATA_Ident*)baddr);
-
-        //GlobalAllocator->FreePage((void*)(uint64_t)data_base);
-        PMM::Free((void*)(uint64_t)data_base);
-        //GlobalAllocator->FreePage((void*)(uint64_t)cmdtbl);
-        
+        PMM::Free((void*)ident_phys);
 
         return test;
     }
@@ -184,7 +151,8 @@ namespace AHCI
     int32_t Port::FindCommandSlot()
     {
         uint32_t cmdSlots = 32;
-        uint32_t slots = (hbaPort->sataControl | hbaPort->commandIssue);
+        // 修复：标准 AHCI 中查找空闲槽位应使用 sataActive，而不是 sataControl
+        uint32_t slots = (hbaPort->sataActive | hbaPort->commandIssue);
         for (int32_t i = 0; i < cmdSlots; i++)
         {
             if ((slots & 1) == 0)
@@ -197,7 +165,6 @@ namespace AHCI
     
     bool Port::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
     {
-        debugpln("This Port: 0x%s", ConvertHexToString((uint64_t)this));
         uint32_t sectorL = (uint32_t)sector;
         uint32_t sectorH = (uint32_t)(sector >> 32);
         uint32_t sectorCountCopy = sectorCount;
@@ -206,22 +173,22 @@ namespace AHCI
         int32_t slot = FindCommandSlot();
         if (slot == -1)
             return false;
-        
-        debugpln("This Slot: %s", to_string(slot));
 
-        HBACommandHeader* cmdHeader = (HBACommandHeader*)(uint64_t)hbaPort->commandListBase;
+        uint64_t cmd_list_phys = (uint64_t)hbaPort->commandListBase | ((uint64_t)hbaPort->commandListBaseUpper << 32);
+        HBACommandHeader* cmdHeader = (HBACommandHeader*)HIGHER_HALF((void*)cmd_list_phys);
         cmdHeader += slot;
-        cmdHeader->commandFISLenght = sizeof(FIS_REG_H2D) / sizeof(uint32_t); // command FIS size
+        cmdHeader->commandFISLenght = sizeof(FIS_REG_H2D) / sizeof(uint32_t);
         cmdHeader->write = 0;
         cmdHeader->prdtLength = ((sectorCount) / 16) + 1;
-        //cmdHeader->prdtLength = (uint16_t)(sectorCount / 16);
 
-        HBACommandTable* commandTable = (HBACommandTable*)((uint64_t)cmdHeader->commandTableBaseAddress);
+        uint64_t cmd_tbl_phys = (uint64_t)cmdHeader->commandTableBaseAddress | ((uint64_t)cmdHeader->commandTableBaseAddressUpper << 32);
+        HBACommandTable* commandTable = (HBACommandTable*)HIGHER_HALF((void*)cmd_tbl_phys);
         _memset(commandTable, 0, sizeof(HBACommandTable) + (cmdHeader->prdtLength - 1) * sizeof(HBAPRDTEntry));
 
         int32_t i = 0;
         for (i = 0; i < cmdHeader->prdtLength - 1; i++)
         {
+            // buffer 在上层 SataDiskInterface 传进来的已经是物理地址(Port->buffer)，直接给硬件
             commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
             commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
             commandTable->prdtEntry[i].byteCount = 0x2000 - 1;
@@ -232,8 +199,7 @@ namespace AHCI
 
         commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
         commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
-        commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1; // 512 bytes per sector
-        debugpln("Reading %s Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)));
+        commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1;
         commandTable->prdtEntry[i].interruptOnCompletion = 1;
         
         FIS_REG_H2D* cmdFIS = (FIS_REG_H2D*)(&commandTable->commandFIS);
@@ -241,24 +207,14 @@ namespace AHCI
         cmdFIS->commandControl = 1;
         cmdFIS->command = ATA_CMD_READ_DMA_EX;
 
-        /*
-        cmdFIS->lba0 = (uint8_t)sectorL;
-        cmdFIS->lba1 = (uint8_t)(sectorL >> 8);
-        cmdFIS->lba2 = (uint8_t)(sectorL >> 16);
-        cmdFIS->lba3 = (uint8_t)sectorH;
-        cmdFIS->lba4 = (uint8_t)(sectorH >> 8);
-        cmdFIS->lba5 = (uint8_t)(sectorH >> 16);*/
-
-        
         cmdFIS->lba0 = (uint8_t)sectorL;
         cmdFIS->lba1 = (uint8_t)(sectorL >> 8);
         cmdFIS->lba2 = (uint8_t)(sectorL >> 16);
         cmdFIS->lba3 = (uint8_t)(sectorL >> 24);
         cmdFIS->lba4 = (uint8_t)sectorH;
         cmdFIS->lba5 = (uint8_t)(sectorH >> 8);
-        
 
-        cmdFIS->deviceRegister = 1<<6; // Set to LBA Mode
+        cmdFIS->deviceRegister = 1<<6; // LBA Mode
 
         cmdFIS->countLow = sectorCountCopy & 0xFF;
         cmdFIS->countHigh = (sectorCountCopy >> 8) & 0xFF;
@@ -268,32 +224,25 @@ namespace AHCI
             spin++;
         if (spin == 1000000)
             return false;
-        debugpln("Spin: %s", to_string(spin));
 
         hbaPort->commandIssue = 1 << slot;
-
-        debugpln("HHHHHHH");
         
         while (true)
         {
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
-                kinfoln("HIT hbaPort->interruptStatus & HBA_PxIS_TFES RETURN 1");
                 return false;
             }
         }
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
-            kinfoln("HIT hbaPort->interruptStatus & HBA_PxIS_TFES RETURN 2");
             return false;
         }
-        
-        if(buffer == nullptr)
-            kwarn("Port::Read buffer is null!");
 
         return true;
     }
+
     bool Port::Write(uint64_t sector, uint32_t sectorCount, void* buffer)
     {
         uint32_t sectorL = (uint32_t)sector;
@@ -305,13 +254,15 @@ namespace AHCI
         if (slot == -1)
             return false;
 
-        HBACommandHeader* cmdHeader = (HBACommandHeader*)(uint64_t)hbaPort->commandListBase;
-        cmdHeader += slot; // A
-        cmdHeader->commandFISLenght = sizeof(FIS_REG_H2D) / sizeof(uint32_t); // command FIS size
+        uint64_t cmd_list_phys = (uint64_t)hbaPort->commandListBase | ((uint64_t)hbaPort->commandListBaseUpper << 32);
+        HBACommandHeader* cmdHeader = (HBACommandHeader*)HIGHER_HALF((void*)cmd_list_phys);
+        cmdHeader += slot;
+        cmdHeader->commandFISLenght = sizeof(FIS_REG_H2D) / sizeof(uint32_t);
         cmdHeader->write = 1;
         cmdHeader->prdtLength = ((sectorCount) / 16) + 1;
 
-        HBACommandTable* commandTable = (HBACommandTable*)((uint64_t)cmdHeader->commandTableBaseAddress);
+        uint64_t cmd_tbl_phys = (uint64_t)cmdHeader->commandTableBaseAddress | ((uint64_t)cmdHeader->commandTableBaseAddressUpper << 32);
+        HBACommandTable* commandTable = (HBACommandTable*)HIGHER_HALF((void*)cmd_tbl_phys);
         _memset(commandTable, 0, sizeof(HBACommandTable) + (cmdHeader->prdtLength - 1) * sizeof(HBAPRDTEntry));
 
         int32_t i = 0;
@@ -327,21 +278,13 @@ namespace AHCI
 
         commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
         commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
-        commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1; // 512 bytes per sector
-        debugpln("Writing %s Bytes.", to_string((uint64_t)(commandTable->prdtEntry[i].byteCount + 1)));
+        commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1;
         commandTable->prdtEntry[i].interruptOnCompletion = 1;
         
         FIS_REG_H2D* cmdFIS = (FIS_REG_H2D*)(&commandTable->commandFIS);
         cmdFIS->fisType = FIS_TYPE_REG_H2D;
         cmdFIS->commandControl = 1;
         cmdFIS->command = ATA_CMD_WRITE_DMA_EX;
-
-        // cmdFIS->lba0 = (uint8_t)sectorL;
-        // cmdFIS->lba1 = (uint8_t)(sectorL >> 8);
-        // cmdFIS->lba2 = (uint8_t)(sectorL >> 16);
-        // cmdFIS->lba3 = (uint8_t)sectorH;
-        // cmdFIS->lba4 = (uint8_t)(sectorH >> 8);
-        // cmdFIS->lba5 = (uint8_t)(sectorH >> 16);
 
         cmdFIS->lba0 = (uint8_t)sectorL;
         cmdFIS->lba1 = (uint8_t)(sectorL >> 8);
@@ -350,7 +293,7 @@ namespace AHCI
         cmdFIS->lba4 = (uint8_t)sectorH;
         cmdFIS->lba5 = (uint8_t)(sectorH >> 8);
 
-        cmdFIS->deviceRegister = 1<<6; // Set to LBA Mode
+        cmdFIS->deviceRegister = 1<<6; // LBA Mode
 
         cmdFIS->countLow = sectorCountCopy & 0xFF;
         cmdFIS->countHigh = (sectorCountCopy >> 8) & 0xFF;
@@ -360,27 +303,19 @@ namespace AHCI
             spin++;
         if (spin == 1000000)
             return false;
-        //osData.debugTerminalWindow->Log("Spin: {}", to_string(spin), Colors.bblue);
 
-        hbaPort->commandIssue = 1<<slot; // A
+        hbaPort->commandIssue = 1<<slot;
 
-        debugpln("HIT  Port::Write");
-        
         while (true)
         {
-            if ((hbaPort->commandIssue & (1<<slot)) == 0) // A
+            if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
                 return false;
         }
 
-        debugpln("HIT  Port::Write");
-
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
                 return false;
-
-        if(buffer == nullptr)
-            kwarn("Port::Write buffer is null!");
 
         return true;
     }
@@ -388,21 +323,16 @@ namespace AHCI
     uint64_t Port::GetMaxSectorCount()
     {
         SATA_Ident test = Identifydrive();
-        //uint32_t cap = (((uint32_t)test.cur_capacity1) << 16) + test.cur_capacity0;
         uint32_t cap = test.lba_capacity;
-        //kinfoln("Max Sector Count: %d", cap);
         return (uint64_t)cap;
-        //return cap;
     }
 
     uint16_t Port::GetSectorSize()
     {
         SATA_Ident test = Identifydrive();
-        //uint32_t cap = (((uint32_t)test.cur_capacity1) << 16) + test.cur_capacity0;
         uint16_t cap = test.sector_bytes;
         return cap;
     }
-
 
     AHCIDriver::AHCIDriver (PCI::PCIDeviceHeader* PCIBaseAddr){
         PCI::PCIDeviceHeader* pciBaseAddress = PCIBaseAddr;
@@ -411,16 +341,12 @@ namespace AHCI
 
         uint32_t low = ((PCI::PCIHeader0*)(uint64_t)pciBaseAddress)->BAR5;
         uint64_t full_phys = (low & ~0xF);
-        if (((low >> 1) & 0x3) == 0x2) { // 依据规范：10b 表示 64-bit 内存空间
-            // 依据规范：高 32 位在“连续的下一个 32 位位置”
-            // 即偏移量 0x24 + 4 = 0x28
+        if (((low >> 1) & 0x3) == 0x2) { 
             uint32_t high = *(uint32_t*)((uint64_t)&low + 4); 
             full_phys = ((uint64_t)high << 32) | (low & ~0xF);
         }
         this->ABAR = (HBAMemory*)(full_phys + hhdm_offset);
 
-        // 3. 映射到 HHDM 虚拟地址
-        //ABAR = (HBAMemory*)(phys_addr + hhdm_offset);
         ABAR->globalHostControl |= 0x80000000;
 
         ProbePorts();
@@ -438,20 +364,15 @@ namespace AHCI
                 kprintf("\033[38;2;255;165;0m* SATA drive\033[0m\n");
                 SataDiskInterface* sataDiskInterface = new SataDiskInterface(port);
             }
-            
         }
     }
 
-    AHCIDriver::~AHCIDriver()
-    {
-        
-    }
+    AHCIDriver::~AHCIDriver() {}
 
     #define SATA_SIG_ATAAPI 0xEB140101
     #define SATA_SIG_ATA    0x00000101
     #define SATA_SIG_SEMB   0xC33C0101
     #define SATA_SIG_PM     0x96690101
-    
 
     void AHCIDriver::ProbePorts()
     {
@@ -460,8 +381,8 @@ namespace AHCI
         PortCount = 0;
         if (portsImplemented > 0)
             kinfo("AHCI: Probing ports via ABAR 0x%016lx, value 0x%04X\n", (uint64_t)ABAR, ABAR->portsImplemented);
-	    else
-		    kinfo("AHCI: Port not implemented, skipping probing\n");
+        else
+            kinfo("AHCI: Port not implemented, skipping probing\n");
         for (int32_t i = 0; i < 32; i++)
         {
             if (portsImplemented & (1 << i))
@@ -484,7 +405,6 @@ namespace AHCI
                     PortCount++;
                 }
             }
-
         }
     }
 
