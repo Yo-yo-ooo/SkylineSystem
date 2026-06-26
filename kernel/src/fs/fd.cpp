@@ -29,12 +29,13 @@
 #include <mem/heap.h>
 
 extern "C" char* GetMountPointName(const char* path) {
-    if (!path || path[0] != '/') return nullptr;
+    if (!path || path[0] != '/' || path[1] == '/') 
+        return nullptr;
 
     // 找到第一个有效字符后的第一个 '/'
     // 比如 "/mp/test" -> 找到 'p' 后面的那个 '/'
     const char* p = path + 1;
-    while (*p && *p == '/') p++; // 跳过开头重复的斜杠，如 "//mp" -> 指向 "mp"
+    //while (*p && *p == '/') p++; // 跳过开头重复的斜杠，如 "//mp" -> 指向 "mp"
     
     const char* second_slash = strchr(p, '/');
     
