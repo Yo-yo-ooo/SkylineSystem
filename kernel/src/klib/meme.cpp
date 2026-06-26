@@ -202,8 +202,6 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
     return dst;
 }
 
-// 完全修复了原有的 TODO: Fix 的问题。
-// 原代码直接相减是错误且不符合 C 标准的，本实现使用异或与 CTZ 快速定位不同字节
 func_optimize(3)
 int32_t memcmp_fscpuf(const void *left, const void *right, size_t len) {
     const uint8_t *l = (const uint8_t *)left;
