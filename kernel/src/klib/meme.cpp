@@ -4,107 +4,22 @@
 * Copyright (C) 2026 Yo-yo-ooo
 *
 * This file is part of SkylineSystem.
-*
-* SkylineSystem is free software; you can redistribute it and/or modify
-* it under the terms of the GNU General Public License as published by
-* the Free Software Foundation; either version 2 of the License, or
-* (at your option) any later version.
-*
-* This program is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License
-* along with this program; if not, write to the Free Software
-* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
 
 #include <klib/klib.h>
 
-extern "C"{
+extern "C" {
 
-#define DECL_MEM_COPY_BACK_FUNC(type) \
-    func_optimize(3) static inline size_t \
-    _memcpy_bw_##type(void *const dst, \
-                                  const void *const src, \
-                                  const size_t n) \
-    {                                                                          \
-        if (n < sizeof(type)) {                                                \
-            return n;                                                          \
-        }                                                                      \
-                                                                               \
-        size_t off = n - sizeof(type);                                  \
-        do {                                                                   \
-            *((type *)(dst + off)) = *((const type *)(src + off));             \
-            if (off < sizeof(type)) {                                          \
-                return off;                                                    \
-            }                                                                  \
-                                                                               \
-            off -= sizeof(type);                                               \
-        } while (true);                                                        \
-                                                                               \
-        return n;                                                              \
-    }
-
-func_optimize(3) static inline size_t
-_memcpy_bw_uint64_t(void *const dst,
-                    const void *const src,
-                    const size_t n)
-{
-    if (n < sizeof(uint64_t)) {
-        return n;
-    }
-
-    size_t off = n - sizeof(uint64_t);
-#if defined(__aarch64__)
-    if (n >= (2 * sizeof(uint64_t))) {
-        off -= sizeof(uint64_t);
-        do {
-            uint64_t left_ch = 0;
-            uint64_t right_ch = 0;
-
-            asm volatile ("ldp %0, %1, [%2]"
-                            : "+r"(left_ch), "+r"(right_ch)
-                            : "r"((const uint64_t *)(src + off))
-                            : "memory");
-
-            asm volatile ("stp %0, %1, [%2]"
-                            :: "r"(left_ch), "r"(right_ch),
-                                "r"((uint64_t *)(dst + off)));
-
-            if (off < sizeof(uint64_t) * 2) {
-                break;
-            }
-
-            off -= sizeof(uint64_t) * 2;
-        } while (true);
-
-        if (off < sizeof(uint64_t)) {
-            return off;
-        }
-    }
-#endif /* defined(__aarch64__) */
-
-    do {
-        *(uint64_t *)(dst + off) = *(const uint64_t *)(src + off);
-        if (off < sizeof(uint64_t)) {
-            break;
-        }
-
-        off -= sizeof(uint64_t);
-    } while (true);
-
-    return off;
-}
-
-
-DECL_MEM_COPY_BACK_FUNC(uint8_t)
-DECL_MEM_COPY_BACK_FUNC(uint16_t)
-DECL_MEM_COPY_BACK_FUNC(uint32_t)
+// 解决 Strict Aliasing 问题，并允许非对齐访问（编译器会自动拆解为对齐指令如果在严格对齐的架构上）
+typedef uint64_t __attribute__((__may_alias__, aligned(1))) unaligned_uint64_t;
+typedef uint32_t __attribute__((__may_alias__, aligned(1))) unaligned_uint32_t;
+typedef uint16_t __attribute__((__may_alias__, aligned(1))) unaligned_uint16_t;
 
 func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
     void *ret = dst;
+    uint8_t *d = (uint8_t *)dst;
+    uint8_t c = (uint8_t)val;
+
 #if defined(__x86_64__)
     if (n >= 48) {
         asm volatile ("cld\n"
@@ -115,145 +30,56 @@ func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
         return ret;
     }
 #else
-    uint64_t value64 = 0;
     if (n >= sizeof(uint64_t)) {
-        value64 =
-            (uint64_t)val << 56
-          | (uint64_t)val << 48
-          | (uint64_t)val << 40
-          | (uint64_t)val << 32
-          | (uint64_t)val << 24
-          | (uint64_t)val << 16
-          | (uint64_t)val << 8
-          | (uint64_t)val;
-
-#if defined(__aarch64__)
-        while (n >= sizeof(uint64_t) * 2) {
-            asm volatile ("stp %0, %0, [%1]" :: "r"(value64), "r"(dst));
-
-            dst += sizeof(uint64_t) * 2;
-            n -= sizeof(uint64_t) * 2;
-        }
-#endif /* defined(__aarch64__) */
-
-        while (n >= sizeof(uint64_t)) {
-            *(uint64_t *)dst = value64;
-
-            dst += sizeof(uint64_t);
-            n -= sizeof(uint64_t);
+        // 头部对齐：将 d 推进到 8 字节对齐的边界
+        size_t align = (uintptr_t)d & 7;
+        if (align) {
+            size_t head = 8 - align;
+            if (head > n) head = n;
+            for (size_t i = 0; i < head; i++) d[i] = c;
+            d += head;
+            n -= head;
         }
 
-        while (n >= sizeof(uint32_t)) {
-            *(uint32_t *)dst = value64;
+        // 生成 64 位填充掩码
+        uint64_t val64 = (uint64_t)c;
+        val64 |= val64 << 8;
+        val64 |= val64 << 16;
+        val64 |= val64 << 32;
 
-            dst += sizeof(uint32_t);
-            n -= sizeof(uint32_t);
+        // 主循环展开：每次写 64 字节
+        while (n >= 64) {
+            ((unaligned_uint64_t *)d)[0] = val64;
+            ((unaligned_uint64_t *)d)[1] = val64;
+            ((unaligned_uint64_t *)d)[2] = val64;
+            ((unaligned_uint64_t *)d)[3] = val64;
+            ((unaligned_uint64_t *)d)[4] = val64;
+            ((unaligned_uint64_t *)d)[5] = val64;
+            ((unaligned_uint64_t *)d)[6] = val64;
+            ((unaligned_uint64_t *)d)[7] = val64;
+            d += 64;
+            n -= 64;
         }
 
-        while (n >= sizeof(uint16_t)) {
-            *(uint16_t *)dst = value64;
-
-            dst += sizeof(uint16_t);
-            n -= sizeof(uint16_t);
+        // 处理剩余的 8 字节块
+        while (n >= 8) {
+            *(unaligned_uint64_t *)d = val64;
+            d += 8;
+            n -= 8;
         }
     }
-#endif /* defined(__x86_64__) */
+#endif
 
-    const auto __limit__606 = (n); 
-    for (auto i = (typeof(n))0; i != __limit__606; i++){
-        ((uint8_t *)dst)[i] = (uint8_t)val;
-    }
-
+    // 尾部字节
+    while (n--) *d++ = c;
     return ret;
 }
 
-
-#define DECL_MEM_COPY_FUNC(type) \
-    func_optimize(3) static inline size_t                            \
-    _memcpy_##type(void *dst,                                      \
-                               const void *src,                                \
-                               size_t n,                                \
-                               void **const dst_out,                           \
-                               const void **const src_out)                     \
-    {                                                                          \
-        if (n >= sizeof(type)) {                                               \
-            do {                                                               \
-                *(type *)dst = *(const type *)src;                             \
-                                                                               \
-                dst += sizeof(type);                                           \
-                src += sizeof(type);                                           \
-                                                                               \
-                n -= sizeof(type);                                             \
-            } while (n >= sizeof(type));                                       \
-                                                                               \
-            *dst_out = dst;                                                    \
-            *src_out = src;                                                    \
-        }                                                                      \
-                                                                               \
-        return n;                                                              \
-    }
-
-func_optimize(3) static inline size_t
-_memcpy_uint64_t(void *dst,
-                 const void *src,
-                 size_t n,
-                 void **const dst_out,
-                 const void **const src_out)
-{
-    if (n >= sizeof(uint64_t)) {
-    #if defined(__aarch64__)
-        if (n >= sizeof(uint64_t) * 2) {
-            do {
-                uint64_t left_ch = 0;
-                uint64_t right_ch = 0;
-
-                asm volatile ("ldp %0, %1, [%2]"
-                              : "+r"(left_ch), "+r"(right_ch)
-                              : "r"(src)
-                              : "memory");
-
-                asm volatile ("stp %0, %1, [%2]"
-                              :: "r"(left_ch), "r"(right_ch), "r"(dst));
-
-                dst += sizeof(uint64_t) * 2;
-                src += sizeof(uint64_t) * 2;
-
-                n -= sizeof(uint64_t) * 2;
-            } while (n >= sizeof(uint64_t) * 2);
-
-            if (n < sizeof(uint64_t)) {
-                *dst_out = dst;
-                *src_out = src;
-
-                return n;
-            }
-        }
-    #endif /* defined(__aarch64__) */
-
-        do {
-            *(uint64_t *)dst = *(const uint64_t *)src;
-
-            dst += sizeof(uint64_t);
-            src += sizeof(uint64_t);
-
-            n -= sizeof(uint64_t);
-        } while (n >= sizeof(uint64_t));
-
-        *dst_out = dst;
-        *src_out = src;
-    }
-
-    return n;
-}
-
-DECL_MEM_COPY_FUNC(uint8_t)
-DECL_MEM_COPY_FUNC(uint16_t)
-DECL_MEM_COPY_FUNC(uint32_t)
-
-
-
 func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n) {
     void *ret = dst;
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+
 #if defined(__x86_64__)
     if (n >= 16) {
         asm volatile ("rep movsb"
@@ -261,60 +87,71 @@ func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n) {
                       :: "memory");
         return ret;
     }
-#endif
+#else
     if (n >= sizeof(uint64_t)) {
-        n = _memcpy_uint64_t(dst, src, n, &dst, &src);
-        n = _memcpy_uint32_t(dst, src, n, &dst, &src);
-        n = _memcpy_uint16_t(dst, src, n, &dst, &src);
-
-        _memcpy_uint8_t(dst, src, n, &dst, &src);
-    } else if (n >= sizeof(uint32_t)) {
-        n = _memcpy_uint32_t(dst, src, n, &dst, &src);
-        n = _memcpy_uint16_t(dst, src, n, &dst, &src);
-
-        _memcpy_uint8_t(dst, src, n, &dst, &src);
-    } else if (n >= sizeof(uint16_t)) {
-        n = _memcpy_uint16_t(dst, src, n, &dst, &src);
-        if (n == 0) {
-            return dst;
+        // 头部对齐
+        size_t align = (uintptr_t)d & 7;
+        if (align) {
+            size_t head = 8 - align;
+            if (head > n) head = n;
+            for (size_t i = 0; i < head; i++) d[i] = s[i];
+            d += head;
+            s += head;
+            n -= head;
         }
 
-        _memcpy_uint8_t(dst, src, n, &dst, &src);
-    } else {
-        _memcpy_uint8_t(dst, src, n, &dst, &src);
-    }
+        // 主循环展开：每次拷贝 64 字节
+        while (n >= 64) {
+            ((unaligned_uint64_t *)d)[0] = ((const unaligned_uint64_t *)s)[0];
+            ((unaligned_uint64_t *)d)[1] = ((const unaligned_uint64_t *)s)[1];
+            ((unaligned_uint64_t *)d)[2] = ((const unaligned_uint64_t *)s)[2];
+            ((unaligned_uint64_t *)d)[3] = ((const unaligned_uint64_t *)s)[3];
+            ((unaligned_uint64_t *)d)[4] = ((const unaligned_uint64_t *)s)[4];
+            ((unaligned_uint64_t *)d)[5] = ((const unaligned_uint64_t *)s)[5];
+            ((unaligned_uint64_t *)d)[6] = ((const unaligned_uint64_t *)s)[6];
+            ((unaligned_uint64_t *)d)[7] = ((const unaligned_uint64_t *)s)[7];
+            d += 64;
+            s += 64;
+            n -= 64;
+        }
 
+        // 8 字贝块
+        while (n >= 8) {
+            *(unaligned_uint64_t *)d = *(const unaligned_uint64_t *)s;
+            d += 8;
+            s += 8;
+            n -= 8;
+        }
+    }
+#endif
+
+    // 尾部字节
+    while (n--) *d++ = *s++;
     return ret;
 }
 
 func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
-    void *ret = dst;
-    if (src > dst) {
-    #if defined(__x86_64__)
+    if (dst == src || n == 0) return dst;
+
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+
+    if (s > d) {
+        // 正向拷贝逻辑与 memcpy 一致
+#if defined(__x86_64__)
         if (n >= 16) {
             asm volatile ("cld\n"
                           "rep movsb\n"
                           : "+D"(dst), "+S"(src), "+c"(n)
                           :: "memory");
-            return ret;
+            return dst;
         }
-    #endif /* defined(__x86_64__) */
-        const uint64_t diff = ((uint64_t)(src) - (uint64_t)(dst));
-        if (diff >= sizeof(uint64_t)) {
-            memcpy_fscpuf(dst, src, n);
-        } else if (diff >= sizeof(uint32_t)) {
-            n = _memcpy_uint32_t(dst, src, n, &dst, &src);
-            n = _memcpy_uint16_t(dst, src, n, &dst, &src);
-
-            _memcpy_uint8_t(dst, src, n, &dst, &src);
-        } else if (diff >= sizeof(uint16_t)) {
-            n = _memcpy_uint16_t(dst, src, n, &dst, &src);
-            _memcpy_uint8_t(dst, src, n, &dst, &src);
-        } else if (diff >= sizeof(uint8_t)) {
-            _memcpy_uint8_t(dst, src, n, &dst, &src);
-        }
+#else
+        return memcpy_fscpuf(dst, src, n);
+#endif
     } else {
-    #if defined(__x86_64__)
+        // 反向拷贝
+#if defined(__x86_64__)
         if (n >= 16) {
             void *dst_back = &((uint8_t *)dst)[n - 1];
             const void *src_back = &((const uint8_t *)src)[n - 1];
@@ -324,165 +161,99 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
                           "cld"
                           : "+D"(dst_back), "+S"(src_back), "+c"(n)
                           :: "memory");
-
-            return ret;
+            return dst;
         }
-    #endif /* defined(__x86_64__) */
-        const uint64_t diff = ((uint64_t)(dst) - (uint64_t)(src));
-        if (diff >= sizeof(uint64_t)) {
-            n = _memcpy_bw_uint64_t(dst, src, n);
-            n = _memcpy_bw_uint32_t(dst, src, n);
-            n = _memcpy_bw_uint16_t(dst, src, n);
+#else
+        d += n;
+        s += n;
 
-            _memcpy_bw_uint8_t(dst, src, n);
-        } else if (diff >= sizeof(uint32_t)) {
-            n = _memcpy_bw_uint32_t(dst, src, n);
-            n = _memcpy_bw_uint16_t(dst, src, n);
-
-            _memcpy_bw_uint8_t(dst, src, n);
-        } else if (diff >= sizeof(uint16_t)) {
-            n = _memcpy_bw_uint16_t(dst, src, n);
-            _memcpy_bw_uint8_t(dst, src, n);
-        } else if (diff >= sizeof(uint8_t)) {
-            _memcpy_bw_uint8_t(dst, src, n);
+        // 尾部对齐：将 d 逆向推进到 8 字节对齐边界
+        size_t align = (uintptr_t)d & 7;
+        if (align) {
+            size_t tail = align;
+            if (tail > n) tail = n;
+            for (size_t i = 0; i < tail; i++) *--d = *--s;
+            n -= tail;
         }
+
+        // 反向主循环展开
+        while (n >= 64) {
+            d -= 64; s -= 64;
+            ((unaligned_uint64_t *)d)[0] = ((const unaligned_uint64_t *)s)[0];
+            ((unaligned_uint64_t *)d)[1] = ((const unaligned_uint64_t *)s)[1];
+            ((unaligned_uint64_t *)d)[2] = ((const unaligned_uint64_t *)s)[2];
+            ((unaligned_uint64_t *)d)[3] = ((const unaligned_uint64_t *)s)[3];
+            ((unaligned_uint64_t *)d)[4] = ((const unaligned_uint64_t *)s)[4];
+            ((unaligned_uint64_t *)d)[5] = ((const unaligned_uint64_t *)s)[5];
+            ((unaligned_uint64_t *)d)[6] = ((const unaligned_uint64_t *)s)[6];
+            ((unaligned_uint64_t *)d)[7] = ((const unaligned_uint64_t *)s)[7];
+        }
+
+        while (n >= 8) {
+            d -= 8; s -= 8;
+            *(unaligned_uint64_t *)d = *(const unaligned_uint64_t *)s;
+        }
+
+        // 处理剩余字节
+        while (n--) *--d = *--s;
+#endif
     }
 
-    return ret;
+    return dst;
 }
 
-// TODO: Fix
-#define DECL_MEM_CMP_FUNC(type)                                                \
-    func_optimize(3) static inline int32_t                                      \
-    _memcmp_##type(const void *left,                               \
-                               const void *right,                              \
-                               size_t len,                                     \
-                               const void **const left_out,                    \
-                               const void **const right_out,                   \
-                               size_t *const len_out)                          \
-    {                                                                          \
-        if (len >= sizeof(type)) {                                             \
-            do {                                                               \
-                const type left_ch = *(const type *)left;                      \
-                const type right_ch = *(const type *)right;                    \
-                                                                               \
-                if (left_ch != right_ch) {                                     \
-                    return (int32_t)(left_ch - right_ch);                      \
-                }                                                              \
-                                                                               \
-                left += sizeof(type);                                          \
-                right += sizeof(type);                                         \
-                len -= sizeof(type);                                           \
-            } while (len >= sizeof(type));                                     \
-                                                                               \
-            *left_out = left;                                                  \
-            *right_out = right;                                                \
-            *len_out = len;                                                    \
-        }                                                                      \
-                                                                               \
-        return 0;                                                              \
+// 完全修复了原有的 TODO: Fix 的问题。
+// 原代码直接相减是错误且不符合 C 标准的，本实现使用异或与 CTZ 快速定位不同字节
+func_optimize(3)
+int32_t memcmp_fscpuf(const void *left, const void *right, size_t len) {
+    const uint8_t *l = (const uint8_t *)left;
+    const uint8_t *r = (const uint8_t *)right;
+
+    // 8 字节块比较
+    while (len >= 8) {
+        uint64_t l64 = *(const unaligned_uint64_t *)l;
+        uint64_t r64 = *(const unaligned_uint64_t *)r;
+        if (l64 != r64) {
+            // 异或找差异，__builtin_ctzll 找最低位 1 的位置，除以 8 得到字节偏移
+            uint64_t diff = l64 ^ r64;
+            int byte_pos = __builtin_ctzll(diff) / 8;
+            return (int32_t)l[byte_pos] - (int32_t)r[byte_pos];
+        }
+        l += 8;
+        r += 8;
+        len -= 8;
     }
 
-func_optimize(3) static inline int32_t
-_memcmp_uint64_t(const void *left,
-                 const void *right,
-                 size_t len,
-                 const void **const left_out,
-                 const void **const right_out,
-                 size_t *const len_out)
-{
-    if (len >= sizeof(uint64_t)) {
-    #if defined(__aarch64__)
-        if (len >= (2 * sizeof(uint64_t))) {
-            do {
-                uint64_t left_ch = 0;
-                uint64_t right_ch = 0;
-
-                uint64_t left_ch_2 = 0;
-                uint64_t right_ch_2 = 0;
-
-                asm volatile ("ldp %0, %1, [%2]"
-                              : "+r"(left_ch), "+r"(left_ch_2)
-                              : "r"(left)
-                              : "memory");
-
-                asm volatile ("ldp %0, %1, [%2]"
-                              : "+r"(right_ch), "+r"(right_ch_2)
-                              : "r"(right)
-                              : "memory");
-
-                if (left_ch != right_ch) {
-                    return (int32_t)(left_ch - right_ch);
-                }
-
-                if (left_ch_2 != right_ch_2) {
-                    return (int32_t)(left_ch_2 - right_ch_2);
-                }
-
-                len -= sizeof(uint64_t) * 2;
-                left += sizeof(uint64_t) * 2;
-                right += sizeof(uint64_t) * 2;
-            } while (len >= sizeof(uint64_t) * 2);
-
-            if (len < sizeof(uint64_t)) {
-                *left_out = left;
-                *right_out = right;
-                *len_out = len;
-
-                return 0;
-            }
+    // 4 字节块比较
+    while (len >= 4) {
+        uint32_t l32 = *(const unaligned_uint32_t *)l;
+        uint32_t r32 = *(const unaligned_uint32_t *)r;
+        if (l32 != r32) {
+            uint32_t diff = l32 ^ r32;
+            int byte_pos = __builtin_ctz(diff) / 8;
+            return (int32_t)l[byte_pos] - (int32_t)r[byte_pos];
         }
-    #endif /* defined(__aarch64__) */
+        l += 4;
+        r += 4;
+        len -= 4;
+    }
 
-        do {
-            const uint64_t left_ch = *(const uint64_t *)left;
-            const uint64_t right_ch = *(const uint64_t *)right;
-
-            if (left_ch != right_ch) {
-                return (int32_t)(left_ch - right_ch);
-            }
-
-            len -= sizeof(uint64_t);
-            left += sizeof(uint64_t);
-            right += sizeof(uint64_t);
-        } while (len >= sizeof(uint64_t));
-
-        *left_out = left;
-        *right_out = right;
-        *len_out = len;
+    // 逐字节比较
+    while (len--) {
+        if (*l != *r) {
+            return (int32_t)*l - (int32_t)*r;
+        }
+        l++;
+        r++;
     }
 
     return 0;
 }
 
-DECL_MEM_CMP_FUNC(uint8_t)
-DECL_MEM_CMP_FUNC(uint16_t)
-DECL_MEM_CMP_FUNC(uint32_t)
-
-
-func_optimize(3)
-int32_t memcmp_fscpuf(const void *left, const void *right, size_t len) {
-    int32_t res = _memcmp_uint64_t(left, right, len, &left, &right, &len);
-    if (res != 0) {
-        return res;
-    }
-
-    res = _memcmp_uint32_t(left, right, len, &left, &right, &len);
-    if (res != 0) {
-        return res;
-    }
-
-    res = _memcmp_uint16_t(left, right, len, &left, &right, &len);
-    if (res != 0) {
-        return res;
-    }
-
-    res = _memcmp_uint8_t(left, right, len, &left, &right, &len);
-    return res;
-}
-
 
 func_optimize(3) void bzero(void *dst, size_t n) {
+    uint8_t *d = (uint8_t *)dst;
+
 #if defined(__x86_64__)
     if (n >= 48) {
         asm volatile ("cld\n"
@@ -491,19 +262,6 @@ func_optimize(3) void bzero(void *dst, size_t n) {
                       : "a"(0)
                       : "memory");
         return;
-    }
-#elif defined(__aarch64__)
-    if (n >= sizeof(uint64_t) * 2) {
-        do {
-            asm volatile ("stp xzr, xzr, [%0]" :: "r"(dst));
-
-            dst += sizeof(uint64_t) * 2;
-            n -= sizeof(uint64_t) * 2;
-        } while (n >= sizeof(uint64_t) * 2);
-
-        if (n == 0) {
-            return;
-        }
     }
 #elif defined(__riscv64)
     uint16_t cbo_size = 0;
@@ -515,52 +273,45 @@ func_optimize(3) void bzero(void *dst, size_t n) {
         if (has_align((uint64_t)dst, cbo_size)) {
             while (n >= cbo_size) {
                 asm volatile ("cbo.zero (%0)" :: "r"(dst));
-
                 dst += cbo_size;
                 n -= cbo_size;
             }
         }
     }
 #endif
-    while (n >= sizeof(uint64_t)) {
-        *(uint64_t *)dst = 0;
 
-        dst += sizeof(uint64_t);
-        n -= sizeof(uint64_t);
+    // 通用清零逻辑（对齐 + 展开，编译器会自动产生 AArch64 的 stp xzr, xzr）
+    if (n >= sizeof(uint64_t)) {
+        size_t align = (uintptr_t)d & 7;
+        if (align) {
+            size_t head = 8 - align;
+            if (head > n) head = n;
+            for (size_t i = 0; i < head; i++) d[i] = 0;
+            d += head;
+            n -= head;
+        }
+
+        while (n >= 64) {
+            ((unaligned_uint64_t *)d)[0] = 0;
+            ((unaligned_uint64_t *)d)[1] = 0;
+            ((unaligned_uint64_t *)d)[2] = 0;
+            ((unaligned_uint64_t *)d)[3] = 0;
+            ((unaligned_uint64_t *)d)[4] = 0;
+            ((unaligned_uint64_t *)d)[5] = 0;
+            ((unaligned_uint64_t *)d)[6] = 0;
+            ((unaligned_uint64_t *)d)[7] = 0;
+            d += 64;
+            n -= 64;
+        }
+
+        while (n >= 8) {
+            *(unaligned_uint64_t *)d = 0;
+            d += 8;
+            n -= 8;
+        }
     }
 
-    if (n == 0) {
-        return;
-    }
-
-    while (n >= sizeof(uint32_t)) {
-        *(uint32_t *)dst = 0;
-
-        dst += sizeof(uint32_t);
-        n -= sizeof(uint32_t);
-    }
-
-    if (n == 0) {
-        return;
-    }
-
-    while (n >= sizeof(uint16_t)) {
-        *(uint16_t *)dst = 0;
-
-        dst += sizeof(uint16_t);
-        n -= sizeof(uint16_t);
-    }
-
-    if (n == 0) {
-        return;
-    }
-
-    while (n >= sizeof(uint8_t)) {
-        *(uint8_t *)dst = 0;
-
-        dst += sizeof(uint8_t);
-        n -= sizeof(uint8_t);
-    }
+    while (n--) *d++ = 0;
 }
 
-}
+} // extern "C"
