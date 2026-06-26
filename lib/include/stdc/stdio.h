@@ -24,6 +24,8 @@ extern "C" {
 
 typedef struct {
     int32_t fd;          // 内核文件句柄
+    uint64_t file_size;
+    uint64_t offset;
     
     // 缓冲 I/O 专用字段 (去掉了引起歧义的全局 pos 和 size)
     int32_t buf_pos;     // 缓冲区当前读取游标

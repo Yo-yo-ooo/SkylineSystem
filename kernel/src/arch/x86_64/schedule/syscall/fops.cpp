@@ -43,11 +43,26 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         return -EFAULT; // Bad address
     }
 
+    //kinfoln("%p,%u",FD->filedesc,((ext4_file*)FD->filedesc)->fsize);
+
     size_t rcnt = 0;
-    int32_t status = FD->FSOPS->read(FD->filedesc, (void*)buf, count, &rcnt);
+    void *kbuf = kmalloc(count);
+    kinfoln("READEING... %d",count);
+    int32_t status = FD->FSOPS->read(FD->filedesc, kbuf, count, &rcnt);
+    
+    VMM::UserAccess::CopyToUser(proc->pagemap,buf,kbuf,count);
+    kfree(kbuf);
     
     if (status != 0) return (int64_t)status; // 返回负数错误码
     return (int64_t)rcnt;
+}
+
+uint64_t sys_fsize(uint64_t fd_idx,GENERATE_IGN5()){
+    IGNV_5();
+    proc_t *proc = Schedule::this_proc();
+    fd_t *FD = fd_get(proc->FDMan,fd_idx);
+    if(!FD){return -EBADF;}
+    return FD->FSOPS->fsize(FD->filedesc);
 }
 
 uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
@@ -78,6 +93,8 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2){
     proc_t *proc = Schedule::this_proc();
     fd_t *FD = fd_get(proc->FDMan,fd_idx);
     if(!FD){return -EBADF;}
+    
+    // 直接将偏移指令透传给内核
     // 增加 whence 的有效性检查
     if (whence > 2) {return -EINVAL; }
     return FD->FSOPS->lseek(FD->filedesc,offset,whence);
@@ -154,12 +171,17 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
 
     fd_struct->FSOPS = MP->FSOPS;
     fd_struct->MP = MP;
+    fd_struct->filedesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
+    _memset(fd_struct->filedesc,0,MP->FSOPS->SIZEOF_FILE_DESC);
     
-    int32_t err = MP->FSOPS->open(&(fd_struct->filedesc), kpath, flags);
+    int32_t err = MP->FSOPS->open(fd_struct->filedesc, kpath, flags);
+
+    //kinfoln("%d",MP->FSOPS->SIZEOF_FILE_DESC);
 
     kfree(kpath); 
 
     if (err < 0) {
+        kfree(fd_struct->filedesc);
         fd_free(proc->FDMan, fd_idx);
         return err; 
     }

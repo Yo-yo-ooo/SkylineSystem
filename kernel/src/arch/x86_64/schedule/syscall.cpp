@@ -80,6 +80,7 @@ void syscall_init() {
     syscall_lists[2] = sys_fread;
     syscall_lists[3] = sys_fclose;
     syscall_lists[4] = sys_flseek;
+    syscall_lists[5] = sys_fsize;
     
     syscall_lists[7] = sys_gettid;
     syscall_lists[8] = sys_getpid;

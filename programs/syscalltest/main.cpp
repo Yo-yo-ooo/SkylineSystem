@@ -71,15 +71,15 @@ int main(){
     void *UIBase = malloc(x);
     
     if(UIBase == nullptr)
-        syscall(24, (long)"FAULT!", 7, 0, 0, 0, 0);//这里没有触发！！！    
+        syscall(24, (long)"FAULT!", 7, 0, 0, 0, 0);    
     
-    syscall(24, (long)msg, 13, 0, 0, 0, 0);//这里没有触发！！！
+    syscall(24, (long)msg, 13, 0, 0, 0, 0);
     //memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
 
     FILE *fp = fopen("/mp/README.md","r");
-    /*char buf[25];
+    char buf[25];
     fread(buf,25,1,fp);
-    syscall(24, (long)buf, 25, 0, 0, 0, 0); */
+    syscall(24, (long)buf, 25, 0, 0, 0, 0); 
     
 
     while (true);

@@ -148,5 +148,6 @@ uint64_t sys_dev_ioctl(
     uint64_t DevType,uint64_t DevIDX,uint64_t cmd,uint64_t arg,
         GENERATE_IGN2());
 uint64_t sys_dbgsout(uint64_t CharsAddr,uint64_t OutSize,GENERATE_IGN4());
+uint64_t sys_fsize(uint64_t fd_idx,GENERATE_IGN5());
 }
 #endif

@@ -48,6 +48,10 @@ FILE* fopen(const char* filename, const char* mode) {
         return NULL;
     }
 
+    if((stream->file_size = sys_fsize(fd)) == 0){
+        return NULL;
+    }
+
     stream->fd = fd;
     stream->buf_pos = 0;  // 初始时缓冲区为空
     stream->buf_size = 0;
@@ -62,41 +66,60 @@ int32_t fclose(FILE *stream) {
     return res;
 }
 
-// ==========================================
-// fread (带智能缓冲的读取机制)
-// ==========================================
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (!ptr || !stream || size == 0 || nmemb == 0) return 0;
+    
+    // 1. 防止整数溢出漏洞 (经典的安全防御)
+    if (nmemb > (SIZE_MAX / size)) return 0;
     
     size_t bytes_to_read = size * nmemb;
     size_t total_read = 0;
     uint8_t *dest = (uint8_t *)ptr;
 
+    // 2. 确保 sys_fread 的请求量不超过文件剩余大小
+    // 假设 FILE 结构体中有 file_size (总大小) 和 offset (当前偏移)
+    if (stream->file_size > 0) {
+        if (stream->offset >= stream->file_size) {
+            return 0; // 已经到达文件末尾
+        }
+        
+        size_t remaining_in_file = stream->file_size - stream->offset;
+        if (bytes_to_read > remaining_in_file) {
+            bytes_to_read = remaining_in_file; // 截断请求量，绝不越界
+        }
+    }
+    
+    if (bytes_to_read == 0) return 0;
+
     while (bytes_to_read > 0) {
-        // 1. 如果缓冲区空了，需要向内核请求填充
+        // 如果缓冲区空了，需要向内核请求填充
         if (stream->buf_pos >= stream->buf_size) {
             
-            // 【极客优化】：如果用户要读的数据大于 4KB，干脆绕过缓冲区，直接读到目标内存！
-            // 这会让加载 10MB 的字体文件速度极快，不浪费 CPU 去 memcpy。
+            // 如果用户要读的数据大于 4KB，绕过缓冲区直读
             if (bytes_to_read >= BUF_SIZE) {
-                int32_t read_now = sys_fread(stream->fd, (uint64_t)dest, bytes_to_read);
+                // 优化：限制单次直接读取的最大块大小，防止内核处理超大内存请求时过载
+                size_t direct_read_size = bytes_to_read > (1024 * 1024) ? (1024 * 1024) : bytes_to_read;
+                
+                int32_t read_now = sys_fread(stream->fd, (uint64_t)dest, direct_read_size);
                 if (read_now <= 0) break; // EOF 或错误
                 
                 total_read += read_now;
                 dest += read_now;
                 bytes_to_read -= read_now;
+                stream->offset += read_now; // 更新文件偏移
                 continue; 
             }
             
-            // 【常规缓冲】：向内核要 4KB 数据塞进缓冲区
+            // 向内核要 4KB 数据塞进缓冲区
             int32_t read_now = sys_fread(stream->fd, (uint64_t)stream->buffer, BUF_SIZE);
             if (read_now <= 0) break; // EOF 或错误
             
             stream->buf_pos = 0;
             stream->buf_size = read_now;
+            stream->offset += read_now; // 更新文件偏移
         }
 
-        // 2. 从缓冲区拷贝数据到目标内存
+        // 从缓冲区拷贝数据到目标内存
         size_t available = stream->buf_size - stream->buf_pos;
         size_t to_copy = (available < bytes_to_read) ? available : bytes_to_read;
         
@@ -106,12 +129,13 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
         dest += to_copy;
         total_read += to_copy;
         bytes_to_read -= to_copy;
+        // 注意：从缓冲区拷贝到用户内存时，不更新 stream->offset，因为 offset 代表的是文件实际读取进度
     }
 
     // 返回成功读取的“元素个数”
     return total_read / size;
 }
-
+#include <errno.h>
 // ==========================================
 // fseek 与 ftell (纯粹依靠内核维护的架构)
 // ==========================================
@@ -122,7 +146,28 @@ int32_t fseek(FILE* stream, int64_t offset, int32_t whence) {
     stream->buf_pos = 0;
     stream->buf_size = 0;
 
-    // 直接将偏移指令透传给内核
+    switch (whence) {
+	case SEEK_SET:
+		if (offset < 0 || (uint64_t)offset > stream->file_size)
+			return EINVAL;
+
+		stream->offset = offset;
+		break;
+	case SEEK_CUR:
+		if ((offset < 0 && (uint64_t)(-offset) > stream->offset) ||
+		    (offset > 0 &&
+		     (uint64_t)offset > (stream->file_size - stream->offset)))
+			return EINVAL;
+
+		stream->offset += offset;
+        break;
+	case SEEK_END:
+		if (offset < 0 || (uint64_t)offset > stream->file_size)
+			return EINVAL;
+
+		stream->offset = stream->file_size - offset;
+		break;
+	}
     int64_t res = sys_flseek(stream->fd, offset, whence);
     
     // sys_flseek 返回新的绝对偏移量(>=0)表示成功，返回负数表示失败

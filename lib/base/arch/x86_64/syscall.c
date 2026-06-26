@@ -26,3 +26,5 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags)
 {return syscall(SYSCALL_FOPEN,path,flags,0,0,0,0);}
 uint64_t sys_fclose(int32_t fd)
 {return syscall(SYSCALL_FCLOSE,fd,0,0,0,0,0);}
+uint64_t sys_fsize(int32_t fd)
+{return syscall(SYSCALL_FSIZE,fd,0,0,0,0,0);}
