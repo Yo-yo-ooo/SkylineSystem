@@ -74,7 +74,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     
     size_t bytes_to_read = size * nmemb;
     size_t total_read = 0;
-    uint8_t *dest = (uint8_t *)ptr;
+    //uint8_t *dest = (uint8_t *)ptr;
 
     // 2. 确保 sys_fread 的请求量不超过文件剩余大小
     // 假设 FILE 结构体中有 file_size (总大小) 和 offset (当前偏移)
@@ -91,46 +91,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     
     if (bytes_to_read == 0) return 0;
 
-    while (bytes_to_read > 0) {
-        // 如果缓冲区空了，需要向内核请求填充
-        if (stream->buf_pos >= stream->buf_size) {
-            
-            // 如果用户要读的数据大于 4KB，绕过缓冲区直读
-            if (bytes_to_read >= BUF_SIZE) {
-                // 优化：限制单次直接读取的最大块大小，防止内核处理超大内存请求时过载
-                size_t direct_read_size = bytes_to_read > (1024 * 1024) ? (1024 * 1024) : bytes_to_read;
-                
-                int32_t read_now = sys_fread(stream->fd, (uint64_t)dest, direct_read_size);
-                if (read_now <= 0) break; // EOF 或错误
-                
-                total_read += read_now;
-                dest += read_now;
-                bytes_to_read -= read_now;
-                stream->offset += read_now; // 更新文件偏移
-                continue; 
-            }
-            
-            // 向内核要 4KB 数据塞进缓冲区
-            int32_t read_now = sys_fread(stream->fd, (uint64_t)stream->buffer, BUF_SIZE);
-            if (read_now <= 0) break; // EOF 或错误
-            
-            stream->buf_pos = 0;
-            stream->buf_size = read_now;
-            stream->offset += read_now; // 更新文件偏移
-        }
-
-        // 从缓冲区拷贝数据到目标内存
-        size_t available = stream->buf_size - stream->buf_pos;
-        size_t to_copy = (available < bytes_to_read) ? available : bytes_to_read;
-        
-        memcpy(dest, stream->buffer + stream->buf_pos, to_copy);
-        
-        stream->buf_pos += to_copy;
-        dest += to_copy;
-        total_read += to_copy;
-        bytes_to_read -= to_copy;
-        // 注意：从缓冲区拷贝到用户内存时，不更新 stream->offset，因为 offset 代表的是文件实际读取进度
-    }
+    total_read = sys_fread(stream->fd,(uint64_t)ptr,bytes_to_read);
 
     // 返回成功读取的“元素个数”
     return total_read / size;

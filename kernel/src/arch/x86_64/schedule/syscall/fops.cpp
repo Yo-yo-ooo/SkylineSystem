@@ -27,34 +27,61 @@
 #include <fs/fd.h>
 
 
-
 uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
 uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     
     proc_t *proc = Schedule::this_proc();
-    fd_t *FD = fd_get(proc->FDMan,fd_idx);
-    if(!FD){return -EBADF;}
-    // 安全校验：如果 count 为 0，直接返回 0
+    fd_t *FD = fd_get(proc->FDMan, fd_idx);
+    if(!FD) { return -EBADF; }
+    
     if (count == 0) return 0;
     
-    // 安全校验：检查用户指针是否越界进入内核区域
     if (!is_user_buffer_valid(buf, count)) {
-        return -EFAULT; // Bad address
+        return -EFAULT; 
     }
 
-    //kinfoln("%p,%u",FD->filedesc,((ext4_file*)FD->filedesc)->fsize);
+    // 核心修复：使用固定大小的栈缓冲区或小块 kmalloc，避免大内存分配失败导致空指针崩溃
+    const size_t CHUNK_SIZE = 8192; // 每次 8KB
+    void *kbuf = kmalloc(CHUNK_SIZE);
+    if (!kbuf) {
+        return -ENOMEM; // 内存不足，安全返回错误
+    }
 
-    size_t rcnt = 0;
-    void *kbuf = kmalloc(count);
-    kinfoln("READEING... %d",count);
-    int32_t status = FD->FSOPS->read(FD->filedesc, kbuf, count, &rcnt);
-    
-    VMM::UserAccess::CopyToUser(proc->pagemap,buf,kbuf,count);
+    size_t total_read = 0;
+    while (total_read < count) {
+        size_t to_read = count - total_read;
+        if (to_read > CHUNK_SIZE) {
+            to_read = CHUNK_SIZE;
+        }
+
+        size_t rcnt = 0;
+        // 向文件系统请求读取一小块
+        int32_t status = FD->FSOPS->read(FD->filedesc, kbuf, to_read, &rcnt);
+        
+        if (status != 0) {
+            kfree(kbuf);
+            return (int64_t)status; // 返回负数错误码
+        }
+
+        if (rcnt > 0) {
+            // 安全拷贝给用户态
+            if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf + total_read, kbuf, rcnt)) {
+                kfree(kbuf);
+                return -EFAULT;
+            }
+            total_read += rcnt;
+        }
+
+        // 如果读取到的比请求的少，说明到了文件末尾
+        if (rcnt < to_read) {
+            break; 
+        }
+    }
+
     kfree(kbuf);
-    
-    if (status != 0) return (int64_t)status; // 返回负数错误码
-    return (int64_t)rcnt;
+    kinfoln("READED %u bytes successfully!", total_read); // 现在这里一定会触发了
+    return (int64_t)total_read;
 }
 
 uint64_t sys_fsize(uint64_t fd_idx,GENERATE_IGN5()){

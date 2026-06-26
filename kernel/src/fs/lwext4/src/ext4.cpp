@@ -398,6 +398,9 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 
     debugpln("HIT!(3)");
 	bsize = ext4_sb_get_block_size(&(MOUNTP->fs.sb));
+    /* Standard size 4KiB, max block size 64KiB  (bounds 1KiB - 64KiB) */
+	if(bsize < 1024 || bsize > 0x10000)
+		return ENOTSUP;
 	ext4_block_set_lb_size(bd, bsize);
 	bc = &(MOUNTP->bc);
 

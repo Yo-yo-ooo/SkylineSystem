@@ -65,10 +65,20 @@ namespace VMM {
             while (offset < len) {
                 uint64_t curr_u_vaddr = u_dest + offset;
 
-                VMM::Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, curr_u_vaddr);
+                Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, curr_u_vaddr);
                 if (info.size == 0) {
-                    spinlock_unlock(&pagemap->vma_lock);
-                    return false; // 未映射
+                    // 主动按需分页：如果用户地址未映射，给它分配一个物理页
+                    uint64_t page_start = curr_u_vaddr & ~(PAGE_SIZE - 1);
+                    void* new_phys = PMM::Request();
+                    if (!new_phys) {
+                        spinlock_unlock(&pagemap->vma_lock);
+                        return false; // 物理内存耗尽
+                    }
+                    VMM::Map4K(pagemap, page_start, (uint64_t)new_phys, MM_READ | MM_WRITE | MM_USER);
+                    __asm__ volatile ("invlpg (%0)" : : "r"(page_start) : "memory");
+                    
+                    // 重新获取信息
+                    info = VMM::Useless::GetPageInfo(pagemap, curr_u_vaddr);
                 }
 
                 bool is_writable = (info.flags & MM_WRITE) != 0;
