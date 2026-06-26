@@ -53,7 +53,7 @@ COMMON: 0:FALSE
 #endif
 
 //COMMON CONFIG
-#define PRINT_INFORMATION_ 0
+#define PRINT_INFORMATION_ 1
 
 #define MAX_VSDEV_COUNT 256
 #define DEV_LIST_NODE_OF_VDL_LIST_COUNT 32 //Dev::DeviceListNL_t->VDL Alloc Count

@@ -168,7 +168,7 @@ typedef struct {
 
 
 // internal buffer output
-static inline void _out_buffer(char character, void* buffer, size_t idx, size_t maxlen)
+static __attribute__((always_inline)) inline void _out_buffer(char character, void* buffer, size_t idx, size_t maxlen)
 {
   if (idx < maxlen) {
     ((char*)buffer)[idx] = character;
@@ -177,14 +177,14 @@ static inline void _out_buffer(char character, void* buffer, size_t idx, size_t 
 
 
 // internal null output
-static inline void _out_null(char character, void* buffer, size_t idx, size_t maxlen)
+static __attribute__((always_inline)) inline void _out_null(char character, void* buffer, size_t idx, size_t maxlen)
 {
   (void)character; (void)buffer; (void)idx; (void)maxlen;
 }
 
 
 // internal _putchar wrapper
-static inline void _out_char(char character, void* buffer, size_t idx, size_t maxlen)
+static __attribute__((always_inline)) inline void _out_char(char character, void* buffer, size_t idx, size_t maxlen)
 {
   (void)buffer; (void)idx; (void)maxlen;
   if (character) {
@@ -194,7 +194,7 @@ static inline void _out_char(char character, void* buffer, size_t idx, size_t ma
 
 
 // internal output function wrapper
-static inline void _out_fct(char character, void* buffer, size_t idx, size_t maxlen)
+static __attribute__((always_inline)) inline void _out_fct(char character, void* buffer, size_t idx, size_t maxlen)
 {
   (void)idx; (void)maxlen;
   if (character) {
@@ -206,7 +206,7 @@ static inline void _out_fct(char character, void* buffer, size_t idx, size_t max
 
 // internal secure strlen
 // \return The length of the string (excluding the terminating 0) limited by 'maxsize'
-static inline uint32_t _strnlen_s(const char* str, size_t maxsize)
+static __attribute__((always_inline)) inline uint32_t _strnlen_s(const char* str, size_t maxsize)
 {
   const char* s;
   for (s = str; *s && maxsize--; ++s);
@@ -216,7 +216,7 @@ static inline uint32_t _strnlen_s(const char* str, size_t maxsize)
 
 // internal test if char is a digit (0-9)
 // \return true if char is a digit
-static inline bool _is_digit(char ch)
+static __attribute__((always_inline)) inline bool _is_digit(char ch)
 {
   return (ch >= '0') && (ch <= '9');
 }
@@ -897,20 +897,26 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
 
 ///////////////////////////////////////////////////////////////////////////////
 
-int32_t printf_(const char* format, ...)
-{
+// [优化点]：使用栈缓冲区进行批量输出，大幅提升性能
+int32_t printf_(const char* format, ...) {
     spinlock_lock(&ptf_lock);
     va_list va;
     va_start(va, format);
-    char buffer[1];
-    const int32_t ret = _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
+    
+    char buffer[512]; // 512字节的栈缓冲区，对于内核打印足够
+    int32_t ret = _vsnprintf(_out_buffer, buffer, sizeof(buffer), format, va);
     va_end(va);
+    
+    // 一次性将缓冲区内容刷入底层设备
+    for (int32_t i = 0; i < ret && buffer[i] != '\0'; i++) {
+        _putchar(buffer[i]);
+    }
+    
     spinlock_unlock(&ptf_lock);
     return ret;
 }
 
-int32_t sprintf_(char* buffer, const char* format, ...)
-{
+int32_t sprintf_(char* buffer, const char* format, ...) {
     va_list va;
     va_start(va, format);
     const int32_t ret = _vsnprintf(_out_buffer, buffer, (size_t)-1, format, va);
@@ -919,8 +925,7 @@ int32_t sprintf_(char* buffer, const char* format, ...)
 }
 
 
-int32_t snprintf_(char* buffer, size_t count, const char* format, ...)
-{
+int32_t snprintf_(char* buffer, size_t count, const char* format, ...) {
     va_list va;
     va_start(va, format);
     const int32_t ret = _vsnprintf(_out_buffer, buffer, count, format, va);
@@ -929,21 +934,28 @@ int32_t snprintf_(char* buffer, size_t count, const char* format, ...)
 }
 
 
-int32_t vprintf_(const char* format, va_list va)
-{
-    char buffer[1];
-    return _vsnprintf(_out_char, buffer, (size_t)-1, format, va);
+// [优化点]：同样改为缓冲区输出，并补全线程安全锁
+int32_t vprintf_(const char* format, va_list va) {
+    spinlock_lock(&ptf_lock);
+    
+    char buffer[512];
+    int32_t ret = _vsnprintf(_out_buffer, buffer, sizeof(buffer), format, va);
+    
+    for (int32_t i = 0; i < ret && buffer[i] != '\0'; i++) {
+        _putchar(buffer[i]);
+    }
+    
+    spinlock_unlock(&ptf_lock);
+    return ret;
 }
 
 
-int32_t vsnprintf_(char* buffer, size_t count, const char* format, va_list va)
-{
+int32_t vsnprintf_(char* buffer, size_t count, const char* format, va_list va) {
     return _vsnprintf(_out_buffer, buffer, count, format, va);
 }
 
 
-int32_t fctprintf(void (*out)(char character, void* arg), void* arg, const char* format, ...)
-{
+int32_t fctprintf(void (*out)(char character, void* arg), void* arg, const char* format, ...) {
     va_list va;
     va_start(va, format);
     const out_fct_wrap_type out_fct_wrap = { out, arg };
