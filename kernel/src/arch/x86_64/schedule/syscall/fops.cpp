@@ -37,52 +37,15 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     
     if (count == 0) return 0;
     
-    // 1. 纯数学范围校验，确保不越界进内核高半区
     uint64_t user_space_end = IsPM5LVL ? USER_SPACE_END_5LVL : USER_SPACE_END_4LVL;
     if (buf >= user_space_end) return -EFAULT;
     if (count > user_space_end - buf) return -EFAULT;
 
-    // [核心修复] 放弃 kmalloc！
-    // 因为 kmalloc 可能返回低地址，而在用户进程上下文中低地址未映射。
-    // 使用 PMM 分配物理页，强制通过 HIGHER_HALF (HHDM) 访问，确保在所有页表中都有效！
-    const size_t CHUNK_SIZE = PAGE_SIZE; // 4KB
-    uint64_t kbuf_phys = (uint64_t)PMM::Request();
-    if (!kbuf_phys) {
-        return -ENOMEM;
-    }
-    void *kbuf = HIGHER_HALF((void*)kbuf_phys);
+    void* kbuf = kmalloc(count);
+    size_t total_read;
+    FD->FSOPS->read(FD->filedesc,kbuf,count,&total_read);
+    VMM::UserAccess::CopyToUser(proc->pagemap,buf,kbuf,count);
 
-    size_t total_read = 0;
-    while (total_read < count) {
-        size_t to_read = count - total_read;
-        if (to_read > CHUNK_SIZE) {
-            to_read = CHUNK_SIZE;
-        }
-
-        size_t rcnt = 0;
-        // 文件系统现在会写入 0xFFFF9000... 的高半区地址，绝对安全！
-        int32_t status = FD->FSOPS->read(FD->filedesc, kbuf, to_read, &rcnt);
-        
-        if (status != 0) {
-            PMM::Free((void*)kbuf_phys);
-            return (int64_t)status;
-        }
-
-        if (rcnt > 0) {
-            // CopyToUser 会安全地把高半区的数据拷贝到用户空间，并自动处理按需分页
-            if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf + total_read, kbuf, rcnt)) {
-                PMM::Free((void*)kbuf_phys);
-                return -EFAULT;
-            }
-            total_read += rcnt;
-        }
-
-        if (rcnt < to_read) {
-            break; // 到达文件末尾
-        }
-    }
-
-    PMM::Free((void*)kbuf_phys);
     kinfoln("READED %u bytes successfully!", total_read);
     return (int64_t)total_read;
 }
