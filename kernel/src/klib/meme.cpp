@@ -1,10 +1,5 @@
-/*
-* SPDX-License-Identifier: GPL-2.0-only
-* File: meme.cpp
-* Copyright (C) 2026 Yo-yo-ooo
-*
-* This file is part of SkylineSystem.
-*/
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: GPL-2.0-only
 
 #include <klib/klib.h>
 
