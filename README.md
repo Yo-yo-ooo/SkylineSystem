@@ -18,7 +18,7 @@
 - Kernel source (kernel/): GPL-2.0-only
 - All code inside (lib/ programs/): MIT License
 Kernel and userspace run in separate address spaces, communicate only via syscall, no GPL copyleft infection.
-Full compliance with REUSE standard, see root LICENSE for full statement.
+Full compliance with REUSE standard, see root LICENSES for full statement.
 
 > [!CAUTION]
 > Don't run it in real machine because it's now in test
