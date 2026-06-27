@@ -42,11 +42,12 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     if (count > user_space_end - buf) return -EFAULT;
 
     void* kbuf = kmalloc(count);
-    size_t total_read;
+    size_t total_read = 0;
+    //kinfoln("READING %u BYTES",count);
     FD->FSOPS->read(FD->filedesc,kbuf,count,&total_read);
     VMM::UserAccess::CopyToUser(proc->pagemap,buf,kbuf,count);
 
-    kinfoln("READED %u bytes successfully!", total_read);
+    //kinfoln("READED %u bytes successfully!", total_read);
     return (int64_t)total_read;
 }
 
