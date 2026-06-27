@@ -64,8 +64,3 @@ download_by_hash() {
     fi
 }
 
-    
-clone_repo_commit \
-    https://codeberg.org/OSDev/cc-runtime.git \
-    cc-runtime
-
