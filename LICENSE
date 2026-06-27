@@ -8,7 +8,7 @@ Full text: ./LICENSES/GPL-2.0-only
 Copyleft applies. Any distributed modified kernel binaries must provide full modified source code.
 
 2. Userspace Source Code
-Scope: lib/ ablib/ programs/
+Scope: lib/ ablib/atomic  programs/
 License: MIT
 Full text: ./LICENSES/MIT
 Permissive terms. Modification, closed-source commercial distribution are permitted, provided original copyright notice is retained.
