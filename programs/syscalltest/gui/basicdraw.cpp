@@ -1,3 +1,5 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 #include <gui/basicdraw.h>
 #include <math.h>
 #include <string.h>

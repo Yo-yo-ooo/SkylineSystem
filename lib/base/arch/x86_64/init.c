@@ -1,3 +1,5 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 #include <stdint.h>
 #include <stddef.h>
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0

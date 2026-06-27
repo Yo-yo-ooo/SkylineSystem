@@ -1,3 +1,5 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 #pragma once
 #ifndef _STDIO_H_
 #define _STDIO_H_

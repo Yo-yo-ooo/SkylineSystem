@@ -1,3 +1,5 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 // ==================== 平台适配层 ====================
 #ifndef TTF_MALLOC
 #include <stdlib.h>

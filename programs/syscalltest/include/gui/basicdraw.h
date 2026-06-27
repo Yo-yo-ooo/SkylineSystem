@@ -1,3 +1,5 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 #pragma once
 #ifndef _BASIC_DRAW_H_
 #define _BASIC_DRAW_H_

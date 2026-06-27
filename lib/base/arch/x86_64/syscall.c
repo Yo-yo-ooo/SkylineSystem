@@ -1,3 +1,6 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+
 #include <stdint.h>
 #include <stddef.h>
 #include <base/arch/x86_64/syscalln.h>
