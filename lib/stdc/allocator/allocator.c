@@ -127,9 +127,9 @@ static void _free_large_object_real(void* block_addr, AllocBlock_t* header);
     do { \
         old_head = (void*)(global_list); \
         *(void**)tail = old_head; \
-        __atomic_thread_fence(__ATOMIC_RELEASE); \
+        atomic_thread_fence(ATOMIC_RELEASE); \
     } while (__a_cas_p(&(global_list), old_head, (tls_list)) != old_head); \
-    __atomic_fetch_add(&(global_count), (tls_count), __ATOMIC_RELEASE); \
+    atomic_fetch_add_n(&(global_count), (tls_count), ATOMIC_RELEASE); \
     (tls_list) = NULL; \
     (tls_count) = 0; \
 } while(0)
@@ -180,14 +180,14 @@ static inline void push_deferred_scb(void* scb, int is_large) {
 
 static inline int32_t qsbr_enter() {
     if (__builtin_expect(tls_data.qsbr_slot == -1, 0)) {
-        tls_data.qsbr_slot = __atomic_fetch_add(&global_qsbr_slot_alloc, 1, __ATOMIC_RELAXED) % QSBR_SLOTS;
+        tls_data.qsbr_slot = atomic_fetch_add_n(&global_qsbr_slot_alloc, 1, ATOMIC_RELAXED) % QSBR_SLOTS;
     }
-    __atomic_fetch_add(&qsbr_counters[tls_data.qsbr_slot].count, 1, __ATOMIC_ACQUIRE);
+    atomic_fetch_add_n(&qsbr_counters[tls_data.qsbr_slot].count, 1, ATOMIC_ACQUIRE);
     return tls_data.qsbr_slot;
 }
 
 static inline void qsbr_leave(int32_t slot) {
-    __atomic_sub_fetch(&qsbr_counters[slot].count, 1, __ATOMIC_RELEASE);
+    atomic_sub_fetch_n(&qsbr_counters[slot].count, 1, ATOMIC_RELEASE);
 }
 
 static inline int32_t is_quiescent() {
@@ -195,21 +195,21 @@ static inline int32_t is_quiescent() {
     uint64_t generation = gc_generation;
 
     for (int32_t i = 0; i < QSBR_SLOTS; i++) {
-        snapshot[i] = __atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE);
+        snapshot[i] = atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE);
     }
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    atomic_thread_fence(__ATOMIC_SEQ_CST);
 
     for (int32_t retry = 0; retry < 50; retry++) {
         int32_t all_advanced = 1;
         for (int32_t i = 0; i < QSBR_SLOTS; i++) {
-            if (__atomic_load_n(&qsbr_counters[i].count, __ATOMIC_ACQUIRE) <= snapshot[i]) {
+            if (atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE) <= snapshot[i]) {
                 all_advanced = 0;
                 break;
             }
         }
         if (all_advanced) {
-            __atomic_thread_fence(__ATOMIC_SEQ_CST);
-            return (__atomic_load_n(&gc_generation, __ATOMIC_ACQUIRE) == generation);
+            atomic_thread_fence(__ATOMIC_SEQ_CST);
+            return (atomic_load_n(&gc_generation, ATOMIC_ACQUIRE) == generation);
         }
         for (int32_t i = 0; i < 50; i++) CPU_RELAX();
     }
@@ -218,16 +218,16 @@ static inline int32_t is_quiescent() {
 
 static inline void try_gc() {
     uint32_t expected = 0;
-    if (!__atomic_compare_exchange_n(&gc_lock, &expected, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) {
+    if (!atomic_compare_exchange_n(&gc_lock, &expected, 1, 0, ATOMIC_ACQUIRE, ATOMIC_RELAXED)) {
         return;
     }
 
     flush_tls_scb_all();
 
-    void* small_list = (void*)(uintptr_t)__atomic_exchange_n(&old_small_scb_list, NULL, __ATOMIC_ACQ_REL);
-    void* large_list = (void*)(uintptr_t)__atomic_exchange_n(&old_large_scb_list, NULL, __ATOMIC_ACQ_REL);
-    void* young_small = (void*)(uintptr_t)__atomic_exchange_n(&deferred_small_scb_list, NULL, __ATOMIC_ACQ_REL);
-    void* young_large = (void*)(uintptr_t)__atomic_exchange_n(&deferred_large_scb_list, NULL, __ATOMIC_ACQ_REL);
+    void* small_list = (void*)(uintptr_t)atomic_exchange_n(&old_small_scb_list, NULL, ATOMIC_ACQ_REL);
+    void* large_list = (void*)(uintptr_t)atomic_exchange_n(&old_large_scb_list, NULL, ATOMIC_ACQ_REL);
+    void* young_small = (void*)(uintptr_t)atomic_exchange_n(&deferred_small_scb_list, NULL, ATOMIC_ACQ_REL);
+    void* young_large = (void*)(uintptr_t)atomic_exchange_n(&deferred_large_scb_list, NULL, ATOMIC_ACQ_REL);
 
     #define APPEND_LIST(head, tail_list) do { \
         if (tail_list) { \
@@ -260,9 +260,9 @@ static inline void try_gc() {
             large_list = next;
         }
 
-        __atomic_store_n(&pending_small_count, 0, __ATOMIC_RELEASE);
-        __atomic_store_n(&pending_large_count, 0, __ATOMIC_RELEASE);
-        __atomic_fetch_add(&gc_generation, 1, __ATOMIC_RELEASE);
+        atomic_store_n(&pending_small_count, 0, ATOMIC_RELEASE);
+        atomic_store_n(&pending_large_count, 0, ATOMIC_RELEASE);
+        atomic_fetch_add_n(&gc_generation, 1, ATOMIC_RELEASE);
     } else {
         void* old_head;
         if (small_list) {
@@ -284,7 +284,7 @@ static inline void try_gc() {
     }
 
 unlock:
-    __atomic_store_n(&gc_lock, 0, __ATOMIC_RELEASE);
+    atomic_store_n(&gc_lock, 0, ATOMIC_RELEASE);
 }
 
 // ============================================================================
@@ -369,13 +369,13 @@ static void* _skyline_malloc_internal(size_t size) {
 
             while (mcb && walk_limit--) {
                 __builtin_prefetch(mcb, 0, 3);
-                if (__atomic_load_n(&mcb->is_full, __ATOMIC_ACQUIRE) == 0) {
-                    if (prev_mcb == NULL || __atomic_load_n(&prev_mcb->next, __ATOMIC_ACQUIRE) == (uint64_t)mcb) {
+                if (atomic_load_n(&mcb->is_full, ATOMIC_ACQUIRE) == 0) {
+                    if (prev_mcb == NULL || atomic_load_n(&prev_mcb->next, ATOMIC_ACQUIRE) == (uint64_t)mcb) {
                         break;
                     }
                 }
                 prev_mcb = mcb;
-                mcb = (MainControlBlock_t*)__atomic_load_n(&mcb->next, __ATOMIC_ACQUIRE);
+                mcb = (MainControlBlock_t*)atomic_load_n(&mcb->next, ATOMIC_ACQUIRE);
             }
             if (mcb && walk_limit >= 0) break; // 找到可用MCB，退出重试
             CPU_RELAX();
@@ -411,7 +411,7 @@ static void* _skyline_malloc_internal(size_t size) {
         // 查找MCB中空闲的SCB槽位
         uint64_t scb_idx = 0xFFFFFFFFFFFFFFFFULL;
         for (int32_t i = 0; i < MCB_BITMAP_WORDS; i++) {
-            uint64_t current_bitmap = __atomic_load_n(&mcb->bitmap[i], __ATOMIC_ACQUIRE);
+            uint64_t current_bitmap = atomic_load_n(&mcb->bitmap[i], ATOMIC_ACQUIRE);
             if (current_bitmap != 0xFFFFFFFFFFFFFFFFULL) {
                 scb_idx = (uint64_t)i * 64 + __builtin_ctzll(~current_bitmap);
                 break;
@@ -419,18 +419,18 @@ static void* _skyline_malloc_internal(size_t size) {
         }
 
         if (scb_idx >= MCB_SCB_COUNT) {
-            __atomic_store_n(&mcb->is_full, 1, __ATOMIC_RELEASE);
+            atomic_store_n(&mcb->is_full, 1, ATOMIC_RELEASE);
             continue;
         }
 
         // ==================== 小对象路径 ====================
         if (region_size != 0) {
-            SecondControlBlock_t* scb = (SecondControlBlock_t*)__atomic_load_n(&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE);
+            SecondControlBlock_t* scb = (SecondControlBlock_t*)atomic_load_n(&mcb->list_base[scb_idx], ATOMIC_ACQUIRE);
             __builtin_prefetch(scb, 0, 3);
 
             if (!scb) {
                 void* expected = NULL;
-                if (__atomic_compare_exchange_n(&mcb->list_base[scb_idx], &expected, (void*)1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+                if (atomic_compare_exchange_n(&mcb->list_base[scb_idx], &expected, (void*)1, 0, ATOMIC_ACQ_REL, ATOMIC_RELAXED)) {
                     uint64_t step_size = size_class + sizeof(AllocBlock_t);
                     uint64_t total_objects = region_size / step_size;
                     
@@ -439,14 +439,14 @@ static void* _skyline_malloc_internal(size_t size) {
                         uint64_t mask = 1ULL << (scb_idx % 64);
                         __a_or_64(&mcb->bitmap[scb_idx / 64], mask);
                         __a_subu32(&mcb->rem_scb_count, 1);
-                        __atomic_store_n(&mcb->list_base[scb_idx], NULL, __ATOMIC_RELEASE);
+                        atomic_store_n(&mcb->list_base[scb_idx], NULL, ATOMIC_RELEASE);
                         continue;
                     }
 
                     // 修复：SCB结构体占4页，修正分配大小，杜绝越界踩坏内存
                     scb = (SecondControlBlock_t*)MoreCore(4);
                     if (!scb) {
-                        __atomic_store_n(&mcb->list_base[scb_idx], NULL, __ATOMIC_RELEASE);
+                        atomic_store_n(&mcb->list_base[scb_idx], NULL, ATOMIC_RELEASE);
                         try_gc();
                         continue;
                     }
@@ -456,7 +456,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     void* data_region = MoreCore(data_pages);
                     if (!data_region) {
                         LessCore(scb, 4);
-                        __atomic_store_n(&mcb->list_base[scb_idx], NULL, __ATOMIC_RELEASE);
+                        atomic_store_n(&mcb->list_base[scb_idx], NULL, ATOMIC_RELEASE);
                         try_gc();
                         continue;
                     }
@@ -477,15 +477,15 @@ static void* _skyline_malloc_internal(size_t size) {
                         scb->bitmap[last_word] |= 0xFFFFFFFFFFFFFFFFULL << (last_bit + 1);
                     }
 
-                    __atomic_store_n(&mcb->list_base[scb_idx], scb, __ATOMIC_RELEASE);
+                    atomic_store_n(&mcb->list_base[scb_idx], scb, ATOMIC_RELEASE);
                 } else {
                     // 【修复6】小对象SCB占位等待增加超时熔断，防止创建线程异常导致永久自旋
                     uint32_t spin_cnt = 0;
-                    while ((scb = (SecondControlBlock_t*)__atomic_load_n(&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE)) == (void*)1) {
+                    while ((scb = (SecondControlBlock_t*)atomic_load_n(&mcb->list_base[scb_idx], ATOMIC_ACQUIRE)) == (void*)1) {
                         CPU_RELAX();
                         if (++spin_cnt > SCB_INIT_SPIN_TIMEOUT) {
                             void* cmp = (void*)1;
-                            __atomic_compare_exchange_n(&mcb->list_base[scb_idx], &cmp, NULL, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
+                            atomic_compare_exchange_n(&mcb->list_base[scb_idx], &cmp, NULL, 0, ATOMIC_ACQ_REL, ATOMIC_RELAXED);
                             break;
                         }
                     }
@@ -505,7 +505,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     // 【修复7】CAS竞争增加重试上限，防止极端竞争下空转死循环
                     if (++cas_retry > 1000) break;
 
-                    uint64_t current_bitmap = __atomic_load_n(&scb->bitmap[i], __ATOMIC_ACQUIRE);
+                    uint64_t current_bitmap = atomic_load_n(&scb->bitmap[i], ATOMIC_ACQUIRE);
                     if (current_bitmap == 0xFFFFFFFFFFFFFFFFULL) break;
 
                     int32_t free_bit = __builtin_ctzll(~current_bitmap);
@@ -514,7 +514,7 @@ static void* _skyline_malloc_internal(size_t size) {
 
                     uint64_t new_bitmap = current_bitmap | (1ULL << free_bit);
                     if (A_CAS_U64_ASM(&scb->bitmap[i], current_bitmap, new_bitmap) == current_bitmap) {
-                        if (__atomic_load_n((uint64_t*)&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE) != (uint64_t)scb) {
+                        if (atomic_load_n((uint64_t*)&mcb->list_base[scb_idx], ATOMIC_ACQUIRE) != (uint64_t)scb) {
                             uint64_t rb_old, rb_new;
                             do {
                                 rb_old = scb->bitmap[i];
@@ -533,10 +533,10 @@ static void* _skyline_malloc_internal(size_t size) {
 
             if (obj_idx == 0xFFFFFFFFFFFFFFFFULL) {
                 uint64_t mask = 1ULL << (scb_idx % 64);
-                uint64_t old_val = __atomic_fetch_or(&mcb->bitmap[scb_idx / 64], mask, __ATOMIC_RELAXED);
+                uint64_t old_val = atomic_fetch_or_n(&mcb->bitmap[scb_idx / 64], mask, ATOMIC_RELAXED);
                 if (!(old_val & mask)) {
                     if (__a_subu32(&mcb->rem_scb_count, 1) == 1) {
-                        __atomic_store_n(&mcb->is_full, 1, __ATOMIC_RELEASE);
+                        atomic_store_n(&mcb->is_full, 1, ATOMIC_RELEASE);
                     }
                 }
                 continue;
@@ -561,24 +561,24 @@ static void* _skyline_malloc_internal(size_t size) {
 
             if (__a_subu32(&scb->rem_count, 1) == 1) {
                 uint64_t expected = 0;
-                if (__atomic_compare_exchange_n(&scb->is_full, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+                if (atomic_compare_exchange_n(&scb->is_full, &expected, 1, 0, ATOMIC_ACQ_REL, ATOMIC_RELAXED)) {
                     __a_or_64(&mcb->bitmap[scb_idx / 64], (1ULL << (scb_idx % 64)));
                     if (__a_subu32(&mcb->rem_scb_count, 1) == 1) {
-                        __atomic_store_n(&mcb->is_full, 1, __ATOMIC_RELEASE);
+                        atomic_store_n(&mcb->is_full, 1, ATOMIC_RELEASE);
                     }
                 }
             }
         }
         // ==================== 大对象路径 ====================
         else {
-            LargeSecondControlBlock_t* l_scb = (LargeSecondControlBlock_t*)__atomic_load_n(&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE);
+            LargeSecondControlBlock_t* l_scb = (LargeSecondControlBlock_t*)atomic_load_n(&mcb->list_base[scb_idx], ATOMIC_ACQUIRE);
 
             if (!l_scb) {
                 void* expected = NULL;
-                if (__atomic_compare_exchange_n(&mcb->list_base[scb_idx], &expected, (void*)1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+                if (atomic_compare_exchange_n(&mcb->list_base[scb_idx], &expected, (void*)1, 0, ATOMIC_ACQ_REL, ATOMIC_RELAXED)) {
                     l_scb = (LargeSecondControlBlock_t*)MoreCore(4);
                     if (!l_scb) {
-                        __atomic_store_n(&mcb->list_base[scb_idx], NULL, __ATOMIC_RELEASE);
+                        atomic_store_n(&mcb->list_base[scb_idx], NULL, ATOMIC_RELEASE);
                         try_gc();
                         continue;
                     }
@@ -591,15 +591,15 @@ static void* _skyline_malloc_internal(size_t size) {
                     l_scb->bitmap[MCB_BITMAP_WORDS - 1] = 0xFFFFFFFFFFFFFFFFULL << (64 - tail_bits);
                     for (int32_t i = 0; i < MCB_SCB_COUNT; i++) l_scb->list_base[i] = 0;
 
-                    __atomic_store_n(&mcb->list_base[scb_idx], l_scb, __ATOMIC_RELEASE);
+                    atomic_store_n(&mcb->list_base[scb_idx], l_scb, ATOMIC_RELEASE);
                 } else {
                     // 【修复8】大对象LSCB占位等待增加超时熔断，防止永久自旋死锁
                     uint32_t spin_cnt = 0;
-                    while ((l_scb = (LargeSecondControlBlock_t*)__atomic_load_n(&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE)) == (void*)1) {
+                    while ((l_scb = (LargeSecondControlBlock_t*)atomic_load_n(&mcb->list_base[scb_idx], ATOMIC_ACQUIRE)) == (void*)1) {
                         CPU_RELAX();
                         if (++spin_cnt > SCB_INIT_SPIN_TIMEOUT) {
                             void* cmp = (void*)1;
-                            __atomic_compare_exchange_n(&mcb->list_base[scb_idx], &cmp, NULL, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
+                            atomic_compare_exchange_n(&mcb->list_base[scb_idx], &cmp, NULL, 0, ATOMIC_ACQ_REL, ATOMIC_RELAXED);
                             break;
                         }
                     }
@@ -614,7 +614,7 @@ static void* _skyline_malloc_internal(size_t size) {
                     // CAS竞争增加重试上限，避免极端多线程空转
                     if (++cas_retry > 1000) break;
 
-                    uint64_t current_bitmap = __atomic_load_n(&l_scb->bitmap[i], __ATOMIC_ACQUIRE);
+                    uint64_t current_bitmap = atomic_load_n(&l_scb->bitmap[i], ATOMIC_ACQUIRE);
                     if (current_bitmap == 0xFFFFFFFFFFFFFFFFULL) break;
 
                     int32_t free_bit = __builtin_ctzll(~current_bitmap);
@@ -623,7 +623,7 @@ static void* _skyline_malloc_internal(size_t size) {
 
                     uint64_t new_bitmap = current_bitmap | (1ULL << free_bit);
                     if (A_CAS_U64_ASM(&l_scb->bitmap[i], current_bitmap, new_bitmap) == current_bitmap) {
-                        if (__atomic_load_n((uint64_t*)&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE) != (uint64_t)l_scb) {
+                        if (atomic_load_n((uint64_t*)&mcb->list_base[scb_idx], ATOMIC_ACQUIRE) != (uint64_t)l_scb) {
                             uint64_t rb_old, rb_new;
                             do {
                                 rb_old = l_scb->bitmap[i];
@@ -642,10 +642,10 @@ static void* _skyline_malloc_internal(size_t size) {
 
             if (obj_idx >= MCB_SCB_COUNT) {
                 uint64_t mask = 1ULL << (scb_idx % 64);
-                uint64_t old_val = __atomic_fetch_or(&mcb->bitmap[scb_idx / 64], mask, __ATOMIC_RELAXED);
+                uint64_t old_val = atomic_fetch_or_n(&mcb->bitmap[scb_idx / 64], mask, ATOMIC_RELAXED);
                 if (!(old_val & mask)) {
                     if (__a_subu32(&mcb->rem_scb_count, 1) == 1) {
-                        __atomic_store_n(&mcb->is_full, 1, __ATOMIC_RELEASE);
+                        atomic_store_n(&mcb->is_full, 1, ATOMIC_RELEASE);
                     }
                 }
                 continue;
@@ -655,7 +655,7 @@ static void* _skyline_malloc_internal(size_t size) {
             void* page_start = MoreCore(DIV_ROUND_UP(total_large_size, PAGE_SIZE));
             if (!page_start) {
                 uint64_t mask = 1ULL << (obj_idx % 64);
-                if (__atomic_load_n(&mcb->list_base[scb_idx], __ATOMIC_ACQUIRE) == (uint64_t)l_scb) {
+                if (atomic_load_n(&mcb->list_base[scb_idx], ATOMIC_ACQUIRE) == (uint64_t)l_scb) {
                     __a_clear_bit(&l_scb->bitmap[obj_idx / 64], mask);
                 }
                 try_gc();
@@ -679,10 +679,10 @@ static void* _skyline_malloc_internal(size_t size) {
 
             if (__a_subu64(&l_scb->rem_count, 1) == 1) {
                 uint64_t expected = 0;
-                if (__atomic_compare_exchange_n(&l_scb->is_full, &expected, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+                if (atomic_compare_exchange_n(&l_scb->is_full, &expected, 1, 0, ATOMIC_ACQ_REL, ATOMIC_RELAXED)) {
                     __a_or_64(&mcb->bitmap[scb_idx / 64], (1ULL << (scb_idx % 64)));
                     if (__a_subu32(&mcb->rem_scb_count, 1) == 1) {
-                        __atomic_store_n(&mcb->is_full, 1, __ATOMIC_RELEASE);
+                        atomic_store_n(&mcb->is_full, 1, ATOMIC_RELEASE);
                     }
                 }
             }
@@ -725,7 +725,7 @@ static void _free_large_object_real(void* block_addr, AllocBlock_t* header) {
         if (__a_fetch_addu32(&mcb->rem_scb_count, 1) == 0) mcb->is_full = 0;
     }
 
-    if (old_rem == MCB_SCB_COUNT - 1 && __atomic_load_n(&l_scb->rem_count, __ATOMIC_ACQUIRE) == MCB_SCB_COUNT) {
+    if (old_rem == MCB_SCB_COUNT - 1 && atomic_load_n(&l_scb->rem_count, ATOMIC_ACQUIRE) == MCB_SCB_COUNT) {
         if (__a_cas_p((volatile void*)&mcb->list_base[mcb_slot], l_scb, NULL) == l_scb) {
             push_deferred_scb(l_scb, 1);
         }
@@ -773,7 +773,7 @@ static void _skyline_free_internal(void* ptr) {
         }
 
         uint64_t target_rem = scb->bit_tail + 1;
-        if (old_rem == target_rem - 1 && __atomic_load_n(&scb->rem_count, __ATOMIC_ACQUIRE) == target_rem) {
+        if (old_rem == target_rem - 1 && atomic_load_n(&scb->rem_count, ATOMIC_ACQUIRE) == target_rem) {
             if (__a_cas_p((volatile void*)&mcb->list_base[mcb_slot], scb, NULL) == scb) {
                 push_deferred_scb(scb, 0);
             }

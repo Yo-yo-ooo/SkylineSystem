@@ -25,8 +25,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <atomic/atomic.h>
 
-// [修复] 引入 CPU_RELAX 宏，利用 pause 指令防止无锁重试循环导致的系统活锁与总线风暴
 #define CPU_RELAX() __asm__ __volatile__("pause" ::: "memory")
 
 #define A_CAS_U64_ASM(p, old, new) ({ \
@@ -109,7 +109,7 @@ static inline __attribute__((always_inline)) uint32_t __a_subu32(volatile uint32
 static inline __attribute__((always_inline)) uint64_t __a_or_64(volatile uint64_t *p, uint64_t v)
 {
     // 初始化旧值
-    uint64_t old_val = __atomic_load_n(p, __ATOMIC_RELAXED);
+    uint64_t old_val = atomic_load_n(p, __ATOMIC_RELAXED);
     
     while (1) {
         uint64_t new_val = old_val | v;
@@ -122,8 +122,8 @@ static inline __attribute__((always_inline)) uint64_t __a_or_64(volatile uint64_
         // 使用 CAS 尝试写入
         // success 使用 ACQ_REL 确保同步
         // failure 使用 RELAXED 即可，因为 old_val 会被自动更新
-        if (__atomic_compare_exchange_n(p, &old_val, new_val, 
-                                        1, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+        if (atomic_compare_exchange_n(p, &old_val, new_val, 
+                                        1, ATOMIC_ACQ_REL, ATOMIC_RELAXED)) {
             return old_val;
         }
         // CAS 失败时，old_val 已自动更新为当前内存值，无需额外加载

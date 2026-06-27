@@ -20,7 +20,7 @@ BINDIR  = bin
 # 编译选项
 CFLAGS  = -m64 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -nostdlib -nostdinc
 CFLAGS += -Wall -Wextra -Werror -O2 -g -I./include/stdc -I../kernel/freestnd-c-hdrs/$(BUILD_ARCH)/include
-CFLAGS += -I./$(INCDIR)
+CFLAGS += -I./$(INCDIR) -I../ablib
 
 
 
