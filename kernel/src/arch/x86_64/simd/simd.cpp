@@ -29,7 +29,7 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/simd/simd.h>
 #include <arch/x86_64/simd/xsave.h>
-#include "../../../../../x86mem/x86mem.h"
+#include "../../../../../ablib/arch/x86_64/x86mem/x86mem.h"
 uint32_t MaxXsaveSize = 0;
 
 void simd_xsave_init(void)

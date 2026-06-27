@@ -236,7 +236,9 @@ endif
 
 .PHONY: clean
 clean:
-	@$(MAKE) -C x86mem clean
+ifdef ($(KARCH),x86_64)
+	@$(MAKE) -C ablib/arch/x86_64/x86mem clean
+endif
 	@$(MAKE) -C kernel clean
 	@$(MAKE) -C programs clean
 	@$(MAKE) -C saf clean
@@ -254,7 +256,7 @@ cm:
 	@$(MAKE) -C saf
 ifeq ($(KARCH),x86_64)
 ifeq ($(NOT_COMPILE_X86MEM),0)
-	$(MAKE) -C x86mem
+	$(MAKE) -C ablib/arch/x86_64/x86mem
 endif
 	@qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
 	@qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G

@@ -27,7 +27,7 @@
 #pragma GCC push_options
 #endif
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
-#include "../../../x86mem/x86mem.h"
+#include "../../../ablib/arch/x86_64/x86mem/x86mem.h"
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <klib/serial.h>

@@ -1,9 +1,9 @@
 CC_x86mem = gcc
 AR_x86mem = ar
-include ../gdef.mk
+include ../../../../gdef.mk
 
 CFLAGS_x86mem = -ffreestanding -msse4.2 -O3 \
-    -isystem ../kernel/freestnd-c-hdrs/x86_64/include \
+    -isystem ../../../../kernel/freestnd-c-hdrs/x86_64/include \
     -nostdlib -nostdinc \
 	-falign-functions=32 -falign-loops=32 -falign-jumps=32 \
     -fpie -fomit-frame-pointer -fno-common -fno-zero-initialized-in-bss \

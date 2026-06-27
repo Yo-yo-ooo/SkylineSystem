@@ -41,8 +41,8 @@ OBJS   += $(patsubst %.S, $(OBJDIR)/%.S.o, $(S_SRCS))
 ifeq ($(BUILD_ARCH),x86_64)
 CFLAGS += -DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM)
 ifeq ($(NOT_COMPILE_X86MEM),0)
-CFLAGS += -I../x86mem
-OBJS += ../x86mem/memops.o
+CFLAGS += -I../ablib/arch/x86_64/x86mem
+OBJS += ../ablib/arch/x86_64/x86mem/memops.o
 endif
 endif
 
