@@ -145,10 +145,10 @@ run-hdd-bios: $(IMAGE_NAME).hdd
 edk2-ovmf:
 	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
 
-limine/limine:
-	rm -rf limine
-	git clone https://github.com/limine-bootloader/limine.git --branch=v11.x-binary --depth=1
-	$(MAKE) -C limine
+limine-binary/limine:
+	rm -rf limine-binary
+	curl -L https://github.com/Limine-Bootloader/Limine/releases/latest/download/limine-binary.tar.gz | gunzip | tar -xf -
+	$(MAKE) -C limine-binary 
 	git clone https://github.com/limine-bootloader/limine-protocol
 	cp -f ./limine-protocol/include/limine.h ./kernel/src
 
@@ -163,75 +163,81 @@ kernel: kernel-deps
 	@echo "Start Building Kernel!"
 	$(MAKE) -C kernel
 
-$(IMAGE_NAME).iso: limine/limine kernel
-	@rm -rf iso_root
-	@mkdir -p iso_root/boot
-	@cp -v kernel/bin-$(KARCH)/kernel iso_root/boot/
-	@mkdir -p iso_root/boot/limine
-	@cp -v limine.conf iso_root/boot/limine/
-	@mkdir -p iso_root/EFI/BOOT
+$(IMAGE_NAME).iso: limine-binary/limine kernel
+	rm -rf iso_root
+	mkdir -p iso_root/boot
+	cp -v kernel/bin-$(KARCH)/kernel iso_root/boot/
+	mkdir -p iso_root/boot/limine
+	cp -v limine.conf iso_root/boot/limine/
+	mkdir -p iso_root/EFI/BOOT
 ifeq ($(KARCH),x86_64)
-	@cp -v limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin iso_root/boot/limine/
-	@cp -v limine/BOOTX64.EFI iso_root/EFI/BOOT/
-	@cp -v limine/BOOTIA32.EFI iso_root/EFI/BOOT/
-	@cp -v programs/programs.saf iso_root/boot/
-	@xorriso -as mkisofs -b boot/limine/limine-bios-cd.bin \
-		-no-emul-boot -boot-load-size 4 -boot-info-table \
-		--efi-boot boot/limine/limine-uefi-cd.bin \
+	cp -v limine-binary/limine-bios.sys limine-binary/limine-bios-cd.bin limine-binary/limine-uefi-cd.bin iso_root/boot/limine/
+	cp -v limine-binary/BOOTX64.EFI iso_root/EFI/BOOT/
+	cp -v limine-binary/BOOTIA32.EFI iso_root/EFI/BOOT/
+	cp -v programs/programs.saf iso_root/boot/
+	xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
+		-no-emul-boot -boot-load-size 4 -boot-info-table -hfsplus \
+		-apm-block-size 2048 --efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
-	./limine/limine bios-install $(IMAGE_NAME).iso
+	./limine-binary/limine bios-install $(IMAGE_NAME).iso
 endif
 ifeq ($(KARCH),aarch64)
-	@cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	@cp -v limine/BOOTAA64.EFI iso_root/EFI/BOOT/
-	@xorriso -as mkisofs \
+	cp -v limine-binary/limine-uefi-cd.bin iso_root/boot/limine/
+	cp -v limine-binary/BOOTAA64.EFI iso_root/EFI/BOOT/
+	xorriso -as mkisofs -R -r -J \
+		-hfsplus -apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
 endif
 ifeq ($(KARCH),riscv64)
-	@cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	@cp -v limine/BOOTRISCV64.EFI iso_root/EFI/BOOT/
-	@xorriso -as mkisofs \
+	cp -v limine-binary/limine-uefi-cd.bin iso_root/boot/limine/
+	cp -v limine-binary/BOOTRISCV64.EFI iso_root/EFI/BOOT/
+	xorriso -as mkisofs -R -r -J \
+		-hfsplus -apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
 endif
 ifeq ($(KARCH),loongarch64)
-	@cp -v limine/limine-uefi-cd.bin iso_root/boot/limine/
-	@cp -v limine/BOOTLOONGARCH64.EFI iso_root/EFI/BOOT/
-	@xorriso -as mkisofs \
+	cp -v limine-binary/limine-uefi-cd.bin iso_root/boot/limine/
+	cp -v limine-binary/BOOTLOONGARCH64.EFI iso_root/EFI/BOOT/
+	xorriso -as mkisofs -R -r -J \
+		-hfsplus -apm-block-size 2048 \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		iso_root -o $(IMAGE_NAME).iso
 endif
-	@rm -rf iso_root
+	rm -rf iso_root
 
-$(IMAGE_NAME).hdd: limine/limine kernel
-	@rm -f $(IMAGE_NAME).hdd
-	@dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
-	@sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
+
+$(IMAGE_NAME).hdd: limine-binary/limine kernel
+	rm -f $(IMAGE_NAME).hdd
+	dd if=/dev/zero bs=1M count=0 seek=64 of=$(IMAGE_NAME).hdd
 ifeq ($(KARCH),x86_64)
-	./limine/limine bios-install $(IMAGE_NAME).hdd
+	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00 -m 1
+	./limine-binary/limine bios-install $(IMAGE_NAME).hdd
+else
+	PATH=$$PATH:/usr/sbin:/sbin sgdisk $(IMAGE_NAME).hdd -n 1:2048 -t 1:ef00
 endif
-	@mformat -i $(IMAGE_NAME).hdd@@1M
-	@mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
-	@mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(KARCH)/kernel ::/boot
-	@mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
+	mformat -i $(IMAGE_NAME).hdd@@1M
+	mmd -i $(IMAGE_NAME).hdd@@1M ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(KARCH)/kernel ::/boot
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine.conf ::/boot/limine
 ifeq ($(KARCH),x86_64)
-	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/limine-bios.sys ::/boot/limine
-	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTX64.EFI ::/EFI/BOOT
-	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTIA32.EFI ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/limine-bios.sys ::/boot/limine
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/BOOTX64.EFI ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/BOOTIA32.EFI ::/EFI/BOOT
 endif
 ifeq ($(KARCH),aarch64)
-	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTAA64.EFI ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/BOOTAA64.EFI ::/EFI/BOOT
 endif
 ifeq ($(KARCH),riscv64)
-	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTRISCV64.EFI ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/BOOTRISCV64.EFI ::/EFI/BOOT
 endif
 ifeq ($(KARCH),loongarch64)
-	@mcopy -i $(IMAGE_NAME).hdd@@1M limine/BOOTLOONGARCH64.EFI ::/EFI/BOOT
+	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/BOOTLOONGARCH64.EFI ::/EFI/BOOT
 endif
 
 .PHONY: clean
@@ -248,7 +254,7 @@ endif
 .PHONY: distclean
 distclean:
 	$(MAKE) -C kernel distclean
-	rm -rf iso_root *.iso *.hdd kernel-deps limine ovmf
+	rm -rf iso_root *.iso *.hdd kernel-deps limine-binary ovmf
 	rm -rf limine-protocol
 
 cm:

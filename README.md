@@ -33,7 +33,7 @@
 **You can build this project(x86_64 arch) with these commands:**
 ```bash
 cd kernel && ./get-deps
-cd .. && make limine/limine
+cd .. && make limine-binary/limine
 #If can't run get-deps script, you can run "chmod +x kernel/get-deps"
 make cm
 ```

@@ -1,5 +1,5 @@
 /kernel-deps
-/limine
+/limine-binary
 /ovmf
 /edk2-ovmf
 /limine-protocol
