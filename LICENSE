@@ -1,0 +1,21 @@
+SkylineSystem Dual License Statement
+Copyright (C) 2026 Yo-yo-ooo
+
+1. Kernel Source Code
+Scope: kernel/
+License: GPL-2.0-only
+Full text: ./LICENSES/GPL-2.0-only
+Copyleft applies. Any distributed modified kernel binaries must provide full modified source code.
+
+2. Userspace Source Code
+Scope: lib/ ablib/ programs/
+License: MIT
+Full text: ./LICENSES/MIT
+Permissive terms. Modification, closed-source commercial distribution are permitted, provided original copyright notice is retained.
+
+Critical Isolation Note:
+Kernel (Ring0) and userspace (Ring3) run in separate virtual address spaces and communicate only via syscall instructions. No static/dynamic linking exists between them.
+Per FSF licensing guidance, userspace MIT code is not considered derivative work of the GPL kernel, and no copyleft infection occurs.
+
+This repository complies with the REUSE Specification 3.3.
+Each source file carries a matching SPDX license identifier.
