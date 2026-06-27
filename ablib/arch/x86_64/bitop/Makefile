@@ -4,7 +4,7 @@ include ../../../../gdef.mk
 
 # 基础编译选项
 CFLAGS_bitop_base = -ffreestanding -O3 \
-    -isystem ../../../../kernel/freestnd-c-hdrs/x86_64/include \
+    -isystem ../../../../ablib/freestndchdrs/x86_64/include \
     -nostdlib -nostdinc \
     -falign-functions=32 -falign-loops=32 -falign-jumps=32 \
     -fpie -fomit-frame-pointer -fno-common -fno-zero-initialized-in-bss \

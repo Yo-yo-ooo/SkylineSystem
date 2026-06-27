@@ -42,36 +42,36 @@
 #endif
 
 typedef struct {
-    int codepoint;
-    int advanceWidth;
-    int off_x;
-    int off_y;
+    int32_t codepoint;
+    int32_t advanceWidth;
+    int32_t off_x;
+    int32_t off_y;
     TTF_Bitmap bmp;
-    int next;
-    int lru_prev;
-    int lru_next;
+    int32_t next;
+    int32_t lru_prev;
+    int32_t lru_next;
 } TTF_CacheNode;
 
 struct TTF_Font_Internal {
     stbtt_fontinfo info;
     unsigned char *data; 
     float scale;
-    int pixel_height;
-    int ascent;
+    int32_t pixel_height;
+    int32_t ascent;
     bool is_initialized;
 
-    int cache_capacity;
-    int hash_size;
+    int32_t cache_capacity;
+    int32_t hash_size;
     TTF_CacheNode *cache_nodes;
-    int *hash_table;
-    int lru_head;
-    int lru_tail;
-    int free_list;
+    int32_t *hash_table;
+    int32_t lru_head;
+    int32_t lru_tail;
+    int32_t free_list;
 
     TTF_MUTEX_TYPE lock;
     
-    int oversampling;
-    int bold_strength;
+    int32_t oversampling;
+    int32_t bold_strength;
     float italic_skew;
 
     unsigned long hit_count;
@@ -79,12 +79,12 @@ struct TTF_Font_Internal {
 };
 
 typedef struct {
-    int codepoint;
-    int x_advance;
+    int32_t codepoint;
+    int32_t x_advance;
 } TTF_RenderCmd;
 
 // CJK 字符判断
-static bool is_cjk_char(int codepoint) {
+static bool is_cjk_char(int32_t codepoint) {
     return (codepoint >= 0x4E00 && codepoint <= 0x9FFF) ||
            (codepoint >= 0x3400 && codepoint <= 0x4DBF) ||
            (codepoint >= 0x3040 && codepoint <= 0x30FF) ||
@@ -93,7 +93,7 @@ static bool is_cjk_char(int codepoint) {
 }
 
 // CJK 标点避首规则判断
-static bool is_punct_no_start(int codepoint) {
+static bool is_punct_no_start(int32_t codepoint) {
     return codepoint == 0x3001 || codepoint == 0x3002 || 
            codepoint == 0xFF0C || codepoint == 0xFF1A || codepoint == 0xFF1B || 
            codepoint == 0xFF01 || codepoint == 0xFF1F || 
@@ -101,14 +101,14 @@ static bool is_punct_no_start(int codepoint) {
            codepoint == 0x300F || codepoint == 0x201D || codepoint == 0x2019;
 }
 
-static int next_power_of_two(int v) {
+static int32_t next_power_of_two(int32_t v) {
     if (v <= 0) return 16;
     v--;
     v |= v >> 1; v |= v >> 2; v |= v >> 4; v |= v >> 8; v |= v >> 16;
     return v + 1;
 }
 
-static int utf8_to_codepoint(const char *str, int str_len, int *advance) {
+static int32_t utf8_to_codepoint(const char *str, int32_t str_len, int32_t *advance) {
     if (str_len <= 0) { *advance = 0; return 0xFFFD; }
     unsigned char c = (unsigned char)str[0];
     if (c < 0x80) { *advance = 1; return c; }
@@ -131,8 +131,8 @@ invalid:
 
 static void cache_init(TTF_Font* font) {
     font->lru_head = -1; font->lru_tail = -1; font->free_list = 0;
-    for (int i = 0; i < font->hash_size; i++) font->hash_table[i] = -1;
-    for (int i = 0; i < font->cache_capacity; i++) {
+    for (int32_t i = 0; i < font->hash_size; i++) font->hash_table[i] = -1;
+    for (int32_t i = 0; i < font->cache_capacity; i++) {
         font->cache_nodes[i].lru_prev = -1;
         font->cache_nodes[i].lru_next = i + 1;
         font->cache_nodes[i].next = -1;
@@ -142,7 +142,7 @@ static void cache_init(TTF_Font* font) {
     font->cache_nodes[font->cache_capacity - 1].lru_next = -1;
 }
 
-static void cache_unlink_lru(TTF_Font* font, int idx) {
+static void cache_unlink_lru(TTF_Font* font, int32_t idx) {
     TTF_CacheNode* node = &font->cache_nodes[idx];
     if (node->lru_prev != -1) font->cache_nodes[node->lru_prev].lru_next = node->lru_next;
     else font->lru_head = node->lru_next;
@@ -151,7 +151,7 @@ static void cache_unlink_lru(TTF_Font* font, int idx) {
     node->lru_prev = -1; node->lru_next = -1;
 }
 
-static void cache_push_front_lru(TTF_Font* font, int idx) {
+static void cache_push_front_lru(TTF_Font* font, int32_t idx) {
     TTF_CacheNode* node = &font->cache_nodes[idx];
     node->lru_prev = -1; node->lru_next = font->lru_head;
     if (font->lru_head != -1) font->cache_nodes[font->lru_head].lru_prev = idx;
@@ -159,18 +159,18 @@ static void cache_push_front_lru(TTF_Font* font, int idx) {
     font->lru_head = idx;
 }
 
-static unsigned int get_hash(int cp, int hash_size) { return ((unsigned int)cp) & (hash_size - 1); }
+static uint32_t get_hash(int32_t cp, int32_t hash_size) { return ((uint32_t)cp) & (hash_size - 1); }
 
-static void hash_insert(TTF_Font* font, int cp, int idx) {
-    unsigned int hash = get_hash(cp, font->hash_size);
+static void hash_insert(TTF_Font* font, int32_t cp, int32_t idx) {
+    uint32_t hash = get_hash(cp, font->hash_size);
     font->cache_nodes[idx].codepoint = cp;
     font->cache_nodes[idx].next = font->hash_table[hash];
     font->hash_table[hash] = idx;
 }
 
-static int hash_find(TTF_Font* font, int cp) {
-    unsigned int hash = get_hash(cp, font->hash_size);
-    int idx = font->hash_table[hash];
+static int32_t hash_find(TTF_Font* font, int32_t cp) {
+    uint32_t hash = get_hash(cp, font->hash_size);
+    int32_t idx = font->hash_table[hash];
     while (idx != -1) {
         if (font->cache_nodes[idx].codepoint == cp) return idx;
         idx = font->cache_nodes[idx].next;
@@ -178,12 +178,12 @@ static int hash_find(TTF_Font* font, int cp) {
     return -1;
 }
 
-static void hash_remove(TTF_Font* font, int cp) {
-    unsigned int hash = get_hash(cp, font->hash_size);
-    int* p_idx = &font->hash_table[hash];
+static void hash_remove(TTF_Font* font, int32_t cp) {
+    uint32_t hash = get_hash(cp, font->hash_size);
+    int32_t* p_idx = &font->hash_table[hash];
     while (*p_idx != -1) {
         if (font->cache_nodes[*p_idx].codepoint == cp) {
-            int target_idx = *p_idx;
+            int32_t target_idx = *p_idx;
             *p_idx = font->cache_nodes[target_idx].next;
             font->cache_nodes[target_idx].next = -1; 
             return;
@@ -194,14 +194,14 @@ static void hash_remove(TTF_Font* font, int cp) {
 
 static void apply_italic_skew(TTF_Bitmap *bmp, float skew) {
     if (skew <= 0.0f || !bmp->pixels) return;
-    int new_w = bmp->width + (int)(bmp->height * skew) + 1;
+    int32_t new_w = bmp->width + (int32_t)(bmp->height * skew) + 1;
     unsigned char *new_pixels = (unsigned char*)TTF_MALLOC(new_w * bmp->height);
     if (!new_pixels) return;
     TTF_MEMSET(new_pixels, 0, new_w * bmp->height);
 
-    for (int y = 0; y < bmp->height; y++) {
-        int offset = (int)((bmp->height - y) * skew);
-        for (int x = 0; x < bmp->width; x++) {
+    for (int32_t y = 0; y < bmp->height; y++) {
+        int32_t offset = (int32_t)((bmp->height - y) * skew);
+        for (int32_t x = 0; x < bmp->width; x++) {
             new_pixels[y * new_w + x + offset] = bmp->pixels[y * bmp->width + x];
         }
     }
@@ -210,7 +210,7 @@ static void apply_italic_skew(TTF_Bitmap *bmp, float skew) {
     bmp->width = new_w;
 }
 
-static void downsample_bilinear(TTF_Bitmap *bmp, int target_w, int target_h) {
+static void downsample_bilinear(TTF_Bitmap *bmp, int32_t target_w, int32_t target_h) {
     if (bmp->width == target_w && bmp->height == target_h) return;
     if (target_w <= 0 || target_h <= 0) return;
 
@@ -221,15 +221,15 @@ static void downsample_bilinear(TTF_Bitmap *bmp, int target_w, int target_h) {
     float scale_x = (float)bmp->width / target_w;
     float scale_y = (float)bmp->height / target_h;
     
-    for (int y = 0; y < target_h; y++) {
+    for (int32_t y = 0; y < target_h; y++) {
         float fy = y * scale_y;
-        int y0 = (int)fy;
-        int y1 = y0 + 1;
+        int32_t y0 = (int32_t)fy;
+        int32_t y1 = y0 + 1;
         float dy = fy - y0;
-        for (int x = 0; x < target_w; x++) {
+        for (int32_t x = 0; x < target_w; x++) {
             float fx = x * scale_x;
-            int x0 = (int)fx;
-            int x1 = x0 + 1;
+            int32_t x0 = (int32_t)fx;
+            int32_t x1 = x0 + 1;
             float dx = fx - x0;
             
             unsigned char c00 = bmp->pixels[y0 * bmp->width + x0];
@@ -247,11 +247,11 @@ static void downsample_bilinear(TTF_Bitmap *bmp, int target_w, int target_h) {
     bmp->height = target_h;
 }
 
-static TTF_CacheNode* get_glyph(TTF_Font* font, int codepoint) {
+static TTF_CacheNode* get_glyph(TTF_Font* font, int32_t codepoint) {
     if (!font->is_initialized) return NULL;
     TTF_MUTEX_LOCK(font->lock);
 
-    int idx = hash_find(font, codepoint);
+    int32_t idx = hash_find(font, codepoint);
     if (idx != -1) {
         cache_unlink_lru(font, idx);
         cache_push_front_lru(font, idx);
@@ -282,17 +282,17 @@ static TTF_CacheNode* get_glyph(TTF_Font* font, int codepoint) {
     node->next = -1; 
     node->codepoint = codepoint;
     
-    int advanceWidth, leftSideBearing;
+    int32_t advanceWidth, leftSideBearing;
     stbtt_GetCodepointHMetrics(&font->info, codepoint, &advanceWidth, &leftSideBearing);
-    node->advanceWidth = (int)(advanceWidth * font->scale);
+    node->advanceWidth = (int32_t)(advanceWidth * font->scale);
     
-    int x0, y0, x1, y1;
+    int32_t x0, y0, x1, y1;
     float subpix_shift = 0.0f;
     stbtt_GetCodepointBitmapBoxSubpixel(&font->info, codepoint, font->scale * font->oversampling, 
                                         font->scale * font->oversampling, subpix_shift, subpix_shift, &x0, &y0, &x1, &y1);
     node->off_x = x0; node->off_y = y0;
     
-    int w = x1 - x0; int h = y1 - y0;
+    int32_t w = x1 - x0; int32_t h = y1 - y0;
     node->bmp.width = w; node->bmp.height = h;
     
     if (w > 0 && h > 0) {
@@ -309,17 +309,17 @@ static TTF_CacheNode* get_glyph(TTF_Font* font, int codepoint) {
                                           subpix_shift, subpix_shift, codepoint);
 
         if (font->bold_strength > 0) {
-            for (int b = 1; b <= font->bold_strength; b++) {
-                for (int y = 0; y < h; y++) {
-                    for (int x = b; x < w; x++) {
+            for (int32_t b = 1; b <= font->bold_strength; b++) {
+                for (int32_t y = 0; y < h; y++) {
+                    for (int32_t x = b; x < w; x++) {
                         unsigned char val = node->bmp.pixels[y * w + x - b];
                         if (val > node->bmp.pixels[y * w + x]) node->bmp.pixels[y * w + x] = val;
                     }
                 }
             }
-            for (int b = 1; b <= font->bold_strength; b++) {
-                for (int y = b; y < h; y++) {
-                    for (int x = 0; x < w; x++) {
+            for (int32_t b = 1; b <= font->bold_strength; b++) {
+                for (int32_t y = b; y < h; y++) {
+                    for (int32_t x = 0; x < w; x++) {
                         unsigned char val = node->bmp.pixels[(y - b) * w + x];
                         if (val > node->bmp.pixels[y * w + x]) node->bmp.pixels[y * w + x] = val;
                     }
@@ -329,12 +329,12 @@ static TTF_CacheNode* get_glyph(TTF_Font* font, int codepoint) {
 
         if (font->italic_skew > 0.0f) {
             apply_italic_skew(&node->bmp, font->italic_skew);
-            node->off_x -= (int)(node->bmp.height * font->italic_skew);
+            node->off_x -= (int32_t)(node->bmp.height * font->italic_skew);
         }
 
         if (font->oversampling > 1) {
-            int target_w = node->bmp.width / font->oversampling;
-            int target_h = node->bmp.height / font->oversampling;
+            int32_t target_w = node->bmp.width / font->oversampling;
+            int32_t target_h = node->bmp.height / font->oversampling;
             downsample_bilinear(&node->bmp, target_w, target_h);
             node->off_x /= font->oversampling;
             node->off_y /= font->oversampling;
@@ -359,7 +359,7 @@ fail:
 
 // ==================== 外部 API 实现 ====================
 
-TTF_Font* TTF_CreateFont(int cache_capacity) {
+TTF_Font* TTF_CreateFont(int32_t cache_capacity) {
     if (cache_capacity <= 0) cache_capacity = 256;
     TTF_Font* font = (TTF_Font*)TTF_MALLOC(sizeof(TTF_Font));
     if (!font) return NULL;
@@ -368,7 +368,7 @@ TTF_Font* TTF_CreateFont(int cache_capacity) {
     font->cache_capacity = cache_capacity;
     font->hash_size = next_power_of_two(cache_capacity * 2);
     font->cache_nodes = (TTF_CacheNode*)TTF_MALLOC(sizeof(TTF_CacheNode) * font->cache_capacity);
-    font->hash_table = (int*)TTF_MALLOC(sizeof(int) * font->hash_size);
+    font->hash_table = (int32_t*)TTF_MALLOC(sizeof(int32_t) * font->hash_size);
     
     if (!font->cache_nodes || !font->hash_table) {
         if (font->cache_nodes) TTF_FREE(font->cache_nodes);
@@ -389,7 +389,7 @@ TTF_Font* TTF_CreateFont(int cache_capacity) {
 void TTF_ClearGlyphCache(TTF_Font *font) {
     if (!font) return;
     TTF_MUTEX_LOCK(font->lock);
-    for (int i = 0; i < font->cache_capacity; i++) {
+    for (int32_t i = 0; i < font->cache_capacity; i++) {
         if (font->cache_nodes[i].bmp.pixels) {
             TTF_FREE(font->cache_nodes[i].bmp.pixels);
             font->cache_nodes[i].bmp.pixels = NULL;
@@ -420,7 +420,7 @@ void TTF_GetCacheStats(TTF_Font *font, TTF_CacheStats *out_stats) {
     TTF_MUTEX_UNLOCK(font->lock);
 }
 
-bool TTF_LoadFontFromMemory(TTF_Font *font, const unsigned char *data, size_t data_size, int pixel_height) {
+bool TTF_LoadFontFromMemory(TTF_Font *font, const unsigned char *data, size_t data_size, int32_t pixel_height) {
     if (!font || !data || data_size == 0) return false;
     if (font->is_initialized) TTF_ClearGlyphCache(font);
     if (font->data) { TTF_FREE(font->data); font->data = NULL; }
@@ -429,7 +429,7 @@ bool TTF_LoadFontFromMemory(TTF_Font *font, const unsigned char *data, size_t da
     if (!font->data) return false;
     TTF_MEMCPY(font->data, data, data_size);
 
-    int offset = stbtt_GetFontOffsetForIndex(font->data, 0);
+    int32_t offset = stbtt_GetFontOffsetForIndex(font->data, 0);
     if (!stbtt_InitFont(&font->info, font->data, offset)) {
         TTF_FREE(font->data); font->data = NULL; font->is_initialized = false; return false;
     }
@@ -438,17 +438,17 @@ bool TTF_LoadFontFromMemory(TTF_Font *font, const unsigned char *data, size_t da
     return true;
 }
 
-void TTF_SetPixelHeight(TTF_Font *font, int pixel_height) {
+void TTF_SetPixelHeight(TTF_Font *font, int32_t pixel_height) {
     if (!font || !font->is_initialized || pixel_height <= 0) return;
     if (font->pixel_height != pixel_height) TTF_ClearGlyphCache(font);
     font->pixel_height = pixel_height;
     font->scale = stbtt_ScaleForPixelHeight(&font->info, (float)pixel_height);
-    int ascent, descent, lineGap;
+    int32_t ascent, descent, lineGap;
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &lineGap);
-    font->ascent = (int)(ascent * font->scale);
+    font->ascent = (int32_t)(ascent * font->scale);
 }
 
-void TTF_SetOversampling(TTF_Font *font, int oversampling) {
+void TTF_SetOversampling(TTF_Font *font, int32_t oversampling) {
     if (!font || oversampling < 1 || oversampling > 4) return;
     if (font->oversampling != oversampling) {
         TTF_ClearGlyphCache(font);
@@ -456,7 +456,7 @@ void TTF_SetOversampling(TTF_Font *font, int oversampling) {
     }
 }
 
-void TTF_SetFontStyle(TTF_Font *font, int bold_strength, float italic_skew) {
+void TTF_SetFontStyle(TTF_Font *font, int32_t bold_strength, float italic_skew) {
     if (!font) return;
     bold_strength = bold_strength > 3 ? 3 : (bold_strength < 0 ? 0 : bold_strength);
     italic_skew = italic_skew > 0.5f ? 0.5f : (italic_skew < 0.0f ? 0.0f : italic_skew);
@@ -468,29 +468,29 @@ void TTF_SetFontStyle(TTF_Font *font, int bold_strength, float italic_skew) {
     }
 }
 
-void TTF_GetTextSize(TTF_Font *font, const char *text, int *out_width, int *out_height) {
+void TTF_GetTextSize(TTF_Font *font, const char *text, int32_t *out_width, int32_t *out_height) {
     if (!font || !text || !font->is_initialized) return;
-    int len = (int)TTF_STRLEN(text);
-    int x_pos = 0, max_x = 0, min_y = 0, max_y = 0, i = 0;
+    int32_t len = (int32_t)TTF_STRLEN(text);
+    int32_t x_pos = 0, max_x = 0, min_y = 0, max_y = 0, i = 0;
 
     while (i < len) {
-        int advance = 0;
-        int codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
+        int32_t advance = 0;
+        int32_t codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
         TTF_CacheNode* node = get_glyph(font, codepoint);
         if (node) {
-            int top = font->ascent + node->off_y;
-            int bot = top + node->bmp.height;
+            int32_t top = font->ascent + node->off_y;
+            int32_t bot = top + node->bmp.height;
             if (top < min_y) min_y = top;
             if (bot > max_y) max_y = bot;
-            int right = x_pos + node->off_x + node->bmp.width;
+            int32_t right = x_pos + node->off_x + node->bmp.width;
             if (right > max_x) max_x = right;
             x_pos += node->advanceWidth;
         }
         if (i + advance < len) {
-            int next_advance = 0;
-            int next_cp = utf8_to_codepoint(&text[i + advance], len - (i + advance), &next_advance);
-            int kern = stbtt_GetCodepointKernAdvance(&font->info, codepoint, next_cp);
-            x_pos += (int)(kern * font->scale);
+            int32_t next_advance = 0;
+            int32_t next_cp = utf8_to_codepoint(&text[i + advance], len - (i + advance), &next_advance);
+            int32_t kern = stbtt_GetCodepointKernAdvance(&font->info, codepoint, next_cp);
+            x_pos += (int32_t)(kern * font->scale);
         }
         i += advance;
     }
@@ -498,7 +498,7 @@ void TTF_GetTextSize(TTF_Font *font, const char *text, int *out_width, int *out_
     if (out_height) *out_height = max_y - min_y;
 }
 
-const TTF_Bitmap* TTF_GetGlyphBitmap(TTF_Font *font, int codepoint, int *out_advance, int *out_off_x, int *out_off_y) {
+const TTF_Bitmap* TTF_GetGlyphBitmap(TTF_Font *font, int32_t codepoint, int32_t *out_advance, int32_t *out_off_x, int32_t *out_off_y) {
     TTF_CacheNode* node = get_glyph(font, codepoint);
     if (!node) return NULL;
     if (out_advance) *out_advance = node->advanceWidth;
@@ -507,9 +507,9 @@ const TTF_Bitmap* TTF_GetGlyphBitmap(TTF_Font *font, int codepoint, int *out_adv
     return &node->bmp;
 }
 
-TTF_Bitmap TTF_RenderChar(TTF_Font *font, int codepoint, int *out_x_offset, int *out_y_offset) {
+TTF_Bitmap TTF_RenderChar(TTF_Font *font, int32_t codepoint, int32_t *out_x_offset, int32_t *out_y_offset) {
     TTF_Bitmap bmp = {0};
-    int off_x, off_y, advance;
+    int32_t off_x, off_y, advance;
     const TTF_Bitmap* ref = TTF_GetGlyphBitmap(font, codepoint, &advance, &off_x, &off_y);
     if (!ref) return bmp;
     if (out_x_offset) *out_x_offset = off_x;
@@ -525,24 +525,24 @@ TTF_Bitmap TTF_RenderChar(TTF_Font *font, int codepoint, int *out_x_offset, int 
     return bmp;
 }
 
-static void draw_line_to_buffer(TTF_Font *font, const char *text, int len, 
-                                unsigned char *dst_pixels, int dst_w, int dst_h, 
-                                int start_x, int start_y, int line_min_y) {
-    int x_pos = start_x;
-    int i = 0;
+static void draw_line_to_buffer(TTF_Font *font, const char *text, int32_t len, 
+                                unsigned char *dst_pixels, int32_t dst_w, int32_t dst_h, 
+                                int32_t start_x, int32_t start_y, int32_t line_min_y) {
+    int32_t x_pos = start_x;
+    int32_t i = 0;
     while (i < len) {
-        int advance = 0;
-        int codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
+        int32_t advance = 0;
+        int32_t codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
         TTF_CacheNode* node = get_glyph(font, codepoint);
         if (node && node->bmp.pixels) {
-            int draw_x = x_pos + node->off_x;
-            int draw_y = start_y + font->ascent + node->off_y - line_min_y;
-            for (int y = 0; y < node->bmp.height; y++) {
-                for (int x = 0; x < node->bmp.width; x++) {
-                    int px = draw_x + x; int py = draw_y + y;
+            int32_t draw_x = x_pos + node->off_x;
+            int32_t draw_y = start_y + font->ascent + node->off_y - line_min_y;
+            for (int32_t y = 0; y < node->bmp.height; y++) {
+                for (int32_t x = 0; x < node->bmp.width; x++) {
+                    int32_t px = draw_x + x; int32_t py = draw_y + y;
                     if (px >= 0 && px < dst_w && py >= 0 && py < dst_h) {
-                        int idx = py * dst_w + px;
-                        int c_idx = y * node->bmp.width + x;
+                        int32_t idx = py * dst_w + px;
+                        int32_t c_idx = y * node->bmp.width + x;
                         if (node->bmp.pixels[c_idx] > dst_pixels[idx]) {
                             dst_pixels[idx] = node->bmp.pixels[c_idx];
                         }
@@ -552,10 +552,10 @@ static void draw_line_to_buffer(TTF_Font *font, const char *text, int len,
             x_pos += node->advanceWidth;
         }
         if (i + advance < len) {
-            int next_advance = 0;
-            int next_cp = utf8_to_codepoint(&text[i + advance], len - (i + advance), &next_advance);
-            int kern = stbtt_GetCodepointKernAdvance(&font->info, codepoint, next_cp);
-            x_pos += (int)(kern * font->scale);
+            int32_t next_advance = 0;
+            int32_t next_cp = utf8_to_codepoint(&text[i + advance], len - (i + advance), &next_advance);
+            int32_t kern = stbtt_GetCodepointKernAdvance(&font->info, codepoint, next_cp);
+            x_pos += (int32_t)(kern * font->scale);
         }
         i += advance;
     }
@@ -563,16 +563,16 @@ static void draw_line_to_buffer(TTF_Font *font, const char *text, int len,
 
 bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bmp) {
     if (!font || !text || !out_bmp || !font->is_initialized) return false;
-    int len = (int)TTF_STRLEN(text);
+    int32_t len = (int32_t)TTF_STRLEN(text);
     if (len == 0) return false;
 
-    int cmd_capacity = 256;
+    int32_t cmd_capacity = 256;
     TTF_RenderCmd* cmds = (TTF_RenderCmd*)TTF_MALLOC(sizeof(TTF_RenderCmd) * cmd_capacity);
     if (!cmds) return false;
 
-    int cmd_count = 0;
-    int x_pos = 0, max_x = 0, min_y = 0, max_y = 0;
-    int i = 0;
+    int32_t cmd_count = 0;
+    int32_t x_pos = 0, max_x = 0, min_y = 0, max_y = 0;
+    int32_t i = 0;
 
     while (i < len) {
         if (cmd_count >= cmd_capacity) {
@@ -582,35 +582,35 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
             cmds = new_cmds;
         }
 
-        int advance = 0;
-        int codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
+        int32_t advance = 0;
+        int32_t codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
         TTF_RenderCmd* cmd = &cmds[cmd_count++];
         cmd->codepoint = codepoint;
         cmd->x_advance = 0;
 
         TTF_CacheNode* node = get_glyph(font, codepoint);
         if (node) {
-            int top = font->ascent + node->off_y;
-            int bot = top + node->bmp.height;
+            int32_t top = font->ascent + node->off_y;
+            int32_t bot = top + node->bmp.height;
             if (top < min_y) min_y = top;
             if (bot > max_y) max_y = bot;
-            int right = x_pos + node->off_x + node->bmp.width;
+            int32_t right = x_pos + node->off_x + node->bmp.width;
             if (right > max_x) max_x = right;
             cmd->x_advance = node->advanceWidth;
         }
 
         if (i + advance < len) {
-            int next_advance = 0;
-            int next_cp = utf8_to_codepoint(&text[i + advance], len - (i + advance), &next_advance);
-            int kern = stbtt_GetCodepointKernAdvance(&font->info, codepoint, next_cp);
-            cmd->x_advance += (int)(kern * font->scale);
+            int32_t next_advance = 0;
+            int32_t next_cp = utf8_to_codepoint(&text[i + advance], len - (i + advance), &next_advance);
+            int32_t kern = stbtt_GetCodepointKernAdvance(&font->info, codepoint, next_cp);
+            cmd->x_advance += (int32_t)(kern * font->scale);
         }
         x_pos += cmd->x_advance;
         i += advance;
     }
 
-    int text_width = max_x;
-    int text_height = max_y - min_y;
+    int32_t text_width = max_x;
+    int32_t text_height = max_y - min_y;
     if (text_width <= 0 || text_height <= 0) { TTF_FREE(cmds); return false; }
 
     if (!out_bmp->pixels || out_bmp->width < text_width || out_bmp->height < text_height) {
@@ -623,18 +623,18 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
     }
     TTF_MEMSET(out_bmp->pixels, 0, (size_t)text_width * text_height);
 
-    int x_pos2 = 0;
-    for (int k = 0; k < cmd_count; k++) {
+    int32_t x_pos2 = 0;
+    for (int32_t k = 0; k < cmd_count; k++) {
         TTF_CacheNode* node = get_glyph(font, cmds[k].codepoint);
         if (node && node->bmp.pixels) {
-            int draw_x = x_pos2 + node->off_x;
-            int draw_y = font->ascent + node->off_y - min_y;
-            for (int y = 0; y < node->bmp.height; y++) {
-                for (int x = 0; x < node->bmp.width; x++) {
-                    int px = draw_x + x; int py = draw_y + y;
+            int32_t draw_x = x_pos2 + node->off_x;
+            int32_t draw_y = font->ascent + node->off_y - min_y;
+            for (int32_t y = 0; y < node->bmp.height; y++) {
+                for (int32_t x = 0; x < node->bmp.width; x++) {
+                    int32_t px = draw_x + x; int32_t py = draw_y + y;
                     if (px >= 0 && px < text_width && py >= 0 && py < text_height) {
-                        int idx = py * text_width + px;
-                        int c_idx = y * node->bmp.width + x;
+                        int32_t idx = py * text_width + px;
+                        int32_t c_idx = y * node->bmp.width + x;
                         if (node->bmp.pixels[c_idx] > out_bmp->pixels[idx]) {
                             out_bmp->pixels[idx] = node->bmp.pixels[c_idx];
                         }
@@ -662,33 +662,33 @@ void TTF_FreeBitmap(TTF_Bitmap *bitmap) {
     }
 }
 
-TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int max_width, TTF_Align align, int line_gap) {
+TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max_width, TTF_Align align, int32_t line_gap) {
     TTF_Bitmap final_bmp = {0};
     if (!font || !text || !font->is_initialized) return final_bmp;
 
-    int len = (int)TTF_STRLEN(text);
+    int32_t len = (int32_t)TTF_STRLEN(text);
     if (len == 0) return final_bmp;
 
-    int lines_capacity = 16;
-    int line_count = 0;
-    typedef struct { int start; int end; int width; int height; int min_y; } LineInfo;
+    int32_t lines_capacity = 16;
+    int32_t line_count = 0;
+    typedef struct { int32_t start; int32_t end; int32_t width; int32_t height; int32_t min_y; } LineInfo;
     LineInfo *lines = (LineInfo*)TTF_MALLOC(sizeof(LineInfo) * lines_capacity);
     if (!lines) return final_bmp;
 
-    int i = 0;
-    int total_height = 0;
-    int max_line_width = 0;
+    int32_t i = 0;
+    int32_t total_height = 0;
+    int32_t max_line_width = 0;
 
     while (i < len) {
-        int line_start = i;
-        int line_end = i;
-        int last_space = -1;
-        int x_pos = 0;
-        int min_y = 0, max_y = 0;
+        int32_t line_start = i;
+        int32_t line_end = i;
+        int32_t last_space = -1;
+        int32_t x_pos = 0;
+        int32_t min_y = 0, max_y = 0;
 
         while (i < len) {
-            int advance = 0;
-            int codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
+            int32_t advance = 0;
+            int32_t codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
             
             if (codepoint == '\n') {
                 line_end = i;
@@ -697,7 +697,7 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int max_wid
             }
 
             TTF_CacheNode* node = get_glyph(font, codepoint);
-            int char_w = node ? node->advanceWidth : 0;
+            int32_t char_w = node ? node->advanceWidth : 0;
 
             if (max_width > 0 && x_pos + char_w > max_width) {
                 if (is_punct_no_start(codepoint) && i > line_start) {
@@ -717,8 +717,8 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int max_wid
             }
 
             if (node) {
-                int top = font->ascent + node->off_y;
-                int bot = top + node->bmp.height;
+                int32_t top = font->ascent + node->off_y;
+                int32_t bot = top + node->bmp.height;
                 if (top < min_y) min_y = top;
                 if (bot > max_y) max_y = bot;
             }
@@ -758,10 +758,10 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int max_wid
     if (!final_bmp.pixels) { TTF_FREE(lines); final_bmp.width = 0; final_bmp.height = 0; return final_bmp; }
     TTF_MEMSET(final_bmp.pixels, 0, mem_size);
 
-    int y_cursor = 0;
-    for (int l = 0; l < line_count; l++) {
-        int line_len = lines[l].end - lines[l].start;
-        int x_offset = 0;
+    int32_t y_cursor = 0;
+    for (int32_t l = 0; l < line_count; l++) {
+        int32_t line_len = lines[l].end - lines[l].start;
+        int32_t x_offset = 0;
         if (align == TTF_ALIGN_CENTER) x_offset = (final_bmp.width - lines[l].width) / 2;
         else if (align == TTF_ALIGN_RIGHT) x_offset = final_bmp.width - lines[l].width;
 

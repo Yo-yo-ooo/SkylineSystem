@@ -49,7 +49,7 @@ $(call USER_VARIABLE,KLDFLAGS,)
 
 # Ensure the dependencies have been obtained.
 ifneq ($(shell ( test '$(MAKECMDGOALS)' = clean || test '$(MAKECMDGOALS)' = distclean ); echo $$?),0)
-    ifeq ($(shell ( ! test -d freestnd-c-hdrs || ! test -d cc-runtime || ! test -f src/limine.h ); echo $$?),0)
+    ifeq ($(shell ( ! test -d cc-runtime || ! test -f src/limine.h ); echo $$?),0)
         $(error Please run the ./get-deps script first)
     endif
 endif
@@ -81,7 +81,7 @@ override KCFLAGS += \
 # Internal C preprocessor flags that should not be changed by the user.
 override KCPPFLAGS := \
     -I src \
-	-isystem freestnd-c-hdrs/$(KARCH)/include \
+	-isystem ../ablib/freestndchdrs/$(KARCH)/include \
 	-I$(SS_BUILD_DIR)/kernel/include \
 	-Ifakestdlib \
 	-DLIMINE_API_REVISION=5 \
