@@ -17,7 +17,7 @@
 [![License: GPL v3.0 w/RLE](https://img.shields.io/badge/ablib_freestndchdrs-GPLv3%20w%2F%20RLE-blue)](https://www.gnu.org/licenses/gcc-exception-3.1.html)
 
 * **`kernel/`**: GPL-2.0-only
-* **`lib/` `programs/` `/ablib/atomic/`**: MIT License
+* **`lib/` `programs/` `ablib/atomic/`**: MIT License
 Kernel and userspace run in separate address spaces, communicate only via syscall, no GPL copyleft infection.
 Full compliance with REUSE standard, see root LICENSES for full statement.
 * **`/ablib/freestndchdrs/`**: This directory is licensed under the **GNU General Public License v3.0 (GPLv3)**, supplemented with the **GCC Runtime Library Exception 3.1**. 
