@@ -247,7 +247,7 @@ ifdef ($(KARCH),x86_64)
 endif
 	@$(MAKE) -C kernel clean
 	@$(MAKE) -C programs clean
-	@$(MAKE) -C saf clean
+	@$(MAKE) -C res/saf clean
 	@$(MAKE) -C lib clean
 	rm -rf iso_root *.iso *.hdd
 
@@ -259,7 +259,7 @@ distclean:
 
 cm:
 	@$(MAKE) clean 
-	@$(MAKE) -C saf
+	@$(MAKE) -C res/saf
 ifeq ($(KARCH),x86_64)
 ifeq ($(NOT_COMPILE_X86MEM),0)
 	$(MAKE) -C ablib/arch/x86_64/x86mem
@@ -282,7 +282,7 @@ ifeq ($(KARCH),x86_64)
 endif
 
 ma:
-	@$(MAKE) -C saf
+	@$(MAKE) -C res/saf
 ifeq ($(KARCH),x86_64)
 	if [ ! -f "$(PROGRAM_IMAGE_NAME).img" ]; then \
 		@echo "Creating program image $(PROGRAM_IMAGE_NAME).img ..."; \

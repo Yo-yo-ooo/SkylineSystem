@@ -29,10 +29,10 @@ HAS_AVX2 := 1
 HAS_AVX_512 := 1
 endif
 
-COMPILER_SUPPORT_SSE_4_2 := $(shell gcc -msse4.2 -o /dev/null $(SS_BUILD_DIR)/scripts/cputest/x86_64/sse4_2.c > /dev/null 2>&1 && echo "yes" || echo "no";)
-COMPILER_SUPPORT_AVX := $(shell gcc -mavx -o /dev/null $(SS_BUILD_DIR)/scripts/cputest/x86_64/avx.c > /dev/null 2>&1 && echo "yes" || echo "no";)
-COMPILER_SUPPORT_AVX2 := $(shell gcc -mavx2 -o /dev/null $(SS_BUILD_DIR)/scripts/cputest/x86_64/avx2.c > /dev/null 2>&1 && echo "yes" || echo "no";)
-COMPILER_SUPPORT_AVX512 := $(shell gcc -mavx512f -o /dev/null $(SS_BUILD_DIR)/scripts/cputest/x86_64/avx512f.c > /dev/null 2>&1 && echo "yes" || echo "no";)
+COMPILER_SUPPORT_SSE_4_2 := $(shell gcc -msse4.2 -o /dev/null $(SS_BUILD_DIR)/res/scripts/cputest/x86_64/sse4_2.c > /dev/null 2>&1 && echo "yes" || echo "no";)
+COMPILER_SUPPORT_AVX := $(shell gcc -mavx -o /dev/null $(SS_BUILD_DIR)/res/scripts/cputest/x86_64/avx.c > /dev/null 2>&1 && echo "yes" || echo "no";)
+COMPILER_SUPPORT_AVX2 := $(shell gcc -mavx2 -o /dev/null $(SS_BUILD_DIR)/res/scripts/cputest/x86_64/avx2.c > /dev/null 2>&1 && echo "yes" || echo "no";)
+COMPILER_SUPPORT_AVX512 := $(shell gcc -mavx512f -o /dev/null $(SS_BUILD_DIR)/res/scripts/cputest/x86_64/avx512f.c > /dev/null 2>&1 && echo "yes" || echo "no";)
 
 # 1:TRUE
 # 0:FALSE

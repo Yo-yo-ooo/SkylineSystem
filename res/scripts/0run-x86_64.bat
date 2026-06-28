@@ -15,7 +15,7 @@ if not exist %SourceFile% (
 
 
 qemu-system-x86_64 -machine q35 -cpu max ^
--cdrom %~dp0/../SkylineSystem-x86_64.iso -m 2G -smp 4 ^
+-cdrom %~dp0/../../SkylineSystem-x86_64.iso -m 2G -smp 4 ^
 -serial stdio -net nic -device AC97 ^
 -drive file=%SourceFile%,if=none,id=drive0 ^
 -device ide-hd,drive=drive0,bus=ide.0 ^

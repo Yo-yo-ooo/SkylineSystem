@@ -74,7 +74,7 @@ qemu-system-x86_64 -machine q35 -cpu max \
 -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait 
 ```
 ### In WSL(Windows Subsystem for Linux):
-see ./scripts/ folder run the arch you need to run
+see ./res/scripts/ folder run the arch you need to run
 ## Debug
 ```bash
 #first run qemu
