@@ -7,11 +7,18 @@ License: GPL-2.0-only
 Full text: ./LICENSES/GPL-2.0-only
 Copyleft applies. Any distributed modified kernel binaries must provide full modified source code.
 
-2. Userspace Source Code
-Scope: lib/ ablib/atomic  programs/
+2. Userspace Source Code & Some part of ablib code
+Scope: lib/ ablib/atomic/  programs/
 License: MIT
 Full text: ./LICENSES/MIT
 Permissive terms. Modification, closed-source commercial distribution are permitted, provided original copyright notice is retained.
+
+3. freestndchdrs
+Scope: ablib/freestndchdrs/
+License: GPL-3.0-or-later WITH GCC-exception-3.1
+Full text: ablib/freestndchdrs/COPYING3 and ablib/freestndchdrs/COPYING3.RUNTIME
+Terms: Licensed under GPLv3, but with the GCC Runtime Library Exception 3.1. This explicitly allows you to link this code into your independent (even closed-source) applications without triggering the copyleft requirements of the GPLv3.
+
 
 Critical Isolation Note:
 Kernel (Ring0) and userspace (Ring3) run in separate virtual address spaces and communicate only via syscall instructions. No static/dynamic linking exists between them.
