@@ -22,7 +22,7 @@ Kernel and userspace run in separate address spaces, communicate only via syscal
 Full compliance with REUSE standard, see root LICENSES for full statement.
 * **`/ablib/freestndchdrs/`**: This directory is licensed under the **GNU General Public License v3.0 (GPLv3)**, supplemented with the **GCC Runtime Library Exception 3.1**. 
     *   *What this means:* You may link this library into your proprietary/closed-source application without being required to release your own source code. 
-    *   Please refer to `COPYING.RUNTIME` within that folder for full details.
+    *   Please refer to `COPYING3.RUNTIME` within that folder for full details.
 
 > [!CAUTION]
 > Don't run it in real machine because it's now in test
