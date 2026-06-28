@@ -264,12 +264,15 @@ ifeq ($(KARCH),x86_64)
 ifeq ($(NOT_COMPILE_X86MEM),0)
 	$(MAKE) -C ablib/arch/x86_64/x86mem
 endif
-	@qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
-	@qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
-	dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2
-	@mkfs.ext4 \
-	-O ^metadata_csum \
-	./$(PROGRAM_IMAGE_NAME).img
+	if [ ! -f "$(PROGRAM_IMAGE_NAME).img" ]; then \
+		@echo "Creating program image $(PROGRAM_IMAGE_NAME).img ..."; \
+		qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2; \
+		qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G; \
+		dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2; \
+		mkfs.ext4 -O ^metadata_csum ./$(PROGRAM_IMAGE_NAME).img; \
+	else \
+		yes | mkfs.ext4 -O ^metadata_csum ./$(PROGRAM_IMAGE_NAME).img; \
+	fi
 	@$(MAKE) -C lib
 	@$(MAKE) -C programs
 endif
@@ -281,12 +284,15 @@ endif
 ma:
 	@$(MAKE) -C saf
 ifeq ($(KARCH),x86_64)
-	@qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2
-	@qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G
-	dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2
-	@mkfs.ext4 \
-	-O ^metadata_csum \
-	./$(PROGRAM_IMAGE_NAME).img
+	if [ ! -f "$(PROGRAM_IMAGE_NAME).img" ]; then \
+		@echo "Creating program image $(PROGRAM_IMAGE_NAME).img ..."; \
+		qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2; \
+		qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G; \
+		dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2; \
+		mkfs.ext4 -O ^metadata_csum ./$(PROGRAM_IMAGE_NAME).img; \
+	else \
+		yes | mkfs.ext4 -O ^metadata_csum ./$(PROGRAM_IMAGE_NAME).img; \
+	fi
 	@$(MAKE) -C programs
 endif
 	@$(MAKE) -j$(shell nproc)

@@ -12,7 +12,7 @@ AS 		= as
 RANLIB  = ranlib
 
 # 目录定义
-SRCDIRS = init stdc stl
+SRCDIRS = stdc
 INCDIR  = include
 OBJDIR  = obj
 BINDIR  = bin
