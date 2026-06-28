@@ -10,7 +10,7 @@
 #include <arch/x86_64/simd/simd.h>
 #include <klib/algorithm/queue.h>
 #include <klib/algorithm/art.h>
-#include <arch/x86_64/atomic/atomic_arch.h>
+#include <atomic/atomic.h>
 
 typedef struct UserTCB{
     uint64_t id;
@@ -341,7 +341,7 @@ retry:
 
     thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry){
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
-        thread->id = __a_fetch_addu64(&sched_tid,1);
+        thread->id = atomic_add_fetch_8(&sched_tid,1,0);
         thread->cpu_num = cpu_num;
         thread->parent = parent;
         thread->IsForkThread = false;
@@ -390,7 +390,7 @@ retry:
 
     thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]){
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
-        thread->id = __a_fetch_addu64(&sched_tid,1);
+        thread->id = atomic_add_fetch_8(&sched_tid,1,0);
         thread->cpu_num = cpu_num;
         thread->parent = parent;
         thread->IsForkThread = false;
@@ -527,7 +527,7 @@ retry:
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         cpu_t *cpu = get_lw_cpu();
         spinlock_lock(&cpu->sched_lock);
-        thread->id = __a_fetch_addu64(&sched_tid,1);
+        thread->id = atomic_add_fetch_8(&sched_tid,1,0);
         thread->cpu_num = cpu->id;
         thread->parent = proc;
         thread->IsForkThread = true;

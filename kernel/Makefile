@@ -64,6 +64,7 @@ override KCXX_IS_CLANG := $(shell ! $(CXX) --version 2>/dev/null | grep 'clang' 
 override KCFLAGS += \
 	-w \
 	-I$(SS_BUILD_DIR)/kernel/include \
+	-I$(SS_BUILD_DIR)/ablib \
     -nostdinc \
     -ffreestanding \
     -fno-stack-protector \

@@ -3,10 +3,7 @@
 #include <klib/klib.h>
 #include <stdint.h>
 #include <stddef.h>
-
-#ifdef __x86_64__
-#include <arch/x86_64/atomic/atomic_arch.h>
-#endif
+#include <atomic/atomic.h>
 
 extern "C" void Panic(const char* message){
     kerrorln("Panic!");
@@ -46,29 +43,18 @@ void hcf(void) {
 
 
 void spinlock_lock(spinlock_t* l) {
-    
+    while(atomic_test_and_set(l,1))
 #ifdef __x86_64__
-    while(true){
-        if(*l == 0)
-            if(__a_swap(l,1) == 0)
-                return;
-        __a_spin();
-    }
-#else
-    while (__sync_lock_test_and_set(l, 1)){
-        asm volatile("nop");
-    } 
+        asm volatile("pause");
+#elif defined(__aarch64__)
+        asm volatile("yield");
+#elif defined (__riscv)
+        asm volatile("pause");
 #endif
 }
 
 void spinlock_unlock(spinlock_t* l) {
-    //__sync_lock_release(l);
-    
-#ifdef __x86_64__
-    __a_store(l,0);
-#else
-    __sync_lock_release(l);
-#endif
+    atomic_store_4(l,0,0);
 }
 
 extern "C" void *__memcpy(void * d, const void * s, uint64_t n) { 

@@ -11,7 +11,6 @@
 #include <arch/x86_64/vmm/vmm.h>
 #include <conf.h>
 #include <klib/klib.h>
-#include <klib/algorithm/stl/vector.h>
 #include <klib/algorithm/hmap.h>
 #include <klib/rnd.h>
 /* PCI::PCIDeviceHeader* pciDevices[PCI_DEVICE_MAX] = {0};

@@ -14,8 +14,7 @@
 #include <arch/x86_64/drivers/hpet/hpet.h>
 #include <drivers/framebuffer/fb.h>
 #include <klib/renderer/rnd.h>
-//#include <desktop/basicdraw/basicdraw.h>
-#include <arch/x86_64/atomic/atomic_arch.h>
+#include <atomic/atomic.h>
 
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
@@ -81,7 +80,7 @@ void __init x86_64_init(void){
 
     Schedule::Install();
 
-    __a_store(&PrintFSERIAL,1);
+    atomic_store_4(&PrintFSERIAL,1,0);
 
     proc_t *proc = Schedule::NewProcess(true);
 
