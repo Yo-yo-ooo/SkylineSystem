@@ -15,8 +15,8 @@
 [![GPL-2.0 Kernel](https://img.shields.io/badge/Kernel-GPLv2--only-red)](./LICENSES/GPL-2.0-only)
 [![MIT Userspace](https://img.shields.io/badge/Userspace-MIT-green)](./LICENSES/MIT.txt)
 
-- Kernel source (kernel/): GPL-2.0-only
-- All code inside (lib/ programs/): MIT License
+* **`kernel/`**: GPL-2.0-only
+* **`lib/`&`programs/`**: MIT License
 Kernel and userspace run in separate address spaces, communicate only via syscall, no GPL copyleft infection.
 Full compliance with REUSE standard, see root LICENSES for full statement.
 * **`/ablib/freestndchdrs`**: This directory is licensed under the **GNU General Public License v3.0 (GPLv3)**, supplemented with the **GCC Runtime Library Exception 3.1**. 
