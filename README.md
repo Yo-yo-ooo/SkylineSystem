@@ -14,7 +14,7 @@
 ## License
 [![GPL-2.0 Kernel](https://img.shields.io/badge/Kernel-GPLv2--only-red)](./LICENSES/GPL-2.0-only)
 [![MIT Userspace](https://img.shields.io/badge/Userspace-MIT-green)](./LICENSES/MIT.txt)
-[![License: GPL v3.0 w/RLE](https://img.shields.io/badge/ablib-freestndchdrs-GPLv3%20w%2F%20RLE-blue)](https://www.gnu.org/licenses/gcc-exception-3.1.html)
+[![License: GPL v3.0 w/RLE](https://img.shields.io/badge/ablib_freestndchdrs-GPLv3%20w%2F%20RLE-blue)](https://www.gnu.org/licenses/gcc-exception-3.1.html)
 
 * **`kernel/`**: GPL-2.0-only
 * **`lib/`&`programs/`**: MIT License
