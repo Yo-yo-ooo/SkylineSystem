@@ -202,12 +202,18 @@ override KLDFLAGS += \
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
 # object and header dependency file names.
-CFILES := $(shell cd src && find . -not -path "./arch/*" -name "*.c" | LC_ALL=C sort)
-ASFILES := $(shell cd src && find . -not -path "./arch/*" -name "*.S" | LC_ALL=C sort)
-CPPFILES := $(shell cd src && find . -not -path "./arch/*" -name "*.cpp" | LC_ALL=C sort)
-CFILES += $(shell cd src && find arch/$(KARCH) -type f -name '*.c' | LC_ALL=C sort)
-ASFILES += $(shell cd src && find arch/$(KARCH) -type f -name '*.S' | LC_ALL=C sort)
-CPPFILES += $(shell cd src && find arch/$(KARCH) -type f -name '*.cpp' | LC_ALL=C sort)
+# 定义一个宏来统一处理文件查找逻辑，避免重复代码 (DRY 原则)
+# $1: 文件扩展名 (如 c, S, cpp)
+# 该宏会查找 src 下排除 arch 目录的通用文件，以及 src/arch/$(KARCH) 下的架构特定文件
+define find_sources
+ $(patsubst src/%,%,$(shell find src -type f -name "*.$(1)" -not -path "*/arch/*" | LC_ALL=C sort)) \
+ $(patsubst src/%,%,$(shell find src/arch/$(KARCH) -type f -name "*.$(1)" | LC_ALL=C sort))
+endef
+
+# 使用宏获取各类源文件列表
+CFILES := $(call find_sources,c)
+ASFILES := $(call find_sources,S)
+CPPFILES := $(call find_sources,cpp)
 
 ifeq ($(KARCH),x86_64)
 override NASMFILES := $(shell cd src && find -L * -type f -name '*.asm' | LC_ALL=C sort)
@@ -249,27 +255,28 @@ endif
 
 # Compilation rules for *.c files.
 obj-$(KARCH)/%.c.o: src/%.c Makefile
-	echo C $<
-	mkdir -p "$$(dirname $@)"
-	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+	@echo C $<
+	@mkdir -p "$$(dirname $@)"
+	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 # Compilation rules for *.S files.
 obj-$(KARCH)/%.S.o: src/%.S Makefile
-	echo GAS $<
-	mkdir -p "$$(dirname $@)"
-	$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+	@echo GAS $<
+	@mkdir -p "$$(dirname $@)"
+	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 
 obj-$(KARCH)/%.cpp.o: src/%.cpp Makefile
-	echo C++ $<
-	mkdir -p "$$(dirname $@)"
-	$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+	@echo C++ $<
+	@mkdir -p "$$(dirname $@)"
+	@$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
 ifeq ($(KARCH),x86_64)
 # Compilation rules for *.asm (nasm) files.
 obj-$(KARCH)/%.asm.o: src/%.asm Makefile
-	mkdir -p "$$(dirname $@)"
-	nasm $(KNASMFLAGS) $< -o $@
+	@echo NASM $<
+	@mkdir -p "$$(dirname $@)"
+	@nasm $(KNASMFLAGS) $< -o $@
 endif
 
 # Remove object files and the final executable.
