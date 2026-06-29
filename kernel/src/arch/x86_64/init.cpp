@@ -84,14 +84,14 @@ void __init x86_64_init(void){
 
     proc_t *proc = Schedule::NewProcess(true);
 
-    kinfoln("Creating syscalltest process...");
+    kinfoln("Creating desktop process...");
     void *R = VMM::Alloc(kernel_pagemap,1000,false);
     VMM::Free(kernel_pagemap,R);
     char *argv[] = {(char*)"Test Main Thread"};
     char *envp[] = {nullptr};
-    thread_t *syscalltest = Schedule::NewThread(proc, 0, 0, 
-        "/mp/syscalltest.elf", 1, argv, envp); 
-    kinfoln("syscalltest PROCESS: %d",proc->id);
+    thread_t *desktop = Schedule::NewThread(proc, 0, 0, 
+        "/mp/desktop.elf", 1, argv, envp); 
+    kinfoln("desktop PROCESS: %d",proc->id);
 
     LAPIC::IPI(this_cpu()->id,SCHED_VEC + 1);
     LAPIC::IPIOthers(0, SCHED_VEC);

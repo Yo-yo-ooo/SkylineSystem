@@ -1,26 +1,26 @@
 /*
-* SPDX-License-Identifier: MIT
-* File: atomic.h
-* Copyright (C) 2026 Yo-yo-ooo
-*
-* Permission is hereby granted, free of charge, to any person obtaining a copy
-* of this software and associated documentation files (the "Software"), to deal
-* in the Software without restriction, including without limitation the rights
-* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-* copies of the Software, and to permit persons to whom the Software is
-* furnished to do so, subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be included in all
-* copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-* SOFTWARE.
-*/
+ * SPDX-License-Identifier: MIT
+ * File: atomic.h
+ * Copyright (C) 2026 Yo-yo-ooo
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
 /* atomic.h - 跨架构原子操作库，覆盖 GCC __atomic_xxx 内建语义 */
 #ifndef ATOMIC_H
 #define ATOMIC_H
@@ -59,20 +59,42 @@ typedef uint8_t atomic_flag;
 #  error "Unsupported architecture"
 #endif
 
-/* __atomic_load_n(ptr, mo) */
-#define atomic_load_n(ptr, mo) ({ \
+/* ------------------------------------------------------------------ */
+/* 内部通用调度宏：利用 ## 拼接消除重复的 switch-case 样板            */
+/* ------------------------------------------------------------------ */
+
+/* 用于 load 类操作 (无 v 参数) */
+#define _ATOMIC_LOAD_OP(op, ptr, mo) ({ \
     uint64_t _i; \
     switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_load_1((ptr), (mo)); break; \
-    case 2: _i = atomic_load_2((ptr), (mo)); break; \
-    case 4: _i = atomic_load_4((ptr), (mo)); break; \
-    case 8: _i = atomic_load_8((ptr), (mo)); break; \
+    case 1: _i = atomic_##op##_1((ptr), (mo)); break; \
+    case 2: _i = atomic_##op##_2((ptr), (mo)); break; \
+    case 4: _i = atomic_##op##_4((ptr), (mo)); break; \
+    case 8: _i = atomic_##op##_8((ptr), (mo)); break; \
     default: _i = 0; break; \
     } \
     (typeof(*(ptr)))_i; \
 })
 
-/* __atomic_store_n(ptr, v, mo) */
+/* 用于 fetch_xxx / xxx_fetch / exchange 类操作 (带 v 参数) */
+#define _ATOMIC_FETCH_OP(op, ptr, v, mo) ({ \
+    uint64_t _i; \
+    switch(sizeof(*(ptr))) { \
+    case 1: _i = atomic_##op##_1((ptr), (uint8_t)(uintptr_t)(v), (mo)); break; \
+    case 2: _i = atomic_##op##_2((ptr), (uint16_t)(uintptr_t)(v), (mo)); break; \
+    case 4: _i = atomic_##op##_4((ptr), (uint32_t)(uintptr_t)(v), (mo)); break; \
+    case 8: _i = atomic_##op##_8((ptr), (uint64_t)(uintptr_t)(v), (mo)); break; \
+    default: _i = 0; break; \
+    } \
+    (typeof(*(ptr)))_i; \
+})
+
+/* ------------------------------------------------------------------ */
+/* 公共 API                                                            */
+/* ------------------------------------------------------------------ */
+
+#define atomic_load_n(ptr, mo)             _ATOMIC_LOAD_OP(load, (ptr), (mo))
+
 #define atomic_store_n(ptr, v, mo) do { \
     switch(sizeof(*(ptr))) { \
     case 1: atomic_store_1((ptr), (uint8_t)(uintptr_t)(v), (mo)); break; \
@@ -83,20 +105,8 @@ typedef uint8_t atomic_flag;
     } \
 } while(0)
 
-/* __atomic_exchange_n(ptr, v, mo) */
-#define atomic_exchange_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_exchange_1((ptr), (uint8_t)(uintptr_t)(v), (mo)); break; \
-    case 2: _i = atomic_exchange_2((ptr), (uint16_t)(uintptr_t)(v), (mo)); break; \
-    case 4: _i = atomic_exchange_4((ptr), (uint32_t)(uintptr_t)(v), (mo)); break; \
-    case 8: _i = atomic_exchange_8((ptr), (uint64_t)(uintptr_t)(v), (mo)); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
+#define atomic_exchange_n(ptr, v, mo)      _ATOMIC_FETCH_OP(exchange, (ptr), (v), (mo))
 
-/* __atomic_compare_exchange_n */
 #define atomic_compare_exchange_n(ptr, exp, des, weak, succ, fail) ({ \
     bool _ok; \
     switch(sizeof(*(ptr))) { \
@@ -109,150 +119,19 @@ typedef uint8_t atomic_flag;
     _ok; \
 })
 
-/* fetch_add */
-#define atomic_fetch_add_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_fetch_add_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_fetch_add_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_fetch_add_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_fetch_add_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
+#define atomic_fetch_add_n(ptr, v, mo)     _ATOMIC_FETCH_OP(fetch_add, (ptr), (v), (mo))
+#define atomic_fetch_sub_n(ptr, v, mo)     _ATOMIC_FETCH_OP(fetch_sub, (ptr), (v), (mo))
+#define atomic_fetch_and_n(ptr, v, mo)     _ATOMIC_FETCH_OP(fetch_and, (ptr), (v), (mo))
+#define atomic_fetch_or_n(ptr, v, mo)      _ATOMIC_FETCH_OP(fetch_or,  (ptr), (v), (mo))
+#define atomic_fetch_xor_n(ptr, v, mo)     _ATOMIC_FETCH_OP(fetch_xor, (ptr), (v), (mo))
+#define atomic_fetch_nand_n(ptr, v, mo)    _ATOMIC_FETCH_OP(fetch_nand,(ptr), (v), (mo))
 
-#define atomic_fetch_sub_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_fetch_sub_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_fetch_sub_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_fetch_sub_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_fetch_sub_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_fetch_and_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_fetch_and_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_fetch_and_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_fetch_and_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_fetch_and_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_fetch_or_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_fetch_or_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_fetch_or_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_fetch_or_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_fetch_or_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_fetch_xor_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_fetch_xor_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_fetch_xor_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_fetch_xor_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_fetch_xor_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_fetch_nand_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_fetch_nand_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_fetch_nand_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_fetch_nand_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_fetch_nand_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_add_fetch_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_add_fetch_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_add_fetch_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_add_fetch_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_add_fetch_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_sub_fetch_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_sub_fetch_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_sub_fetch_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_sub_fetch_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_sub_fetch_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_and_fetch_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_and_fetch_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_and_fetch_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_and_fetch_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_and_fetch_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_or_fetch_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_or_fetch_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_or_fetch_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_or_fetch_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_or_fetch_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_xor_fetch_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_xor_fetch_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_xor_fetch_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_xor_fetch_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_xor_fetch_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
-
-#define atomic_nand_fetch_n(ptr, v, mo) ({ \
-    uint64_t _i; \
-    switch(sizeof(*(ptr))) { \
-    case 1: _i = atomic_nand_fetch_1((ptr),(uint8_t)(uintptr_t)(v),mo); break; \
-    case 2: _i = atomic_nand_fetch_2((ptr),(uint16_t)(uintptr_t)(v),mo); break; \
-    case 4: _i = atomic_nand_fetch_4((ptr),(uint32_t)(uintptr_t)(v),mo); break; \
-    case 8: _i = atomic_nand_fetch_8((ptr),(uint64_t)(uintptr_t)(v),mo); break; \
-    default: _i = 0; break; \
-    } \
-    (typeof(*(ptr)))_i; \
-})
+#define atomic_add_fetch_n(ptr, v, mo)     _ATOMIC_FETCH_OP(add_fetch, (ptr), (v), (mo))
+#define atomic_sub_fetch_n(ptr, v, mo)     _ATOMIC_FETCH_OP(sub_fetch, (ptr), (v), (mo))
+#define atomic_and_fetch_n(ptr, v, mo)     _ATOMIC_FETCH_OP(and_fetch, (ptr), (v), (mo))
+#define atomic_or_fetch_n(ptr, v, mo)      _ATOMIC_FETCH_OP(or_fetch,  (ptr), (v), (mo))
+#define atomic_xor_fetch_n(ptr, v, mo)     _ATOMIC_FETCH_OP(xor_fetch, (ptr), (v), (mo))
+#define atomic_nand_fetch_n(ptr, v, mo)    _ATOMIC_FETCH_OP(nand_fetch,(ptr), (v), (mo))
 
 #ifdef __cplusplus
 }

@@ -494,13 +494,13 @@ static void* _skyline_malloc_internal(size_t size) {
                     if (current_bit > scb->bit_tail) break;
 
                     uint64_t new_bitmap = current_bitmap | (1ULL << free_bit);
-                    if (A_CAS_U64_ASM(&scb->bitmap[i], current_bitmap, new_bitmap) == current_bitmap) {
+                    if (A_CAS_U64(&scb->bitmap[i], current_bitmap, new_bitmap) == current_bitmap) {
                         if (atomic_load_n((uint64_t*)&mcb->list_base[scb_idx], ATOMIC_ACQUIRE) != (uint64_t)scb) {
                             uint64_t rb_old, rb_new;
                             do {
                                 rb_old = scb->bitmap[i];
                                 rb_new = rb_old & ~(1ULL << free_bit);
-                            } while (A_CAS_U64_ASM(&scb->bitmap[i], rb_old, rb_new) != rb_old);
+                            } while (A_CAS_U64(&scb->bitmap[i], rb_old, rb_new) != rb_old);
                             i = scb_max_words;
                             break;
                         }
@@ -603,13 +603,13 @@ static void* _skyline_malloc_internal(size_t size) {
                     if (current_bit >= MCB_SCB_COUNT) break;
 
                     uint64_t new_bitmap = current_bitmap | (1ULL << free_bit);
-                    if (A_CAS_U64_ASM(&l_scb->bitmap[i], current_bitmap, new_bitmap) == current_bitmap) {
+                    if (A_CAS_U64(&l_scb->bitmap[i], current_bitmap, new_bitmap) == current_bitmap) {
                         if (atomic_load_n((uint64_t*)&mcb->list_base[scb_idx], ATOMIC_ACQUIRE) != (uint64_t)l_scb) {
                             uint64_t rb_old, rb_new;
                             do {
                                 rb_old = l_scb->bitmap[i];
                                 rb_new = rb_old & ~(1ULL << free_bit);
-                            } while (A_CAS_U64_ASM(&l_scb->bitmap[i], rb_old, rb_new) != rb_old);
+                            } while (A_CAS_U64(&l_scb->bitmap[i], rb_old, rb_new) != rb_old);
                             i = MCB_BITMAP_WORDS;
                             break;
                         }
