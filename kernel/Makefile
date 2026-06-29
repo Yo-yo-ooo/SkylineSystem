@@ -231,9 +231,9 @@ all: bin-$(KARCH)/$(OUTPUT)
 # Link rules for the final executable.
 bin-$(KARCH)/$(OUTPUT): Makefile linker-$(KARCH).ld $(OBJ)
 	@mkdir -p "$$(dirname $@)"
-	@echo LD $<
+	@echo LD kernel
 ifeq ($(NOT_COMPILE_X86MEM),0)
-	$(KLD) $(OBJ) $(X86MEM_PATH)/memops.o \
+	@$(KLD) $(OBJ) $(X86MEM_PATH)/memops.o \
 				$(KLDFLAGS) -o $@
 else
 	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@

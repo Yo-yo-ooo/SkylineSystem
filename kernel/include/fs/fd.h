@@ -105,6 +105,7 @@ typedef struct FDManager {
     // 系统或进程当前分配出的最大 FD 编号
     // 默认为 -1 (表示还没分配任何 FD)
     int32_t max_fd;           
+    fd_node_t* tail;
     
     spinlock_t lock;
 } fd_manager_t;

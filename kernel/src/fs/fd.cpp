@@ -105,78 +105,69 @@ static fd_node_t* create_fd_node() {
 void fd_manager_init(fd_manager_t* manager) {
     manager->head = nullptr;
     manager->max_fd = -1;
+    manager->tail = nullptr;
     manager->lock = 0; // 初始化自旋锁
 }
-
-// 分配一个空闲的 FD
 int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
-    //kinfoln("ALLOCATING FD");
-    spinlock_lock(&manager->lock); // 加锁
-    //kinfoln("ALLOCATING FD...");
+    spinlock_lock(&manager->lock); 
+    
     fd_node_t* curr = manager->head;
-    fd_node_t* prev = nullptr;
     uint32_t node_index = 0; 
     
     // 如果链表为空，创建第一个节点
     if (!curr) {
         manager->head = create_fd_node();
+        manager->tail = manager->head; // head 和 tail 指向同一个节点
         curr = manager->head;
         if (!curr) {
             spinlock_unlock(&manager->lock);
-            return -1; // ENOMEM
+            return -1; 
         }
     }
     
     // 遍历链表寻找空闲位
     while (curr) {
-        // alloc_count 提供快速判断，避免扫描满载节点的位图
         if (curr->alloc_count < FDS_PER_NODE) {
             for (int i = 0; i < 4; i++) {
-                // 如果当前 64 位不全为 1，说明有空闲位
                 if (curr->bitmap[i] != ~(0ULL)) {
-                    // __builtin_ctzll 找到最低位的 0 变 1 的位置，极速分配
                     uint64_t inverted = ~(curr->bitmap[i]);
                     int bit_idx = __builtin_ctzll(inverted);
                     
-                    // 标记为已分配
                     curr->bitmap[i] |= (1ULL << bit_idx);
                     curr->alloc_count++;
                     
-                    // 计算全局 FD 编号
                     int32_t global_fd = (node_index * FDS_PER_NODE) + (i * 64) + bit_idx;
                     
-                    // 更新最大 FD
                     if (global_fd > manager->max_fd) {
                         manager->max_fd = global_fd;
                     }
                     
-                    // 返回 fd_t 指针给调用者填充
                     if (out_fd_ptr) {
                         *out_fd_ptr = &curr->fds[(i * 64) + bit_idx];
-                        // 安全初始化，防止野指针
                         (*out_fd_ptr)->filedesc = nullptr;
                         (*out_fd_ptr)->FSOPS = nullptr;
                         (*out_fd_ptr)->MP = nullptr;
                     }
                     
-                    spinlock_unlock(&manager->lock); // 解锁
+                    spinlock_unlock(&manager->lock); 
                     return global_fd;
                 }
             }
         }
         node_index++;
-        prev = curr;
         curr = curr->next;
     }
 
-    // 所有现有节点都满了，创建新节点追加到链表尾部
+    // 所有现有节点都满了，利用 tail 指针 O(1) 追加新节点
     fd_node_t* new_node = create_fd_node();
     if (!new_node) {
         spinlock_unlock(&manager->lock);
         return -1;
     }
     
-    prev->next = new_node;
+    // O(1) 尾部插入核心逻辑
+    manager->tail->next = new_node;
+    manager->tail = new_node;       // <--- 更新尾指针
     
     // 直接分配新节点的第 0 个位置
     new_node->bitmap[0] |= 1ULL;
@@ -190,13 +181,12 @@ int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
     
     if (out_fd_ptr) {
         *out_fd_ptr = &new_node->fds[0];
-        // 安全初始化
         (*out_fd_ptr)->filedesc = nullptr;
         (*out_fd_ptr)->FSOPS = nullptr;
         (*out_fd_ptr)->MP = nullptr;
     }
     
-    spinlock_unlock(&manager->lock); // 解锁
+    spinlock_unlock(&manager->lock); 
     return global_fd;
 }
 
@@ -278,46 +268,39 @@ void fd_free(fd_manager_t* manager, int32_t fd) {
     spinlock_unlock(&manager->lock); // 解锁
 }
 
-// 销毁管理器，回收所有资源
 void fd_manager_destroy(fd_manager_t* manager) {
     if (!manager || !manager->head) return;
 
-    spinlock_lock(&manager->lock); // 加锁
+    spinlock_lock(&manager->lock); 
 
     fd_node_t* curr = manager->head;
     while (curr) {
         fd_node_t* next = curr->next;
-        
-        // 遍历当前节点中所有已分配的 fd，执行 close 操作
+    
         if (curr->alloc_count > 0) {
             for (int i = 0; i < 4; i++) {
                 uint64_t bm = curr->bitmap[i];
-                // 极速扫描：利用 __builtin_ctzll 提取已分配位，跳过连续的 0
                 while (bm) {
                     int bit_idx = __builtin_ctzll(bm);
                     uint32_t local_idx = (i * 64) + bit_idx;
                     fd_t* fd_ptr = &curr->fds[local_idx];
-                    
-                    // 调用底层文件系统的 close 接口
                     if (fd_ptr->FSOPS && fd_ptr->FSOPS->close) {
                         fd_ptr->FSOPS->close(fd_ptr->filedesc);
                     }
-                    
-                    // 清除最低位的 1，进入下一个已分配的 FD
                     bm &= bm - 1; 
                 }
             }
         }
         
-        kfree(curr); // 释放节点内存
+        kfree(curr); 
         curr = next;
     }
 
-    // 重置管理器状态
     manager->head = nullptr;
+    manager->tail = nullptr; //重置 tail
     manager->max_fd = -1;
 
-    spinlock_unlock(&manager->lock); // 解锁
+    spinlock_unlock(&manager->lock); 
 }
 
 } // extern "C"
