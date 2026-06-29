@@ -13,6 +13,7 @@ namespace PIT
     extern bool Inited;
     extern int32_t FreqAdder;
     extern uint16_t NonMusicDiv;
+    extern void (*TickHandle)();
 
     void Handler(registers *r);
 
@@ -26,4 +27,6 @@ namespace PIT
     uint64_t GetFrequency();
     void SetFrequency(uint64_t frequency);
     void Tick();
+    void Tick_();
+    void Tick__();
 }

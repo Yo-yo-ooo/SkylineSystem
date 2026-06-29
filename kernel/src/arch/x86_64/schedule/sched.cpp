@@ -241,6 +241,12 @@ retry:
             proc_t *proc = Schedule::NewProcess(false);
             thread_t *thread = Schedule::NewKernelThread(proc, cpu->id, THREAD_QUEUE_CNT - 1, sched_idle);
         }
+        //PIT::TickHandle = PIT::Tick_();
+        atomic_store_8(
+            (volatile uint8_t*)&PIT::TickHandle,         // 目标地址
+            (uint64_t)(uintptr_t)&PIT::Tick_,            // 函数指针转为 64 位整数
+            0                                            // 内存序
+        );
     }
 
     
@@ -438,6 +444,13 @@ retry:
         // [修改 1] 接收 ELF 中的 TLS 参数
         uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
         thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align); 
+        if (thread->ctx.rip == 0) {
+            kerrorln("ELF load failed!");
+            MP->FSOPS->close(FileDesc);
+            kfree(FileDesc);
+            kfree(buffer);
+            return nullptr; // 增加 return nullptr
+        }
         MP->FSOPS->close(FileDesc);
         kfree(FileDesc);
         //kfree(buffer);
@@ -621,12 +634,52 @@ retry:
         return this_cpu()->current_thread->parent;
     }
     
-
+    
     void Sleep(uint64_t ms){
+        if (ms == 0) return;
+        
         LAPIC::StopTimer();
-        Schedule::this_thread()->state = THREAD_SLEEPING;
-        Schedule::this_thread()->sleeping_time = ms;
+        
+        thread_t* current = Schedule::this_thread();
+        current->state = THREAD_SLEEPING;
+        // 记录唤醒时间 = 当前系统时间 + 睡眠时长
+        current->wakeup_tick = PIT::TimeSinceBootMS() + ms; 
+        
         Schedule::Yield();
+    }
+
+    void Tick() {
+        cpu_t *cpu = this_cpu();
+        if (!cpu) return;
+
+        // 保存当前中断状态并关闭本地中断，防止定时器中断嵌套死锁
+        uint64_t rflags;
+        asm volatile("pushfq\n\tpop %0\n\tcli" : "=r"(rflags) :: "memory");
+
+        spinlock_lock(&cpu->sched_lock);
+        
+        // 优化：只获取一次时间，避免在循环中频繁调用 PIT
+        uint64_t current_time = PIT::TimeSinceBootMS();
+        
+        for (uint32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
+            thread_queue_t *queue = &cpu->thread_queues[i];
+            if (!queue->head) continue;
+
+            thread_t *t = queue->head;
+            do {
+                // 建议去掉 +1，直接用 >= 保证唤醒精度
+                if (t->state == THREAD_SLEEPING && current_time >= t->wakeup_tick) {
+                    t->state = THREAD_RUNNING;
+                    t->wakeup_tick = 0;
+                }
+                t = t->list_next;
+            } while (t != queue->head);
+        }
+        
+        spinlock_unlock(&cpu->sched_lock);
+        
+        // 恢复中断状态
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
     }
 
     void Yield(){

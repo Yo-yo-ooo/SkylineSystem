@@ -54,7 +54,7 @@ typedef struct thread_t {
     struct thread_t *list_next; // In the cpu thread list
     struct thread_t *list_prev;
     struct proc_t *parent;
-    uint64_t sleeping_time;
+    uint64_t wakeup_tick;
 
     void* heap;//data segment
     uint64_t heap_size;
@@ -114,6 +114,7 @@ namespace Schedule{
     void Exit(int32_t code);
     void Yield();
     void PAUSE();
+    void Tick();
     void Resume();
 
     void DeleteThread(cpu_t *cpu, thread_t *thread);

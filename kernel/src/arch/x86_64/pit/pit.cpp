@@ -20,6 +20,30 @@ namespace PIT
 
     uint64_t freq = GetFrequency();
     int32_t FreqAdder = 1;
+    void (*TickHandle)();
+
+    
+    int32_t tempus = 0;
+    void Tick__(){
+        TicksSinceBoot++;
+        
+        if (tempus++ > roughCount){
+            tempus = 0;
+            RTC::UpdateTimeIfNeeded();
+        }
+        
+    }
+
+    void Tick_(){
+        TicksSinceBoot++;
+        
+        if (tempus++ > roughCount)
+        {
+            tempus = 0;
+            RTC::UpdateTimeIfNeeded();
+        }
+        Schedule::Tick();
+    }
 
     void InitPIT()
     {
@@ -39,6 +63,7 @@ namespace PIT
         RTC_INIT_SECOND = RTC::Second;
         TIME_SINCE_RTC_INITED_SECOND = mktime(RTC_INIT_YEAR,RTC_INIT_MONTH,RTC_INIT_DAY,
             RTC_INIT_HOUR,RTC_INIT_MINUTE,RTC_INIT_SECOND);
+        TickHandle = PIT::Tick__;
     }
 
     void Handler(registers *r){
@@ -95,19 +120,11 @@ namespace PIT
     }
 
     
-    int32_t tempus = 0;
-    void Tick()
-    {
-        TicksSinceBoot++;
-        
-        if (tempus++ > roughCount)
-        {
-            tempus = 0;
-            RTC::UpdateTimeIfNeeded();
-        }
-    }
 
-    
+
+    void Tick(){
+        TickHandle();
+    }
     
     uint64_t TimeSinceBootMS()
     {
