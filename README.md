@@ -29,6 +29,42 @@ Full compliance with REUSE standard, see root LICENSES for full statement.
 > If Build Failed, please open an issue or contact me
 > The General Build Faild reason is you don't have install the required dependencies <br>
 > [OR] You are building for unsupported architecture <br>
+
+
+---
+
+### ⚙️ `SkylineSystem Low-Level Stack Implementations`
+
+I have independently designed and implemented a comprehensive low-level stack from scratch:
+
+<table>
+  <tr>
+    <td valign="top" width="50%">
+      <h3 align="center">💾 Memory Management</h3>
+      <ul>
+        <li><b>VMM:</b> 5-level paging, 1GB/2MB huge pages, and copy-on-write with dynamic huge page splitting.</li>
+        <li><b>PMM:</b> 3-level physical manager with lazy bitmap initialization and per-CPU caches to eliminate spinlock contention.</li>
+      </ul>
+    </td>
+    <td valign="top" width="50%">
+      <h3 align="center">⚡ Core & Concurrency</h3>
+      <ul>
+        <li><b>Allocator:</b> Industrial-grade <code>malloc</code>/<code>free</code> engine with QSBR garbage collection, TLS batching, and lock-free bitmap CAS.</li>
+        <li><b>VFS & FD:</b> Hashmap mount point resolution and bitmap-based file descriptor allocator with O(1) tail insertion.</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" valign="top">
+      <h3 align="center">🎨 Graphics & UI</h3>
+      <ul>
+        <li><b>Graphics:</b> TTF rasterization engine with LRU+hashtable glyph caching, CJK typography rules, and strict boundary-clipped alpha blending for the linear framebuffer.</li>
+      </ul>
+    </td>
+  </tr>
+</table>
+
+
 ## How to build
 
 > [!IMPORTANT]

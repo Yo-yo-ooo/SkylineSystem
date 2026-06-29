@@ -61,6 +61,10 @@ FILE* fopen(const char* filename, const char* mode) {
     return stream;
 }
 
+size_t fsize(FILE *stream){
+    return stream->file_size;
+}
+
 int32_t fclose(FILE *stream) {
     if (!stream) return -1;
     int32_t res = sys_fclose(stream->fd);

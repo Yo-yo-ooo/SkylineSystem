@@ -37,7 +37,7 @@ typedef struct {
 
 
 int32_t fclose(FILE *stream);
-
+size_t fsize(FILE *stream);
 FILE *fopen(const char* filename,const char* mode);
 size_t fread(void *ptr,size_t size,size_t nmemb,FILE *stream);
 int32_t fseek(FILE* stream,int64_t offset, int32_t whence);
