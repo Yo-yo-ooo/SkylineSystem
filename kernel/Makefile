@@ -85,7 +85,7 @@ override KCPPFLAGS := \
 	-isystem ../ablib/freestndchdrs/$(KARCH)/include \
 	-I$(SS_BUILD_DIR)/kernel/include \
 	-Ifakestdlib \
-	-DLIMINE_API_REVISION=5 \
+	-DLIMINE_API_REVISION=6 \
     $(KCPPFLAGS) \
     -MMD \
     -MP \
