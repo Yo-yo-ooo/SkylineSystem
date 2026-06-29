@@ -30,7 +30,10 @@
 #define TTF_MUTEX_DESTROY(m)
 
 #define STB_TRUETYPE_IMPLEMENTATION
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wimplicit-function-declaration"
 #include <base/font/ttf/stb_ttf.h>
+#pragma GCC diagnostic pop
 #include <base/font/ttf/ttf.h>
 
 // ==================== 原子操作适配层 ====================

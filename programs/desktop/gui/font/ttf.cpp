@@ -35,7 +35,7 @@ bool init_system_font(const char* path, int32_t pixel_height) {
         return false;
     }
 
-    fread(fd, font_data, file_size);
+    fread(font_data, file_size,1,fd);
     fclose(fd);
 
     // 5. 将内存数据交给 TTF 库解析

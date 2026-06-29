@@ -49,7 +49,7 @@ I have independently designed and implemented a comprehensive low-level stack fr
     <td valign="top" width="50%">
       <h3 align="center">⚡ Core & Concurrency</h3>
       <ul>
-        <li><b>Allocator:</b> Industrial-grade <code>malloc</code>/<code>free</code> engine with QSBR garbage collection, TLS batching, and lock-free bitmap CAS.</li>
+        <li><b>Allocator:</b> <code>malloc</code>/<code>free</code> engine with QSBR garbage collection, TLS batching, and lock-free bitmap CAS.</li>
         <li><b>VFS & FD:</b> Hashmap mount point resolution and bitmap-based file descriptor allocator with O(1) tail insertion.</li>
       </ul>
     </td>

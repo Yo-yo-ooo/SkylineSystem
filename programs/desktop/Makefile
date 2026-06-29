@@ -17,7 +17,7 @@ LDFLAGS  =   -entry=_start -static -nostdlib \
     -m elf_x86_64 -z noexecstack 
 
 CFLAGS    = -nostdlib -nostdinc -I../../ablib/freestndchdrs/$(BUILD_ARCH)/include \
-	-I./include -I. -I../../lib/include/stdc -I../../lib/include/base/arch/$(BUILD_ARCH) \
+	-I./include -I. -I../../lib/include/stdc -I../../lib/include -I../../lib/include/base/arch/$(BUILD_ARCH) \
 	-ffreestanding -fshort-wchar -mno-red-zone \
  	-fno-omit-frame-pointer -fno-exceptions \
 	-ffunction-sections -fdata-sections -O0 -m64 -static -g3
