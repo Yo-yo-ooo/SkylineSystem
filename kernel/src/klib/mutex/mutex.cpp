@@ -28,6 +28,7 @@ mutex_t *MutexCreate(void)
 
 void MutexDestroy(mutex_t *mutex)
 {
+#ifdef __x86_64__
     if (!mutex)
         return;
 
@@ -43,6 +44,7 @@ void MutexDestroy(mutex_t *mutex)
     // 销毁队列 + 释放自身内存
     Queue::Destroy(mutex->queue);
     kfree(mutex);
+#endif
 }
 
 void MutexAcquire(mutex_t *mutex)

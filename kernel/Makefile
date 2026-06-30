@@ -232,24 +232,25 @@ all: bin-$(KARCH)/$(OUTPUT)
 bin-$(KARCH)/$(OUTPUT): Makefile linker-$(KARCH).ld $(OBJ)
 	@mkdir -p "$$(dirname $@)"
 	@echo LD kernel
+ifeq ($(KARCH), x86_64)
 ifeq ($(NOT_COMPILE_X86MEM),0)
 	@$(KLD) $(OBJ) $(X86MEM_PATH)/memops.o \
 				$(KLDFLAGS) -o $@
 else
 	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
 endif
-
-	
-
+endif
+ifeq ($(shell ( ! test -f bin-$(KARCH)/$(OUTPUT) ); echo $$?),0)
+	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
+endif
 	
 
 # Include header dependencies.
 -include $(HEADER_DEPS)
 
 # 4. 针对这些特定目标，在 aarch64 架构下移除 Flag
-ifeq ($(BUILD_ARCH), aarch64)
-obj-$(KARCH)/./klib/algorithm/hashmap.c.o: KCFLAGS := -march=armv8-a+fp+simd $(filter-out -mgeneral-regs-only -march=armv8-a+nofp+nosimd, $(KCFLAGS))
-obj-$(KARCH)/./klib/0aarch64mem.cpp.o: KCFLAGS := -march=armv8-a+fp+simd $(filter-out -mgeneral-regs-only -march=armv8-a+nofp+nosimd, $(KCFLAGS))
+ifeq ($(KARCH), aarch64)
+obj-$(KARCH)/klib/0aarch64mem.cpp.o: KCFLAGS := -march=armv8-a+fp+simd $(filter-out -mgeneral-regs-only -march=armv8-a+nofp+nosimd, $(KCFLAGS))
 endif
 
 

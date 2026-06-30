@@ -1,24 +1,42 @@
 #include <klib/klibc.h>
 #include <klib/algorithm/hmap.h>
-#define GROW_AT   0.60 /* 60% */
-#define SHRINK_AT 0.10 /* 10% */
+
+// ===================== 负载因子配置 =====================
+#define GROW_AT   60    // 60%
+#define SHRINK_AT 10    // 10%
 
 #ifndef HASHMAP_LOAD_FACTOR
 #define HASHMAP_LOAD_FACTOR GROW_AT
 #endif
 
-/* static void *(*__malloc)(size_t) = NULL;
-static void *(*__realloc)(void *, size_t) = NULL;
-static void (*__free)(void *) = NULL; */
+// ===================== 定点数定义 =====================
+// 分母 = 1024 (2^10)，用 >> 10 替代 / 100
+// 精度：1/1024 ≈ 0.098%，是百分比法(1%)的 10.24 倍
+#define LF_BITS    10
+#define LF_ONE     (1U << LF_BITS)         // 1024
+#define LF_HALF    (LF_ONE >> 1)            // 512 (四舍五入常数)
 
-// hashmap_set_allocator allows for configuring a custom allocator for
-// all hashmap library operations. This function, if needed, should be called
-// only once at startup and a prior to calling hashmap_new().
-/* void hashmap_set_allocator(void *(*malloc)(size_t), void (*free)(void*)) {
-    __malloc = malloc;
-    __free = free;
+// 编译期：百分比 → 定点数
+#define PCT_TO_LF(pct)  ((uint16_t)(((pct) * LF_ONE + 50) / 100))
+
+// 预计算收缩因子（编译期常量）
+#define SHRINK_LF  PCT_TO_LF(SHRINK_AT)     // 10% → 102
+
+// 运行期：百分比 → 定点数（带 clamp）
+static uint16_t clamp_load_factor(uint8_t percent, uint8_t default_percent) {
+    if (percent == 0) percent = default_percent;
+    if (percent < 50) percent = 50;
+    if (percent > 95) percent = 95;
+    // 四舍五入转换：(pct * 1024 + 50) / 100
+    return (uint16_t)((percent * LF_ONE + 50) / 100);
 }
- */
+
+// 阈值计算：floor(nbuckets * lf / 1024) — 纯位移，无除法
+// 使用 uint64_t 中间值，防止 32 位平台溢出
+static inline size_t lf_threshold(size_t nbuckets, uint16_t lf) {
+    return (size_t)(((uint64_t)nbuckets * (uint64_t)lf) >> LF_BITS);
+}
+
 struct bucket {
     uint64_t hash:48;
     uint64_t dib:16;
@@ -26,9 +44,6 @@ struct bucket {
 
 // hashmap is an open addressed hash map using robinhood hashing.
 struct hashmap {
-/*     void *(*malloc)(size_t);
-    void *(*realloc)(void *, size_t);
-    void (*free)(void *); */
     size_t elsize;
     size_t cap;
     uint64_t seed0;
@@ -43,7 +58,7 @@ struct hashmap {
     size_t mask;
     size_t growat;
     size_t shrinkat;
-    uint8_t loadfactor;
+    uint16_t loadfactor; // 存储整数百分比，例如 60 代表 60%
     uint8_t growpower;
     bool oom;
     void *buckets;
@@ -54,24 +69,17 @@ struct hashmap {
 void hashmap_set_grow_by_power(struct hashmap *map, size_t power) {
     map->growpower = power < 1 ? 1 : power > 16 ? 16 : power;
 }
-#if defined(__x86_64__)
-#pragma GCC push_options
-#pragma GCC target("sse2")
-#endif
-static double clamp_load_factor(double factor, double default_factor) {
-    // Check for NaN and clamp between 50% and 90%
-    return factor != factor ? default_factor : 
-           factor < 0.50 ? 0.50 : 
-           factor > 0.95 ? 0.95 : 
-           factor;
-}
 
-void hashmap_set_load_factor(struct hashmap *map, double factor) {
-    factor = clamp_load_factor(factor, map->loadfactor / 100.0);
-    map->loadfactor = factor * 100;
-    map->growat = map->nbuckets * (map->loadfactor / 100.0);
+// 整数百分比 (例如传入 75 表示 0.75)
+// 整数百分比 (例如传入 75 表示 75%)
+void hashmap_set_load_factor(struct hashmap *map, uint8_t percent) {
+    map->loadfactor = clamp_load_factor(
+        percent,
+        map->loadfactor ? map->loadfactor : PCT_TO_LF(GROW_AT)
+    );
+    // 位移替代除法
+    map->growat = lf_threshold(map->nbuckets, map->loadfactor);
 }
-
 
 static struct bucket *bucket_at0(void *buckets, size_t bucketsz, size_t i) {
     return (struct bucket*)(((char*)buckets)+(bucketsz*i));
@@ -92,21 +100,15 @@ static uint64_t clip_hash(uint64_t hash) {
 static uint64_t get_hash(const struct hashmap *map, const void *key) {
     return clip_hash(map->hash(key, map->seed0, map->seed1));
 }
-
-
 // hashmap_new_with_allocator returns a new hash map using a custom allocator.
 // See hashmap_new for more information information
-struct hashmap *hashmap_new_with_allocator(/* void *(*_malloc)(size_t), 
-    void *(*_realloc)(void*, size_t), void (*_free)(void*), */
+struct hashmap *hashmap_new_with_allocator(
     size_t elsize, size_t cap, uint64_t seed0, uint64_t seed1,
     uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1),
     int32_t (*compare)(const void *a, const void *b, void *udata),
     void (*elfree)(void *item),
     void *udata)
 {
-    /* _malloc = _malloc ? _malloc : __malloc ? __malloc : malloc;
-    _realloc = _realloc ? _realloc : __realloc ? __realloc : realloc;
-    _free = _free ? _free : __free ? __free : free; */
     size_t ncap = 16;
     if (cap < ncap) {
         cap = ncap;
@@ -120,7 +122,6 @@ struct hashmap *hashmap_new_with_allocator(/* void *(*_malloc)(size_t),
     while (bucketsz & (sizeof(uintptr_t)-1)) {
         bucketsz++;
     }
-    // hashmap + spare + edata
     size_t size = sizeof(struct hashmap)+bucketsz*2;
     struct hashmap *map = kmalloc(size);
     if (!map) {
@@ -147,32 +148,16 @@ struct hashmap *hashmap_new_with_allocator(/* void *(*_malloc)(size_t),
     }
     _memset(map->buckets, 0, map->bucketsz*map->nbuckets);
     map->growpower = 1;
-    map->loadfactor = clamp_load_factor(HASHMAP_LOAD_FACTOR, GROW_AT) * 100;
-    map->growat = map->nbuckets * (map->loadfactor / 100.0);
-    map->shrinkat = map->nbuckets * SHRINK_AT;
-    //map->malloc = _malloc;
-    //map->realloc = _realloc;
-    //map->free = _free;
+
+    // 定点数初始化
+    map->loadfactor = clamp_load_factor(HASHMAP_LOAD_FACTOR, GROW_AT);
+    map->growat   = lf_threshold(map->nbuckets, map->loadfactor);
+    map->shrinkat = lf_threshold(map->nbuckets, SHRINK_LF);
+
     return map;  
 }
 
 // hashmap_new returns a new hash map. 
-// Param `elsize` is the size of each element in the tree. Every element that
-// is inserted, deleted, or retrieved will be this size.
-// Param `cap` is the default lower capacity of the hashmap. Setting this to
-// zero will default to 16.
-// Params `seed0` and `seed1` are optional seed values that are passed to the 
-// following `hash` function. These can be any value you wish but it's often 
-// best to use randomly generated values.
-// Param `hash` is a function that generates a hash value for an item. It's
-// important that you provide a good hash function, otherwise it will perform
-// poorly or be vulnerable to Denial-of-service attacks. This implementation
-// comes with two helper functions `hashmap_sip()` and `hashmap_murmur()`.
-// Param `compare` is a function that compares items in the tree. See the 
-// qsort stdlib function for an example of how this function works.
-// The hashmap must be freed with hashmap_free(). 
-// Param `elfree` is a function that frees a specific item. This should be NULL
-// unless you're storing some kind of reference data in the hash.
 struct hashmap *hashmap_new(size_t elsize, size_t cap, uint64_t seed0, 
     uint64_t seed1,
     uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1),
@@ -194,11 +179,6 @@ static void free_elements(struct hashmap *map) {
 }
 
 // hashmap_clear quickly clears the map. 
-// Every item is called with the element-freeing function given in hashmap_new,
-// if present, to free any data referenced in the elements of the hashmap.
-// When the update_cap is provided, the map's capacity will be updated to match
-// the currently number of allocated buckets. This is an optimization to ensure
-// that this operation does not perform any allocations.
 void hashmap_clear(struct hashmap *map, bool update_cap) {
     map->count = 0;
     free_elements(map);
@@ -214,13 +194,15 @@ void hashmap_clear(struct hashmap *map, bool update_cap) {
     }
     _memset(map->buckets, 0, map->bucketsz*map->nbuckets);
     map->mask = map->nbuckets-1;
-    map->growat = map->nbuckets * (map->loadfactor / 100.0) ;
-    map->shrinkat = map->nbuckets * SHRINK_AT;
+
+    // 定点数重算
+    map->growat   = lf_threshold(map->nbuckets, map->loadfactor);
+    map->shrinkat = lf_threshold(map->nbuckets, SHRINK_LF);
 }
 
 static bool resize0(struct hashmap *map, size_t new_cap) {
-    struct hashmap *map2 = hashmap_new_with_allocator(/* map->malloc, map->realloc, 
-        map->free,  */map->elsize, new_cap, map->seed0, map->seed1, map->hash, 
+    struct hashmap *map2 = hashmap_new_with_allocator(
+        map->elsize, new_cap, map->seed0, map->seed1, map->hash, 
         map->compare, map->elfree, map->udata);
     if (!map2) return false;
     for (size_t i = 0; i < map->nbuckets; i++) {
@@ -260,8 +242,7 @@ static bool resize(struct hashmap *map, size_t new_cap) {
 }
 
 // hashmap_set_with_hash works like hashmap_set but you provide your
-// own hash. The 'hash' callback provided to the hashmap_new function
-// will not be called
+// own hash. 
 const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
     uint64_t hash)
 {
@@ -308,17 +289,10 @@ const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
     }
 }
 
-// hashmap_set inserts or replaces an item in the hash map. If an item is
-// replaced then it is returned otherwise NULL is returned. This operation
-// may allocate memory. If the system is unable to allocate additional
-// memory then NULL is returned and hashmap_oom() returns true.
 const void *hashmap_set(struct hashmap *map, const void *item) {
     return hashmap_set_with_hash(map, item, get_hash(map, item));
 }
 
-// hashmap_get_with_hash works like hashmap_get but you provide your
-// own hash. The 'hash' callback provided to the hashmap_new function
-// will not be called
 const void *hashmap_get_with_hash(const struct hashmap *map, const void *key,
     uint64_t hash)
 {
@@ -337,15 +311,10 @@ const void *hashmap_get_with_hash(const struct hashmap *map, const void *key,
     }
 }
 
-// hashmap_get returns the item based on the provided key. If the item is not
-// found then NULL is returned.
 const void *hashmap_get(const struct hashmap *map, const void *key) {
     return hashmap_get_with_hash(map, key, get_hash(map, key));
 }
 
-// hashmap_probe returns the item in the bucket at position or NULL if an item
-// is not set for that bucket. The position is 'moduloed' by the number of 
-// buckets in the hashmap.
 const void *hashmap_probe(struct hashmap *map, uint64_t position) {
     size_t i = position & map->mask;
     struct bucket *bucket = bucket_at(map, i);
@@ -355,9 +324,6 @@ const void *hashmap_probe(struct hashmap *map, uint64_t position) {
     return bucket_item(bucket);
 }
 
-// hashmap_delete_with_hash works like hashmap_delete but you provide your
-// own hash. The 'hash' callback provided to the hashmap_new function
-// will not be called
 const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
     uint64_t hash)
 {
@@ -388,9 +354,6 @@ const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
             }
             map->count--;
             if (map->nbuckets > map->cap && map->count <= map->shrinkat) {
-                // Ignore the return value. It's ok for the resize operation to
-                // fail to allocate enough memory because a shrink operation
-                // does not change the integrity of the data.
                 resize(map, map->nbuckets/2);
             }
             return map->spare;
@@ -399,20 +362,14 @@ const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
     }
 }
 
-// hashmap_delete removes an item from the hash map and returns it. If the
-// item is not found then NULL is returned.
 const void *hashmap_delete(struct hashmap *map, const void *key) {
     return hashmap_delete_with_hash(map, key, get_hash(map, key));
 }
 
-// hashmap_count returns the number of items in the hash map.
 size_t hashmap_count(const struct hashmap *map) {
     return map->count;
 }
 
-// hashmap_free frees the hash map
-// Every item is called with the element-freeing function given in hashmap_new,
-// if present, to free any data referenced in the elements of the hashmap.
 void hashmap_free(struct hashmap *map) {
     if (!map) return;
     free_elements(map);
@@ -420,15 +377,10 @@ void hashmap_free(struct hashmap *map) {
     kfree(map);
 }
 
-// hashmap_oom returns true if the last hashmap_set() call failed due to the 
-// system being out of memory.
 bool hashmap_oom(struct hashmap *map) {
     return map->oom;
 }
 
-// hashmap_scan iterates over all items in the hash map
-// Param `iter` can return false to stop iteration early.
-// Returns false if the iteration has been stopped early.
 bool hashmap_scan(struct hashmap *map, 
     bool (*iter)(const void *item, void *udata), void *udata)
 {
@@ -441,24 +393,6 @@ bool hashmap_scan(struct hashmap *map,
     return true;
 }
 
-// hashmap_iter iterates one key at a time yielding a reference to an
-// entry at each iteration. Useful to write simple loops and avoid writing
-// dedicated callbacks and udata structures, as in hashmap_scan.
-//
-// map is a hash map handle. i is a pointer to a size_t cursor that
-// should be initialized to 0 at the beginning of the loop. item is a void
-// pointer pointer that is populated with the retrieved item. Note that this
-// is NOT a copy of the item stored in the hash map and can be directly
-// modified.
-//
-// Note that if hashmap_delete() is called on the hashmap being iterated,
-// the buckets are rearranged and the iterator must be reset to 0, otherwise
-// unexpected results may be returned after deletion.
-//
-// This function has not been tested for thread safety.
-//
-// The function returns true if an item was retrieved; false if the end of the
-// iteration has been reached.
 bool hashmap_iter(struct hashmap *map, size_t *i, void **item) {
     struct bucket *bucket;
     do {
@@ -470,23 +404,8 @@ bool hashmap_iter(struct hashmap *map, size_t *i, void **item) {
     return true;
 }
 
-
 //-----------------------------------------------------------------------------
 // SipHash reference C implementation
-//
-// Copyright (c) 2012-2016 Jean-Philippe Aumasson
-// <jeanphilippe.aumasson@gmail.com>
-// Copyright (c) 2012-2014 Daniel J. Bernstein <djb@cr.yp.to>
-//
-// To the extent possible under law, the author(s) have dedicated all copyright
-// and related and neighboring rights to this software to the public domain
-// worldwide. This software is distributed without any warranty.
-//
-// You should have received a copy of the CC0 Public Domain Dedication along
-// with this software. If not, see
-// <http://creativecommons.org/publicdomain/zero/1.0/>.
-//
-// default: SipHash-2-4
 //-----------------------------------------------------------------------------
 static uint64_t SIP64(const uint8_t *in, const size_t inlen, uint64_t seed0,
     uint64_t seed1) 
@@ -551,10 +470,7 @@ static uint64_t SIP64(const uint8_t *in, const size_t inlen, uint64_t seed0,
 }
 
 //-----------------------------------------------------------------------------
-// MurmurHash3 was written by Austin Appleby, and is placed in the public
-// domain. The author hereby disclaims copyright to this source code.
-//
-// Murmur3_86_128
+// MurmurHash3 was written by Austin Appleby
 //-----------------------------------------------------------------------------
 static uint64_t MM86128(const void *key, const int32_t len, uint32_t seed) {
 #define	ROTL32(x, r) ((x << r) | (x >> (32 - r)))
@@ -625,12 +541,6 @@ static uint64_t MM86128(const void *key, const int32_t len, uint32_t seed) {
 
 //-----------------------------------------------------------------------------
 // xxHash Library
-// Copyright (c) 2012-2021 Yann Collet
-// All rights reserved.
-// 
-// BSD 2-Clause License (https://www.opensource.org/licenses/bsd-license.php)
-//
-// xxHash3
 //-----------------------------------------------------------------------------
 #define XXH_PRIME_1 11400714785074694791ULL
 #define XXH_PRIME_2 14029467366897019727ULL
@@ -654,7 +564,7 @@ static uint64_t XXH_rotl64(uint64_t x, int32_t r) {
     return (x << r) | (x >> (64 - r));
 }
 
-static uint64_t xxh3(const void* data, size_t len, uint64_t seed) {
+static uint64_t xxh3(const void *data, size_t len, uint64_t seed) {
     const uint8_t* p = (const uint8_t*)data;
     const uint8_t* const end = p + len;
     uint64_t h64;
@@ -750,14 +660,12 @@ static uint64_t xxh3(const void* data, size_t len, uint64_t seed) {
     return h64;
 }
 
-// hashmap_sip returns a hash value for `data` using SipHash-2-4.
 uint64_t hashmap_sip(const void *data, size_t len, uint64_t seed0,
     uint64_t seed1)
 {
     return SIP64((uint8_t*)data, len, seed0, seed1);
 }
 
-// hashmap_murmur returns a hash value for `data` using Murmur3_86_128.
 uint64_t hashmap_murmur(const void *data, size_t len, uint64_t seed0,
     uint64_t seed1)
 {
@@ -771,6 +679,3 @@ uint64_t hashmap_xxhash3(const void *data, size_t len, uint64_t seed0,
     (void)seed1;
     return xxh3(data, len ,seed0);
 }
-#if defined(__x86_64__)
-#pragma GCC pop_options
-#endif

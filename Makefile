@@ -244,11 +244,11 @@ endif
 clean:
 ifdef ($(KARCH),x86_64)
 	@$(MAKE) -C ablib/arch/x86_64/x86mem clean
-endif
-	@$(MAKE) -C kernel clean
 	@$(MAKE) -C programs clean
 	@$(MAKE) -C res/saf clean
 	@$(MAKE) -C lib clean
+endif
+	@$(MAKE) -C kernel clean
 	rm -rf iso_root *.iso *.hdd
 
 .PHONY: distclean

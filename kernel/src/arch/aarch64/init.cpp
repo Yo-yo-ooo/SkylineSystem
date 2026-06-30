@@ -6,6 +6,7 @@
 #include <mem/pmm.h>
 #include <arch/aarch64/vmm/vmm.h>
 
+uint32_t PrintFSERIAL = 0;
 
 void aarch64_init(void){
     WELCOME_AARCH64
