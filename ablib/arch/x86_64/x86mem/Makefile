@@ -48,7 +48,7 @@ OBJS_TO_LINK = $(foreach arch,$(TARGET_ARCHS),memops_$(arch).o)
 
 all: memops.o
 
-# 2. 核心魔法：使用模板函数动态生成各指令集版本的编译规则
+#  核心魔法：使用模板函数动态生成各指令集版本的编译规则
 define COMPILE_TEMPLATE
 memops_$(1).o: $(SRCS)
 	@echo " -> Compiling x86mem [$(1)] tier..."
