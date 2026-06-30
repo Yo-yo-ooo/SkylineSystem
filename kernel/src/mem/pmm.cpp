@@ -729,10 +729,10 @@ namespace PMM {
                 entry->length -= total_meta_size;
                 entry->base   += total_meta_size;
 
-                _memset((void*)PMM::bitmap,      0xFF, bitmap_size);
-                _memset((void*)PMM::bitmap_l2,   0xFF, bitmap_l2_size);
-                _memset((void*)PMM::bitmap_l3,   0xFF, bitmap_l3_size);
-                _memset((void*)PMM::init_bitmap, 0x00, init_bitmap_size);
+                memset_fscpuf((void*)PMM::bitmap,      0xFF, bitmap_size);
+                memset_fscpuf((void*)PMM::bitmap_l2,   0xFF, bitmap_l2_size);
+                memset_fscpuf((void*)PMM::bitmap_l3,   0xFF, bitmap_l3_size);
+                memset_fscpuf((void*)PMM::init_bitmap, 0x00, init_bitmap_size);
                 break;
             }
         }
