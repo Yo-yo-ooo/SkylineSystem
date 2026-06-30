@@ -63,7 +63,7 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
 
 void TTF_GetCacheStats(TTF_Font *font, TTF_CacheStats *out_stats);
 
-bool TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,int32_t CacheCap);
+uint8_t TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,int32_t CacheCap);
 
 void TTF_DrawText(
     FrameBuffer *FB, TTF_Font *TTFFont,

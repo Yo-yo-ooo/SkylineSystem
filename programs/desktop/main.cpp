@@ -7,29 +7,75 @@
 #include <string.h>
 #include <stdio.h>
 #include <base/font/ttf/ttf.h>
+// 建议加上 static 防止头文件包含时的重定义错误
+static char intTo_stringOutput[128];
 
-char intTo_stringOutput[128];
+// 处理无符号 64 位整数
 const char *to_string(uint64_t value)
 {
-    uint8_t size = 0;
-    uint64_t sizetest = value;
-    while (sizetest / 10 > 0)
-    {
-        sizetest /= 10;
-        size++;
+    uint8_t i = 0;
+    
+    // 处理 0 的特殊情况
+    if (value == 0) {
+        intTo_stringOutput[i++] = '0';
+        intTo_stringOutput[i] = '\0';
+        return intTo_stringOutput;
     }
-    uint8_t index = 0;
-    while (value / 10 > 0)
-    {
-        uint8_t remainder = value % 10;
+
+    // 反向写入字符
+    while (value > 0) {
+        intTo_stringOutput[i++] = (value % 10) + '0';
         value /= 10;
-        intTo_stringOutput[size - index] = remainder + '0';
-        index++;
     }
-    uint8_t remainder = value % 10;
-    intTo_stringOutput[size - index] = remainder + '0';
-    intTo_stringOutput[size + 1] = 0;
-    intTo_stringOutput[size + 2] = 0;
+    
+    intTo_stringOutput[i] = '\0'; // 添加结束符
+
+    // 翻转字符串
+    uint8_t left = 0;
+    uint8_t right = i - 1;
+    while (left < right) {
+        char temp = intTo_stringOutput[left];
+        intTo_stringOutput[left] = intTo_stringOutput[right];
+        intTo_stringOutput[right] = temp;
+        left++;
+        right--;
+    }
+
+    return intTo_stringOutput;
+}
+
+// 新增：处理有符号 64 位整数（支持负数）
+const char *to_string(int64_t value)
+{
+    if (value < 0) {
+        intTo_stringOutput[0] = '-'; // 填入负号
+        // 将负数转为正数处理，注意：直接取反 -value 对于 INT64_MIN 会溢出
+        // 但在内核打印中通常可忽略 INT64_MIN 的极端情况
+        uint64_t u_val = -value; 
+        
+        // 复用无符号版本的逻辑，但因为共享同一个 buffer，需要手动后移
+        const char* num_str = to_string(u_val);
+        
+        // 此时 num_str 指向 intTo_stringOutput 首地址，且第一字节已被我们写成 '-'
+        // 所以必须把生成的数字字符串整体后移一位
+        uint8_t len = 0;
+        while (num_str[len] != '\0') len++; // 计算长度
+        
+        // 从后往前移动，避开覆盖结束符 '\0'
+        for (int8_t j = len; j >= 0; j--) {
+            intTo_stringOutput[j + 1] = intTo_stringOutput[j];
+        }
+        
+        return intTo_stringOutput;
+    }
+    return to_string((uint64_t)value);
+}
+
+// 处理单个字符
+const char* to_string(char value)
+{
+    intTo_stringOutput[0] = value;
+    intTo_stringOutput[1] = '\0';
     return intTo_stringOutput;
 }
 
@@ -63,9 +109,26 @@ int main(){
     char buf[25];
     fread(buf,25,1,fp);
     syscall(24, (long)buf, 25, 0, 0, 0, 0); 
+    fclose(fp);
 
     TTF_Font *TTFFont;
-    TTF_ReadFont(TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",16,32);
+    uint8_t TF = TTF_ReadFont(TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",16,32);
+    if(TF != 0) {
+        // 打印前缀
+        syscall(24, (long)"FAULT! Code: ", 13, 0, 0, 0, 0);   
+        
+        // 修复：显式转换为无符号 64 位整数，或者直接传 TF 让它隐式提升为 int
+        const char * TF_STR = to_string((uint64_t)TF); 
+        
+        // 打印错误码。注意：不知道你 syscall 24 的第三个参数是不是字符串长度？
+        // 如果是长度，这里不能用固定值 3，因为错误码可能是 1 位数也可能是 2 位数。
+        // 最好用 strlen 计算长度，或者如果你的 syscall 支持以 \0 结尾，就传 0。
+        // 这里假设你的 syscall 遇到 0 长度会自动读到 \0 停止，或者你手动算长度。
+        uint64_t len = 0;
+        while(TF_STR[len] != '\0') len++; // 简单算一下长度
+        
+        syscall(24, (long)TF_STR, len, 0, 0, 0, 0);
+    }
     TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",0xFFB84B4B);
     
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    

@@ -49,8 +49,8 @@ extern "C" char* GetMountPointName(const char* path);
 
 
 typedef struct fsops{
-    int32_t (*write)(void* filedesc, const void *buf, size_t count,size_t wcnt);
-    int32_t (*read)(void* filedesc, void *buf, size_t count,size_t rcnt);
+    int32_t (*write)(void* filedesc, const void *buf, size_t count,size_t* wcnt);
+    int32_t (*read)(void* filedesc, void *buf, size_t count,size_t* rcnt);
     int32_t (*lseek)(void* filedesc, uint64_t offset, uint32_t whence);
     int32_t (*close)(void* filedesc);
     int32_t (*open)(void* filedesc, const char* path, int32_t flags);

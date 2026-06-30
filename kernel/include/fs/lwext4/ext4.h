@@ -333,7 +333,7 @@ int32_t ext4_ftruncate(ext4_file *file, uint64_t size);
  *
  * @return  Standard error code.*/
 int32_t ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt);
-int32_t ext4_fread_(void *file, void *buf, size_t size,size_t rcnt);
+//int32_t ext4_fread_(void *file, void *buf, size_t size,size_t* rcnt);
 
 /**@brief   Write data to file.
  *
@@ -344,7 +344,7 @@ int32_t ext4_fread_(void *file, void *buf, size_t size,size_t rcnt);
  *
  * @return  Standard error code.*/
 int32_t ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt);
-int32_t ext4_fwrite_(void *file, const void *buf, size_t size,size_t wcnt);
+//int32_t ext4_fwrite_(void *file, const void *buf, size_t size,size_t* wcnt);
 
 /**@brief   File seek operation.
  *

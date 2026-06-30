@@ -8,6 +8,7 @@
 #include <fs/fd.h>
 
 extern volatile bool IsPM5LVL;
+
 uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
 uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
@@ -22,13 +23,22 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     if (buf >= user_space_end) return -EFAULT;
     if (count > user_space_end - buf) return -EFAULT;
 
+    // 检查 kmalloc 是否失败
     void* kbuf = kmalloc(count);
+    if (!kbuf) return -ENOMEM;
+    
     size_t total_read = 0;
-    //kinfoln("READING %u BYTES",count);
-    FD->FSOPS->read(FD->filedesc,kbuf,count,&total_read);
-    VMM::UserAccess::CopyToUser(proc->pagemap,buf,kbuf,count);
+    FD->FSOPS->read(FD->filedesc, kbuf, count, &total_read);
+    
+    // 只拷贝实际读取的字节数，防止越界读 kbuf 和写穿用户态
+    if (total_read > 0) {
+        if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf, kbuf, total_read)) {
+            kfree(kbuf); // 发生错误也要释放内存
+            return -EFAULT;
+        }
+    }
 
-    //kinfoln("READED %u bytes successfully!", total_read);
+    kfree(kbuf); // 彻底修复内存泄漏
     return (int64_t)total_read;
 }
 
@@ -46,70 +56,70 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     proc_t *proc = Schedule::this_proc();
     fd_t *FD = fd_get(proc->FDMan,fd_idx);
     if(!FD){return -EBADF;}
-    // 安全校验：如果 count 为 0，直接返回 0
+    
     if (count == 0) return 0;
     
-    // 安全校验：检查用户指针是否越界进入内核区域
     if (!is_user_buffer_valid(buf, count)) {
-        return -EFAULT; // Bad address
+        return -EFAULT;
+    }
+
+    // 不要直接把用户态指针传给文件系统，先拷贝到内核缓冲区
+    void* kbuf = kmalloc(count);
+    if (!kbuf) return -ENOMEM;
+
+    if (!VMM::UserAccess::CopyFromUser(proc->pagemap, kbuf, (void*)buf, count)) {
+        kfree(kbuf);
+        return -EFAULT;
     }
 
     size_t wcnt = 0;
-    int32_t status = FD->FSOPS->write(FD->filedesc, (void*)buf, count, &wcnt);
+    int32_t status = FD->FSOPS->write(FD->filedesc, kbuf, count, &wcnt);
     
-    if (status != 0) return (int64_t)status; // 返回负数错误码
-    return (int64_t)wcnt;
+    kfree(kbuf); // 修复内存泄漏
 
-    //return FD->FSOPS->write(FD->filedesc,buf,count);
+    if (status != 0) return (int64_t)status;
+    return (int64_t)wcnt;
 }
 
 uint64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
 uint64_t ign_0,uint64_t ign_1,uint64_t ign_2){
+    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     proc_t *proc = Schedule::this_proc();
     fd_t *FD = fd_get(proc->FDMan,fd_idx);
     if(!FD){return -EBADF;}
     
-    // 直接将偏移指令透传给内核
-    // 增加 whence 的有效性检查
     if (whence > 2) {return -EINVAL; }
     return FD->FSOPS->lseek(FD->filedesc,offset,whence);
 }
 
-// 优化后的路径长度检测：利用 64 位并行扫描
 static inline bool is_path_too_long(const char* kpath) {
     const uint64_t* p = (const uint64_t*)kpath;
     const uint64_t* end = (const uint64_t*)(kpath + PATH_MAX);
 
-    // 每次处理 8 个字节
     while (p < end) {
         uint64_t v = *p;
-        
-        // 核心技巧：SWAR (SIMD Within A Register)
-        // 检测 64 位字中是否有任意一个字节为 0
-        // (v - 0x0101010101010101) & ~v & 0x8080808080808080
         if (((v - 0x0101010101010101ULL) & ~v & 0x8080808080808080ULL)) {
-            return false; // 找到了 '\0'，路径合法
+            return false;
         }
         p++;
     }
-    return true; // 没找到 '\0'，路径超长
+    return true;
 }
 
-
-// 辅助函数：安全地从用户态拷贝字符串 (遇到 \0 停止)，返回拷贝的字节数，失败返回负数
 static int64_t strncpy_from_user(char* dst, const char* src, size_t max_len, pagemap_t* pagemap) {
     for (size_t i = 0; i < max_len; i++) {
         if (!VMM::UserAccess::CopyFromUser(pagemap, dst + i, (void*)(src + i), 1)) {
-            return -EFAULT; // 越界
+            return -EFAULT;
         }
         if (dst[i] == '\0') {
-            return i; // 成功找到结尾
+            return i;
         }
     }
-    return -ENAMETOOLONG; // 超过 max_len 仍未找到 \0
+    return -ENAMETOOLONG;
 }
-extern void P(ext4_file *f);
+
 uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
+    IGNV_4();
     proc_t *proc = Schedule::this_proc();
 
     if (!is_user_address(path)) { 
@@ -121,15 +131,13 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
         return -ENOMEM; 
     }
 
-
-    // [修复 1] 替换强制 PATH_MAX 拷贝为安全字符串拷贝
     int64_t path_len = strncpy_from_user(kpath, (const char*)path, PATH_MAX, proc->pagemap);
     if (path_len < 0) {
         kinfoln("sys_fopen free kpath(pathlen < 0)");
         kfree(kpath);
-        return path_len; // 可能是 -EFAULT 或 -ENAMETOOLONG
+        return path_len;
     }
-    //kinfoln("KAPTH:%s",kpath);
+    
     __hmap_s_mp *MP = GetMount(kpath);
     if (!MP) {
         kinfoln("sys_fopen free kpath(!MP)");
@@ -150,12 +158,6 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
     _memset(fd_struct->filedesc,0,MP->FSOPS->SIZEOF_FILE_DESC);
     
     int32_t err = MP->FSOPS->open(fd_struct->filedesc, kpath, flags);
-
-    //ext4_file *f = (ext4_file*)fd_struct->filedesc;
-    //P(f);
-    
-
-    //kinfoln("%d",MP->FSOPS->SIZEOF_FILE_DESC);
 
     kfree(kpath); 
 
@@ -180,6 +182,5 @@ uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5()){
 
 uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4()){
     IGNV_4();
-    
+    return -ENOSYS; // Function not implemented
 }
-

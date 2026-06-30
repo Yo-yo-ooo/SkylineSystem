@@ -24,6 +24,12 @@ ifeq ($(shell ( ! test -f ../res/font/SourceHanSerifTC_Medium.ttf ); echo $$?),0
 	mv SourceHanSerifTC_Medium.ttf ../res/font
 	rm -rf SourceHanSerifTC_Medium.zip
 	e2cp ../res/font/SourceHanSerifTC_Medium.ttf ../$(PROGRAM_IMAGE_NAME).img:/
+else
+ifeq ($(shell e2ls disk.img 2>/dev/null | grep -q "SourceHanSerifTC_Medium.ttf" && echo yes),yes)
+	$(info "SourceHanSerifTC_Medium.ttf Exists")
+else	
+	e2cp ../res/font/SourceHanSerifTC_Medium.ttf ../$(PROGRAM_IMAGE_NAME).img:/
+endif
 endif
 	
 

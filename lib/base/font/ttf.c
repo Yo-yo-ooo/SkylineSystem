@@ -781,31 +781,34 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
     return final_bmp;
 }
 #include <stdio.h>
-
+#include <base/arch/x86_64/syscall.h>
 
 // 初始化并加载系统字体
-bool TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,int32_t CacheCap) {
+uint8_t TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,int32_t CacheCap) {
     TTFFont = TTF_CreateFont(CacheCap);
-    if (!TTFFont) return false;
+    if (!TTFFont) return 1;
 
-    FILE* fd = fopen(path, O_RDONLY);
+    FILE* fd = fopen(path, "r");
     if (fd == NULL) {
         TTF_DestroyFont(TTFFont);
-        return false;
+        syscall(24, (long)"FAULT!2", 7, 0, 0, 0, 0);
+        return 2;
     }
 
     uint64_t file_size = fsize(fd);
     if (file_size == 0) {
         fclose(fd);
         TTF_DestroyFont(TTFFont);
-        return false;
+        syscall(24, (long)"FAULT3", 7, 0, 0, 0, 0);
+        return 3;
     }
 
     unsigned char* font_data = (unsigned char*)malloc(file_size);
     if (!font_data) {
         fclose(fd);
         TTF_DestroyFont(TTFFont);
-        return false;
+        syscall(24, (long)"FAULT!4", 7, 0, 0, 0, 0);
+        return 4;
     }
 
     fread(font_data, file_size,1,fd);
@@ -818,13 +821,14 @@ bool TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,int32
     if (!success) {
         TTF_DestroyFont(TTFFont);
         TTFFont = NULL;
-        return false;
+            
+        return 5;
     }
 
     TTF_SetOversampling(TTFFont, 2); // 2x2 超采样
     // TTF_SetFontStyle(g_system_font, 1, 0.2f); // 轻微加粗和斜体
 
-    return true;
+    return 0;
 }
 
 void TTF_DrawText(

@@ -112,7 +112,7 @@ struct ext4_mountpoint{
 
 
 static FS_PDESC fs = {
-    .write = ext4_fwrite_,.read = ext4_fread_,
+    .write = ext4_fwrite,.read = ext4_fread,
     .lseek = ext4_fseek_,.close = ext4_fclose_,
     .open = ext4_fopen_,.fsize = ext4_fsize_,.SIZEOF_FILE_DESC = sizeof(ext4_file)
 };
@@ -3526,14 +3526,6 @@ void ext4_fs_test_all(){
 }
 
 
-
-int32_t ext4_fwrite_(void *file, const void *buf, size_t size,size_t wcnt){
-    return ext4_fwrite((ext4_file *)file,buf,size,&wcnt);
-}
-
-int32_t ext4_fread_(void *file, void *buf, size_t size,size_t rcnt){
-    return ext4_fread((ext4_file *)file,buf,size,&rcnt);
-}
 
 int32_t ext4_fseek_(void *file, uint64_t offset, uint32_t origin){
     return ext4_fseek((ext4_file *)file,offset,origin);
