@@ -50,7 +50,7 @@ FILE* fopen(const char* filename, const char* mode) {
     }
 
     stream->fd = fd;
-    // 修复1：空文件 size=0 是合法的，不应报错
+    // 空文件 size=0 是合法的，不应报错
     stream->file_size = sys_fsize(fd);
     stream->offset = 0;
     stream->buf_pos = 0;
@@ -72,9 +72,6 @@ int32_t fclose(FILE *stream) {
     return res;
 }
 
-// ==========================================
-// fread (带用户态缓冲的极速版)
-// ==========================================
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     if (!ptr || !stream || size == 0 || nmemb == 0) return 0;
     
@@ -97,7 +94,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
 
     // 核心循环：带缓冲的数据读取
     while (total_read < bytes_to_read) {
-        // 1. 缓冲区还有未消费的数据，直接内存拷贝（零 syscall）
+        // 缓冲区还有未消费的数据，直接内存拷贝（零 syscall）
         if (stream->buf_pos < stream->buf_size) {
             size_t avail = stream->buf_size - stream->buf_pos;
             size_t to_copy = (bytes_to_read - total_read < avail) ? (bytes_to_read - total_read) : avail;
@@ -110,7 +107,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
             continue;
         }
 
-        // 2. 缓冲区空了。如果剩余请求量 >= 缓冲区容量，直接 bypass 缓冲区，DMA 到用户内存
+        // 缓冲区空了。如果剩余请求量 >= 缓冲区容量，直接 bypass 缓冲区，DMA 到用户内存
         size_t remaining_request = bytes_to_read - total_read;
         if (remaining_request >= stream->buf_capacity) {
             size_t r = sys_fread(stream->fd, (uint64_t)(dest + total_read), remaining_request);
@@ -120,7 +117,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
             continue;
         }
 
-        // 3. 剩余请求量 < 缓冲区容量，refill 缓冲区（触发 1 次 syscall 拉取一整块数据）
+        // 剩余请求量 < 缓冲区容量，refill 缓冲区（触发 1 次 syscall 拉取一整块数据）
         stream->buf_pos = 0;
         stream->buf_size = sys_fread(stream->fd, (uint64_t)stream->buffer, stream->buf_capacity);
         if (stream->buf_size == 0) break; // EOF 或出错
@@ -129,9 +126,6 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     return total_read / size; // 返回成功读取的元素个数
 }
 
-// ==========================================
-// fseek 与 ftell 
-// ==========================================
 int32_t fseek(FILE* stream, int64_t offset, int32_t whence) {
     if (!stream) return -1;
 
@@ -148,7 +142,6 @@ int32_t fseek(FILE* stream, int64_t offset, int32_t whence) {
             new_offset = stream->offset + offset;
             break;
         case SEEK_END:
-            // 修复3：SEEK_END 的 offset 通常是 0 或负数，正确公式是 file_size + offset
             new_offset = stream->file_size + offset; 
             break;
         default:
@@ -170,7 +163,5 @@ int32_t fseek(FILE* stream, int64_t offset, int32_t whence) {
 int64_t ftell(FILE* stream) {
     if (!stream) return -1;
     
-    // 修复4：因为我们在用户态精确维护了 stream->offset
-    // 所以逻辑位置直接就是 stream->offset，根本不需要再发 syscall 问内核！
     return stream->offset;
 }
