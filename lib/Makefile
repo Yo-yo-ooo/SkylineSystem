@@ -7,12 +7,13 @@
 include ../gdef.mk
 # 工具链定义
 CC      = gcc
+CPP 	= g++
 AR      = ar
 AS 		= as
 RANLIB  = ranlib
 
 # 目录定义
-SRCDIRS = stdc base
+SRCDIRS = stdc base graphic
 INCDIR  = include
 OBJDIR  = obj
 BINDIR  = bin
@@ -30,13 +31,15 @@ TARGET  = $(BINDIR)/lib.a
 # 自动递归查找源文件
 C_SRCS  = $(shell find $(SRCDIRS) -name "*.c")
 S_SRCS  = $(shell find $(SRCDIRS) -name "*.S")
+CPP_SRCS  = $(shell find $(SRCDIRS) -name "*.cpp")
 
 C_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.c")
 S_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.S")
-
+CPP_SRCS += $(shell find base/arch/$(BUILD_ARCH) -name "*.cpp")
 
 OBJS    = $(patsubst %.c, $(OBJDIR)/%.c.o, $(C_SRCS))
 OBJS   += $(patsubst %.S, $(OBJDIR)/%.S.o, $(S_SRCS))
+OBJS   += $(patsubst %.cpp, $(OBJDIR)/%.cpp.o, $(CPP_SRCS))
 
 ifeq ($(BUILD_ARCH),x86_64)
 CFLAGS += -DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM)
@@ -73,7 +76,11 @@ $(OBJDIR)/%.c.o: %.c
 	@echo "CC      $<"
 	$(CC) $(CFLAGS) -MMD -c $< -o $@
 
-
+# 编译 C++ 文件
+$(OBJDIR)/%.cpp.o: %.cpp
+	@mkdir -p $(dir $@)
+	@echo "C++      $<"
+	$(CPP) $(CFLAGS) -MMD -c $< -o $@
 
 # 创建目录
 $(OBJDIR):
@@ -88,7 +95,7 @@ $(BINDIR):
 # 清理规则
 # ==============================================
 clean:
-	@rm -rf $(OBJDIR) $(BINDIR)
+	rm -rf $(OBJDIR) $(BINDIR)
 	@echo "Library all cleaned."
 
 .PHONY: all clean

@@ -1,11 +1,12 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
-#include <gui/fb.h>
+#include <graphic/fb.h>
 #include <syscall.h>
-#include <gui/basicdraw.h>
+#include <graphic/basicdraw.hpp>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <base/font/ttf/ttf.h>
 
 char intTo_stringOutput[128];
 const char *to_string(uint64_t value)
@@ -43,6 +44,7 @@ int main(){
     BasicDraw bd((FrameBuffer*)&fb);
     // 绘制自适应UI
     bd.DrawProportionalUI();
+
     
     syscall(24,(long)to_string(fb.BufferSize),256,0,0,0,0);
 
@@ -61,7 +63,12 @@ int main(){
     char buf[25];
     fread(buf,25,1,fp);
     syscall(24, (long)buf, 25, 0, 0, 0, 0); 
+
+    TTF_Font *TTFFont;
+    TTF_ReadFont(TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",16,32);
+    TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",0xFFB84B4B);
     
+    syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
 
     while (true);
     

@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <graphic/fb.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -61,6 +62,13 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
 TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max_width, TTF_Align align, int32_t line_gap);
 
 void TTF_GetCacheStats(TTF_Font *font, TTF_CacheStats *out_stats);
+
+bool TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,int32_t CacheCap);
+
+void TTF_DrawText(
+    FrameBuffer *FB, TTF_Font *TTFFont,
+    int32_t x, int32_t y, const char* text, uint32_t color
+);
 
 #ifdef __cplusplus
 }
