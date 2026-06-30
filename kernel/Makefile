@@ -40,8 +40,8 @@ $(call USER_VARIABLE,KCFLAGS,-g -pipe)
 $(call USER_VARIABLE,KCPPFLAGS,)
 
 ifeq ($(KARCH),x86_64)
-    # User controllable nasm flags.
-    $(call USER_VARIABLE,KNASMFLAGS,-F dwarf -g)
+# User controllable nasm flags.
+$(call USER_VARIABLE,KNASMFLAGS,-F dwarf -g)
 endif
 
 # User controllable linker flags. We set none by default.
@@ -232,15 +232,10 @@ all: bin-$(KARCH)/$(OUTPUT)
 bin-$(KARCH)/$(OUTPUT): Makefile linker-$(KARCH).ld $(OBJ)
 	@mkdir -p "$$(dirname $@)"
 	@echo LD kernel
-ifeq ($(KARCH), x86_64)
 ifeq ($(NOT_COMPILE_X86MEM),0)
 	@$(KLD) $(OBJ) $(X86MEM_PATH)/memops.o \
 				$(KLDFLAGS) -o $@
 else
-	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
-endif
-endif
-ifeq ($(shell ( ! test -f bin-$(KARCH)/$(OUTPUT) ); echo $$?),0)
 	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
 endif
 	
