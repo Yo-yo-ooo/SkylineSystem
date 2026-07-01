@@ -789,9 +789,10 @@ uint8_t TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,in
     if (!TTFFont) return 1;
 
     FILE* fd = fopen(path, "r");
+    
     if (fd == NULL) {
         TTF_DestroyFont(TTFFont);
-        syscall(24, (long)"FAULT!2", 7, 0, 0, 0, 0);
+        syscall(24, (long)"FAULT!2", 8, 0, 0, 0, 0);
         return 2;
     }
 
@@ -799,7 +800,7 @@ uint8_t TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,in
     if (file_size == 0) {
         fclose(fd);
         TTF_DestroyFont(TTFFont);
-        syscall(24, (long)"FAULT3", 7, 0, 0, 0, 0);
+        syscall(24, (long)"FAULT3", 8, 0, 0, 0, 0);
         return 3;
     }
 
@@ -807,11 +808,12 @@ uint8_t TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,in
     if (!font_data) {
         fclose(fd);
         TTF_DestroyFont(TTFFont);
-        syscall(24, (long)"FAULT!4", 7, 0, 0, 0, 0);
+        syscall(24, (long)"FAULT!4", 8, 0, 0, 0, 0);
         return 4;
     }
-
+    syscall(24, (long)"NNNNNNN", 8, 0, 0, 0, 0);
     fread(font_data, file_size,1,fd);
+    syscall(24, (long)"Closing File...", 16, 0, 0, 0, 0);
     fclose(fd);
 
     bool success = TTF_LoadFontFromMemory(TTFFont, font_data, file_size, pixel_height);
@@ -821,7 +823,7 @@ uint8_t TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,in
     if (!success) {
         TTF_DestroyFont(TTFFont);
         TTFFont = NULL;
-            
+        syscall(24, (long)"FAULT!5", 8, 0, 0, 0, 0);
         return 5;
     }
 

@@ -129,6 +129,7 @@ int main(){
         
         syscall(24, (long)TF_STR, len, 0, 0, 0, 0);
     }
+    
     TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",0xFFB84B4B);
     
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    

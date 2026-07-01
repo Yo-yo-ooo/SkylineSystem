@@ -590,9 +590,8 @@ static size_t __ffunc _etoa(out_fct_type out, char* buffer, size_t idx, size_t m
 }
 #endif  // PRINTF_SUPPORT_EXPONENTIAL
 #endif  // PRINTF_SUPPORT_FLOAT
-
-
 // internal vsnprintf
+// 修复：增加 maxlen == 0 的安全防御
 static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t maxlen, const char* format, va_list va)
 {
   uint32_t flags, width, precision, n;
@@ -868,8 +867,11 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
     }
   }
 
-  // termination
-  out((char)0, buffer, idx < maxlen ? idx : maxlen - 1U, maxlen);
+  // 修复：maxlen == 0 时的防下溢保护
+  if (maxlen > 0) {
+    // termination
+    out((char)0, buffer, idx < maxlen ? idx : maxlen - 1U, maxlen);
+  }
 
   // return written chars without terminating \0
   return (int32_t)idx;
@@ -878,22 +880,25 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
 
 ///////////////////////////////////////////////////////////////////////////////
 
-// [优化点]：使用栈缓冲区进行批量输出，大幅提升性能
+// [优化]：格式化在锁外执行，写入硬件在锁内执行，大幅降低锁持有时间
 int32_t printf_(const char* format, ...) {
-    spinlock_lock(&ptf_lock);
     va_list va;
     va_start(va, format);
     
-    char buffer[512]; // 512字节的栈缓冲区，对于内核打印足够
+    char buffer[512]; // 局部栈缓冲区，格式化过程无需加锁
     int32_t ret = _vsnprintf(_out_buffer, buffer, sizeof(buffer), format, va);
     va_end(va);
     
-    // 一次性将缓冲区内容刷入底层设备
-    for (int32_t i = 0; i < ret && buffer[i] != '\0'; i++) {
+    // _vsnprintf 返回值 ret 可能大于 sizeof(buffer)，必须截断防止越界读
+    int32_t write_len = (ret >= (int32_t)sizeof(buffer)) ? (sizeof(buffer) - 1) : ret;
+
+    // 仅在将缓冲区刷入底层设备时加锁，防止多核输出交错
+    spinlock_lock(&ptf_lock);
+    for (int32_t i = 0; i < write_len; i++) {
         _putchar(buffer[i]);
     }
-    
     spinlock_unlock(&ptf_lock);
+    
     return ret;
 }
 
@@ -915,18 +920,18 @@ int32_t snprintf_(char* buffer, size_t count, const char* format, ...) {
 }
 
 
-// [优化点]：同样改为缓冲区输出，并补全线程安全锁
 int32_t vprintf_(const char* format, va_list va) {
-    spinlock_lock(&ptf_lock);
-    
     char buffer[512];
     int32_t ret = _vsnprintf(_out_buffer, buffer, sizeof(buffer), format, va);
     
-    for (int32_t i = 0; i < ret && buffer[i] != '\0'; i++) {
+    int32_t write_len = (ret >= (int32_t)sizeof(buffer)) ? (sizeof(buffer) - 1) : ret;
+    
+    spinlock_lock(&ptf_lock);
+    for (int32_t i = 0; i < write_len; i++) {
         _putchar(buffer[i]);
     }
-    
     spinlock_unlock(&ptf_lock);
+    
     return ret;
 }
 
