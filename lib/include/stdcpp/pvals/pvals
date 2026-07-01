@@ -1,0 +1,27 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+#pragma once
+
+#if (defined(__cplusplus) && __cplusplus >= 201402L)
+#define DEPRECATED_CXX14 [[deprecated("This function was deprecated in C++14")]]
+#else
+#define DEPRECATED_CXX14()
+#endif
+
+#if (defined(__cplusplus) && __cplusplus >= 201703L)
+#define DEPRECATED_CXX17 [[deprecated("This function was deprecated in C++17")]]
+#else
+#define DEPRECATED_CXX17()
+#endif
+
+#if (defined(__cplusplus) && __cplusplus >= 202002L)
+#define DEPRECATED_CXX20 [[deprecated("This function was deprecated in C++20")]]
+#else
+#define DEPRECATED_CXX20()
+#endif
+
+#if (defined(__cplusplus) && __cplusplus >= 202302L)
+#define DEPRECATED_CXX23 [[deprecated("This function was deprecated in C++23")]]
+#else
+#define DEPRECATED_CXX23()
+#endif

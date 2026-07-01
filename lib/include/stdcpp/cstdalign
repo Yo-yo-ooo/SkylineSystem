@@ -1,0 +1,9 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+#pragma once
+
+#if (defined(__cplusplus) && __cplusplus >= 201103L && __cplusplus < 202002L)
+#include <stdalign.h>
+#elif (defined(__cplusplus) && (__cplusplus < 201103L || __cplusplus >= 202002L))
+#error "Your C++ Version Not Support You To Contain <stdalign>"
+#endif

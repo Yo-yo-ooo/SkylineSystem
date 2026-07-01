@@ -9,7 +9,7 @@
 #include <cstdint>
 
 namespace std{
-#if (defined(__cplusplus) && __cplusplus >= 201103L && __cplusplus <= 202002L)
+#if (defined(__cplusplus) && __cplusplus >= 201103L && __cplusplus < 202002L)
     enum memory_order{
         memory_order_relaxed,
         memory_order_consume,
