@@ -1,0 +1,7 @@
+#pragma once
+
+#if (defined(__cplusplus) && __cplusplus >= 201103L)
+#include <limits.h>
+#else
+#error "Your CPP Version Is Under C++11 Cannot CONTAIN <climits>"
+#endif
