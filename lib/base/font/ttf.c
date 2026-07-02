@@ -41,7 +41,6 @@
     #define TTF_ATOMIC_FETCH_ADD(ptr, val) atomic_fetch_add_n(ptr, val, ATOMIC_RELAXED)
     #define TTF_ATOMIC_LOAD(ptr) atomic_load_n(ptr, ATOMIC_RELAXED)
 #else
-    // 降级：非原子环境，直接操作（需由调用方 TTF_MUTEX 保证安全）
     #define TTF_ATOMIC_FETCH_ADD(ptr, val) (*(ptr) += (val))
     #define TTF_ATOMIC_LOAD(ptr) (*(ptr))
 #endif
@@ -83,12 +82,14 @@ struct TTF_Font_Internal {
     unsigned long miss_count;
 };
 
+// 确保 TTF_Font 类型定义存在
+typedef struct TTF_Font_Internal TTF_Font;
+
 typedef struct {
     int32_t codepoint;
     int32_t x_advance;
 } TTF_RenderCmd;
 
-// CJK 字符判断
 static bool is_cjk_char(int32_t codepoint) {
     return (codepoint >= 0x4E00 && codepoint <= 0x9FFF) ||
            (codepoint >= 0x3400 && codepoint <= 0x4DBF) ||
@@ -97,7 +98,6 @@ static bool is_cjk_char(int32_t codepoint) {
            (codepoint >= 0x20000 && codepoint <= 0x2A6DF);
 }
 
-// CJK 标点避首规则判断
 static bool is_punct_no_start(int32_t codepoint) {
     return codepoint == 0x3001 || codepoint == 0x3002 || 
            codepoint == 0xFF0C || codepoint == 0xFF1A || codepoint == 0xFF1B || 
@@ -200,9 +200,9 @@ static void hash_remove(TTF_Font* font, int32_t cp) {
 static void apply_italic_skew(TTF_Bitmap *bmp, float skew) {
     if (skew <= 0.0f || !bmp->pixels) return;
     int32_t new_w = bmp->width + (int32_t)(bmp->height * skew) + 1;
-    unsigned char *new_pixels = (unsigned char*)TTF_MALLOC(new_w * bmp->height);
+    unsigned char *new_pixels = (unsigned char*)TTF_MALLOC((size_t)new_w * bmp->height);
     if (!new_pixels) return;
-    TTF_MEMSET(new_pixels, 0, new_w * bmp->height);
+    TTF_MEMSET(new_pixels, 0, (size_t)new_w * bmp->height);
 
     for (int32_t y = 0; y < bmp->height; y++) {
         int32_t offset = (int32_t)((bmp->height - y) * skew);
@@ -219,9 +219,9 @@ static void downsample_bilinear(TTF_Bitmap *bmp, int32_t target_w, int32_t targe
     if (bmp->width == target_w && bmp->height == target_h) return;
     if (target_w <= 0 || target_h <= 0) return;
 
-    unsigned char *dst = TTF_MALLOC(target_w * target_h);
+    unsigned char *dst = (unsigned char*)TTF_MALLOC((size_t)target_w * target_h);
     if (!dst) return;
-    TTF_MEMSET(dst, 0, target_w * target_h);
+    TTF_MEMSET(dst, 0, (size_t)target_w * target_h);
     
     float scale_x = (float)bmp->width / target_w;
     float scale_y = (float)bmp->height / target_h;
@@ -260,7 +260,6 @@ static TTF_CacheNode* get_glyph(TTF_Font* font, int32_t codepoint) {
     if (idx != -1) {
         cache_unlink_lru(font, idx);
         cache_push_front_lru(font, idx);
-        // 修复 1: 使用统一原子宏进行无锁化自增
         TTF_ATOMIC_FETCH_ADD(&font->hit_count, 1);
         TTF_CacheNode* node = &font->cache_nodes[idx];
         TTF_MUTEX_UNLOCK(font->lock);
@@ -362,8 +361,6 @@ fail:
     return NULL;
 }
 
-// ==================== 外部 API 实现 ====================
-
 TTF_Font* TTF_CreateFont(int32_t cache_capacity) {
     if (cache_capacity <= 0) cache_capacity = 256;
     TTF_Font* font = (TTF_Font*)TTF_MALLOC(sizeof(TTF_Font));
@@ -419,7 +416,6 @@ void TTF_DestroyFont(TTF_Font* font) {
 void TTF_GetCacheStats(TTF_Font *font, TTF_CacheStats *out_stats) {
     if (!font || !out_stats) return;
     TTF_MUTEX_LOCK(font->lock);
-    // 修复 1: 使用统一原子宏安全读取
     out_stats->hit_count = TTF_ATOMIC_LOAD(&font->hit_count);
     out_stats->miss_count = TTF_ATOMIC_LOAD(&font->miss_count);
     TTF_MUTEX_UNLOCK(font->lock);
@@ -618,14 +614,18 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
     int32_t text_height = max_y - min_y;
     if (text_width <= 0 || text_height <= 0) { TTF_FREE(cmds); return false; }
 
+    // 如果传入的 buffer 不够大，重新分配
     if (!out_bmp->pixels || out_bmp->width < text_width || out_bmp->height < text_height) {
         if (out_bmp->pixels) TTF_FREE(out_bmp->pixels);
         size_t mem_size = (size_t)text_width * (size_t)text_height;
         if (mem_size / (size_t)text_width != (size_t)text_height) { TTF_FREE(cmds); return false; }
         out_bmp->pixels = (unsigned char*)TTF_MALLOC(mem_size);
         if (!out_bmp->pixels) { TTF_FREE(cmds); return false; }
-        out_bmp->width = text_width; out_bmp->height = text_height;
     }
+    
+    // 更新 width 和 height，防止越界
+    out_bmp->width = text_width;
+    out_bmp->height = text_height;
     TTF_MEMSET(out_bmp->pixels, 0, (size_t)text_width * text_height);
 
     int32_t x_pos2 = 0;
@@ -706,7 +706,6 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
 
             if (max_width > 0 && x_pos + char_w > max_width) {
                 if (is_punct_no_start(codepoint) && i > line_start) {
-                    // 强制将标点留在本行
                 } else {
                     if (last_space != -1) {
                         line_end = last_space;
@@ -780,55 +779,61 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
     TTF_FREE(lines);
     return final_bmp;
 }
-#include <stdio.h>
-//#include <base/arch/x86_64/syscall.h>
 
-// 初始化并加载系统字体
-uint8_t TTF_ReadFont(TTF_Font *TTFFont,const char* path, int32_t pixel_height,int32_t CacheCap) {
-    TTFFont = TTF_CreateFont(CacheCap);
-    if (!TTFFont) return 1;
+#include <stdio.h>
+
+uint8_t TTF_ReadFont(
+    TTF_Font **out_font, const char* path, 
+    int32_t pixel_height, int32_t CacheCap
+) {
+    if (!out_font) return 254;
+    *out_font = TTF_CreateFont(CacheCap);
+    if (!(*out_font)) return 1;
 
     FILE* fd = fopen(path, "r");
-    
     if (fd == NULL) {
-        TTF_DestroyFont(TTFFont);
-        //syscall(24, (long)"FAULT!2", 8, 0, 0, 0, 0);
+        TTF_DestroyFont(*out_font);
+        *out_font = NULL;
         return 2;
     }
 
     uint64_t file_size = fsize(fd);
     if (file_size == 0) {
         fclose(fd);
-        TTF_DestroyFont(TTFFont);
-        //syscall(24, (long)"FAULT3", 8, 0, 0, 0, 0);
+        TTF_DestroyFont(*out_font);
+        *out_font = NULL;
         return 3;
     }
 
     unsigned char* font_data = (unsigned char*)malloc(file_size);
     if (!font_data) {
         fclose(fd);
-        TTF_DestroyFont(TTFFont);
-        //syscall(24, (long)"FAULT!4", 8, 0, 0, 0, 0);
+        TTF_DestroyFont(*out_font);
+        *out_font = NULL;
         return 4;
     }
 
-    fread(font_data, file_size,1,fd);
+    // 修复：fread 参数顺序应为 (ptr, size, nmemb, stream)
+    size_t read_bytes = fread(font_data, 1, file_size, fd);
     fclose(fd);
 
-    bool success = TTF_LoadFontFromMemory(TTFFont, font_data, file_size, pixel_height);
-    
+    if (read_bytes != file_size) {
+        free(font_data);
+        TTF_DestroyFont(*out_font);
+        *out_font = NULL;
+        return 6;
+    }
+
+    bool success = TTF_LoadFontFromMemory(*out_font, font_data, file_size, pixel_height);
     free(font_data);
 
     if (!success) {
-        TTF_DestroyFont(TTFFont);
-        TTFFont = NULL;
-        //syscall(24, (long)"FAULT!5", 8, 0, 0, 0, 0);
+        TTF_DestroyFont(*out_font);
+        *out_font = NULL;
         return 5;
     }
 
-    TTF_SetOversampling(TTFFont, 2); // 2x2 超采样
-    // TTF_SetFontStyle(g_system_font, 1, 0.2f); // 轻微加粗和斜体
-
+    TTF_SetOversampling(*out_font, 2);
     return 0;
 }
 
@@ -838,63 +843,51 @@ int32_t x, int32_t y, const char* text, uint32_t color
 ) {
     if (!TTFFont || !FB || !FB->BaseAddress) return;
 
-    // 渲染文本到位图
     TTF_Bitmap bmp = TTF_RenderText(TTFFont, text);
     if (bmp.pixels && bmp.width > 0 && bmp.height > 0) {
         
         uint32_t* fb_ptr = (uint32_t*)FB->BaseAddress;
         int32_t fb_w = (int32_t)FB->Width;
         int32_t fb_h = (int32_t)FB->Height;
-        // 必须使用 PixelsPerScanLine，因为硬件行宽可能大于分辨率宽度
         int32_t fb_pitch = (int32_t)FB->PixelsPerScanLine; 
 
-        // 提取目标颜色 RGB 分量
         uint8_t src_r = (color >> 16) & 0xFF;
         uint8_t src_g = (color >> 8) & 0xFF;
         uint8_t src_b = color & 0xFF;
 
-        // 注意修复了 for 循环的语法
         for (int32_t y2 = 0; y2 < bmp.height; y2++) {
             for (int32_t x2 = 0; x2 < bmp.width; x2++) {
                 
-                // 1. 计算屏幕上的绝对坐标
                 int32_t px = x + x2;
                 int32_t py = y + y2;
 
-                // 2. 严格边界裁剪 (防止写溢出显存导致 Triple Fault)
                 if (px < 0 || px >= fb_w || py < 0 || py >= fb_h) continue;
 
-                // 3. 从灰度图中读取 Alpha 透明度 (0~255)
                 uint8_t alpha = bmp.pixels[y2 * bmp.width + x2];
-                
-                // 完全透明的像素直接跳过，不读写显存，提升性能
                 if (alpha == 0) continue;
 
-                // 4. 计算显存线性地址
                 uint32_t* dst_pixel = &fb_ptr[py * fb_pitch + px];
 
-                // 完全不透明，直接覆盖
                 if (alpha == 255) {
-                    *dst_pixel = 0xFF000000 | color; // 补齐 Alpha 通道为 255
+                    // 修复：按分量重组，避免原有 color 残留的 Alpha 干扰
+                    *dst_pixel = 0xFF000000 | (src_r << 16) | (src_g << 8) | src_b;
                     continue;
                 }
 
-                // 5. 执行 Alpha 混合 (Src * A + Dst * (1-A)) / 255
                 uint32_t bg = *dst_pixel;
                 uint8_t bg_r = (bg >> 16) & 0xFF;
                 uint8_t bg_g = (bg >> 8) & 0xFF;
                 uint8_t bg_b = bg & 0xFF;
 
-                // 使用快速整数近似除以 255: (val + 128) >> 8
-                uint8_t mix_r = (src_r * alpha + bg_r * (255 - alpha) + 128) >> 8;
-                uint8_t mix_g = (src_g * alpha + bg_g * (255 - alpha) + 128) >> 8;
-                uint8_t mix_b = (src_b * alpha + bg_b * (255 - alpha) + 128) >> 8;
+                // 优化：提取公共反透明度
+                uint8_t inv_alpha = 255 - alpha;
+                uint8_t mix_r = (src_r * alpha + bg_r * inv_alpha + 128) >> 8;
+                uint8_t mix_g = (src_g * alpha + bg_g * inv_alpha + 128) >> 8;
+                uint8_t mix_b = (src_b * alpha + bg_b * inv_alpha + 128) >> 8;
 
                 *dst_pixel = 0xFF000000 | (mix_r << 16) | (mix_g << 8) | mix_b;
             }
         }
-        
-        // 渲染完务必释放位图内存
         TTF_FreeBitmap(&bmp);
     }
 }

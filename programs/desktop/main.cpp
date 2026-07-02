@@ -112,7 +112,7 @@ int main(){
     fclose(fp);
 
     TTF_Font *TTFFont;
-    uint8_t TF = TTF_ReadFont(TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",16,32);
+    uint8_t TF = TTF_ReadFont(&TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",16,32);
     if(TF != 0) {
         // 打印前缀
         syscall(24, (long)"FAULT! Code: ", 13, 0, 0, 0, 0);   
