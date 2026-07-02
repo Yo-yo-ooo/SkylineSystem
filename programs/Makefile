@@ -1,37 +1,41 @@
 include ../gdef.mk
 
 PROGRAM_BUILD_DIR = ./bin
+DISK_IMG = ../$(PROGRAM_IMAGE_NAME).img
+FONT_FILE = ../res/font/SourceHanSerifTC_Medium.ttf
 
-.PHONY: all
+.PHONY: all clean
+
 all: 
 	@echo "Building all programs in $(BUILD_ARCH) architecture"
 	@mkdir -p $(PROGRAM_BUILD_DIR)
 	$(MAKE) -C desktop
-	
+    
 	@echo "Copying programs to disk image..."
 	../res/saf/saf-make ./bin ./programs.saf -q
-	e2cp $(PROGRAM_BUILD_DIR)/desktop.elf ../$(PROGRAM_IMAGE_NAME).img:/
+	e2cp $(PROGRAM_BUILD_DIR)/desktop.elf $(DISK_IMG):/
 
-ifeq ($(shell e2ls disk.img 2>/dev/null | grep -q "README.md" && echo yes),yes)
-	$(info "README.md Exists")
-else	
-	$(shell e2cp ./README.md ../$(PROGRAM_IMAGE_NAME).img:/)
-endif
+	@if e2ls $(DISK_IMG) 2>/dev/null | grep -q "README.md"; then \
+	    echo "README.md Exists"; \
+	else \
+	    e2cp ./README.md $(DISK_IMG):/; \
+	fi
 
-ifeq ($(shell ( ! test -f ../res/font/SourceHanSerifTC_Medium.ttf ); echo $$?),0)
-    wget https://github.com/Yo-yo-ooo/SkylineSystem/releases/download/font/SourceHanSerifTC_Medium.zip
-	unzip SourceHanSerifTC_Medium.zip
-	mv SourceHanSerifTC_Medium.ttf ../res/font
-	rm -rf SourceHanSerifTC_Medium.zip
-	e2cp ../res/font/SourceHanSerifTC_Medium.ttf ../$(PROGRAM_IMAGE_NAME).img:/
-else
-ifeq ($(shell e2ls disk.img 2>/dev/null | grep -q "SourceHanSerifTC_Medium.ttf" && echo yes),yes)
-	$(info "SourceHanSerifTC_Medium.ttf Exists")
-else	
-	e2cp ../res/font/SourceHanSerifTC_Medium.ttf ../$(PROGRAM_IMAGE_NAME).img:/
-endif
-endif
-	
+	@if [ ! -f "$(FONT_FILE)" ]; then \
+	    echo "Font not found locally, downloading..."; \
+        wget -q https://github.com/Yo-yo-ooo/SkylineSystem/releases/download/font/SourceHanSerifTC_Medium.zip -O /tmp/font.zip; \
+        if [ $$? -ne 0 ]; then echo "Failed to download font!"; exit 1; fi; \
+        mkdir -p ../res/font; \
+        unzip -o -q /tmp/font.zip -d ../res/font/; \
+        rm -f /tmp/font.zip; \
+	fi
+
+	@# 检查镜像中是否已有字体，没有则拷贝
+	@if e2ls $(DISK_IMG) 2>/dev/null | grep -q "SourceHanSerifTC_Medium.ttf"; then \
+        echo "SourceHanSerifTC_Medium.ttf Exists in image"; \
+	else \
+	    e2cp $(FONT_FILE) $(DISK_IMG):/; \
+	fi
 
 clean:
 	$(MAKE) -C desktop clean
