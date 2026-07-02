@@ -135,7 +135,7 @@ int main(){
     
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
 
-    while (true);
+    //while (true);
     
 
     syscall(9, 0, 0, 0, 0, 0, 0); // Exit

@@ -25,7 +25,11 @@ namespace Schedule{
         if(thread->sig_stack)
             VMM::Free(kernel_pagemap, thread->sig_stack);
         debugpln("Thread Signal Stack freeed!");
-        
+        cpu_t* cpu = get_cpu(thread->cpu_num);
+        spinlock_lock(&cpu->sched_lock);
+        Schedule::Internal::TimerRemove(thread); // 从时间轮中安全摘除！
+        spinlock_unlock(&cpu->sched_lock);
+
         debugpln("Thread Res All freeed!");
     }
 

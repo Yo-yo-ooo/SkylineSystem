@@ -39,6 +39,11 @@ typedef struct cpu_overloadable_functions_t{
     
 }cpu_overloadable_functions_t;
 
+// 时间轮参数 (TV_SIZE = 64，位运算极速)
+#define TV_BITS 6
+#define TV_SIZE (1 << TV_BITS)
+#define TV_MASK (TV_SIZE - 1)
+
 typedef void (*interrupt_handler_t)(context_t*);
 typedef struct cpu_t{
     struct cpu_t* self;          // 偏移 0：指向自身，this_cpu() 快速获取
@@ -78,6 +83,11 @@ typedef struct cpu_t{
     uint32_t pmm_cache_count;
 
     cpu_overloadable_functions_t OverLoadableFuncs;
+
+    thread_t* tv1[TV_SIZE]; // 第一级：0 ~ 63 ms
+    thread_t* tv2[TV_SIZE]; // 第二级：64 ~ 4095 ms
+    thread_t* tv3[TV_SIZE]; // 第三级：4096 ~ 262143 ms (~4.3 分钟)
+    uint64_t timer_last_tick; // 记录上一次处理到的时间戳
 
     alignas(16) uint8_t exit_stack[4096];
 } cpu_t;

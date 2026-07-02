@@ -97,6 +97,12 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
     // 交换 GS：此时 GS 切换为内核 cpu_t 基址，用户态 GS 初始为0
     asm volatile("swapgs" ::: "memory");
+
+    _memset(cpu->tv1,0,sizeof(TV_SIZE * 8));
+    _memset(cpu->tv3,0,sizeof(TV_SIZE * 8));
+    _memset(cpu->tv2,0,sizeof(TV_SIZE * 8));
+    cpu->timer_last_tick = PIT::TimeSinceBootMS();
+
     spinlock_lock(&smp_lock);
     kpok("Initialized CPU %d.\n", mp_info->lapic_id);
     started_count++;
@@ -163,6 +169,11 @@ void InitBSPCPUThread(){
     init_thread->state = THREAD_RUNNING;
     init_thread->id = -1;
     init_thread->cpu_num = smp_bsp_cpu;
+
+    _memset(smp_cpu_list[smp_bsp_cpu]->tv1,0,sizeof(TV_SIZE * 8));
+    _memset(smp_cpu_list[smp_bsp_cpu]->tv3,0,sizeof(TV_SIZE * 8));
+    _memset(smp_cpu_list[smp_bsp_cpu]->tv2,0,sizeof(TV_SIZE * 8));
+    smp_cpu_list[smp_bsp_cpu]->timer_last_tick = PIT::TimeSinceBootMS();
 
     init_thread->pagemap = kernel_pagemap;
     Schedule::Internal::AddThread(smp_cpu_list[smp_bsp_cpu], init_thread);

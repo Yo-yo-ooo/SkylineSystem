@@ -58,6 +58,11 @@ typedef struct thread_t {
 
     bool IsTrusted;
     
+    // 时间轮专用字段
+    uint64_t timer_wakeup;       // 绝对唤醒时间
+    thread_t* timer_next;        // 时间轮链表后继
+    thread_t* timer_prev;        // 时间轮链表前驱
+    thread_t** timer_bucket;     // 记录自己挂在哪个桶里（用于 O(1) 删除）
 
     bool IsForkThread;
 } thread_t;
@@ -92,6 +97,10 @@ namespace Schedule{
         void AddThread(cpu_t *cpu, thread_t *thread);
 
         uint8_t Demote(cpu_t *cpu, thread_t *thread);
+
+        void TimerRemove(thread_t* t);
+        void TimerAdd(cpu_t* cpu, thread_t* t, uint64_t expires);
+        void TimerCascade(cpu_t* cpu, thread_t** tv, int idx);
     }
 
     namespace Signal{

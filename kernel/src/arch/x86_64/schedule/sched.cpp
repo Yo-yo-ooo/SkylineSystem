@@ -631,54 +631,6 @@ retry:
         return this_cpu()->current_thread->parent;
     }
     
-    
-    void Sleep(uint64_t ms){
-        if (ms == 0) return;
-        
-        LAPIC::StopTimer();
-        
-        thread_t* current = Schedule::this_thread();
-        current->state = THREAD_SLEEPING;
-        // 记录唤醒时间 = 当前系统时间 + 睡眠时长
-        current->wakeup_tick = PIT::TimeSinceBootMS() + ms; 
-        
-        Schedule::Yield();
-    }
-
-    void Tick() {
-        cpu_t *cpu = this_cpu();
-        if (!cpu) return;
-
-        // 保存当前中断状态并关闭本地中断，防止定时器中断嵌套死锁
-        uint64_t rflags;
-        asm volatile("pushfq\n\tpop %0\n\tcli" : "=r"(rflags) :: "memory");
-
-        spinlock_lock(&cpu->sched_lock);
-        
-        // 优化：只获取一次时间，避免在循环中频繁调用 PIT
-        uint64_t current_time = PIT::TimeSinceBootMS();
-        
-        for (uint32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
-            thread_queue_t *queue = &cpu->thread_queues[i];
-            if (!queue->head) continue;
-
-            thread_t *t = queue->head;
-            do {
-                // 建议去掉 +1，直接用 >= 保证唤醒精度
-                if (t->state == THREAD_SLEEPING && current_time >= t->wakeup_tick) {
-                    t->state = THREAD_RUNNING;
-                    t->wakeup_tick = 0;
-                }
-                t = t->list_next;
-            } while (t != queue->head);
-        }
-        
-        spinlock_unlock(&cpu->sched_lock);
-        
-        // 恢复中断状态
-        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
-    }
-
     void Yield(){
         LAPIC::StopTimer();
         Schedule::this_thread()->flags &= ~TFLAGS_PREEMPTED;
