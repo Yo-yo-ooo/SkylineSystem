@@ -12,8 +12,6 @@
 
 namespace Schedule{
     void FreeThreadResources(thread_t *thread){
-        if(thread->heap != nullptr)
-            VMM::Free(thread->pagemap, thread->heap);
         debugpln("Thread Heap Freed!");
 
         if(thread->fx_area)

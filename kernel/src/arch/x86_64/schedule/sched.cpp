@@ -357,7 +357,6 @@ retry:
         Schedule::Internal::ProcessAddThread(parent, thread);
         thread->sig_deliver = 0;
         thread->sig_mask = 0;
-        thread->heap_size = 0;
         cpu_t *cpu = get_cpu(cpu_num);
         // Fx area
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
@@ -408,7 +407,6 @@ retry:
 
         thread->sig_deliver = 0;
         thread->sig_mask = 0;
-        thread->heap_size = 0;
 
         // Load ELF
         //ext4_file f;
@@ -449,6 +447,7 @@ retry:
             MP->FSOPS->close(FileDesc);
             kfree(FileDesc);
             kfree(buffer);
+            kfree(thread);
             return nullptr; // 增加 return nullptr
         }
         MP->FSOPS->close(FileDesc);
@@ -458,8 +457,6 @@ retry:
 
         cpu_t *cpu = get_cpu(cpu_num);
         // HEAP AREA ALLOC HERE
-        thread->heap = (uint64_t)VMM::Alloc(thread->pagemap, 8, true);
-        thread->heap_size = 8 * PAGE_SIZE; 
         // Fx area
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
         _memset(thread->fx_area, 0, cpu->XsaveSize);
@@ -528,8 +525,6 @@ retry:
         spinlock_unlock(&target_cpu->sched_lock);
         kpokln("Add Thread!");
 
-        kinfoln("thread->heap = 0x%lx", (uint64_t)thread->heap);
-        kinfoln("thread->heap_size = 0x%lx", thread->heap_size);
         kinfoln("thread stack = 0x%lx", thread->stack);
         kinfoln("thread rip = 0x%lx", thread->ctx.rip);
 
@@ -611,6 +606,8 @@ retry:
         proc->pagemap = VMM::Fork(parent->pagemap);
         __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
         //__memcpy(proc->fd_table, parent->fd_table, 256 * 8);
+        proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
+        __memcpy(proc->FDMan, parent->FDMan,sizeof(fd_manager_t));
         proc->fd_count = parent->fd_count;
         /* if(proc->id > procl_count){
             size_t size;

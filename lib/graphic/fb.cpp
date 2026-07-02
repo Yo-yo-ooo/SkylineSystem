@@ -86,26 +86,6 @@ void BasicDraw::DrawLine(int64_t x0, int64_t y0, int64_t x1, int64_t y1, uint32_
     }
 }
 
-void BasicDraw::DrawWindow(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, const char* Title) {
-    if (W < 4 || H < 4) return;
-
-    // 客户区背景：浅灰（修复 alpha=0 -> 0xFF）
-    DrawRect(X, Y, W, H, 0xFFC6C6C6, true);
-
-    // 标题栏：深蓝
-    uint64_t titleHeight = 25;
-    if (titleHeight > H - 4) titleHeight = (H > 4) ? (H - 4) : 0;
-    if (titleHeight > 0)
-        DrawRect(X + 2, Y + 2, W - 4, titleHeight, 0xFF000080, true);
-
-    // 3D 边框
-    DrawHLine(X,         Y,         W, 0xFFFFFFFF); // 上：白
-    DrawVLine(X,         Y,         H, 0xFFFFFFFF); // 左：白
-    DrawHLine(X,         Y + H - 1, W, 0xFF404040); // 下：深灰
-    DrawVLine(X + W - 1, Y,         H, 0xFF404040); // 右：深灰
-
-    (void)Title;
-}
 
 void BasicDraw::DrawCircle(uint64_t xc, uint64_t yc, uint64_t r, uint32_t Color) {
     if (r == 0) { PutPixel(xc, yc, Color); return; }

@@ -59,69 +59,6 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length,
 }
 
 extern "C" void mmu_invlpg(uint64_t vaddr);
-uint64_t sys_brk(uint64_t addr, GENERATE_IGN5()) {
-    IGNV_5();
-    thread_t *t = Schedule::this_thread();
-    pagemap_t *pagemap = t->pagemap;
-
-    // 1. 基础检查与 brk(0) 处理
-    uint64_t current_brk = (uint64_t)t->heap + t->heap_size;
-    if (addr == 0) return current_brk;
-    if (addr < (uint64_t)t->heap) return current_brk;
-
-    uint64_t old_page_count = DIV_ROUND_UP(t->heap_size, PAGE_SIZE);
-    uint64_t new_size = addr - (uint64_t)t->heap;
-    uint64_t new_page_count = DIV_ROUND_UP(new_size, PAGE_SIZE);
-
-    if (new_page_count > old_page_count) {
-        // 2. 扩容逻辑
-        for (uint64_t i = old_page_count; i < new_page_count; i++) {
-            uint64_t vaddr = (uint64_t)t->heap + (i * PAGE_SIZE);
-            uint64_t paddr = (uint64_t)PMM::Request(); 
-            if (!paddr) return current_brk;
-
-            // 映射并清理内存 
-            VMM::Map(pagemap, vaddr, paddr, MM_USER | MM_WRITE);
-            _memset(HIGHER_HALF((void*)paddr), 0, PAGE_SIZE);
-        }
-    } 
-    else if (new_page_count < old_page_count) {
-        // 3. 缩容逻辑：绕过失效的 VMM::Free，直接操作单页
-        for (uint64_t i = new_page_count; i < old_page_count; i++) {
-            uint64_t vaddr = (uint64_t)t->heap + (i * PAGE_SIZE);
-            uint64_t paddr = VMM::GetPhysics(pagemap, vaddr);
-            
-            if (paddr) {
-                VMM::Unmap(pagemap, vaddr);
-                PMM::Free((void*)paddr); // 还给物理内存管理器
-                mmu_invlpg(vaddr);
-            }
-        }
-    }
-
-    // 4. 同步 VMA 链表状态
-    // 否则 Fork 或退出时会因为 page_count 不匹配导致解映射错误
-    bool found = false;
-    vma_region_t *region = t->pagemap->vma_head->next;
-    for (; region != t->pagemap->vma_head; region = region->next) {
-        if (region->start == (uint64_t)t->heap) {
-            region->page_count = new_page_count;
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        // 错误处理或记录日志
-        kwarnln("VMA region for heap not found during brk adjustment.\n"
-             "This may lead to issues with fork or exit.");
-         // 这里我们选择继续执行，因为 brk 本身已经成功调整了堆的大小，
-         //VMA 的问题会在后续操作中暴露出来，我们可以通过日志来追踪这个问题，而不是直接失败。
-    }
-
-    t->heap_size = new_size;
-    return (uint64_t)t->heap + t->heap_size; // 返回新的断点
-}
-
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);

@@ -56,8 +56,7 @@ typedef struct thread_t {
     struct proc_t *parent;
     uint64_t wakeup_tick;
 
-    void* heap;//data segment
-    uint64_t heap_size;
+    bool IsTrusted;
     
 
     bool IsForkThread;

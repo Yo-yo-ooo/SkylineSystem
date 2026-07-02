@@ -112,7 +112,7 @@ int main(){
     fclose(fp);
 
     TTF_Font *TTFFont;
-    uint8_t TF = TTF_ReadFont(&TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",16,32);
+    uint8_t TF = TTF_ReadFont(&TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",64,32);
     if(TF != 0) {
         // 打印前缀
         syscall(24, (long)"FAULT! Code: ", 13, 0, 0, 0, 0);   
@@ -130,7 +130,8 @@ int main(){
         syscall(24, (long)TF_STR, len, 0, 0, 0, 0);
     }
     
-    TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",0xFFB84B4B);
+    TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",RGB(0,0,0));
+    TTF_DrawText(&fb,TTFFont,200,200,"Welcome to SkylineSystem!",RGB(0,0,0));
     
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
 

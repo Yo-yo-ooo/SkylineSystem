@@ -19,7 +19,6 @@ public:
     void DrawVLine(uint64_t X, uint64_t Y, uint64_t Height, uint32_t Color); 
     void DrawRect(uint64_t X, uint64_t Y, uint64_t Width, uint64_t Height, uint32_t Color, bool Fill);
     void DrawLine(int64_t x0, int64_t y0, int64_t x1, int64_t y1, uint32_t Color);
-    void DrawWindow(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, const char* Title);
     void DrawCircle(uint64_t xc, uint64_t yc, uint64_t r, uint32_t Color);
     void DrawRoundedRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint64_t R, uint32_t Color, bool Fill);
     void DrawProportionalUI();
