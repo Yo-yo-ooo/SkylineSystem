@@ -254,7 +254,7 @@ namespace VMM{
     }
 
     void Map(uint64_t vaddr, uint64_t paddr){
-        VMM::Map4K(kernel_pagemap, vaddr, paddr, MM_READ | MM_WRITE);
+        VMM::Map(kernel_pagemap, vaddr, paddr, MM_READ | MM_WRITE);
     }
 
     void Unmap(pagemap_t *pagemap, uint64_t vaddr){
@@ -287,9 +287,32 @@ namespace VMM{
         return VMM::Useless::GetPageInfo(pagemap, vaddr).phys;
     }
 
-    void MapRange(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags, uint64_t count){
-        for (uint64_t i = 0; i < count; i++)
-            VMM::Map4K(pagemap, vaddr + (i * PAGE_SIZE), paddr + (i * PAGE_SIZE), flags);
+    void MapRange(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr,
+              uint64_t flags, uint64_t count){
+        uint64_t mapped = 0;
+        while (mapped < count) {
+            uint64_t cur_v = vaddr + mapped * PAGE_SIZE;
+            uint64_t cur_p = paddr + mapped * PAGE_SIZE;
+            uint64_t rem   = count - mapped;
+
+            // 1GB
+            if ((cur_v & (PAGE_1GB - 1)) == 0 &&
+                (cur_p & (PAGE_1GB - 1)) == 0 && rem >= 262144) {
+                VMM::Map1G(pagemap, cur_v, cur_p, flags);
+                mapped += 262144;
+                continue;
+            }
+            // 2MB
+            if ((cur_v & (PAGE_2MB - 1)) == 0 &&
+                (cur_p & (PAGE_2MB - 1)) == 0 && rem >= 512) {
+                VMM::Map2M(pagemap, cur_v, cur_p, flags);
+                mapped += 512;
+                continue;
+            }
+            // 4KB
+            VMM::Map4K(pagemap, cur_v, cur_p, flags);
+            mapped += 1;
+        }
     }
 
     pagemap_t *SwitchPageMap(pagemap_t *pagemap){
