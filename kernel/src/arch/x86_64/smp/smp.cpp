@@ -145,6 +145,7 @@ void smp_init() {
 extern "C" cpu_t *this_cpu() {
     if (!smp_started) return smp_cpu_list[mp_response->bsp_lapic_id];
     return smp_cpu_list[LAPIC::GetID()];
+    
 }
 
 cpu_t *get_cpu(uint32_t id) {

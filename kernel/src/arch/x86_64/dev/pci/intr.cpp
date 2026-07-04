@@ -9,6 +9,7 @@
 static u16 *MSICAP_MSGDATA(PCI::PCI_MSI_CAP *cap) {
     return PCI_MSI_CAP_IS64(cap) ? &cap->Cap64.MsgData : &cap->Cap32.MsgData;
 }
+
 namespace PCI
 {
     void SetMsgData16(uint16_t *msgData, uint32_t vec, 
@@ -20,10 +21,9 @@ namespace PCI
         uint32_t deliverMode, uint32_t level, uint32_t triggerMode) {
         *msgData = vec | (deliverMode << 8) | (level << 14) | (triggerMode << 15);
     }
+    
     namespace MSIX
     {
-        //redirect = 0 : 直接投递给指定的 CPU。
-        //redirect = 1 : 允许中断控制器根据负载均衡等策略重新分发。
         void SetMsgAddr(uint64_t *msgAddr, uint32_t cpuId, uint32_t redirect, uint32_t destMode) {
             *msgAddr = 0xfee00000u
                 | (((cpuId) & 0xFF) << 12)
@@ -31,21 +31,21 @@ namespace PCI
         }
 
         void ConfigMSIX(
-        PCI::PCIHeader0 *Hdr,uint32_t CpuId, uint32_t Redirect, 
-        uint32_t DestMode,uint16_t TblIdx,uint16_t INTRNUM,
+        PCI::PCIHeader0 *Hdr, uint32_t CpuId, uint32_t Redirect, 
+        uint32_t DestMode, uint16_t TblIdx, uint16_t Vector,
         void (*Handler)(context_t*)){
             PCI::PCI_MSIX_CAP *Cap = PCI::GetMSIXCap(Hdr);
             uint32_t MsgAddr = 0xfee00000u
                 | ((CpuId) << 12)
                 | (Redirect << 3) | (DestMode << 2);
-            PCI::PCI_MSIX_TABLE* Tbl = PCI::GetMSIXTblBaseAddr(Hdr,Cap);
+            PCI::PCI_MSIX_TABLE* Tbl = PCI::GetMSIXTblBaseAddr(Hdr, Cap);
             
             Tbl[TblIdx].msgAddr = MsgAddr;
-            Tbl[TblIdx].msgData = INTRNUM;
-            __asm__ volatile ("mfence" ::: "memory"); // 确保硬件看到地址和数据
-            Tbl[TblIdx].vecCtrl &= ~1u; // 解除ENTRY[INTRNUM]'s Mask
+            Tbl[TblIdx].msgData = Vector; // 必须是传入的 IDT 向量号
+            __asm__ volatile ("mfence" ::: "memory");
+            Tbl[TblIdx].vecCtrl &= ~1u; // 解除 Mask
             
-            idt_install_irq_cpu(CpuId,INTRNUM,Handler);
+            idt_install_irq_cpu(CpuId, Vector, Handler);
 
             PCI::enable_bus_mastering((uint64_t)Hdr);
             Cap->MsgCtrl |= (1 << 15); // Enable

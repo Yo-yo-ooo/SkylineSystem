@@ -187,6 +187,7 @@ public:
 
     typedef struct NVMERequest {
         //task_Request req;
+        bool done;
         int32_t inputSz;
         NVME::CmplQueEntry res;
         NVME::SubQueEntry input[0];
