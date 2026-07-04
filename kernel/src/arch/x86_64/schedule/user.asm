@@ -23,25 +23,21 @@
 [global syscall_entry]
 [extern syscall_handler]
 
-[bits 64]
-[section .text]
-[global syscall_entry]
-[extern syscall_handler]
-
 syscall_entry:
-    swapgs                           ; 切换为内核 GS
+    cli                               ; syscall不会自动关中断
+    swapgs                            ; 切换为内核 GS
 
-    mov [gs:16], rsp                 ; 保存用户栈到 cpu_t.user_scratch
-    mov rsp, [gs:8]                  ; 切换到内核栈
+    mov [gs:16], rsp                  ; 保存用户栈到 cpu_t.user_scratch
+    mov rsp, [gs:8]                   ; 切换到内核栈
 
     ; 构建标准中断栈帧 (严格匹配 context_t)
-    push qword 0x1B                  ; 用户态 SS
-    push qword [gs:16]               ; 用户态 RSP
-    push r11                         ; RFLAGS (syscall 会把 rflags 存入 r11)
-    push qword 0x23                  ; 用户态 CS
-    push rcx                         ; 用户态 RIP (syscall 会把 rip 存入 rcx)
-    push qword 0                     ; 错误码（占位）
-    push qword 0                     ; 中断号（占位）
+    push qword 0x1B                   ; 用户态 SS
+    push qword [gs:16]                ; 用户态 RSP
+    push r11                          ; RFLAGS
+    push qword 0x23                   ; 用户态 CS
+    push rcx                          ; 用户态 RIP
+    push qword 0                      ; 错误码（占位）
+    push qword 0                      ; 中断号（占位）
 
     push rax
     push rcx
@@ -59,10 +55,7 @@ syscall_entry:
     push r14
     push r15
 
-    ; 准备传递 context_t 指针
     mov rdi, rsp
-    
-    ; 强制符合 C 语言 ABI 规范
     cld 
 
     call syscall_handler
@@ -83,11 +76,13 @@ syscall_entry:
     pop rcx
     pop rax
 
-    add rsp, 16                      ; 跳过中断号、错误码
-    pop rcx                          ; 恢复用户 RIP（sysret 消费 rcx）
-    add rsp, 8                       ; 跳过 CS
-    pop r11                          ; 恢复 RFLAGS（sysret 消费 r11）
-    pop rsp                          ; 恢复用户栈指针
+    add rsp, 16                       ; 跳过中断号、错误码
+    pop rcx                           ; 恢复用户 RIP 到 rcx
+    add rsp, 8                        ; 跳过 CS
+    pop r11                           ; 恢复 RFLAGS 到 r11
 
-    swapgs                           ; 切回用户态 GS
-    o64 sysret                       ; 或者写 sysretq
+    ; 此时栈顶刚好是保存的用户态 RSP。读取它并赋给 RSP 避开 gs:16 污染问题
+    mov rsp, [rsp]                    
+
+    swapgs                            ; 切回用户态 GS
+    o64 sysret

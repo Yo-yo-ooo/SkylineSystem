@@ -11,7 +11,7 @@ extern "C" void gdt_reload_seg();
 
 namespace GDT{
     void Init(uint32_t cpu_num) {
-        tss_desc[cpu_num].iopb = sizeof(tss_desc_t);
+        tss_desc[cpu_num].iopb = sizeof(tss_desc_t) - 1; 
         gdt_tables[cpu_num].entries[0] = 0x0000000000000000;
         gdt_tables[cpu_num].entries[1] = 0x00af9b000000ffff; // 0x08 64 bit cs (code)
         gdt_tables[cpu_num].entries[2] = 0x00af93000000ffff; // 0x10 64 bit ss (data)

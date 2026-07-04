@@ -132,6 +132,7 @@ int main(){
     
     TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",RGB(0,0,0));
     TTF_DrawText(&fb,TTFFont,200,200,"Welcome to SkylineSystem!",RGB(0,0,0));
+    TTF_DrawText(&fb,TTFFont,200,400,"HaHaHa (￣y▽,￣)╭ ",RGB(0,0,0));
     
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
 
