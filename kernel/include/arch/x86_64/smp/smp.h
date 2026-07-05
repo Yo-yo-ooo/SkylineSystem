@@ -96,6 +96,7 @@ typedef struct cpu_t{
     uint64_t last_boost_tick;    // 记录上一次发生全局提升时的节拍数
     uint64_t boost_interval_base = 100; // 动态自适应基数 (初始给个较小值让它快速收敛)
     uint64_t total_thread_count = 0;    // 该CPU上的总线程数 (包括睡眠的)
+    uint32_t thread_count_lower = 0; // 记录当前在非最高优先级队列中的线程数
 } cpu_t;
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);
 

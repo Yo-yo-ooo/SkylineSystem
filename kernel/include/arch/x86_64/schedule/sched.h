@@ -84,7 +84,6 @@ typedef struct procl{
 }procl_t;
 
 namespace Schedule{
-    extern uint64_t sched_pid;
     extern uint64_t procl_count;
     extern procl_t *sched_proclist;
 
