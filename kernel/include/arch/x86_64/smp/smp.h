@@ -52,6 +52,7 @@ typedef struct cpu_t{
 
     uint32_t id;
     uint64_t lapic_ticks;
+    uint32_t lapic_id;
     pagemap_t *pagemap;
     thread_queue_t thread_queues[THREAD_QUEUE_CNT];
     thread_t *current_thread;

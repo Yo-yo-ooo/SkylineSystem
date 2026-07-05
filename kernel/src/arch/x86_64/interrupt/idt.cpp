@@ -164,7 +164,7 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     __asm__ volatile ("movq %%cr0, %0" : "=r"(cr0));
     __asm__ volatile ("movq %%cr4, %0" : "=r"(cr4));
     kerror("Kernel exception caught: %s.\n", isr_errors[ctx->int_no]);
-    kerror("Kernel crash on core %d at 0x%p.\n", smp_started ? this_cpu()->id : 0,
+    kerror("Kernel crash on core %d at 0x%p.\n", smp_started ? this_cpu()->lapic_id : 0,
         ctx->rip);
     kerrorln("REGISTERS DATA(64bits data):");
     kerrorln("RAX: 0x%p  RBX: 0x%p RCX: 0x%p RDX: 0x%p.",ctx->rax,ctx->rbx,ctx->rcx,ctx->rdx);

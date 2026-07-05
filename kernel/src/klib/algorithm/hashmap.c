@@ -66,6 +66,24 @@ struct hashmap {
     void *edata;
 };
 
+// hashmap_nbuckets returns the total number of buckets.
+size_t hashmap_nbuckets(const struct hashmap *map) {
+    return map->nbuckets;
+}
+
+// hashmap_bucket_item returns the item at a specific bucket.
+// Returns NULL if the bucket is empty.
+const void *hashmap_bucket_item(const struct hashmap *map, size_t i) {
+    if (i > map->nbuckets-1) {
+        return 0;
+    }
+    struct bucket *bucket = bucket_at(map, i);
+    if (!bucket->dib) {
+        return 0;
+    }
+    return bucket_item(bucket);
+}
+
 void hashmap_set_grow_by_power(struct hashmap *map, size_t power) {
     map->growpower = power < 1 ? 1 : power > 16 ? 16 : power;
 }

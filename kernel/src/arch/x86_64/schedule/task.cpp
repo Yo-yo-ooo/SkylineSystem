@@ -127,7 +127,7 @@ namespace Schedule{
         kinfoln("Delete PROC %d", proc->id);
         
         // 触发调度中断，强制离开 exit_stack，加载新线程
-        LAPIC::IPI(cpu->id, SCHED_VEC + 1);
+        LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
         
         // 等待 IPI 响应，永远不会往下执行
         while(true) { asm volatile("hlt"); }
