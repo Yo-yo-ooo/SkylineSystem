@@ -34,6 +34,7 @@ typedef struct {
     size_t buf_capacity;   // 缓冲区容量
     size_t buf_pos;        // 缓冲区当前读取游标
     size_t buf_size;       // 缓冲区中当前实际有效的数据量
+    volatile uint8_t lock;
 } FILE;
 
 int32_t fclose(FILE *stream);

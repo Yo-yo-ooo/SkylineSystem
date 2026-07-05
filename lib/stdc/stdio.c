@@ -6,6 +6,24 @@
 #include <errno.h>
 #include <base/arch/x86_64/syscall.h>
 #include <stdio.h>
+#include <atomic/atomic.h>
+
+static inline void file_spin_lock(volatile uint8_t *lock) {
+    while (atomic_test_and_set(lock, ATOMIC_ACQUIRE)) {
+#ifdef __x86_64__
+        asm volatile("pause");
+#elif defined(__aarch64__)
+        asm volatile("yield");
+#elif defined (__riscv)
+        asm volatile("pause");
+#endif
+    }
+}
+
+static inline void file_spin_unlock(volatile uint8_t *lock) {
+    atomic_clear(lock, ATOMIC_RELEASE);
+}
+
 
 // ==========================================
 // fopen / fclose
@@ -40,7 +58,6 @@ FILE* fopen(const char* filename, const char* mode) {
         return NULL;
     }
 
-    // 动态分配缓冲区
     stream->buf_capacity = DEFAULT_BUF_SIZE;
     stream->buffer = (uint8_t*)malloc(stream->buf_capacity);
     if (!stream->buffer) {
@@ -50,24 +67,29 @@ FILE* fopen(const char* filename, const char* mode) {
     }
 
     stream->fd = fd;
-    // 空文件 size=0 是合法的，不应报错
     stream->file_size = sys_fsize(fd);
     stream->offset = 0;
     stream->buf_pos = 0;
     stream->buf_size = 0;
+    stream->lock = 0; // 初始化锁
 
     return stream;
 }
 
 size_t fsize(FILE *stream) {
     if (!stream) return 0;
-    return stream->file_size;
+    // fsize 是无状态的，直接原子读取 file_size 即可，无需加锁
+    return atomic_load_8(&stream->file_size, __ATOMIC_ACQUIRE);
 }
 
 int32_t fclose(FILE *stream) {
     if (!stream) return -1;
+    // 关闭前加锁，防止其他线程还在读写
+    file_spin_lock(&stream->lock);
     int32_t res = sys_fclose(stream->fd);
-    if (stream->buffer) free(stream->buffer); // 释放动态缓冲区
+    if (stream->buffer) free(stream->buffer); 
+    // 注意：解锁后 stream 内存已被释放，这里的解锁仅是为了规范
+    file_spin_unlock(&stream->lock);
     free(stream); 
     return res;
 }
@@ -81,20 +103,26 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
     size_t total_read = 0;
     uint8_t *dest = (uint8_t *)ptr;
 
-    // 确保不超过文件剩余大小
+    // 进入原子临界区：保护 buf_pos, offset 以及内核文件指针的强一致性
+    file_spin_lock(&stream->lock);
+
     if (stream->file_size > 0) {
-        if (stream->offset >= stream->file_size) return 0; // 已到末尾
+        if (stream->offset >= stream->file_size) {
+            file_spin_unlock(&stream->lock);
+            return 0; // 已到末尾
+        }
         size_t remaining_in_file = stream->file_size - stream->offset;
         if (bytes_to_read > remaining_in_file) {
             bytes_to_read = remaining_in_file;
         }
     }
     
-    if (bytes_to_read == 0) return 0;
+    if (bytes_to_read == 0) {
+        file_spin_unlock(&stream->lock);
+        return 0;
+    }
 
-    // 核心循环：带缓冲的数据读取
     while (total_read < bytes_to_read) {
-        // 缓冲区还有未消费的数据，直接内存拷贝（零 syscall）
         if (stream->buf_pos < stream->buf_size) {
             size_t avail = stream->buf_size - stream->buf_pos;
             size_t to_copy = (bytes_to_read - total_read < avail) ? (bytes_to_read - total_read) : avail;
@@ -102,34 +130,34 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
             memcpy(dest + total_read, stream->buffer + stream->buf_pos, to_copy);
             
             stream->buf_pos += to_copy;
-            stream->offset += to_copy; // 及时更新逻辑偏移量
+            stream->offset += to_copy; 
             total_read += to_copy;
             continue;
         }
 
-        // 缓冲区空了。如果剩余请求量 >= 缓冲区容量，直接 bypass 缓冲区，DMA 到用户内存
         size_t remaining_request = bytes_to_read - total_read;
         if (remaining_request >= stream->buf_capacity) {
             size_t r = sys_fread(stream->fd, (uint64_t)(dest + total_read), remaining_request);
-            stream->offset += r; // 更新偏移量
+            stream->offset += r; 
             total_read += r;
-            if (r == 0) break; // EOF 或出错
+            if (r == 0) break; 
             continue;
         }
 
-        // 剩余请求量 < 缓冲区容量，refill 缓冲区（触发 1 次 syscall 拉取一整块数据）
         stream->buf_pos = 0;
         stream->buf_size = sys_fread(stream->fd, (uint64_t)stream->buffer, stream->buf_capacity);
-        if (stream->buf_size == 0) break; // EOF 或出错
+        if (stream->buf_size == 0) break; 
     }
 
-    return total_read / size; // 返回成功读取的元素个数
+    file_spin_unlock(&stream->lock);
+    return total_read / size; 
 }
 
 int32_t fseek(FILE* stream, int64_t offset, int32_t whence) {
     if (!stream) return -1;
 
-    // 任何跳转操作都让当前缓冲区作废
+    file_spin_lock(&stream->lock);
+
     stream->buf_pos = 0;
     stream->buf_size = 0;
 
@@ -145,23 +173,25 @@ int32_t fseek(FILE* stream, int64_t offset, int32_t whence) {
             new_offset = stream->file_size + offset; 
             break;
         default:
+            file_spin_unlock(&stream->lock);
             return EINVAL;
     }
 
-    // 统一的越界检查
     if (new_offset < 0 || (uint64_t)new_offset > stream->file_size) {
+        file_spin_unlock(&stream->lock);
         return EINVAL;
     }
 
     stream->offset = new_offset;
-    // 通知内核物理指针移动到新位置 (使用 SEEK_SET 传绝对位置最安全)
     int64_t res = sys_flseek(stream->fd, new_offset, SEEK_SET);
     
+    file_spin_unlock(&stream->lock);
     return (res >= 0) ? 0 : -1;
 }
 
 int64_t ftell(FILE* stream) {
     if (!stream) return -1;
-    
-    return stream->offset;
+    // ftell 仅读取单个 offset 变量，x86_64 上 64位读取本身是原子的
+    // 加上原子加载指令保证内存序（防止读到中间态）
+    return (int64_t)atomic_load_8(&stream->offset, __ATOMIC_ACQUIRE);
 }
