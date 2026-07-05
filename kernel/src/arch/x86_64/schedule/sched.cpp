@@ -115,26 +115,43 @@ namespace Schedule {
         }
 
         thread_t *Pick(cpu_t *cpu) {
-            // 1. 老化提升
             for (uint32_t i = 1; i < THREAD_QUEUE_CNT; i++) {
                 thread_queue_t *q = &cpu->thread_queues[i];
                 if (!q->head) continue;
                 
-                thread_t *curr = q->head;
-                bool promoted = false;
-                do {
+                thread_t *start = q->head;
+                thread_t *curr = start;
+                
+                while (true) {
+                    // 必须先保存 next，因为 Promote 会将 curr 移出当前队列并破坏其指针
                     thread_t *next = curr->list_next;
+                    bool removed = false;
+                    
                     if (curr->state == THREAD_RUNNING) {
                         curr->wait_ticks++;
+                        // 统计等待 tick
+                        cpu->sched_stats.total_wait_ticks++; 
+                        
                         if (curr->wait_ticks > (AGING_THRESHOLD_BASE * (i + 1))) {
                             Promote(cpu, curr);
-                            promoted = true;
-                            break; // 队列结构已变，重新评估
+                            cpu->sched_stats.aging_promotions++; // 统计升权次数
+                            removed = true;
                         }
                     }
-                    curr = next;
-                } while (curr != q->head);
-                if (promoted) return Pick(cpu);
+                    
+                    if (removed) {
+                        // curr 被移除，如果它是唯一节点，队列已空
+                        if (next == curr) break; 
+                        // 如果起始节点被移除，更新 start 指针为新的合法节点
+                        if (curr == start) start = next; 
+                        // 不判断 next == start，直接继续处理 next
+                        curr = next;
+                    } else {
+                        // curr 未被移除，如果转了一圈回到了 start，则结束本队列遍历
+                        if (next == start) break;
+                        curr = next;
+                    }
+                }
             }
 
             // 2. 严格按优先级轮转选取
@@ -197,6 +214,9 @@ namespace Schedule {
             }
             
             cpu->current_thread = next_thread;
+            // 统计上下文切换次数
+            cpu->sched_stats.context_switches++; 
+            
             *ctx = next_thread->ctx;
             TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
             cpu->kernel_stack = next_thread->kernel_rsp;
@@ -242,7 +262,6 @@ namespace Schedule {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
-        //proc->id = sched_pid.fetch_add(1, std::memory_order_relaxed);
         proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED);
     
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
@@ -274,7 +293,6 @@ namespace Schedule {
             __memcpy(kernel_argv[i], argv[i], size);
         }
 
-        
         while (envp[envc++]); envc -= 1;
         kernel_envp = (char**)kmalloc(envc * sizeof(char*));
         if (!kernel_envp) goto cleanup;
@@ -508,7 +526,6 @@ namespace Schedule {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
-        //proc->id = sched_pid.fetch_add(1, std::memory_order_relaxed);
         proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED);
         proc->parent = parent;
         if (!parent->children) parent->children = proc;

@@ -6,9 +6,6 @@
 #define _SMP_H_
 
 #include <klib/klib.h>
-//#include <arch/x86_64/schedule/sched.h>
-
-//#include <arch/x86_64/cpu.h>
 
 #define MAX_CPU 128
 #define THREAD_QUEUE_CNT 16
@@ -37,15 +34,25 @@ typedef struct cpu_overloadable_functions_t{
     void *(*MemsetCore)(void *dest, const uint8_t val, size_t numbytes);
     void *(*MemcmpCore)(const void *str1, const void *str2, size_t numbytes, int equality);
     
-}cpu_overloadable_functions_t;
+} cpu_overloadable_functions_t;
 
 // 时间轮参数 (TV_SIZE = 64，位运算极速)
 #define TV_BITS 6
 #define TV_SIZE (1 << TV_BITS)
 #define TV_MASK (TV_SIZE - 1)
 
+// ==========================================
+// 调度器性能统计埋点结构体
+// ==========================================
+typedef struct sched_stats_t {
+    uint64_t context_switches;   // 上下文切换总次数
+    uint64_t aging_promotions;   // 老化升权总次数
+    uint64_t total_wait_ticks;   // 线程累积等待 tick 数
+} sched_stats_t;
+
 typedef void (*interrupt_handler_t)(context_t*);
-typedef struct cpu_t{
+
+typedef struct cpu_t {
     struct cpu_t* self;          // 偏移 0：指向自身，this_cpu() 快速获取
     uint64_t kernel_stack;       // 偏移 8：当前 CPU 内核栈顶（syscall 入口切栈用）
     uint64_t user_scratch;       // 偏移 16：临时保存用户态 RSP
@@ -56,12 +63,14 @@ typedef struct cpu_t{
     pagemap_t *pagemap;
     thread_queue_t thread_queues[THREAD_QUEUE_CNT];
     thread_t *current_thread;
-    uint64_t thread_count;
+    
+    // 使用 volatile 防止编译器过度优化原子读取时的撕裂
+    volatile uint64_t thread_count;
     int32_t sched_lock;
     idt_desc_t idtdesc;
     interrupt_handler_t handlers[256];
-    uint8_t IntrRegistCount = 0x20; //Base:0x20(CPU RSVD 0~0x20)
-    uint64_t IntrBitMap[4]; // 256 Count Bitmap      
+    uint8_t IntrRegistCount = 0x20; // Base: 0x20 (CPU RSVD 0~0x20)
+    uint64_t IntrBitMap[4];         // 256 Count Bitmap      
     int8_t* KernelXsaveSpace;
 
     int32_t preempt_count = 0;
@@ -91,13 +100,18 @@ typedef struct cpu_t{
     uint64_t timer_last_tick; // 记录上一次处理到的时间戳
 
     alignas(16) uint8_t exit_stack[4096];
-    uint64_t load_ema = 0; // 记录历史活跃线程的指数移动平均线
-    uint64_t tick_count;         // 记录该 CPU 发生的调度次数/时钟节拍
-    uint64_t last_boost_tick;    // 记录上一次发生全局提升时的节拍数
-    uint64_t boost_interval_base = 100; // 动态自适应基数 (初始给个较小值让它快速收敛)
-    uint64_t total_thread_count = 0;    // 该CPU上的总线程数 (包括睡眠的)
-    uint32_t thread_count_lower = 0; // 记录当前在非最高优先级队列中的线程数
+    
+    uint64_t tick_count = 0;             // 记录该 CPU 发生的调度次数/时钟节拍
+    uint64_t total_thread_count = 0;     // 该 CPU 上的总线程数 (包括睡眠的)
+    
+    // 使用 volatile 保证在 get_lw_cpu 等无锁读取时的可见性一致性
+    volatile uint32_t thread_count_lower = 0; // 记录当前在非最高优先级队列中的线程数
+
+    // 调度性能统计结构体
+    sched_stats_t sched_stats;
+
 } cpu_t;
+
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);
 
 extern uint32_t smp_bsp_cpu;
