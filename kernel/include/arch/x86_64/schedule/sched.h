@@ -18,7 +18,7 @@ extern "C++" {
 #define THREAD_SLEEPING 3
 
 #define TFLAGS_WAITING 1
-#define TFLAGS_PREEMPTED 2
+// 移除 TFLAGS_PREEMPTED，不再需要人工补偿标志
 
 #define SCHED_PREEMPTION_MAX 16
 
@@ -32,7 +32,7 @@ typedef struct thread_t {
     uint64_t id;
     uint32_t cpu_num;
     uint32_t priority;
-    uint32_t preempt_count;
+    uint32_t preempt_count; // 用于时间片耗尽降级计数
     uint64_t kernel_stack;
     int32_t state;
     uint64_t stack;
@@ -65,6 +65,10 @@ typedef struct thread_t {
     thread_t** timer_bucket;     // 记录自己挂在哪个桶里（用于 O(1) 删除）
 
     bool IsForkThread;
+
+    uint64_t wait_ticks;         // 用于 Aging 老化机制，记录在当前优先级的等待 tick 数
+    uint64_t tls_base;           // TLS 区域起始虚拟地址，用于线程销毁时释放
+    uint64_t tls_pages;          // TLS 区域占用的页数
 } thread_t;
 
 typedef struct proc_t {
@@ -93,9 +97,12 @@ namespace Schedule{
 
         void ProcessAddThread(proc_t *parent, thread_t *thread);
         
-        void AddThread(cpu_t *cpu, thread_t *thread);
-
-        uint8_t Demote(cpu_t *cpu, thread_t *thread);
+        // 统一的队列维护接口
+        void RemoveFromQueue(cpu_t *cpu, thread_t *thread);
+        void InsertToQueue(cpu_t *cpu, thread_t *thread);
+        void Demote(cpu_t *cpu, thread_t *thread);
+        void Promote(cpu_t *cpu, thread_t *thread);
+        thread_t *Pick(cpu_t *cpu);
 
         void TimerRemove(thread_t* t);
         void TimerAdd(cpu_t* cpu, thread_t* t, uint64_t expires);

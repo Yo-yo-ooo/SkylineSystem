@@ -207,6 +207,6 @@ void InitBSPCPUThread(){
     smp_cpu_list[smp_bsp_cpu]->timer_last_tick = PIT::TimeSinceBootMS();
 
     init_thread->pagemap = kernel_pagemap;
-    Schedule::Internal::AddThread(smp_cpu_list[smp_bsp_cpu], init_thread);
+    Schedule::Internal::InsertToQueue(smp_cpu_list[smp_bsp_cpu], init_thread);
     smp_cpu_list[smp_bsp_cpu]->current_thread = init_thread;
 }
