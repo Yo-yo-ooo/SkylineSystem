@@ -117,7 +117,7 @@ int main(){
         // 打印前缀
         syscall(24, (long)"FAULT! Code: ", 13, 0, 0, 0, 0);   
         
-        // 修复：显式转换为无符号 64 位整数，或者直接传 TF 让它隐式提升为 int
+        // 显式转换为无符号 64 位整数，或者直接传 TF 让它隐式提升为 int
         const char * TF_STR = to_string((uint64_t)TF); 
         
         // 打印错误码。注意：不知道你 syscall 24 的第三个参数是不是字符串长度？

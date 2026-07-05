@@ -813,7 +813,7 @@ uint8_t TTF_ReadFont(
         return 4;
     }
 
-    // 修复：fread 参数顺序应为 (ptr, size, nmemb, stream)
+    // fread 参数顺序应为 (ptr, size, nmemb, stream)
     size_t read_bytes = fread(font_data, 1, file_size, fd);
     fclose(fd);
 
@@ -869,7 +869,7 @@ int32_t x, int32_t y, const char* text, uint32_t color
                 uint32_t* dst_pixel = &fb_ptr[py * fb_pitch + px];
 
                 if (alpha == 255) {
-                    // 修复：按分量重组，避免原有 color 残留的 Alpha 干扰
+                    // 按分量重组，避免原有 color 残留的 Alpha 干扰
                     *dst_pixel = 0xFF000000 | (src_r << 16) | (src_g << 8) | src_b;
                     continue;
                 }

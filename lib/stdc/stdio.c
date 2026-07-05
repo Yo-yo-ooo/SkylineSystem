@@ -102,7 +102,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
             memcpy(dest + total_read, stream->buffer + stream->buf_pos, to_copy);
             
             stream->buf_pos += to_copy;
-            stream->offset += to_copy; // 修复2：及时更新逻辑偏移量
+            stream->offset += to_copy; // 及时更新逻辑偏移量
             total_read += to_copy;
             continue;
         }
@@ -111,7 +111,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
         size_t remaining_request = bytes_to_read - total_read;
         if (remaining_request >= stream->buf_capacity) {
             size_t r = sys_fread(stream->fd, (uint64_t)(dest + total_read), remaining_request);
-            stream->offset += r; // 修复2：更新偏移量
+            stream->offset += r; // 更新偏移量
             total_read += r;
             if (r == 0) break; // EOF 或出错
             continue;

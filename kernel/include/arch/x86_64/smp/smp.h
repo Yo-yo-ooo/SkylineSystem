@@ -91,6 +91,11 @@ typedef struct cpu_t{
     uint64_t timer_last_tick; // 记录上一次处理到的时间戳
 
     alignas(16) uint8_t exit_stack[4096];
+    uint64_t load_ema = 0; // 记录历史活跃线程的指数移动平均线
+    uint64_t tick_count;         // 记录该 CPU 发生的调度次数/时钟节拍
+    uint64_t last_boost_tick;    // 记录上一次发生全局提升时的节拍数
+    uint64_t boost_interval_base = 100; // 动态自适应基数 (初始给个较小值让它快速收敛)
+    uint64_t total_thread_count = 0;    // 该CPU上的总线程数 (包括睡眠的)
 } cpu_t;
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);
 

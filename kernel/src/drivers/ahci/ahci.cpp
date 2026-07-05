@@ -132,7 +132,7 @@ namespace AHCI
     int32_t Port::FindCommandSlot()
     {
         uint32_t cmdSlots = 32;
-        // 修复：标准 AHCI 中查找空闲槽位应使用 sataActive，而不是 sataControl
+        // 标准 AHCI 中查找空闲槽位应使用 sataActive，而不是 sataControl
         uint32_t slots = (hbaPort->sataActive | hbaPort->commandIssue);
         for (int32_t i = 0; i < cmdSlots; i++)
         {

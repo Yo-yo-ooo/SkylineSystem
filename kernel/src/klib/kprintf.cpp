@@ -591,7 +591,7 @@ static size_t __ffunc _etoa(out_fct_type out, char* buffer, size_t idx, size_t m
 #endif  // PRINTF_SUPPORT_EXPONENTIAL
 #endif  // PRINTF_SUPPORT_FLOAT
 // internal vsnprintf
-// 修复：增加 maxlen == 0 的安全防御
+// 增加 maxlen == 0 的安全防御
 static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t maxlen, const char* format, va_list va)
 {
   uint32_t flags, width, precision, n;
