@@ -48,6 +48,7 @@ typedef struct sched_stats_t {
     uint64_t context_switches;   // 上下文切换总次数
     uint64_t aging_promotions;   // 老化升权总次数
     uint64_t total_wait_ticks;   // 线程累积等待 tick 数
+    uint64_t thread_steals;
 } sched_stats_t;
 
 typedef void (*interrupt_handler_t)(context_t*);

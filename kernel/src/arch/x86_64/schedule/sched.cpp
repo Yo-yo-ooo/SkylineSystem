@@ -15,7 +15,6 @@
 static uint64_t sched_tid = 0;
 static uint64_t sched_pid = 0;
 
-// 老化阈值：优先级越低，容忍的等待 tick 越长
 #define AGING_THRESHOLD_BASE 50
 
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap, 
@@ -47,7 +46,6 @@ static cpu_t *get_lw_cpu() {
 
 namespace Schedule {
     namespace Internal {
-        // 统一的队列移除，自动维护计数器
         void RemoveFromQueue(cpu_t *cpu, thread_t *thread) {
             thread_queue_t *q = &cpu->thread_queues[thread->priority];
             if (thread->list_next == thread) {
@@ -64,7 +62,6 @@ namespace Schedule {
             if (thread->priority > 0) cpu->thread_count_lower--;
         }
 
-        // 统一的队列插入，自动维护计数器
         void InsertToQueue(cpu_t *cpu, thread_t *thread) {
             thread_queue_t *q = &cpu->thread_queues[thread->priority];
             cpu->thread_count++;
@@ -92,7 +89,6 @@ namespace Schedule {
             InsertToQueue(cpu, thread);
         }
 
-        // 平滑提升优先级，防止 Boost 风暴
         void Promote(cpu_t *cpu, thread_t *thread) {
             if (thread->priority == 0) return;
             RemoveFromQueue(cpu, thread);
@@ -114,40 +110,75 @@ namespace Schedule {
             parent->threads->prev = thread;
         }
 
+        // ==========================================
+        // 运行时动态线程迁移
+        // 单次仅窃取单条线程，偷出后直接返回，绝不插入本地队列再移除
+        // ==========================================
+        thread_t *StealThread(cpu_t *cpu) {
+            for (int32_t i = 0; i <= smp_last_cpu; i++) {
+                cpu_t *victim = smp_cpu_list[i];
+                if (!victim || victim == cpu) continue;
+                
+                // 如果受害者线程数 <= 1，不窃取，避免偷完导致对方空闲
+                if (atomic_load_4(&victim->thread_count, 1) <= 1) continue;
+
+                // 尝试加锁，避免死锁绝不阻塞等待
+                if (!__sync_bool_compare_and_swap(&victim->sched_lock, 0, 1)) continue;
+
+                thread_t *stolen = nullptr;
+                // 从最低优先级队列开始偷，把后台任务扔给空闲CPU
+                for (int32_t p = THREAD_QUEUE_CNT - 1; p >= 0; p--) {
+                    thread_queue_t *vq = &victim->thread_queues[p];
+                    if (vq->head && vq->head != vq->head->list_prev) { // 确保至少有2个节点
+                        // 偷取队列尾部
+                        stolen = vq->head->list_prev;
+                        RemoveFromQueue(victim, stolen);
+                        break;
+                    }
+                }
+
+                // 修复致命Bug：释放锁必须无条件 store，不能用 CAS
+                __atomic_store_n(&victim->sched_lock, 0, __ATOMIC_RELEASE);
+                
+                if (stolen) {
+                    // 迁移线程归属权到当前 CPU
+                    stolen->cpu_num = cpu->id;
+                    stolen->wait_ticks = 0;
+                    stolen->preempt_count = 0;
+                    // 统计窃取次数
+                    cpu->sched_stats.thread_steals++; 
+                    // 直接返回，准备投入运行
+                    return stolen;
+                }
+            }
+            return nullptr;
+        }
+
         thread_t *Pick(cpu_t *cpu) {
+            // 1. 批量老化提升
             for (uint32_t i = 1; i < THREAD_QUEUE_CNT; i++) {
                 thread_queue_t *q = &cpu->thread_queues[i];
                 if (!q->head) continue;
                 
                 thread_t *start = q->head;
                 thread_t *curr = start;
-                
                 while (true) {
-                    // 必须先保存 next，因为 Promote 会将 curr 移出当前队列并破坏其指针
                     thread_t *next = curr->list_next;
                     bool removed = false;
-                    
                     if (curr->state == THREAD_RUNNING) {
                         curr->wait_ticks++;
-                        // 统计等待 tick
                         cpu->sched_stats.total_wait_ticks++; 
-                        
                         if (curr->wait_ticks > (AGING_THRESHOLD_BASE * (i + 1))) {
                             Promote(cpu, curr);
-                            cpu->sched_stats.aging_promotions++; // 统计升权次数
+                            cpu->sched_stats.aging_promotions++;
                             removed = true;
                         }
                     }
-                    
                     if (removed) {
-                        // curr 被移除，如果它是唯一节点，队列已空
                         if (next == curr) break; 
-                        // 如果起始节点被移除，更新 start 指针为新的合法节点
                         if (curr == start) start = next; 
-                        // 不判断 next == start，直接继续处理 next
                         curr = next;
                     } else {
-                        // curr 未被移除，如果转了一圈回到了 start，则结束本队列遍历
                         if (next == start) break;
                         curr = next;
                     }
@@ -172,7 +203,9 @@ namespace Schedule {
                     t = t->list_next;
                 } while (t != start);
             }
-            return nullptr;
+
+            // 3. 本地无线程可运行，触发跨核窃取
+            return StealThread(cpu);
         }
 
         void Switch(context_t *ctx) {
@@ -194,7 +227,6 @@ namespace Schedule {
                     cpu->OverLoadableFuncs.StoreSIMDState(curr_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
                 }
                 
-                // 时间片耗尽降级
                 if (curr_thread->state == THREAD_RUNNING) {
                     curr_thread->preempt_count++;
                     if (curr_thread->preempt_count >= SCHED_PREEMPTION_MAX) {
@@ -214,7 +246,6 @@ namespace Schedule {
             }
             
             cpu->current_thread = next_thread;
-            // 统计上下文切换次数
             cpu->sched_stats.context_switches++; 
             
             *ctx = next_thread->ctx;
@@ -462,7 +493,7 @@ namespace Schedule {
             *(uint64_t*)tcb_base = tcb_base; 
             VMM::SwitchPageMap(kernel_pagemap); 
             thread->fs = tcb_base;
-            thread->tls_base = tls_mem; // 记录以便销毁
+            thread->tls_base = tls_mem;
             thread->tls_pages = tls_pages;
         }
 
@@ -492,7 +523,7 @@ namespace Schedule {
         
         thread->cpu_num = cpu->id;
         thread->parent = proc;
-        thread->IsForkThread = true; // 标记为 Fork 线程，防止双释放栈
+        thread->IsForkThread = true;
         thread->pagemap = proc->pagemap; 
         thread->kernel_stack = kernel_stack;
         thread->kernel_rsp = kernel_stack + 4 * PAGE_SIZE;
@@ -537,13 +568,11 @@ namespace Schedule {
         proc->pagemap = VMM::Fork(parent->pagemap);
         __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
         
-        // 深拷贝 FDMan 防止双重释放
         proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
         __memcpy(proc->FDMan, parent->FDMan, sizeof(fd_manager_t));
         proc->fd_count = parent->fd_count;
         return proc;
     }
-
 
     thread_t* this_thread() {
         cpu_t* cpu = this_cpu();
