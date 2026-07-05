@@ -8,7 +8,7 @@ CFLAGS_x86mem = -ffreestanding -msse4.2 -O3 \
 	-falign-functions=32 -falign-loops=32 -falign-jumps=32 \
     -fpie -fomit-frame-pointer -fno-common -fno-zero-initialized-in-bss \
     -fno-exceptions -fno-unwind-tables -fno-asynchronous-unwind-tables \
-    -fno-stack-protector -fno-stack-check -fno-strict-aliasing \
+    -fno-stack-protector -fno-stack-check  \
     -fno-merge-all-constants -fno-merge-constants -mno-stack-arg-probe \
     -m64 -mno-red-zone -maccumulate-outgoing-args --std=gnu17 -g3 \
     -Wno-error=deprecated -fmessage-length=0 -ffunction-sections -MMD -MP 

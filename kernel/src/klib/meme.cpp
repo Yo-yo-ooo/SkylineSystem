@@ -1,11 +1,10 @@
-//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-FileCopyrightText: 2026 Yo-yoo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
 
 #include <klib/klib.h>
 
 extern "C" {
 
-// 解决 Strict Aliasing 问题，并允许非对齐访问（编译器会自动拆解为对齐指令如果在严格对齐的架构上）
 typedef uint64_t __attribute__((__may_alias__, aligned(1))) unaligned_uint64_t;
 typedef uint32_t __attribute__((__may_alias__, aligned(1))) unaligned_uint32_t;
 typedef uint16_t __attribute__((__may_alias__, aligned(1))) unaligned_uint16_t;
@@ -17,8 +16,7 @@ func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
 
 #if defined(__x86_64__)
     if (n >= 48) {
-        asm volatile ("cld\n"
-                      "rep stosb"
+        asm volatile ("rep stosb"
                       : "+D"(dst), "+c"(n)
                       : "a"(val)
                       : "memory");
@@ -26,7 +24,6 @@ func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
     }
 #else
     if (n >= sizeof(uint64_t)) {
-        // 头部对齐：将 d 推进到 8 字节对齐的边界
         size_t align = (uintptr_t)d & 7;
         if (align) {
             size_t head = 8 - align;
@@ -36,13 +33,11 @@ func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
             n -= head;
         }
 
-        // 生成 64 位填充掩码
         uint64_t val64 = (uint64_t)c;
         val64 |= val64 << 8;
         val64 |= val64 << 16;
         val64 |= val64 << 32;
 
-        // 主循环展开：每次写 64 字节
         while (n >= 64) {
             ((unaligned_uint64_t *)d)[0] = val64;
             ((unaligned_uint64_t *)d)[1] = val64;
@@ -56,7 +51,6 @@ func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
             n -= 64;
         }
 
-        // 处理剩余的 8 字节块
         while (n >= 8) {
             *(unaligned_uint64_t *)d = val64;
             d += 8;
@@ -65,7 +59,6 @@ func_optimize(3) void *memset_fscpuf(void *dst, const int32_t val, size_t n) {
     }
 #endif
 
-    // 尾部字节
     while (n--) *d++ = c;
     return ret;
 }
@@ -84,7 +77,6 @@ func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n) {
     }
 #else
     if (n >= sizeof(uint64_t)) {
-        // 头部对齐
         size_t align = (uintptr_t)d & 7;
         if (align) {
             size_t head = 8 - align;
@@ -95,7 +87,6 @@ func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n) {
             n -= head;
         }
 
-        // 主循环展开：每次拷贝 64 字节
         while (n >= 64) {
             ((unaligned_uint64_t *)d)[0] = ((const unaligned_uint64_t *)s)[0];
             ((unaligned_uint64_t *)d)[1] = ((const unaligned_uint64_t *)s)[1];
@@ -110,7 +101,6 @@ func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n) {
             n -= 64;
         }
 
-        // 8 字贝块
         while (n >= 8) {
             *(unaligned_uint64_t *)d = *(const unaligned_uint64_t *)s;
             d += 8;
@@ -120,7 +110,6 @@ func_optimize(3) void *memcpy_fscpuf(void *dst, const void *src, size_t n) {
     }
 #endif
 
-    // 尾部字节
     while (n--) *d++ = *s++;
     return ret;
 }
@@ -132,11 +121,10 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
     const uint8_t *s = (const uint8_t *)src;
 
     if (s > d) {
-        // 正向拷贝逻辑与 memcpy 一致
+        // 正向拷贝
 #if defined(__x86_64__)
         if (n >= 16) {
-            asm volatile ("cld\n"
-                          "rep movsb\n"
+            asm volatile ("rep movsb"
                           : "+D"(dst), "+S"(src), "+c"(n)
                           :: "memory");
             return dst;
@@ -147,22 +135,11 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
     } else {
         // 反向拷贝
 #if defined(__x86_64__)
-        if (n >= 16) {
-            void *dst_back = &((uint8_t *)dst)[n - 1];
-            const void *src_back = &((const uint8_t *)src)[n - 1];
 
-            asm volatile ("std\n"
-                          "rep movsb\n"
-                          "cld"
-                          : "+D"(dst_back), "+S"(src_back), "+c"(n)
-                          :: "memory");
-            return dst;
-        }
-#else
         d += n;
         s += n;
-
-        // 尾部对齐：将 d 逆向推进到 8 字节对齐边界
+        
+        // 先处理尾部未对齐部分
         size_t align = (uintptr_t)d & 7;
         if (align) {
             size_t tail = align;
@@ -182,14 +159,47 @@ func_optimize(3) void *memmove_fscpuf(void *dst, const void *src, size_t n) {
             ((unaligned_uint64_t *)d)[5] = ((const unaligned_uint64_t *)s)[5];
             ((unaligned_uint64_t *)d)[6] = ((const unaligned_uint64_t *)s)[6];
             ((unaligned_uint64_t *)d)[7] = ((const unaligned_uint64_t *)s)[7];
+            n -= 64;
         }
 
         while (n >= 8) {
             d -= 8; s -= 8;
             *(unaligned_uint64_t *)d = *(const unaligned_uint64_t *)s;
+            n -= 8;
         }
 
-        // 处理剩余字节
+        while (n--) *--d = *--s;
+#else
+        d += n;
+        s += n;
+
+        size_t align = (uintptr_t)d & 7;
+        if (align) {
+            size_t tail = align;
+            if (tail > n) tail = n;
+            for (size_t i = 0; i < tail; i++) *--d = *--s;
+            n -= tail;
+        }
+
+        while (n >= 64) {
+            d -= 64; s -= 64;
+            ((unaligned_uint64_t *)d)[0] = ((const unaligned_uint64_t *)s)[0];
+            ((unaligned_uint64_t *)d)[1] = ((const unaligned_uint64_t *)s)[1];
+            ((unaligned_uint64_t *)d)[2] = ((const unaligned_uint64_t *)s)[2];
+            ((unaligned_uint64_t *)d)[3] = ((const unaligned_uint64_t *)s)[3];
+            ((unaligned_uint64_t *)d)[4] = ((const unaligned_uint64_t *)s)[4];
+            ((unaligned_uint64_t *)d)[5] = ((const unaligned_uint64_t *)s)[5];
+            ((unaligned_uint64_t *)d)[6] = ((const unaligned_uint64_t *)s)[6];
+            ((unaligned_uint64_t *)d)[7] = ((const unaligned_uint64_t *)s)[7];
+            n -= 64;
+        }
+
+        while (n >= 8) {
+            d -= 8; s -= 8;
+            *(unaligned_uint64_t *)d = *(const unaligned_uint64_t *)s;
+            n -= 8;
+        }
+
         while (n--) *--d = *--s;
 #endif
     }
@@ -207,7 +217,6 @@ int32_t memcmp_fscpuf(const void *left, const void *right, size_t len) {
         uint64_t l64 = *(const unaligned_uint64_t *)l;
         uint64_t r64 = *(const unaligned_uint64_t *)r;
         if (l64 != r64) {
-            // 异或找差异，__builtin_ctzll 找最低位 1 的位置，除以 8 得到字节偏移
             uint64_t diff = l64 ^ r64;
             int byte_pos = __builtin_ctzll(diff) / 8;
             return (int32_t)l[byte_pos] - (int32_t)r[byte_pos];
@@ -243,14 +252,12 @@ int32_t memcmp_fscpuf(const void *left, const void *right, size_t len) {
     return 0;
 }
 
-
 func_optimize(3) void bzero(void *dst, size_t n) {
     uint8_t *d = (uint8_t *)dst;
 
 #if defined(__x86_64__)
     if (n >= 48) {
-        asm volatile ("cld\n"
-                      "rep stosb"
+        asm volatile ("rep stosb"
                       : "+D"(dst), "+c"(n)
                       : "a"(0)
                       : "memory");
@@ -273,7 +280,6 @@ func_optimize(3) void bzero(void *dst, size_t n) {
     }
 #endif
 
-    // 通用清零逻辑（对齐 + 展开，编译器会自动产生 AArch64 的 stp xzr, xzr）
     if (n >= sizeof(uint64_t)) {
         size_t align = (uintptr_t)d & 7;
         if (align) {
