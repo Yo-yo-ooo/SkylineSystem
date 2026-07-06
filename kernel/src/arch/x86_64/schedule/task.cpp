@@ -9,6 +9,10 @@
 #include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/simd/simd.h>
 #include <klib/algorithm/queue.h>
+#include <klib/algorithm/art.h>
+
+extern art_tree *pid2proc_tree;
+extern spinlock_t PID2PROC_TREE_LOCK;
 
 namespace Schedule {
     void FreeThreadResources(thread_t *thread) {
@@ -134,7 +138,10 @@ namespace Schedule {
             VMM::DestroyPM(proc->pagemap);
         }
 
-        // 5. 释放进程结构体本身
+        
+        spinlock_lock(&PID2PROC_TREE_LOCK);
+        art_delete(pid2proc_tree,proc->id,8);
+        spinlock_unlock(&PID2PROC_TREE_LOCK);
         kfree(proc);
     }
 
@@ -155,16 +162,12 @@ namespace Schedule {
         while(true) { asm volatile("hlt"); }
     }
 
-    void Exit(int32_t code) {
-        asm volatile("cli");    // 必须关中断，保证切换过程绝对原子
-        LAPIC::StopTimer();
-
-        proc_t *curr_proc = Schedule::this_proc();
+    void PROC_KILL(proc_t *proc){
         thread_t *curr_thread = Schedule::this_thread();
         cpu_t *cpu = this_cpu();
 
         curr_thread->state = THREAD_ZOMBIE;
-        curr_thread->exit_code = code;
+        curr_thread->exit_code = 0;
 
         // 切入内核全局页表，脱离对 proc->pagemap 的依赖
         VMM::SwitchPageMap(kernel_pagemap);
@@ -176,11 +179,19 @@ namespace Schedule {
             "mov %2, %%rsi \n\t"       // rsi = 参数2: cpu
             "call *%3      \n\t"       // 间接调用 FinalizeProcExit
             :
-            : "r"((uint64_t)&cpu->exit_stack[4096]), "r"(curr_proc), "r"(cpu), "r"(&FinalizeProcExit)
+            : "r"((uint64_t)&cpu->exit_stack[4096]), "r"(proc), "r"(cpu), "r"(&FinalizeProcExit)
             : "memory", "rdi", "rsi"   // 声明污染了 RDI 和 RSI
         );
                
         // 如果代码执行到了这里，说明宇宙物理法则被打破了
         while(1) { asm volatile("hlt"); }
+    }
+
+    void Exit(int32_t code) {
+        asm volatile("cli");    // 必须关中断，保证切换过程绝对原子
+        LAPIC::StopTimer();
+
+        proc_t *curr_proc = Schedule::this_proc();
+        PROC_KILL(curr_proc);
     }
 }

@@ -14,6 +14,8 @@
 
 static uint64_t sched_tid = 0;
 static uint64_t sched_pid = 0;
+art_tree *pid2proc_tree = nullptr;
+spinlock_t PID2PROC_TREE_LOCK = 0;
 
 #define AGING_THRESHOLD_BASE 50
 #define SCHED_STEAL_BATCH 8
@@ -327,6 +329,10 @@ namespace Schedule {
     }
 
     void Init() {
+        if (!pid2proc_tree) {
+            pid2proc_tree = (art_tree*)kmalloc(sizeof(art_tree));
+            if (art_tree_init(pid2proc_tree) != 0) Panic("ART TREE INIT FAILED!");
+        }
         idt_install_irq(SCHED_VEC, (void*)Schedule::Internal::Preempt);
         idt_install_irq(SCHED_VEC + 1, (void*)Schedule::Internal::Switch);
         idt_set_ist(SCHED_VEC, 0);
@@ -360,6 +366,9 @@ namespace Schedule {
         if (!proc->FDMan) { kfree(proc); return nullptr; }
         fd_manager_init(proc->FDMan);
         proc->fd_count = 4;
+        spinlock_lock(&PID2PROC_TREE_LOCK);
+        art_insert(pid2proc_tree,(const uint8_t*)&proc->id,8,proc);
+        spinlock_unlock(&PID2PROC_TREE_LOCK);
         return proc;
     }
 

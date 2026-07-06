@@ -5,6 +5,10 @@
 #include <klib/errno.h>
 #include <elf/elf.h>
 #include <mem/pmm.h>
+#include <klib/algorithm/art.h>
+#include <arch/x86_64/lapic/lapic.h>
+
+extern art_tree *pid2proc_tree;
 
 uint64_t sys_getpid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
     uint64_t ign_3,uint64_t ign_4,uint64_t ign_5) {
@@ -44,12 +48,16 @@ uint64_t sched_yield(uint64_t ign_0, uint64_t ign_1, \
 }
 
 
+
 uint64_t sys_kill(uint64_t pid,uint64_t sig, uint64_t ign_0, \
     uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
     IGNORE_VALUE(ign_3);
 
-    
+    asm volatile("cli");    // 必须关中断，保证切换过程绝对原子
+    LAPIC::StopTimer();
+    proc_t *proc = (proc_t*)art_search(pid2proc_tree,pid,8);
+    Schedule::PROC_KILL(proc);
 
     return 0;
 }
