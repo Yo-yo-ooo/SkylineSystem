@@ -130,12 +130,12 @@ namespace Schedule {
                 cpu_t *victim = smp_cpu_list[i];
                 if (!victim || victim == cpu) continue;
                 
-                // 核心优化：快速跳过无冗余线程的 CPU，避免无意义的 CAS 开销
+                // 快速跳过无冗余线程的 CPU，避免无意义的 CAS 开销
                 if (!__atomic_load_n(&victim->has_surplus, __ATOMIC_RELAXED)) continue;
 
                 if (!__sync_bool_compare_and_swap(&victim->sched_lock, 0, 1)) continue;
 
-                // 二次检查，防止在加锁前 has_surplus 被其他 CPU 偷空
+                // 防止在加锁前 has_surplus 被其他 CPU 偷空
                 if (atomic_load_4(&victim->thread_count, 1) <= 1) {
                     __atomic_store_n(&victim->sched_lock, 0, __ATOMIC_RELEASE);
                     continue;

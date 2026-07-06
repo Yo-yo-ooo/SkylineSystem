@@ -22,15 +22,11 @@ void dump_REG(syscall_frame_t *frame){
 }
 
 extern "C" void syscall_handler(syscall_frame_t *frame) {
-    // 1. 安全检查：防止用户态传一个 rax = 9999 导致内核空指针解引用
-    // 1. Safe check: prevent user from passing 
-    // rax = 9999 which may cause null pointer dereference in kernel
     if (frame->rax >= 512 || syscall_lists[frame->rax] == nullptr) {
         frame->rax = -ENOSYS; 
         return;
     }
 
-    // 2. Get function pointer from syscall_lists
     auto func = syscall_lists[frame->rax];
 
     //kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);

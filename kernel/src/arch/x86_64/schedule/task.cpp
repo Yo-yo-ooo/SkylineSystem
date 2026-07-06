@@ -16,19 +16,19 @@ namespace Schedule {
 
         cpu_t *cpu = get_cpu(thread->cpu_num);
 
-        // 1. 释放 SIMD 扩展状态保存区
+        // 释放 SIMD 扩展状态保存区
         if (thread->fx_area) {
             VMM::Free(kernel_pagemap, thread->fx_area);
         }
         debugpln("Thread FX Area freed!");
 
-        // 2. 释放内核栈 (4页)
+        // 释放内核栈 (4页)
         if (thread->kernel_stack) {
             VMM::Free(kernel_pagemap, thread->kernel_stack);
         }
         debugpln("Thread Kernel Stack freed!");
 
-        // 3. 如果不是 Fork 产生的线程，才拥有用户态独占资源的所有权
+        // 如果不是 Fork 产生的线程，才拥有用户态独占资源的所有权
         if (!thread->IsForkThread) {
             // 避免内核线程（user==false）或共享栈线程被误释放
             if (thread->pagemap != kernel_pagemap) {
@@ -52,7 +52,7 @@ namespace Schedule {
             }
         }
 
-        // 4. 从时间轮中安全摘除
+        // 从时间轮中安全摘除
         spinlock_lock(&cpu->sched_lock);
         Schedule::Internal::TimerRemove(thread); 
         spinlock_unlock(&cpu->sched_lock);
@@ -63,12 +63,12 @@ namespace Schedule {
     void DeleteThread(cpu_t *cpu, thread_t *thread) {
         if (!cpu || !thread) return;
 
-        // 1. 从调度器的优先级队列中安全移除，统一由 RemoveFromQueue 维护计数器
+        // 从调度器的优先级队列中安全移除，统一由 RemoveFromQueue 维护计数器
         spinlock_lock(&cpu->sched_lock);
         Schedule::Internal::RemoveFromQueue(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
 
-        // 2. 从进程的线程双向链表中移除
+        // 从进程的线程双向链表中移除
         proc_t *parent = thread->parent;
         if (parent && parent->threads) {
             if (thread->next == thread) {
@@ -80,10 +80,10 @@ namespace Schedule {
             }
         }
 
-        // 3. 释放线程挂载的所有内存资源
+        // 释放线程挂载的所有内存资源
         FreeThreadResources(thread);
 
-        // 4. 释放线程结构体本身，防止内存泄漏
+        // 释放线程结构体本身，防止内存泄漏
         kfree(thread);
     }
 
