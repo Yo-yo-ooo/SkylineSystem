@@ -62,12 +62,22 @@ namespace Schedule {
             thread->list_next = thread->list_prev = nullptr;
             cpu->thread_count--;
             if (thread->priority > 0) cpu->thread_count_lower--;
+            
+            // 维护冗余标记：线程数降到1，无冗余可偷
+            if (cpu->thread_count == 1) {
+                cpu->has_surplus = false;
+            }
         }
 
         void InsertToQueue(cpu_t *cpu, thread_t *thread) {
             thread_queue_t *q = &cpu->thread_queues[thread->priority];
             cpu->thread_count++;
             if (thread->priority > 0) cpu->thread_count_lower++;
+
+            // 维护冗余标记：线程数升到2，产生冗余可被偷
+            if (cpu->thread_count == 2) {
+                cpu->has_surplus = true;
+            }
 
             if (!q->head) {
                 thread->list_next = thread;
@@ -112,14 +122,24 @@ namespace Schedule {
             parent->threads->prev = thread;
         }
 
+        // ==========================================
+        // 优化后的批量窃取机制：基于 has_surplus 快速跳过
+        // ==========================================
         thread_t *StealThread(cpu_t *cpu) {
             for (int32_t i = 0; i <= smp_last_cpu; i++) {
                 cpu_t *victim = smp_cpu_list[i];
                 if (!victim || victim == cpu) continue;
                 
-                if (atomic_load_4(&victim->thread_count, 1) <= 1) continue;
+                // 核心优化：快速跳过无冗余线程的 CPU，避免无意义的 CAS 开销
+                if (!__atomic_load_n(&victim->has_surplus, __ATOMIC_RELAXED)) continue;
 
                 if (!__sync_bool_compare_and_swap(&victim->sched_lock, 0, 1)) continue;
+
+                // 二次检查，防止在加锁前 has_surplus 被其他 CPU 偷空
+                if (atomic_load_4(&victim->thread_count, 1) <= 1) {
+                    __atomic_store_n(&victim->sched_lock, 0, __ATOMIC_RELEASE);
+                    continue;
+                }
 
                 thread_t *stolen_list = nullptr;
                 thread_t *stolen_tail = nullptr;
@@ -137,6 +157,7 @@ namespace Schedule {
                             stolen = vq->head->list_prev;
                         }
                         
+                        // RemoveFromQueue 会自动维护 victim->has_surplus
                         RemoveFromQueue(victim, stolen);
                         
                         if (!stolen_list) {
@@ -165,6 +186,7 @@ namespace Schedule {
                         curr->cpu_num = cpu->id;
                         curr->wait_ticks = 0;
                         curr->preempt_count = 0;
+                        // InsertToQueue 会自动维护本机 has_surplus (不过本机通常在 Pick 时已空，无伤大雅)
                         InsertToQueue(cpu, curr);
                         curr = next;
                     } while (curr != stolen_list);
@@ -180,21 +202,15 @@ namespace Schedule {
         }
 
         thread_t *Pick(cpu_t *cpu) {
-            // ==========================================
-            // 动态老化阈值：根据低优先级队列堆积量自适应膨胀
-            // ==========================================
             uint32_t lower_load = cpu->thread_count_lower;
-            // 负载因子：每个后台线程拉长 8 个 tick 的容忍度
             uint32_t dynamic_base = AGING_THRESHOLD_BASE + (lower_load * 8);
-            // 设定上限 500 ticks，防止极端负载下彻底饥饿
             if (dynamic_base > 500) dynamic_base = 500;
 
-            // 1. 两阶段快照法批量老化
             for (uint32_t i = 1; i < THREAD_QUEUE_CNT; i++) {
                 thread_queue_t *q = &cpu->thread_queues[i];
                 if (!q->head) continue;
                 
-                thread_t* to_promote[MAX_PROMOTE_SNAPSHOT];
+                thread_t** to_promote = cpu->promote_buf;
                 uint32_t promote_count = 0;
                 
                 thread_t *curr = q->head;
@@ -202,7 +218,6 @@ namespace Schedule {
                     if (curr->state == THREAD_RUNNING) {
                         curr->wait_ticks++;
                         cpu->sched_stats.total_wait_ticks++;
-                        // 使用动态阈值进行判定
                         if (curr->wait_ticks > (dynamic_base * (i + 1))) {
                             if (promote_count < MAX_PROMOTE_SNAPSHOT) {
                                 to_promote[promote_count++] = curr;
@@ -218,7 +233,6 @@ namespace Schedule {
                 }
             }
 
-            // 2. 严格按优先级轮转选取
             for (uint32_t i = 0; i < THREAD_QUEUE_CNT; i++) {
                 thread_queue_t *q = &cpu->thread_queues[i];
                 if (!q->head) continue;
@@ -237,7 +251,6 @@ namespace Schedule {
                 } while (t != start);
             }
 
-            // 3. 本地无线程可运行，触发跨核批量窃取
             return StealThread(cpu);
         }
 
@@ -252,7 +265,6 @@ namespace Schedule {
             cpu->tick_count++;
             thread_t *curr_thread = cpu->current_thread;
 
-            // 阶段 1：锁外保存当前线程上下文
             if (curr_thread && curr_thread != cpu->idle_thread) {
                 curr_thread->fs = rdmsr(FS_BASE);
                 curr_thread->ctx = *ctx;
@@ -261,7 +273,6 @@ namespace Schedule {
                 }
             }
 
-            // 阶段 2：锁内执行队列操作与任务选取
             spinlock_lock(&cpu->sched_lock);
             
             if (curr_thread && curr_thread->state == THREAD_RUNNING && curr_thread != cpu->idle_thread) {
@@ -291,7 +302,6 @@ namespace Schedule {
                 return; 
             }
 
-            // 阶段 3：锁外加载下一线程上下文
             *ctx = next_thread->ctx;
             TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
             cpu->kernel_stack = next_thread->kernel_rsp;

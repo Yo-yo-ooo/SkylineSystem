@@ -9,6 +9,7 @@
 
 #define MAX_CPU 128
 #define THREAD_QUEUE_CNT 16
+#define MAX_PROMOTE_SNAPSHOT 256  // 升权快照缓冲区大小
 
 typedef struct thread_t thread_t;
 
@@ -107,6 +108,12 @@ typedef struct cpu_t {
     
     // 使用 volatile 保证在 get_lw_cpu 等无锁读取时的可见性一致性
     volatile uint32_t thread_count_lower = 0; // 记录当前在非最高优先级队列中的线程数
+    volatile bool has_surplus = false; 
+
+    // 每 CPU 私有升权快照缓冲区
+    // 取代 Pick() 内栈上 thread_t* to_promote[256] (2KB)，消除中断栈溢出风险
+    // 同一 CPU 不会并发进入 Pick()（sched_lock + preempt_count 保证），故无需额外加锁
+    thread_t* promote_buf[MAX_PROMOTE_SNAPSHOT];
 
     // 调度性能统计结构体
     sched_stats_t sched_stats;
