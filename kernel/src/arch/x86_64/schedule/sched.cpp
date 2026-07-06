@@ -17,7 +17,7 @@ static uint64_t sched_pid = 0;
 
 #define AGING_THRESHOLD_BASE 50
 #define SCHED_STEAL_BATCH 8
-#define MAX_PROMOTE_SNAPSHOT 256 // 单次老化快照最大容量
+#define MAX_PROMOTE_SNAPSHOT 256
 
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap, 
                   uint64_t *tls_offset = nullptr, 
@@ -112,9 +112,6 @@ namespace Schedule {
             parent->threads->prev = thread;
         }
 
-        // ==========================================
-        // 混合头尾批量窃取机制
-        // ==========================================
         thread_t *StealThread(cpu_t *cpu) {
             for (int32_t i = 0; i <= smp_last_cpu; i++) {
                 cpu_t *victim = smp_cpu_list[i];
@@ -128,15 +125,12 @@ namespace Schedule {
                 thread_t *stolen_tail = nullptr;
                 uint32_t stolen_count = 0;
 
-                // 从最低优先级开始偷
                 for (int32_t p = THREAD_QUEUE_CNT - 1; p >= 0; p--) {
                     thread_queue_t *vq = &victim->thread_queues[p];
                     if (!vq->head) continue;
                     
                     while (vq->head != vq->head->list_prev && stolen_count < SCHED_STEAL_BATCH) {
                         thread_t *stolen = nullptr;
-                        
-                        // 混合策略：高优任务偷头部(低延迟)，低优任务偷尾部(保缓存)
                         if (p >= THREAD_QUEUE_CNT / 2) {
                             stolen = vq->head;
                         } else {
@@ -187,8 +181,15 @@ namespace Schedule {
 
         thread_t *Pick(cpu_t *cpu) {
             // ==========================================
-            // 1. 两阶段快照法批量老化，彻底消除指针失效与重复扫描
+            // 动态老化阈值：根据低优先级队列堆积量自适应膨胀
             // ==========================================
+            uint32_t lower_load = cpu->thread_count_lower;
+            // 负载因子：每个后台线程拉长 8 个 tick 的容忍度
+            uint32_t dynamic_base = AGING_THRESHOLD_BASE + (lower_load * 8);
+            // 设定上限 500 ticks，防止极端负载下彻底饥饿
+            if (dynamic_base > 500) dynamic_base = 500;
+
+            // 1. 两阶段快照法批量老化
             for (uint32_t i = 1; i < THREAD_QUEUE_CNT; i++) {
                 thread_queue_t *q = &cpu->thread_queues[i];
                 if (!q->head) continue;
@@ -201,7 +202,8 @@ namespace Schedule {
                     if (curr->state == THREAD_RUNNING) {
                         curr->wait_ticks++;
                         cpu->sched_stats.total_wait_ticks++;
-                        if (curr->wait_ticks > (AGING_THRESHOLD_BASE * (i + 1))) {
+                        // 使用动态阈值进行判定
+                        if (curr->wait_ticks > (dynamic_base * (i + 1))) {
                             if (promote_count < MAX_PROMOTE_SNAPSHOT) {
                                 to_promote[promote_count++] = curr;
                             }
@@ -210,7 +212,6 @@ namespace Schedule {
                     curr = curr->list_next;
                 } while (curr != q->head && q->head != nullptr);
 
-                // 遍历完毕，统一执行升权
                 for (uint32_t j = 0; j < promote_count; j++) {
                     Promote(cpu, to_promote[j]);
                     cpu->sched_stats.aging_promotions++;
@@ -251,9 +252,7 @@ namespace Schedule {
             cpu->tick_count++;
             thread_t *curr_thread = cpu->current_thread;
 
-            // ==========================================
-            // 阶段 1：锁外保存当前线程上下文 (减少锁持有时间)
-            // ==========================================
+            // 阶段 1：锁外保存当前线程上下文
             if (curr_thread && curr_thread != cpu->idle_thread) {
                 curr_thread->fs = rdmsr(FS_BASE);
                 curr_thread->ctx = *ctx;
@@ -262,9 +261,7 @@ namespace Schedule {
                 }
             }
 
-            // ==========================================
             // 阶段 2：锁内执行队列操作与任务选取
-            // ==========================================
             spinlock_lock(&cpu->sched_lock);
             
             if (curr_thread && curr_thread->state == THREAD_RUNNING && curr_thread != cpu->idle_thread) {
@@ -276,7 +273,7 @@ namespace Schedule {
             
             thread_t *next_thread = Pick(cpu);
             if (!next_thread) {
-                next_thread = cpu->idle_thread; // 降级为 idle，不挂入队列
+                next_thread = cpu->idle_thread;
             }
             
             bool is_switch = (next_thread != curr_thread);
@@ -287,7 +284,6 @@ namespace Schedule {
             
             spinlock_unlock(&cpu->sched_lock);
 
-            // 如果没有切换，直接重设时钟返回
             if (!is_switch) {
                 uint64_t q = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->thread_queues[next_thread->priority].quantum;
                 LAPIC::Oneshot(SCHED_VEC, q);
@@ -295,9 +291,7 @@ namespace Schedule {
                 return; 
             }
 
-            // ==========================================
-            // 阶段 3：锁外加载下一线程上下文 (耗时的硬件操作移出临界区)
-            // ==========================================
+            // 阶段 3：锁外加载下一线程上下文
             *ctx = next_thread->ctx;
             TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
             cpu->kernel_stack = next_thread->kernel_rsp;
@@ -311,7 +305,6 @@ namespace Schedule {
                 cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
             
-            // 动态时间片：优先使用线程自定义时间片，否则用队列默认时间片
             uint64_t quantum = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->thread_queues[next_thread->priority].quantum;
             LAPIC::Oneshot(SCHED_VEC, quantum);
             
@@ -334,11 +327,9 @@ namespace Schedule {
         for (uint32_t i = 0; i <= smp_last_cpu; i++) {
             cpu_t *cpu = smp_cpu_list[i];
             if (!cpu) continue;
-            // 为所有 CPU (包括 BSP) 创建专属 idle 线程
             proc_t *proc = Schedule::NewProcess(false);
             thread_t *idle_t = Schedule::NewKernelThread(proc, cpu->id, THREAD_QUEUE_CNT - 1, sched_idle);
             
-            // 将 idle 线程从运行队列中移除，它只存在于 cpu->idle_thread 指针中
             spinlock_lock(&cpu->sched_lock);
             Internal::RemoveFromQueue(cpu, idle_t);
             spinlock_unlock(&cpu->sched_lock);
@@ -348,7 +339,6 @@ namespace Schedule {
         atomic_store_8((volatile uint8_t*)&PIT::TickHandle, (uint64_t)(uintptr_t)&PIT::Tick_, 0);
     }
 
-    
     proc_t *NewProcess(bool user) {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
