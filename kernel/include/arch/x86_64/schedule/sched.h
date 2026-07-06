@@ -69,6 +69,8 @@ typedef struct thread_t {
     uint64_t wait_ticks;         // 用于 Aging 老化机制，记录在当前优先级的等待 tick 数
     uint64_t tls_base;           // TLS 区域起始虚拟地址，用于线程销毁时释放
     uint64_t tls_pages;          // TLS 区域占用的页数
+
+    uint64_t custom_quantum; 
 } thread_t;
 
 typedef struct proc_t {

@@ -16,6 +16,8 @@ static uint64_t sched_tid = 0;
 static uint64_t sched_pid = 0;
 
 #define AGING_THRESHOLD_BASE 50
+#define SCHED_STEAL_BATCH 8
+#define MAX_PROMOTE_SNAPSHOT 256 // 单次老化快照最大容量
 
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap, 
                   uint64_t *tls_offset = nullptr, 
@@ -111,77 +113,107 @@ namespace Schedule {
         }
 
         // ==========================================
-        // 运行时动态线程迁移
-        // 单次仅窃取单条线程，偷出后直接返回，绝不插入本地队列再移除
+        // 混合头尾批量窃取机制
         // ==========================================
         thread_t *StealThread(cpu_t *cpu) {
             for (int32_t i = 0; i <= smp_last_cpu; i++) {
                 cpu_t *victim = smp_cpu_list[i];
                 if (!victim || victim == cpu) continue;
                 
-                // 如果受害者线程数 <= 1，不窃取，避免偷完导致对方空闲
                 if (atomic_load_4(&victim->thread_count, 1) <= 1) continue;
 
-                // 尝试加锁，避免死锁绝不阻塞等待
                 if (!__sync_bool_compare_and_swap(&victim->sched_lock, 0, 1)) continue;
 
-                thread_t *stolen = nullptr;
-                // 从最低优先级队列开始偷，把后台任务扔给空闲CPU
+                thread_t *stolen_list = nullptr;
+                thread_t *stolen_tail = nullptr;
+                uint32_t stolen_count = 0;
+
+                // 从最低优先级开始偷
                 for (int32_t p = THREAD_QUEUE_CNT - 1; p >= 0; p--) {
                     thread_queue_t *vq = &victim->thread_queues[p];
-                    if (vq->head && vq->head != vq->head->list_prev) { // 确保至少有2个节点
-                        // 偷取队列尾部
-                        stolen = vq->head->list_prev;
+                    if (!vq->head) continue;
+                    
+                    while (vq->head != vq->head->list_prev && stolen_count < SCHED_STEAL_BATCH) {
+                        thread_t *stolen = nullptr;
+                        
+                        // 混合策略：高优任务偷头部(低延迟)，低优任务偷尾部(保缓存)
+                        if (p >= THREAD_QUEUE_CNT / 2) {
+                            stolen = vq->head;
+                        } else {
+                            stolen = vq->head->list_prev;
+                        }
+                        
                         RemoveFromQueue(victim, stolen);
-                        break;
+                        
+                        if (!stolen_list) {
+                            stolen_list = stolen;
+                            stolen_tail = stolen;
+                            stolen->list_next = stolen;
+                            stolen->list_prev = stolen;
+                        } else {
+                            stolen->list_next = stolen_list;
+                            stolen->list_prev = stolen_tail;
+                            stolen_tail->list_next = stolen;
+                            stolen_list->list_prev = stolen;
+                            stolen_tail = stolen;
+                        }
+                        stolen_count++;
                     }
+                    if (stolen_count >= SCHED_STEAL_BATCH) break;
                 }
 
-                // 修复致命Bug：释放锁必须无条件 store，不能用 CAS
                 __atomic_store_n(&victim->sched_lock, 0, __ATOMIC_RELEASE);
                 
-                if (stolen) {
-                    // 迁移线程归属权到当前 CPU
-                    stolen->cpu_num = cpu->id;
-                    stolen->wait_ticks = 0;
-                    stolen->preempt_count = 0;
-                    // 统计窃取次数
-                    cpu->sched_stats.thread_steals++; 
-                    // 直接返回，准备投入运行
-                    return stolen;
+                if (stolen_list) {
+                    thread_t *curr = stolen_list;
+                    do {
+                        thread_t *next = curr->list_next;
+                        curr->cpu_num = cpu->id;
+                        curr->wait_ticks = 0;
+                        curr->preempt_count = 0;
+                        InsertToQueue(cpu, curr);
+                        curr = next;
+                    } while (curr != stolen_list);
+
+                    cpu->sched_stats.thread_steals += stolen_count;
+                    
+                    thread_t *to_run = stolen_list;
+                    RemoveFromQueue(cpu, to_run);
+                    return to_run;
                 }
             }
             return nullptr;
         }
 
         thread_t *Pick(cpu_t *cpu) {
-            // 1. 批量老化提升
+            // ==========================================
+            // 1. 两阶段快照法批量老化，彻底消除指针失效与重复扫描
+            // ==========================================
             for (uint32_t i = 1; i < THREAD_QUEUE_CNT; i++) {
                 thread_queue_t *q = &cpu->thread_queues[i];
                 if (!q->head) continue;
                 
-                thread_t *start = q->head;
-                thread_t *curr = start;
-                while (true) {
-                    thread_t *next = curr->list_next;
-                    bool removed = false;
+                thread_t* to_promote[MAX_PROMOTE_SNAPSHOT];
+                uint32_t promote_count = 0;
+                
+                thread_t *curr = q->head;
+                do {
                     if (curr->state == THREAD_RUNNING) {
                         curr->wait_ticks++;
-                        cpu->sched_stats.total_wait_ticks++; 
+                        cpu->sched_stats.total_wait_ticks++;
                         if (curr->wait_ticks > (AGING_THRESHOLD_BASE * (i + 1))) {
-                            Promote(cpu, curr);
-                            cpu->sched_stats.aging_promotions++;
-                            removed = true;
+                            if (promote_count < MAX_PROMOTE_SNAPSHOT) {
+                                to_promote[promote_count++] = curr;
+                            }
                         }
                     }
-                    if (removed) {
-                        if (next == curr) break; 
-                        if (curr == start) start = next; 
-                        curr = next;
-                    } else {
-                        if (next == start) break;
-                        curr = next;
-                    }
+                    curr = curr->list_next;
+                } while (curr != q->head && q->head != nullptr);
+
+                // 遍历完毕，统一执行升权
+                for (uint32_t j = 0; j < promote_count; j++) {
+                    Promote(cpu, to_promote[j]);
+                    cpu->sched_stats.aging_promotions++;
                 }
             }
 
@@ -204,50 +236,68 @@ namespace Schedule {
                 } while (t != start);
             }
 
-            // 3. 本地无线程可运行，触发跨核窃取
+            // 3. 本地无线程可运行，触发跨核批量窃取
             return StealThread(cpu);
         }
 
         void Switch(context_t *ctx) {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
-            if (!cpu || cpu->preempt_count > 0 || cpu->thread_count == 0) {
+            if (!cpu || cpu->preempt_count > 0) {
                 if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
                 return;
             }
 
             cpu->tick_count++;
-            spinlock_lock(&cpu->sched_lock);
-            
             thread_t *curr_thread = cpu->current_thread;
-            if (curr_thread) {
+
+            // ==========================================
+            // 阶段 1：锁外保存当前线程上下文 (减少锁持有时间)
+            // ==========================================
+            if (curr_thread && curr_thread != cpu->idle_thread) {
                 curr_thread->fs = rdmsr(FS_BASE);
                 curr_thread->ctx = *ctx;
                 if (curr_thread->fx_area) {
                     cpu->OverLoadableFuncs.StoreSIMDState(curr_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
                 }
-                
-                if (curr_thread->state == THREAD_RUNNING) {
-                    curr_thread->preempt_count++;
-                    if (curr_thread->preempt_count >= SCHED_PREEMPTION_MAX) {
-                        Demote(cpu, curr_thread);
-                    }
+            }
+
+            // ==========================================
+            // 阶段 2：锁内执行队列操作与任务选取
+            // ==========================================
+            spinlock_lock(&cpu->sched_lock);
+            
+            if (curr_thread && curr_thread->state == THREAD_RUNNING && curr_thread != cpu->idle_thread) {
+                curr_thread->preempt_count++;
+                if (curr_thread->preempt_count >= SCHED_PREEMPTION_MAX) {
+                    Demote(cpu, curr_thread);
                 }
             }
             
             thread_t *next_thread = Pick(cpu);
-            if (!next_thread || next_thread == curr_thread) {
-                spinlock_unlock(&cpu->sched_lock);
-                if (next_thread == curr_thread) {
-                    LAPIC::Oneshot(SCHED_VEC, cpu->thread_queues[curr_thread->priority].quantum);
-                }
+            if (!next_thread) {
+                next_thread = cpu->idle_thread; // 降级为 idle，不挂入队列
+            }
+            
+            bool is_switch = (next_thread != curr_thread);
+            if (is_switch) {
+                cpu->current_thread = next_thread;
+                cpu->sched_stats.context_switches++;
+            }
+            
+            spinlock_unlock(&cpu->sched_lock);
+
+            // 如果没有切换，直接重设时钟返回
+            if (!is_switch) {
+                uint64_t q = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->thread_queues[next_thread->priority].quantum;
+                LAPIC::Oneshot(SCHED_VEC, q);
                 if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
                 return; 
             }
-            
-            cpu->current_thread = next_thread;
-            cpu->sched_stats.context_switches++; 
-            
+
+            // ==========================================
+            // 阶段 3：锁外加载下一线程上下文 (耗时的硬件操作移出临界区)
+            // ==========================================
             *ctx = next_thread->ctx;
             TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
             cpu->kernel_stack = next_thread->kernel_rsp;
@@ -261,9 +311,10 @@ namespace Schedule {
                 cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
             
-            spinlock_unlock(&cpu->sched_lock);
+            // 动态时间片：优先使用线程自定义时间片，否则用队列默认时间片
+            uint64_t quantum = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->thread_queues[next_thread->priority].quantum;
+            LAPIC::Oneshot(SCHED_VEC, quantum);
             
-            LAPIC::Oneshot(SCHED_VEC, cpu->thread_queues[next_thread->priority].quantum);
             if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
         }
 
@@ -282,13 +333,22 @@ namespace Schedule {
     void Install() {
         for (uint32_t i = 0; i <= smp_last_cpu; i++) {
             cpu_t *cpu = smp_cpu_list[i];
-            if (!cpu || cpu->id == smp_bsp_cpu) continue;
+            if (!cpu) continue;
+            // 为所有 CPU (包括 BSP) 创建专属 idle 线程
             proc_t *proc = Schedule::NewProcess(false);
-            Schedule::NewKernelThread(proc, cpu->id, THREAD_QUEUE_CNT - 1, sched_idle);
+            thread_t *idle_t = Schedule::NewKernelThread(proc, cpu->id, THREAD_QUEUE_CNT - 1, sched_idle);
+            
+            // 将 idle 线程从运行队列中移除，它只存在于 cpu->idle_thread 指针中
+            spinlock_lock(&cpu->sched_lock);
+            Internal::RemoveFromQueue(cpu, idle_t);
+            spinlock_unlock(&cpu->sched_lock);
+            
+            cpu->idle_thread = idle_t;
         }
         atomic_store_8((volatile uint8_t*)&PIT::TickHandle, (uint64_t)(uintptr_t)&PIT::Tick_, 0);
     }
 
+    
     proc_t *NewProcess(bool user) {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;

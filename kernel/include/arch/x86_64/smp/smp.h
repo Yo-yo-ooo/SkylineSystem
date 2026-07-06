@@ -110,7 +110,7 @@ typedef struct cpu_t {
 
     // 调度性能统计结构体
     sched_stats_t sched_stats;
-
+    thread_t *idle_thread;
 } cpu_t;
 
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);
