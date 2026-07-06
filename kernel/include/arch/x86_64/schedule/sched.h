@@ -6,7 +6,7 @@
 
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
-#include <arch/x86_64/schedule/signal.h>
+
 
 extern "C++" {
 
@@ -75,7 +75,6 @@ typedef struct thread_t {
 
 typedef struct proc_t {
     uint64_t id;
-    sigaction_t sig_handlers[64];
     thread_t *threads;
     pagemap_t *pagemap;
     struct proc_t *parent; // In case of fork

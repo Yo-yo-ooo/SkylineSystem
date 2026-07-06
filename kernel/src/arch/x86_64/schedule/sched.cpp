@@ -626,7 +626,7 @@ namespace Schedule {
             last->sibling = proc;
         }
         proc->pagemap = VMM::Fork(parent->pagemap);
-        __memcpy(proc->sig_handlers, parent->sig_handlers, 64 * sizeof(sigaction_t));
+        
         
         proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
         __memcpy(proc->FDMan, parent->FDMan, sizeof(fd_manager_t));
