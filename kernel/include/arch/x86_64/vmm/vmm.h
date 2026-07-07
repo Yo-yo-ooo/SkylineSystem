@@ -20,10 +20,10 @@
 #define MM_USER 4
 #define MM_NX (1ull << 63)
 
-
+#define PAGE_SIZE 4096ULL
 #define PAGE_2MB (2ULL * 1024 * 1024)
 #define PAGE_1GB (1ULL * 1024 * 1024 * 1024)
-#define PAGE_2GB (2ULL * 1024 * 1024 * 1024)
+#define PAGE_2GB (2ULL * PAGE_1GB)
 
 #define VMM_FLAG_PRESENT        (1 << 0)        /* P   */
 #define VMM_FLAG_READWRITE      (1 << 1)        /* R/W */
@@ -32,19 +32,13 @@
 #define VMM_FLAG_CACHE_DISABLE  (1 << 4)        /* PCD */
 #define VMM_FLAG_PAT            (1 << 7)        /* PAT */
 
-// x86_64 巨页 (Huge Page) 的 PS (Page Size) 位，用于区分大页与页目录指针
+// x86_64 巨页 (Huge Page) 的 PS (Page Size) 位
 #define VMM_PS_BIT              (1ULL << 7)
 
 #define PTE_MMIO (1 << 9)
 
 #define VMM_FLAGS_DEFAULT       (VMM_FLAG_PRESENT | VMM_FLAG_READWRITE)
 
-/* According to Intel's manual, only when CACHE_DISABLE and WRITETHROUGH
- * are both set to 1, the MMIO will be strong uncacheable (UC) which can
- * meet requirements of some memory regions, e.g., xAPIC memory address.
- * If we only set CACHE_DISABLE value, thw writing operation will be halt
- * when running on NEC VersaPro which has a i5-6200U CPU.
- */
 #define VMM_FLAGS_MMIO          (VMM_FLAGS_DEFAULT | VMM_FLAG_CACHE_DISABLE \
                                 | VMM_FLAG_WRITETHROUGH)
 #define VMM_FLAGS_USERMODE      (VMM_FLAGS_DEFAULT | VMM_FLAG_USER)
@@ -52,30 +46,23 @@
 #define PML5E(x) ((x >> 48) & 0x1ff)
 #define PML4E(x) ((x >> 39) & 0x1ff)
 #define PDPTE(x) ((x >> 30) & 0x1ff)
-#define PDE(x) ((x >> 21) & 0x1ff)
-#define PTE(x) ((x >> 12) & 0x1ff)
+#define PDE(x)  ((x >> 21) & 0x1ff)
+#define PTE(x)  ((x >> 12) & 0x1ff)
 
-// 物理地址掩码：只保留 12-51 位 (支持到 52 位物理地址线)
 #define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
-
-// 标志位掩码：只保留 0-11 位 和 63 位 (NX)
-// 屏蔽掉 52-62 位的保留位
 #define PTE_FLAGS_MASK 0x8000000000000FFFULL 
 
 #define PTE_MASK(x) (typeof(x))((uint64_t)x & PTE_ADDR_MASK)
 #define PTE_FLAGS(x) (typeof(x))((uint64_t)x & PTE_FLAGS_MASK)
 
 #define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
+
 static inline bool is_user_address(uint64_t addr){
-    // 用户态地址 < 0xFFFF800000000000
     return __builtin_expect(addr < 0xFFFF800000000000, 1);
 }
 
 static inline bool is_user_buffer_valid(uint64_t addr, size_t count) {
-    // 检查是否存在溢出情况
     if (addr > addr + count) return false; 
-    
-    // 检查起始和结束地址是否都在用户空间内
     return (addr + count) <= 0xFFFF800000000000;
 }
 
@@ -96,11 +83,11 @@ typedef struct vm_mapping_t {
 } vm_mapping_t;
 
 typedef struct {
-    //volatile uint64_t *pml4;
     volatile uint64_t *toplvl;
     vm_mapping_t *vm_mappings;
     int32_t vma_lock;
     vma_region_t *vma_head;
+    vma_region_t *vma_cursor; // 游标：用于加速分配和释放定位
 } pagemap_t;
 
 extern volatile pagemap_t *kernel_pagemap;
@@ -112,63 +99,29 @@ extern volatile pagemap_t *kernel_pagemap;
 namespace VMM{
     
     namespace UserAccess {
-        
-        /**
-         * @brief 将内核数据安全地拷贝到当前用户进程的虚拟地址空间
-         *
-         * - 校验用户态地址范围，防止越界访问内核空间
-         * - 自动处理 CoW 页（避免通过 HHDM 绕过用户页表写保护）
-         * - 感知 4K/2M/1G 页大小，减少 GetPageInfo 调用次数
-         *
-         * @param pagemap  当前进程的页表指针
-         * @param u_dest   用户态目标虚拟地址
-         * @param k_src    内核态源数据地址
-         * @param len      拷贝长度（字节）
-         * @return true    拷贝成功
-         * @return false   地址非法 / 未映射 / 越界 / 权限不足
-         */
         bool CopyToUser(pagemap_t* pagemap, uint64_t u_dest, const void* k_src, uint64_t len);
-
-        /**
-         * @brief 从用户进程的虚拟地址空间安全地拷贝数据到内核
-         *
-         * - 校验用户态地址范围
-         * - 感知 4K/2M/1G 页大小，减少 GetPageInfo 调用次数
-         * - 读取操作不会触发 CoW
-         *
-         * @param pagemap  当前进程的页表指针
-         * @param k_dest   内核态目标地址
-         * @param u_src    用户态源虚拟地址
-         * @param len      拷贝长度（字节）
-         * @return true    拷贝成功
-         * @return false   地址非法 / 未映射 / 越界
-         */
         bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len);
     }
-    namespace Useless
-    {
-        // 保存页面详细信息的结构体，适配多级巨页
+
+    namespace Useless {
         struct PageInfo {
-            uint64_t phys;  // 物理基址
-            uint64_t size;  // 页面大小 (4KB, 2MB, 1GB)
-            uint64_t flags; // 页表项标志位
+            uint64_t phys;
+            uint64_t size;
+            uint64_t flags;
         };
 
         uint64_t *NewLevel(uint64_t *level, uint64_t entry);
-        
-        // 替换原有的 GetPhysicsFlags，现在返回包含页面大小的 PageInfo
         PageInfo GetPageInfo(pagemap_t *pagemap, uint64_t vaddr);
         
+        // 保持兼容，调用 VMA::InternalAlloc
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
     } // namespace Useless
 
     extern "C" void Init();
     
-    // 传统的 4KB 映射封装（兼容旧调用）
     void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
     void Map(uint64_t vaddr, uint64_t paddr);
 
-    // 显式指定页面大小的映射函数
     void Map4K(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
     void Map2M(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
     void Map1G(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags);
@@ -184,6 +137,10 @@ namespace VMM{
         vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
         vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags);
         void RemoveRegion(vma_region_t *region);
+        
+        // 新增：优化后的查找和分配接口
+        vma_region_t *FindRegion(pagemap_t *pagemap, uint64_t addr);
+        uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags, uint64_t hint = 0);
     }
 
     vm_mapping_t *NewMapping(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
@@ -198,8 +155,6 @@ namespace VMM{
     void DestroyPM(pagemap_t *pagemap);
 
     uint32_t HandlePF(context_t *ctx);
-
-
 }
 
 #endif

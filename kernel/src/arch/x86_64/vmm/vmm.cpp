@@ -5,7 +5,6 @@
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 
-
 // x86_64 PS (Page Size) Bit
 #define VMM_PS_BIT (1ULL << 7)
 
@@ -53,10 +52,9 @@ extern char ld_data_end[];
 
 extern bool smp_started;
 
-namespace VMM{
+namespace VMM {
 
-    namespace Useless
-    {
+    namespace Useless {
 
         uint64_t *NewLevel(uint64_t *level, uint64_t entry) {
             uint64_t *new_level = PMM::Request();
@@ -65,7 +63,6 @@ namespace VMM{
             return new_level;
         }
 
-        // 重构：获取页面物理地址、大小和标志
         PageInfo GetPageInfo(pagemap_t *pagemap, uint64_t vaddr) {
             PageInfo info = {0, 0, 0};
             uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
@@ -82,7 +79,6 @@ namespace VMM{
 
             uint64_t pde_val = pdpt[PDPTE(vaddr)];
             if (!PAGE_EXISTS(pde_val)) return info;
-            // Check 1GB Page
             if (pde_val & VMM_PS_BIT) {
                 info.phys = pde_val & 0x000FFFFFC0000000ULL;
                 info.size = PAGE_1GB;
@@ -93,7 +89,6 @@ namespace VMM{
             uint64_t *pd = HIGHER_HALF(PTE_MASK(pde_val));
             uint64_t pte_val = pd[PDE(vaddr)];
             if (!PAGE_EXISTS(pte_val)) return info;
-            // Check 2MB Page
             if (pte_val & VMM_PS_BIT) {
                 info.phys = pte_val & 0x000FFFFFFFE00000ULL;
                 info.size = PAGE_2MB;
@@ -104,35 +99,15 @@ namespace VMM{
             uint64_t *pt = HIGHER_HALF(PTE_MASK(pte_val));
             uint64_t page_val = pt[PTE(vaddr)];
             if (!PAGE_EXISTS(page_val)) return info;
-            // Normal 4KB Page
             info.phys = page_val & 0x000FFFFFFFFFF000ULL;
             info.size = PAGE_SIZE;
             info.flags = page_val & 0x8000000000000FFFULL;
             return info;
         }
 
+        // 转发至 VMA::InternalAlloc
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags) {
-            vma_region_t *region = pagemap->vma_head->next;
-            uint64_t addr = 0;
-            if (region == pagemap->vma_head) {
-                addr = region->start + (region->page_count * PAGE_SIZE);
-                VMM::VMA::AddRegion(pagemap, addr, page_count, flags);
-                return addr;
-            }
-            for (; region != pagemap->vma_head; region = region->next) {
-                if (region->next == pagemap->vma_head) {
-                    addr = region->start + (region->page_count * PAGE_SIZE);
-                    VMM::VMA::AddRegion(pagemap, addr, page_count, flags);
-                    return addr;
-                }
-                uint64_t region_end = region->start + (region->page_count * PAGE_SIZE);
-                if (region->next->start >= region_end + (page_count * PAGE_SIZE)) {
-                    addr = region_end;
-                    region = VMM::VMA::InsertRegion(region, addr, page_count, flags);
-                    return addr;
-                }
-            }
-            return 0;
+            return VMM::VMA::InternalAlloc(pagemap, page_count, flags);
         }
     } // namespace Useless
     
@@ -147,9 +122,12 @@ namespace VMM{
         kernel_pagemap = HIGHER_HALF((pagemap_t*)PMM::Request());
         kernel_pagemap->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
         kernel_pagemap->vma_head = nullptr;
+        kernel_pagemap->vma_cursor = nullptr;
+        kernel_pagemap->vm_mappings = nullptr;
         _memset(kernel_pagemap->toplvl, 0, PAGE_SIZE);
 
-        VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(0x100000000000), 1);
+        // 哨兵节点下界从 HIGHER_HALF(0x100000000000) 开始
+        VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(0x100000000000), 0);
 
         uint64_t executable_vaddr = executable_address->virtual_base;
         uint64_t executable_paddr = executable_address->physical_base;
@@ -175,7 +153,6 @@ namespace VMM{
         VMM::MapRange(kernel_pagemap, rodata_start, PHYS_BASE(rodata_start), MM_READ | MM_NX, rodata_pages);
         VMM::MapRange(kernel_pagemap, data_start, PHYS_BASE(data_start), MM_READ | MM_WRITE | MM_NX, data_pages);
 
-        // 优化：低4GB区域直接用2MB巨页映射，大幅减少页表占用
         for (uint64_t gb4 = 0; gb4 < 0x100000000; gb4 += PAGE_2MB) {
             VMM::Map2M(kernel_pagemap, gb4, gb4, MM_READ | MM_WRITE);
             VMM::Map2M(kernel_pagemap, HIGHER_HALF(gb4), gb4, MM_READ | MM_WRITE);
@@ -227,7 +204,6 @@ namespace VMM{
         if (!PAGE_EXISTS(pd)) pd = VMM::Useless::NewLevel(pdpt, PDPTE(vaddr));
         pd = HIGHER_HALF(PTE_MASK(pd));
 
-        // 在 PD 项中设置 PS 位 (Bit 7) 表示 2MB 页
         pd[PDE(vaddr)] = (paddr & 0x000FFFFFFFE00000ULL) | (flags & 0x8000000000000FFFULL) | VMM_PS_BIT;
     }
 
@@ -245,7 +221,6 @@ namespace VMM{
         if (!PAGE_EXISTS(pdpt)) pdpt = VMM::Useless::NewLevel(pml4, PML4E(vaddr));
         pdpt = HIGHER_HALF(PTE_MASK(pdpt));
 
-        // 在 PDPT 项中设置 PS 位 (Bit 7) 表示 1GB 页
         pdpt[PDPTE(vaddr)] = (paddr & 0x000FFFFFC0000000ULL) | (flags & 0x8000000000000FFFULL) | VMM_PS_BIT;
     }
 
@@ -272,15 +247,15 @@ namespace VMM{
 
         uint64_t pde_val = pdpt[PDPTE(vaddr)];
         if (!PAGE_EXISTS(pde_val)) return;
-        if (pde_val & VMM_PS_BIT) { pdpt[PDPTE(vaddr)] = 0; return; } // 1GB
+        if (pde_val & VMM_PS_BIT) { pdpt[PDPTE(vaddr)] = 0; return; }
 
         uint64_t *pd = HIGHER_HALF(PTE_MASK(pde_val));
         uint64_t pte_val = pd[PDE(vaddr)];
         if (!PAGE_EXISTS(pte_val)) return;
-        if (pte_val & VMM_PS_BIT) { pd[PDE(vaddr)] = 0; return; } // 2MB
+        if (pte_val & VMM_PS_BIT) { pd[PDE(vaddr)] = 0; return; }
 
         uint64_t *pt = HIGHER_HALF(PTE_MASK(pte_val));
-        pt[PTE(vaddr)] = 0; // 4KB
+        pt[PTE(vaddr)] = 0;
     }
 
     uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr){
@@ -295,21 +270,18 @@ namespace VMM{
             uint64_t cur_p = paddr + mapped * PAGE_SIZE;
             uint64_t rem   = count - mapped;
 
-            // 1GB
             if ((cur_v & (PAGE_1GB - 1)) == 0 &&
                 (cur_p & (PAGE_1GB - 1)) == 0 && rem >= 262144) {
                 VMM::Map1G(pagemap, cur_v, cur_p, flags);
                 mapped += 262144;
                 continue;
             }
-            // 2MB
             if ((cur_v & (PAGE_2MB - 1)) == 0 &&
                 (cur_p & (PAGE_2MB - 1)) == 0 && rem >= 512) {
                 VMM::Map2M(pagemap, cur_v, cur_p, flags);
                 mapped += 512;
                 continue;
             }
-            // 4KB
             VMM::Map4K(pagemap, cur_v, cur_p, flags);
             mapped += 1;
         }
@@ -334,32 +306,26 @@ namespace VMM{
         pagemap->vm_mappings = nullptr;
         pagemap->vma_lock = 0;
         pagemap->vma_head = nullptr;
+        pagemap->vma_cursor = nullptr;
         __memcpy(&pagemap->toplvl[256], &kernel_pagemap->toplvl[256], (512 - 256) * sizeof(uint64_t));
         return pagemap;
     }
 
-    namespace VMA
-    {
+    // ==========================================================
+    // VMA 命名空间优化实现
+    // ==========================================================
+    namespace VMA {
         void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count){
-            vma_region_t *region = HIGHER_HALF((vma_region_t*)PMM::Request());
-            region->start = start;
-            region->page_count = page_count;
-            region->flags = MM_READ | MM_WRITE;
-            region->next = region;
-            region->prev = region;
-            pagemap->vma_head = region;
+            vma_region_t *sentinel = HIGHER_HALF((vma_region_t*)PMM::Request());
+            sentinel->start = start;
+            sentinel->page_count = 0;
+            sentinel->flags = 0;
+            sentinel->next = sentinel;
+            sentinel->prev = sentinel;
+            pagemap->vma_head = sentinel;
+            pagemap->vma_cursor = sentinel;
         }
-        vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags){
-            vma_region_t *region = HIGHER_HALF((vma_region_t*)PMM::Request());
-            region->start = start;
-            region->page_count = page_count;
-            region->flags = flags;
-            region->prev = pagemap->vma_head->prev;
-            region->next = pagemap->vma_head;
-            pagemap->vma_head->prev->next = region;
-            pagemap->vma_head->prev = region;
-            return region;
-        }
+
         vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags){
             vma_region_t *region = HIGHER_HALF((vma_region_t*)PMM::Request());
             region->start = start;
@@ -372,10 +338,96 @@ namespace VMM{
             return region;
         }
 
+        vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags){
+            return InsertRegion(pagemap->vma_head->prev, start, page_count, flags);
+        }
+
         void RemoveRegion(vma_region_t *region) {
             region->next->prev = region->prev;
             region->prev->next = region->next;
             PMM::Free(PHYSICAL((void*)region));
+        }
+
+        vma_region_t *FindRegion(pagemap_t *pagemap, uint64_t addr) {
+            uint64_t page_addr = ALIGN_DOWN(addr, PAGE_SIZE);
+            vma_region_t *cur = pagemap->vma_head->next;
+            while (cur != pagemap->vma_head) {
+                uint64_t end = cur->start + cur->page_count * PAGE_SIZE;
+                if (page_addr < end) {
+                    return (page_addr >= cur->start) ? cur : nullptr;
+                }
+                cur = cur->next;
+            }
+            return nullptr;
+        }
+
+        uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags, uint64_t hint) {
+            const uint64_t need = page_count * PAGE_SIZE;
+            const uint64_t lo = pagemap->vma_head->start;
+            const uint64_t hi = is_user_address(0) ? 0xFFFF800000000000ULL : USER_SPACE_END_5LVL;
+
+            // 1. hint 优先
+            if (hint >= lo && hint + need <= hi) {
+                vma_region_t *prev = pagemap->vma_head;
+                for (vma_region_t *c = prev->next; c != pagemap->vma_head && c->start <= hint; prev = c, c = c->next);
+                
+                uint64_t prev_end = prev->start + prev->page_count * PAGE_SIZE;
+                uint64_t cur_start = (prev->next != pagemap->vma_head) ? prev->next->start : hi;
+                if (hint >= prev_end && hint + need <= cur_start) {
+                    vma_region_t *r = InsertRegion(prev, hint, page_count, flags);
+                    pagemap->vma_cursor = r;
+                    return hint;
+                }
+            }
+
+            // 2. 从游标开始 best-fit 环形扫描
+            vma_region_t *best_prev = nullptr;
+            uint64_t best_addr = 0;
+            uint64_t best_gap = UINT64_MAX;
+
+            vma_region_t *start_node = pagemap->vma_cursor ? pagemap->vma_cursor : pagemap->vma_head;
+            vma_region_t *prev = start_node;
+            vma_region_t *cur = start_node->next;
+            bool wrapped = false;
+
+            while (true) {
+                if (cur == pagemap->vma_head) {
+                    if (wrapped) break;
+                    cur = pagemap->vma_head->next;
+                    if (cur == pagemap->vma_head) break;
+                    wrapped = true;
+                }
+
+                uint64_t prev_end = prev->start + prev->page_count * PAGE_SIZE;
+                uint64_t cur_start = cur->start;
+                uint64_t gap = cur_start - prev_end;
+
+                if (gap >= need && gap < best_gap) {
+                    best_prev = prev;
+                    best_addr = prev_end;
+                    best_gap = gap;
+                }
+
+                prev = cur;
+                cur = cur->next;
+                if (prev == start_node && wrapped) break;
+            }
+
+            // 3. 检查最高 region 到上界的间隙
+            if (best_gap == UINT64_MAX) {
+                uint64_t prev_end = prev->start + prev->page_count * PAGE_SIZE;
+                uint64_t gap = hi - prev_end;
+                if (gap >= need) {
+                    best_prev = prev;
+                    best_addr = prev_end;
+                    best_gap = gap;
+                }
+            }
+
+            if (!best_prev) return 0;
+            vma_region_t *r = InsertRegion(best_prev, best_addr, page_count, flags);
+            pagemap->vma_cursor = r;
+            return best_addr;
         }
     } // namespace VMA
     
@@ -395,20 +447,20 @@ namespace VMM{
         pagemap->vm_mappings = mapping;
         return mapping;
     }
+
     void RemoveMapping(vm_mapping_t *mapping){
         mapping->next->prev = mapping->prev;
         mapping->prev->next = mapping->next;
         PMM::Free(PHYSICAL((void*)mapping));
     }
 
-    // --- 核心改造：带巨页优先分配的 Alloc ---
+    // --- Alloc / EAlloc ---
     void *Alloc(pagemap_t *pagemap, uint64_t page_count, bool user) {
         if (!page_count) return nullptr;
-
         uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
 
         spinlock_lock(&pagemap->vma_lock);
-        uint64_t addr = VMM::Useless::InternalAlloc(pagemap, page_count, flags);
+        uint64_t addr = VMM::VMA::InternalAlloc(pagemap, page_count, flags);
         if (!addr) {
             spinlock_unlock(&pagemap->vma_lock);
             return nullptr;
@@ -416,44 +468,36 @@ namespace VMM{
 
         uint64_t mapped = 0;
         while (mapped < page_count) {
-            uint64_t current_vaddr = addr + mapped * PAGE_SIZE;
-            uint64_t remaining = page_count - mapped;
+            uint64_t cv = addr + mapped * PAGE_SIZE;
+            uint64_t rem = page_count - mapped;
 
-            // 1. 尝试 2GB 映射 (映射为两个连续的1GB页)
-            if (remaining >= 524288 && (current_vaddr % PAGE_2GB) == 0) {
+            if (rem >= 524288 && (cv % PAGE_2GB) == 0) {
                 void* phys_ptr = PMM::Request2GB();
                 if (phys_ptr) {
                     uint64_t phys = (uint64_t)phys_ptr;
-                    VMM::Map1G(pagemap, current_vaddr, phys, flags);
-                    VMM::Map1G(pagemap, current_vaddr + PAGE_1GB, phys + PAGE_1GB, flags);
-                    mapped += 524288;
-                    continue;
+                    VMM::Map1G(pagemap, cv,        phys,             flags);
+                    VMM::Map1G(pagemap, cv+PAGE_1GB, phys+PAGE_1GB,  flags);
+                    mapped += 524288; continue;
                 }
             }
-
-            // 2. 尝试 2MB 巨页映射
-            if (remaining >= 512 && (current_vaddr % PAGE_2MB) == 0) {
+            if (rem >= 512 && (cv % PAGE_2MB) == 0) {
                 void* phys_ptr = PMM::Request2MB();
                 if (phys_ptr) {
-                    VMM::Map2M(pagemap, current_vaddr, (uint64_t)phys_ptr, flags);
-                    mapped += 512;
-                    continue;
+                    VMM::Map2M(pagemap, cv, (uint64_t)phys_ptr, flags);
+                    mapped += 512; continue;
                 }
             }
-
-            // 3. 回退到 4KB 普通页
             void* phys_ptr = PMM::Request();
             if (!phys_ptr) {
-                kerrorln("PMM: Out of memory during Alloc!");
+                kerrorln("PMM: OOM in Alloc");
                 break; 
             }
-            VMM::Map4K(pagemap, current_vaddr, (uint64_t)phys_ptr, flags);
+            VMM::Map4K(pagemap, cv, (uint64_t)phys_ptr, flags);
             mapped += 1;
         }
 
         VMM::NewMapping(pagemap, addr, page_count, flags);
         spinlock_unlock(&pagemap->vma_lock);
-
         return (void*)addr;
     }
 
@@ -461,7 +505,7 @@ namespace VMM{
         if (!page_count) return nullptr;
 
         spinlock_lock(&pagemap->vma_lock);
-        uint64_t addr = VMM::Useless::InternalAlloc(pagemap, page_count, flags);
+        uint64_t addr = VMM::VMA::InternalAlloc(pagemap, page_count, flags);
         if (!addr) {
             spinlock_unlock(&pagemap->vma_lock);
             return nullptr;
@@ -469,35 +513,31 @@ namespace VMM{
 
         uint64_t mapped = 0;
         while (mapped < page_count) {
-            uint64_t current_vaddr = addr + mapped * PAGE_SIZE;
-            uint64_t remaining = page_count - mapped;
+            uint64_t cv = addr + mapped * PAGE_SIZE;
+            uint64_t rem = page_count - mapped;
 
-            if (remaining >= 524288 && (current_vaddr % PAGE_2GB) == 0) {
+            if (rem >= 524288 && (cv % PAGE_2GB) == 0) {
                 void* phys_ptr = PMM::Request2GB();
                 if (phys_ptr) {
                     uint64_t phys = (uint64_t)phys_ptr;
-                    VMM::Map1G(pagemap, current_vaddr, phys, flags);
-                    VMM::Map1G(pagemap, current_vaddr + PAGE_1GB, phys + PAGE_1GB, flags);
-                    mapped += 524288;
-                    continue;
+                    VMM::Map1G(pagemap, cv,        phys,             flags);
+                    VMM::Map1G(pagemap, cv+PAGE_1GB, phys+PAGE_1GB,  flags);
+                    mapped += 524288; continue;
                 }
             }
-
-            if (remaining >= 512 && (current_vaddr % PAGE_2MB) == 0) {
+            if (rem >= 512 && (cv % PAGE_2MB) == 0) {
                 void* phys_ptr = PMM::Request2MB();
                 if (phys_ptr) {
-                    VMM::Map2M(pagemap, current_vaddr, (uint64_t)phys_ptr, flags);
-                    mapped += 512;
-                    continue;
+                    VMM::Map2M(pagemap, cv, (uint64_t)phys_ptr, flags);
+                    mapped += 512; continue;
                 }
             }
-
             void* phys_ptr = PMM::Request();
             if (!phys_ptr) {
-                kerrorln("PMM: Out of memory during Alloc!");
+                kerrorln("PMM: OOM in EAlloc");
                 break; 
             }
-            VMM::Map4K(pagemap, current_vaddr, (uint64_t)phys_ptr, flags);
+            VMM::Map4K(pagemap, cv, (uint64_t)phys_ptr, flags);
             mapped += 1;
         }
 
@@ -506,111 +546,102 @@ namespace VMM{
         return (void*)addr;
     }
 
-    // --- 核心改造：感知巨页的 Free ---
+    // --- 感知巨页的 Free ---
     void Free(pagemap_t *pagemap, void *ptr){
         if (((uint64_t)ptr & 0xfff) != 0) return;
         spinlock_lock(&pagemap->vma_lock);
-        vma_region_t *region = pagemap->vma_head->next;
-        for (; region != pagemap->vma_head; region = region->next) {
-            if (region->start == (uint64_t)ptr) {
-                uint64_t vaddr = region->start;
-                uint64_t end = region->start + region->page_count * PAGE_SIZE;
-                
-                while (vaddr < end) {
-                    Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, vaddr);
-                    if (info.size == 0) { vaddr += PAGE_SIZE; continue; }
 
-                    if (info.size == PAGE_1GB) {
-                        // 探测是否为 2GB 连续块映射
-                        Useless::PageInfo next_info = VMM::Useless::GetPageInfo(pagemap, vaddr + PAGE_1GB);
-                        if (next_info.size == PAGE_1GB && next_info.phys == info.phys + PAGE_1GB) {
-                            PMM::Free2GB((void*)info.phys);
-                            VMM::Unmap(pagemap, vaddr + PAGE_1GB);
-                            mmu_invlpg(vaddr + PAGE_1GB);
-                            vaddr += PAGE_2GB;
-                        } else {
-                            // 若不是2GB块，则按1GB释放（如果PMM支持1GB释放，这里调用Free2MB拆分，由于暂无Free1GB，暂用Free2MB逻辑兜底）
-                            for(uint32_t j = 0;j < 512;j++)
-                                PMM::Free2MB((void*)info.phys); 
-                            vaddr += PAGE_1GB;
-                        }
-                    } else if (info.size == PAGE_2MB) {
-                        PMM::Free2MB((void*)info.phys);
-                        vaddr += PAGE_2MB;
-                    } else {
-                        PMM::Free((void*)info.phys);
-                        vaddr += PAGE_SIZE;
-                    }
-
-                    VMM::Unmap(pagemap, vaddr - info.size);
-                    mmu_invlpg(vaddr - info.size);
-                }
-
-                VMM::VMA::RemoveRegion(region);
-                spinlock_unlock(&pagemap->vma_lock);
-                return;
-            }
+        vma_region_t *region = VMM::VMA::FindRegion(pagemap, (uint64_t)ptr);
+        if (!region || region->start != (uint64_t)ptr) {
+            spinlock_unlock(&pagemap->vma_lock);
+            return;
         }
+        pagemap->vma_cursor = region->prev; // 防止游标悬空
+
+        uint64_t v = region->start;
+        uint64_t end = v + region->page_count * PAGE_SIZE;
+        while (v < end) {
+            Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, v);
+            if (info.size == 0) { v += PAGE_SIZE; continue; }
+
+            if (info.size == PAGE_1GB) {
+                Useless::PageInfo next = VMM::Useless::GetPageInfo(pagemap, v + PAGE_1GB);
+                if (next.size == PAGE_1GB && next.phys == info.phys + PAGE_1GB) {
+                    PMM::Free2GB((void*)info.phys);
+                    VMM::Unmap(pagemap, v + PAGE_1GB);
+                    mmu_invlpg(v + PAGE_1GB);
+                    v += PAGE_2GB;
+                } else {
+                    // [BUG 修复] 原代码这里释放512次同一地址！
+                    for (uint32_t j = 0; j < 512; j++)
+                        PMM::Free2MB((void*)(info.phys + j * PAGE_2MB));
+                    v += PAGE_1GB;
+                }
+            } else if (info.size == PAGE_2MB) {
+                PMM::Free2MB((void*)info.phys);
+                v += PAGE_2MB;
+            } else {
+                PMM::Free((void*)info.phys);
+                v += PAGE_SIZE;
+            }
+            VMM::Unmap(pagemap, v - info.size);
+            mmu_invlpg(v - info.size);
+        }
+
+        // 清理 vm_mapping_t 链表记录
+        vm_mapping_t *m = pagemap->vm_mappings;
+        if (m) {
+            vm_mapping_t *start_m = m;
+            do {
+                if (m->start == (uint64_t)ptr) {
+                    RemoveMapping(m);
+                    break;
+                }
+                m = m->next;
+            } while (m != start_m);
+        }
+
+        VMM::VMA::RemoveRegion(region);
         spinlock_unlock(&pagemap->vma_lock);
     }
-
 
     pagemap_t *Fork(pagemap_t *parent){
         pagemap_t *restore = VMM::SwitchPageMap(kernel_pagemap);
         pagemap_t *pagemap = HIGHER_HALF((pagemap_t*)PMM::Request());
         pagemap->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
         _memset(pagemap->toplvl, 0, PAGE_SIZE);
-        // 只共享内核空间的顶层页表项
         for (uint64_t i = 256; i < 512; i++)
             pagemap->toplvl[i] = kernel_pagemap->toplvl[i];
-            
-        vm_mapping_t *mapping = parent->vm_mappings;
-        if (mapping) {
-            vm_mapping_t *start_mapping = mapping;
-            bool cont = true;
-            while (cont) {
-                // [关键修复 1] 只对用户空间的映射进行 CoW，绝不能碰内核空间！
-                if (mapping->start < HIGHER_HALF(0)) {
-                    uint64_t vaddr = mapping->start;
-                    uint64_t mapped = 0;
-                    while (mapped < mapping->page_count) {
-                        Useless::PageInfo info = VMM::Useless::GetPageInfo(parent, vaddr);
-                        if (info.size == 0) break;
 
-                        uint64_t new_flags = info.flags & ~MM_WRITE;
-                        new_flags |= (1ULL << 55); // CoW 标志位
+        VMM::VMA::SetStart(pagemap, parent->vma_head->start, 0);
 
-                        if (info.size == PAGE_1GB) {
-                            VMM::Map1G(pagemap, vaddr, info.phys, new_flags);
-                            VMM::Map1G(parent, vaddr, info.phys, new_flags);
-                            mapped += 262144;
-                        } else if (info.size == PAGE_2MB) {
-                            VMM::Map2M(pagemap, vaddr, info.phys, new_flags);
-                            VMM::Map2M(parent, vaddr, info.phys, new_flags);
-                            mapped += 512;
-                        } else {
-                            VMM::Map4K(pagemap, vaddr, info.phys, new_flags);
-                            VMM::Map4K(parent, vaddr, info.phys, new_flags);
-                            mapped += 1;
-                        }
-                        vaddr += info.size;
-                    }
-                    VMM::NewMapping(pagemap, mapping->start, mapping->page_count, mapping->flags);
-                }
-                
-                mapping = mapping->next;
-                if (mapping == start_mapping) cont = false;
-            }
-        }
-
-        VMM::VMA::SetStart(pagemap, parent->vma_head->start, parent->vma_head->page_count);
         spinlock_lock(&parent->vma_lock);
-        vma_region_t *region = parent->vma_head->next;
-        for (; region != parent->vma_head; region = region->next) {
-            // [关键修复 2] 复制 VMA 区域时，跳过内核空间，避免 CleanPM 时误释放内核物理内存
-            if (region->start < HIGHER_HALF(0)) {
-                VMM::VMA::AddRegion(pagemap, region->start, region->page_count, region->flags);
+        for (vma_region_t *r = parent->vma_head->next; r != parent->vma_head; r = r->next) {
+            if (r->start >= HIGHER_HALF(0)) continue;
+
+            uint64_t v = r->start, mapped = 0;
+            while (mapped < r->page_count) {
+                Useless::PageInfo info = VMM::Useless::GetPageInfo(parent, v);
+                if (info.size == 0) break;
+
+                uint64_t nf = (info.flags & ~MM_WRITE) | (1ULL << 55);
+                if (info.size == PAGE_1GB) {
+                    VMM::Map1G(pagemap, v, info.phys, nf);
+                    VMM::Map1G(parent, v, info.phys, nf);
+                    mapped += 262144;
+                } else if (info.size == PAGE_2MB) {
+                    VMM::Map2M(pagemap, v, info.phys, nf);
+                    VMM::Map2M(parent, v, info.phys, nf);
+                    mapped += 512;
+                } else {
+                    VMM::Map4K(pagemap, v, info.phys, nf);
+                    VMM::Map4K(parent, v, info.phys, nf);
+                    mapped += 1;
+                }
+                v += info.size;
             }
+            VMM::VMA::AddRegion(pagemap, r->start, r->page_count, r->flags);
+            VMM::NewMapping(pagemap, r->start, r->page_count, r->flags);
         }
         spinlock_unlock(&parent->vma_lock);
         
@@ -619,26 +650,40 @@ namespace VMM{
     }
 
     void CleanPM(pagemap_t *pagemap){
-        vma_region_t *region = pagemap->vma_head->next;
-        vma_region_t *next_region = region->next;
-        for (; region != pagemap->vma_head; region = next_region) {
-            next_region = region->next;
-            uint64_t vaddr = region->start;
-            uint64_t end = region->start + region->page_count * PAGE_SIZE;
-            while(vaddr < end) {
-                Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, vaddr);
-                if(info.size) {
-                    if(info.size == PAGE_2MB) PMM::Free2MB((void*)info.phys);
-                    else if(info.size == PAGE_1GB) PMM::Free2GB((void*)info.phys); // 假定1GB来自2GB分配的一半
-                    else PMM::Free((void*)info.phys);
-                    VMM::Unmap(pagemap, vaddr);
+        vma_region_t *r = pagemap->vma_head->next;
+        while (r != pagemap->vma_head) {
+            vma_region_t *next = r->next;
+            if (r->start < HIGHER_HALF(0)) {
+                uint64_t v = r->start, end = v + r->page_count * PAGE_SIZE;
+                while(v < end) {
+                    Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, v);
+                    if(info.size) {
+                        if(info.size == PAGE_2MB) {
+                            PMM::Free2MB((void*)info.phys);
+                        } else if(info.size == PAGE_1GB) {
+                            Useless::PageInfo n = VMM::Useless::GetPageInfo(pagemap, v+PAGE_1GB);
+                            if (n.size == PAGE_1GB && n.phys == info.phys + PAGE_1GB) {
+                                PMM::Free2GB((void*)info.phys);
+                                VMM::Unmap(pagemap, v + PAGE_1GB);
+                                v += PAGE_2GB;
+                            } else {
+                                for (uint32_t j = 0; j < 512; j++)
+                                    PMM::Free2MB((void*)(info.phys + j*PAGE_2MB));
+                                v += PAGE_1GB;
+                            }
+                        } else {
+                            PMM::Free((void*)info.phys);
+                        }
+                        VMM::Unmap(pagemap, v);
+                    }
+                    v += (info.size ? info.size : PAGE_SIZE);
                 }
-                vaddr += (info.size ? info.size : PAGE_SIZE);
             }
-            VMM::VMA::RemoveRegion(region);
+            VMM::VMA::RemoveRegion(r);
+            r = next;
         }
         PMM::Free(PHYSICAL(pagemap->vma_head));
-        pagemap->vma_head = nullptr;
+        pagemap->vma_head = pagemap->vma_cursor = nullptr;
 
         vm_mapping_t *mapping = pagemap->vm_mappings;
         if(mapping) {
@@ -659,7 +704,6 @@ namespace VMM{
         PMM::Free(PHYSICAL(pagemap->toplvl));
         PMM::Free(PHYSICAL(pagemap));
     }
-
 
     uint32_t HandlePF(context_t *ctx){
         uint64_t cr2 = 0;
@@ -689,15 +733,20 @@ namespace VMM{
         uint64_t old_phys = info.phys;
         if (!old_phys) {
             kerrorln("Segmentation fault (core undumped)");
-            VMM::SwitchPageMap(restore); // [关键修复 3] 错误返回前必须恢复页表
+            VMM::SwitchPageMap(restore);
             return 1;
         }
 
-        uint64_t new_flags = info.flags;
-        new_flags &= ~(1ULL << 55); // [关键修复 4] 正确清除 CoW 软件标志位 (Bit 55)
+        bool is_cow = (info.flags & (1ULL << 55));
+        if (!wr || !is_cow) {
+            kerrorln("Illegal #PF (not CoW or not write)");
+            VMM::SwitchPageMap(restore);
+            return 1;
+        }
+
+        uint64_t new_flags = info.flags & ~(1ULL << 55);
         new_flags |= MM_WRITE;
 
-        // 针对巨页和普通页分别执行 CoW，必须进行巨页边界对齐！
         if (info.size == PAGE_1GB) {
             uint64_t page_start = fault_addr & ~(PAGE_1GB - 1);
             VMM::Unmap(pagemap, page_start); 
@@ -727,8 +776,7 @@ namespace VMM{
         }
         
         __asm__ volatile ("invlpg (%0)" : : "r"(fault_addr) : "memory");
-        
-        VMM::SwitchPageMap(restore); // [关键修复 5] 处理完毕恢复原页表
+        VMM::SwitchPageMap(restore);
         return 0;
     }
 
