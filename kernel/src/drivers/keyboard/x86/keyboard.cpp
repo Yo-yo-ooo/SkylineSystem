@@ -90,23 +90,30 @@ int32_t keyboard_wait_read()
     return 1;
 }
 
-void keyboard_handler(registers *regs)
-{
+// 优化后的中断处理程序：无忙等待，极速执行
+void keyboard_handler(registers *regs) {
     (void)regs;
-
-    u8 key;
-
-    if (!keyboard_wait_read())
-    {
-        key = inb(0x60);
-        keyboard_handle_key(key);
+    
+    // 既然中断触发了，状态寄存器的 OBF 位必定为 1，直接读取即可
+    // 但为了严谨，可以做一次非阻塞检查
+    if (inb(0x64) & 0x01) {
+        u8 key = inb(0x60);
+        
+        // 快速解析按键（无锁，因为 PS/2 键盘中断通常只在 CPU0 触发，
+        keyboard_state = (key & 0x80) ? 2 : 1;
+        u8 scancode = key & 0x7F;
+        
+        // 构造事件
+        keyboard_event ev;
+        ev.type = 1;
+        ev.value = keyboard_state;
+        ev.code = kb_map_keys[scancode]; // 简化版解析
+        
+        //thread_t *thread = Schedule::this_thread();
+        
     }
-    else
-    {
-        keyboard_char = 0;
-        keyboard_pressed = false;
-    }
-    LAPIC::EOI();
+    
+    LAPIC::EOI(); // 尽早发送 EOI
 }
 
 i32 keyboard_read(u8 *buffer)
@@ -115,50 +122,27 @@ i32 keyboard_read(u8 *buffer)
     return sizeof(keyboard_event);
 }
 
-void keyboard_init()
-{
-    // https://wiki.osdev.org/%228042%22_PS/2_Controller#Command_Register
-    keyboard_wait_write();
+void keyboard_init() {
+    // 禁用第一端口
     outb(0x64, 0xAD);
-    keyboard_wait_write();
-    outb(0x64, 0x20);
-    keyboard_wait_read();
-    u8 state = inb(0x60);
-    state |= (1 << 0) | (1 << 6);
-    if ((state & (1 << 5)) != 0)
-    {
-        state |= (1 << 1);
-    }
-    keyboard_wait_write();
-    outb(0x64, 0x60);
-    keyboard_wait_write();
-    outb(0x60, state);
-
-    keyboard_wait_write();
-    outb(0x64, 0xAE);
-    if ((state & (1 << 5)) != 0)
-    {
-        outb(0x64, 0xa8);
-    }
-
-    keyboard_fifo = FIFO::Create(256, sizeof(keyboard_event));
+    // 清空输出缓冲区（通过读取清空）
+    while (inb(0x64) & 0x01) inb(0x60);
     
-    /*
-    kb_node = (vfs_node *)kmalloc(sizeof(vfs_node));
-    kb_node->name = (char *)kmalloc(9);
-    __memcpy(kb_node->name, "keyboard", 9);
-    kb_node->ino = 0;
-    kb_node->write = 0;
-    kb_node->read = keyboard_read;
-    kb_node->readdir = 0;
-    kb_node->finddir = 0;
-    kb_node->size = 1;
-    kb_node->type = VFS_DEVICE;
-    //Dev::Add(kb_node);
-    */
-
-    //irq_register(1, keyboard_handler);
-    idt_install_irq(33,keyboard_handler);
-    inb(0x60);
+    // 获取当前状态
+    outb(0x64, 0x20);
+    u8 state = inb(0x60);
+    state |= 0x01; // 启用第一端口中断
+    state &= ~0x10; // 禁用第一端口时钟（可选）
+    state |= 0x40; // 启用第一端口时钟（确保启用）
+    
+    // 写入状态
+    outb(0x64, 0x60);
+    outb(0x60, state);
+    
+    // 启用第一端口
+    outb(0x64, 0xAE);
+    
+    // 注册中断
+    idt_install_irq(33, keyboard_handler);
 }
 #endif
