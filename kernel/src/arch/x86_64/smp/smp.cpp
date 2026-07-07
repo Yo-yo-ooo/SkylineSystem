@@ -95,6 +95,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     sse_enable();
     fpu_init();
     simd_cpu_init(cpu);
+    cpu->simd_mask = cpu_simd_mask(cpu);
     
     wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
     asm volatile("swapgs" ::: "memory");

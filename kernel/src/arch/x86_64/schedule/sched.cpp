@@ -35,18 +35,27 @@ void sched_idle() {
     }
 }
 
-static cpu_t *get_lw_cpu() {
+static cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr) {
     cpu_t *lw_cpu = nullptr;
+    uint32_t ref_mask = ref_cpu ? cpu_simd_mask(ref_cpu) : 0;
+
     for (int32_t i = 0; i <= smp_last_cpu; i++) {
         cpu_t *cpu = smp_cpu_list[i];
-        if (cpu == nullptr) continue; 
+        if (cpu == nullptr) continue;
+
+        // SIMD 门控：若提供了参照 CPU，跳过标志不一致的 CPU
+        if (ref_cpu && cpu_simd_mask(cpu) != ref_mask) continue;
+
         if (!lw_cpu) { lw_cpu = cpu; continue; }
-        uint32_t current_count = atomic_load_4(&cpu->thread_count,1);
-        uint32_t lowest_count = atomic_load_4(&lw_cpu->thread_count,1);
+        uint32_t current_count = atomic_load_4(&cpu->thread_count, 1);
+        uint32_t lowest_count  = atomic_load_4(&lw_cpu->thread_count, 1);
         if (current_count < lowest_count) lw_cpu = cpu;
     }
-    return lw_cpu ? lw_cpu : this_cpu();
+
+    // 兜底：没有兼容 CPU 时回退到参照 CPU 或当前 CPU
+    return lw_cpu ? lw_cpu : (ref_cpu ? ref_cpu : this_cpu());
 }
+
 
 namespace Schedule {
     namespace Internal {
@@ -128,16 +137,20 @@ namespace Schedule {
         // 优化后的批量窃取机制：基于 has_surplus 快速跳过
         // ==========================================
         thread_t *StealThread(cpu_t *cpu) {
+            uint32_t my_mask = cpu_simd_mask(cpu);          
+
             for (int32_t i = 0; i <= smp_last_cpu; i++) {
                 cpu_t *victim = smp_cpu_list[i];
                 if (!victim || victim == cpu) continue;
-                
-                // 快速跳过无冗余线程的 CPU，避免无意义的 CAS 开销
+
+                // *** SIMD 门控：只从标志相同的 CPU 窃取 ***
+                if (cpu_simd_mask(victim) != my_mask) continue;  
+
+                // 快速跳过无冗余线程的 CPU
                 if (!__atomic_load_n(&victim->has_surplus, __ATOMIC_RELAXED)) continue;
 
                 if (!__sync_bool_compare_and_swap(&victim->sched_lock, 0, 1)) continue;
 
-                // 防止在加锁前 has_surplus 被其他 CPU 偷空
                 if (atomic_load_4(&victim->thread_count, 1) <= 1) {
                     __atomic_store_n(&victim->sched_lock, 0, __ATOMIC_RELEASE);
                     continue;
@@ -201,6 +214,82 @@ namespace Schedule {
                 }
             }
             return nullptr;
+        }
+
+        // ==========================================
+        // 主动负载均衡：将本 CPU 冗余线程推送到标志相同的轻载 CPU
+        // 在 Switch() 中持有 sched_lock 时调用，target 锁用 CAS 尝试（无死锁风险）
+        // ==========================================
+        void TryPush(cpu_t *cpu) {
+            if (!atomic_load_1(&cpu->has_surplus, ATOMIC_RELAXED)) return;
+
+            uint32_t my_count = atomic_load_4(
+                (volatile uint32_t*)&cpu->thread_count, 1);
+            if (my_count < 4) return;  // 线程太少，不推送
+
+            uint32_t my_mask = cpu_simd_mask(cpu);
+            cpu_t *target = nullptr;
+            uint32_t target_count = UINT32_MAX;
+
+            // 在标志相同的 CPU 中找负载最低的
+            for (int32_t i = 0; i <= smp_last_cpu; i++) {
+                cpu_t *other = smp_cpu_list[i];
+                if (!other || other == cpu) continue;
+                if (cpu_simd_mask(other) != my_mask) continue;   // SIMD 门控
+
+                uint32_t oc = atomic_load_4(
+                    (volatile uint32_t*)&other->thread_count, 1);
+                // 只有显著不均衡时才推送
+                if (oc + 2 < my_count && oc < target_count) {
+                    target = other;
+                    target_count = oc;
+                }
+            }
+            if (!target) return;
+
+            // CAS 尝试锁 target（非阻塞，不会死锁）
+            if (!__sync_bool_compare_and_swap(&target->sched_lock, 0, 1)) return;
+
+            // 加锁后复查：可能刚被其他 CPU 改过
+            uint32_t tc = atomic_load_4(
+                (volatile uint32_t*)&target->thread_count, 1);
+            uint32_t mc = atomic_load_4(
+                (volatile uint32_t*)&cpu->thread_count, 1);
+            if (tc + 2 >= mc) {
+                atomic_store_4(&target->sched_lock, 0, ATOMIC_RELEASE);
+                return;
+            }
+
+            // 用 promote_buf 快照待推送线程（复用每 CPU 私有缓冲区，无栈溢出风险）
+            thread_t **to_push = cpu->promote_buf;
+            uint32_t push_count = 0;
+
+            // 从低优先级队列向高优先级扫描，优先推送低优先级线程
+            for (int32_t p = THREAD_QUEUE_CNT - 1; p >= 1 && push_count < SCHED_STEAL_BATCH; p--) {
+                thread_queue_t *q = &cpu->thread_queues[p];
+                if (!q->head) continue;
+
+                thread_t *curr = q->head;
+                do {
+                    // 跳过当前正在运行的线程和不可运行线程
+                    if (curr != cpu->current_thread && curr->state == THREAD_RUNNING) {
+                        if (push_count < SCHED_STEAL_BATCH)
+                            to_push[push_count++] = curr;
+                    }
+                    curr = curr->list_next;
+                } while (curr != q->head && push_count < SCHED_STEAL_BATCH);
+            }
+
+            // 执行推送
+            for (uint32_t j = 0; j < push_count; j++) {
+                RemoveFromQueue(cpu, to_push[j]);
+                to_push[j]->cpu_num    = target->id;
+                to_push[j]->wait_ticks = 0;
+                to_push[j]->preempt_count = 0;
+                InsertToQueue(target, to_push[j]);
+            }
+
+            atomic_store_4(&target->sched_lock, 0, ATOMIC_RELEASE);
         }
 
         thread_t *Pick(cpu_t *cpu) {
@@ -271,30 +360,34 @@ namespace Schedule {
                 curr_thread->fs = rdmsr(FS_BASE);
                 curr_thread->ctx = *ctx;
                 if (curr_thread->fx_area) {
-                    cpu->OverLoadableFuncs.StoreSIMDState(curr_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
+                    cpu->OverLoadableFuncs.StoreSIMDState(
+                        curr_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
                 }
             }
 
             spinlock_lock(&cpu->sched_lock);
-            
-            if (curr_thread && curr_thread->state == THREAD_RUNNING && curr_thread != cpu->idle_thread) {
+
+            if (curr_thread && curr_thread->state == THREAD_RUNNING
+                && curr_thread != cpu->idle_thread) {
                 curr_thread->preempt_count++;
-                if (curr_thread->preempt_count >= SCHED_PREEMPTION_MAX) {
+                if (curr_thread->preempt_count >= SCHED_PREEMPTION_MAX)
                     Demote(cpu, curr_thread);
-                }
             }
-            
+
+            // *** 主动推送：每 8 个 tick 尝试一次，将冗余线程推到兼容 CPU ***
+            if ((cpu->tick_count & 0x7) == 0) {
+                TryPush(cpu);                
+            }
+
             thread_t *next_thread = Pick(cpu);
-            if (!next_thread) {
-                next_thread = cpu->idle_thread;
-            }
-            
+            if (!next_thread) next_thread = cpu->idle_thread;
+
             bool is_switch = (next_thread != curr_thread);
             if (is_switch) {
                 cpu->current_thread = next_thread;
                 cpu->sched_stats.context_switches++;
             }
-            
+
             spinlock_unlock(&cpu->sched_lock);
 
             if (!is_switch) {
@@ -576,27 +669,31 @@ namespace Schedule {
         return thread;
     }
 
+
     thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame) {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
-        
-        cpu_t *cpu = get_lw_cpu();
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
+
+        // *** 以父线程所在 CPU 为参照，只在标志相同的 CPU 中选最轻载的 ***
+        cpu_t *parent_cpu = get_cpu(parent->cpu_num);
+        cpu_t *cpu = get_lw_cpu(parent_cpu);       
+
+        thread->fx_area = VMM::Alloc(kernel_pagemap,
+            DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
         __memcpy(thread->fx_area, parent->fx_area, cpu->XsaveSize);
 
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
         __memcpy((void*)kernel_stack, (void*)parent->kernel_stack, 4 * PAGE_SIZE);
 
-        thread->id = atomic_add_fetch_8(&sched_tid,1,ATOMIC_RELAXED);
-        
+        thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
         thread->cpu_num = cpu->id;
         thread->parent = proc;
         thread->IsForkThread = true;
-        thread->pagemap = proc->pagemap; 
+        thread->pagemap = proc->pagemap;
         thread->kernel_stack = kernel_stack;
         thread->kernel_rsp = kernel_stack + 4 * PAGE_SIZE;
-        thread->stack = parent->stack; 
+        thread->stack = parent->stack;
         thread->sig_stack = parent->sig_stack;
         thread->tls_base = parent->tls_base;
         thread->tls_pages = parent->tls_pages;
@@ -607,12 +704,12 @@ namespace Schedule {
         thread->ctx.cs = 0x23;
         thread->ctx.ss = 0x1b;
         thread->ctx.rflags = ((syscall_frame_t*)frame)->r11;
-        thread->ctx.rax = 0; 
-        thread->ctx.rip = ((syscall_frame_t*)frame)->rcx; 
+        thread->ctx.rax = 0;
+        thread->ctx.rip = ((syscall_frame_t*)frame)->rcx;
         thread->thread_stack = parent->thread_stack;
         thread->fs = rdmsr(FS_BASE);
         thread->state = THREAD_RUNNING;
-        
+
         spinlock_lock(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);

@@ -114,7 +114,7 @@ typedef struct cpu_t {
     // 取代 Pick() 内栈上 thread_t* to_promote[256] (2KB)，消除中断栈溢出风险
     // 同一 CPU 不会并发进入 Pick()（sched_lock + preempt_count 保证），故无需额外加锁
     thread_t* promote_buf[MAX_PROMOTE_SNAPSHOT];
-
+    uint32_t simd_mask;
     // 调度性能统计结构体
     sched_stats_t sched_stats;
     thread_t *idle_thread;
@@ -132,5 +132,21 @@ void smp_init();
 extern "C" cpu_t *this_cpu();
 cpu_t *get_cpu(uint32_t id);
 void InitBSPCPUThread();
+
+static inline uint32_t cpu_simd_mask(const cpu_t *cpu) {
+    uint32_t m = 0;
+    if (cpu->SupportSIMD)     m |= 0x01;
+    if (cpu->SupportXSAVE)    m |= 0x02;
+    if (cpu->SupportSSE4_2)   m |= 0x04;
+    if (cpu->SupportAVX)      m |= 0x08;
+    if (cpu->SupportAVX2)     m |= 0x10;
+    if (cpu->SupportAVX512)   m |= 0x20;
+    if (cpu->SupportXSAVEOPT) m |= 0x40;
+    return m;
+}
+
+static inline bool simd_compatible(const cpu_t *a, const cpu_t *b) {
+    return cpu_simd_mask(a) == cpu_simd_mask(b);
+}
 
 #endif
