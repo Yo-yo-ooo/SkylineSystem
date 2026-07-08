@@ -6,7 +6,8 @@
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/vmm/vmm.h>
 #include <mem/pmm.h>
-
+#include <arch/x86_64/schedule/sched.h>
+#include <drivers/dev/dev.h>
 #define PS2_DATA_PORT     0x60
 #define PS2_STATUS_PORT   0x64
 #define PS2_CMD_PORT      0x64
@@ -29,8 +30,28 @@
 #define MOUSE_ACK             0xFA
 #define MOUSE_SELF_TEST_PASS  0xAA
 
-ps2_mouse_state_t g_ps2_mouse_state = {0};
-uint64_t ps2stateAddr_v = 0;
+
+ps2_mouse_event PS2MouseEvent = {0};
+
+
+uint64_t PS2_MOUSE_MemoryMap(
+    uint64_t length,uint64_t prot,
+    uint64_t offset,uint64_t VADDR
+){
+    pagemap_t *pm = Schedule::this_proc()->pagemap;
+    //uint64_t pages = DIV_ROUND_UP(fb_siz, PAGE_SIZE);
+
+    spinlock_lock(&pm->vma_lock);
+    VADDR = VMM::Useless::InternalAlloc(pm, 1,VMM_FLAG_USER | VMM_FLAG_PRESENT);
+    spinlock_unlock(&pm->vma_lock);
+    VMM::Map4K(pm,VADDR,PHYSICAL(&PS2MouseEvent),VMM_FLAG_USER | VMM_FLAG_PRESENT);
+    //VMM::MapRange(pm,VADDR,PHYSICAL(Fb->BaseAddress),MM_USER | VMM_FLAGS_MMIO,pages);
+    VMM::NewMapping(pm, VADDR, 1 ,VMM_FLAG_USER | VMM_FLAG_PRESENT);
+    uint64_t check_pte = VMM::Useless::GetPageInfo(pm, VADDR).flags;
+    kinfoln("VADDR: 0x%X -> PTE Value: 0x%llX", VADDR, check_pte);
+    kinfoln("Framebuffer mapped to VADDR: 0x%X", VADDR);
+    return (VADDR); 
+}
 
 // 内部状态机，用于中断处理中解析 3 字节数据包
 static uint8_t mouse_cycle = 0;
@@ -142,13 +163,15 @@ bool ps2_mouse_init(void) {
     wait_write();
     io_out8(PS2_CMD_PORT, PS2_CMD_ENABLE_PORT1);
     io_wait();
-
+    VDL PS2MouseDev = {0};
+    DevOPS ops = {0};
+    ops.MemoryMap = PS2_MOUSE_MemoryMap;
+    Dev::AddDevice(PS2MouseDev,X86_PS2_MOUSE,ops);
+    idt_install_irq(32+12,(void*)ps2_mouse_handler);
     // 11. 恢复中断
     ENABLE_INTERRUPTS();
 
-    idt_install_irq(32+12,(void*)ps2_mouse_handler);
-    ps2stateAddr_v = HIGHER_HALF(PMM::Request());
-    __memcpy(ps2stateAddr_v,&g_ps2_mouse_state,sizeof(ps2_mouse_state_t));
+    
     //uint16_t X = PAGE_SIZE - sizeof(ps2_mouse_state_t);
 
 
@@ -171,6 +194,7 @@ void ps2_mouse_handler(void) {
     }
 
     uint8_t data = io_in8(PS2_DATA_PORT);
+    PS2MouseEvent.ps2_mouse_state.seq++;
 
     switch (mouse_cycle) {
         case 0:
@@ -192,16 +216,16 @@ void ps2_mouse_handler(void) {
             mouse_cycle = 0; // 重置状态机，准备接收下一个包
 
             // 解析按键状态
-            g_ps2_mouse_state.left = mouse_bytes[0] & 0x01;
-            g_ps2_mouse_state.right = (mouse_bytes[0] >> 1) & 0x01;
-            g_ps2_mouse_state.middle = (mouse_bytes[0] >> 2) & 0x01;
+            PS2MouseEvent.ps2_mouse_state.left = mouse_bytes[0] & 0x01;
+            PS2MouseEvent.ps2_mouse_state.right = (mouse_bytes[0] >> 1) & 0x01;
+            PS2MouseEvent.ps2_mouse_state.middle = (mouse_bytes[0] >> 2) & 0x01;
 
             // 解析 X 移动
             int16_t dx = mouse_bytes[1];
             if (mouse_bytes[0] & 0x10) { // X 符号位为 1，表示负方向移动
                 dx |= 0xFF00; // 符号扩展到 16 位
             }
-            g_ps2_mouse_state.x += dx;
+            PS2MouseEvent.ps2_mouse_state.x += dx;
 
             // 解析 Y 移动
             int16_t dy = mouse_bytes[2];
@@ -209,10 +233,11 @@ void ps2_mouse_handler(void) {
                 dy |= 0xFF00; // 符号扩展到 16 位
             }
             // PS/2 鼠标的 Y 轴方向是向上的，而屏幕坐标系通常是向下的，所以这里取反
-            g_ps2_mouse_state.y -= dy; 
+            PS2MouseEvent.ps2_mouse_state.y -= dy; 
 
             break;
     }
+    PS2MouseEvent.ps2_mouse_state.seq++;
     
     LAPIC::EOI();
 }

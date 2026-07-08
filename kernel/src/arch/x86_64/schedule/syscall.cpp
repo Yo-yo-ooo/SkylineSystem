@@ -6,6 +6,7 @@
 #include <klib/kio.h>
 #include <errno.h>
 #include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/schedule/syscalln.h>
 
 static uint64_t 
 SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){return NULL;}
@@ -52,12 +53,12 @@ syscall_lists[x] = sys_xxxx //? <---- it means i don't know how to impl this sys
 */
 void syscall_init() {
     
-    syscall_lists[0] = sys_fopen;
-    syscall_lists[1] = sys_fwrite;
-    syscall_lists[2] = sys_fread;
-    syscall_lists[3] = sys_fclose;
-    syscall_lists[4] = sys_flseek;
-    syscall_lists[5] = sys_fsize;
+    syscall_lists[SYSCALL_FOPEN] = sys_fopen;
+    syscall_lists[SYSCALL_FWRITE] = sys_fwrite;
+    syscall_lists[SYSCALL_FREAD] = sys_fread;
+    syscall_lists[SYSCALL_FCLOSE] = sys_fclose;
+    syscall_lists[SYSCALL_FLSEEK] = sys_flseek;
+    syscall_lists[SYSCALL_FSIZE] = sys_fsize;
     
     syscall_lists[7] = sys_gettid;
     syscall_lists[8] = sys_getpid;

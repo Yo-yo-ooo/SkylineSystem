@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <pdef.h>
 
 // 鼠标状态结构体
 typedef struct {
@@ -12,11 +13,15 @@ typedef struct {
     uint8_t left;       // 左键状态 (1=按下, 0=松开)
     uint8_t right;      // 右键状态
     uint8_t middle;     // 中键状态
+    uint64_t seq;
 } ps2_mouse_state_t;
 
-// 全局鼠标状态
-extern ps2_mouse_state_t g_ps2_mouse_state;
-extern uint64_t ps2stateAddr_v;
+typedef struct ps2_mouse_event{
+    ps2_mouse_state_t ps2_mouse_state;
+    char padding[4096 - sizeof(ps2_mouse_state_t)];
+}ps2_mouse_event;
+
+extern ps2_mouse_event PS2MouseEvent;
 
 // 初始化 PS/2 鼠标
 bool ps2_mouse_init(void);

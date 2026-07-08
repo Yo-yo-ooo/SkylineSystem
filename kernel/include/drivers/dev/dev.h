@@ -19,6 +19,7 @@ typedef enum VsDevType
     Undefined,
     NSDEV, //Not Storage Device
     FrameBuffer,
+    X86_PS2_MOUSE,
 }VsDevType;
 
 #define MAX_TYPE_C 6
