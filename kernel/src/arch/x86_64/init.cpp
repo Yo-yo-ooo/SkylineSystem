@@ -15,6 +15,7 @@
 #include <drivers/framebuffer/fb.h>
 #include <klib/renderer/rnd.h>
 #include <atomic/atomic.h>
+#include <drivers/mouse/x86/ps2mouse.h>
 
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
@@ -71,6 +72,7 @@ void __init x86_64_init(void){
     InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
 
     InitFunc("KEYBOARD(x86)",keyboard_init());
+    InitFunc("PS/2 MOUSE(x86)",ps2_mouse_init());
 
     if(!ext4_kernel_init("sata0","/mp/",0)){hcf();}
 
