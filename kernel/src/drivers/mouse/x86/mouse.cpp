@@ -30,6 +30,7 @@
 #define MOUSE_ACK             0xFA
 #define MOUSE_SELF_TEST_PASS  0xAA
 
+void ps2_mouse_handler(registers *regs);
 
 
 __attribute__((aligned(PAGE_SIZE)))
@@ -39,7 +40,7 @@ uint64_t PS2_MOUSE_MemoryMap(uint64_t length, uint64_t prot,
                              uint64_t offset, uint64_t /*hint*/)
 {
     pagemap_t *pm = Schedule::this_proc()->pagemap;
-    uint64_t flags = MM_USER | VMM_FLAG_PRESENT | MM_READ | MM_NX;  // 用户只读、不可执行
+    uint64_t flags = MM_USER | VMM_FLAG_PRESENT | MM_NX;  // 用户只读、不可执行
 
     spinlock_lock(&pm->vma_lock);
 
@@ -179,7 +180,7 @@ bool ps2_mouse_init(void) {
     DevOPS ops = {0};
     ops.MemoryMap = PS2_MOUSE_MemoryMap;
     Dev::AddDevice(PS2MouseDev,X86_PS2_MOUSE,ops);
-    idt_install_irq(32+12,(void*)ps2_mouse_handler);
+    idt_install_irq(0x2C,(void*)ps2_mouse_handler);
     // 11. 恢复中断
     ENABLE_INTERRUPTS();
 
@@ -192,7 +193,7 @@ bool ps2_mouse_init(void) {
     return true;
 }
 
-void ps2_mouse_handler(void) {
+void ps2_mouse_handler(registers *regs) {
     uint8_t status = io_in8(PS2_STATUS_PORT);
     if (!(status & 0x01)) {
         return; // 没有数据

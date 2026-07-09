@@ -172,8 +172,6 @@ void smp_init() {
 extern "C" cpu_t *this_cpu() {
     if (!smp_started) return smp_cpu_list[0]; // smp_bsp_cpu (逻辑0)
     
-    // 优化建议：如果你之前按照我说的把 cpu_t 指针放在了 GS:0，这里直接 mov %%gs:0, %0 是最快的
-    // 如果还要用 LAPIC::GetID()，现在需要查一次映射表
     uint32_t apic_id = LAPIC::GetID();
     if (apic_id < 256 && apic_id_to_logical[apic_id] != 0xFF) {
         return smp_cpu_list[apic_id_to_logical[apic_id]];

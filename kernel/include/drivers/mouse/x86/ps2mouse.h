@@ -25,6 +25,3 @@ extern ps2_mouse_event PS2MouseEvent;
 
 // 初始化 PS/2 鼠标
 bool ps2_mouse_init(void);
-
-// PS/2 鼠标中断处理函数 (挂载到 IRQ12)
-void ps2_mouse_handler(void);

@@ -93,6 +93,8 @@ int32_t keyboard_wait_read()
 // 优化后的中断处理程序：无忙等待，极速执行
 void keyboard_handler(registers *regs) {
     (void)regs;
+
+    kinfoln("KBD HIT!");
     
     // 既然中断触发了，状态寄存器的 OBF 位必定为 1，直接读取即可
     // 但为了严谨，可以做一次非阻塞检查
