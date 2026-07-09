@@ -94,7 +94,6 @@ int32_t keyboard_wait_read()
 void keyboard_handler(registers *regs) {
     (void)regs;
 
-    kinfoln("KBD HIT!");
     
     // 既然中断触发了，状态寄存器的 OBF 位必定为 1，直接读取即可
     // 但为了严谨，可以做一次非阻塞检查
@@ -146,5 +145,6 @@ void keyboard_init() {
     
     // 注册中断
     idt_install_irq(33, keyboard_handler);
+    IOAPIC::RemapIRQ(smp_bsp_cpu,1,33,false);
 }
 #endif

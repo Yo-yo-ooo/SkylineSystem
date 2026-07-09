@@ -6,6 +6,7 @@
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/vmm/vmm.h>
 #include <mem/pmm.h>
+#include <arch/x86_64/ioapic/ioapic.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <drivers/dev/dev.h>
 #define PS2_DATA_PORT     0x60
@@ -181,6 +182,7 @@ bool ps2_mouse_init(void) {
     ops.MemoryMap = PS2_MOUSE_MemoryMap;
     Dev::AddDevice(PS2MouseDev,X86_PS2_MOUSE,ops);
     idt_install_irq(0x2C,(void*)ps2_mouse_handler);
+    IOAPIC::RemapIRQ(smp_bsp_cpu,12,0x2C,false);
     // 11. 恢复中断
     ENABLE_INTERRUPTS();
 
@@ -204,8 +206,6 @@ void ps2_mouse_handler(registers *regs) {
     }
 
     uint8_t data = io_in8(PS2_DATA_PORT);
-
-    kinfoln("HIT MOUSE INTR!!!");
 
     switch (mouse_cycle) {
         case 0:
