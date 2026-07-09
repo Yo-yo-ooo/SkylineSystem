@@ -31,26 +31,38 @@
 #define MOUSE_SELF_TEST_PASS  0xAA
 
 
+
+__attribute__((aligned(PAGE_SIZE)))
 ps2_mouse_event PS2MouseEvent = {0};
 
-
-uint64_t PS2_MOUSE_MemoryMap(
-    uint64_t length,uint64_t prot,
-    uint64_t offset,uint64_t VADDR
-){
+uint64_t PS2_MOUSE_MemoryMap(uint64_t length, uint64_t prot,
+                             uint64_t offset, uint64_t /*hint*/)
+{
     pagemap_t *pm = Schedule::this_proc()->pagemap;
-    //uint64_t pages = DIV_ROUND_UP(fb_siz, PAGE_SIZE);
+    uint64_t flags = MM_USER | VMM_FLAG_PRESENT | MM_READ | MM_NX;  // 用户只读、不可执行
 
     spinlock_lock(&pm->vma_lock);
-    VADDR = VMM::Useless::InternalAlloc(pm, 1,VMM_FLAG_USER | VMM_FLAG_PRESENT);
+
+    uint64_t vaddr = VMM::Useless::InternalAlloc(pm, 1, flags);
+    if (!vaddr) {
+        spinlock_unlock(&pm->vma_lock);
+        kerrorln("PS2 mouse mmap: no virtual address");
+        return 0;
+    }
+
+    uint64_t phys = VMM::GetPhysics(kernel_pagemap, (uint64_t)&PS2MouseEvent);
+    VMM::Map4K(pm, vaddr, phys, flags);
+    VMM::NewMapping(pm, vaddr, 1, flags);
+    __asm__ volatile ("invlpg (%0)" : : "r"(vaddr) : "memory");
+
+    uint64_t pte = VMM::Useless::GetPageInfo(pm, vaddr).flags;
+    kinfoln("[PS2 mouse] mmap VADDR=0x%llx -> phys=0x%llx PTE.flags=0x%llx",
+            (unsigned long long)vaddr,
+            (unsigned long long)phys,
+            (unsigned long long)pte);
+
     spinlock_unlock(&pm->vma_lock);
-    VMM::Map4K(pm,VADDR,PHYSICAL(&PS2MouseEvent),VMM_FLAG_USER | VMM_FLAG_PRESENT);
-    //VMM::MapRange(pm,VADDR,PHYSICAL(Fb->BaseAddress),MM_USER | VMM_FLAGS_MMIO,pages);
-    VMM::NewMapping(pm, VADDR, 1 ,VMM_FLAG_USER | VMM_FLAG_PRESENT);
-    uint64_t check_pte = VMM::Useless::GetPageInfo(pm, VADDR).flags;
-    kinfoln("VADDR: 0x%X -> PTE Value: 0x%llX", VADDR, check_pte);
-    kinfoln("Framebuffer mapped to VADDR: 0x%X", VADDR);
-    return (VADDR); 
+    return vaddr;
 }
 
 // 内部状态机，用于中断处理中解析 3 字节数据包
@@ -181,25 +193,22 @@ bool ps2_mouse_init(void) {
 }
 
 void ps2_mouse_handler(void) {
-    // 检查状态寄存器，位 0 为 1 表示有数据可读
-    // 位 5 为 1 表示数据来自鼠标 (第二端口)
     uint8_t status = io_in8(PS2_STATUS_PORT);
     if (!(status & 0x01)) {
         return; // 没有数据
     }
     if (!(status & 0x20)) {
-        // 数据来自键盘，忽略或交给键盘处理程序
-        io_in8(PS2_DATA_PORT); 
+        io_in8(PS2_DATA_PORT); // 丢弃键盘数据
         return;
     }
 
     uint8_t data = io_in8(PS2_DATA_PORT);
-    PS2MouseEvent.ps2_mouse_state.seq++;
+
+    kinfoln("HIT MOUSE INTR!!!");
 
     switch (mouse_cycle) {
         case 0:
-            // 字节 0: [Y溢出, X溢出, Y符号, X符号, 1, 中键, 右键, 左键]
-            // 始终检查位 3 是否为 1 以同步数据包
+            // 字节 0: 始终检查位 3 是否为 1 以同步数据包
             if (data & 0x08) {
                 mouse_bytes[0] = data;
                 mouse_cycle++;
@@ -215,30 +224,34 @@ void ps2_mouse_handler(void) {
             mouse_bytes[2] = data;
             mouse_cycle = 0; // 重置状态机，准备接收下一个包
 
+            // ===== 开始更新共享数据 (Seqlock 加锁) =====
+            // 插入内存屏障，防止编译器/CPU 将 seq++ 重排到数据更新之后
+            asm volatile("" ::: "memory");
+            PS2MouseEvent.ps2_mouse_state.seq++; // 变为奇数，表示正在写
+
             // 解析按键状态
             PS2MouseEvent.ps2_mouse_state.left = mouse_bytes[0] & 0x01;
             PS2MouseEvent.ps2_mouse_state.right = (mouse_bytes[0] >> 1) & 0x01;
             PS2MouseEvent.ps2_mouse_state.middle = (mouse_bytes[0] >> 2) & 0x01;
 
-            // 解析 X 移动
-            int16_t dx = mouse_bytes[1];
-            if (mouse_bytes[0] & 0x10) { // X 符号位为 1，表示负方向移动
-                dx |= 0xFF00; // 符号扩展到 16 位
-            }
+            // 解析 X 移动 (利用 C 语言的隐式符号扩展)
+            int8_t dx_raw = (int8_t)mouse_bytes[1];
+            int16_t dx = dx_raw; 
             PS2MouseEvent.ps2_mouse_state.x += dx;
 
-            // 解析 Y 移动
-            int16_t dy = mouse_bytes[2];
-            if (mouse_bytes[0] & 0x20) { // Y 符号位为 1，表示负方向移动
-                dy |= 0xFF00; // 符号扩展到 16 位
-            }
-            // PS/2 鼠标的 Y 轴方向是向上的，而屏幕坐标系通常是向下的，所以这里取反
+            // 解析 Y 移动 (Y 轴方向是向上的，屏幕坐标系通常是向下的，所以取反)
+            int8_t dy_raw = (int8_t)mouse_bytes[2];
+            int16_t dy = dy_raw;
             PS2MouseEvent.ps2_mouse_state.y -= dy; 
 
+            // 再次插入内存屏障，确保上面的写入先于 seq++ 完成
+            asm volatile("" ::: "memory");
+            PS2MouseEvent.ps2_mouse_state.seq++; // 变为偶数，表示写完
+            // ===== 更新结束 =====
             break;
     }
-    PS2MouseEvent.ps2_mouse_state.seq++;
     
     LAPIC::EOI();
 }
+
 #endif

@@ -78,18 +78,27 @@ void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist) {
 
 //ZH:根据CPU负载均衡分配最适合的IRQ向量号
 //EN:Allocate the optimal IRQ vector by evaluating per-CPU interrupt load
-extern "C" uint8_t RequestFreeIRQPerCPU(){
+extern "C" uint8_t RequestFreeIRQPerCPU() {
     cpu_t *target_cpu = GetLWIntrCpu();
+    if (!target_cpu) {
+        kerrorln("RequestFreeIRQPerCPU: No available CPU!");
+        return 0xFF; // 错误码
+    }
+
     for (uint32_t i = 0; i < 4; i++) {
         uint64_t bitmap_val = target_cpu->IntrBitMap[i];
-        //64 bit all = 1 (0xFFFFFFFFFFFFFFFF)
+        
+        // 如果 64 位全为 1，说明这组没有空闲
         if (bitmap_val == UINT64_MAX) continue;
-        for(uint32_t j = 0; j < 64;j++){
-            if(GET_BIT(bitmap_val,j) == 0)
-                return ((i * 64) + j);
-        }
+        uint32_t j = __builtin_ctzll(~bitmap_val);
+        
+        return ((i * 64) + j);
     }
+    
+    kerrorln("RequestFreeIRQPerCPU: No free IRQ vector available!");
+    return 0xFF; // 256 个 IRQ 全满
 }
+
 
 extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
     kpokln("IRQ %d Installed",irq);

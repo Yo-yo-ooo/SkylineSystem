@@ -1,18 +1,21 @@
 #include <base/arch/x86_64/syscall.h>
 #include <graphic/fb.h>
+#include <base/arch/x86_64/syscalln.h>
+
+#define FB_TYPE_IDX         6
 
 FrameBuffer GetFBInfo() {
     FrameBuffer fb;
-    fb.BaseAddress = (void*)syscall(26,6,0,0,0,0,0);
-    fb.BufferSize = syscall(26,6,0,1,0,0,0);
-    fb.Height = syscall(26,6,0,2,0,0,0);
-    fb.PixelsPerScanLine = syscall(26,6,0,3,0,0,0);
-    fb.Width = syscall(26,6,0,4,0,0,0);
+    fb.BaseAddress = (void*)syscall(SYSCALL_DEV_IOCTL,FB_TYPE_IDX,0,0,0,0,0);
+    fb.BufferSize = syscall(SYSCALL_DEV_IOCTL,FB_TYPE_IDX,0,1,0,0,0);
+    fb.Height = syscall(SYSCALL_DEV_IOCTL,FB_TYPE_IDX,0,2,0,0,0);
+    fb.PixelsPerScanLine = syscall(SYSCALL_DEV_IOCTL,FB_TYPE_IDX,0,3,0,0,0);
+    fb.Width = syscall(SYSCALL_DEV_IOCTL,FB_TYPE_IDX,0,4,0,0,0);
     return fb;
 }
 
 uint64_t MapFB() {
-    return syscall(21,6,0,0,0,0,0);
+    return syscall(SYSCALL_DEV_MMAP,FB_TYPE_IDX,0,0,0,0,0);
 }
 
 void PutPixel(FrameBuffer *FB, uint64_t x, uint64_t y, Color color) {

@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <base/font/ttf/ttf.h>
+#include <mouse/ps2.h>
 // 建议加上 static 防止头文件包含时的重定义错误
 static char intTo_stringOutput[128];
 
@@ -43,29 +44,21 @@ const char *to_string(uint64_t value)
 
     return intTo_stringOutput;
 }
-
-// 新增：处理有符号 64 位整数（支持负数）
 const char *to_string(int64_t value)
 {
     if (value < 0) {
-        intTo_stringOutput[0] = '-'; // 填入负号
-        // 将负数转为正数处理，注意：直接取反 -value 对于 INT64_MIN 会溢出
-        // 但在内核打印中通常可忽略 INT64_MIN 的极端情况
         uint64_t u_val = -value; 
+        const char* num_str = to_string(u_val); // 这里会覆盖 buffer[0] 的 '-'
         
-        // 复用无符号版本的逻辑，但因为共享同一个 buffer，需要手动后移
-        const char* num_str = to_string(u_val);
-        
-        // 此时 num_str 指向 intTo_stringOutput 首地址，且第一字节已被我们写成 '-'
-        // 所以必须把生成的数字字符串整体后移一位
         uint8_t len = 0;
-        while (num_str[len] != '\0') len++; // 计算长度
+        while (num_str[len] != '\0') len++;
         
-        // 从后往前移动，避开覆盖结束符 '\0'
+        // 整体后移一位
         for (int8_t j = len; j >= 0; j--) {
             intTo_stringOutput[j + 1] = intTo_stringOutput[j];
         }
         
+        intTo_stringOutput[0] = '-'; 
         return intTo_stringOutput;
     }
     return to_string((uint64_t)value);
@@ -129,10 +122,29 @@ int main(){
         
         syscall(24, (long)TF_STR, len, 0, 0, 0, 0);
     }
-    
+    MouseInit();
     TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",RGB(0,0,0));
-    TTF_DrawText(&fb,TTFFont,200,200,"Welcome to SkylineSystem!",RGB(0,0,0));
     TTF_DrawText(&fb,TTFFont,200,400,"HaHaHa (￣y▽,￣)╭ ",RGB(0,0,0));
+    // 假设你的 BasicDraw 有填充矩形的功能，或者你可以手写一个
+    // 如果没有，可以简单写个内联函数刷白背景
+    auto clear_rect = [&](int x, int y, int w, int h) {
+        uint32_t* fb_ptr = (uint32_t*)fb.BaseAddress;
+        for(int yy = y; yy < y+h; yy++)
+            for(int xx = x; xx < x+w; xx++)
+                fb_ptr[yy * fb.PixelsPerScanLine + xx] = 0xFFFFFFFF; // 白色
+    };
+
+    for(;;){
+        ps2_mouse_state_t *p = (ps2_mouse_state_t*)mouse_addr;
+        
+        // 清除旧文字区域 (假设文字宽度大概 150，高度 80)
+        clear_rect(200, 180, 300, 80); 
+        clear_rect(400, 180, 300, 80);
+
+        // 绘制黑色文字
+        TTF_DrawText(&fb,TTFFont,200,200,to_string((int64_t)p->x),RGB(0,0,0));
+        TTF_DrawText(&fb,TTFFont,400,200,to_string((int64_t)p->y),RGB(0,0,0));
+    }
     
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
 

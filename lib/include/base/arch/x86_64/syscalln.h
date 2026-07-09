@@ -14,4 +14,7 @@
 #define SYSCALL_MMAP            13
 #define SYSCALL_MUNMAP          12
 
+#define SYSCALL_DEV_MMAP        21
+#define SYSCALL_DEV_IOCTL       26
+
 #endif
