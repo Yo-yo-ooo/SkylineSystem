@@ -115,6 +115,7 @@ int main(){
     }
     MouseInit();
 
+
     int32_t prev_x = -100; 
     int32_t prev_y = -100;
     
@@ -127,16 +128,42 @@ int main(){
 
     for(;;){
         ps2_mouse_state_t *p = (ps2_mouse_state_t*)mouse_addr;
-        int32_t mx = p->x;
-        int32_t my = p->y;
 
-        // 如果鼠标坐标与上一帧完全相同，跳过恢复和绘制
+        uint32_t seq1, seq2;
+        int32_t mx, my;
+
+        while (true) {
+            // 读取开始前的序列号
+            seq1 = __atomic_load_n(&p->seq, __ATOMIC_ACQUIRE);
+            
+            // 如果是奇数，说明内核正在写，等一会再读
+            if (seq1 & 1) {
+                continue;
+            }
+
+            // 此时 seq 为偶数，快速拷贝坐标
+            mx = p->x;
+            my = p->y;
+
+            // 读取结束后的序列号
+            seq2 = __atomic_load_n(&p->seq, __ATOMIC_ACQUIRE);
+            
+            // 如果前后序列号一致，说明读取期间没有发生中断写入，数据有效
+            if (seq1 == seq2) {
+                break;
+            }
+            // 否则说明读了一半被中断打断了，作废，重新进入 while 循环读取
+        }
+
+        if (mx < 0) mx = 0;
+        if (my < 0) my = 0;
+        if (mx >= fb_width - 16) mx = fb_width - 16;
+        if (my >= fb_height - 16) my = fb_height - 16;
+
         if (mx == prev_x && my == prev_y) {
             continue;
         }
 
-        // 1. 局部擦除旧鼠标：将上一帧鼠标所在的 16x16 区域从 UIBase 恢复到显存
-        // 只有在鼠标移动了的情况下才执行
         for (int y = 0; y < 16; y++) {
             int py = prev_y + y;
             if (py < 0 || py >= fb_height) continue; // 越界跳过
@@ -150,14 +177,11 @@ int main(){
             }
         }
 
-        // 2. 绘制当前帧的鼠标
         DrawMousePointer(mx, my, &fb);
 
-        // 3. 更新上一帧的位置记录
         prev_x = mx;
         prev_y = my;
     }
-
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
 
     //while (true);

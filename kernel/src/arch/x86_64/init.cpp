@@ -71,8 +71,9 @@ void __init x86_64_init(void){
     else{InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));}
     InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
 
-    InitFunc("KEYBOARD(x86)",keyboard_init());
     InitFunc("PS/2 MOUSE(x86)",ps2_mouse_init());
+    InitFunc("KEYBOARD(x86)",keyboard_init());
+    
 
     if(!ext4_kernel_init("sata0","/mp/",0)){hcf();}
 

@@ -27,7 +27,6 @@ void DrawMousePointer(int32_t mousex,int32_t mousey, FrameBuffer* framebuffer)
     // 将 BaseAddress 转为 32 位指针，因为我们要写入 32 位 ARGB 颜色
     uint32_t* fb_ptr = (uint32_t*)framebuffer->BaseAddress;
     
-    // 获取屏幕宽高用于边界检查（根据你的结构体，可能是 Width 或 PixelsPerScanLine）
     int fb_width = framebuffer->Width;
     int fb_height = framebuffer->Height;
 
