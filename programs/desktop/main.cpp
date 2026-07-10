@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <base/font/ttf/ttf.h>
 #include <mouse/ps2.h>
-// 建议加上 static 防止头文件包含时的重定义错误
 static char intTo_stringOutput[128];
 
 // 处理无符号 64 位整数
