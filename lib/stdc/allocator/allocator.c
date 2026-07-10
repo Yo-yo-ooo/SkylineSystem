@@ -178,7 +178,7 @@ static inline int32_t is_quiescent() {
     for (int32_t i = 0; i < QSBR_SLOTS; i++) {
         snapshot[i] = atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE);
     }
-    atomic_thread_fence(__ATOMIC_SEQ_CST);
+    atomic_thread_fence(ATOMIC_SEQ_CST);
 
     for (int32_t retry = 0; retry < 50; retry++) {
         int32_t all_advanced = 1;
@@ -189,7 +189,7 @@ static inline int32_t is_quiescent() {
             }
         }
         if (all_advanced) {
-            atomic_thread_fence(__ATOMIC_SEQ_CST);
+            atomic_thread_fence(ATOMIC_SEQ_CST);
             return (atomic_load_n(&gc_generation, ATOMIC_ACQUIRE) == generation);
         }
         for (int32_t i = 0; i < 50; i++) CPU_RELAX();

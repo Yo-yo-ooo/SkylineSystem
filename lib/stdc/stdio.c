@@ -79,7 +79,7 @@ FILE* fopen(const char* filename, const char* mode) {
 size_t fsize(FILE *stream) {
     if (!stream) return 0;
     // fsize 是无状态的，直接原子读取 file_size 即可，无需加锁
-    return atomic_load_8(&stream->file_size, __ATOMIC_ACQUIRE);
+    return atomic_load_8(&stream->file_size, ATOMIC_ACQUIRE);
 }
 
 int32_t fclose(FILE *stream) {
@@ -193,5 +193,5 @@ int64_t ftell(FILE* stream) {
     if (!stream) return -1;
     // ftell 仅读取单个 offset 变量，x86_64 上 64位读取本身是原子的
     // 加上原子加载指令保证内存序（防止读到中间态）
-    return (int64_t)atomic_load_8(&stream->offset, __ATOMIC_ACQUIRE);
+    return (int64_t)atomic_load_8(&stream->offset, ATOMIC_ACQUIRE);
 }

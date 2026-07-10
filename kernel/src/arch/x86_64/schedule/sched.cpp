@@ -147,12 +147,12 @@ namespace Schedule {
                 if (cpu_simd_mask(victim) != my_mask) continue;  
 
                 // 快速跳过无冗余线程的 CPU
-                if (!__atomic_load_n(&victim->has_surplus, __ATOMIC_RELAXED)) continue;
+                if (!atomic_load_1(&victim->has_surplus, ATOMIC_RELAXED)) continue;
 
                 if (!__sync_bool_compare_and_swap(&victim->sched_lock, 0, 1)) continue;
 
                 if (atomic_load_4(&victim->thread_count, 1) <= 1) {
-                    __atomic_store_n(&victim->sched_lock, 0, __ATOMIC_RELEASE);
+                    atomic_store_4(&victim->sched_lock, 0, ATOMIC_RELEASE);
                     continue;
                 }
 
@@ -192,7 +192,7 @@ namespace Schedule {
                     if (stolen_count >= SCHED_STEAL_BATCH) break;
                 }
 
-                __atomic_store_n(&victim->sched_lock, 0, __ATOMIC_RELEASE);
+                atomic_store_4(&victim->sched_lock, 0, ATOMIC_RELEASE);
                 
                 if (stolen_list) {
                     thread_t *curr = stolen_list;
