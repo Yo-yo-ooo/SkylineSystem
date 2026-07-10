@@ -115,16 +115,49 @@ int main(){
     }
     MouseInit();
 
+    int32_t prev_x = -100; 
+    int32_t prev_y = -100;
+    
+    // 提前获取指针和宽高，避免每次循环都解引用
+    uint32_t* fb_ptr = (uint32_t*)fb.BaseAddress;
+    uint32_t* ui_ptr = (uint32_t*)UIBase;
+    int32_t fb_width = fb.Width;
+    int32_t fb_height = fb.Height;
+    int32_t fb_psl = fb.PixelsPerScanLine; // 每行像素数
+
     for(;;){
         ps2_mouse_state_t *p = (ps2_mouse_state_t*)mouse_addr;
-        
-        // 1. 恢复一整屏的纯净背景（这会自动擦除上一帧的鼠标和动态数字）
-        memcpy(fb.BaseAddress, UIBase, fb.BufferSize);
+        int32_t mx = p->x;
+        int32_t my = p->y;
 
-        // 3. 在最上层绘制鼠标（遇到 '.' 自动透出底层背景）
-        DrawMousePointer(p->x,p->y, &fb); 
+        // 如果鼠标坐标与上一帧完全相同，跳过恢复和绘制
+        if (mx == prev_x && my == prev_y) {
+            continue;
+        }
+
+        // 1. 局部擦除旧鼠标：将上一帧鼠标所在的 16x16 区域从 UIBase 恢复到显存
+        // 只有在鼠标移动了的情况下才执行
+        for (int y = 0; y < 16; y++) {
+            int py = prev_y + y;
+            if (py < 0 || py >= fb_height) continue; // 越界跳过
+            
+            for (int x = 0; x < 16; x++) {
+                int px = prev_x + x;
+                if (px < 0 || px >= fb_width) continue; // 越界跳过
+                
+                // 从背景恢复到显存
+                fb_ptr[py * fb_psl + px] = ui_ptr[py * fb_psl + px];
+            }
+        }
+
+        // 2. 绘制当前帧的鼠标
+        DrawMousePointer(mx, my, &fb);
+
+        // 3. 更新上一帧的位置记录
+        prev_x = mx;
+        prev_y = my;
     }
-    
+
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
 
     //while (true);
