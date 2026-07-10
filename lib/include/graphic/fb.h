@@ -12,7 +12,6 @@ extern "C" {
 typedef uint32_t Color;
 
 // 颜色宏定义 (根据你的具体硬件颜色格式，可能需要调整 R, G, B 的位置)
-// 这里假设格式为 0xAARRGGBB
 #define RGB(r, g, b)   (0xFF000000 | ((r) << 16) | ((g) << 8) | (b))
 #define ARGB(a, r, g, b) (((a) << 24) | ((r) << 16) | ((g) << 8) | (b))
 

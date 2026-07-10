@@ -64,6 +64,8 @@ const char *to_string(int64_t value)
     return to_string((uint64_t)value);
 }
 
+extern void DrawMousePointer(int32_t mousex,int32_t mousey, FrameBuffer* framebuffer);
+
 // 处理单个字符
 const char* to_string(char value)
 {
@@ -96,7 +98,7 @@ int main(){
         syscall(24, (long)"FAULT!", 7, 0, 0, 0, 0);    
     
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
-    //memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
+    memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
 
     FILE *fp = fopen("/mp/README.md","r");
     char buf[25];
@@ -113,10 +115,6 @@ int main(){
         // 显式转换为无符号 64 位整数，或者直接传 TF 让它隐式提升为 int
         const char * TF_STR = to_string((uint64_t)TF); 
         
-        // 打印错误码。注意：不知道你 syscall 24 的第三个参数是不是字符串长度？
-        // 如果是长度，这里不能用固定值 3，因为错误码可能是 1 位数也可能是 2 位数。
-        // 最好用 strlen 计算长度，或者如果你的 syscall 支持以 \0 结尾，就传 0。
-        // 这里假设你的 syscall 遇到 0 长度会自动读到 \0 停止，或者你手动算长度。
         uint64_t len = 0;
         while(TF_STR[len] != '\0') len++; // 简单算一下长度
         
@@ -125,8 +123,6 @@ int main(){
     MouseInit();
     TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",RGB(0,0,0));
     TTF_DrawText(&fb,TTFFont,200,400,"HaHaHa (￣y▽,￣)╭ ",RGB(0,0,0));
-    // 假设你的 BasicDraw 有填充矩形的功能，或者你可以手写一个
-    // 如果没有，可以简单写个内联函数刷白背景
     auto clear_rect = [&](int x, int y, int w, int h) {
         uint32_t* fb_ptr = (uint32_t*)fb.BaseAddress;
         for(int yy = y; yy < y+h; yy++)
@@ -134,16 +130,14 @@ int main(){
                 fb_ptr[yy * fb.PixelsPerScanLine + xx] = 0xFFFFFFFF; // 白色
     };
 
-    for(;;){
+        for(;;){
         ps2_mouse_state_t *p = (ps2_mouse_state_t*)mouse_addr;
         
-        // 清除旧文字区域 (假设文字宽度大概 150，高度 80)
-        clear_rect(200, 180, 300, 80); 
-        clear_rect(400, 180, 300, 80);
+        // 1. 恢复一整屏的纯净背景（这会自动擦除上一帧的鼠标和动态数字）
+        memcpy(fb.BaseAddress, UIBase, fb.BufferSize);
 
-        // 绘制黑色文字
-        TTF_DrawText(&fb,TTFFont,200,200,to_string((int64_t)p->x),RGB(0,0,0));
-        TTF_DrawText(&fb,TTFFont,400,200,to_string((int64_t)p->y),RGB(0,0,0));
+        // 3. 在最上层绘制鼠标（遇到 '.' 自动透出底层背景）
+        DrawMousePointer(p->x,p->y, &fb); // 如果 fb 是 FrameBuffer，这里强转一下
     }
     
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
