@@ -100,12 +100,6 @@ int main(){
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
     memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
 
-    FILE *fp = fopen("/mp/README.md","r");
-    char buf[25];
-    fread(buf,25,1,fp);
-    syscall(24, (long)buf, 25, 0, 0, 0, 0); 
-    fclose(fp);
-
     TTF_Font *TTFFont;
     uint8_t TF = TTF_ReadFont(&TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",64,32);
     if(TF != 0) {
@@ -121,23 +115,15 @@ int main(){
         syscall(24, (long)TF_STR, len, 0, 0, 0, 0);
     }
     MouseInit();
-    TTF_DrawText(&fb,TTFFont,20,20,"Hello 你好",RGB(0,0,0));
-    TTF_DrawText(&fb,TTFFont,200,400,"HaHaHa (￣y▽,￣)╭ ",RGB(0,0,0));
-    auto clear_rect = [&](int x, int y, int w, int h) {
-        uint32_t* fb_ptr = (uint32_t*)fb.BaseAddress;
-        for(int yy = y; yy < y+h; yy++)
-            for(int xx = x; xx < x+w; xx++)
-                fb_ptr[yy * fb.PixelsPerScanLine + xx] = 0xFFFFFFFF; // 白色
-    };
 
-        for(;;){
+    for(;;){
         ps2_mouse_state_t *p = (ps2_mouse_state_t*)mouse_addr;
         
         // 1. 恢复一整屏的纯净背景（这会自动擦除上一帧的鼠标和动态数字）
         memcpy(fb.BaseAddress, UIBase, fb.BufferSize);
 
         // 3. 在最上层绘制鼠标（遇到 '.' 自动透出底层背景）
-        DrawMousePointer(p->x,p->y, &fb); // 如果 fb 是 FrameBuffer，这里强转一下
+        DrawMousePointer(p->x,p->y, &fb); 
     }
     
     syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
