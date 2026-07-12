@@ -67,12 +67,16 @@ struct alignas(16) __hmap_s_mp{
     FS_PDESC *FSOPS;
 };
 
+typedef struct file_cache file_cache_t;
 
-typedef struct FileDesc{
-    void *filedesc;
-    FS_PDESC *FSOPS;
-    __hmap_s_mp *MP;
-}fd_t;
+typedef struct fd_t {
+    void           *filedesc;
+    FS_PDESC        *FSOPS;
+    void           *MP;
+    file_cache_t   *cache;         // 指向全局共享的文件缓存
+    uint64_t        window_base;   // 本进程的缓存窗口虚拟地址基址
+    uint64_t        window_pages;  // 本进程的窗口页数
+} fd_t;
 
 
 extern "C" int32_t __hmap_s_mp_compare(const void* a,const void* b,void *udata);
@@ -110,7 +114,7 @@ typedef struct FDManager {
     spinlock_t lock;
 } fd_manager_t;
 
-#define PATH_MAX 4096
+#define PATH_MAX 512
 
 extern "C" {
     void fd_manager_init(fd_manager_t* manager);
