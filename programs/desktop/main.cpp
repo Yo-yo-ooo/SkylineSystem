@@ -99,7 +99,7 @@ int main(){
     syscall(24, (long)msg, 13, 0, 0, 0, 0);
     memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
 
-    TTF_Font *TTFFont;
+    /* TTF_Font *TTFFont;
     uint8_t TF = TTF_ReadFont(&TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",64,32);
     if(TF != 0) {
         // 打印前缀
@@ -112,7 +112,7 @@ int main(){
         while(TF_STR[len] != '\0') len++; // 简单算一下长度
         
         syscall(24, (long)TF_STR, len, 0, 0, 0, 0);
-    }
+    } */
     MouseInit();
 
 
