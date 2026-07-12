@@ -29,7 +29,11 @@ typedef unsigned long uintptr_t;
 #define RB_CONTAINER_OF(ptr, type, member) \
     ((type *)((char *)(ptr) - offsetof(type, member)))
 #endif
+
+/* 允许用户通过定义 RB_NO_CONTAINER_OF 禁用通用宏，防止命名冲突 */
+#ifndef RB_NO_CONTAINER_OF
 #define container_of RB_CONTAINER_OF
+#endif
 
 #if defined(__x86_64__) || defined(__i386__)
 #define RB_SPIN_PAUSE() __builtin_ia32_pause()
@@ -69,6 +73,8 @@ typedef unsigned long uintptr_t;
 
 /* ============================================================
  *  锁原语与快捷宏
+ *  约定：若初始化时传入的锁函数指针为 NULL，则所有锁操作退化为空，
+ *        即等价于单线程无锁模式。
  * ============================================================ */
 typedef void (*rb_lock_fn)(void *lock_ctx);
 typedef void (*rb_unlock_fn)(void *lock_ctx);
@@ -89,14 +95,20 @@ struct rb_node;
 typedef void (*rb_visit_t)(struct rb_node *node, void *arg);
 typedef void (*rb_free_cb_t)(struct rb_node *node, void *arg);
 
+/* 缓存行伪共享优化：将高频更新的热数据与冷数据分隔至不同 32 字节边界 */
 typedef struct rb_node {
+    /* --- 冷数据：树形结构指针 (24 bytes) --- */
     struct rb_node *parent;
     struct rb_node *left;
     struct rb_node *right;
     uint8_t  color;
-    uint8_t  flags;          /* 原子操作目标，无需 _Atomic 修饰 */
-    uint64_t access_time;
-    uint64_t access_count;
+    uint8_t  _pad1[7];      /* 填充至 32 字节边界 */
+
+    /* --- 热数据：并发访问统计 (24 bytes) --- */
+    uint8_t  flags;         /* 原子操作目标 */
+    uint8_t  _pad2[7];      /* 对齐 access_time */
+    uint64_t access_time;   /* 原子操作目标 */
+    uint64_t access_count;  /* 原子操作目标 */
 } rb_node_t;
 
 typedef struct rb_root {
@@ -191,7 +203,7 @@ static inline void rb_stat_inc(rb_root_t *root, uint8_t flags) {
 
 static inline void rb_init_node(rb_node_t *node) {
     if (!node) return;
-    /* 初始化在写锁内，使用普通赋值即可 */
+    /* 初始化阶段无并发，普通赋值 */
     node->parent       = NULL;
     node->left         = NULL;
     node->right        = NULL;
@@ -206,19 +218,20 @@ static inline void rb_root_init(rb_root_t *root,
                                 rb_rdlock_fn rlock, rb_rdunlock_fn runlock,
                                 void *lock_ctx) {
     if (!root) return;
+    /* [OPT] 初始化无并发，全部改为普通赋值 */
     root->node      = NULL;
-    RB_ATOMIC_STORE(&root->hint, NULL);
-    RB_ATOMIC_STORE(&root->cnt, 0);
-    RB_ATOMIC_STORE(&root->clock, 0);
+    root->hint      = NULL;
+    root->cnt       = 0;
+    root->clock     = 0;
 
     root->warm_decay = 1 << 12;
     root->hot_decay  = 1 << 14;
     root->hint_mask  = RB_HINT_MASK_DEFAULT;
 
-    RB_ATOMIC_STORE(&root->stat_cold, 0);
-    RB_ATOMIC_STORE(&root->stat_warm, 0);
-    RB_ATOMIC_STORE(&root->stat_hot, 0);
-    RB_ATOMIC_STORE(&root->stat_pinned, 0);
+    root->stat_cold   = 0;
+    root->stat_warm   = 0;
+    root->stat_hot    = 0;
+    root->stat_pinned = 0;
 
     root->lock_ctx  = lock_ctx;
     root->lock      = wlock;
@@ -238,12 +251,14 @@ static inline void rb_set_hint_mask(rb_root_t *root, uint32_t mask) {
     if (root) root->hint_mask = mask ? mask : RB_HINT_MASK_DEFAULT;
 }
 
+/* 推进逻辑时钟。由调用方周期性调用，冷热衰减阈值的时间单位即为 tick 数 */
 static inline void rb_tick(rb_root_t *root) {
     if (root) RB_ATOMIC_ADD(&root->clock, 1);
 }
 
 /* ============================================================
  *  rb_pin_node / rb_unpin_node
+ *  约束：必须在持有读锁或写锁的情况下调用，防止节点被并发删除导致野指针
  * ============================================================ */
 
 static inline void rb_pin_node(rb_root_t *root, rb_node_t *node) {
@@ -298,9 +313,9 @@ static inline void rb_touch(rb_root_t *root, rb_node_t *node) {
 
     uint64_t cur_time = RB_ATOMIC_LOAD(&root->clock);
     uint64_t last_time = RB_ATOMIC_LOAD(&node->access_time);
-    uint64_t elapsed = (cur_time >= last_time) ? (cur_time - last_time) : 0;
+    /* [OPT] 利用无符号整数天然回绕特性，简化 elapsed 计算 */
+    uint64_t elapsed = cur_time - last_time;
 
-    /* 仍然累加真实计数，避免并发 ADD 丢失 */
     uint64_t count = RB_ATOMIC_ADD(&node->access_count, 1) + 1;
 
     if (elapsed > RB_TIME_UPDATE_THRESHOLD) {
@@ -316,18 +331,14 @@ static inline void rb_touch(rb_root_t *root, rb_node_t *node) {
         uint8_t new_temp = cur_temp;
         bool should_decay = false;
 
-        /* 1. 先应用衰减（降级） */
         if (elapsed > root->hot_decay) {
             new_temp = RB_FLAG_COLD;
             should_decay = true;
         } else if (elapsed > root->warm_decay) {
-            /* [FIX] 补全 WARM -> COLD 的降级路径 */
             new_temp = (cur_temp == RB_FLAG_HOT) ? RB_FLAG_WARM : RB_FLAG_COLD;
             should_decay = true;
         }
 
-        /* 2. 再应用升级（仅当升级目标高于衰减后的温度） */
-        /* [FIX] 若发生衰减，视为冷启动，使用 effective_count = 1 评估升级 */
         uint64_t effective_count = should_decay ? 1 : count;
         if (effective_count >= 8 && new_temp < RB_FLAG_HOT) {
             new_temp = RB_FLAG_HOT;
@@ -343,7 +354,6 @@ static inline void rb_touch(rb_root_t *root, rb_node_t *node) {
         if (RB_ATOMIC_CAS(&node->flags, &expected, new_flags)) {
             rb_stat_dec(root, cur_flags);
             rb_stat_inc(root, new_flags);
-            /* [FIX] 仅在 CAS 成功发生降级时重置计数，最大限度避免独立 store 造成的竞态 */
             if (should_decay) {
                 RB_ATOMIC_STORE(&node->access_count, 1);
             }
@@ -404,7 +414,6 @@ static inline void rb_insert_raw(rb_root_t *root, rb_node_t *node, rb_compare_t 
     rb_node_t *current = root->node;
     int cmp_res = 0;
 
-    /* [FIX] 复用循环中的比较结果，消除额外调用 cmp 的开销 */
     while (current) {
         parent = current;
         cmp_res = cmp(node, current);
@@ -417,7 +426,9 @@ static inline void rb_insert_raw(rb_root_t *root, rb_node_t *node, rb_compare_t 
     else if (cmp_res < 0) parent->left = node;
     else parent->right = node;
 
-    RB_ATOMIC_STORE(&node->access_time, RB_ATOMIC_LOAD(&root->clock));
+    /* [OPT] 节点尚未接入树，仅当前线程可见，普通赋值即可 */
+    node->access_time = RB_ATOMIC_LOAD(&root->clock);
+    /* 写锁下调用，rb_stat_inc 内部的原子操作用于防止与读锁并发冲突 */
     rb_stat_inc(root, RB_FLAG_COLD);
 
     rb_node_t **proot = &root->node;
@@ -464,7 +475,8 @@ static inline void rb_insert(rb_root_t *root, rb_node_t *node, rb_compare_t cmp)
     if (!root || !node || !cmp) return;
     RB_WLOCK(root);
     rb_insert_raw(root, node, cmp);
-    RB_ATOMIC_ADD(&root->cnt, 1);
+    /* [OPT] 写锁内独占，普通自增即可 */
+    root->cnt++;
     RB_WUNLOCK(root);
 }
 
@@ -596,13 +608,13 @@ static inline void rb_erase_fixup(rb_node_t **root, rb_node_t *node, rb_node_t *
     if (node) node->color = RB_BLACK;
 }
 
-/* [FIX] 移除不必要的原子操作，写锁内直接读赋值 */
 static inline void rb_erase_update_stats(rb_root_t *root, rb_node_t *node) {
     if (!root || !node) return;
+    /* 写锁内读取，普通访问即可 */
     uint8_t old_flags = node->flags; 
     rb_stat_dec(root, old_flags);
     
-    /* 节点即将被销毁或复用，直接赋值清零 */
+    /* 节点字段清零，无并发风险 */
     node->flags = RB_FLAG_COLD;
     node->access_time = 0;
     node->access_count = 0;
@@ -673,7 +685,6 @@ static inline void rb_erase_raw(rb_root_t *root, rb_node_t *node) {
     rb_erase_update_stats(root, node);
 }
 
-/* 使用 CAS 替代 LOAD+STORE，防止并发场景下覆盖其他线程更新的新 hint */
 static inline void rb_clear_hint_if_match(rb_root_t *root, rb_node_t *node) {
     rb_node_t *hint_node = RB_ATOMIC_LOAD(&root->hint);
     if (hint_node == node) {
@@ -687,7 +698,8 @@ static inline void rb_erase(rb_root_t *root, rb_node_t *node) {
     RB_WLOCK(root);
     rb_clear_hint_if_match(root, node);
     rb_erase_raw(root, node);
-    RB_ATOMIC_SUB(&root->cnt, 1);
+    /* [OPT] 写锁内独占，普通自减即可 */
+    root->cnt--;
     RB_WUNLOCK(root);
 }
 
@@ -769,7 +781,8 @@ static inline size_t rb_erase_range(rb_root_t *root,
 
         rb_clear_hint_if_match(root, cur);
         rb_erase_raw(root, cur);
-        RB_ATOMIC_SUB(&root->cnt, 1);
+        /* [OPT] 写锁内独占，普通自减即可 */
+        root->cnt--;
         if (free_cb) free_cb(cur, arg);
         erased++;
         cur = next;
@@ -792,6 +805,7 @@ static inline void rb_get_stats(rb_root_t *root, rb_stats_t *stats) {
     stats->pinned  = 0;
 
     RB_RDLOCK(root);
+    /* 读锁下并发读取，需使用原子 LOAD */
     stats->total   = RB_ATOMIC_LOAD(&root->cnt);
     stats->cold    = RB_ATOMIC_LOAD(&root->stat_cold);
     stats->warm    = RB_ATOMIC_LOAD(&root->stat_warm);
@@ -868,13 +882,14 @@ static inline void rb_clear(rb_root_t *root, rb_free_cb_t free_cb, void *arg) {
     RB_WLOCK(root);
     rb_postorder_iter(root, free_cb, arg);
 
+    /* [OPT] 写锁内独占，直接普通赋值清零 */
     root->node = NULL;
-    RB_ATOMIC_STORE(&root->hint, NULL);
-    RB_ATOMIC_STORE(&root->cnt, 0);
-    RB_ATOMIC_STORE(&root->stat_cold, 0);
-    RB_ATOMIC_STORE(&root->stat_warm, 0);
-    RB_ATOMIC_STORE(&root->stat_hot, 0);
-    RB_ATOMIC_STORE(&root->stat_pinned, 0);
+    root->hint = NULL;
+    root->cnt = 0;
+    root->stat_cold = 0;
+    root->stat_warm = 0;
+    root->stat_hot = 0;
+    root->stat_pinned = 0;
     RB_WUNLOCK(root);
 }
 
@@ -971,7 +986,6 @@ static inline rb_root_t* rb_get_shard(rb_sharded_root_t *sroot, const void *key)
     return &sroot->shards[sroot->ops.hash_fn(key) & sroot->shard_mask];
 }
 
-/* [FIX] 移除冗余的 if (shard) 判空 */
 static inline void rb_sharded_insert(rb_sharded_root_t *sroot, rb_node_t *node) {
     if (!sroot || !node || !sroot->ops.key_of) return;
     const void *key = sroot->ops.key_of(node);
@@ -994,9 +1008,8 @@ static inline void rb_sharded_erase(rb_sharded_root_t *sroot, rb_node_t *node) {
 }
 
 /* 
- * [FIX] 哈希分片不支持按范围定位单分片，必须遍历全部分片。
+ * 哈希分片不支持按范围定位单分片，必须遍历全部分片。
  * 警告：在大规模分片树中执行此操作会带来显著性能开销。
- * 若业务需高频范围操作，请改用按 key 范围分片的有序分片方案。
  */
 static inline size_t rb_sharded_erase_range(rb_sharded_root_t *sroot,
                                             const rb_node_t *lo_key,
@@ -1012,8 +1025,49 @@ static inline size_t rb_sharded_erase_range(rb_sharded_root_t *sroot,
     return total_erased;
 }
 
+/* 分片全局统计聚合接口 */
+static inline void rb_sharded_get_stats(rb_sharded_root_t *sroot, rb_stats_t *stats) {
+    if (!sroot || !stats) return;
+    rb_stats_t tmp;
+    stats->total = 0;
+    stats->cold = 0;
+    stats->warm = 0;
+    stats->hot = 0;
+    stats->pinned = 0;
+
+    for (uint32_t i = 0; i < sroot->shard_num; i++) {
+        rb_get_stats(&sroot->shards[i], &tmp);
+        stats->total  += tmp.total;
+        stats->cold   += tmp.cold;
+        stats->warm   += tmp.warm;
+        stats->hot    += tmp.hot;
+        stats->pinned += tmp.pinned;
+    }
+}
+
+/* 
+ * 分片范围快照接口，遍历全部分片收集节点
+ * 注意：返回的节点数组仅保证单个分片内有序，全局不保证有序。
+ * 若需全局有序结果，需调用方自行对 out_nodes 排序。
+ */
+static inline size_t rb_sharded_snapshot_range(rb_sharded_root_t *sroot,
+                                               const rb_node_t *lo_key,
+                                               const rb_node_t *hi_key,
+                                               rb_node_t **out_nodes,
+                                               size_t max_nodes) {
+    if (!sroot || !sroot->ops.cmp || !out_nodes || max_nodes == 0) return 0;
+    size_t count = 0;
+    for (uint32_t i = 0; i < sroot->shard_num && count < max_nodes; i++) {
+        count += rb_snapshot_range(&sroot->shards[i], lo_key, hi_key,
+                                   sroot->ops.cmp, out_nodes + count, max_nodes - count);
+    }
+    return count;
+}
+
 /* ============================================================
  *  校验接口
+ *  约束：会递归遍历整棵树，调用期间必须持有读锁或写锁，
+ *        否则并发修改会导致遍历崩溃。
  * ============================================================ */
 #ifndef RB_DISABLE_VALIDATE
 static inline int rb_validate_full_helper(const rb_node_t *n,
