@@ -125,10 +125,7 @@ namespace VMM{
             PMM::Free(PHYSICAL((void*)region));
         }
 
-        /* ==========================================================
-        *  FindRegion — O(log n) 红黑树查找
-        *  原版 O(n) 线性扫描 → 优化为 O(log n) 树搜索
-        * ========================================================== */
+        //FindRegion — O(log n) 红黑树查找
         vma_region_t *FindRegion(pagemap_t *pagemap, uint64_t addr) {
             uint64_t page_addr = ALIGN_DOWN(addr, PAGE_SIZE);
 

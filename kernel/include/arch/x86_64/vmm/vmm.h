@@ -72,8 +72,8 @@ typedef struct vma_region_t {
     uint64_t flags;
     struct vma_region_t *next;
     struct vma_region_t *prev;
-    rb_root_t  *rb_root;      /* 新增：反向指针，指向所属红黑树根（哨兵为 NULL）*/
-    rb_node_t   rb_node;      /* 新增：嵌入红黑树节点 */
+    rb_root_t  *rb_root;      //反向指针，指向所属红黑树根（哨兵为 NULL）
+    rb_node_t   rb_node;      //嵌入红黑树节点
 } vma_region_t;
 
 typedef struct vm_mapping_t {
@@ -84,16 +84,13 @@ typedef struct vm_mapping_t {
     struct vm_mapping_t *prev;
 } vm_mapping_t;
 
-/* ============================================================
- *  页表映射结构体（新增 vma_tree 红黑树根）
- * ============================================================ */
 typedef struct {
     volatile uint64_t *toplvl;
     vm_mapping_t *vm_mappings;
     int32_t vma_lock;
     vma_region_t *vma_head;
     vma_region_t *vma_cursor;
-    rb_root_t vma_tree;       /* 新增：红黑树根，用于 O(log n) 查找 */
+    rb_root_t vma_tree;       //红黑树根，用于 O(log n) 查找
 } pagemap_t;
 
 extern volatile pagemap_t *kernel_pagemap;
