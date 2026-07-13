@@ -307,129 +307,20 @@ namespace VMM {
         pagemap->vma_lock = 0;
         pagemap->vma_head = nullptr;
         pagemap->vma_cursor = nullptr;
-        __memcpy(&pagemap->toplvl[256], &kernel_pagemap->toplvl[256], (512 - 256) * sizeof(uint64_t));
+
+        /* 新增：初始化红黑树 */
+        rb_root_init(&pagemap->vma_tree,
+                    nullptr, nullptr,
+                    nullptr, nullptr,
+                    nullptr);
+
+        __memcpy(&pagemap->toplvl[256],
+                &kernel_pagemap->toplvl[256],
+                (512 - 256) * sizeof(uint64_t));
         return pagemap;
     }
 
-    // ==========================================================
-    // VMA 命名空间优化实现
-    // ==========================================================
-    namespace VMA {
-        void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count){
-            vma_region_t *sentinel = HIGHER_HALF((vma_region_t*)PMM::Request());
-            sentinel->start = start;
-            sentinel->page_count = 0;
-            sentinel->flags = 0;
-            sentinel->next = sentinel;
-            sentinel->prev = sentinel;
-            pagemap->vma_head = sentinel;
-            pagemap->vma_cursor = sentinel;
-        }
-
-        vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags){
-            vma_region_t *region = HIGHER_HALF((vma_region_t*)PMM::Request());
-            region->start = start;
-            region->page_count = page_count;
-            region->flags = flags;
-            region->prev = after;
-            region->next = after->next;
-            after->next->prev = region;
-            after->next = region;
-            return region;
-        }
-
-        vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags){
-            return InsertRegion(pagemap->vma_head->prev, start, page_count, flags);
-        }
-
-        void RemoveRegion(vma_region_t *region) {
-            region->next->prev = region->prev;
-            region->prev->next = region->next;
-            PMM::Free(PHYSICAL((void*)region));
-        }
-
-        vma_region_t *FindRegion(pagemap_t *pagemap, uint64_t addr) {
-            uint64_t page_addr = ALIGN_DOWN(addr, PAGE_SIZE);
-            vma_region_t *cur = pagemap->vma_head->next;
-            while (cur != pagemap->vma_head) {
-                uint64_t end = cur->start + cur->page_count * PAGE_SIZE;
-                if (page_addr < end) {
-                    return (page_addr >= cur->start) ? cur : nullptr;
-                }
-                cur = cur->next;
-            }
-            return nullptr;
-        }
-
-        uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags, uint64_t hint) {
-            const uint64_t need = page_count * PAGE_SIZE;
-            const uint64_t lo = pagemap->vma_head->start;
-            const uint64_t hi = is_user_address(0) ? 0xFFFF800000000000ULL : USER_SPACE_END_5LVL;
-
-            // 1. hint 优先
-            if (hint >= lo && hint + need <= hi) {
-                vma_region_t *prev = pagemap->vma_head;
-                for (vma_region_t *c = prev->next; c != pagemap->vma_head && c->start <= hint; prev = c, c = c->next);
-                
-                uint64_t prev_end = prev->start + prev->page_count * PAGE_SIZE;
-                uint64_t cur_start = (prev->next != pagemap->vma_head) ? prev->next->start : hi;
-                if (hint >= prev_end && hint + need <= cur_start) {
-                    vma_region_t *r = InsertRegion(prev, hint, page_count, flags);
-                    pagemap->vma_cursor = r;
-                    return hint;
-                }
-            }
-
-            // 2. 从游标开始 best-fit 环形扫描
-            vma_region_t *best_prev = nullptr;
-            uint64_t best_addr = 0;
-            uint64_t best_gap = UINT64_MAX;
-
-            vma_region_t *start_node = pagemap->vma_cursor ? pagemap->vma_cursor : pagemap->vma_head;
-            vma_region_t *prev = start_node;
-            vma_region_t *cur = start_node->next;
-            bool wrapped = false;
-
-            while (true) {
-                if (cur == pagemap->vma_head) {
-                    if (wrapped) break;
-                    cur = pagemap->vma_head->next;
-                    if (cur == pagemap->vma_head) break;
-                    wrapped = true;
-                }
-
-                uint64_t prev_end = prev->start + prev->page_count * PAGE_SIZE;
-                uint64_t cur_start = cur->start;
-                uint64_t gap = cur_start - prev_end;
-
-                if (gap >= need && gap < best_gap) {
-                    best_prev = prev;
-                    best_addr = prev_end;
-                    best_gap = gap;
-                }
-
-                prev = cur;
-                cur = cur->next;
-                if (prev == start_node && wrapped) break;
-            }
-
-            // 3. 检查最高 region 到上界的间隙
-            if (best_gap == UINT64_MAX) {
-                uint64_t prev_end = prev->start + prev->page_count * PAGE_SIZE;
-                uint64_t gap = hi - prev_end;
-                if (gap >= need) {
-                    best_prev = prev;
-                    best_addr = prev_end;
-                    best_gap = gap;
-                }
-            }
-
-            if (!best_prev) return 0;
-            vma_region_t *r = InsertRegion(best_prev, best_addr, page_count, flags);
-            pagemap->vma_cursor = r;
-            return best_addr;
-        }
-    } // namespace VMA
+    
     
     vm_mapping_t *NewMapping(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags){
         vm_mapping_t *mapping = HIGHER_HALF((vm_mapping_t*)PMM::Request());
