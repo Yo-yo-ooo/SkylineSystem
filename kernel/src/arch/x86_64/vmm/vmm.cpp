@@ -161,8 +161,8 @@ namespace VMM {
         VMM::SwitchPageMap(kernel_pagemap);
     }
 
-    // --- 4KB 映射 ---
     void Map4K(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags){
+
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
 #if CONFIG_VMM_5LVL_MAP == 1
         if(IsPM5LVL){
@@ -183,11 +183,15 @@ namespace VMM {
         if (!PAGE_EXISTS(pt)) pt = VMM::Useless::NewLevel(pd, PDE(vaddr));
         pt = HIGHER_HALF(PTE_MASK(pt));
 
+        
         pt[PTE(vaddr)] = (paddr & 0x000FFFFFFFFFF000ULL) | (flags & 0x8000000000001FFFULL);
+
     }
 
     // --- 2MB 巨页映射 ---
     void Map2M(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags){
+
+
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
 #if CONFIG_VMM_5LVL_MAP == 1
         if(IsPM5LVL){
@@ -204,11 +208,14 @@ namespace VMM {
         if (!PAGE_EXISTS(pd)) pd = VMM::Useless::NewLevel(pdpt, PDPTE(vaddr));
         pd = HIGHER_HALF(PTE_MASK(pd));
 
-        pd[PDE(vaddr)] = (paddr & 0x000FFFFFFFE00000ULL) | (flags & 0x8000000000000FFFULL) | VMM_PS_BIT;
+        pd[PDE(vaddr)] = (paddr & 0x000FFFFFFFE00000ULL) | (flags & 0x8000000000001FFFULL) | VMM_PS_BIT;
+
     }
 
     // --- 1GB 巨页映射 ---
     void Map1G(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags){
+        
+
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
 #if CONFIG_VMM_5LVL_MAP == 1
         if(IsPM5LVL){
@@ -221,7 +228,9 @@ namespace VMM {
         if (!PAGE_EXISTS(pdpt)) pdpt = VMM::Useless::NewLevel(pml4, PML4E(vaddr));
         pdpt = HIGHER_HALF(PTE_MASK(pdpt));
 
-        pdpt[PDPTE(vaddr)] = (paddr & 0x000FFFFFC0000000ULL) | (flags & 0x8000000000000FFFULL) | VMM_PS_BIT;
+        pdpt[PDPTE(vaddr)] = (paddr & 0x000FFFFFC0000000ULL) | (flags & 0x8000000000001FFFULL) | VMM_PS_BIT;
+
+        
     }
 
     void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags){
