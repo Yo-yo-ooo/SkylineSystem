@@ -173,7 +173,7 @@ bool ps2_mouse_init(void) {
     mouse_write(MOUSE_CMD_ENABLE_REPORT);
     mouse_read(); // ACK
 
-    // 10. 重新启用第一端口 (如果你使用键盘的话)
+    // 10. 重新启用第一端口 (如果使用键盘的话)
     wait_write();
     io_out8(PS2_CMD_PORT, PS2_CMD_ENABLE_PORT1);
     io_wait();
