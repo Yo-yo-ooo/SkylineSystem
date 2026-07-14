@@ -54,6 +54,13 @@ typedef struct sched_stats_t {
 
 typedef void (*interrupt_handler_t)(context_t*);
 
+// Per-CPU 级别的空闲链表缓存 (消除 kmalloc 的全局锁竞争)
+// 我们为每个 CPU 核心维护 8 个档位的空闲对象链表
+typedef struct {
+    void* freelist[8]; // 指向空闲对象链表
+    uint32_t count[8]; // 当前缓存的数量
+} cpu_slab_t;
+
 typedef struct cpu_t {
     struct cpu_t* self;          // 偏移 0：指向自身，this_cpu() 快速获取
     uint64_t kernel_stack;       // 偏移 8：当前 CPU 内核栈顶（syscall 入口切栈用）
@@ -118,6 +125,7 @@ typedef struct cpu_t {
     // 调度性能统计结构体
     sched_stats_t sched_stats;
     thread_t *idle_thread;
+    cpu_slab_t cslab;
 } cpu_t;
 
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);

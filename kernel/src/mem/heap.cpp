@@ -10,26 +10,41 @@
 
 volatile spinlock_t heap_lock = 0;
 
-
 #define SLAB_PAGES 4
 #define SLAB_SIZE (SLAB_PAGES * PAGE_SIZE)
 
-#define SLAB_IDX(cache, i) (slab_obj_t*)(cache->slabs + (i * (sizeof(slab_obj_t) + cache->obj_size)))
+#define SLAB_IDX(cache, i) (slab_obj_t*)((uint64_t)cache->slabs + (i * (sizeof(slab_obj_t) + cache->obj_size)))
 #define OBJS_IN_SLAB(cache) (SLAB_SIZE / (cache->obj_size + sizeof(slab_obj_t)))
+#define SLAB_BATCH 16
 
-// Only 8 because once we hit 4096, the VMA is going to take over.
 slab_cache_t *caches[8] = { 0 };
 
-static slab_cache_t *slab_create_cache(uint64_t obj_size) {
+
+//cpu_slab_t* cpu_slabs = nullptr; 
+
+static slab_cache_t *slab_create_cache(uint64_t obj_size, uint32_t size_class) {
 #ifdef __x86_64__
     slab_cache_t *cache = (slab_cache_t*)VMM::Alloc(kernel_pagemap, 1, false);
     cache->obj_size = obj_size;
+    cache->size_class = size_class;
     uint64_t obj_count = SLAB_SIZE / (cache->obj_size + sizeof(slab_obj_t));
     uint64_t total_size = obj_count * (cache->obj_size + sizeof(slab_obj_t));
     cache->slabs = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(total_size, PAGE_SIZE), false);
+    
+    cache->global_free_list = nullptr;
     cache->free_idx = 0;
     cache->used = false;
     cache->empty_cache = NULL;
+    
+    // 预初始化所有对象并挂入 global_free_list
+    for (uint64_t i = 0; i < obj_count; i++) {
+        slab_obj_t *obj = SLAB_IDX(cache, i);
+        obj->cache = cache;
+        obj->magic = 0; // 0 表示在链表中空闲
+        // 隐式链表：把对象的数据区当作 next 指针用
+        *(void**)(obj + 1) = cache->global_free_list;
+        cache->global_free_list = (void*)(obj + 1);
+    }
     return cache;
 #else
     return nullptr;
@@ -45,35 +60,31 @@ namespace SLAB{
         for (int32_t i = 0; i < 8; i++) {
             size = last_size * 2;
             last_size = size;
-            caches[i] = slab_create_cache(size);
+            caches[i] = slab_create_cache(size, i);
         }
+        
+        
 #endif
     }
 
     slab_cache_t *GetCache(size_t size) {
+        if (size <= 16) return caches[0];
+        if (size > 2048) return NULL; // 超过 2KB 直接走大页分配
         uint64_t cache = 64 - __builtin_clzll(size - 1);
         cache = (cache >= 4 ? cache - 4 : 0);
-        if (cache > 7)
-            return NULL;
+        if (cache > 7) return NULL;
         return caches[cache];
     }
 
     int64_t FindFree(slab_cache_t *cache) {
-        if (cache->free_idx < OBJS_IN_SLAB(cache))
-            return cache->free_idx++;
-        for (uint64_t i = 0; i < OBJS_IN_SLAB(cache); i++) {
-            slab_obj_t *obj = SLAB_IDX(cache, i);
-            if (obj->magic != SLAB_MAGIC)
-                return i;
-        }
-        return -1;
+        return -1; 
     }
 
     slab_cache_t *cache_get_empty(slab_cache_t *cache) {
         slab_cache_t *empty = cache;
         while (empty->used) {
             if (!empty->empty_cache) {
-                empty->empty_cache = slab_create_cache(cache->obj_size);
+                empty->empty_cache = slab_create_cache(cache->obj_size, cache->size_class);
                 empty = empty->empty_cache;
                 break;
             }
@@ -82,42 +93,71 @@ namespace SLAB{
         return empty;
     }
 
+    void RefillCpuCache(slab_cache_t* cache, uint32_t cpu_id) {
+        spinlock_lock(&heap_lock);
+        for (int i = 0; i < SLAB_BATCH; i++) {
+            if (!cache->global_free_list) {
+                if (cache->used && !cache->empty_cache) {
+                    cache->empty_cache = slab_create_cache(cache->obj_size, cache->size_class);
+                }
+                if (cache->empty_cache) {
+                    cache = cache->empty_cache;
+                } else {
+                    cache->used = true;
+                    break;
+                }
+            }
+            void* obj = cache->global_free_list;
+            cache->global_free_list = *(void**)obj;
+            
+            cpu_t *cpu = get_cpu(cpu_id);
+            *(void**)obj = cpu->cslab.freelist[cache->size_class];
+            cpu->cslab.freelist[cache->size_class] = obj;
+            cpu->cslab.count[cache->size_class]++;
+        }
+        spinlock_unlock(&heap_lock);
+    }
+
     void *Alloc(size_t size) {
 #ifdef __x86_64__
-        spinlock_lock(&heap_lock);
         slab_cache_t *cache = SLAB::GetCache(size);
         
-        // 1. 处理大块内存分配 (>= 4096)
         if (!cache) {
             uint64_t total_pages = DIV_ROUND_UP(size + sizeof(slab_page_t), PAGE_SIZE);
             slab_page_t *page = (slab_page_t*)VMM::Alloc(kernel_pagemap, total_pages, false);
             page->magic = SLAB_MAGIC;
             page->page_count = total_pages;
-            spinlock_unlock(&heap_lock);
             return (void*)(page + 1);
         }
 
-        // 2. 优化后的 SLAB 分配逻辑
-        slab_cache_t *current = cache;
-        while (current) {
-            // 找当前 slab 里的空闲位
-            int64_t free_obj = SLAB::FindFree(current);
-            if (free_obj != -1) {
-                slab_obj_t *obj = SLAB_IDX(current, free_obj);
-                obj->cache = current; // 存回 cache 指针方便 Free 时查找
-                obj->magic = SLAB_MAGIC;
-                spinlock_unlock(&heap_lock);
-                return (void*)(obj + 1);
-            }
-            
-            // 如果当前 slab 满了，看链表下一个
-            if (!current->empty_cache) {
-                current->empty_cache = slab_create_cache(cache->obj_size);
-            }
-            current = current->empty_cache;
+        uint32_t cpu_id = 0;
+        cpu_t* cpu = this_cpu();
+        if (cpu) cpu_id = cpu->id;
+
+        uint32_t idx = cache->size_class;
+
+        // 快速路径：Per-CPU 无锁分配
+        void* obj = cpu->cslab.freelist[idx];
+        if (obj) {
+            cpu->cslab.freelist[idx] = *(void**)obj;
+            cpu->cslab.count[idx]--;
+            slab_obj_t* header = (slab_obj_t*)((uint64_t)obj - sizeof(slab_obj_t));
+            header->magic = SLAB_MAGIC;
+            return obj;
+        }
+
+        // 慢速路径：从全局链表批量获取
+        RefillCpuCache(cache, cpu_id);
+        
+        obj = cpu->cslab.freelist[idx];
+        if (obj) {
+            cpu->cslab.freelist[idx] = *(void**)obj;
+            cpu->cslab.count[idx]--;
+            slab_obj_t* header = (slab_obj_t*)((uint64_t)obj - sizeof(slab_obj_t));
+            header->magic = SLAB_MAGIC;
+            return obj;
         }
         
-        spinlock_unlock(&heap_lock);
         return nullptr;
 #endif
     }
@@ -126,122 +166,88 @@ namespace SLAB{
 #ifdef __x86_64__
         if (!ptr) return SLAB::Alloc(size);
         if (size == 0){SLAB::Free(ptr);return nullptr;}
+        
         uint64_t current_capacity = SLAB::GetSize(ptr, true);
-
-        // Bucket-level Reuse 
-        // 如果新请求的大小，依然没有超出当前 SLAB Cache 档位的容量，直接返回！
         if (size <= current_capacity) {
-            // 激进的防碎片策略：如果缩容极其夸张（比如从一个 4096 的页缩到 16 字节），
-            // 且当前容量较大，才强制走重新分配释放大内存。否则全部原地复用。
             if (size >= (current_capacity / 4) || current_capacity <= 64) {
-                return ptr; // 零拷贝 (Zero-copy)，零锁争用 (Zero-lock)！
+                return ptr; 
             }
         }
         
-        // 只有在内存确实装不下（或者缩容太夸张）时，才去拿锁、分配、拷贝
         void *new_ptr = SLAB::Alloc(size);
         if (new_ptr) {
-            // 安全拷贝：取 current_capacity 和 size 的最小值，严防越界 (Buffer Overflow)
             uint64_t copy_size = (current_capacity > size) ? size : current_capacity;
-            
-            // 这里的 __memcpy 是整个函数最耗时的部分
             __memcpy(new_ptr, ptr, copy_size); 
-            
             SLAB::Free(ptr);
         }
-        
         return new_ptr;
 #endif
     }
 
     void Free(void *ptr) {
 #ifdef __x86_64__
-        spinlock_lock(&heap_lock);
+        if (!ptr) return;
+
         slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
-        if (page->magic != SLAB_MAGIC) {
-            slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
-            if (obj->magic != SLAB_MAGIC) {
-                kerror("Critical SLAB error: Trying to free invalid ptr.\n");
-                spinlock_unlock(&heap_lock);
-                return;
-            }
-            slab_cache_t *cache = obj->cache;
-            if (cache->used)
-                cache->used = false;
-            obj->magic = 0;
+        if (page->magic == SLAB_MAGIC) {
+            spinlock_lock(&heap_lock);
+            VMM::Free(kernel_pagemap, page);
             spinlock_unlock(&heap_lock);
             return;
         }
-        VMM::Free(kernel_pagemap, page);
-        spinlock_unlock(&heap_lock);
+
+        slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
+        if (obj->magic != SLAB_MAGIC) {
+            kerror("Critical SLAB error: Trying to free invalid ptr.\n");
+            return;
+        }
+        
+        slab_cache_t *cache = obj->cache;
+        uint32_t idx = cache->size_class;
+
+        uint32_t cpu_id = 0;
+        cpu_t* cpu = this_cpu();
+        if (cpu) cpu_id = cpu->id;
+
+        obj->magic = 0; // 标记为空闲
+        
+        // 直接挂入当前 CPU 的 Per-CPU 链表 (无锁释放)
+        *(void**)ptr = cpu->cslab.freelist[idx];
+        cpu->cslab.freelist[idx] = ptr;
+        cpu->cslab.count[idx]++;
+
+        // 缓存积压过多，批量归还给全局链表
+        if (cpu->cslab.count[idx] > SLAB_BATCH * 2) {
+            spinlock_lock(&heap_lock);
+            for (int i = 0; i < SLAB_BATCH; i++) {
+                void* free_obj = cpu->cslab.freelist[idx];
+                if (!free_obj) break;
+                cpu->cslab.freelist[idx] = *(void**)free_obj;
+                cpu->cslab.count[idx]--;
+                
+                *(void**)free_obj = cache->global_free_list;
+                cache->global_free_list = free_obj;
+            }
+            spinlock_unlock(&heap_lock);
+        }
 #endif
     }
 
     void *UserAlloc(size_t size) {
-#ifdef __x86_64__
-        spinlock_lock(&heap_lock);
-        slab_cache_t *cache = SLAB::GetCache(size);
-        if (!cache) {
-            uint64_t total_pages = DIV_ROUND_UP(size + sizeof(slab_page_t), PAGE_SIZE);
-            slab_page_t *page = VMM::Alloc(kernel_pagemap, total_pages, true);
-            page->magic = SLAB_MAGIC;
-            page->page_count = total_pages;
-            spinlock_unlock(&heap_lock);
-            return (void*)(page + 1);
-        }
-        bool found = false;
-        int64_t free_obj;
-        slab_obj_t *obj = NULL;
-        while (!found) {
-            if (cache->used) {
-                cache = cache_get_empty(cache);
-            }
-            free_obj = SLAB::FindFree(cache);
-            if (free_obj == -1)
-                cache->used = true;
-            else {
-                obj = SLAB_IDX(cache, free_obj);
-                found = true;
-            }
-        }
-        obj->cache = cache;
-        obj->magic = SLAB_MAGIC;
-        spinlock_unlock(&heap_lock);
-        return (void*)(obj + 1);
-#endif
+        return SLAB::Alloc(size); 
     }
 
-    uint64_t GetSize(void* ptr, bool ERO = false) {
+    uint64_t GetSize(void* ptr, bool ERO) {
 #ifdef __x86_64__
-        /* Intercept null pointer and lowest address
-        Not only intercept nullptr, 
-        but also prevent wild pointer read causeing unnecessary page faults in kernel.*/
         if (!ptr || (uint64_t)ptr < 0x1000) return 0;
-
-        //Try analysing for big page allocation (Page-aligned Allocation)
         slab_page_t *page = (slab_page_t*)((uint64_t)ptr - sizeof(slab_page_t));
-        
-        // 【无锁读取】：x86_64 保证对按自然边界对齐的 64 位整数的读取是原子的
-        // [No lock read] x86_64 guarantee atomic read for 64-bit 
-        // integer aligned to natural boundary
         if (page->magic == SLAB_MAGIC) {
             return page->page_count * PAGE_SIZE - sizeof(slab_page_t);
         } 
-
-        // 尝试解析为 SLAB 缓存小对象 (Cache Object Allocation)
-        // Try analysing SLAB as small Cache Object
         slab_obj_t *obj = (slab_obj_t*)((uint64_t)ptr - sizeof(slab_obj_t));
         if (obj->magic == SLAB_MAGIC) {
-            // 安全校验：确保 cache 指针没有损坏
-            // Safe check: Ensure cache pointer is not corrupted
-            if (obj->cache) {
-                return obj->cache->obj_size;
-            }
+            if (obj->cache) return obj->cache->obj_size;
         }
-
-        // 异常处理：走到这里说明指针既不是大页也不是 SLAB 对象
-        // Exception handling: Reaching here means the pointer is 
-        // neither a big page nor a SLAB object
         if (!ERO) kerror("Invalid SLAB ptr\n");
         return (ERO ? 1 : UINT64_MAX);
 #else
@@ -250,34 +256,20 @@ namespace SLAB{
     }
 }
 
-extern "C" void* kmalloc(uint64_t size) {
-    return SLAB::Alloc(size);
-}
+extern "C" void* kmalloc(uint64_t size) { return SLAB::Alloc(size); }
+extern "C" void kfree(void *ptr) { SLAB::Free(ptr); }
+extern "C" void* krealloc(void *ptr, uint64_t size) { return SLAB::Realloc(ptr,size); }
 
-extern "C" void kfree(void* ptr) {
-    SLAB::Free(ptr);
-}
-
-extern "C" void* krealloc(void* ptr, uint64_t size) {
-    return SLAB::Realloc(ptr,size);
-}
-
-uint64_t GetPtrPointAreaSize(void *ptr){
-    return SLAB::GetSize(ptr);
-}
-
+uint64_t GetPtrPointAreaSize(void *ptr){ return SLAB::GetSize(ptr); }
 
 #define align4(x) (((((x)-1)>>2)<<2)+4)
-extern "C" void *kcalloc(size_t numitems, size_t size)
-{
+extern "C" void *kcalloc(size_t numitems, size_t size) {
     size_t *knew;
     size_t s, i;
     knew = kmalloc(numitems * size);
-    if(knew)
-    {
+    if(knew) {
         s = align4(numitems * size) >> 2;
         _memset(knew,0,s);
     }
     return knew;
 }
-

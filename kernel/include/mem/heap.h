@@ -13,23 +13,24 @@
 typedef struct slab_cache_t {
     void *slabs;
     uint64_t obj_size;
-    uint64_t free_idx;
+    void* global_free_list; // 全局空闲链表头，用于 Per-CPU 批量取对象
+    uint32_t size_class;    // 记录当前 Cache 属于哪个档位 (0-7)，方便释放时快速定位
+    uint64_t free_idx;      // 兼容字段
     bool used;
     struct slab_cache_t *empty_cache;
 } slab_cache_t;
 
+
 PACK(typedef struct slab_obj_t{
-    bool used;
-    slab_cache_t *cache;
-    uint32_t magic;
+    slab_cache_t *cache;    // 8 bytes
+    uint32_t magic;         // 4 bytes
+    uint32_t _padding;      // 4 bytes
 }) slab_obj_t;
 
 PACK(typedef struct slab_page_t{
     uint32_t magic;
     uint64_t page_count;
 }) slab_page_t;
-
-
 
 namespace SLAB{
     void Init();
@@ -42,6 +43,7 @@ namespace SLAB{
 
     slab_cache_t *GetCache(size_t size);
     slab_cache_t *cache_get_empty(slab_cache_t *cache);
+    // FindFree 在新架构下不再需要 O(N) 扫描，保留声明以兼容
     int64_t FindFree(slab_cache_t *cache);
 }
 
