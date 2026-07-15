@@ -91,22 +91,19 @@ typedef struct procl{
     proc_t *proc;
 } procl_t;
 
-// 资源节点包装器：将资源ID和等待队列挂载到红黑树节点上
+// 资源节点包装器
 typedef struct KernelResource {
-    rb_node_t node;          // 必须在第一位，用于 container_of 宏
-    int64_t res_id;          // 资源ID
+    rb_node_t node;          
+    int64_t res_id;          
     volatile thread_t *owner;
-    thread_t *wait_head;     // 等待该资源的线程队列头
+    thread_t *wait_head;     
 } KernelResource_t;
 
-// 使用分片红黑树代替原来的数组哈希表
 extern rb_sharded_root_t res_tree;
 
 namespace Schedule{
     extern uint64_t procl_count;
     extern procl_t *sched_proclist;
-    
-    
 
     namespace Internal{
         void Switch(context_t *ctx);
@@ -152,9 +149,6 @@ namespace Schedule{
     void FreeThreadResources(thread_t *thread);
     void PROC_KILL(proc_t *proc);
 
-    // ==========================================
-    // 用户态无并发支持接口
-    // ==========================================
     bool AcquireResource(int64_t res_id);
     void ReleaseResource(int64_t res_id);
     void InitResourceTable();
