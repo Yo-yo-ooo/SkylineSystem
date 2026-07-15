@@ -36,6 +36,7 @@
 #include <fs/lwext4/ext4.h>
 #include <drivers/dev/dev.h>
 #include <klib/algorithm/hmap.h>
+#include <klib/algorithm/rbtree.h>
 
 enum FSType : uint32_t{
     FS_UNKOWN = 0,
@@ -43,75 +44,43 @@ enum FSType : uint32_t{
     FS_FATFS = 2,
 };
 
-
-
 extern "C" char* GetMountPointName(const char* path);
 
-
-typedef struct fsops{
-    int32_t (*write)(void* filedesc, const void *buf, size_t count,size_t* wcnt);
-    int32_t (*read)(void* filedesc, void *buf, size_t count,size_t* rcnt);
+typedef struct fsops {
+    int32_t (*write)(void* filedesc, const void *buf, size_t count, size_t* wcnt);
+    int32_t (*read)(void* filedesc, void *buf, size_t count, size_t* rcnt);
     int32_t (*lseek)(void* filedesc, uint64_t offset, uint32_t whence);
     int32_t (*close)(void* filedesc);
     int32_t (*open)(void* filedesc, const char* path, int32_t flags);
     uint64_t (*fsize)(void *filedesc);
 
     uint64_t SIZEOF_FILE_DESC;
-}FS_PDESC; //File System public mamage desc
+} FS_PDESC;
 
-
-struct alignas(16) __hmap_s_mp{
+struct alignas(16) __hmap_s_mp {
     char *MPName;
     void* MP;
     FSType FST;
     FS_PDESC *FSOPS;
 };
 
-typedef struct file_cache file_cache_t;
-
 typedef struct fd_t {
-    void           *filedesc;
-    FS_PDESC        *FSOPS;
-    void           *MP;
-    file_cache_t   *cache;         // 指向全局共享的文件缓存
-    uint64_t        window_base;   // 本进程的缓存窗口虚拟地址基址
-    uint64_t        window_pages;  // 本进程的窗口页数
+    rb_node_t node;         // 必须在第一位，用于 container_of 宏
+    int32_t   fd;           // FD 编号，作为红黑树的 Key
+    void     *filedesc;
+    FS_PDESC *FSOPS;
+    void     *MP;
 } fd_t;
 
-
-extern "C" int32_t __hmap_s_mp_compare(const void* a,const void* b,void *udata);
+extern "C" int32_t __hmap_s_mp_compare(const void* a, const void* b, void *udata);
 extern "C" uint64_t __hmap_s_mp_hash(const void* item, uint64_t seed0, uint64_t seed1);
 extern "C" struct hashmap* HMapS_MP;
 __hmap_s_mp *GetMount(const char *path);
 
-#define FDS_PER_NODE 256
-
-// FD 链表节点 (移除 base_fd)
-typedef struct FDNode {
-    // 256 bits = 4 * 64 bits. 
-    // 位图：0 表示空闲，1 表示已分配
-    uint64_t bitmap[4];       
-    
-    // 实际存储的 FileDesc 数组 (256个)
-    fd_t fds[FDS_PER_NODE];   
-    
-    // 当前节点已分配的 FD 数量，用于快速跳过满载节点
-    uint32_t alloc_count;     
-    
-    // 链表指针
-    struct FDNode* next;      
-} fd_node_t;
-
-// FD 管理器 (增加了 max_fd)
+// FD 管理器：使用分片红黑树替代位图链表
 typedef struct FDManager {
-    fd_node_t* head;
-    
-    // 系统或进程当前分配出的最大 FD 编号
-    // 默认为 -1 (表示还没分配任何 FD)
-    int32_t max_fd;           
-    fd_node_t* tail;
-    
-    spinlock_t lock;
+    rb_sharded_root_t fd_tree;
+    int32_t next_fd_hint;   // 下一次分配 FD 的起始探测点
 } fd_manager_t;
 
 #define PATH_MAX 512
@@ -125,6 +94,5 @@ extern "C" {
 }
 
 void InitFFMAN();
-
 
 #endif
