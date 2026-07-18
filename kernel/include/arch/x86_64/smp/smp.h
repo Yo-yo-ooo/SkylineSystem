@@ -139,7 +139,7 @@ extern bool smp_started;
 void smp_init();
 extern "C" cpu_t *this_cpu();
 cpu_t *get_cpu(uint32_t id);
-void InitBSPCPUThread();
+void InitCPUThread();
 
 static inline uint32_t cpu_simd_mask(const cpu_t *cpu) {
     uint32_t m = 0;

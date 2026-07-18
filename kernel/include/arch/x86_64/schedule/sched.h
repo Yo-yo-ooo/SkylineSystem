@@ -66,14 +66,7 @@ typedef struct thread_t {
 
     uint64_t custom_quantum; 
 
-    // ==========================================
-    // RA-MLFQ 资源感知专用字段
-    // ==========================================
-    int64_t held_resource_id;      
-    int64_t requested_resource_id; 
-    int32_t original_priority;     
-    struct thread_t *res_wait_next; 
-    struct thread_t *res_wait_prev; 
+    uint32_t timer_cpu;
 } thread_t;
 
 typedef struct proc_t {

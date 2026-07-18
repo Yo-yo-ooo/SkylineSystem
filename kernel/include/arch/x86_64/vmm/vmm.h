@@ -88,6 +88,7 @@ typedef struct {
     volatile uint64_t *toplvl;
     vm_mapping_t *vm_mappings;
     int32_t vma_lock;
+    int32_t pt_lock;
     vma_region_t *vma_head;
     vma_region_t *vma_cursor;
     rb_root_t vma_tree;       //红黑树根，用于 O(log n) 查找

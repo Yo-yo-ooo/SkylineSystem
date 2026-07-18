@@ -25,7 +25,7 @@
 
 %define CPU_ININTR_OFF 2692
 
-; 保存所有通用寄存器（顺序和原有一致，保证 context_t 结构体兼容）
+; 保存所有通用寄存器
 %macro pushaq 0
     push rax
     push rcx
@@ -67,11 +67,12 @@
     pushaq
 
     ; 1. 特权级判断与 swapgs
-    mov rax, [rsp + 144]
+    mov rax, [rsp + 144]    ; 144 = 15*8(pushaq) + 8(err/no) + 8(int_no) + 8(RIP) = 136? 
+                            ; 修正计算: 120(pushaq) + 16(stub压栈) = 136 为 RIP, 144 为 CS. 逻辑正确。
     test al, 3
-    jz .kernel_mode_entry
+    jz %%kernel_mode_entry  ; 【修复】使用 %% 避免宏展开标号重定义
     swapgs
-.kernel_mode_entry:
+%%kernel_mode_entry:
 
     ; 2. 使用 inc 代替 mov，支持中断/异常的嵌套重入
     inc byte gs:[CPU_ININTR_OFF]
@@ -79,9 +80,9 @@
     ; 3. 准备传递给 C 语言的参数 (rdi = rsp)
     mov rdi, rsp
     
-    ; 4. 解决对齐问题：保存真实的 rsp 到 rbx 
-    ;    (rbx 是 callee-saved 寄存器，C 函数保证不会破坏它)
-    mov rbx, rsp
+    ; 4. 解决对齐问题：保存真实的 rsp 到 r12 
+    ;  使用 r12 代替 rbx。因为 rbx 已经被 pushaq 压栈，用 r12 更清晰且 r12 也是 callee-saved。
+    mov r12, rsp
     
     ; 5. 强制 16 字节对齐
     and rsp, ~15
@@ -93,7 +94,7 @@
     call idt_exception_handler
 
     ; 7. 恢复真实的未对齐栈指针
-    mov rsp, rbx
+    mov rsp, r12            ; 【修复】恢复 r12 保存的栈指针
 
     ; 8. 嵌套退出：使用 dec 恢复状态
     dec byte gs:[CPU_ININTR_OFF]
@@ -101,21 +102,22 @@
     ; 9. 恢复 GS
     mov rax, [rsp + 144]
     test al, 3
-    jz .kernel_mode_exit
+    jz %%kernel_mode_exit   ; 【修复】使用 %%
     swapgs
-.kernel_mode_exit:
+%%kernel_mode_exit:
 
     popaq
-    add rsp, 16
+    add rsp, 16             ; 跳过 we pushed int_no and error_code/dummy
     iretq
 %endmacro
 
 %macro isr_no_err_stub 1
 int_stub%+%1:
-    push 0
-    push %1
+    push 0                  ; 压入假错误码，统一栈结构
+    push %1                 ; 压入中断号
     isr_common_logic %1
 %endmacro
+
 ; 有错误码中断桩函数
 %macro isr_err_stub 1
 int_stub%+%1:

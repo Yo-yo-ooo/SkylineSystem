@@ -9,6 +9,7 @@
 #include <arch/x86_64/ioapic/ioapic.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <drivers/dev/dev.h>
+#include <arch/x86_64/pit/pit.h>
 #define PS2_DATA_PORT     0x60
 #define PS2_STATUS_PORT   0x64
 #define PS2_CMD_PORT      0x64
@@ -43,8 +44,15 @@ uint64_t PS2_MOUSE_MemoryMap(uint64_t length, uint64_t prot,
     pagemap_t *pm = Schedule::this_proc()->pagemap;
     uint64_t flags = MM_USER | VMM_FLAG_PRESENT | MM_NX;  // 用户只读、不可执行
 
-    spinlock_lock(&pm->vma_lock);
+    // 1. 提前获取物理地址，避免在锁内执行复杂查询
+    uint64_t phys = VMM::GetPhysics(kernel_pagemap, (uint64_t)&PS2MouseEvent);
+    if (!phys) {
+        kerrorln("PS2 mouse mmap: failed to get physical address!");
+        return 0;
+    }
 
+    // 2. 获取 VMA 锁（分配虚拟地址）
+    spinlock_lock(&pm->vma_lock);
     uint64_t vaddr = VMM::Useless::InternalAlloc(pm, 1, flags);
     if (!vaddr) {
         spinlock_unlock(&pm->vma_lock);
@@ -52,18 +60,26 @@ uint64_t PS2_MOUSE_MemoryMap(uint64_t length, uint64_t prot,
         return 0;
     }
 
-    uint64_t phys = VMM::GetPhysics(kernel_pagemap, (uint64_t)&PS2MouseEvent);
+    // 3. 获取页表锁（修改页表，防止与 HandlePF 竞争）
+    spinlock_lock(&pm->pt_lock);
+    
     VMM::Map4K(pm, vaddr, phys, flags);
     VMM::NewMapping(pm, vaddr, 1, flags);
+    
+    spinlock_unlock(&pm->pt_lock);
+    spinlock_unlock(&pm->vma_lock);
+
+    // 4. 刷新 TLB（在锁外执行更安全）
     __asm__ volatile ("invlpg (%0)" : : "r"(vaddr) : "memory");
 
-    uint64_t pte = VMM::Useless::GetPageInfo(pm, vaddr).flags;
+    // 5. 将打印移到锁外！防止因打印内部锁导致死锁
+    uint64_t pte_flags = 0;
+    pte_flags = VMM::Useless::GetPageInfo(pm, vaddr).flags;
     kinfoln("[PS2 mouse] mmap VADDR=0x%llx -> phys=0x%llx PTE.flags=0x%llx",
             (unsigned long long)vaddr,
             (unsigned long long)phys,
-            (unsigned long long)pte);
+            (unsigned long long)pte_flags);
 
-    spinlock_unlock(&pm->vma_lock);
     return vaddr;
 }
 
@@ -129,13 +145,9 @@ bool ps2_mouse_init(void) {
     wait_read();
     config = io_in8(PS2_DATA_PORT);
 
-    // 5. 修改配置：
-    // - 清除位 0 (禁用第一端口中断)
-    // - 设置位 1 (启用第二端口中断, IRQ12)
-    // - 清除位 4 (禁用第一端口时钟)
-    // - 设置位 5 (启用第二端口时钟)
-    config = (config & ~0x01) | 0x02; 
-    config = (config & ~0x10) | 0x20;
+    // 5. 修改配置
+    config |= 0x02;       // 设置位 1: 启用第二端口(鼠标)中断
+    config &= ~0x20;      // 清除位 5: 启用第二端口时钟 (0=Enable, 1=Disable)
 
     wait_write();
     io_out8(PS2_CMD_PORT, PS2_CMD_WRITE_CONFIG);
@@ -186,16 +198,13 @@ bool ps2_mouse_init(void) {
     // 11. 恢复中断
     ENABLE_INTERRUPTS();
 
-    
-    //uint16_t X = PAGE_SIZE - sizeof(ps2_mouse_state_t);
-
-
-    // 初始化状态机
     mouse_cycle = 0;
+
     return true;
 }
 
 void ps2_mouse_handler(registers *regs) {
+    Serial::Writelnf("YYHYHJ");
     uint8_t status = io_in8(PS2_STATUS_PORT);
     if (!(status & 0x01)) {
         return; // 没有数据
@@ -207,6 +216,7 @@ void ps2_mouse_handler(registers *regs) {
 
     uint8_t data = io_in8(PS2_DATA_PORT);
 
+    
     switch (mouse_cycle) {
         case 0:
             // 字节 0: 始终检查位 3 是否为 1 以同步数据包
@@ -221,6 +231,12 @@ void ps2_mouse_handler(registers *regs) {
             mouse_cycle++;
             break;
         case 2:
+            static bool printed_once = false;
+            if (!printed_once) {
+                printed_once = true;
+                // 注意：如果此时锁被占用，仍可能死锁，但概率极低
+                kinfoln("[Mouse] First packet received successfully!"); 
+            }
             // 字节 2: Y 移动增量
             mouse_bytes[2] = data;
             mouse_cycle = 0; // 重置状态机，准备接收下一个包
@@ -234,6 +250,9 @@ void ps2_mouse_handler(registers *regs) {
             PS2MouseEvent.ps2_mouse_state.left = mouse_bytes[0] & 0x01;
             PS2MouseEvent.ps2_mouse_state.right = (mouse_bytes[0] >> 1) & 0x01;
             PS2MouseEvent.ps2_mouse_state.middle = (mouse_bytes[0] >> 2) & 0x01;
+
+            //kinfoln("%d",PS2MouseEvent.ps2_mouse_state.left);
+            //kinfoln("%d",PS2MouseEvent.ps2_mouse_state.right);
 
             // 解析 X 移动 (利用 C 语言的隐式符号扩展)
             int8_t dx_raw = (int8_t)mouse_bytes[1];

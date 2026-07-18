@@ -151,30 +151,52 @@ extern "C" void idt_irq_handler(context_t *ctx) {
 }
 
 extern struct flanterm_context* ft_ctx;
-
 extern "C" void idt_exception_handler(context_t *ctx) {
-    uint64_t cr0,cr2,cr3,cr4;
+    Serial::Writelnf("HIT INTNO:%d",ctx->int_no);
+    // 1. 处理外部中断和调度 IPI (>=32)
     if (ctx->int_no >= 32)
         return idt_irq_handler(ctx);
+
+    // 2. 处理缺页异常 (#PF)
     if (ctx->int_no == 14) {
         LAPIC::StopTimer();
         uint32_t should_halt = VMM::HandlePF(ctx);
         if (!should_halt) {
-            Schedule::Yield();
             return;
         }
     }
-    if(ctx->int_no == 14){
-        __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
-        kerror("Page fault on 0x%p, Should NOT continue.\n", cr2);
+
+    // 3. 拦截用户态引发的致命异常
+    bool from_user = ((ctx->cs & 3) == 3);
+    
+    // 【新增容错】：如果 RIP 跑飞到了极低的地址(如 0x1, 0x3)，
+    // 这通常是因为用户态程序 main() 返回后没有调用 exit，误把 argc 当返回地址弹出。
+    // 无论是用户态还是内核态遇到这种情况，都视为用户程序结束，安全回收资源。
+    if (from_user && ctx->rip < 0x1000) {
+        kerrorln("Program exited abnormally (Missing exit syscall?). PID: %d, RIP: 0x%p",
+                 Schedule::this_proc() ? Schedule::this_proc()->id : -1, ctx->rip);
+        Schedule::Exit(0); // 当作正常退出处理，不会返回
     }
+
+    if (from_user) {
+        uint64_t cr2 = 0;
+        __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
+        kerrorln("User process crashed! PID: %d, Exception: %d at RIP: 0x%p (CR2: 0x%p)",
+                 Schedule::this_proc() ? Schedule::this_proc()->id : -1, 
+                 ctx->int_no, ctx->rip, cr2);
+        
+        Schedule::Exit(-1);
+    }
+
+    // 4. 如果是内核态引发的异常，打印调试信息并死机
+    uint64_t cr0,cr2,cr3,cr4;
     __asm__ volatile ("movq %%cr3, %0" : "=r"(cr3));
     __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
     __asm__ volatile ("movq %%cr0, %0" : "=r"(cr0));
     __asm__ volatile ("movq %%cr4, %0" : "=r"(cr4));
+    
     kerror("Kernel exception caught: %s.\n", isr_errors[ctx->int_no]);
-    kerror("Kernel crash on core %d at 0x%p.\n", smp_started ? this_cpu()->lapic_id : 0,
-        ctx->rip);
+    kerror("Kernel crash on core %d at 0x%p.\n", smp_started ? this_cpu()->lapic_id : 0, ctx->rip);
     kerrorln("REGISTERS DATA(64bits data):");
     kerrorln("RAX: 0x%p  RBX: 0x%p RCX: 0x%p RDX: 0x%p.",ctx->rax,ctx->rbx,ctx->rcx,ctx->rdx);
     kerrorln("RBP: 0x%p  RDI: 0x%p RSI: 0x%p RSP: 0x%p.",ctx->rbp,ctx->rdi,ctx->rsi,ctx->rsp);

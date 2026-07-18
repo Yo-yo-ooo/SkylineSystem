@@ -85,8 +85,8 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     // 使用逻辑 ID 安装 IDT
     idt_install_irq_cpu(cpu->id, 48, (void*)Schedule::Internal::Preempt);
     idt_install_irq_cpu(cpu->id, 49, (void*)Schedule::Internal::Switch);
-    idt_set_ist_cpu(cpu->id, SCHED_VEC, 1);
-    idt_set_ist_cpu(cpu->id, SCHED_VEC + 1, 1);
+    idt_set_ist_cpu(cpu->id, SCHED_VEC, 0);
+    idt_set_ist_cpu(cpu->id, SCHED_VEC + 1, 0);
     
     syscall_init();
     smp_setup_thread_queue(cpu);
@@ -185,8 +185,8 @@ cpu_t *get_cpu(uint32_t id) {
     return smp_cpu_list[id];
 }
 
-void InitBSPCPUThread(){
-    // smp_bsp_cpu 现在是逻辑 ID (0)
+void InitCPUThread(){
+    
     thread_t *init_thread = (thread_t*)kmalloc(sizeof(*init_thread));
     *init_thread = {};
     init_thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((smp_cpu_list[smp_bsp_cpu]->XsaveSize), PAGE_SIZE), true);

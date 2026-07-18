@@ -1,6 +1,6 @@
 OBJDIR := ../object
 BINDIR := ../bin
-PROJ_NAME := DESKTOP
+PROJ_NAME := HW
 
 include ../../gdef.mk
 
@@ -34,10 +34,10 @@ OBJ := $(addprefix $(OBJDIR)/$(PROJ_NAME)/, \
 )
 
 .PHONY: all clean
-all: $(BINDIR)/desktop.elf
+all: $(BINDIR)/hw.elf
 
 
- $(BINDIR)/desktop.elf: $(OBJ) Makefile
+ $(BINDIR)/hw.elf: $(OBJ) Makefile
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(OBJ) -L../../lib/bin -l:lib.a 
 

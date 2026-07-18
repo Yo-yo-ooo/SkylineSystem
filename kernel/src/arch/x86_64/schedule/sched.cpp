@@ -16,12 +16,11 @@ static uint64_t sched_tid = 0;
 static uint64_t sched_pid = 0;
 art_tree *pid2proc_tree = nullptr;
 spinlock_t PID2PROC_TREE_LOCK = 0;
-spinlock_t PROC_LIST_LOCK = 0;      // 全局锁，保护进程树和线程链表
+spinlock_t PROC_LIST_LOCK = 0;      
 
 #define AGING_THRESHOLD_BASE 50
 #define SCHED_STEAL_BATCH 8
 #define MAX_PROMOTE_SNAPSHOT 256
-
 
 extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap, 
                   uint64_t *tls_offset = nullptr, 
@@ -33,7 +32,6 @@ void sched_idle() {
     while (true) {
         Schedule::PAUSE();
         asm volatile("sti; hlt; cli" ::: "memory");
-        // 去除冗余的 Schedule::Resume()，硬件中断唤醒后自然会有调度
     }
 }
 
@@ -44,7 +42,6 @@ static cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr) {
     for (int32_t i = 0; i <= smp_last_cpu; i++) {
         cpu_t *cpu = smp_cpu_list[i];
         if (cpu == nullptr) continue;
-
         if (ref_cpu && cpu_simd_mask(cpu) != ref_mask) continue;
 
         if (!lw_cpu) { lw_cpu = cpu; continue; }
@@ -52,7 +49,6 @@ static cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr) {
         uint32_t lowest_count  = atomic_load_4(&lw_cpu->thread_count, 1);
         if (current_count < lowest_count) lw_cpu = cpu;
     }
-
     return lw_cpu ? lw_cpu : (ref_cpu ? ref_cpu : this_cpu());
 }
 
@@ -72,20 +68,14 @@ namespace Schedule {
             thread->list_next = thread->list_prev = nullptr;
             cpu->thread_count--;
             if (thread->priority > 0) cpu->thread_count_lower--;
-            
-            if (cpu->thread_count == 1) {
-                cpu->has_surplus = false;
-            }
+            if (cpu->thread_count == 1) cpu->has_surplus = false;
         }
 
         void InsertToQueue(cpu_t *cpu, thread_t *thread) {
             thread_queue_t *q = &cpu->thread_queues[thread->priority];
             cpu->thread_count++;
             if (thread->priority > 0) cpu->thread_count_lower++;
-
-            if (cpu->thread_count == 2) {
-                cpu->has_surplus = true;
-            }
+            if (cpu->thread_count == 2) cpu->has_surplus = true;
 
             if (!q->head) {
                 thread->list_next = thread;
@@ -138,11 +128,9 @@ namespace Schedule {
             for (int32_t i = 0; i <= smp_last_cpu; i++) {
                 cpu_t *victim = smp_cpu_list[i];
                 if (!victim || victim == cpu) continue;
-
                 if (cpu_simd_mask(victim) != my_mask) continue;  
                 if (!atomic_load_1(&victim->has_surplus, ATOMIC_RELAXED)) continue;
-
-                if (!__sync_bool_compare_and_swap(&victim->sched_lock, 0, 1)) continue;
+                if (!__sync_bool_compare_and_swap(&victim->sched_lock,0,1)) continue;
 
                 if (atomic_load_4(&victim->thread_count, 1) <= 1) {
                     spinlock_unlock(&victim->sched_lock);
@@ -157,23 +145,30 @@ namespace Schedule {
                     thread_queue_t *vq = &victim->thread_queues[p];
                     if (!vq->head) continue;
                     
-                    while (vq->head != vq->head->list_prev && stolen_count < SCHED_STEAL_BATCH) {
-                        thread_t *stolen = (p >= THREAD_QUEUE_CNT / 2) ? vq->head : vq->head->list_prev;
-                        RemoveFromQueue(victim, stolen);
-                        
-                        if (!stolen_list) {
-                            stolen_list = stolen;
-                            stolen_tail = stolen;
-                            stolen->list_next = stolen;
-                            stolen->list_prev = stolen;
-                        } else {
-                            stolen->list_next = stolen_list;
-                            stolen->list_prev = stolen_tail;
-                            stolen_tail->list_next = stolen;
-                            stolen_list->list_prev = stolen;
-                            stolen_tail = stolen;
+                    thread_t *cursor = vq->head;
+                    uint32_t scanned = 0;
+                    while (scanned < 512 && stolen_count < SCHED_STEAL_BATCH) {
+                        thread_t *next_cursor = cursor->list_next;
+
+                        if (cursor->state == THREAD_RUNNING && cursor->timer_bucket == nullptr) {
+                            RemoveFromQueue(victim, cursor);
+                            if (!stolen_list) {
+                                stolen_list = cursor;
+                                stolen_tail = cursor;
+                                cursor->list_next = cursor;
+                                cursor->list_prev = cursor;
+                            } else {
+                                cursor->list_next = stolen_list;
+                                cursor->list_prev = stolen_tail;
+                                stolen_tail->list_next = cursor;
+                                stolen_list->list_prev = cursor;
+                                stolen_tail = cursor;
+                            }
+                            stolen_count++;
                         }
-                        stolen_count++;
+                        cursor = next_cursor;
+                        scanned++;
+                        if (cursor == vq->head) break;
                     }
                     if (stolen_count >= SCHED_STEAL_BATCH) break;
                 }
@@ -192,7 +187,6 @@ namespace Schedule {
                     } while (curr != stolen_list);
 
                     cpu->sched_stats.thread_steals += stolen_count;
-                    
                     thread_t *to_run = stolen_list;
                     RemoveFromQueue(cpu, to_run);
                     return to_run;
@@ -203,7 +197,6 @@ namespace Schedule {
 
         void TryPush(cpu_t *cpu) {
             if (!atomic_load_1(&cpu->has_surplus, ATOMIC_RELAXED)) return;
-
             uint32_t my_count = cpu->thread_count;
             if (my_count < 4) return;  
 
@@ -224,9 +217,9 @@ namespace Schedule {
             }
             if (!target) return;
 
-            if (!__sync_bool_compare_and_swap(&target->sched_lock, 0, 1)) return;
+            if (!__sync_bool_compare_and_swap(&target->sched_lock,0,1)) return;
 
-            uint32_t tc = atomic_load_4((volatile uint32_t*)&target->thread_count, 1);
+            uint32_t tc = target->thread_count;
             uint32_t mc = cpu->thread_count;
             if (tc + 2 >= mc) {
                 spinlock_unlock(&target->sched_lock);
@@ -242,7 +235,7 @@ namespace Schedule {
 
                 thread_t *curr = q->head;
                 do {
-                    if (curr != cpu->current_thread && curr->state == THREAD_RUNNING) {
+                    if (curr != cpu->current_thread && curr->state == THREAD_RUNNING && curr->timer_bucket == nullptr) {
                         if (push_count < SCHED_STEAL_BATCH)
                             to_push[push_count++] = curr;
                     }
@@ -273,7 +266,6 @@ namespace Schedule {
                 thread_t** to_promote = cpu->promote_buf;
                 uint32_t promote_count = 0;
                 
-                // 修复反向老化：低优先级(i大)应该使用更小的阈值，更快被提升
                 uint32_t threshold = dynamic_base / (i + 1);
                 if (threshold < 10) threshold = 10;
                 
@@ -322,7 +314,6 @@ namespace Schedule {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             if (!cpu || cpu->preempt_count > 0) {
-                // 避免软中断误发 EOI
                 if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
                 return;
             }
@@ -341,11 +332,19 @@ namespace Schedule {
 
             spinlock_lock(&cpu->sched_lock);
 
-            // 如果当前线程是僵尸，直接移除并释放
-            if (curr_thread && curr_thread->state == THREAD_ZOMBIE && curr_thread != cpu->idle_thread) {
+            uint32_t curr_state = 0xFFFFFFFF;
+            if (curr_thread) {
+                curr_state = atomic_load_4((volatile uint32_t*)&curr_thread->state, ATOMIC_ACQUIRE);
+            }
+
+            if (curr_thread && curr_state == THREAD_ZOMBIE && curr_thread != cpu->idle_thread) {
                 RemoveFromQueue(cpu, curr_thread);
-                // 资源释放交由原所属进程的 FinalizeProcExit 统一处理，或在此处安全释放
-            } else if (curr_thread && curr_thread->state == THREAD_RUNNING
+                cpu->current_thread = nullptr; 
+                if (curr_thread->parent == nullptr) {
+                    FreeThreadResources(curr_thread);
+                    kfree(curr_thread);
+                }
+            } else if (curr_thread && curr_state == THREAD_RUNNING
                 && curr_thread != cpu->idle_thread) {
                 curr_thread->preempt_count++;
                 if (curr_thread->preempt_count >= SCHED_PREEMPTION_MAX)
@@ -545,6 +544,12 @@ namespace Schedule {
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
         
+        thread->timer_bucket = nullptr;
+        thread->timer_next = nullptr;
+        thread->timer_prev = nullptr;
+        thread->timer_cpu = cpu_num;
+        thread->timer_wakeup = 0;
+        
         thread->id = atomic_add_fetch_8(&sched_tid,1,ATOMIC_RELAXED);
         thread->cpu_num = cpu_num;
         thread->parent = parent;
@@ -573,13 +578,14 @@ namespace Schedule {
         thread->thread_stack = thread->ctx.rsp;
         thread->state = THREAD_RUNNING;
 
-        // 资源分配完毕，安全挂入进程链表
         Schedule::Internal::ProcessAddThread(parent, thread);
 
         spinlock_lock(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
+
+        
         return thread;
     }
 
@@ -587,6 +593,13 @@ namespace Schedule {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
+
+        thread->timer_bucket = nullptr;
+        thread->timer_next = nullptr;
+        thread->timer_prev = nullptr;
+        thread->timer_cpu = cpu_num;
+        thread->timer_wakeup = 0;
+
         thread->id = atomic_add_fetch_8(&sched_tid,1,ATOMIC_RELAXED);
         thread->cpu_num = cpu_num;
         thread->parent = parent;
@@ -651,7 +664,7 @@ namespace Schedule {
             uint64_t total_tls_size = ALIGN_UP(tls_memsz, tls_align) + 8;
             uint64_t tls_pages = DIV_ROUND_UP(total_tls_size, PAGE_SIZE);
             uint64_t tls_mem = (uint64_t)VMM::Alloc(thread->pagemap, tls_pages, true);
-            if (!tls_mem) { /* cleanup omitted for brevity */ kfree(buffer); kfree(thread); return nullptr; }
+            if (!tls_mem) { kfree(buffer); kfree(thread); return nullptr; }
             uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
             VMM::SwitchPageMap(thread->pagemap);
             __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
@@ -665,13 +678,14 @@ namespace Schedule {
         kfree(buffer);
         thread->state = THREAD_RUNNING;
 
-        // 资源分配完毕，安全挂入进程链表
         Schedule::Internal::ProcessAddThread(parent, thread);
 
         spinlock_lock(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
+
+        
         return thread;
     }
 
@@ -683,13 +697,19 @@ namespace Schedule {
         cpu_t *parent_cpu = get_cpu(parent->cpu_num);
         cpu_t *cpu = get_lw_cpu(parent_cpu);       
 
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
         if (!thread->fx_area) { kfree(thread); return nullptr; }
+
+        spinlock_lock(&parent_cpu->sched_lock);
+        if (parent_cpu->current_thread == parent && parent->fx_area) {
+            parent_cpu->OverLoadableFuncs.StoreSIMDState(
+                parent->fx_area, parent_cpu->XsaveMaskLo, parent_cpu->XsaveMaskHi);
+        }
         __memcpy(thread->fx_area, parent->fx_area, cpu->XsaveSize);
+        spinlock_unlock(&parent_cpu->sched_lock);
 
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
         if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(thread); return nullptr; }
-        // 移除整页拷贝：子线程不需要父线程的历史栈数据，且存在安全隐患。直接置零即可。
         _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
 
         thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
@@ -704,15 +724,23 @@ namespace Schedule {
         thread->tls_base = parent->tls_base;
         thread->tls_pages = parent->tls_pages;
 
+        thread->timer_bucket = nullptr;
+        thread->timer_next = nullptr;
+        thread->timer_prev = nullptr;
+        thread->timer_cpu = cpu->id;
+        thread->timer_wakeup = 0;
+
         Schedule::Internal::ProcessAddThread(proc, thread);
         __memcpy(&thread->ctx, frame, sizeof(context_t));
-        thread->ctx.rsp = parent->thread_stack;
+        
+        thread->ctx.rsp = ((context_t*)frame)->rsp; 
+        
         thread->ctx.cs = 0x23;
         thread->ctx.ss = 0x1b;
         thread->ctx.rflags = ((syscall_frame_t*)frame)->r11;
         thread->ctx.rax = 0;
         thread->ctx.rip = ((syscall_frame_t*)frame)->rcx;
-        thread->thread_stack = parent->thread_stack;
+        thread->thread_stack = thread->ctx.rsp;
         thread->fs = rdmsr(FS_BASE);
         thread->state = THREAD_RUNNING;
 
@@ -720,6 +748,8 @@ namespace Schedule {
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
+
+        
         return thread;
     }
 
@@ -737,10 +767,11 @@ namespace Schedule {
         
         proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
         if (!proc->FDMan) { VMM::DestroyPM(proc->pagemap); kfree(proc); return nullptr; }
+
+        spinlock_lock(&PROC_LIST_LOCK);
         __memcpy(proc->FDMan, parent->FDMan, sizeof(fd_manager_t));
         proc->fd_count = parent->fd_count;
         
-        spinlock_lock(&PROC_LIST_LOCK);
         if (!parent->children) parent->children = proc;
         else {
             proc_t *last = parent->children;
@@ -749,7 +780,6 @@ namespace Schedule {
         }
         spinlock_unlock(&PROC_LIST_LOCK);
         
-        // 修复遗漏：将新进程插入全局 PID 查询树
         spinlock_lock(&PID2PROC_TREE_LOCK);
         art_insert(pid2proc_tree, (const uint8_t*)&proc->id, 8, proc);
         spinlock_unlock(&PID2PROC_TREE_LOCK);
@@ -778,5 +808,4 @@ namespace Schedule {
         cpu_t* cpu = this_cpu();
         if (cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1); 
     }
-
 }

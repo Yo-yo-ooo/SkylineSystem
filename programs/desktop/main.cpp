@@ -126,11 +126,15 @@ int main(){
     int32_t fb_height = fb.Height;
     int32_t fb_psl = fb.PixelsPerScanLine; // 每行像素数
 
-    for(;;){
-        ps2_mouse_state_t *p = (ps2_mouse_state_t*)mouse_addr;
+    ps2_mouse_state_t *p = (ps2_mouse_state_t*)mouse_addr;
 
-        uint32_t seq1, seq2;
-        int32_t mx, my;
+    uint32_t seq1, seq2;
+    int32_t mx, my;
+
+    
+
+    for(;;){
+        
 
         while (true) {
             // 读取开始前的序列号

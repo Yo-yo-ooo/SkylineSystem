@@ -18,6 +18,17 @@ extern spinlock_t PROC_LIST_LOCK;
 namespace Schedule {
     
     void FreeThreadResources(thread_t *thread) {
+        // 1. 先从定时器轮盘中移除（可能在不同CPU上）
+        if (thread->timer_bucket != nullptr) {
+            cpu_t *timer_cpu = smp_cpu_list[thread->timer_cpu];
+            if (timer_cpu) {
+                spinlock_lock(&timer_cpu->sched_lock);
+                Schedule::Internal::TimerRemove(thread); 
+                spinlock_unlock(&timer_cpu->sched_lock);
+            }
+        }
+
+        // 2. 再释放其他资源
         cpu_t *cpu = get_cpu(thread->cpu_num);
         if (thread->fx_area) VMM::Free(kernel_pagemap, thread->fx_area);
         if (thread->kernel_stack) VMM::Free(kernel_pagemap, thread->kernel_stack);
@@ -32,19 +43,27 @@ namespace Schedule {
                     VMM::Free(thread->pagemap, thread->tls_base);
             }
         }
-
-        spinlock_lock(&cpu->sched_lock);
-        Schedule::Internal::TimerRemove(thread); 
-        spinlock_unlock(&cpu->sched_lock);
     }
 
     void DeleteThread(cpu_t *cpu, thread_t *thread) {
         if (!cpu || !thread) return;
 
+        // 1. 从运行队列和定时器轮盘移除
         spinlock_lock(&cpu->sched_lock);
         Schedule::Internal::RemoveFromQueue(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
 
+        // 如果定时器在别的CPU上，需去对应CPU移除
+        if (thread->timer_bucket != nullptr) {
+            cpu_t *timer_cpu = smp_cpu_list[thread->timer_cpu];
+            if (timer_cpu && timer_cpu != cpu) {
+                spinlock_lock(&timer_cpu->sched_lock);
+                Schedule::Internal::TimerRemove(thread);
+                spinlock_unlock(&timer_cpu->sched_lock);
+            }
+        }
+
+        // 2. 从进程线程链表移除
         spinlock_lock(&PROC_LIST_LOCK);
         proc_t *parent = thread->parent;
         if (parent && parent->threads) {
@@ -58,6 +77,7 @@ namespace Schedule {
         }
         spinlock_unlock(&PROC_LIST_LOCK);
 
+        // 3. 释放资源
         FreeThreadResources(thread);
         kfree(thread);
     }
@@ -65,22 +85,33 @@ namespace Schedule {
     void DeleteProc(proc_t *proc) {
         if (!proc) return;
         
-        // 1. 终止并销毁进程中的所有线程
+        // 获取当前正在运行的线程，绝不能销毁自己！
+        thread_t *curr_thread = this_cpu()->current_thread;
+
+        // 1. 收集所有线程指针（持锁快照）
         spinlock_lock(&PROC_LIST_LOCK);
+        thread_t *threads_to_delete[256];
+        int thread_count = 0;
         thread_t *thread = proc->threads;
-        while (thread) {
-            thread_t *next_thread = (thread->next != thread) ? thread->next : nullptr;
-            cpu_t *cpu = smp_cpu_list[thread->cpu_num];
-            spinlock_unlock(&PROC_LIST_LOCK);
-            
-            Schedule::DeleteThread(cpu, thread); 
-            
-            spinlock_lock(&PROC_LIST_LOCK);
-            thread = next_thread;
+        if (thread) {
+            thread_t *start = thread;
+            do {
+                // 【关键修复】：跳过当前正在执行的线程
+                if (thread != curr_thread && thread_count < 256)
+                    threads_to_delete[thread_count++] = thread;
+                thread = thread->next;
+            } while (thread != start);
         }
+        proc->threads = nullptr; // 先断开链接
         spinlock_unlock(&PROC_LIST_LOCK);
+
+        // 2. 逐个删除（不包含当前线程）
+        for (int i = 0; i < thread_count; i++) {
+            cpu_t *cpu = smp_cpu_list[threads_to_delete[i]->cpu_num];
+            Schedule::DeleteThread(cpu, threads_to_delete[i]); 
+        }
         
-        // 2. 从父进程的子进程链表中移除
+        // 3. 从父进程的子进程链表中移除
         spinlock_lock(&PROC_LIST_LOCK);
         if (proc->parent) {
             if (proc->parent->children == proc) {
@@ -94,21 +125,23 @@ namespace Schedule {
             }
         }
         
-        // 3. 将子进程 reparent 给 init（此处简化为直接挂到最顶层，或交由父进程接管）
-        // 注：理想情况下应过继给 init 进程，这里保持原有的递归删除逻辑
-        if (proc->children) {
-            proc_t *child = proc->children;
-            while (child) {
-                proc_t *next_child = child->sibling;
-                spinlock_unlock(&PROC_LIST_LOCK);
-                DeleteProc(child); 
-                spinlock_lock(&PROC_LIST_LOCK);
-                child = next_child;
-            }
+        // 4. 收集子进程指针
+        proc_t *children_to_delete[256];
+        int child_count = 0;
+        proc_t *child = proc->children;
+        while (child && child_count < 256) {
+            children_to_delete[child_count++] = child;
+            child = child->sibling;
         }
+        proc->children = nullptr;
         spinlock_unlock(&PROC_LIST_LOCK);
         
-        // 4. 销毁文件描述符表与页表
+        // 5. 递归删除子进程
+        for (int i = 0; i < child_count; i++) {
+            DeleteProc(children_to_delete[i]); 
+        }
+        
+        // 6. 销毁文件描述符表与页表
         if (proc->FDMan) {
             fd_manager_destroy(proc->FDMan);
             kfree(proc->FDMan);
@@ -128,58 +161,75 @@ namespace Schedule {
         uint64_t pid = proc->id;
         thread_t *curr_thread = cpu->current_thread;
 
-        // 1. 标记所有同进程其他线程为 ZOMBIE，并发送 IPI 强制其下线
+        // 1. 标记其他线程为 ZOMBIE
         spinlock_lock(&PROC_LIST_LOCK);
         thread_t *t = proc->threads;
         while (t) {
+            thread_t *next = (t->next == t) ? nullptr : t->next;
             if (t != curr_thread) {
-                t->state = THREAD_ZOMBIE;
-                if (t->cpu_num != cpu->id) {
-                    cpu_t *t_cpu = smp_cpu_list[t->cpu_num];
-                    if (t_cpu) LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC + 1);
+                cpu_t *t_cpu = smp_cpu_list[t->cpu_num];
+                if (t_cpu) {
+                    spinlock_lock(&t_cpu->sched_lock);
+                    t->state = THREAD_ZOMBIE;
+                    spinlock_unlock(&t_cpu->sched_lock);
+                    if (t->cpu_num != cpu->id) {
+                        LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC + 1);
+                    }
                 }
             }
-            t = (t->next == t) ? nullptr : t->next;
+            t = next;
         }
         spinlock_unlock(&PROC_LIST_LOCK);
 
-        // 2. 自旋等待其他线程全部被各自 CPU 丢弃并停止使用该进程的 pagemap
+        // 2. 自旋等待其他线程全部被各自 CPU 丢弃
         bool all_stopped = false;
         while (!all_stopped) {
             all_stopped = true;
             spinlock_lock(&PROC_LIST_LOCK);
             t = proc->threads;
             while (t) {
+                thread_t *next = (t->next == t) ? nullptr : t->next;
                 if (t != curr_thread) {
                     cpu_t *t_cpu = smp_cpu_list[t->cpu_num];
-                    // 如果它还在运行，或者还被挂在某 CPU 上
-                    if (t->state == THREAD_RUNNING || (t_cpu && t_cpu->current_thread == t)) {
-                        all_stopped = false;
-                        t->state = THREAD_ZOMBIE;
-                        if (t_cpu && t_cpu->id != cpu->id) {
+                    if (t_cpu) {
+                        spinlock_lock(&t_cpu->sched_lock);
+                        bool still_running = (t->state == THREAD_RUNNING || t_cpu->current_thread == t);
+                        if (still_running) {
+                            all_stopped = false;
+                            t->state = THREAD_ZOMBIE;
+                        }
+                        spinlock_unlock(&t_cpu->sched_lock);
+                        if (still_running && t_cpu->id != cpu->id) {
                             LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC + 1);
                         }
                     }
                 }
-                t = (t->next == t) ? nullptr : t->next;
+                t = next;
             }
             spinlock_unlock(&PROC_LIST_LOCK);
             if (!all_stopped) asm volatile("pause");
         }
 
-        // 3. 此时除了当前线程，其他线程均已安全退出运行，可以销毁进程一切资源
+        // 防止 DeleteProc 释放当前栈
+        if (curr_thread) {
+            curr_thread->kernel_stack = 0;
+        }
+
+        // 3. 销毁进程一切资源 (已修改为跳过当前线程)
         Schedule::DeleteProc(proc);
+        
+        // 【关键修复】：此时 curr_thread 已经成了孤儿，它的 parent 已经被 kfree 了！
+        // 必须将 parent 设为 nullptr，防止后续调度器解引用野指针
+        curr_thread->parent = nullptr; 
         
         cpu->current_thread = nullptr;
         kinfoln("Delete PROC %d", pid);
         
-        // 4. 开中断并触发自陷调度，彻底离开 exit_stack
+        // 4. 触发调度
         asm volatile("sti");
         LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
-        
         while(true) { asm volatile("hlt"); }
     }
-
     void PROC_KILL(proc_t *proc, int32_t exit_code){
         thread_t *curr_thread = Schedule::this_thread();
         cpu_t *cpu = this_cpu();

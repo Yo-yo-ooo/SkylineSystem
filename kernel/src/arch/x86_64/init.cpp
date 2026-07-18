@@ -58,7 +58,7 @@ void __init x86_64_init(void){
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
     InitFunc("SIMD Core 0",simd_cpu_init(this_cpu()));
-    InitBSPCPUThread();
+    InitCPUThread();
     
     InitFunc("Schedule",Schedule::Init());
     InitFunc("Syscall",syscall_init());
@@ -93,9 +93,13 @@ void __init x86_64_init(void){
     char *argv[] = {(char*)"Test Main Thread"};
     char *envp[] = {nullptr};
     thread_t *desktop = Schedule::NewThread(proc, 0, 0, 
-        "/mp/desktop.elf", 1, argv, envp); 
+        "/mp/desktop.elf", 1, argv, envp);  
     kinfoln("desktop PROCESS: %d",proc->id);
-
+    asm volatile("sti");
     LAPIC::IPI(this_cpu()->id,SCHED_VEC + 1);
-    LAPIC::IPIOthers(0, SCHED_VEC);
+    LAPIC::IPIOthers(0, SCHED_VEC + 1);
+
+    while (true) {
+        asm volatile("hlt");
+    }
 }
