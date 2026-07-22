@@ -532,6 +532,12 @@ static inline rb_node_t *rb_first(rb_node_t *root) {
     return root;
 }
 
+static inline rb_node_t *rb_last(rb_node_t *root) {
+    if (!root) return NULL;
+    while (root->right) root = root->right;
+    return root;
+}
+
 static inline rb_node_t *rb_next(rb_node_t *node) {
     if (!node) return NULL;
     if (node->right) return rb_first(node->right);

@@ -134,7 +134,7 @@ int main(){
     
 
     for(;;){
-        
+        //syscall(24, (long)msg, 13, 0, 0, 0, 0);
 
         while (true) {
             // 读取开始前的序列号

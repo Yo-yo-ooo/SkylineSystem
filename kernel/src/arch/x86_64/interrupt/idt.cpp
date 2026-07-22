@@ -13,25 +13,25 @@ extern void FT_Clear();
 #pragma GCC optimize ("O0")
 
 volatile static idt_entry_t alignas(16) idt_entries[256];
-//static idt_desc_t idt_desc;
 extern "C" void *idt_int_table[];
 interrupt_handler_t handlers[256];
-
 
 extern volatile const char* isr_errors[32];
 
 void idt_set_entry(uint16_t vector, void *isr, uint8_t flags);
 
 void idt_init() {
-    for (uint16_t vector = 0; vector < 256; vector++)
+    for (uint16_t vector = 0; vector < 256; vector++) {
         idt_set_entry(vector, idt_int_table[vector], 0x8e);
+    }
 
     smp_cpu_list[smp_bsp_cpu]->idtdesc.size = sizeof(idt_entries) - 1;
     smp_cpu_list[smp_bsp_cpu]->idtdesc.address = (uint64_t)&idt_entries;
-    //smp_cpu_list[smp_bsp_cpu]->handlers = handlers;
     memcpy_fscpuf(smp_cpu_list[smp_bsp_cpu]->handlers, (void*)handlers, 256 * sizeof(uint64_t));
-    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[0] = 0x00000000FFFFFFFFULL;
-    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[1] = 0;
+    
+    // 【修复 3】标记 0~127 号向量为系统保留，彻底防止动态分配冲突
+    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[0] = 0xFFFFFFFFFFFFFFFFULL;
+    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[1] = 0xFFFFFFFFFFFFFFFFULL;
     smp_cpu_list[smp_bsp_cpu]->IntrBitMap[2] = 0;
     smp_cpu_list[smp_bsp_cpu]->IntrBitMap[3] = 0;
 
@@ -40,18 +40,20 @@ void idt_init() {
 }
 
 void idt_reinit(uint32_t CPUID) {
-    idt_entry_t* local_idt = (idt_entry_t*)kmalloc(sizeof(idt_entries));
-    __memcpy(local_idt, (void*)&idt_entries, sizeof(idt_entries));
+    idt_entry_t* local_idt = (idt_entry_t*)kmalloc(sizeof(idt_entries) + 15);
+    uint64_t aligned_addr = ((uint64_t)local_idt + 15) & ~15;
+    idt_entry_t* aligned_idt = (idt_entry_t*)aligned_addr;
+    
+    __memcpy(aligned_idt, (void*)&idt_entries, sizeof(idt_entries));
     
     smp_cpu_list[CPUID]->idtdesc.size = sizeof(idt_entries) - 1;
-    smp_cpu_list[CPUID]->idtdesc.address = (uint64_t)local_idt;
+    smp_cpu_list[CPUID]->idtdesc.address = (uint64_t)aligned_idt;
     memcpy_fscpuf(smp_cpu_list[CPUID]->handlers, (void*)smp_cpu_list[smp_bsp_cpu]->handlers, 256 * sizeof(uint64_t));
-    smp_cpu_list[CPUID]->IntrBitMap[0] = 0x00000000FFFFFFFFULL;
-    smp_cpu_list[CPUID]->IntrBitMap[1] = 0;
+    smp_cpu_list[CPUID]->IntrBitMap[0] = 0xFFFFFFFFFFFFFFFFULL;
+    smp_cpu_list[CPUID]->IntrBitMap[1] = 0xFFFFFFFFFFFFFFFFULL;
     smp_cpu_list[CPUID]->IntrBitMap[2] = 0;
     smp_cpu_list[CPUID]->IntrBitMap[3] = 0;
     __asm__ volatile ("lidt %0" : : "m"(smp_cpu_list[CPUID]->idtdesc) : "memory");
-    //__asm__ volatile ("sti");
 }
 
 void idt_set_entry(uint16_t vector, void *isr, uint8_t flags) {
@@ -76,41 +78,41 @@ void idt_set_ist_cpu(uint32_t cpuid,uint16_t vector, uint8_t ist) {
     local_idt[vector].ist = ist;
 }
 
-//ZH:根据CPU负载均衡分配最适合的IRQ向量号
-//EN:Allocate the optimal IRQ vector by evaluating per-CPU interrupt load
 extern "C" uint8_t RequestFreeIRQPerCPU() {
     cpu_t *target_cpu = GetLWIntrCpu();
     if (!target_cpu) {
         kerrorln("RequestFreeIRQPerCPU: No available CPU!");
-        return 0xFF; // 错误码
+        return 0xFF;
     }
 
     for (uint32_t i = 0; i < 4; i++) {
         uint64_t bitmap_val = target_cpu->IntrBitMap[i];
-        
-        // 如果 64 位全为 1，说明这组没有空闲
         if (bitmap_val == UINT64_MAX) continue;
         uint32_t j = __builtin_ctzll(~bitmap_val);
-        
+        uint64_t mask = 1ULL << j;
+        // 【最高优先级修复 1】原子置位，防止并发分配与重复分配
+        __sync_or_and_fetch(&target_cpu->IntrBitMap[i], mask);
         return ((i * 64) + j);
     }
     
     kerrorln("RequestFreeIRQPerCPU: No free IRQ vector available!");
-    return 0xFF; // 256 个 IRQ 全满
+    return 0xFF;
 }
 
-
 extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
+    if (smp_cpu_list[smp_bsp_cpu]->handlers[irq]) {
+        kerrorln("Warning: IRQ %d is already installed, overwriting!", irq);
+    }
     kpokln("IRQ %d Installed",irq);
-    smp_cpu_list[smp_bsp_cpu]->handlers[irq] = (uint64_t)handler;
-    uint32_t Index = irq / 64;
-    uint32_t SIndex = irq % 64;
-    //smp_cpu_list[smp_bsp_cpu]->IntrBitMap[Index] |= (1 << SIndex);
-    SET1_BIT(smp_cpu_list[smp_bsp_cpu]->IntrBitMap[Index],SIndex);
-    //handlers[irq] = handler;
-    //if (irq < 16){IOAPIC::RemapIRQ(0, irq, irq + 32, false);}
-    // Right now we just map
-    // every interrupt to MP.
+    // 【最高优先级修复 2】遍历所有 CPU 安装处理程序与位图，保证多核一致
+    for (int32_t i = 0; i <= smp_last_cpu; i++) {
+        if (smp_cpu_list[i] == nullptr) continue;
+        smp_cpu_list[i]->handlers[irq] = (uint64_t)handler;
+        smp_cpu_list[i]->IntrRegistCount++;
+        uint32_t Index = irq / 64;
+        uint32_t SIndex = irq % 64;
+        SET1_BIT(smp_cpu_list[i]->IntrBitMap[Index], SIndex);
+    }
 }
 
 extern "C" void idt_install_irq_cpu(uint32_t cpuid,uint8_t irq, void* handler) {
@@ -118,15 +120,14 @@ extern "C" void idt_install_irq_cpu(uint32_t cpuid,uint8_t irq, void* handler) {
     smp_cpu_list[cpuid]->IntrRegistCount++;
     uint32_t Index = irq / 64;
     uint32_t SIndex = irq % 64;
-    //smp_cpu_list[cpuid]->IntrBitMap[Index] |= (1 << SIndex);
     SET1_BIT(smp_cpu_list[cpuid]->IntrBitMap[Index],SIndex);
 }
 
 extern int32_t smp_last_cpu;
 extern "C" cpu_t* GetLWIntrCpu(){
     cpu_t *cpu = nullptr;
-    for (int32_t i = 0; i < smp_last_cpu; i++) {
-        if (smp_cpu_list[i] == nullptr || i == smp_bsp_cpu) continue;
+    for (int32_t i = 0; i <= smp_last_cpu; i++) {
+        if (smp_cpu_list[i] == nullptr) continue;
         if (!cpu) {
             cpu = smp_cpu_list[i];
             continue;
@@ -141,41 +142,64 @@ extern "C" void idt_irq_handler(context_t *ctx) {
     cpu_t* cpu = this_cpu();
     if (!cpu || !cpu->handlers) {
         kerror("CPU or Handlers not initialized for IDT %d\n", ctx->int_no);
-        hcf();
+        if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
+        return;
     }
     interrupt_handler_t handler = cpu->handlers[ctx->int_no];
     if (!handler) {
         kerror("(PANIC)Uncaught IRQ #%d.\n", ctx->int_no);
+        if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
+        return;
     }
     handler(ctx);
+    // 统一在外部中断出口处发送 EOI
+    if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) {
+        if (ctx->int_no != SCHED_VEC && ctx->int_no != SCHED_VEC + 1) {
+            LAPIC::EOI();
+        }
+    }
 }
 
 extern struct flanterm_context* ft_ctx;
 extern "C" void idt_exception_handler(context_t *ctx) {
-    Serial::Writelnf("HIT INTNO:%d",ctx->int_no);
-    // 1. 处理外部中断和调度 IPI (>=32)
-    if (ctx->int_no >= 32)
-        return idt_irq_handler(ctx);
+    cpu_t *cpu = this_cpu();
+    bool from_user = ((ctx->cs & 3) == 3);
 
-    // 2. 处理缺页异常 (#PF)
+    if (ctx->int_no == SCHED_VEC || ctx->int_no == SCHED_VEC + 1) {
+        if (cpu) cpu->preempt_count++;
+        Schedule::Internal::Switch(ctx);
+        if (cpu) cpu->preempt_count--;
+        return;
+    }
+
+    if (cpu) cpu->preempt_count++;
+
+    if (ctx->int_no >= 32) {
+        idt_irq_handler(ctx);
+        if (cpu) cpu->preempt_count--;
+        return;
+    }
+
     if (ctx->int_no == 14) {
-        LAPIC::StopTimer();
         uint32_t should_halt = VMM::HandlePF(ctx);
         if (!should_halt) {
+            // 【最高优先级修复 4】无论是否是 idle 线程，缺页处理后都应恢复调度定时器
+            if (cpu) {
+                uint64_t quantum = cpu->base_quantum;
+                if (cpu->current_thread && cpu->current_thread != cpu->idle_thread) {
+                    quantum = (cpu->current_thread->custom_quantum > 0) ? cpu->current_thread->custom_quantum : cpu->base_quantum;
+                }
+                LAPIC::Oneshot(SCHED_VEC, quantum);
+            }
+            if (cpu) cpu->preempt_count--;
             return;
         }
     }
 
-    // 3. 拦截用户态引发的致命异常
-    bool from_user = ((ctx->cs & 3) == 3);
-    
-    // 【新增容错】：如果 RIP 跑飞到了极低的地址(如 0x1, 0x3)，
-    // 这通常是因为用户态程序 main() 返回后没有调用 exit，误把 argc 当返回地址弹出。
-    // 无论是用户态还是内核态遇到这种情况，都视为用户程序结束，安全回收资源。
     if (from_user && ctx->rip < 0x1000) {
         kerrorln("Program exited abnormally (Missing exit syscall?). PID: %d, RIP: 0x%p",
                  Schedule::this_proc() ? Schedule::this_proc()->id : -1, ctx->rip);
-        Schedule::Exit(0); // 当作正常退出处理，不会返回
+        Schedule::Exit(0);
     }
 
     if (from_user) {
@@ -184,11 +208,9 @@ extern "C" void idt_exception_handler(context_t *ctx) {
         kerrorln("User process crashed! PID: %d, Exception: %d at RIP: 0x%p (CR2: 0x%p)",
                  Schedule::this_proc() ? Schedule::this_proc()->id : -1, 
                  ctx->int_no, ctx->rip, cr2);
-        
         Schedule::Exit(-1);
     }
 
-    // 4. 如果是内核态引发的异常，打印调试信息并死机
     uint64_t cr0,cr2,cr3,cr4;
     __asm__ volatile ("movq %%cr3, %0" : "=r"(cr3));
     __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));

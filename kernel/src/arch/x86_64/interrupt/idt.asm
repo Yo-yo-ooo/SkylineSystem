@@ -1,131 +1,117 @@
 ; SPDX-License-Identifier: GPL-2.0-only
 ; File: idt.asm
-; Copyright (C) 2026 Yo-yo-ooo
-;
-; This file is part of SkylineSystem.
-;
-; SkylineSystem is free software; you can redistribute it and/or modify
-; it under the terms of the GNU General Public License as published by
-; the Free Software Foundation; either version 2 of the License, or
-; (at your option) any later version.
-;
-; This program is distributed in the hope that it will be useful,
-; but WITHOUT ANY WARRANTY; without even the implied warranty of
-; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-; GNU General Public License for more details.
-;
-; You should have received a copy of the GNU General Public License
-; along with this program; if not, write to the Free Software
-; Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 
 [bits 64]
 [extern idt_exception_handler]
 [extern this_cpu]
 [global idt_int_table]
 
-%define CPU_ININTR_OFF 2692
+%define CPU_ININTR_OFF 2332
 
-; 保存所有通用寄存器
+; 严格按照 context_t 结构体的顺序压栈 (r15 在最底部，即最低地址)
 %macro pushaq 0
-    push rax
-    push rcx
-    push rdx
-    push rbx
-    push rbp
-    push rsi
-    push rdi
-    push r8
-    push r9
-    push r10
-    push r11
-    push r12
-    push r13
-    push r14
     push r15
+    push r14
+    push r13
+    push r12
+    push r11
+    push r10
+    push r9
+    push r8
+    push rdi
+    push rsi
+    push rbp
+    push rbx
+    push rdx
+    push rcx
+    push rax
 %endmacro
 
-; 恢复所有通用寄存器
 %macro popaq 0
-    pop r15
-    pop r14
-    pop r13
-    pop r12
-    pop r11
-    pop r10
-    pop r9
-    pop r8
-    pop rdi
-    pop rsi
-    pop rbp
-    pop rbx
-    pop rdx
-    pop rcx
     pop rax
+    pop rcx
+    pop rdx
+    pop rbx
+    pop rbp
+    pop rsi
+    pop rdi
+    pop r8
+    pop r9
+    pop r10
+    pop r11
+    pop r12
+    pop r13
+    pop r14
+    pop r15
 %endmacro
 
 %macro isr_common_logic 1
+    ; 因为设置了 IST=1，CPU 无条件压入了 SS 和 RSP
+    ; 栈结构为 7 个元素 (和用户态完全一致)
+    ; [rsp]    int_no
+    ; [rsp+8]  err_code
+    ; [rsp+16] RIP
+    ; [rsp+24] CS
+    ; [rsp+32] RFLAGS
+    ; [rsp+40] RSP
+    ; [rsp+48] SS
+    
     pushaq
 
-    ; 1. 特权级判断与 swapgs
-    mov rax, [rsp + 144]    ; 144 = 15*8(pushaq) + 8(err/no) + 8(int_no) + 8(RIP) = 136? 
-                            ; 修正计算: 120(pushaq) + 16(stub压栈) = 136 为 RIP, 144 为 CS. 逻辑正确。
+    ; CS 在 120(pushaq) + 24 = 144
+    mov rax, [rsp + 144]    ; CS
     test al, 3
-    jz %%kernel_mode_entry  ; 【修复】使用 %% 避免宏展开标号重定义
+    jz %%kernel_mode_entry
     swapgs
 %%kernel_mode_entry:
 
-    ; 2. 使用 inc 代替 mov，支持中断/异常的嵌套重入
-    inc byte gs:[CPU_ININTR_OFF]
+    ; 【关键修复】：删除硬编码偏移，防止破坏 cpu_t 结构体！
+    ; inc byte gs:[CPU_ININTR_OFF]
 
-    ; 3. 准备传递给 C 语言的参数 (rdi = rsp)
     mov rdi, rsp
-    
-    ; 4. 解决对齐问题：保存真实的 rsp 到 r12 
-    ;  使用 r12 代替 rbx。因为 rbx 已经被 pushaq 压栈，用 r12 更清晰且 r12 也是 callee-saved。
     mov r12, rsp
-    
-    ; 5. 强制 16 字节对齐
     and rsp, ~15
-    
-    ; 6. 核心：清空方向标志位，满足 C ABI 要求！
     cld
 
-    ; 调用 C 处理函数
     call idt_exception_handler
 
-    ; 7. 恢复真实的未对齐栈指针
-    mov rsp, r12            ; 【修复】恢复 r12 保存的栈指针
+    mov rsp, r12
 
-    ; 8. 嵌套退出：使用 dec 恢复状态
-    dec byte gs:[CPU_ININTR_OFF]
+    ; 【关键修复】：删除硬编码偏移！
+    ; dec byte gs:[CPU_ININTR_OFF]
 
-    ; 9. 恢复 GS
-    mov rax, [rsp + 144]
+    ; RFLAGS 在 120 + 32 = 152
+    mov rax, [rsp + 152]     ; RFLAGS
+    and rax, ~0x4000         ; 清除 NT 位
+    mov [rsp + 152], rax
+
+    mov rax, [rsp + 144]    ; CS
     test al, 3
-    jz %%kernel_mode_exit   ; 【修复】使用 %%
+    jz %%kernel_mode_exit
     swapgs
 %%kernel_mode_exit:
 
     popaq
-    add rsp, 16             ; 跳过 we pushed int_no and error_code/dummy
+    
+    ; 因为 IST=1，CPU 压入了完整的 5 个元素 (RIP, CS, RFLAGS, RSP, SS)
+    ; 所以直接跳过 int_no 和 err_code，执行 iretq 即可完美返回！
+    add rsp, 16
     iretq
 %endmacro
 
 %macro isr_no_err_stub 1
 int_stub%+%1:
-    push 0                  ; 压入假错误码，统一栈结构
-    push %1                 ; 压入中断号
+    push 0
+    push %1
     isr_common_logic %1
 %endmacro
 
-; 有错误码中断桩函数
 %macro isr_err_stub 1
 int_stub%+%1:
-    push %1                 ; 压入中断号（CPU已自动压入错误码）
+    push %1
     isr_common_logic %1
 %endmacro
 
-; 生成 0~255 全部中断桩函数
 %assign i 0
 %rep 256
 %if !(i == 8 || (i >= 10 && i <= 14) || i == 17 || i == 21 || i == 29 || i == 30)
@@ -137,7 +123,6 @@ isr_err_stub i
 %endrep
 
 section .data
-; 中断向量表（256个中断处理函数地址）
 idt_int_table:
     %assign i 0
     %rep 256

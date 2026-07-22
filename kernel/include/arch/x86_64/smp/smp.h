@@ -9,21 +9,14 @@
 
 #define MAX_CPU 128
 #define THREAD_QUEUE_CNT 16
-#define MAX_PROMOTE_SNAPSHOT 256  // 升权快照缓冲区大小
+#define MAX_PROMOTE_SNAPSHOT 256  
 
 typedef struct thread_t thread_t;
 
-typedef struct thread_queue_t{
-    thread_t *head;
-    thread_t *current;
-    uint64_t count;
-    uint64_t quantum;
-} thread_queue_t;
-
 #include <arch/x86_64/schedule/syscall.h>
 
-#define PMM_PCP_MAX 256    // 每个 CPU 最多缓存 256 页 (1MB)
-#define PMM_PCP_BATCH 64   // 每次去全局位图“进货”或“退货”的数量
+#define PMM_PCP_MAX 256    
+#define PMM_PCP_BATCH 64   
 
 typedef struct cpu_overloadable_functions_t{
     void (*StoreSIMDState)(char* area,uint32_t Lo,uint32_t Hi);
@@ -34,52 +27,50 @@ typedef struct cpu_overloadable_functions_t{
     void *(*MemmoveCore)(void *dest, void *src, size_t numbytes);
     void *(*MemsetCore)(void *dest, const uint8_t val, size_t numbytes);
     void *(*MemcmpCore)(const void *str1, const void *str2, size_t numbytes, int equality);
-    
 } cpu_overloadable_functions_t;
 
-// 时间轮参数 (TV_SIZE = 64，位运算极速)
 #define TV_BITS 6
 #define TV_SIZE (1 << TV_BITS)
 #define TV_MASK (TV_SIZE - 1)
 
-// ==========================================
-// 调度器性能统计埋点结构体
-// ==========================================
 typedef struct sched_stats_t {
-    uint64_t context_switches;   // 上下文切换总次数
-    uint64_t aging_promotions;   // 老化升权总次数
-    uint64_t total_wait_ticks;   // 线程累积等待 tick 数
+    uint64_t context_switches;
     uint64_t thread_steals;
+    uint64_t steal_attempts;
+    uint64_t zombie_reclaims;
+    uint64_t try_pushes;
+    uint64_t push_success;
 } sched_stats_t;
 
 typedef void (*interrupt_handler_t)(context_t*);
 
-// Per-CPU 级别的空闲链表缓存 (消除 kmalloc 的全局锁竞争)
-// 我们为每个 CPU 核心维护 8 个档位的空闲对象链表
 typedef struct {
-    void* freelist[8]; // 指向空闲对象链表
-    uint32_t count[8]; // 当前缓存的数量
+    void* freelist[8]; 
+    uint32_t count[8]; 
 } cpu_slab_t;
 
 typedef struct cpu_t {
-    struct cpu_t* self;          // 偏移 0：指向自身，this_cpu() 快速获取
-    uint64_t kernel_stack;       // 偏移 8：当前 CPU 内核栈顶（syscall 入口切栈用）
-    uint64_t user_scratch;       // 偏移 16：临时保存用户态 RSP
+    struct cpu_t* self;          
+    uint64_t kernel_stack;       
+    uint64_t user_scratch;       
 
     uint32_t id;
     uint64_t lapic_ticks;
     uint32_t lapic_id;
     pagemap_t *pagemap;
-    thread_queue_t thread_queues[THREAD_QUEUE_CNT];
+    
+    rb_root_t runqueue_root;
+    uint64_t min_vruntime;       
+    uint64_t base_quantum;       
+    
     thread_t *current_thread;
     
-    // 使用 volatile 防止编译器过度优化原子读取时的撕裂
     volatile uint64_t thread_count;
     int32_t sched_lock;
     idt_desc_t idtdesc;
     interrupt_handler_t handlers[256];
-    uint8_t IntrRegistCount = 0x20; // Base: 0x20 (CPU RSVD 0~0x20)
-    uint64_t IntrBitMap[4];         // 256 Count Bitmap      
+    uint8_t IntrRegistCount = 0x20; 
+    uint64_t IntrBitMap[4];         
     int8_t* KernelXsaveSpace;
 
     int32_t preempt_count = 0;
@@ -103,35 +94,36 @@ typedef struct cpu_t {
 
     cpu_overloadable_functions_t OverLoadableFuncs;
 
-    thread_t* tv1[TV_SIZE]; // 第一级：0 ~ 63 ms
-    thread_t* tv2[TV_SIZE]; // 第二级：64 ~ 4095 ms
-    thread_t* tv3[TV_SIZE]; // 第三级：4096 ~ 262143 ms (~4.3 分钟)
-    uint64_t timer_last_tick; // 记录上一次处理到的时间戳
+    thread_t* tv1[TV_SIZE]; 
+    thread_t* tv2[TV_SIZE]; 
+    thread_t* tv3[TV_SIZE]; 
+    uint64_t timer_last_tick; 
 
     alignas(16) uint8_t exit_stack[4096];
     
-    uint64_t tick_count = 0;             // 记录该 CPU 发生的调度次数/时钟节拍
-    uint64_t total_thread_count = 0;     // 该 CPU 上的总线程数 (包括睡眠的)
+    uint64_t tick_count = 0;             
+    uint64_t total_thread_count = 0;     
     
-    // 使用 volatile 保证在 get_lw_cpu 等无锁读取时的可见性一致性
-    volatile uint32_t thread_count_lower = 0; // 记录当前在非最高优先级队列中的线程数
+    volatile uint32_t thread_count_lower = 0; 
     volatile bool has_surplus = false; 
 
-    // 每 CPU 私有升权快照缓冲区
-    // 取代 Pick() 内栈上 thread_t* to_promote[256] (2KB)，消除中断栈溢出风险
-    // 同一 CPU 不会并发进入 Pick()（sched_lock + preempt_count 保证），故无需额外加锁
     thread_t* promote_buf[MAX_PROMOTE_SNAPSHOT];
     uint32_t simd_mask;
-    // 调度性能统计结构体
     sched_stats_t sched_stats;
     thread_t *idle_thread;
     cpu_slab_t cslab;
+    
+    uint64_t zombie_count;
+    thread_t *zombie_list;
+    uint64_t total_weight;
+    uint64_t avg_vruntime;
+    uint64_t avg_vruntime_rem;
 } cpu_t;
 
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);
+constexpr uint64_t OFF_CPU_ININTR = offsetof(cpu_t,InIntr);
 
 extern uint32_t smp_bsp_cpu;
-
 extern int32_t smp_last_cpu;
 extern cpu_t *smp_cpu_list[MAX_CPU];
 extern bool smp_started;

@@ -67,6 +67,16 @@ typedef struct thread_t {
     uint64_t custom_quantum; 
 
     uint32_t timer_cpu;
+
+    uint64_t vruntime;        // 虚拟运行时间
+    uint64_t deadline;        // 虚拟截止时间
+    uint64_t last_run_time;  // 上次运行的实际时间
+    uint32_t weight;         // 线程权重 (由 priority 转换)
+    rb_node_t rb_node;       // 红黑树节点，挂入 CPU 运行队列
+    bool on_rq;              // 标记当前线程是否在运行队列红黑树中
+    uint64_t vruntime_rem;
+    uint64_t min_vruntime_subtree;
+    struct thread_t *zombie_next; 
 } thread_t;
 
 typedef struct proc_t {
@@ -78,6 +88,7 @@ typedef struct proc_t {
     struct proc_t *sibling;
     int32_t fd_count;
     fd_manager_t *FDMan;
+    volatile int32_t exiting;
 } proc_t;
 
 typedef struct procl{
@@ -91,6 +102,8 @@ typedef struct KernelResource {
     volatile thread_t *owner;
     thread_t *wait_head;     
 } KernelResource_t;
+
+#define THREAD_QUEUE_CNT 16
 
 extern rb_sharded_root_t res_tree;
 
@@ -106,8 +119,6 @@ namespace Schedule{
         
         void RemoveFromQueue(cpu_t *cpu, thread_t *thread);
         void InsertToQueue(cpu_t *cpu, thread_t *thread);
-        void Demote(cpu_t *cpu, thread_t *thread);
-        void Promote(cpu_t *cpu, thread_t *thread);
         thread_t *Pick(cpu_t *cpu);
 
         void TimerRemove(thread_t* t);
@@ -145,6 +156,8 @@ namespace Schedule{
     bool AcquireResource(int64_t res_id);
     void ReleaseResource(int64_t res_id);
     void InitResourceTable();
+    void WaitForThreadOffCpu(thread_t *thread);
+    void KillThread(thread_t *thread);
 }
 
 }

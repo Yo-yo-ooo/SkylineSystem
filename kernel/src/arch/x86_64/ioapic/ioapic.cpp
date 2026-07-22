@@ -42,8 +42,9 @@ namespace IOAPIC{
         uint64_t value = vec;
         value |= flags;
         value |= (uint64_t)lapic_id << 56;
-        IOAPIC::Write(REDTBL(gsi), (uint32_t)value);
+        
         IOAPIC::Write(REDTBL(gsi)+1, (uint32_t)(value >> 32));
+        IOAPIC::Write(REDTBL(gsi), (uint32_t)value);
     }
 
     void RemapIRQ(uint32_t lapic_id, uint8_t irq, uint8_t vec, bool masked) {

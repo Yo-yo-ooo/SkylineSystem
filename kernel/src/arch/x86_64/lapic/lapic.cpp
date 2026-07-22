@@ -26,7 +26,8 @@ namespace LAPIC{
             x2apic = true;
         }
         wrmsr(0x1B, apic_msr);
-        LAPIC::Write(0xF0, LAPIC::Read(0xF0) | 0x100); // Spurious interrupt vector
+        LAPIC::Write(0xF0, LAPIC::Read(0xF0) | 0x100 | 0xFF); // Spurious interrupt vector
+        LAPIC::Write(0x80, 0);
     }
 
     void Write(uint32_t reg, uint64_t val) {
