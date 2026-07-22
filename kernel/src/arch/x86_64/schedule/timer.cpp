@@ -12,6 +12,8 @@
 #include <klib/algorithm/art.h>
 #include <atomic/atomic.h>
 
+#define TIMER_MAX_TIMEOUT_MS (TV_SIZE * TV_SIZE * TV_SIZE)
+
 namespace Schedule {
     namespace Internal {
 
@@ -28,19 +30,12 @@ namespace Schedule {
             t->timer_prev = nullptr;
         }
 
-        void TimerAdd(cpu_t* cpu, thread_t* t, uint64_t expires) {
-            uint64_t now = PIT::TimeSinceBootMS();
-            
-            if (expires <= now) {
-                t->state = THREAD_RUNNING;
-                return;
-            }
-            
+        void TimerAdd(cpu_t* cpu, thread_t* t, uint64_t expires, uint64_t now) {
             uint64_t delta = expires - now;
             t->timer_wakeup = expires;
             t->timer_next = nullptr;
             t->timer_prev = nullptr;
-            t->timer_cpu = cpu->id; // 记录所在CPU
+            t->timer_cpu = cpu->id;
 
             thread_t** bucket;
             if (delta < TV_SIZE) {
@@ -57,16 +52,33 @@ namespace Schedule {
             *bucket = t;
         }
 
+        static void WakeupTimerThread(cpu_t* cpu, thread_t* t) {
+            t->timer_bucket = nullptr;
+            t->timer_next = nullptr;
+            t->timer_prev = nullptr;
+            
+            if (t->state == THREAD_SLEEPING) {
+                t->state = THREAD_RUNNING;
+                InsertToQueue(cpu, t); 
+            }
+        }
+
         void TimerCascade(cpu_t* cpu, thread_t** tv, int idx) {
             thread_t* t = tv[idx];
             tv[idx] = nullptr;
             
+            uint64_t now = PIT::TimeSinceBootMS();
             while (t) {
                 thread_t* next = t->timer_next;
-                t->timer_bucket = nullptr;
-                t->timer_next = nullptr;
-                t->timer_prev = nullptr;
-                TimerAdd(cpu, t, t->timer_wakeup);
+                
+                if (t->timer_wakeup <= now) {
+                    WakeupTimerThread(cpu, t);
+                } else {
+                    t->timer_bucket = nullptr;
+                    t->timer_next = nullptr;
+                    t->timer_prev = nullptr;
+                    TimerAdd(cpu, t, t->timer_wakeup, now);
+                }
                 t = next;
             }
         }
@@ -74,22 +86,36 @@ namespace Schedule {
 
     void Sleep(uint64_t ms){
         if (ms == 0) return;
+        
+        if (ms >= TIMER_MAX_TIMEOUT_MS) {
+            ms = TIMER_MAX_TIMEOUT_MS - 1;
+        }
+
         LAPIC::StopTimer();
         
         thread_t* current = Schedule::this_thread();
         cpu_t* cpu = this_cpu();
 
-        uint64_t expires = PIT::TimeSinceBootMS() + ms;
+        uint64_t now = PIT::TimeSinceBootMS();
+        uint64_t expires = now + ms;
         
         uint64_t rflags;
         asm volatile("pushfq\n\tpop %0\n\tcli" : "=r"(rflags) :: "memory");
         spinlock_lock(&cpu->sched_lock);
         
-        current->state = THREAD_SLEEPING;
-        Schedule::Internal::TimerAdd(cpu, current, expires);
+        if (expires <= now) {
+            current->state = THREAD_RUNNING;
+        } else {
+            current->state = THREAD_SLEEPING;
+            Schedule::Internal::TimerAdd(cpu, current, expires, now);
+        }
         
         spinlock_unlock(&cpu->sched_lock);
         asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+
+        if (expires <= PIT::TimeSinceBootMS()) {
+            return;
+        }
 
         Schedule::Yield();
     }
@@ -114,8 +140,7 @@ namespace Schedule {
             cpu->tv1[idx1] = nullptr;
             while (t) {
                 thread_t* next = t->timer_next;
-                t->timer_bucket = nullptr;
-                t->state = THREAD_RUNNING;
+                WakeupTimerThread(cpu, t);
                 t = next;
             }
 

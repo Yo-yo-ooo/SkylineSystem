@@ -35,15 +35,12 @@ extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
                   uint64_t *tls_filesz = nullptr, 
                   uint64_t *tls_align = nullptr);
 
-// Global average vruntime. Monotonically increasing.
-// Represents the system-wide vruntime baseline to ensure fairness across CPUs.
 static volatile uint64_t global_avg_vruntime = 0;
 
 void sched_idle() {
     while (true) {
         cpu_t *cpu = this_cpu();
         
-        // Reclaim zombie threads when idle
         thread_t *zombie_head = nullptr;
         spinlock_lock(&cpu->sched_lock);
         if (cpu->zombie_list) {
@@ -192,7 +189,6 @@ namespace Schedule {
             
             if (thread->state == THREAD_ZOMBIE) {
                 if (thread->parent) {
-                    // Lock order: CPU sched lock -> PROC_LIST_LOCK
                     spinlock_lock(&PROC_LIST_LOCK);
                     detach_thread_from_proc(thread);
                     spinlock_unlock(&PROC_LIST_LOCK);
@@ -278,11 +274,8 @@ namespace Schedule {
                         
                         RemoveFromQueue(victim, stolen);
                         
-                        // If a zombie thread is encountered during stealing, 
-                        // attach it to the victim's zombie list directly.
                         if (stolen->state == THREAD_ZOMBIE) {
                             if (stolen->parent) {
-                                // Lock order: CPU sched lock -> PROC_LIST_LOCK
                                 spinlock_lock(&PROC_LIST_LOCK);
                                 detach_thread_from_proc(stolen);
                                 spinlock_unlock(&PROC_LIST_LOCK);
@@ -300,16 +293,12 @@ namespace Schedule {
                         spinlock_unlock(&victim->sched_lock);
                         
                         spinlock_lock(&cpu->sched_lock);
-                        // InsertToQueue handles zombie state safely.
-                        // All stolen threads are inserted into the local queue.
                         for (int j = 0; j < stolen_count; j++) {
                             stolen_batch[j]->cpu_num = cpu->id;
                             stolen_batch[j]->timer_cpu = cpu->id;
                             InsertToQueue(cpu, stolen_batch[j]);
                         }
                         
-                        // Pick the best from the local queue to return.
-                        // Pick safely ignores zombies.
                         thread_t *best = Pick(cpu);
                         spinlock_unlock(&cpu->sched_lock);
 
@@ -317,9 +306,6 @@ namespace Schedule {
                             cpu->sched_stats.thread_steals += stolen_count;
                             return best;
                         }
-                        
-                        // If best is null (e.g. all stolen became zombies and queue is empty),
-                        // return null and let Switch handle idle.
                         return nullptr;
                     }
                     spinlock_unlock(&victim->sched_lock);
@@ -329,7 +315,7 @@ namespace Schedule {
         }
 
         void TryPush(cpu_t *cpu) {
-            cpu->sched_stats.try_pushes++; // Count total invocations
+            cpu->sched_stats.try_pushes++; 
 
             if (!atomic_load_1(&cpu->has_surplus, ATOMIC_RELAXED)) return;
             
@@ -361,12 +347,10 @@ namespace Schedule {
                 else return;
             }
 
-            // Strict lock ordering by CPU ID to prevent deadlocks
             cpu_t *lock_a = (cpu->id < target->id) ? cpu : target;
             cpu_t *lock_b = (cpu->id < target->id) ? target : cpu;
             
             spinlock_lock(&lock_a->sched_lock);
-            // Use non-blocking trylock for the second lock to avoid extending interrupt latency
             if (!__sync_bool_compare_and_swap(&lock_b->sched_lock, 0, 1)) {
                 spinlock_unlock(&lock_a->sched_lock);
                 return;
@@ -501,7 +485,6 @@ namespace Schedule {
                 cpu->current_thread = nullptr; 
                 
                 if (curr_thread->parent) {
-                    // Lock order: CPU sched lock -> PROC_LIST_LOCK
                     spinlock_lock(&PROC_LIST_LOCK);
                     detach_thread_from_proc(curr_thread);
                     spinlock_unlock(&PROC_LIST_LOCK);
@@ -548,8 +531,6 @@ namespace Schedule {
                 return;
             }
 
-            // Redundant defensive check removed: StealThread and Pick guarantee non-zombie.
-
             if (next_thread == cpu->idle_thread) {
                 uint64_t g_avg = __atomic_load_n(&global_avg_vruntime, __ATOMIC_ACQUIRE);
                 if (cpu->avg_vruntime < g_avg) {
@@ -567,8 +548,6 @@ namespace Schedule {
                 }
             }
 
-            // Active load balancing, executed outside the sched lock.
-            // Triggered every 32 ticks to avoid excessive overhead.
             if ((cpu->tick_count & 0x1F) == 0) {
                 TryPush(cpu);                
             }
@@ -609,14 +588,6 @@ namespace Schedule {
         }
     }
 
-    /*
-     * Asynchronous thread termination interface.
-     * Callers must NOT free the thread object immediately after calling this function.
-     * The thread might still be running on another CPU. It will be safely reclaimed
-     * by the scheduler's zombie list mechanism in the future.
-     * If the thread is running on another CPU, an IPI will be sent to force a
-     * schedule switch to expedite the reclamation process.
-     */
     void KillThread(thread_t *thread) {
         if (!thread) return;
         cpu_t *cpu = get_cpu(thread->cpu_num);
@@ -626,22 +597,26 @@ namespace Schedule {
         thread->state = THREAD_ZOMBIE;
         was_running = (cpu->current_thread == thread);
         
-        // Safely detach from process list immediately to prevent UAF
-        // Lock order: CPU sched lock -> PROC_LIST_LOCK
         spinlock_lock(&PROC_LIST_LOCK);
         detach_thread_from_proc(thread);
         spinlock_unlock(&PROC_LIST_LOCK);
 
         if (thread->on_rq) {
+            // 就绪态线程：移出队列并入僵尸链表
             Internal::RemoveFromQueue(cpu, thread);
             thread->zombie_next = cpu->zombie_list;
             cpu->zombie_list = thread;
             cpu->zombie_count++;
+        } else if (thread->timer_bucket != nullptr) {
+            // 睡眠态线程：从定时器轮盘移除并入僵尸链表
+            Internal::TimerRemove(thread);
+            thread->zombie_next = cpu->zombie_list;
+            cpu->zombie_list = thread;
+            cpu->zombie_count++;
         }
+        // 运行态线程由下一次 Switch 捕获处理
         spinlock_unlock(&cpu->sched_lock);
 
-        // If the thread is currently running on another CPU, send an IPI
-        // to force a schedule switch so it can be safely reclaimed.
         if (was_running) {
             cpu_t *cur_cpu = this_cpu();
             if (cpu != cur_cpu) {
@@ -650,11 +625,6 @@ namespace Schedule {
         }
     }
 
-    /*
-     * Batch terminate all threads belonging to a process.
-     * Reads the thread list in batches to avoid holding the process lock for too long
-     * and to support processes with a large number of threads.
-     */
     void KillProcessThreads(proc_t *proc) {
         if (!proc) return;
         
@@ -685,23 +655,16 @@ namespace Schedule {
         }
     }
 
-    /*
-     * Synchronously wait for a thread to be off the CPU.
-     * Uses atomic loads with acquire semantics for safe cross-core visibility.
-     * Includes a timeout to prevent permanent hangs in case of bugs.
-     */
     void WaitForThreadOffCpu(thread_t *thread) {
         if (!thread) return;
         uint64_t timeout = 0;
         
         while (timeout < WAIT_THREAD_MAX_TIMEOUT) {
-            // Use atomic load for cpu_num as it might change during migration
             uint32_t cpu_num = __atomic_load_n(&thread->cpu_num, __ATOMIC_ACQUIRE);
             if (cpu_num >= MAX_CPU) break; 
             cpu_t *cpu = smp_cpu_list[cpu_num];
             if (!cpu) break;
             
-            // Use atomic load for current_thread to ensure visibility
             thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
             if (curr != thread) {
                 break;
@@ -715,15 +678,6 @@ namespace Schedule {
         }
     }
 
-    /*
-     * Wakeup preempt interface.
-     * Triggered after a thread is woken up and inserted into a CPU's runqueue.
-     * Checks if the woken thread's deadline is earlier than the currently running
-     * thread on that CPU. If so, sends an IPI to force a schedule switch,
-     * improving response latency for interactive tasks.
-     * Note: In extreme high-frequency wakeup scenarios, adding a throttle mechanism
-     * (e.g., minimum preempt interval) could be considered to prevent IPI storms.
-     */
     void TriggerPreempt(thread_t *woken_thread) {
         if (!woken_thread) return;
         
@@ -734,20 +688,16 @@ namespace Schedule {
 
         thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
         
-        // If the CPU is idle, simply send an IPI to wake it up.
         if (!curr || curr == cpu->idle_thread) {
             LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
             return;
         }
 
-        // If the woken thread has an earlier deadline than the currently running thread,
-        // it should preempt the current thread to maintain EEVDF scheduling semantics.
         if (woken_thread->deadline < curr->deadline) {
             cpu_t *cur_cpu = this_cpu();
             if (cpu != cur_cpu) {
                 LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
             } else {
-                // If it's the current CPU, force a yield
                 Yield();
             }
         }
@@ -768,6 +718,9 @@ namespace Schedule {
         for (uint32_t i = 0; i <= smp_last_cpu; i++) {
             cpu_t *cpu = smp_cpu_list[i];
             if (!cpu) continue;
+            
+            // 初始化时间轮基准，防止首次 Tick 发生追Tick风暴
+            cpu->timer_last_tick = PIT::TimeSinceBootMS();
             
             proc_t *proc = Schedule::NewProcess(false);
             thread_t *idle_t = Schedule::NewKernelThread(proc, cpu->id, 15, sched_idle);
