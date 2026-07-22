@@ -14,6 +14,17 @@
 
 #define TIMER_MAX_TIMEOUT_MS (TV_SIZE * TV_SIZE * TV_SIZE)
 
+static void WakeupTimerThread(cpu_t* cpu, thread_t* t) {
+    t->timer_bucket = nullptr;
+    t->timer_next = nullptr;
+    t->timer_prev = nullptr;
+    
+    if (t->state == THREAD_SLEEPING) {
+        t->state = THREAD_RUNNING;
+        Schedule::Internal::InsertToQueue(cpu, t); 
+    }
+}
+
 namespace Schedule {
     namespace Internal {
 
@@ -52,16 +63,7 @@ namespace Schedule {
             *bucket = t;
         }
 
-        static void WakeupTimerThread(cpu_t* cpu, thread_t* t) {
-            t->timer_bucket = nullptr;
-            t->timer_next = nullptr;
-            t->timer_prev = nullptr;
-            
-            if (t->state == THREAD_SLEEPING) {
-                t->state = THREAD_RUNNING;
-                InsertToQueue(cpu, t); 
-            }
-        }
+        
 
         void TimerCascade(cpu_t* cpu, thread_t** tv, int idx) {
             thread_t* t = tv[idx];
