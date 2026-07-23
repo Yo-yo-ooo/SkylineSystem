@@ -23,6 +23,8 @@
 
 uint32_t PrintFSERIAL = 0;
 
+extern cpu_t *bsp_cpu;
+
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
     WELCOME_X86_64
@@ -31,6 +33,9 @@ void __init x86_64_init(void){
     kinfoln("HHDM OFFSET:0x%X",hhdm_offset);
 
     InitFunc("GDT",GDT::Init(0));
+    bsp_cpu->self = bsp_cpu;
+    wrmsr(KERNEL_GS_BASE, (uint64_t)bsp_cpu);
+    wrmsr(IA32_GS_MSR,(uint64_t)bsp_cpu);
     InitFunc("IDT",idt_init());
     if (fpu_init()){
         kerror("FPU INIT FAILED: x86_64 CPU doesn't support FPU.\n");

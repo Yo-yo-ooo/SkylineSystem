@@ -580,7 +580,8 @@ namespace Schedule {
                 LAPIC::Oneshot(SCHED_VEC, quantum);
             }
             
-            if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
+            /* if (ctx->int_no >= 0x20 && ctx->int_no < 0x40)  */
+            LAPIC::EOI();
         }
 
         void Preempt(context_t *ctx) {
@@ -710,8 +711,8 @@ namespace Schedule {
         }
         idt_install_irq(SCHED_VEC, (void*)Schedule::Internal::Preempt);
         idt_install_irq(SCHED_VEC + 1, (void*)Schedule::Internal::Switch);
-        idt_set_ist(SCHED_VEC, 1);
-        idt_set_ist(SCHED_VEC + 1, 1);
+        idt_set_ist(SCHED_VEC, 0);
+        idt_set_ist(SCHED_VEC + 1, 0);
     }
     
     void Install() {

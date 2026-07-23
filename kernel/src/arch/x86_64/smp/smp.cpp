@@ -22,9 +22,10 @@ extern volatile struct limine_mp_response *mp_response;
 uint8_t apic_id_to_logical[256] = {0};
 
 void smp_setup_kstack(cpu_t *cpu) {
-    void *stack = (void*)VMM::Alloc(kernel_pagemap, 8, true);
-    TSS::SetIST(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
-    TSS::SetRSP(cpu->id, 0, (void*)((uint64_t)stack + 8 * PAGE_SIZE));
+    void *rsps = (void*)VMM::Alloc(kernel_pagemap, 8, true);
+    void *ists = (void*)VMM::Alloc(kernel_pagemap,8,true);
+    TSS::SetIST(cpu->id, 1, (void*)((uint64_t)ists + 8 * PAGE_SIZE));
+    TSS::SetRSP(cpu->id, 0, (void*)((uint64_t)rsps + 8 * PAGE_SIZE));
 }
 
 void smp_setup_thread_queue(cpu_t *cpu) {
@@ -63,8 +64,14 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     GDT::Init(logical_id);
     idt_reinit(logical_id);
     
-    spinlock_lock(&smp_lock);
     cpu_t *cpu = smp_cpu_list[logical_id];
+    cpu->self = cpu;
+    wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
+    wrmsr(IA32_GS_MSR,(uint64_t)cpu);
+
+    spinlock_lock(&smp_lock);
+    
+    //asm volatile("swapgs" ::: "memory");
     cpu->id = logical_id;          
     cpu->lapic_id = mp_info->lapic_id; 
     spinlock_unlock(&smp_lock);
@@ -75,24 +82,26 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     cpu->thread_count = 0;
     cpu->sched_lock = 0;
     cpu->has_runnable_thread = false;
+    
     EnableFSGSBASE(cpu);
     
+    smp_setup_kstack(cpu);
+
     idt_install_irq_cpu(cpu->id, 48, (void*)Schedule::Internal::Preempt);
     idt_install_irq_cpu(cpu->id, 49, (void*)Schedule::Internal::Switch);
-    idt_set_ist_cpu(cpu->id, SCHED_VEC, 1);
-    idt_set_ist_cpu(cpu->id, SCHED_VEC + 1, 1);
+    idt_set_ist_cpu(cpu->id, SCHED_VEC, 0);
+    idt_set_ist_cpu(cpu->id, SCHED_VEC + 1, 0);
     
     syscall_init();
     smp_setup_thread_queue(cpu);
-    smp_setup_kstack(cpu);
+    
     
     sse_enable();
     fpu_init();
     simd_cpu_init(cpu);
     cpu->simd_mask = cpu_simd_mask(cpu);
     
-    wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
-    asm volatile("swapgs" ::: "memory");
+    
 
     _memset(cpu->tv1, 0, sizeof(cpu->tv1)); 
     _memset(cpu->tv3, 0, sizeof(cpu->tv3));
@@ -114,7 +123,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
 void smp_init() {
     for (int i = 0; i < 256; i++) apic_id_to_logical[i] = 0xFF;
 
-    bsp_cpu = (cpu_t*)kmalloc(sizeof(cpu_t)); 
+    //bsp_cpu = (cpu_t*)kmalloc(sizeof(cpu_t)); 
     bsp_cpu->lapic_id = mp_response->bsp_lapic_id; 
     bsp_cpu->id = 0;                               
     apic_id_to_logical[bsp_cpu->lapic_id] = 0;     
@@ -124,14 +133,13 @@ void smp_init() {
     bsp_cpu->thread_count = 0;
     bsp_cpu->sched_lock = 0;
     bsp_cpu->has_runnable_thread = false;
-    smp_cpu_list[0] = bsp_cpu;                     
+    smp_cpu_list[0] = bsp_cpu;                         
     smp_bsp_cpu = 0;                               
     
     smp_setup_thread_queue(bsp_cpu);
     smp_setup_kstack(bsp_cpu);
     EnableFSGSBASE(bsp_cpu);
-    wrmsr(KERNEL_GS_BASE, (uint64_t)bsp_cpu);
-    asm volatile("swapgs" ::: "memory");
+    
     
     simd_cpu_init(bsp_cpu);
     kinfo("Detected %zu CPUs.\n", mp_response->cpu_count);
@@ -162,13 +170,11 @@ void smp_init() {
 }
 
 extern "C" cpu_t *this_cpu() {
-    if (!smp_started) return smp_cpu_list[0];
-    
-    uint32_t apic_id = LAPIC::GetID();
-    if (apic_id < 256 && apic_id_to_logical[apic_id] != 0xFF) {
-        return smp_cpu_list[apic_id_to_logical[apic_id]];
-    }
-    return &ZeroCPU; 
+    if(!smp_started)
+        return bsp_cpu;
+    cpu_t *cpu;
+    asm volatile("movq %%gs:0, %0" : "=r"(cpu) : : "memory");
+    return cpu;
 }
 
 cpu_t *get_cpu(uint32_t id) {
