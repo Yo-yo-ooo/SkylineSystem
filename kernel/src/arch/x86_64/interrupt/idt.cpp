@@ -202,15 +202,24 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     }
 
     if (from_user) {
-        uint64_t cr2 = 0;
+        uint64_t cr0,cr2,cr3,cr4;
+        __asm__ volatile ("movq %%cr3, %0" : "=r"(cr3));
         __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
-        kerrorln("User process crashed! \nPID: %d\nException: %s at RIP: 0x%p (CR2: 0x%p)",
-                 Schedule::this_proc() ? Schedule::this_proc()->id : -1, 
-                 isr_errors[ctx->int_no], ctx->rip, cr2);
+        __asm__ volatile ("movq %%cr0, %0" : "=r"(cr0));
+        __asm__ volatile ("movq %%cr4, %0" : "=r"(cr4));
+        kerrorln("User process crashed!");
+        kerrorln("PID: %d ",Schedule::this_proc() ? Schedule::this_proc()->id : -1);
+        kerrorln("Exception: %s at RIP: 0x%p (CR2: 0x%p)",isr_errors[ctx->int_no], ctx->rip, cr2);
+        kerrorln("REGISTERS DATA(64bits data):");
+        kerrorln("RAX: 0x%p  RBX: 0x%p RCX: 0x%p RDX: 0x%p.",ctx->rax,ctx->rbx,ctx->rcx,ctx->rdx);
+        kerrorln("RBP: 0x%p  RDI: 0x%p RSI: 0x%p RSP: 0x%p.",ctx->rbp,ctx->rdi,ctx->rsi,ctx->rsp);
+        kerrorln("CR0: 0x%p  CR4: 0x%p CR3: 0x%p CR2: 0x%p",cr0,cr4,cr3,cr2);
+        kerrorln("RFLAGS: 0x%p",ctx->rflags);
+        kerrorln("ERROR_CODE: 0x%p",ctx->error_code);
+        kerrorln("CS: 0x%x SS: 0x%x", ctx->cs, ctx->ss);
         Schedule::Exit(-1);
     }
     asm volatile("cli");
-
     uint64_t cr0,cr2,cr3,cr4;
     __asm__ volatile ("movq %%cr3, %0" : "=r"(cr3));
     __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));

@@ -5,6 +5,7 @@
 /limine-protocol
 /lib/bin
 /lib/obj
+/iso_root
 *.iso
 *.hdd
 .vscode/
