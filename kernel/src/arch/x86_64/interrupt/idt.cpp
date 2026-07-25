@@ -204,9 +204,9 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     if (from_user) {
         uint64_t cr2 = 0;
         __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
-        kerrorln("User process crashed! PID: %d, Exception: %d at RIP: 0x%p (CR2: 0x%p)",
+        kerrorln("User process crashed! \nPID: %d\nException: %s at RIP: 0x%p (CR2: 0x%p)",
                  Schedule::this_proc() ? Schedule::this_proc()->id : -1, 
-                 ctx->int_no, ctx->rip, cr2);
+                 isr_errors[ctx->int_no], ctx->rip, cr2);
         Schedule::Exit(-1);
     }
     asm volatile("cli");

@@ -992,8 +992,8 @@ namespace Schedule {
         if (!sig_stack) { VMM::Free(kernel_pagemap, thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); VMM::Free(thread->pagemap, (void*)thread_stack); kfree(buffer); kfree(thread); return nullptr; }
         thread->sig_stack = sig_stack;
 
-        thread->ctx.cs = 0x1b;
-        thread->ctx.ss = 0x23;
+        thread->ctx.cs = 0x23;
+        thread->ctx.ss = 0x1b;
         thread->ctx.rflags = 0x202;
         thread->ctx.rsp = thread->thread_stack;
         PrepareUserStack(thread, argc, argv, envp);
@@ -1075,8 +1075,8 @@ namespace Schedule {
         
         thread->ctx.rsp = ((context_t*)frame)->rsp; 
         
-        thread->ctx.cs = 0x1b;
-        thread->ctx.ss = 0x23;
+        thread->ctx.cs = 0x23;
+        thread->ctx.ss = 0x1b;
         thread->ctx.rflags = ((syscall_frame_t*)frame)->r11;
         thread->ctx.rax = 0;
         thread->ctx.rip = ((syscall_frame_t*)frame)->rcx;
