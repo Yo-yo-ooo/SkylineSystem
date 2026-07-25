@@ -29,9 +29,8 @@ void idt_init() {
     smp_cpu_list[smp_bsp_cpu]->idtdesc.address = (uint64_t)&idt_entries;
     memcpy_fscpuf(smp_cpu_list[smp_bsp_cpu]->handlers, (void*)handlers, 256 * sizeof(uint64_t));
     
-    // 【修复 3】标记 0~127 号向量为系统保留，彻底防止动态分配冲突
-    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[0] = 0xFFFFFFFFFFFFFFFFULL;
-    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[1] = 0xFFFFFFFFFFFFFFFFULL;
+    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[0] = 0x00000000FFFFFFFFULL;
+    smp_cpu_list[smp_bsp_cpu]->IntrBitMap[1] = 0;
     smp_cpu_list[smp_bsp_cpu]->IntrBitMap[2] = 0;
     smp_cpu_list[smp_bsp_cpu]->IntrBitMap[3] = 0;
 
@@ -49,8 +48,8 @@ void idt_reinit(uint32_t CPUID) {
     smp_cpu_list[CPUID]->idtdesc.size = sizeof(idt_entries) - 1;
     smp_cpu_list[CPUID]->idtdesc.address = (uint64_t)aligned_idt;
     memcpy_fscpuf(smp_cpu_list[CPUID]->handlers, (void*)smp_cpu_list[smp_bsp_cpu]->handlers, 256 * sizeof(uint64_t));
-    smp_cpu_list[CPUID]->IntrBitMap[0] = 0xFFFFFFFFFFFFFFFFULL;
-    smp_cpu_list[CPUID]->IntrBitMap[1] = 0xFFFFFFFFFFFFFFFFULL;
+    smp_cpu_list[CPUID]->IntrBitMap[0] = 0x00000000FFFFFFFFULL;
+    smp_cpu_list[CPUID]->IntrBitMap[1] = 0;
     smp_cpu_list[CPUID]->IntrBitMap[2] = 0;
     smp_cpu_list[CPUID]->IntrBitMap[3] = 0;
     __asm__ volatile ("lidt %0" : : "m"(smp_cpu_list[CPUID]->idtdesc) : "memory");
@@ -210,6 +209,7 @@ extern "C" void idt_exception_handler(context_t *ctx) {
                  ctx->int_no, ctx->rip, cr2);
         Schedule::Exit(-1);
     }
+    asm volatile("cli");
 
     uint64_t cr0,cr2,cr3,cr4;
     __asm__ volatile ("movq %%cr3, %0" : "=r"(cr3));
@@ -217,6 +217,7 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     __asm__ volatile ("movq %%cr0, %0" : "=r"(cr0));
     __asm__ volatile ("movq %%cr4, %0" : "=r"(cr4));
     
+    kerrorln("KERNEL FAULT AT CPU RSVD INT :%d",ctx->int_no);
     kerror("Kernel exception caught: %s.\n", isr_errors[ctx->int_no]);
     kerror("Kernel crash on core %d at 0x%p.\n", smp_started ? this_cpu()->lapic_id : 0, ctx->rip);
     kerrorln("REGISTERS DATA(64bits data):");
@@ -236,7 +237,6 @@ extern "C" void idt_exception_handler(context_t *ctx) {
         kerror("    0x%p\n", stack->rip);
         stack = stack->rbp;
     }
-    asm volatile("cli");
     hcf();
 }
 

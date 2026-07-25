@@ -20,7 +20,7 @@ spinlock_t PROC_LIST_LOCK = 0;
 
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
-#define WAIT_THREAD_MAX_TIMEOUT 100000000ULL
+#define WAIT_THREAD_TIMEOUT_MS 1000ULL
 
 static uint32_t sched_prio_to_weight[16] = {
     /* 0 */ 8192, /* 1 */ 6553, /* 2 */ 5242, /* 3 */ 4194,
@@ -35,12 +35,28 @@ extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
                   uint64_t *tls_filesz = nullptr, 
                   uint64_t *tls_align = nullptr);
 
-static volatile uint64_t global_avg_vruntime = 0;
+
+// Helper function to get previous node in RB tree for reverse traversal
+static inline rb_node_t* rb_prev(rb_node_t* node) {
+    if (!node) return nullptr;
+    if (node->left) {
+        node = node->left;
+        while (node->right) node = node->right;
+        return node;
+    }
+    rb_node_t* parent = node->parent;
+    while (parent && node == parent->left) {
+        node = parent;
+        parent = parent->parent;
+    }
+    return parent;
+}
 
 void sched_idle() {
     while (true) {
         cpu_t *cpu = this_cpu();
         
+        // Reclaim zombie threads when idle
         thread_t *zombie_head = nullptr;
         spinlock_lock(&cpu->sched_lock);
         if (cpu->zombie_list) {
@@ -95,24 +111,21 @@ static inline thread_t* rb_to_thread(rb_node_t* node) {
     return container_of(node, thread_t, rb_node);
 }
 
-static void update_global_avg_vruntime(uint64_t new_val) {
-    uint64_t old = __atomic_load_n(&global_avg_vruntime, __ATOMIC_RELAXED);
-    while (new_val > old) {
-        if (__atomic_compare_exchange_n(&global_avg_vruntime, &old, new_val,
-                                        false, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
-            break;
-    }
-}
-
 static inline void calibrate_and_set_deadline(thread_t *thread, cpu_t *cpu) {
     uint64_t quantum = (thread->custom_quantum > 0) ? thread->custom_quantum : cpu->base_quantum;
     uint64_t max_lag = (quantum * 4 * 1024) / thread->weight;
     
-    if (cpu->avg_vruntime > thread->vruntime + max_lag) {
-        thread->vruntime = cpu->avg_vruntime - max_lag;
+    uint64_t avg_vr = cpu->avg_vruntime;
+    
+    // put awakened sleep thread back of avg_vruntime max_lag/2, promote it's priority
+    // avoid hard truncate lead to inconsistent response
+    uint64_t target_vr = (avg_vr > max_lag / 2) ? (avg_vr - max_lag / 2) : 0;
+    
+    if (thread->vruntime < target_vr) {
+        thread->vruntime = target_vr;
         thread->vruntime_rem = 0; 
-    } else if (thread->vruntime > cpu->avg_vruntime + max_lag) {
-        thread->vruntime = cpu->avg_vruntime + max_lag;
+    } else if (thread->vruntime > avg_vr + max_lag) {
+        thread->vruntime = avg_vr + max_lag;
         thread->vruntime_rem = 0;
     }
     
@@ -182,6 +195,7 @@ namespace Schedule {
                 update_min_vruntime_upward(update_2);
             
             if (cpu->thread_count == 1) cpu->has_surplus = false;
+            if (cpu->thread_count == 0) cpu->has_runnable_thread = false;
         }
 
         void InsertToQueue(cpu_t *cpu, thread_t *thread) {
@@ -189,6 +203,7 @@ namespace Schedule {
             
             if (thread->state == THREAD_ZOMBIE) {
                 if (thread->parent) {
+                    // Lock order: CPU sched lock -> PROC_LIST_LOCK
                     spinlock_lock(&PROC_LIST_LOCK);
                     detach_thread_from_proc(thread);
                     spinlock_unlock(&PROC_LIST_LOCK);
@@ -201,12 +216,15 @@ namespace Schedule {
             
             calibrate_and_set_deadline(thread, cpu);
             
-            thread->last_run_time = PIT::TimeSinceBootMS();
+            // set last_run_time when not joining the quque
+            // avoid calculate wait schedule time = running time
+            // just set last_run_time value when Switch(...) to running thread
             
             rb_insert(&cpu->runqueue_root, &thread->rb_node, thread_rb_cmp);
             thread->on_rq = true;
             cpu->thread_count++;
             cpu->total_weight += thread->weight;
+            if (cpu->thread_count == 1) cpu->has_runnable_thread = true;
             if (cpu->thread_count == 2) cpu->has_surplus = true;
             
             update_min_vruntime_upward(&thread->rb_node);
@@ -256,25 +274,28 @@ namespace Schedule {
                     thread_t *stolen_batch[SCHED_STEAL_BATCH];
                     int stolen_count = 0;
 
-                    while (stolen_count < SCHED_STEAL_BATCH) {
+                    // reverse traversal
+                    rb_node_t *node = rb_last(victim->runqueue_root.node);
+                    while (node && stolen_count < SCHED_STEAL_BATCH) {
                         if (victim->thread_count <= 1) break;
                         
-                        rb_node_t *node = rb_last(victim->runqueue_root.node);
-                        if (!node) break;
                         thread_t *stolen = rb_to_thread(node);
+                        rb_node_t *prev_node = rb_prev(node);
                         
                         if (stolen->timer_bucket != nullptr) {
                             if (stolen->timer_cpu == victim->id) {
                                 TimerRemove(stolen);
                                 stolen->timer_bucket = nullptr; 
                             } else {
-                                break; 
+                                node = prev_node;
+                                continue;
                             }
                         }
                         
                         RemoveFromQueue(victim, stolen);
                         
                         if (stolen->state == THREAD_ZOMBIE) {
+                            // 优化：直接在源 CPU 分离并放入源 CPU 僵尸链表，避免跨核迁移
                             if (stolen->parent) {
                                 spinlock_lock(&PROC_LIST_LOCK);
                                 detach_thread_from_proc(stolen);
@@ -283,10 +304,12 @@ namespace Schedule {
                             stolen->zombie_next = victim->zombie_list;
                             victim->zombie_list = stolen;
                             victim->zombie_count++;
+                            node = prev_node;
                             continue;
                         }
                         
                         stolen_batch[stolen_count++] = stolen;
+                        node = prev_node;
                     }
 
                     if (stolen_count > 0) {
@@ -357,21 +380,22 @@ namespace Schedule {
             }
 
             int push_count = 0;
-            while (push_count < SCHED_STEAL_BATCH) {
+            rb_node_t *node = rb_last(cpu->runqueue_root.node);
+            while (node && push_count < SCHED_STEAL_BATCH) {
                 uint64_t tc_w = target->total_weight + (target->current_thread ? target->current_thread->weight : 0);
                 uint64_t mc_w = cpu->total_weight + (cpu->current_thread ? cpu->current_thread->weight : 0);
                 if (tc_w * 3 >= mc_w * 2) break;
 
-                rb_node_t *node = rb_last(cpu->runqueue_root.node);
-                if (!node) break;
                 thread_t *to_push = rb_to_thread(node);
+                rb_node_t *prev_node = rb_prev(node);
                 
                 if (to_push->timer_bucket != nullptr) {
                     if (to_push->timer_cpu == cpu->id) {
                         TimerRemove(to_push);
                         to_push->timer_bucket = nullptr; 
                     } else {
-                        break; 
+                        node = prev_node;
+                        continue; 
                     }
                 }
                 
@@ -382,6 +406,7 @@ namespace Schedule {
                 
                 InsertToQueue(target, to_push);
                 push_count++;
+                node = prev_node;
             }
 
             cpu->sched_stats.push_success += push_count;
@@ -465,7 +490,6 @@ namespace Schedule {
                     cpu->avg_vruntime_rem = avg_total % active_weight;
                     cpu->avg_vruntime += avg_delta;
                 }
-                update_global_avg_vruntime(cpu->avg_vruntime);
             }
 
             if (curr_thread && curr_thread != cpu->idle_thread) {
@@ -531,13 +555,6 @@ namespace Schedule {
                 return;
             }
 
-            if (next_thread == cpu->idle_thread) {
-                uint64_t g_avg = __atomic_load_n(&global_avg_vruntime, __ATOMIC_ACQUIRE);
-                if (cpu->avg_vruntime < g_avg) {
-                    cpu->avg_vruntime = g_avg;
-                    cpu->avg_vruntime_rem = 0; 
-                }
-            }
 
             bool is_switch = (next_thread != curr_thread);
             if (is_switch) {
@@ -579,9 +596,7 @@ namespace Schedule {
                 uint64_t quantum = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->base_quantum;
                 LAPIC::Oneshot(SCHED_VEC, quantum);
             }
-            
-            /* if (ctx->int_no >= 0x20 && ctx->int_no < 0x40)  */
-            LAPIC::EOI();
+            if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
         }
 
         void Preempt(context_t *ctx) {
@@ -603,19 +618,16 @@ namespace Schedule {
         spinlock_unlock(&PROC_LIST_LOCK);
 
         if (thread->on_rq) {
-            // 就绪态线程：移出队列并入僵尸链表
             Internal::RemoveFromQueue(cpu, thread);
             thread->zombie_next = cpu->zombie_list;
             cpu->zombie_list = thread;
             cpu->zombie_count++;
         } else if (thread->timer_bucket != nullptr) {
-            // 睡眠态线程：从定时器轮盘移除并入僵尸链表
             Internal::TimerRemove(thread);
             thread->zombie_next = cpu->zombie_list;
             cpu->zombie_list = thread;
             cpu->zombie_count++;
         }
-        // 运行态线程由下一次 Switch 捕获处理
         spinlock_unlock(&cpu->sched_lock);
 
         if (was_running) {
@@ -658,9 +670,9 @@ namespace Schedule {
 
     void WaitForThreadOffCpu(thread_t *thread) {
         if (!thread) return;
-        uint64_t timeout = 0;
+        uint64_t start_time = PIT::TimeSinceBootMS();
         
-        while (timeout < WAIT_THREAD_MAX_TIMEOUT) {
+        while (true) {
             uint32_t cpu_num = __atomic_load_n(&thread->cpu_num, __ATOMIC_ACQUIRE);
             if (cpu_num >= MAX_CPU) break; 
             cpu_t *cpu = smp_cpu_list[cpu_num];
@@ -670,12 +682,12 @@ namespace Schedule {
             if (curr != thread) {
                 break;
             }
+            
+            if (PIT::TimeSinceBootMS() - start_time > WAIT_THREAD_TIMEOUT_MS) {
+                Panic("WaitForThreadOffCpu: Thread stuck on CPU (timeout)");
+            }
+            
             asm volatile("pause");
-            timeout++;
-        }
-        
-        if (timeout >= WAIT_THREAD_MAX_TIMEOUT) {
-            Panic("WaitForThreadOffCpu: Thread stuck on CPU (timeout)");
         }
     }
 
@@ -694,7 +706,8 @@ namespace Schedule {
             return;
         }
 
-        if (woken_thread->deadline < curr->deadline) {
+        // add qualification check avoid UN-Qualified Thread preempt Qualified Thread
+        if (woken_thread->vruntime <= cpu->avg_vruntime && woken_thread->deadline < curr->deadline) {
             cpu_t *cur_cpu = this_cpu();
             if (cpu != cur_cpu) {
                 LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
@@ -720,7 +733,6 @@ namespace Schedule {
             cpu_t *cpu = smp_cpu_list[i];
             if (!cpu) continue;
             
-            // 初始化时间轮基准，防止首次 Tick 发生追Tick风暴
             cpu->timer_last_tick = PIT::TimeSinceBootMS();
             
             proc_t *proc = Schedule::NewProcess(false);
@@ -873,8 +885,9 @@ namespace Schedule {
         
         cpu_t *cpu = get_cpu(cpu_num);
         
-        uint64_t g_avg = __atomic_load_n(&global_avg_vruntime, __ATOMIC_ACQUIRE);
-        uint64_t base_vruntime = (cpu->avg_vruntime > g_avg) ? cpu->avg_vruntime : g_avg;
+        // completly use local avg_vruntime as benchmark
+        // calibrate_and_set_deadline deal cross-CPU clamping
+        uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = (cpu->base_quantum * 1024) / (2 * thread->weight);
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
         
@@ -930,8 +943,7 @@ namespace Schedule {
         
         cpu_t *cpu = get_cpu(cpu_num);
         
-        uint64_t g_avg = __atomic_load_n(&global_avg_vruntime, __ATOMIC_ACQUIRE);
-        uint64_t base_vruntime = (cpu->avg_vruntime > g_avg) ? cpu->avg_vruntime : g_avg;
+        uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = (cpu->base_quantum * 1024) / (2 * thread->weight);
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
 
@@ -1074,8 +1086,8 @@ namespace Schedule {
         
         thread->priority = parent->priority;
         thread->weight = parent->weight;
-        uint64_t g_avg = __atomic_load_n(&global_avg_vruntime, __ATOMIC_ACQUIRE);
-        uint64_t base_vruntime = (cpu->avg_vruntime > g_avg) ? cpu->avg_vruntime : g_avg;
+        
+        uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = (cpu->base_quantum * 1024) / (2 * thread->weight);
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
 

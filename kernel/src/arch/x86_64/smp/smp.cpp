@@ -22,8 +22,8 @@ extern volatile struct limine_mp_response *mp_response;
 uint8_t apic_id_to_logical[256] = {0};
 
 void smp_setup_kstack(cpu_t *cpu) {
-    void *rsps = (void*)VMM::Alloc(kernel_pagemap, 8, true);
-    void *ists = (void*)VMM::Alloc(kernel_pagemap,8,true);
+    void *rsps = (void*)VMM::Alloc(kernel_pagemap, 8, false);
+    void *ists = (void*)VMM::Alloc(kernel_pagemap,8,false);
     TSS::SetIST(cpu->id, 1, (void*)((uint64_t)ists + 8 * PAGE_SIZE));
     TSS::SetRSP(cpu->id, 0, (void*)((uint64_t)rsps + 8 * PAGE_SIZE));
 }
