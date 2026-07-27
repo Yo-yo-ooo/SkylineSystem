@@ -470,7 +470,7 @@ namespace Schedule {
                     uint64_t q = cpu->base_quantum;
                     LAPIC::Oneshot(SCHED_VEC, q * cpu->lapic_ticks);
                 }
-                if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
+                LAPIC::EOI();
                 return;
             }
 
@@ -555,7 +555,7 @@ namespace Schedule {
             }
 
             if (!next_thread) {
-                if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
+                LAPIC::EOI();
                 return;
             }
 
@@ -578,10 +578,10 @@ namespace Schedule {
                     quantum = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->base_quantum;
                     LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
                 }
-                if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
+                LAPIC::EOI();
                 return; 
             }
-
+            //uint32_t curr_int_no = ctx->int_no;
             *ctx = next_thread->ctx;
             TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
             cpu->kernel_stack = next_thread->kernel_rsp;
@@ -604,7 +604,8 @@ namespace Schedule {
             }
             // 统一重启定时器，毫秒转硬件滴答
             LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
-            if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
+            /* if (curr_int_no >= 0x20 && curr_int_no < 0x40)  */
+            LAPIC::EOI();
         }
 
         void Preempt(context_t *ctx) {
