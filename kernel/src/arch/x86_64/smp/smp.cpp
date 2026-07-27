@@ -64,14 +64,15 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     GDT::Init(logical_id);
     idt_reinit(logical_id);
     
+    
+
+    spinlock_lock(&smp_lock);
+    
     cpu_t *cpu = smp_cpu_list[logical_id];
     cpu->self = cpu;
     wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
     wrmsr(IA32_GS_MSR,(uint64_t)cpu);
 
-    spinlock_lock(&smp_lock);
-    
-    //asm volatile("swapgs" ::: "memory");
     cpu->id = logical_id;          
     cpu->lapic_id = mp_info->lapic_id; 
     spinlock_unlock(&smp_lock);

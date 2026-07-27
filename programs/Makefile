@@ -11,11 +11,13 @@ all:
 	@mkdir -p $(PROGRAM_BUILD_DIR)
 	$(MAKE) -C desktop
 	$(MAKE) -C helloworld
+	$(MAKE) -C helloworld2
     
 	@echo "Copying programs to disk image..."
 	../res/saf/saf-make ./bin ./programs.saf -q
 	e2cp $(PROGRAM_BUILD_DIR)/desktop.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/hw.elf $(DISK_IMG):/
+	e2cp $(PROGRAM_BUILD_DIR)/hw2.elf $(DISK_IMG):/
 
 	@if e2ls $(DISK_IMG) 2>/dev/null | grep -q "README.md"; then \
 	    echo "README.md Exists"; \

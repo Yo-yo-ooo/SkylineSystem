@@ -75,7 +75,8 @@ void sched_idle() {
             z = next;
         }
         
-        Schedule::PAUSE();
+        //Schedule::PAUSE();
+        
         asm volatile("sti; hlt; cli" ::: "memory");
     }
 }
@@ -464,8 +465,11 @@ namespace Schedule {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             if (!cpu) return;
-
             if (cpu->preempt_count > 1) {
+                if (cpu->current_thread) {
+                    uint64_t q = cpu->base_quantum;
+                    LAPIC::Oneshot(SCHED_VEC, q * cpu->lapic_ticks);
+                }
                 if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
                 return;
             }
@@ -555,7 +559,7 @@ namespace Schedule {
                 return;
             }
 
-
+            uint64_t quantum = cpu->base_quantum;
             bool is_switch = (next_thread != curr_thread);
             if (is_switch) {
                 cpu->current_thread = next_thread;
@@ -571,8 +575,8 @@ namespace Schedule {
 
             if (!is_switch) {
                 if (next_thread != cpu->idle_thread) {
-                    uint64_t q = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->base_quantum;
-                    LAPIC::Oneshot(SCHED_VEC, q);
+                    quantum = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->base_quantum;
+                    LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
                 }
                 if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
                 return; 
@@ -592,10 +596,14 @@ namespace Schedule {
                 cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
             
+            
             if (next_thread != cpu->idle_thread) {
-                uint64_t quantum = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->base_quantum;
-                LAPIC::Oneshot(SCHED_VEC, quantum);
+                quantum = (next_thread->custom_quantum > 0) 
+                    ? next_thread->custom_quantum 
+                    : cpu->base_quantum;
             }
+            // 统一重启定时器，毫秒转硬件滴答
+            LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
             if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
         }
 

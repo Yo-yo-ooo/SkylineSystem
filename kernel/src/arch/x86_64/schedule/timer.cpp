@@ -22,6 +22,7 @@ static void WakeupTimerThread(cpu_t* cpu, thread_t* t) {
     if (t->state == THREAD_SLEEPING) {
         t->state = THREAD_RUNNING;
         Schedule::Internal::InsertToQueue(cpu, t); 
+        Schedule::TriggerPreempt(t);
     }
 }
 

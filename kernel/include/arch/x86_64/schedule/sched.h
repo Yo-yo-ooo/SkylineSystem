@@ -158,6 +158,7 @@ namespace Schedule{
     void InitResourceTable();
     void WaitForThreadOffCpu(thread_t *thread);
     void KillThread(thread_t *thread);
+    void TriggerPreempt(thread_t *woken_thread);
 }
 
 }
