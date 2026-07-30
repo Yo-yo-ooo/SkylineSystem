@@ -99,9 +99,10 @@ void __init x86_64_init(void){
     char *argv[] = {(char*)"Test Main Thread"};
     char *envp[] = {nullptr};
     thread_t *desktop = Schedule::NewThread(proc, 0, 0, 
+        "/mp/desktop.elf", 1, argv, envp);  
+    proc_t *proc2 = Schedule::NewProcess(true);
+    thread_t *desktop2 = Schedule::NewThread(proc2, 0, 0, 
         "/mp/hw.elf", 1, argv, envp);  
-    thread_t *desktop2 = Schedule::NewThread(proc, 0, 0, 
-        "/mp/hw2.elf", 1, argv, envp);  
     kinfoln("desktop PROCESS: %d",proc->id);
     asm volatile("sti");
     LAPIC::IPI(smp_bsp_cpu,SCHED_VEC + 1);

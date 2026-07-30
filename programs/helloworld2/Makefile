@@ -1,6 +1,6 @@
 OBJDIR := ../object
 BINDIR := ../bin
-PROJ_NAME := HW
+PROJ_NAME := HW2
 
 include ../../gdef.mk
 

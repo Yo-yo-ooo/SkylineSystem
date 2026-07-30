@@ -204,7 +204,6 @@ bool ps2_mouse_init(void) {
 }
 
 void ps2_mouse_handler(registers *regs) {
-    Serial::Writelnf("YYHYHJ");
     uint8_t status = io_in8(PS2_STATUS_PORT);
     if (!(status & 0x01)) {
         return; // 没有数据
