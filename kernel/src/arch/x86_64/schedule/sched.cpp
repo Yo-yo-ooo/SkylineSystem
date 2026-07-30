@@ -35,6 +35,21 @@ extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
                   uint64_t *tls_filesz = nullptr, 
                   uint64_t *tls_align = nullptr);
 
+//DYNAMIC QUAMTUM CALC FUNCTION
+static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
+    if (!thread || thread == cpu->idle_thread) {
+        return cpu->base_quantum;
+    }
+    if (thread->custom_quantum > 0) {
+        return thread->custom_quantum;
+    }
+    uint64_t weight = thread->weight ? thread->weight : 1024;
+    // (base_quantum * 1024 / weight)RANGE IS:[1, base_quantum * 4]
+    uint64_t quantum = (cpu->base_quantum * 1024) / weight;
+    if (quantum < 1) quantum = 1;
+    if (quantum > cpu->base_quantum * 4) quantum = cpu->base_quantum * 4;
+    return quantum;
+}
 
 // Helper function to get previous node in RB tree for reverse traversal
 static inline rb_node_t* rb_prev(rb_node_t* node) {
@@ -56,7 +71,6 @@ void sched_idle() {
     while (true) {
         cpu_t *cpu = this_cpu();
         
-        // Reclaim zombie threads when idle
         thread_t *zombie_head = nullptr;
         spinlock_lock(&cpu->sched_lock);
         if (cpu->zombie_list) {
@@ -74,8 +88,6 @@ void sched_idle() {
             cpu->sched_stats.zombie_reclaims++;
             z = next;
         }
-        
-        //Schedule::PAUSE();
         
         asm volatile("sti; hlt; cli" ::: "memory");
     }
@@ -113,24 +125,24 @@ static inline thread_t* rb_to_thread(rb_node_t* node) {
 }
 
 static inline void calibrate_and_set_deadline(thread_t *thread, cpu_t *cpu) {
-    uint64_t quantum = (thread->custom_quantum > 0) ? thread->custom_quantum : cpu->base_quantum;
-    uint64_t max_lag = (quantum * 4 * 1024) / thread->weight;
+    uint64_t quantum = get_dynamic_quantum(cpu, thread);
+    uint64_t weight = thread->weight ? thread->weight : 1024;
+    
+    uint64_t max_lag = (quantum * 1024) / weight; 
     
     uint64_t avg_vr = cpu->avg_vruntime;
     
-    // put awakened sleep thread back of avg_vruntime max_lag/2, promote it's priority
-    // avoid hard truncate lead to inconsistent response
-    uint64_t target_vr = (avg_vr > max_lag / 2) ? (avg_vr - max_lag / 2) : 0;
+    uint64_t target_vr = (avg_vr > max_lag) ? (avg_vr - max_lag) : 0;
     
     if (thread->vruntime < target_vr) {
         thread->vruntime = target_vr;
         thread->vruntime_rem = 0; 
-    } else if (thread->vruntime > avg_vr + max_lag) {
-        thread->vruntime = avg_vr + max_lag;
+    } else if (thread->vruntime > avg_vr + max_lag * 2) {
+        thread->vruntime = avg_vr + max_lag * 2;
         thread->vruntime_rem = 0;
     }
     
-    thread->deadline = thread->vruntime + (quantum * 1024) / thread->weight;
+    thread->deadline = thread->vruntime + (quantum * 1024) / weight;
     thread->min_vruntime_subtree = thread->vruntime; 
 }
 
@@ -147,7 +159,6 @@ static inline void update_min_vruntime_upward(rb_node_t *node) {
             if (rt->min_vruntime_subtree < min_vr) min_vr = rt->min_vruntime_subtree;
         }
         
-        if (t->min_vruntime_subtree == min_vr) break; 
         t->min_vruntime_subtree = min_vr;
         node = node->parent;
     }
@@ -204,7 +215,6 @@ namespace Schedule {
             
             if (thread->state == THREAD_ZOMBIE) {
                 if (thread->parent) {
-                    // Lock order: CPU sched lock -> PROC_LIST_LOCK
                     spinlock_lock(&PROC_LIST_LOCK);
                     detach_thread_from_proc(thread);
                     spinlock_unlock(&PROC_LIST_LOCK);
@@ -216,10 +226,6 @@ namespace Schedule {
             }
             
             calibrate_and_set_deadline(thread, cpu);
-            
-            // set last_run_time when not joining the quque
-            // avoid calculate wait schedule time = running time
-            // just set last_run_time value when Switch(...) to running thread
             
             rb_insert(&cpu->runqueue_root, &thread->rb_node, thread_rb_cmp);
             thread->on_rq = true;
@@ -275,7 +281,6 @@ namespace Schedule {
                     thread_t *stolen_batch[SCHED_STEAL_BATCH];
                     int stolen_count = 0;
 
-                    // reverse traversal
                     rb_node_t *node = rb_last(victim->runqueue_root.node);
                     while (node && stolen_count < SCHED_STEAL_BATCH) {
                         if (victim->thread_count <= 1) break;
@@ -296,7 +301,6 @@ namespace Schedule {
                         RemoveFromQueue(victim, stolen);
                         
                         if (stolen->state == THREAD_ZOMBIE) {
-                            // 优化：直接在源 CPU 分离并放入源 CPU 僵尸链表，避免跨核迁移
                             if (stolen->parent) {
                                 spinlock_lock(&PROC_LIST_LOCK);
                                 detach_thread_from_proc(stolen);
@@ -467,7 +471,7 @@ namespace Schedule {
             if (!cpu) return;
             if (cpu->preempt_count > 1) {
                 if (cpu->current_thread) {
-                    uint64_t q = cpu->base_quantum;
+                    uint64_t q = get_dynamic_quantum(cpu, cpu->current_thread);
                     LAPIC::Oneshot(SCHED_VEC, q * cpu->lapic_ticks);
                 }
                 LAPIC::EOI();
@@ -481,6 +485,9 @@ namespace Schedule {
             if (curr_thread && curr_thread != cpu->idle_thread) {
                 uint64_t delta = now - curr_thread->last_run_time;
                 curr_thread->last_run_time = now;
+                
+                
+                if (delta == 0) delta = 1;
                 
                 uint64_t vruntime_total = delta * 1024 + curr_thread->vruntime_rem;
                 uint64_t vruntime_delta = vruntime_total / curr_thread->weight;
@@ -575,13 +582,13 @@ namespace Schedule {
 
             if (!is_switch) {
                 if (next_thread != cpu->idle_thread) {
-                    quantum = (next_thread->custom_quantum > 0) ? next_thread->custom_quantum : cpu->base_quantum;
+                    quantum = get_dynamic_quantum(cpu, next_thread);
                     LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
                 }
                 LAPIC::EOI();
                 return; 
             }
-            //uint32_t curr_int_no = ctx->int_no;
+
             *ctx = next_thread->ctx;
             TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
             cpu->kernel_stack = next_thread->kernel_rsp;
@@ -596,15 +603,12 @@ namespace Schedule {
                 cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
             
-            
             if (next_thread != cpu->idle_thread) {
-                quantum = (next_thread->custom_quantum > 0) 
-                    ? next_thread->custom_quantum 
-                    : cpu->base_quantum;
+                quantum = get_dynamic_quantum(cpu, next_thread);
+            } else {
+                quantum = cpu->base_quantum;
             }
-            // 统一重启定时器，毫秒转硬件滴答
             LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
-            /* if (curr_int_no >= 0x20 && curr_int_no < 0x40)  */
             LAPIC::EOI();
         }
 
@@ -715,7 +719,6 @@ namespace Schedule {
             return;
         }
 
-        // add qualification check avoid UN-Qualified Thread preempt Qualified Thread
         if (woken_thread->vruntime <= cpu->avg_vruntime && woken_thread->deadline < curr->deadline) {
             cpu_t *cur_cpu = this_cpu();
             if (cpu != cur_cpu) {
@@ -894,8 +897,6 @@ namespace Schedule {
         
         cpu_t *cpu = get_cpu(cpu_num);
         
-        // completly use local avg_vruntime as benchmark
-        // calibrate_and_set_deadline deal cross-CPU clamping
         uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = (cpu->base_quantum * 1024) / (2 * thread->weight);
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
