@@ -22,9 +22,6 @@ spinlock_t PROC_LIST_LOCK = 0;
 #define ZOMBIE_RECLAIM_THRESHOLD 8
 #define WAIT_THREAD_TIMEOUT_MS 1000ULL
 
-#define ZOMBIE_RECLAIM_TICK_INTERVAL 16
-#define PUSH_BALANCE_TICK_INTERVAL 32
-
 static uint32_t sched_prio_to_weight[16] = {
     /* 0 */ 8192, /* 1 */ 6553, /* 2 */ 5242, /* 3 */ 4194,
     /* 4 */ 3355, /* 5 */ 2684, /* 6 */ 2147, /* 7 */ 1717,
@@ -38,6 +35,7 @@ extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
                   uint64_t *tls_filesz = nullptr, 
                   uint64_t *tls_align = nullptr);
 
+//DYNAMIC QUAMTUM CALC FUNCTION
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     if (!thread || thread == cpu->idle_thread) {
         return cpu->base_quantum;
@@ -46,12 +44,14 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
         return thread->custom_quantum;
     }
     uint64_t weight = thread->weight ? thread->weight : 1024;
+    // (base_quantum * 1024 / weight)RANGE IS:[1, base_quantum * 4]
     uint64_t quantum = (cpu->base_quantum * 1024) / weight;
     if (quantum < 1) quantum = 1;
     if (quantum > cpu->base_quantum * 4) quantum = cpu->base_quantum * 4;
     return quantum;
 }
 
+// Helper function to get previous node in RB tree for reverse traversal
 static inline rb_node_t* rb_prev(rb_node_t* node) {
     if (!node) return nullptr;
     if (node->left) {
@@ -127,9 +127,11 @@ static inline thread_t* rb_to_thread(rb_node_t* node) {
 static inline void calibrate_and_set_deadline(thread_t *thread, cpu_t *cpu) {
     uint64_t quantum = get_dynamic_quantum(cpu, thread);
     uint64_t weight = thread->weight ? thread->weight : 1024;
+    
     uint64_t max_lag = (quantum * 1024) / weight; 
     
     uint64_t avg_vr = cpu->avg_vruntime;
+    
     uint64_t target_vr = (avg_vr > max_lag) ? (avg_vr - max_lag) : 0;
     
     if (thread->vruntime < target_vr) {
@@ -160,16 +162,6 @@ static inline void update_min_vruntime_upward(rb_node_t *node) {
         t->min_vruntime_subtree = min_vr;
         node = node->parent;
     }
-}
-
-
-static inline void rb_augment_insert(rb_node_t *node) {
-    update_min_vruntime_upward(node);
-}
-
-static inline void rb_augment_erase(rb_node_t *update_node, rb_node_t *update_node2) {
-    if (update_node) update_min_vruntime_upward(update_node);
-    if (update_node2) update_min_vruntime_upward(update_node2);
 }
 
 static inline void detach_thread_from_proc(thread_t *thread) {
@@ -209,8 +201,10 @@ namespace Schedule {
             cpu->thread_count--;
             cpu->total_weight -= thread->weight;
             
-            // Force update influenced path
-            rb_augment_erase(update_1, update_2);
+            if (update_1)
+                update_min_vruntime_upward(update_1);
+            if (update_2)
+                update_min_vruntime_upward(update_2);
             
             if (cpu->thread_count == 1) cpu->has_surplus = false;
             if (cpu->thread_count == 0) cpu->has_runnable_thread = false;
@@ -231,12 +225,6 @@ namespace Schedule {
                 return;
             }
             
-            
-            if (thread->timer_bucket != nullptr) {
-                TimerRemove(thread);
-                thread->timer_bucket = nullptr;
-            }
-            
             calibrate_and_set_deadline(thread, cpu);
             
             rb_insert(&cpu->runqueue_root, &thread->rb_node, thread_rb_cmp);
@@ -246,8 +234,7 @@ namespace Schedule {
             if (cpu->thread_count == 1) cpu->has_runnable_thread = true;
             if (cpu->thread_count == 2) cpu->has_surplus = true;
             
-            // 更新 augment
-            rb_augment_insert(&thread->rb_node);
+            update_min_vruntime_upward(&thread->rb_node);
         }
 
         void ProcessAddThread(proc_t *parent, thread_t *thread) {
@@ -301,13 +288,31 @@ namespace Schedule {
                         thread_t *stolen = rb_to_thread(node);
                         rb_node_t *prev_node = rb_prev(node);
                         
-                        // 严格限制：仅迁移运行状态且无定时器挂起的线程，杜绝状态重叠
-                        if (stolen->state != THREAD_RUNNING || stolen->timer_bucket != nullptr) {
+                        if (stolen->timer_bucket != nullptr) {
+                            if (stolen->timer_cpu == victim->id) {
+                                TimerRemove(stolen);
+                                stolen->timer_bucket = nullptr; 
+                            } else {
+                                node = prev_node;
+                                continue;
+                            }
+                        }
+                        
+                        RemoveFromQueue(victim, stolen);
+                        
+                        if (stolen->state == THREAD_ZOMBIE) {
+                            if (stolen->parent) {
+                                spinlock_lock(&PROC_LIST_LOCK);
+                                detach_thread_from_proc(stolen);
+                                spinlock_unlock(&PROC_LIST_LOCK);
+                            }
+                            stolen->zombie_next = victim->zombie_list;
+                            victim->zombie_list = stolen;
+                            victim->zombie_count++;
                             node = prev_node;
                             continue;
                         }
                         
-                        RemoveFromQueue(victim, stolen);
                         stolen_batch[stolen_count++] = stolen;
                         node = prev_node;
                     }
@@ -389,10 +394,14 @@ namespace Schedule {
                 thread_t *to_push = rb_to_thread(node);
                 rb_node_t *prev_node = rb_prev(node);
                 
-                // 严格限制：仅推送运行状态且无定时器挂起的线程
-                if (to_push->state != THREAD_RUNNING || to_push->timer_bucket != nullptr) {
-                    node = prev_node;
-                    continue; 
+                if (to_push->timer_bucket != nullptr) {
+                    if (to_push->timer_cpu == cpu->id) {
+                        TimerRemove(to_push);
+                        to_push->timer_bucket = nullptr; 
+                    } else {
+                        node = prev_node;
+                        continue; 
+                    }
                 }
                 
                 RemoveFromQueue(cpu, to_push);
@@ -477,6 +486,7 @@ namespace Schedule {
                 uint64_t delta = now - curr_thread->last_run_time;
                 curr_thread->last_run_time = now;
                 
+                
                 if (delta == 0) delta = 1;
                 
                 uint64_t vruntime_total = delta * 1024 + curr_thread->vruntime_rem;
@@ -484,8 +494,7 @@ namespace Schedule {
                 curr_thread->vruntime_rem = vruntime_total % curr_thread->weight;
                 curr_thread->vruntime += vruntime_delta;
                 
-                // 修复：计算 avg_vruntime 排除 idle 线程，防止空闲时 avg_vruntime 虚假增长
-                uint64_t active_weight = cpu->total_weight; 
+                uint64_t active_weight = cpu->total_weight + curr_thread->weight;
                 if (active_weight > 0) {
                     uint64_t avg_total = delta * 1024 + cpu->avg_vruntime_rem;
                     uint64_t avg_delta = avg_total / active_weight;
@@ -509,15 +518,13 @@ namespace Schedule {
 
             if (curr_thread && curr_state == THREAD_ZOMBIE && curr_thread != cpu->idle_thread) {
                 cpu->current_thread = nullptr; 
-                spinlock_unlock(&cpu->sched_lock); // 解锁以维持锁顺序
-
+                
                 if (curr_thread->parent) {
                     spinlock_lock(&PROC_LIST_LOCK);
                     detach_thread_from_proc(curr_thread);
                     spinlock_unlock(&PROC_LIST_LOCK);
                 }
                 
-                spinlock_lock(&cpu->sched_lock); // 重新获取
                 curr_thread->zombie_next = cpu->zombie_list;
                 cpu->zombie_list = curr_thread;
                 cpu->zombie_count++;
@@ -530,7 +537,7 @@ namespace Schedule {
             thread_t *next_thread = Pick(cpu);
             
             thread_t *zombie_to_free = nullptr;
-            if (((cpu->tick_count & (ZOMBIE_RECLAIM_TICK_INTERVAL - 1)) == 0 || cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD) && cpu->zombie_list) {
+            if (((cpu->tick_count & 0xF) == 0 || cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD) && cpu->zombie_list) {
                 zombie_to_free = cpu->zombie_list;
                 cpu->zombie_list = nullptr;
                 cpu->zombie_count = 0;
@@ -569,7 +576,7 @@ namespace Schedule {
                 }
             }
 
-            if ((cpu->tick_count & (PUSH_BALANCE_TICK_INTERVAL - 1)) == 0) {
+            if ((cpu->tick_count & 0x1F) == 0) {
                 TryPush(cpu);                
             }
 
@@ -618,14 +625,11 @@ namespace Schedule {
         spinlock_lock(&cpu->sched_lock);
         thread->state = THREAD_ZOMBIE;
         was_running = (cpu->current_thread == thread);
-        spinlock_unlock(&cpu->sched_lock);
-
-       
+        
         spinlock_lock(&PROC_LIST_LOCK);
         detach_thread_from_proc(thread);
         spinlock_unlock(&PROC_LIST_LOCK);
 
-        spinlock_lock(&cpu->sched_lock);
         if (thread->on_rq) {
             Internal::RemoveFromQueue(cpu, thread);
             thread->zombie_next = cpu->zombie_list;
