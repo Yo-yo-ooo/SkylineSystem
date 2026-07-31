@@ -145,12 +145,21 @@ run-hdd-bios: $(IMAGE_NAME).hdd
 edk2-ovmf:
 	curl -L https://github.com/osdev0/edk2-ovmf-nightly/releases/latest/download/edk2-ovmf.tar.gz | gunzip | tar -xf -
 
-limine-binary/limine:
-	rm -rf limine-binary
-	curl -L https://github.com/Limine-Bootloader/Limine/releases/latest/download/limine-binary.tar.gz | gunzip | tar -xf -
-	$(MAKE) -C limine-binary 
-	git clone https://github.com/limine-bootloader/limine-protocol
-	cp -f ./limine-protocol/include/limine.h ./kernel/src
+limine-binary/limine: kernel/src/limine.h
+	@if [ ! -d "limine-binary" ]; then \
+		echo "Downloading limine binary..."; \
+		curl -L https://github.com/Limine-Bootloader/Limine/releases/latest/download/limine-binary.tar.gz | gunzip | tar -xf -; \
+	fi
+	$(MAKE) -C limine-binary
+
+kernel/src/limine.h:
+	@if [ ! -f "kernel/src/limine.h" ]; then \
+		if [ ! -d "limine-protocol" ]; then \
+			echo "Cloning limine-protocol..."; \
+			git clone https://github.com/limine-bootloader/limine-protocol; \
+		fi; \
+		cp -f ./limine-protocol/include/limine.h ./kernel/src; \
+	fi
 
 kernel-deps:
 	dos2unix ./kernel/get-deps
