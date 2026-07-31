@@ -2,9 +2,7 @@
 #include <klib/algorithm/hmap.h>
 #include <klib/algorithm/rbtree.h>
 
-// ============================================================
-//  负载因子配置
-// ============================================================
+// Load factor configuration
 #define GROW_AT   60
 #define SHRINK_AT 10
 
@@ -12,9 +10,7 @@
 #define HASHMAP_LOAD_FACTOR GROW_AT
 #endif
 
-// ============================================================
-//  定点数定义
-// ============================================================
+// Fixed-point definition for load factor calculation
 #define LF_BITS    10
 #define LF_ONE     (1U << LF_BITS)
 #define LF_HALF    (LF_ONE >> 1)
@@ -37,36 +33,29 @@ static inline uint64_t clip_hash(uint64_t hash) {
     return hash & 0xFFFFFFFFFFFFULL;
 }
 
-// ============================================================
-//  节点结构：存储在红黑树中的元素
-//
-//  核心设计：将 map 指针存放在节点中，避免修改 rb_tree.h 的
-//  比较函数签名，同时彻底消除全局变量。
-// ============================================================
+// Hashmap node stored inside red-black tree
+// Core design: store map pointer inside node to avoid modifying rb_tree.h comparator signature
+// and eliminate global variables completely
 struct hashmap_node {
-    rb_node_t      rb;          // 红黑树节点（必须为首成员）
-    uint64_t       hash;        // 48-bit clipped hash
-    struct hashmap *map;        // 所属的 hashmap，替代全局变量
-    const void    *key_ptr;     // 仅当 is_proxy != 0 时有效
-    uint8_t        is_proxy;    // 0 = 真实节点, 1 = 查找代理
-    uint8_t        _pad[7];     // 对齐 item[] 到 8 字节边界
-    char           item[];      // 真实节点的用户数据（柔性数组）
+    rb_node_t      rb;          // Red-black tree node (MUST be first member)
+    uint64_t       hash;        // 48-bit clipped hash value
+    struct hashmap *map;        // Parent hashmap, replaces global context
+    const void    *key_ptr;     // Valid only when is_proxy != 0
+    uint8_t        is_proxy;    // 0 = real node, 1 = lookup proxy node
+    uint8_t        _pad[7];     // Padding to align flexible array item[] to 8-byte boundary
+    char           item[];      // Flexible array: user stored data for real node
 };
 
 static inline void *hashmap_node_item(struct hashmap_node *n) {
     return (void *)((char *)n + offsetof(struct hashmap_node, item));
 }
 
-// ============================================================
-//  区间结构
-// ============================================================
+// Bucket region structure (each region holds an independent red-black tree)
 struct hashmap_region {
     rb_root_t root;
 };
 
-// ============================================================
-//  哈希映射主结构
-// ============================================================
+// Main hashmap instance structure
 struct hashmap {
     size_t   elsize;
     size_t   cap;
@@ -88,11 +77,9 @@ struct hashmap {
     void     *spare;
 };
 
-// ============================================================
-//  红黑树比较函数 (无全局变量，无 ctx，完全兼容原版 rb_tree.h)
-//
-//  通过 container_of 还原 hashmap_node，直接从节点中取 map 指针。
-// ============================================================
+// Red-black tree comparator
+// No global variable, no extra context, fully compatible with original rb_tree.h interface
+// Use container_of to restore hashmap_node and retrieve map pointer directly from node
 static int hashmap_rb_cmp(const rb_node_t *a, const rb_node_t *b) {
     struct hashmap_node *na = RB_CONTAINER_OF(a, struct hashmap_node, rb);
     struct hashmap_node *nb = RB_CONTAINER_OF(b, struct hashmap_node, rb);
@@ -100,7 +87,7 @@ static int hashmap_rb_cmp(const rb_node_t *a, const rb_node_t *b) {
     if (na->hash < nb->hash) return -1;
     if (na->hash > nb->hash) return 1;
 
-    // 两个节点中至少有一个带有 map 指针（通常都有）
+    // At least one node carries valid map pointer
     struct hashmap *map = na->map ? na->map : nb->map;
     if (!map || !map->compare) {
         return 1;
@@ -113,9 +100,7 @@ static int hashmap_rb_cmp(const rb_node_t *a, const rb_node_t *b) {
     return 0;
 }
 
-// ============================================================
-//  节点分配
-// ============================================================
+// Allocate new hashmap node
 static struct hashmap_node *hashmap_node_alloc(struct hashmap *map,
                                                 const void *item,
                                                 uint64_t hash) {
@@ -123,7 +108,7 @@ static struct hashmap_node *hashmap_node_alloc(struct hashmap *map,
     struct hashmap_node *n = (struct hashmap_node *)kmalloc(total);
     if (!n) return NULL;
     n->hash     = hash;
-    n->map      = map; // 绑定 map 指针
+    n->map      = map; // Bind node to parent hashmap
     n->key_ptr  = NULL;
     n->is_proxy = 0;
     _memset(n->_pad, 0, sizeof(n->_pad));
@@ -133,13 +118,12 @@ static struct hashmap_node *hashmap_node_alloc(struct hashmap *map,
     return n;
 }
 
-// ============================================================
-//  区间操作
-// ============================================================
+// Initialize bucket region
 static void hashmap_region_init(struct hashmap_region *r) {
     rb_root_init(&r->root, NULL, NULL, NULL, NULL, NULL);
 }
 
+// Callback to free node content during region clear
 static void hashmap_free_node_cb(rb_node_t *node, void *arg) {
     struct hashmap *map = (struct hashmap *)arg;
     struct hashmap_node *n = RB_CONTAINER_OF(node, struct hashmap_node, rb);
@@ -149,13 +133,12 @@ static void hashmap_free_node_cb(rb_node_t *node, void *arg) {
     kfree(n);
 }
 
+// Clear all nodes inside one bucket region
 static void hashmap_clear_region(struct hashmap *map, struct hashmap_region *r) {
     rb_clear(&r->root, hashmap_free_node_cb, map);
 }
 
-// ============================================================
-//  扩缩容
-// ============================================================
+// Resize bucket table (expand or shrink)
 static bool hashmap_resize(struct hashmap *map, size_t new_cap) {
     size_t ncap = 16;
     if (new_cap < 16) new_cap = 16;
@@ -181,7 +164,7 @@ static bool hashmap_resize(struct hashmap *map, size_t new_cap) {
             struct hashmap_node *hn = RB_CONTAINER_OF(node, struct hashmap_node, rb);
             size_t new_idx = hn->hash & new_mask;
             struct hashmap_region *new_r = &new_regions[new_idx];
-            // 不需要传 map 参数，因为 hn 内部已经包含了 map 指针
+            // No need to pass map externally; node contains self-bound map pointer
             rb_insert(&new_r->root, &hn->rb, hashmap_rb_cmp);
         }
     }
@@ -195,13 +178,12 @@ static bool hashmap_resize(struct hashmap *map, size_t new_cap) {
     return true;
 }
 
-// ============================================================
-//  公共 API: 配置
-// ============================================================
+// Public API: set growth power factor
 void hashmap_set_grow_by_power(struct hashmap *map, size_t power) {
     map->growpower = power < 1 ? 1 : (power > 16 ? 16 : (uint8_t)power);
 }
 
+// Public API: update load factor threshold
 void hashmap_set_load_factor(struct hashmap *map, uint8_t percent) {
     uint8_t cur_pct = (map->loadfactor != 0) ? (uint8_t)map->loadfactor : GROW_AT;
     uint8_t pct = clamp_load_factor_pct(percent, cur_pct);
@@ -209,9 +191,7 @@ void hashmap_set_load_factor(struct hashmap *map, uint8_t percent) {
     map->growat = lf_threshold(map->nbuckets, PCT_TO_LF(pct));
 }
 
-// ============================================================
-//  构造
-// ============================================================
+// Create hashmap with custom allocator wrapper
 struct hashmap *hashmap_new_with_allocator(
     size_t elsize, size_t cap, uint64_t seed0, uint64_t seed1,
     uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1),
@@ -272,6 +252,7 @@ struct hashmap *hashmap_new_with_allocator(
     return map;
 }
 
+// Standard hashmap constructor
 struct hashmap *hashmap_new(size_t elsize, size_t cap, uint64_t seed0,
     uint64_t seed1,
     uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1),
@@ -283,9 +264,7 @@ struct hashmap *hashmap_new(size_t elsize, size_t cap, uint64_t seed0,
         seed1, hash, compare, elfree, udata);
 }
 
-// ============================================================
-//  析构 / 清空
-// ============================================================
+// Destroy entire hashmap and free all resources
 void hashmap_free(struct hashmap *map) {
     if (!map) return;
     for (size_t i = 0; i < map->nbuckets; i++) {
@@ -296,6 +275,7 @@ void hashmap_free(struct hashmap *map) {
     kfree(map);
 }
 
+// Clear all entries, optionally reset bucket capacity
 void hashmap_clear(struct hashmap *map, bool update_cap) {
     for (size_t i = 0; i < map->nbuckets; i++) {
         hashmap_clear_region(map, &map->regions[i]);
@@ -309,27 +289,24 @@ void hashmap_clear(struct hashmap *map, bool update_cap) {
     }
 }
 
-// ============================================================
-//  内部辅助
-// ============================================================
+// Internal helper: compute and clip hash value
 static uint64_t get_hash(const struct hashmap *map, const void *key) {
     return clip_hash(map->hash(key, map->seed0, map->seed1));
 }
 
+// Initialize proxy node used for search matching
 static inline void hashmap_build_proxy(struct hashmap_node *proxy,
                                         struct hashmap *map,
                                         uint64_t hash, const void *key) {
     rb_init_node(&proxy->rb);
     proxy->hash     = hash;
-    proxy->map      = map; // 代理节点也绑定 map 指针
+    proxy->map      = map; // Proxy node also bind parent map pointer
     proxy->key_ptr  = key;
     proxy->is_proxy = 1;
     _memset(proxy->_pad, 0, sizeof(proxy->_pad));
 }
 
-// ============================================================
-//  插入
-// ============================================================
+// Insert or update entry with precomputed hash
 const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
     uint64_t hash)
 {
@@ -346,11 +323,9 @@ const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
     size_t idx = hash & map->mask;
     struct hashmap_region *r = &map->regions[idx];
 
-    // 构造代理节点时传入 map
     struct hashmap_node proxy;
     hashmap_build_proxy(&proxy, map, hash, item);
 
-    // 调用红黑树查找，使用原版无 ctx 接口
     rb_node_t *existing = rb_search(&r->root, &proxy.rb, hashmap_rb_cmp);
 
     if (existing) {
@@ -366,20 +341,18 @@ const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
         map->oom = true;
         return NULL;
     }
-    // 调用红黑树插入，使用原版无 ctx 接口
     rb_insert(&r->root, &n->rb, hashmap_rb_cmp);
     map->count++;
 
     return NULL;
 }
 
+// Insert or update entry (compute hash internally)
 const void *hashmap_set(struct hashmap *map, const void *item) {
     return hashmap_set_with_hash(map, item, get_hash(map, item));
 }
 
-// ============================================================
-//  查找
-// ============================================================
+// Lookup entry with precomputed hash
 const void *hashmap_get_with_hash(const struct hashmap *map, const void *key,
     uint64_t hash)
 {
@@ -390,7 +363,6 @@ const void *hashmap_get_with_hash(const struct hashmap *map, const void *key,
     struct hashmap_node proxy;
     hashmap_build_proxy(&proxy, (struct hashmap *)map, hash, key);
 
-    // 调用红黑树查找，使用原版无 ctx 接口
     rb_node_t *found = rb_search(&r->root, &proxy.rb, hashmap_rb_cmp);
 
     if (!found) return NULL;
@@ -398,13 +370,12 @@ const void *hashmap_get_with_hash(const struct hashmap *map, const void *key,
     return hashmap_node_item(n);
 }
 
+// Lookup entry (compute hash internally)
 const void *hashmap_get(const struct hashmap *map, const void *key) {
     return hashmap_get_with_hash(map, key, get_hash(map, key));
 }
 
-// ============================================================
-//  删除
-// ============================================================
+// Delete entry with precomputed hash
 const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
     uint64_t hash)
 {
@@ -416,7 +387,6 @@ const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
     struct hashmap_node proxy;
     hashmap_build_proxy(&proxy, map, hash, key);
 
-    // 调用红黑树查找，使用原版无 ctx 接口
     rb_node_t *found = rb_search(&r->root, &proxy.rb, hashmap_rb_cmp);
     if (!found) {
         return NULL;
@@ -437,28 +407,27 @@ const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
     return map->spare;
 }
 
+// Delete entry (compute hash internally)
 const void *hashmap_delete(struct hashmap *map, const void *key) {
     return hashmap_delete_with_hash(map, key, get_hash(map, key));
 }
 
-// ============================================================
-//  统计与状态
-// ============================================================
+// Return stored entry count
 size_t hashmap_count(const struct hashmap *map) {
     return map->count;
 }
 
+// Check whether last operation encountered OOM
 bool hashmap_oom(struct hashmap *map) {
     return map->oom;
 }
 
+// Return bucket table size
 size_t hashmap_nbuckets(const struct hashmap *map) {
     return map->nbuckets;
 }
 
-// ============================================================
-//  区间接口
-// ============================================================
+// Fetch first item in specified bucket
 const void *hashmap_bucket_item(const struct hashmap *map, size_t i) {
     if (i >= map->nbuckets) return NULL;
     struct hashmap_region *r = &map->regions[i];
@@ -467,6 +436,7 @@ const void *hashmap_bucket_item(const struct hashmap *map, size_t i) {
     return hashmap_node_item(RB_CONTAINER_OF(first, struct hashmap_node, rb));
 }
 
+// Simple probe function by hash position
 const void *hashmap_probe(struct hashmap *map, uint64_t position) {
     size_t idx = (size_t)(position & map->mask);
     if (idx >= map->nbuckets) return NULL;
@@ -476,9 +446,7 @@ const void *hashmap_probe(struct hashmap *map, uint64_t position) {
     return hashmap_node_item(RB_CONTAINER_OF(first, struct hashmap_node, rb));
 }
 
-// ============================================================
-//  全量遍历
-// ============================================================
+// Full scan iteration over all entries
 bool hashmap_scan(struct hashmap *map,
     bool (*iter)(const void *item, void *udata), void *udata)
 {
@@ -494,9 +462,7 @@ bool hashmap_scan(struct hashmap *map,
     return true;
 }
 
-// ============================================================
-//  迭代器（可恢复）
-// ============================================================
+// Resumable iterator
 bool hashmap_iter(struct hashmap *map, size_t *i, void **item) {
     uint64_t state  = *i;
     uint32_t region = (uint32_t)(state >> 32);
@@ -519,9 +485,7 @@ bool hashmap_iter(struct hashmap *map, size_t *i, void **item) {
     return false;
 }
 
-//=============================================================================
 // SipHash reference C implementation
-//=============================================================================
 static uint64_t SIP64(const uint8_t *in, const size_t inlen, uint64_t seed0,
     uint64_t seed1)
 {
@@ -584,9 +548,7 @@ static uint64_t SIP64(const uint8_t *in, const size_t inlen, uint64_t seed0,
     return out;
 }
 
-//=============================================================================
-// MurmurHash3
-//=============================================================================
+// MurmurHash3 128-bit implementation
 static uint64_t MM86128(const void *key, const int32_t len, uint32_t seed) {
 #define	ROTL32(x, r) ((x << r) | (x >> (32 - r)))
 #define FMIX32(h) h^=h>>16; h*=0x85ebca6b; h^=h>>13; h*=0xc2b2ae35; h^=h>>16;
@@ -654,9 +616,7 @@ static uint64_t MM86128(const void *key, const int32_t len, uint32_t seed) {
     return (((uint64_t)h2)<<32)|h1;
 }
 
-//=============================================================================
-// xxHash Library
-//=============================================================================
+// xxHash3 implementation
 #define XXH_PRIME_1 11400714785074694791ULL
 #define XXH_PRIME_2 14029467366897019727ULL
 #define XXH_PRIME_3 1609587929392839161ULL
@@ -775,6 +735,7 @@ static uint64_t xxh3(const void *data, size_t len, uint64_t seed) {
     return h64;
 }
 
+// Public hash function wrappers
 uint64_t hashmap_sip(const void *data, size_t len, uint64_t seed0,
     uint64_t seed1)
 {
