@@ -51,21 +51,7 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     return quantum;
 }
 
-// Helper function to get previous node in RB tree for reverse traversal
-static inline rb_node_t* rb_prev(rb_node_t* node) {
-    if (!node) return nullptr;
-    if (node->left) {
-        node = node->left;
-        while (node->right) node = node->right;
-        return node;
-    }
-    rb_node_t* parent = node->parent;
-    while (parent && node == parent->left) {
-        node = parent;
-        parent = parent->parent;
-    }
-    return parent;
-}
+
 
 void sched_idle() {
     while (true) {
