@@ -20,20 +20,69 @@ char* strcat(char* dest, const char* source){
 	return dest;
 }
 
-uint8_t strcmp(const char *cs, const char *ct)
-{
-    uint8_t c1, c2;
+#define ONES  0x0101010101010101ULL
+#define HIGHS 0x8080808080808080ULL
 
-    while (1)
-    {
-        c1 = *cs++;
-        c2 = *ct++;
+extern void *__memcpy(void * d, const void * s, uint64_t n);
+
+int strcmp(const char *cs, const char *ct)
+{
+    // 1. 双指针对齐阶段
+    while (((uintptr_t)cs & 7) != 0 || ((uintptr_t)ct & 7) != 0) {
+        uint8_t c1 = *(const uint8_t *)cs;
+        uint8_t c2 = *(const uint8_t *)ct;
         if (c1 != c2)
-            return c1 < c2 ? -1 : 1;
-        if (!c1)
-            break;
+            return (int)c1 - (int)c2; 
+        if (c1 == '\0')
+            return 0;
+        cs++;
+        ct++;
     }
-    return 0;
+
+    // 2. SWAR 主循环
+    while (1) {
+        uint64_t x, y;
+        
+    
+        __memcpy(&x, cs, 8);
+        __memcpy(&y, ct, 8);
+
+        // 并行检测 0 字节
+        uint64_t zero_mask = ((x - ONES) & ~x & HIGHS) | ((y - ONES) & ~y & HIGHS);
+
+        // 计算差异
+        uint64_t diff = x ^ y;
+        uint64_t mask = diff | zero_mask;
+
+        if (__builtin_expect(mask != 0, 0)) {
+            int byte_idx;
+            
+        #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+            // 大端序：内存低地址对应数值高位。
+            // clz 返回前导 0 个数。若最高位 bit63 置 1，clz=0，对应内存字节 0。
+            // 因此直接用 clz 除以 8 即可得到正确的内存字节索引。
+            byte_idx = __builtin_clzll(mask) / 8;
+        #else
+            // 小端序：内存低地址对应数值低位。
+            // ctz 返回末尾 0 个数。若最低位 bit0 置 1，ctz=0，对应内存字节 0。
+            byte_idx = __builtin_ctzll(mask) / 8;
+        #endif
+
+            // 统一使用无符号字节指针下标取值，消除隐式符号转换隐患，保持代码一致性
+            const uint8_t *p1 = (const uint8_t *)cs;
+            const uint8_t *p2 = (const uint8_t *)ct;
+            uint8_t c1 = p1[byte_idx];
+            uint8_t c2 = p2[byte_idx];
+
+            if (c1 != c2)
+                return (int)c1 - (int)c2; // C 标准：返回 unsigned char 的差值
+            else
+                return 0; // 遇到 '\0' 且之前的字节都相等
+        }
+
+        cs += 8;
+        ct += 8;
+    }
 }
 
 char *strtok(char *str, const char *delim)
@@ -261,6 +310,7 @@ typedef unsigned long int bytemask_t;
 
 size_t	strlen(const char *__restrict__  s)
 {
+    if (!s) return 0;
 #if defined(__GNUC__) || defined (__clang__)
 	register const uintptr_t	s0 = (uintptr_t)s;
 	register const word_t		*w = (const word_t *)(((uintptr_t)s) & \

@@ -7,7 +7,7 @@
 extern "C"{
 #endif
 
-uint8_t strcmp(const char *cs, const char *ct);
+int32_t strcmp(const char *cs, const char *ct);
 char *strtok(char *str, const char *delim);
 char* strchr(const char* str, int32_t c);
 char *strcpy(char *strDest, const char *strSrc);
