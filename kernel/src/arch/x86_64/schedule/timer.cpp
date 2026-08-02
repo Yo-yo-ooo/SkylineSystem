@@ -71,7 +71,6 @@ namespace Schedule {
             uint64_t now = PIT::TimeSinceBootMS();
             uint64_t expires = now + chunk;
             
-            // FIX [自旋锁中断安全]: 严格应用模式
             uint64_t rflags;
             asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
             spinlock_lock(&cpu->sched_lock);
@@ -94,7 +93,6 @@ namespace Schedule {
         uint64_t now = PIT::TimeSinceBootMS();
         if (now == cpu->timer_last_tick) return;
         
-        // FIX [自旋锁中断安全]: 严格应用模式
         uint64_t rflags;
         asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&cpu->sched_lock);

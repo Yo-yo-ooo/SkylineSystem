@@ -52,12 +52,26 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     return quantum;
 }
 
+static inline void detach_thread_from_proc(thread_t *thread) {
+    if (thread->parent && thread->parent->threads) {
+        if (thread->next == thread) {
+            thread->parent->threads = nullptr;
+        } else {
+            if (thread->parent->threads == thread) thread->parent->threads = thread->next;
+            thread->prev->next = thread->next;
+            thread->next->prev = thread->prev;
+        }
+    }
+    thread->parent = nullptr;
+    thread->next = thread->prev = nullptr;
+}
+
+
 void sched_idle() {
     while (true) {
         cpu_t *cpu = this_cpu();
         thread_t *zombie_head = nullptr;
 
-        // FIX [自旋锁中断安全]: 保存中断状态并关中断
         uint64_t rflags;
         asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&cpu->sched_lock);
@@ -72,13 +86,20 @@ void sched_idle() {
         thread_t *z = zombie_head;
         while (z) {
             thread_t *next = z->zombie_next;
+
+            uint64_t rflags2;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags2) :: "memory");
+            spinlock_lock(&PROC_LIST_LOCK);
+            detach_thread_from_proc(z);
+            spinlock_unlock(&PROC_LIST_LOCK);
+            asm volatile("push %0\n\tpopfq" :: "r"(rflags2) : "memory");
+
             Schedule::FreeThreadResources(z);
             kfree(z);
             cpu->sched_stats.zombie_reclaims++;
             z = next;
         }
 
-        // FIX [功耗优化]: 空闲时直接 hlt，等待下一次时钟中断或 IPI 唤醒
         asm volatile("sti; hlt; cli" ::: "memory");
     }
 }
@@ -148,19 +169,6 @@ static inline void update_min_vruntime_upward(rb_node_t *node) {
     }
 }
 
-static inline void detach_thread_from_proc(thread_t *thread) {
-    if (thread->parent && thread->parent->threads) {
-        if (thread->next == thread) {
-            thread->parent->threads = nullptr;
-        } else {
-            if (thread->parent->threads == thread) thread->parent->threads = thread->next;
-            thread->prev->next = thread->next;
-            thread->next->prev = thread->prev;
-        }
-    }
-    thread->parent = nullptr;
-    thread->next = thread->prev = nullptr;
-}
 
 namespace Schedule {
     namespace Internal {
@@ -204,7 +212,6 @@ namespace Schedule {
         }
 
         void ProcessAddThread(proc_t *parent, thread_t *thread) {
-            // FIX [自旋锁中断安全]: 保护全局进程链表
             uint64_t rflags;
             asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
             spinlock_lock(&PROC_LIST_LOCK);
@@ -236,7 +243,6 @@ namespace Schedule {
 
                     cpu->sched_stats.steal_attempts++;
 
-                    // FIX [自旋锁中断安全]: 获取其他 CPU 锁前关本地中断
                     uint64_t rflags1;
                     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags1) :: "memory");
                     int retries = 0;
@@ -409,7 +415,6 @@ namespace Schedule {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             if (!cpu) return;
-            // 该函数通常由中断触发，IF已清，但统一关中断无副作用且更安全
             uint64_t rflags;
             asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
 
@@ -453,13 +458,11 @@ namespace Schedule {
                 }
             }
 
-            thread_t *zombie_to_detach = nullptr;
             spinlock_lock(&cpu->sched_lock);
             uint32_t curr_state = curr_thread ? curr_thread->state : 0xFFFFFFFF;
 
             if (curr_thread && curr_state == THREAD_ZOMBIE && curr_thread != cpu->idle_thread) {
                 cpu->current_thread = nullptr;
-                if (curr_thread->parent) zombie_to_detach = curr_thread;
                 curr_thread->zombie_next = cpu->zombie_list;
                 cpu->zombie_list = curr_thread;
                 cpu->zombie_count++;
@@ -471,13 +474,33 @@ namespace Schedule {
             thread_t *next_thread = Pick(cpu);
             spinlock_unlock(&cpu->sched_lock);
 
-            if (zombie_to_detach) {
-                uint64_t rflags2;
-                asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags2) :: "memory");
-                spinlock_lock(&PROC_LIST_LOCK);
-                detach_thread_from_proc(zombie_to_detach);
-                spinlock_unlock(&PROC_LIST_LOCK);
-                asm volatile("push %0\n\tpopfq" :: "r"(rflags2) : "memory");
+            
+            // 使用 trylock 避免在中断上下文中死等 PROC_LIST_LOCK，如果拿不到锁就跳过，保证不增加额外死锁风险
+            if (cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD) {
+                if (__sync_bool_compare_and_swap(&PROC_LIST_LOCK, 0, 1)) {
+                    thread_t *batch[4];
+                    int batch_count = 0;
+                    
+                    spinlock_lock(&cpu->sched_lock);
+                    thread_t *z = cpu->zombie_list;
+                    while (z && batch_count < 4) {
+                        batch[batch_count++] = z;
+                        z = z->zombie_next;
+                    }
+                    if (batch_count > 0) {
+                        cpu->zombie_list = z;
+                        cpu->zombie_count -= batch_count;
+                    }
+                    spinlock_unlock(&cpu->sched_lock);
+
+                    for (int i = 0; i < batch_count; i++) {
+                        detach_thread_from_proc(batch[i]);
+                        Schedule::FreeThreadResources(batch[i]);
+                        kfree(batch[i]);
+                        cpu->sched_stats.zombie_reclaims++;
+                    }
+                    spinlock_unlock(&PROC_LIST_LOCK);
+                }
             }
 
             if (!next_thread) {
@@ -629,13 +652,11 @@ namespace Schedule {
         }
 
         if (woken_thread->vruntime <= cpu->avg_vruntime && woken_thread->deadline < curr->deadline) {
-            // FIX [抢占阈值动态化]: 根据唤醒线程权重动态计算阈值，替代固定1ms
-            // 高权重(如8192): 1024/8192=0，总是抢占；中权重(1024): 1ms；低权重(288): 3ms
-            uint64_t threshold_ms = 1024 / woken_thread->weight;
-            
-            uint64_t remaining_slice_vr = curr->deadline - curr->vruntime;
-            uint64_t remaining_slice_phys_ms = (remaining_slice_vr * curr->weight) / 1024;
-            if (remaining_slice_phys_ms < threshold_ms) return;
+            // 等价于: (remaining_vr * curr->weight) / 1024 < 1024 / woken_thread->weight
+            uint64_t remaining_vr = curr->deadline - curr->vruntime;
+            if (remaining_vr * curr->weight * woken_thread->weight < 1024 * 1024) {
+                return; 
+            }
 
             cpu_t *cur_cpu = this_cpu();
             if (cpu != cur_cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
