@@ -25,7 +25,7 @@ char* strcat(char* dest, const char* source){
 
 extern void *__memcpy(void * d, const void * s, uint64_t n);
 
-int strcmp(const char *cs, const char *ct)
+int32_t strcmp(const char *cs, const char *ct)
 {
     // 1. 双指针对齐阶段
     while (((uintptr_t)cs & 7) != 0 || ((uintptr_t)ct & 7) != 0) {
@@ -75,7 +75,7 @@ int strcmp(const char *cs, const char *ct)
             uint8_t c2 = p2[byte_idx];
 
             if (c1 != c2)
-                return (int)c1 - (int)c2; // C 标准：返回 unsigned char 的差值
+                return (int32_t)c1 - (int32_t)c2; // C 标准：返回 unsigned char 的差值
             else
                 return 0; // 遇到 '\0' 且之前的字节都相等
         }
