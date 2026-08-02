@@ -1,5 +1,5 @@
-//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
-//SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: GPL-2.0-only
 #include <arch/x86_64/allin.h>
 #include <elf/elf.h>
 #include <arch/x86_64/schedule/sched.h>
@@ -12,11 +12,15 @@
 #include <klib/algorithm/art.h>
 #include <atomic/atomic.h>
 
+#ifndef THREAD_TRANSFER
+#define THREAD_TRANSFER 4
+#endif
+
 static uint64_t sched_tid = 0;
 static uint64_t sched_pid = 0;
 art_tree *pid2proc_tree = nullptr;
 spinlock_t PID2PROC_TREE_LOCK = 0;
-spinlock_t PROC_LIST_LOCK = 0;      
+spinlock_t PROC_LIST_LOCK = 0;
 
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
@@ -29,35 +33,33 @@ static uint32_t sched_prio_to_weight[16] = {
     /* 12 */ 562, /* 13 */ 450, /* 14 */ 360, /* 15 */ 288
 };
 
-extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap, 
-                  uint64_t *tls_offset = nullptr, 
-                  uint64_t *tls_memsz = nullptr, 
-                  uint64_t *tls_filesz = nullptr, 
+extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
+                  uint64_t *tls_offset = nullptr,
+                  uint64_t *tls_memsz = nullptr,
+                  uint64_t *tls_filesz = nullptr,
                   uint64_t *tls_align = nullptr);
 
-//DYNAMIC QUAMTUM CALC FUNCTION
+static_assert(sizeof(sched_prio_to_weight)/sizeof(sched_prio_to_weight[0]) == 16,
+              "sched_prio_to_weight must have 16 entries");
+
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
-    if (!thread || thread == cpu->idle_thread) {
-        return cpu->base_quantum;
-    }
-    if (thread->custom_quantum > 0) {
-        return thread->custom_quantum;
-    }
+    if (!thread || thread == cpu->idle_thread) return cpu->base_quantum;
+    if (thread->custom_quantum > 0) return thread->custom_quantum;
     uint64_t weight = thread->weight ? thread->weight : 1024;
-    // (base_quantum * 1024 / weight)RANGE IS:[1, base_quantum * 4]
-    uint64_t quantum = (cpu->base_quantum * 1024) / weight;
+    uint64_t quantum = (cpu->base_quantum * weight) / 1024;
     if (quantum < 1) quantum = 1;
-    if (quantum > cpu->base_quantum * 4) quantum = cpu->base_quantum * 4;
+    if (quantum > cpu->base_quantum * 8) quantum = cpu->base_quantum * 8;
     return quantum;
 }
-
-
 
 void sched_idle() {
     while (true) {
         cpu_t *cpu = this_cpu();
-        
         thread_t *zombie_head = nullptr;
+
+        // FIX [自旋锁中断安全]: 保存中断状态并关中断
+        uint64_t rflags;
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&cpu->sched_lock);
         if (cpu->zombie_list) {
             zombie_head = cpu->zombie_list;
@@ -65,6 +67,7 @@ void sched_idle() {
             cpu->zombie_count = 0;
         }
         spinlock_unlock(&cpu->sched_lock);
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
         thread_t *z = zombie_head;
         while (z) {
@@ -74,7 +77,8 @@ void sched_idle() {
             cpu->sched_stats.zombie_reclaims++;
             z = next;
         }
-        
+
+        // FIX [功耗优化]: 空闲时直接 hlt，等待下一次时钟中断或 IPI 唤醒
         asm volatile("sti; hlt; cli" ::: "memory");
     }
 }
@@ -82,12 +86,10 @@ void sched_idle() {
 static cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr) {
     cpu_t *lw_cpu = nullptr;
     uint32_t ref_mask = ref_cpu ? cpu_simd_mask(ref_cpu) : 0;
-
     for (int32_t i = 0; i <= smp_last_cpu; i++) {
         cpu_t *cpu = smp_cpu_list[i];
         if (cpu == nullptr) continue;
         if (ref_cpu && cpu_simd_mask(cpu) != ref_mask) continue;
-
         if (!lw_cpu) { lw_cpu = cpu; continue; }
         uint64_t current_weight = cpu->total_weight + (cpu->current_thread ? cpu->current_thread->weight : 0);
         uint64_t lowest_weight  = lw_cpu->total_weight + (lw_cpu->current_thread ? lw_cpu->current_thread->weight : 0);
@@ -111,25 +113,21 @@ static inline thread_t* rb_to_thread(rb_node_t* node) {
 }
 
 static inline void calibrate_and_set_deadline(thread_t *thread, cpu_t *cpu) {
-    uint64_t quantum = get_dynamic_quantum(cpu, thread);
     uint64_t weight = thread->weight ? thread->weight : 1024;
-    
-    uint64_t max_lag = (quantum * 1024) / weight; 
-    
+    uint64_t virtual_slice = cpu->base_quantum;
+    uint64_t max_lag = virtual_slice;
     uint64_t avg_vr = cpu->avg_vruntime;
-    
     uint64_t target_vr = (avg_vr > max_lag) ? (avg_vr - max_lag) : 0;
-    
+
     if (thread->vruntime < target_vr) {
         thread->vruntime = target_vr;
-        thread->vruntime_rem = 0; 
+        thread->vruntime_rem = 0;
     } else if (thread->vruntime > avg_vr + max_lag * 2) {
         thread->vruntime = avg_vr + max_lag * 2;
         thread->vruntime_rem = 0;
     }
-    
-    thread->deadline = thread->vruntime + (quantum * 1024) / weight;
-    thread->min_vruntime_subtree = thread->vruntime; 
+    thread->deadline = thread->vruntime + virtual_slice;
+    thread->min_vruntime_subtree = thread->vruntime;
 }
 
 static inline void update_min_vruntime_upward(rb_node_t *node) {
@@ -144,7 +142,7 @@ static inline void update_min_vruntime_upward(rb_node_t *node) {
             thread_t *rt = rb_to_thread(node->right);
             if (rt->min_vruntime_subtree < min_vr) min_vr = rt->min_vruntime_subtree;
         }
-        
+        if (t->min_vruntime_subtree == min_vr) break;
         t->min_vruntime_subtree = min_vr;
         node = node->parent;
     }
@@ -160,14 +158,14 @@ static inline void detach_thread_from_proc(thread_t *thread) {
             thread->next->prev = thread->prev;
         }
     }
-    thread->parent = nullptr; 
+    thread->parent = nullptr;
     thread->next = thread->prev = nullptr;
 }
 
 namespace Schedule {
     namespace Internal {
         void RemoveFromQueue(cpu_t *cpu, thread_t *thread) {
-            if (!thread->on_rq) return; 
+            if (!thread->on_rq) return;
             rb_node_t *node = &thread->rb_node;
             
             rb_node_t *successor = nullptr;
@@ -176,8 +174,7 @@ namespace Schedule {
 
             if (node->left && node->right) {
                 successor = node->right;
-                while (successor->left)
-                    successor = successor->left;
+                while (successor->left) successor = successor->left;
                 update_1 = successor->parent;
                 update_2 = successor;
             }
@@ -187,43 +184,29 @@ namespace Schedule {
             cpu->thread_count--;
             cpu->total_weight -= thread->weight;
             
-            if (update_1)
-                update_min_vruntime_upward(update_1);
-            if (update_2)
-                update_min_vruntime_upward(update_2);
+            if (update_1) update_min_vruntime_upward(update_1);
+            if (update_2) update_min_vruntime_upward(update_2);
             
             if (cpu->thread_count == 1) cpu->has_surplus = false;
             if (cpu->thread_count == 0) cpu->has_runnable_thread = false;
         }
 
         void InsertToQueue(cpu_t *cpu, thread_t *thread) {
-            if (thread->on_rq) return; 
-            
-            if (thread->state == THREAD_ZOMBIE) {
-                if (thread->parent) {
-                    spinlock_lock(&PROC_LIST_LOCK);
-                    detach_thread_from_proc(thread);
-                    spinlock_unlock(&PROC_LIST_LOCK);
-                }
-                thread->zombie_next = cpu->zombie_list;
-                cpu->zombie_list = thread;
-                cpu->zombie_count++;
-                return;
-            }
-            
+            if (thread->on_rq) return;
             calibrate_and_set_deadline(thread, cpu);
-            
             rb_insert(&cpu->runqueue_root, &thread->rb_node, thread_rb_cmp);
             thread->on_rq = true;
             cpu->thread_count++;
             cpu->total_weight += thread->weight;
             if (cpu->thread_count == 1) cpu->has_runnable_thread = true;
             if (cpu->thread_count == 2) cpu->has_surplus = true;
-            
             update_min_vruntime_upward(&thread->rb_node);
         }
 
         void ProcessAddThread(proc_t *parent, thread_t *thread) {
+            // FIX [自旋锁中断安全]: 保护全局进程链表
+            uint64_t rflags;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
             spinlock_lock(&PROC_LIST_LOCK);
             if (!parent->threads) {
                 parent->threads = thread;
@@ -236,10 +219,11 @@ namespace Schedule {
                 parent->threads->prev = thread;
             }
             spinlock_unlock(&PROC_LIST_LOCK);
+            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
         }
 
         thread_t *StealThread(cpu_t *cpu) {
-            uint32_t my_mask = cpu_simd_mask(cpu);          
+            uint32_t my_mask = cpu_simd_mask(cpu);
             uint32_t start_cpu = (sched_pid + PIT::TimeSinceBootMS()) % (smp_last_cpu + 1);
 
             for (int pass = 0; pass < 2; pass++) {
@@ -252,69 +236,63 @@ namespace Schedule {
 
                     cpu->sched_stats.steal_attempts++;
 
+                    // FIX [自旋锁中断安全]: 获取其他 CPU 锁前关本地中断
+                    uint64_t rflags1;
+                    asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags1) :: "memory");
                     int retries = 0;
                     while (!__sync_bool_compare_and_swap(&victim->sched_lock,0,1)) {
                         if (++retries > 100) break;
                         asm volatile("pause");
                     }
-                    if (retries > 100) continue;
+                    if (retries > 100) {
+                        asm volatile("push %0\n\tpopfq" :: "r"(rflags1) : "memory");
+                        continue;
+                    }
 
                     if (victim->thread_count <= 1) {
                         spinlock_unlock(&victim->sched_lock);
+                        asm volatile("push %0\n\tpopfq" :: "r"(rflags1) : "memory");
                         continue;
                     }
 
                     thread_t *stolen_batch[SCHED_STEAL_BATCH];
                     int stolen_count = 0;
-
                     rb_node_t *node = rb_last(victim->runqueue_root.node);
                     while (node && stolen_count < SCHED_STEAL_BATCH) {
                         if (victim->thread_count <= 1) break;
-                        
                         thread_t *stolen = rb_to_thread(node);
                         rb_node_t *prev_node = rb_prev(node);
-                        
+                        if (stolen->state == THREAD_ZOMBIE) { node = prev_node; continue; }
                         if (stolen->timer_bucket != nullptr) {
                             if (stolen->timer_cpu == victim->id) {
                                 TimerRemove(stolen);
-                                stolen->timer_bucket = nullptr; 
-                            } else {
-                                node = prev_node;
-                                continue;
-                            }
+                                stolen->timer_bucket = nullptr;
+                            } else { node = prev_node; continue; }
                         }
-                        
                         RemoveFromQueue(victim, stolen);
-                        
-                        if (stolen->state == THREAD_ZOMBIE) {
-                            if (stolen->parent) {
-                                spinlock_lock(&PROC_LIST_LOCK);
-                                detach_thread_from_proc(stolen);
-                                spinlock_unlock(&PROC_LIST_LOCK);
-                            }
-                            stolen->zombie_next = victim->zombie_list;
-                            victim->zombie_list = stolen;
-                            victim->zombie_count++;
-                            node = prev_node;
-                            continue;
-                        }
-                        
                         stolen_batch[stolen_count++] = stolen;
                         node = prev_node;
                     }
 
                     if (stolen_count > 0) {
+                        for (int j = 0; j < stolen_count; j++) {
+                            __atomic_store_n(&stolen_batch[j]->state, THREAD_TRANSFER, __ATOMIC_RELEASE);
+                        }
                         spinlock_unlock(&victim->sched_lock);
-                        
+                        asm volatile("push %0\n\tpopfq" :: "r"(rflags1) : "memory");
+
+                        uint64_t rflags2;
+                        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags2) :: "memory");
                         spinlock_lock(&cpu->sched_lock);
                         for (int j = 0; j < stolen_count; j++) {
                             stolen_batch[j]->cpu_num = cpu->id;
                             stolen_batch[j]->timer_cpu = cpu->id;
+                            __atomic_store_n(&stolen_batch[j]->state, THREAD_RUNNING, __ATOMIC_RELEASE);
                             InsertToQueue(cpu, stolen_batch[j]);
                         }
-                        
                         thread_t *best = Pick(cpu);
                         spinlock_unlock(&cpu->sched_lock);
+                        asm volatile("push %0\n\tpopfq" :: "r"(rflags2) : "memory");
 
                         if (best) {
                             cpu->sched_stats.thread_steals += stolen_count;
@@ -323,16 +301,15 @@ namespace Schedule {
                         return nullptr;
                     }
                     spinlock_unlock(&victim->sched_lock);
+                    asm volatile("push %0\n\tpopfq" :: "r"(rflags1) : "memory");
                 }
             }
             return nullptr;
         }
 
         void TryPush(cpu_t *cpu) {
-            cpu->sched_stats.try_pushes++; 
-
+            cpu->sched_stats.try_pushes++;
             if (!atomic_load_1(&cpu->has_surplus, ATOMIC_RELAXED)) return;
-            
             uint64_t my_weight = cpu->total_weight + (cpu->current_thread ? cpu->current_thread->weight : 0);
             if (cpu->thread_count < 2) return;
 
@@ -344,18 +321,13 @@ namespace Schedule {
             for (int32_t i = 0; i <= smp_last_cpu; i++) {
                 cpu_t *other = smp_cpu_list[i];
                 if (!other || other == cpu) continue;
-
                 uint64_t ow = other->total_weight + (other->current_thread ? other->current_thread->weight : 0);
-                if (ow * 3 < my_weight * 2 && ow < target_weight) {
-                    if (cpu_simd_mask(other) == my_mask) {
-                        target = other;
-                        target_weight = ow;
-                    } else if (!fallback_target) {
-                        fallback_target = other;
-                    }
+                if (ow < my_weight && ow < target_weight) {
+                    if (cpu_simd_mask(other) == my_mask) { target = other; target_weight = ow; }
+                    else if (!fallback_target) { fallback_target = other; }
                 }
             }
-            
+
             if (!target) {
                 if (fallback_target) target = fallback_target;
                 else return;
@@ -363,10 +335,13 @@ namespace Schedule {
 
             cpu_t *lock_a = (cpu->id < target->id) ? cpu : target;
             cpu_t *lock_b = (cpu->id < target->id) ? target : cpu;
-            
+
+            uint64_t rflags;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
             spinlock_lock(&lock_a->sched_lock);
             if (!__sync_bool_compare_and_swap(&lock_b->sched_lock, 0, 1)) {
                 spinlock_unlock(&lock_a->sched_lock);
+                asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
                 return;
             }
 
@@ -375,79 +350,58 @@ namespace Schedule {
             while (node && push_count < SCHED_STEAL_BATCH) {
                 uint64_t tc_w = target->total_weight + (target->current_thread ? target->current_thread->weight : 0);
                 uint64_t mc_w = cpu->total_weight + (cpu->current_thread ? cpu->current_thread->weight : 0);
-                if (tc_w * 3 >= mc_w * 2) break;
+                if (tc_w >= mc_w) break;
 
                 thread_t *to_push = rb_to_thread(node);
                 rb_node_t *prev_node = rb_prev(node);
-                
                 if (to_push->timer_bucket != nullptr) {
-                    if (to_push->timer_cpu == cpu->id) {
-                        TimerRemove(to_push);
-                        to_push->timer_bucket = nullptr; 
-                    } else {
-                        node = prev_node;
-                        continue; 
-                    }
+                    if (to_push->timer_cpu == cpu->id) { TimerRemove(to_push); to_push->timer_bucket = nullptr; } 
+                    else { node = prev_node; continue; }
                 }
-                
+
+                __atomic_store_n(&to_push->state, THREAD_TRANSFER, __ATOMIC_RELEASE);
                 RemoveFromQueue(cpu, to_push);
-                
                 to_push->cpu_num = target->id;
                 to_push->timer_cpu = target->id;
-                
+                __atomic_store_n(&to_push->state, THREAD_RUNNING, __ATOMIC_RELEASE);
                 InsertToQueue(target, to_push);
                 push_count++;
                 node = prev_node;
             }
 
             cpu->sched_stats.push_success += push_count;
-
             spinlock_unlock(&lock_b->sched_lock);
             spinlock_unlock(&lock_a->sched_lock);
+            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
         }
 
         thread_t *Pick(cpu_t *cpu) {
             rb_node_t *root = cpu->runqueue_root.node;
             if (!root) return nullptr;
-            
+
             thread_t *root_t = rb_to_thread(root);
             if (root_t->min_vruntime_subtree > cpu->avg_vruntime) {
                 thread_t *best = rb_to_thread(rb_first(root));
-                if (best) {
-                    RemoveFromQueue(cpu, best);
-                    return best;
-                }
+                if (best) { RemoveFromQueue(cpu, best); return best; }
                 return nullptr;
             }
 
             rb_node_t *node = root;
             thread_t *best = nullptr;
-            
             while (node) {
                 thread_t *t = rb_to_thread(node);
-                
-                if (t->vruntime <= cpu->avg_vruntime) {
-                    best = t;
-                    node = node->left;
-                } else {
+                if (t->vruntime <= cpu->avg_vruntime) { best = t; node = node->left; } 
+                else {
                     if (node->left) {
                         thread_t *lt = rb_to_thread(node->left);
-                        if (lt->min_vruntime_subtree <= cpu->avg_vruntime) {
-                            node = node->left;
-                            continue;
-                        }
+                        if (lt->min_vruntime_subtree <= cpu->avg_vruntime) { node = node->left; continue; }
                     }
                     node = node->right;
                 }
             }
-            
-            if (!best) {
-                best = rb_to_thread(rb_first(cpu->runqueue_root.node));
-            }
-            
-            if (best) {
-                RemoveFromQueue(cpu, best);
-            }
+
+            if (!best) best = rb_to_thread(rb_first(cpu->runqueue_root.node));
+            if (best) RemoveFromQueue(cpu, best);
             return best;
         }
 
@@ -455,31 +409,33 @@ namespace Schedule {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             if (!cpu) return;
+            // 该函数通常由中断触发，IF已清，但统一关中断无副作用且更安全
+            uint64_t rflags;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
+
             if (cpu->preempt_count > 1) {
                 if (cpu->current_thread) {
                     uint64_t q = get_dynamic_quantum(cpu, cpu->current_thread);
                     LAPIC::Oneshot(SCHED_VEC, q * cpu->lapic_ticks);
                 }
                 LAPIC::EOI();
+                asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
                 return;
             }
 
             cpu->tick_count++;
             thread_t *curr_thread = cpu->current_thread;
-
             uint64_t now = PIT::TimeSinceBootMS();
+
             if (curr_thread && curr_thread != cpu->idle_thread) {
                 uint64_t delta = now - curr_thread->last_run_time;
                 curr_thread->last_run_time = now;
-                
-                
                 if (delta == 0) delta = 1;
-                
                 uint64_t vruntime_total = delta * 1024 + curr_thread->vruntime_rem;
                 uint64_t vruntime_delta = vruntime_total / curr_thread->weight;
                 curr_thread->vruntime_rem = vruntime_total % curr_thread->weight;
                 curr_thread->vruntime += vruntime_delta;
-                
+
                 uint64_t active_weight = cpu->total_weight + curr_thread->weight;
                 if (active_weight > 0) {
                     uint64_t avg_total = delta * 1024 + cpu->avg_vruntime_rem;
@@ -493,53 +449,35 @@ namespace Schedule {
                 curr_thread->fs = rdmsr(FS_BASE);
                 curr_thread->ctx = *ctx;
                 if (curr_thread->fx_area) {
-                    cpu->OverLoadableFuncs.StoreSIMDState(
-                        curr_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
+                    cpu->OverLoadableFuncs.StoreSIMDState(curr_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
                 }
             }
 
+            thread_t *zombie_to_detach = nullptr;
             spinlock_lock(&cpu->sched_lock);
-
             uint32_t curr_state = curr_thread ? curr_thread->state : 0xFFFFFFFF;
 
             if (curr_thread && curr_state == THREAD_ZOMBIE && curr_thread != cpu->idle_thread) {
-                cpu->current_thread = nullptr; 
-                
-                if (curr_thread->parent) {
-                    spinlock_lock(&PROC_LIST_LOCK);
-                    detach_thread_from_proc(curr_thread);
-                    spinlock_unlock(&PROC_LIST_LOCK);
-                }
-                
+                cpu->current_thread = nullptr;
+                if (curr_thread->parent) zombie_to_detach = curr_thread;
                 curr_thread->zombie_next = cpu->zombie_list;
                 cpu->zombie_list = curr_thread;
                 cpu->zombie_count++;
                 curr_thread = nullptr;
-            } else if (curr_thread && curr_state == THREAD_RUNNING
-                && curr_thread != cpu->idle_thread) {
+            } else if (curr_thread && curr_state == THREAD_RUNNING && curr_thread != cpu->idle_thread) {
                 InsertToQueue(cpu, curr_thread);
             }
 
             thread_t *next_thread = Pick(cpu);
-            
-            thread_t *zombie_to_free = nullptr;
-            if (((cpu->tick_count & 0xF) == 0 || cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD) && cpu->zombie_list) {
-                zombie_to_free = cpu->zombie_list;
-                cpu->zombie_list = nullptr;
-                cpu->zombie_count = 0;
-            }
-            
             spinlock_unlock(&cpu->sched_lock);
 
-            if (zombie_to_free) {
-                thread_t *z = zombie_to_free;
-                while (z) {
-                    thread_t *next = z->zombie_next;
-                    FreeThreadResources(z);
-                    kfree(z);
-                    cpu->sched_stats.zombie_reclaims++;
-                    z = next;
-                }
+            if (zombie_to_detach) {
+                uint64_t rflags2;
+                asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags2) :: "memory");
+                spinlock_lock(&PROC_LIST_LOCK);
+                detach_thread_from_proc(zombie_to_detach);
+                spinlock_unlock(&PROC_LIST_LOCK);
+                asm volatile("push %0\n\tpopfq" :: "r"(rflags2) : "memory");
             }
 
             if (!next_thread) {
@@ -549,6 +487,7 @@ namespace Schedule {
 
             if (!next_thread) {
                 LAPIC::EOI();
+                asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
                 return;
             }
 
@@ -557,14 +496,10 @@ namespace Schedule {
             if (is_switch) {
                 cpu->current_thread = next_thread;
                 cpu->sched_stats.context_switches++;
-                if (next_thread != cpu->idle_thread) {
-                    next_thread->last_run_time = now;
-                }
+                if (next_thread != cpu->idle_thread) next_thread->last_run_time = now;
             }
 
-            if ((cpu->tick_count & 0x1F) == 0) {
-                TryPush(cpu);                
-            }
+            if ((cpu->tick_count & 0x1F) == 0) TryPush(cpu);
 
             if (!is_switch) {
                 if (next_thread != cpu->idle_thread) {
@@ -572,50 +507,56 @@ namespace Schedule {
                     LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
                 }
                 LAPIC::EOI();
-                return; 
+                asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+                return;
             }
 
             *ctx = next_thread->ctx;
             TSS::SetRSP(cpu->id, 0, (void*)next_thread->kernel_rsp);
             cpu->kernel_stack = next_thread->kernel_rsp;
-            
+
             if (!curr_thread || curr_thread->pagemap != next_thread->pagemap) {
                 VMM::SwitchPageMap(next_thread->pagemap);
                 asm volatile("cli");
             }
-            
+
             cpu->OverLoadableFuncs.WRFSBASE(next_thread->fs);
             if (next_thread->fx_area) {
                 cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
+
+            if (next_thread != cpu->idle_thread) quantum = get_dynamic_quantum(cpu, next_thread);
+            else quantum = cpu->base_quantum;
             
-            if (next_thread != cpu->idle_thread) {
-                quantum = get_dynamic_quantum(cpu, next_thread);
-            } else {
-                quantum = cpu->base_quantum;
-            }
             LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
             LAPIC::EOI();
+            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
         }
 
-        void Preempt(context_t *ctx) {
-            Switch(ctx);
-        }
+        void Preempt(context_t *ctx) { Switch(ctx); }
     }
 
     void KillThread(thread_t *thread) {
         if (!thread) return;
+        uint64_t wait_start = PIT::TimeSinceBootMS();
+        while (__atomic_load_n(&thread->state, __ATOMIC_ACQUIRE) == THREAD_TRANSFER) {
+            if (PIT::TimeSinceBootMS() - wait_start > WAIT_THREAD_TIMEOUT_MS) break;
+            asm volatile("pause");
+        }
+
         cpu_t *cpu = get_cpu(thread->cpu_num);
+        if (!cpu) return;
         bool was_running = false;
-        
-        spinlock_lock(&cpu->sched_lock);
-        thread->state = THREAD_ZOMBIE;
-        was_running = (cpu->current_thread == thread);
-        
+
+        uint64_t rflags;
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&PROC_LIST_LOCK);
         detach_thread_from_proc(thread);
         spinlock_unlock(&PROC_LIST_LOCK);
 
+        spinlock_lock(&cpu->sched_lock);
+        thread->state = THREAD_ZOMBIE;
+        was_running = (cpu->current_thread == thread);
         if (thread->on_rq) {
             Internal::RemoveFromQueue(cpu, thread);
             thread->zombie_next = cpu->zombie_list;
@@ -628,90 +569,77 @@ namespace Schedule {
             cpu->zombie_count++;
         }
         spinlock_unlock(&cpu->sched_lock);
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
         if (was_running) {
             cpu_t *cur_cpu = this_cpu();
-            if (cpu != cur_cpu) {
-                LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
-            }
+            if (cpu != cur_cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
         }
     }
 
     void KillProcessThreads(proc_t *proc) {
         if (!proc) return;
-        
         while (true) {
             thread_t *batch[64];
             int count = 0;
-            
+            uint64_t rflags;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
             spinlock_lock(&PROC_LIST_LOCK);
             thread_t *t = proc->threads;
             if (t) {
                 thread_t *start = t;
                 do {
-                    if (count < 64) {
-                        batch[count++] = t;
-                        t = t->next;
-                    } else {
-                        break;
-                    }
+                    if (count < 64) { batch[count++] = t; t = t->next; } else break;
                 } while (t != start);
             }
             spinlock_unlock(&PROC_LIST_LOCK);
+            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
             if (count == 0) break;
-
-            for (int i = 0; i < count; i++) {
-                KillThread(batch[i]);
-            }
+            for (int i = 0; i < count; i++) KillThread(batch[i]);
         }
     }
 
     void WaitForThreadOffCpu(thread_t *thread) {
         if (!thread) return;
         uint64_t start_time = PIT::TimeSinceBootMS();
-        
         while (true) {
             uint32_t cpu_num = __atomic_load_n(&thread->cpu_num, __ATOMIC_ACQUIRE);
-            if (cpu_num >= MAX_CPU) break; 
+            if (cpu_num >= MAX_CPU) break;
             cpu_t *cpu = smp_cpu_list[cpu_num];
             if (!cpu) break;
-            
             thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
-            if (curr != thread) {
-                break;
-            }
-            
-            if (PIT::TimeSinceBootMS() - start_time > WAIT_THREAD_TIMEOUT_MS) {
-                Panic("WaitForThreadOffCpu: Thread stuck on CPU (timeout)");
-            }
-            
+            if (curr != thread) break;
+            if (PIT::TimeSinceBootMS() - start_time > WAIT_THREAD_TIMEOUT_MS) Panic("WaitForThreadOffCpu: Thread stuck on CPU (timeout)");
             asm volatile("pause");
         }
     }
 
     void TriggerPreempt(thread_t *woken_thread) {
         if (!woken_thread) return;
-        
         uint32_t cpu_num = __atomic_load_n(&woken_thread->cpu_num, __ATOMIC_ACQUIRE);
         if (cpu_num >= MAX_CPU) return;
         cpu_t *cpu = smp_cpu_list[cpu_num];
         if (!cpu) return;
 
         thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
-        
         if (!curr || curr == cpu->idle_thread) {
             LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
             return;
         }
 
         if (woken_thread->vruntime <= cpu->avg_vruntime && woken_thread->deadline < curr->deadline) {
+            // FIX [抢占阈值动态化]: 根据唤醒线程权重动态计算阈值，替代固定1ms
+            // 高权重(如8192): 1024/8192=0，总是抢占；中权重(1024): 1ms；低权重(288): 3ms
+            uint64_t threshold_ms = 1024 / woken_thread->weight;
+            
+            uint64_t remaining_slice_vr = curr->deadline - curr->vruntime;
+            uint64_t remaining_slice_phys_ms = (remaining_slice_vr * curr->weight) / 1024;
+            if (remaining_slice_phys_ms < threshold_ms) return;
+
             cpu_t *cur_cpu = this_cpu();
-            if (cpu != cur_cpu) {
-                LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
-            } else {
-                Yield();
-            }
+            if (cpu != cur_cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+            else Yield();
         }
     }
 
@@ -725,21 +653,20 @@ namespace Schedule {
         idt_set_ist(SCHED_VEC, 0);
         idt_set_ist(SCHED_VEC + 1, 0);
     }
-    
+
     void Install() {
         for (uint32_t i = 0; i <= smp_last_cpu; i++) {
             cpu_t *cpu = smp_cpu_list[i];
             if (!cpu) continue;
-            
             cpu->timer_last_tick = PIT::TimeSinceBootMS();
-            
             proc_t *proc = Schedule::NewProcess(false);
             thread_t *idle_t = Schedule::NewKernelThread(proc, cpu->id, 15, sched_idle);
-            
+            uint64_t rflags;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
             spinlock_lock(&cpu->sched_lock);
             Internal::RemoveFromQueue(cpu, idle_t);
             spinlock_unlock(&cpu->sched_lock);
-            
+            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
             cpu->idle_thread = idle_t;
         }
         atomic_store_8((volatile uint8_t*)&PIT::TickHandle, (uint64_t)(uintptr_t)&PIT::Tick_, 0);
@@ -750,39 +677,31 @@ namespace Schedule {
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
         proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED);
-    
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         if (user && !proc->pagemap) { kfree(proc); return nullptr; }
-        
         proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
-        if (!proc->FDMan) { 
-            if (user) VMM::DestroyPM(proc->pagemap); 
-            kfree(proc); 
-            return nullptr; 
-        }
+        if (!proc->FDMan) { if (user) VMM::DestroyPM(proc->pagemap); kfree(proc); return nullptr; }
         fd_manager_init(proc->FDMan);
         proc->fd_count = 4;
-        
+        uint64_t rflags;
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&PID2PROC_TREE_LOCK);
         art_insert(pid2proc_tree,(const uint8_t*)&proc->id,8,proc);
         spinlock_unlock(&PID2PROC_TREE_LOCK);
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
         return proc;
     }
 
     void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]) {
         if (argc <= 0 || !argv || !envp) return;
-        
-        char **kernel_argv = nullptr;
-        char **kernel_envp = nullptr;
-        uint64_t *thread_argv = nullptr;
-        uint64_t *thread_envp = nullptr;
-        int32_t envc = 0;uint64_t offset = 0;
-        uint64_t stack_top = 0;pagemap_t *restore = nullptr;
-        
+        char **kernel_argv = nullptr, **kernel_envp = nullptr;
+        uint64_t *thread_argv = nullptr, *thread_envp = nullptr;
+        int32_t envc = 0; uint64_t offset = 0;
+        uint64_t stack_top = 0; pagemap_t *restore = nullptr;
+
         kernel_argv = (char**)kmalloc(argc * sizeof(char*));
         if (!kernel_argv) return;
         for (int32_t i = 0; i < argc; i++) kernel_argv[i] = nullptr;
-
         for (int32_t i = 0; i < argc; i++) {
             if(!argv[i]) goto cleanup;
             int32_t size = strlen(argv[i]) + 1;
@@ -796,7 +715,6 @@ namespace Schedule {
             kernel_envp = (char**)kmalloc(envc * sizeof(char*));
             if (!kernel_envp) goto cleanup;
             for (int32_t i = 0; i < envc; i++) kernel_envp[i] = nullptr;
-
             for (int32_t i = 0; i < envc; i++) {
                 if(!envp[i]) goto cleanup;
                 int32_t size = strlen(envp[i]) + 1;
@@ -808,25 +726,19 @@ namespace Schedule {
 
         thread_argv = (uint64_t*)kmalloc(argc * sizeof(uint64_t));
         if (!thread_argv) goto cleanup;
-
         stack_top = thread->ctx.rsp;
-        
         if ((argc + envc) % 2 == 0) offset = 8;
-        
         restore = VMM::SwitchPageMap(thread->pagemap);
         for (int32_t i = 0; i < argc; i++) {
             int32_t size = strlen(kernel_argv[i]) + 1;
-            offset += ALIGN_UP(size, 16); 
+            offset += ALIGN_UP(size, 16);
             thread_argv[i] = stack_top - offset;
             __memcpy((void*)(stack_top - offset), kernel_argv[i], size);
         }
-        
+
         if (envc > 0) {
             thread_envp = (uint64_t*)kmalloc(envc * sizeof(uint64_t));
-            if(!thread_envp) {
-                VMM::SwitchPageMap(restore);
-                goto cleanup;
-            }
+            if(!thread_envp) { VMM::SwitchPageMap(restore); goto cleanup; }
             for (int32_t i = 0; i < envc; i++) {
                 int32_t size = strlen(kernel_envp[i]) + 1;
                 offset += ALIGN_UP(size, 16);
@@ -834,28 +746,18 @@ namespace Schedule {
                 __memcpy((void*)(stack_top - offset), kernel_envp[i], size);
             }
         }
-        
-        offset += 8; *(uint64_t*)(stack_top - offset) = 0; 
-        for (int32_t i = envc - 1; i >= 0; i--) {
-            offset += 8; *(uint64_t*)(stack_top - offset) = thread_envp[i];
-        }
-        offset += 8; *(uint64_t*)(stack_top - offset) = 0; 
-        for (int32_t i = argc - 1; i >= 0; i--) {
-            offset += 8; *(uint64_t*)(stack_top - offset) = thread_argv[i];
-        }
+
+        offset += 8; *(uint64_t*)(stack_top - offset) = 0;
+        for (int32_t i = envc - 1; i >= 0; i--) { offset += 8; *(uint64_t*)(stack_top - offset) = thread_envp[i]; }
+        offset += 8; *(uint64_t*)(stack_top - offset) = 0;
+        for (int32_t i = argc - 1; i >= 0; i--) { offset += 8; *(uint64_t*)(stack_top - offset) = thread_argv[i]; }
         offset += 8; *(uint64_t*)(stack_top - offset) = argc;
         VMM::SwitchPageMap(restore);
         thread->ctx.rsp = stack_top - offset;
 
     cleanup:
-        if (kernel_argv) {
-            for (int32_t i = 0; i < argc; i++) if (kernel_argv[i]) kfree(kernel_argv[i]);
-            kfree(kernel_argv);
-        }
-        if (kernel_envp) {
-            for (int32_t i = 0; i < envc; i++) if (kernel_envp[i]) kfree(kernel_envp[i]);
-            kfree(kernel_envp);
-        }
+        if (kernel_argv) { for (int32_t i = 0; i < argc; i++) if (kernel_argv[i]) kfree(kernel_argv[i]); kfree(kernel_argv); }
+        if (kernel_envp) { for (int32_t i = 0; i < envc; i++) if (kernel_envp[i]) kfree(kernel_envp[i]); kfree(kernel_envp); }
         if (thread_argv) kfree(thread_argv);
         if (thread_envp) kfree(thread_envp);
     }
@@ -864,56 +766,37 @@ namespace Schedule {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
-        
-        thread->timer_bucket = nullptr;
-        thread->timer_next = nullptr;
-        thread->timer_prev = nullptr;
         thread->timer_cpu = cpu_num;
-        thread->timer_wakeup = 0;
-        
         thread->id = atomic_add_fetch_8(&sched_tid,1,ATOMIC_RELAXED);
-        thread->cpu_num = cpu_num;
-        thread->parent = parent;
-        thread->IsForkThread = false;
+        thread->cpu_num = cpu_num; thread->parent = parent;
         thread->pagemap = parent->pagemap;
-        
-        if (priority > 15) priority = 15;
-        thread->priority = priority;
-        thread->weight = sched_prio_to_weight[priority];
-        
+        thread->priority = priority > 15 ? 15 : priority;
+        thread->weight = sched_prio_to_weight[thread->priority];
         cpu_t *cpu = get_cpu(cpu_num);
-        
         uint64_t base_vruntime = cpu->avg_vruntime;
-        uint64_t half_slice = (cpu->base_quantum * 1024) / (2 * thread->weight);
+        uint64_t half_slice = cpu->base_quantum / 2;
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
-        
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
         if (!thread->fx_area) { kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
-
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
         if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(thread); return nullptr; }
         _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
-
-        thread->kernel_stack = kernel_stack;
-        thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
-        thread->stack = kernel_stack;
-        thread->ctx.rip = (uint64_t)entry;
-        thread->ctx.cs = 0x08;
-        thread->ctx.ss = 0x10;
-        thread->ctx.rflags = 0x202;
-        thread->ctx.rsp = thread->kernel_rsp;
-        thread->thread_stack = thread->ctx.rsp;
+        thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
+        thread->stack = kernel_stack; thread->ctx.rip = (uint64_t)entry;
+        thread->ctx.cs = 0x08; thread->ctx.ss = 0x10; thread->ctx.rflags = 0x202;
+        thread->ctx.rsp = thread->kernel_rsp; thread->thread_stack = thread->ctx.rsp;
         thread->state = THREAD_RUNNING;
-
         Schedule::Internal::ProcessAddThread(parent, thread);
-
+        
+        uint64_t rflags;
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
-
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
         return thread;
     }
 
@@ -921,76 +804,48 @@ namespace Schedule {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
-
-        thread->timer_bucket = nullptr;
-        thread->timer_next = nullptr;
-        thread->timer_prev = nullptr;
         thread->timer_cpu = cpu_num;
-        thread->timer_wakeup = 0;
-
         thread->id = atomic_add_fetch_8(&sched_tid,1,ATOMIC_RELAXED);
-        thread->cpu_num = cpu_num;
-        thread->parent = parent;
-        thread->pagemap = parent->pagemap;
-        
-        if (priority > 15) priority = 15;
-        thread->priority = priority;
-        thread->weight = sched_prio_to_weight[priority];
-        
+        thread->cpu_num = cpu_num; thread->parent = parent; thread->pagemap = parent->pagemap;
+        thread->priority = priority > 15 ? 15 : priority;
+        thread->weight = sched_prio_to_weight[thread->priority];
         cpu_t *cpu = get_cpu(cpu_num);
-        
         uint64_t base_vruntime = cpu->avg_vruntime;
-        uint64_t half_slice = (cpu->base_quantum * 1024) / (2 * thread->weight);
+        uint64_t half_slice = cpu->base_quantum / 2;
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
 
         __hmap_s_mp *MP = GetMount(Path);
         if(!MP) { kerrorln("Cannot Find Mount Point!!!"); kfree(thread); return nullptr; }
-        
         void *FileDesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
         if (!FileDesc) { kfree(thread); return nullptr; }
         _memset(FileDesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
-        
         if(MP->FSOPS->open(FileDesc, Path, O_RDONLY) != 0) { kfree(FileDesc); kfree(thread); return nullptr; }
-        
         uint64_t FSize = MP->FSOPS->fsize(FileDesc);
         uint8_t *buffer = (uint8_t*)kmalloc(FSize);
         if (!buffer) { MP->FSOPS->close(FileDesc); kfree(FileDesc); kfree(thread); return nullptr; }
         MP->FSOPS->read(FileDesc, buffer, FSize, 0);
-        MP->FSOPS->close(FileDesc);
-        kfree(FileDesc);
-        
+        MP->FSOPS->close(FileDesc); kfree(FileDesc);
+
         uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
         _memset(&thread->ctx, 0, sizeof(context_t));
-        thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align); 
-        
-        if (thread->ctx.rip == 0) {
-            kerrorln("ELF load failed!");
-            kfree(buffer); kfree(thread); return nullptr; 
-        }
+        thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align);
+        if (thread->ctx.rip == 0) { kerrorln("ELF load failed!"); kfree(buffer); kfree(thread); return nullptr; }
 
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
         if (!thread->fx_area) { kfree(buffer); kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
-
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
         if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(buffer); kfree(thread); return nullptr; }
         _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
-        thread->kernel_stack = kernel_stack;
-        thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
-
+        thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
         uint64_t thread_stack = (uint64_t)VMM::Alloc(thread->pagemap, 8, true);
         if (!thread_stack) { VMM::Free(kernel_pagemap, thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); kfree(buffer); kfree(thread); return nullptr; }
-        thread->stack = thread_stack;
-        thread->thread_stack = thread_stack + 8 * PAGE_SIZE;
-
+        thread->stack = thread_stack; thread->thread_stack = thread_stack + 8 * PAGE_SIZE;
         uint64_t sig_stack = (uint64_t)VMM::Alloc(thread->pagemap, 1, true);
         if (!sig_stack) { VMM::Free(kernel_pagemap, thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); VMM::Free(thread->pagemap, (void*)thread_stack); kfree(buffer); kfree(thread); return nullptr; }
         thread->sig_stack = sig_stack;
-
-        thread->ctx.cs = 0x23;
-        thread->ctx.ss = 0x1b;
-        thread->ctx.rflags = 0x202;
+        thread->ctx.cs = 0x23; thread->ctx.ss = 0x1b; thread->ctx.rflags = 0x202;
         thread->ctx.rsp = thread->thread_stack;
         PrepareUserStack(thread, argc, argv, envp);
         thread->thread_stack = thread->ctx.rsp;
@@ -1004,23 +859,22 @@ namespace Schedule {
             uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
             VMM::SwitchPageMap(thread->pagemap);
             __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
-            *(uint64_t*)tcb_base = tcb_base; 
-            VMM::SwitchPageMap(kernel_pagemap); 
-            thread->fs = tcb_base;
-            thread->tls_base = tls_mem;
-            thread->tls_pages = tls_pages;
+            *(uint64_t*)tcb_base = tcb_base;
+            VMM::SwitchPageMap(kernel_pagemap);
+            thread->fs = tcb_base; thread->tls_base = tls_mem; thread->tls_pages = tls_pages;
         }
 
         kfree(buffer);
         thread->state = THREAD_RUNNING;
-
         Schedule::Internal::ProcessAddThread(parent, thread);
-
+        
+        uint64_t rflags;
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
-
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
         return thread;
     }
 
@@ -1028,70 +882,50 @@ namespace Schedule {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
-
         cpu_t *parent_cpu = get_cpu(parent->cpu_num);
-        cpu_t *cpu = get_lw_cpu(parent_cpu);       
-
+        cpu_t *cpu = get_lw_cpu(parent_cpu);
         thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
         if (!thread->fx_area) { kfree(thread); return nullptr; }
 
+        uint64_t rflags;
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&parent_cpu->sched_lock);
         if (parent_cpu->current_thread == parent && parent->fx_area) {
-            parent_cpu->OverLoadableFuncs.StoreSIMDState(
-                parent->fx_area, parent_cpu->XsaveMaskLo, parent_cpu->XsaveMaskHi);
+            parent_cpu->OverLoadableFuncs.StoreSIMDState(parent->fx_area, parent_cpu->XsaveMaskLo, parent_cpu->XsaveMaskHi);
         }
         __memcpy(thread->fx_area, parent->fx_area, cpu->XsaveSize);
         spinlock_unlock(&parent_cpu->sched_lock);
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
         if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(thread); return nullptr; }
         _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
 
         thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
-        thread->cpu_num = cpu->id;
-        thread->parent = proc;
-        thread->IsForkThread = true;
-        thread->pagemap = proc->pagemap;
-        thread->kernel_stack = kernel_stack;
-        thread->kernel_rsp = kernel_stack + 4 * PAGE_SIZE;
-        
-        thread->stack = parent->stack;
-        thread->sig_stack = parent->sig_stack;
-        thread->tls_base = parent->tls_base;
-        thread->tls_pages = parent->tls_pages;
-
-        thread->timer_bucket = nullptr;
-        thread->timer_next = nullptr;
-        thread->timer_prev = nullptr;
+        thread->cpu_num = cpu->id; thread->parent = proc; thread->IsForkThread = true; thread->pagemap = proc->pagemap;
+        thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + 4 * PAGE_SIZE;
+        thread->stack = parent->stack; thread->sig_stack = parent->sig_stack;
+        thread->tls_base = parent->tls_base; thread->tls_pages = parent->tls_pages;
         thread->timer_cpu = cpu->id;
-        thread->timer_wakeup = 0;
-
         Schedule::Internal::ProcessAddThread(proc, thread);
         __memcpy(&thread->ctx, frame, sizeof(context_t));
-        
-        thread->ctx.rsp = ((context_t*)frame)->rsp; 
-        
-        thread->ctx.cs = 0x23;
-        thread->ctx.ss = 0x1b;
-        thread->ctx.rflags = ((syscall_frame_t*)frame)->r11;
-        thread->ctx.rax = 0;
-        thread->ctx.rip = ((syscall_frame_t*)frame)->rcx;
-        thread->thread_stack = thread->ctx.rsp;
-        thread->fs = rdmsr(FS_BASE);
-        thread->state = THREAD_RUNNING;
-        
-        thread->priority = parent->priority;
-        thread->weight = parent->weight;
+        thread->ctx.rsp = ((context_t*)frame)->rsp;
+        thread->ctx.cs = 0x23; thread->ctx.ss = 0x1b; thread->ctx.rflags = ((syscall_frame_t*)frame)->r11;
+        thread->ctx.rax = 0; thread->ctx.rip = ((syscall_frame_t*)frame)->rcx;
+        thread->thread_stack = thread->ctx.rsp; thread->fs = rdmsr(FS_BASE); thread->state = THREAD_RUNNING;
+        thread->priority = parent->priority; thread->weight = parent->weight;
         
         uint64_t base_vruntime = cpu->avg_vruntime;
-        uint64_t half_slice = (cpu->base_quantum * 1024) / (2 * thread->weight);
+        uint64_t half_slice = cpu->base_quantum / 2;
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
 
+        uint64_t rflags2;
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags2) :: "memory");
         spinlock_lock(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);
         spinlock_unlock(&cpu->sched_lock);
-
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags2) : "memory");
         return thread;
     }
 
@@ -1101,19 +935,17 @@ namespace Schedule {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
-        proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED);
-        proc->parent = parent;
-        
+        proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED); proc->parent = parent;
         proc->pagemap = VMM::Fork(parent->pagemap);
         if (!proc->pagemap) { kfree(proc); return nullptr; }
-        
         proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
         if (!proc->FDMan) { VMM::DestroyPM(proc->pagemap); kfree(proc); return nullptr; }
 
+        uint64_t rflags;
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&PROC_LIST_LOCK);
         __memcpy(proc->FDMan, parent->FDMan, sizeof(fd_manager_t));
         proc->fd_count = parent->fd_count;
-        
         if (!parent->children) parent->children = proc;
         else {
             proc_t *last = parent->children;
@@ -1121,40 +953,26 @@ namespace Schedule {
             last->sibling = proc;
         }
         spinlock_unlock(&PROC_LIST_LOCK);
-        
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&PID2PROC_TREE_LOCK);
         art_insert(pid2proc_tree, (const uint8_t*)&proc->id, 8, proc);
         spinlock_unlock(&PID2PROC_TREE_LOCK);
-        
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
         return proc;
     }
 
-    thread_t* this_thread() {
-        cpu_t* cpu = this_cpu();
-        return cpu ? cpu->current_thread : nullptr;
-    }
-
-    proc_t *this_proc() {
-        thread_t* t = this_thread();
-        return t ? t->parent : nullptr;
-    }
-    
-    void Yield() {
-        LAPIC::StopTimer();
-        asm volatile("int %0" :: "i"(SCHED_VEC + 1));
-    }
-
+    thread_t* this_thread() { cpu_t* cpu = this_cpu(); return cpu ? cpu->current_thread : nullptr; }
+    proc_t *this_proc() { thread_t* t = this_thread(); return t ? t->parent : nullptr; }
+    void Yield() { LAPIC::StopTimer(); asm volatile("int %0" :: "i"(SCHED_VEC + 1)); }
     void PAUSE() { LAPIC::StopTimer(); }
-    
     void Resume() {
         cpu_t* cur_cpu = this_cpu();
         if (!cur_cpu) return;
-        
         for (int32_t i = 0; i <= smp_last_cpu; i++) {
-            if (smp_cpu_list[i] && i != cur_cpu->id) {
-                LAPIC::IPI(smp_cpu_list[i]->lapic_id, SCHED_VEC + 1);
-            }
+            if (smp_cpu_list[i] && i != cur_cpu->id) LAPIC::IPI(smp_cpu_list[i]->lapic_id, SCHED_VEC + 1);
         }
-        LAPIC::IPI(cur_cpu->lapic_id, SCHED_VEC + 1); 
+        LAPIC::IPI(cur_cpu->lapic_id, SCHED_VEC + 1);
     }
 }
