@@ -58,12 +58,11 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     return quantum;
 }
 
-// FIX [重复代码抽象]: 抽象出统一的僵尸回收函数
 static void reclaim_zombie_list(cpu_t *cpu, thread_t *head) {
     thread_t *z = head;
     while (z) {
         thread_t *next = z->zombie_next;
-        // FIX [内存泄漏修复]: KillThread 阶段已完成 detach，此处无需获取全局 PROC_LIST_LOCK
+        
         Schedule::FreeThreadResources(z);
         kfree(z);
         cpu->sched_stats.zombie_reclaims++;
@@ -475,7 +474,7 @@ namespace Schedule {
 
             thread_t *next_thread = Pick(cpu);
 
-            // FIX [锁冗余 & 满载兜底]: 合并到 sched_lock 临界区内摘取僵尸，锁外直接释放
+        
             thread_t *zombie_to_free = nullptr;
             thread_t *zombie_tail = nullptr;
             if (cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD) {
