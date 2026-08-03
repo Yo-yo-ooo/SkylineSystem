@@ -14,6 +14,8 @@
 
 #define TIMER_MAX_TIMEOUT_MS (TV_SIZE * TV_SIZE * TV_SIZE)
 
+extern volatile bool need_resched_flags[];
+
 static void WakeupTimerThread(cpu_t* cpu, thread_t* t) {
     t->timer_bucket = nullptr; t->timer_next = nullptr; t->timer_prev = nullptr;
     if (t->state == THREAD_SLEEPING) {
@@ -117,6 +119,12 @@ namespace Schedule {
             }
         }
         spinlock_unlock(&cpu->sched_lock);
+        
+        if (__atomic_load_n(&need_resched_flags[cpu->id], __ATOMIC_ACQUIRE)) {
+            __atomic_store_n(&need_resched_flags[cpu->id], false, __ATOMIC_RELEASE);
+            Schedule::Yield();
+        }
+        
         asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
     }
 }

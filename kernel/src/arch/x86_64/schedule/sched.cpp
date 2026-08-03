@@ -42,6 +42,12 @@ extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
 static_assert(sizeof(sched_prio_to_weight)/sizeof(sched_prio_to_weight[0]) == 16,
               "sched_prio_to_weight must have 16 entries");
 
+static inline bool spin_trylock(spinlock_t *lock) {
+    return __sync_bool_compare_and_swap(lock, 0, 1);
+}
+
+volatile bool need_resched_flags[MAX_CPU] = {false};
+
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     if (!thread || thread == cpu->idle_thread) return cpu->base_quantum;
     if (thread->custom_quantum > 0) return thread->custom_quantum;
@@ -52,20 +58,18 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     return quantum;
 }
 
-static inline void detach_thread_from_proc(thread_t *thread) {
-    if (thread->parent && thread->parent->threads) {
-        if (thread->next == thread) {
-            thread->parent->threads = nullptr;
-        } else {
-            if (thread->parent->threads == thread) thread->parent->threads = thread->next;
-            thread->prev->next = thread->next;
-            thread->next->prev = thread->prev;
-        }
+// FIX [重复代码抽象]: 抽象出统一的僵尸回收函数
+static void reclaim_zombie_list(cpu_t *cpu, thread_t *head) {
+    thread_t *z = head;
+    while (z) {
+        thread_t *next = z->zombie_next;
+        // FIX [内存泄漏修复]: KillThread 阶段已完成 detach，此处无需获取全局 PROC_LIST_LOCK
+        Schedule::FreeThreadResources(z);
+        kfree(z);
+        cpu->sched_stats.zombie_reclaims++;
+        z = next;
     }
-    thread->parent = nullptr;
-    thread->next = thread->prev = nullptr;
 }
-
 
 void sched_idle() {
     while (true) {
@@ -83,22 +87,7 @@ void sched_idle() {
         spinlock_unlock(&cpu->sched_lock);
         asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
-        thread_t *z = zombie_head;
-        while (z) {
-            thread_t *next = z->zombie_next;
-
-            uint64_t rflags2;
-            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags2) :: "memory");
-            spinlock_lock(&PROC_LIST_LOCK);
-            detach_thread_from_proc(z);
-            spinlock_unlock(&PROC_LIST_LOCK);
-            asm volatile("push %0\n\tpopfq" :: "r"(rflags2) : "memory");
-
-            Schedule::FreeThreadResources(z);
-            kfree(z);
-            cpu->sched_stats.zombie_reclaims++;
-            z = next;
-        }
+        reclaim_zombie_list(cpu, zombie_head);
 
         asm volatile("sti; hlt; cli" ::: "memory");
     }
@@ -169,6 +158,19 @@ static inline void update_min_vruntime_upward(rb_node_t *node) {
     }
 }
 
+static inline void detach_thread_from_proc(thread_t *thread) {
+    if (thread->parent && thread->parent->threads) {
+        if (thread->next == thread) {
+            thread->parent->threads = nullptr;
+        } else {
+            if (thread->parent->threads == thread) thread->parent->threads = thread->next;
+            thread->prev->next = thread->next;
+            thread->next->prev = thread->prev;
+        }
+    }
+    thread->parent = nullptr;
+    thread->next = thread->prev = nullptr;
+}
 
 namespace Schedule {
     namespace Internal {
@@ -246,7 +248,7 @@ namespace Schedule {
                     uint64_t rflags1;
                     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags1) :: "memory");
                     int retries = 0;
-                    while (!__sync_bool_compare_and_swap(&victim->sched_lock,0,1)) {
+                    while (!spin_trylock(&victim->sched_lock)) {
                         if (++retries > 100) break;
                         asm volatile("pause");
                     }
@@ -345,7 +347,7 @@ namespace Schedule {
             uint64_t rflags;
             asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
             spinlock_lock(&lock_a->sched_lock);
-            if (!__sync_bool_compare_and_swap(&lock_b->sched_lock, 0, 1)) {
+            if (!spin_trylock(&lock_b->sched_lock)) {
                 spinlock_unlock(&lock_a->sched_lock);
                 asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
                 return;
@@ -472,36 +474,30 @@ namespace Schedule {
             }
 
             thread_t *next_thread = Pick(cpu);
-            spinlock_unlock(&cpu->sched_lock);
 
-            
-            // 使用 trylock 避免在中断上下文中死等 PROC_LIST_LOCK，如果拿不到锁就跳过，保证不增加额外死锁风险
+            // FIX [锁冗余 & 满载兜底]: 合并到 sched_lock 临界区内摘取僵尸，锁外直接释放
+            thread_t *zombie_to_free = nullptr;
+            thread_t *zombie_tail = nullptr;
             if (cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD) {
-                if (__sync_bool_compare_and_swap(&PROC_LIST_LOCK, 0, 1)) {
-                    thread_t *batch[4];
-                    int batch_count = 0;
-                    
-                    spinlock_lock(&cpu->sched_lock);
-                    thread_t *z = cpu->zombie_list;
-                    while (z && batch_count < 4) {
-                        batch[batch_count++] = z;
-                        z = z->zombie_next;
-                    }
-                    if (batch_count > 0) {
-                        cpu->zombie_list = z;
-                        cpu->zombie_count -= batch_count;
-                    }
-                    spinlock_unlock(&cpu->sched_lock);
-
-                    for (int i = 0; i < batch_count; i++) {
-                        detach_thread_from_proc(batch[i]);
-                        Schedule::FreeThreadResources(batch[i]);
-                        kfree(batch[i]);
-                        cpu->sched_stats.zombie_reclaims++;
-                    }
-                    spinlock_unlock(&PROC_LIST_LOCK);
+                int moved = 0;
+                thread_t *z = cpu->zombie_list;
+                while (z && moved < 4) {
+                    thread_t *next = z->zombie_next;
+                    z->zombie_next = zombie_to_free;
+                    zombie_to_free = z;
+                    if (!zombie_tail) zombie_tail = z;
+                    z = next;
+                    moved++;
+                }
+                if (zombie_to_free) {
+                    cpu->zombie_list = z;
+                    cpu->zombie_count -= moved;
                 }
             }
+            spinlock_unlock(&cpu->sched_lock);
+
+            // 锁外同步释放资源，作为极端满载场景下的兜底机制
+            reclaim_zombie_list(cpu, zombie_to_free);
 
             if (!next_thread) {
                 next_thread = StealThread(cpu);
@@ -638,9 +634,9 @@ namespace Schedule {
         }
     }
 
-    void TriggerPreempt(thread_t *woken_thread) {
-        if (!woken_thread) return;
-        uint32_t cpu_num = __atomic_load_n(&woken_thread->cpu_num, __ATOMIC_ACQUIRE);
+    void TriggerPreempt(thread_t *woked_thread) {
+        if (!woked_thread) return;
+        uint32_t cpu_num = __atomic_load_n(&woked_thread->cpu_num, __ATOMIC_ACQUIRE);
         if (cpu_num >= MAX_CPU) return;
         cpu_t *cpu = smp_cpu_list[cpu_num];
         if (!cpu) return;
@@ -651,16 +647,18 @@ namespace Schedule {
             return;
         }
 
-        if (woken_thread->vruntime <= cpu->avg_vruntime && woken_thread->deadline < curr->deadline) {
-            // 等价于: (remaining_vr * curr->weight) / 1024 < 1024 / woken_thread->weight
+        if (woked_thread->vruntime <= cpu->avg_vruntime && woked_thread->deadline < curr->deadline) {
             uint64_t remaining_vr = curr->deadline - curr->vruntime;
-            if (remaining_vr * curr->weight * woken_thread->weight < 1024 * 1024) {
+            if (remaining_vr * curr->weight * woked_thread->weight < 1024 * 1024) {
                 return; 
             }
 
             cpu_t *cur_cpu = this_cpu();
-            if (cpu != cur_cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
-            else Yield();
+            if (cpu != cur_cpu) {
+                LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+            } else {
+                __atomic_store_n(&need_resched_flags[cpu->id], true, __ATOMIC_RELEASE);
+            }
         }
     }
 
