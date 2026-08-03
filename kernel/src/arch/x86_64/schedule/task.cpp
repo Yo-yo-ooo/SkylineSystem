@@ -19,6 +19,18 @@ extern spinlock_t PROC_LIST_LOCK;
 #define THREAD_TRANSFER 4
 #endif
 
+
+static inline void wait_for_transfer(thread_t *t) {
+    uint64_t wait_start = PIT::TimeSinceBootMS();
+    while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == THREAD_TRANSFER) {
+        if (PIT::TimeSinceBootMS() - wait_start > 1000) { // 1s 超时兜底
+            kerrorln("Warning: Thread stuck in TRANSFER state for too long!");
+            break;
+        }
+        asm volatile("pause");
+    }
+}
+
 namespace Schedule {
     void DeleteProc(proc_t *proc);
 
@@ -49,55 +61,103 @@ namespace Schedule {
     static void SyncKillProcThreads(proc_t *proc, thread_t *except_thread) {
         if (!proc) return;
         cpu_t *self_cpu = this_cpu();
+
         while (true) {
             thread_t *batch[64];
             int count = 0;
             uint64_t rflags;
+
+            // 1. 持有进程锁：收集线程并从链表中摘除，彻底打破死循环
             asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
             spinlock_lock(&PROC_LIST_LOCK);
             thread_t *t = proc->threads;
             if (t) {
                 thread_t *start = t;
                 do {
-                    if (t != except_thread) {
-                        if (count < 64) { batch[count++] = t; t = t->next; } else break;
-                    } else t = t->next;
-                } while (t != start);
+                    thread_t *next = t->next;
+                    if (t != except_thread && count < 64) {
+                        if (t->next == t) {
+                            proc->threads = nullptr;
+                        } else {
+                            if (proc->threads == t) proc->threads = t->next;
+                            t->prev->next = t->next;
+                            t->next->prev = t->prev;
+                        }
+                        t->parent = nullptr;
+                        t->next = t->prev = nullptr;
+                        batch[count++] = t;
+                    }
+                    t = next;
+                } while (t != start && proc->threads);
             }
             spinlock_unlock(&PROC_LIST_LOCK);
             asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
             if (count == 0) break;
-            bool processed[64] = {false};
 
+            bool processed[64] = {false};
+            bool need_wait[64] = {false};
+
+            // 2. 按CPU分组处理调度队列和定时器队列
             for (int i = 0; i < count; i++) {
                 if (processed[i]) continue;
+                
+                
+                wait_for_transfer(batch[i]);
+
                 uint32_t target_cpu_num = batch[i]->cpu_num;
                 cpu_t *t_cpu = get_cpu(target_cpu_num);
-                if (!t_cpu) continue;
-                bool need_ipi = false;
+                if (!t_cpu) { processed[i] = true; continue; }
 
+                bool need_ipi = false;
                 uint64_t rflags2;
                 asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags2) :: "memory");
                 spinlock_lock(&t_cpu->sched_lock);
+
                 for (int j = i; j < count; j++) {
                     if (processed[j]) continue;
                     if (batch[j]->cpu_num == target_cpu_num) {
                         thread_t *target = batch[j];
-                        target->stack = 0; target->sig_stack = 0; target->tls_base = 0;
                         target->state = THREAD_ZOMBIE;
-                        processed[j] = true; need_ipi = true;
+                        target->pagemap = kernel_pagemap; // 防止被 FreeThreadResources 访问已销毁的 pagemap
+
+                        // 从运行队列移除
+                        if (target->on_rq) {
+                            Schedule::Internal::RemoveFromQueue(t_cpu, target);
+                        }
+                        // 从定时器队列移除
+                        else if (target->timer_bucket) {
+                            Schedule::Internal::TimerRemove(target);
+                        }
+
+                    
+                        target->zombie_next = t_cpu->zombie_list;
+                        t_cpu->zombie_list = target;
+                        t_cpu->zombie_count++;
+
+                        // 如果线程正在CPU上运行，需要触发调度让它下来
+                        if (t_cpu->current_thread == target) {
+                            need_ipi = true;
+                            need_wait[j] = true;
+                        }
+
+                        processed[j] = true;
                     }
                 }
+
                 spinlock_unlock(&t_cpu->sched_lock);
                 asm volatile("push %0\n\tpopfq" :: "r"(rflags2) : "memory");
 
-                if (need_ipi && t_cpu != self_cpu) LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC + 1);
+                if (need_ipi && t_cpu != self_cpu) {
+                    LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC + 1);
+                }
             }
 
+            // 3. 仅等待正在运行的线程离开CPU
             for (int i = 0; i < count; i++) {
-                Schedule::WaitForThreadOffCpu(batch[i]);
-                Schedule::KillThread(batch[i]);
+                if (need_wait[i]) {
+                    Schedule::WaitForThreadOffCpu(batch[i]);
+                }
             }
         }
     }
@@ -118,6 +178,8 @@ namespace Schedule {
             spinlock_unlock(&PROC_LIST_LOCK);
             asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
         }
+        
+    
         proc_t *to_delete_list = proc;
         proc->sibling = nullptr;
         while (to_delete_list) {
@@ -154,6 +216,7 @@ namespace Schedule {
     static void FinalizeProcExit(proc_t *proc, cpu_t *cpu) {
         uint64_t pid = proc->id;
         thread_t *curr_thread = cpu->current_thread;
+        
         SyncKillProcThreads(proc, curr_thread);
 
         uint64_t rflags;
@@ -166,6 +229,7 @@ namespace Schedule {
             curr_thread->next->prev = curr_thread->prev;
         }
         curr_thread->parent = nullptr;
+        curr_thread->next = curr_thread->prev = nullptr;
         spinlock_unlock(&PROC_LIST_LOCK);
         asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
@@ -195,7 +259,29 @@ namespace Schedule {
         asm volatile("push %0\n\tpopfq" :: "r"(rflags3) : "memory");
 
         if (proc->FDMan) { fd_manager_destroy(proc->FDMan); kfree(proc->FDMan); }
-        if (proc->pagemap && proc->pagemap != kernel_pagemap) VMM::DestroyPM(proc->pagemap);
+        
+        pagemap_t *pm_to_destroy = proc->pagemap;
+        proc->pagemap = nullptr;
+        curr_thread->pagemap = kernel_pagemap;
+        curr_thread->stack = 0;
+        curr_thread->sig_stack = 0;
+        curr_thread->tls_base = 0;
+
+        VMM::SwitchPageMap(kernel_pagemap);
+
+        if (pm_to_destroy && pm_to_destroy != kernel_pagemap) {
+            VMM::DestroyPM(pm_to_destroy);
+        }
+
+        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
+        spinlock_lock(&cpu->sched_lock);
+        curr_thread->state = THREAD_ZOMBIE;
+        curr_thread->zombie_next = cpu->zombie_list;
+        cpu->zombie_list = curr_thread;
+        cpu->zombie_count++;
+        cpu->current_thread = nullptr;
+        spinlock_unlock(&cpu->sched_lock);
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
         uint64_t rflags4;
         asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags4) :: "memory");
@@ -205,20 +291,18 @@ namespace Schedule {
         asm volatile("push %0\n\tpopfq" :: "r"(rflags4) : "memory");
         kfree(proc);
 
-        curr_thread->pagemap = kernel_pagemap; curr_thread->stack = 0;
-        curr_thread->sig_stack = 0; curr_thread->tls_base = 0;
-        FreeThreadResources(curr_thread);
-        kfree(curr_thread);
-        cpu->current_thread = nullptr;
         kinfoln("Delete PROC %d", pid);
 
+        
+        asm volatile("sti");
         while (to_delete_list) {
             proc_t *curr_child = to_delete_list;
             to_delete_list = curr_child->sibling;
             curr_child->sibling = nullptr;
             DeleteProc(curr_child);
         }
-        asm volatile("sti");
+
+        
         LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
         while(true) { asm volatile("hlt"); }
     }
@@ -226,14 +310,46 @@ namespace Schedule {
     void PROC_KILL(proc_t *proc, int32_t exit_code){
         thread_t *curr_thread = Schedule::this_thread();
         cpu_t *cpu = this_cpu();
-        curr_thread->state = THREAD_ZOMBIE; curr_thread->exit_code = exit_code;
+        curr_thread->exit_code = exit_code;
+        
         if (__sync_lock_test_and_set(&proc->exiting, 1) != 0) {
-            VMM::SwitchPageMap(kernel_pagemap); asm volatile("sti");
+            
+            VMM::SwitchPageMap(kernel_pagemap);
+            
+            uint64_t rflags;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
+            spinlock_lock(&PROC_LIST_LOCK);
+            if (curr_thread->next == curr_thread) proc->threads = nullptr;
+            else {
+                if (proc->threads == curr_thread) proc->threads = curr_thread->next;
+                curr_thread->prev->next = curr_thread->next;
+                curr_thread->next->prev = curr_thread->prev;
+            }
+            curr_thread->parent = nullptr;
+            curr_thread->next = curr_thread->prev = nullptr;
+            spinlock_unlock(&PROC_LIST_LOCK);
+            
+            spinlock_lock(&cpu->sched_lock);
+            curr_thread->state = THREAD_ZOMBIE;
+            curr_thread->pagemap = kernel_pagemap;
+            curr_thread->stack = 0;
+            curr_thread->sig_stack = 0;
+            curr_thread->tls_base = 0;
+            curr_thread->zombie_next = cpu->zombie_list;
+            cpu->zombie_list = curr_thread;
+            cpu->zombie_count++;
+            cpu->current_thread = nullptr;
+            spinlock_unlock(&cpu->sched_lock);
+            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+
+            asm volatile("sti");
             LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
             while(1) { asm volatile("hlt"); }
         }
+        
         Serial::Writelnf("THREAD EXIT!!");
         VMM::SwitchPageMap(kernel_pagemap);
+
         uint64_t exit_rsp = (uint64_t)&cpu->exit_stack[4096];
         TSS::SetRSP(cpu->id, 0, (void*)exit_rsp);
         cpu->kernel_stack = exit_rsp;

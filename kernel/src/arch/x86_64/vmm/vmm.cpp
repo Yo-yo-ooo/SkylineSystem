@@ -515,25 +515,31 @@ namespace VMM {
                 while(v < end) {
                     Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, v);
                     if(info.size) {
-                        if(info.size == PAGE_2MB) {
-                            PMM::Free2MB((void*)info.phys);
-                        } else if(info.size == PAGE_1GB) {
+                        if(info.size == PAGE_1GB) {
                             Useless::PageInfo n = VMM::Useless::GetPageInfo(pagemap, v+PAGE_1GB);
                             if (n.size == PAGE_1GB && n.phys == info.phys + PAGE_1GB) {
                                 PMM::Free2GB((void*)info.phys);
+                                VMM::Unmap(pagemap, v);
                                 VMM::Unmap(pagemap, v + PAGE_1GB);
                                 v += PAGE_2GB;
                             } else {
                                 for (uint32_t j = 0; j < 512; j++)
                                     PMM::Free2MB((void*)(info.phys + j*PAGE_2MB));
+                                VMM::Unmap(pagemap, v);
                                 v += PAGE_1GB;
                             }
+                        } else if(info.size == PAGE_2MB) {
+                            PMM::Free2MB((void*)info.phys);
+                            VMM::Unmap(pagemap, v);
+                            v += PAGE_2MB;
                         } else {
                             PMM::Free((void*)info.phys);
+                            VMM::Unmap(pagemap, v);
+                            v += PAGE_SIZE;
                         }
-                        VMM::Unmap(pagemap, v);
+                    } else {
+                        v += PAGE_SIZE;
                     }
-                    v += (info.size ? info.size : PAGE_SIZE);
                 }
             }
             VMM::VMA::RemoveRegion(r);
@@ -542,16 +548,22 @@ namespace VMM {
         PMM::Free(PHYSICAL(pagemap->vma_head));
         pagemap->vma_head = pagemap->vma_cursor = nullptr;
 
+    
         vm_mapping_t *mapping = pagemap->vm_mappings;
         if(mapping) {
-            vm_mapping_t *start_mapping = mapping;
-            bool cont = true;
+            size_t map_count = 0;
+            vm_mapping_t *curr = mapping;
             do {
-                vm_mapping_t *next = mapping->next;
-                if (next == start_mapping) cont = false;
-                VMM::RemoveMapping(mapping);
-                mapping = next;
-            } while (cont);
+                map_count++;
+                curr = curr->next;
+            } while (curr != mapping);
+
+            curr = mapping;
+            for (size_t i = 0; i < map_count; i++) {
+                vm_mapping_t *next = curr->next;
+                VMM::RemoveMapping(curr);
+                curr = next;
+            }
         }
         pagemap->vm_mappings = nullptr;
 
