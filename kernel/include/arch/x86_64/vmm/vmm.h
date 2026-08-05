@@ -84,6 +84,7 @@ typedef struct vm_mapping_t {
     struct vm_mapping_t *prev;
 } vm_mapping_t;
 
+#define TLB_MASK_WORDS ((MAX_CPU + 63) / 64)
 typedef struct {
     volatile uint64_t *toplvl;
     vm_mapping_t *vm_mappings;
@@ -92,6 +93,8 @@ typedef struct {
     vma_region_t *vma_head;
     vma_region_t *vma_cursor;
     rb_root_t vma_tree;       //红黑树根，用于 O(log n) 查找
+    uint32_t          pcid;               
+    uint64_t          cpus_with_tlb[TLB_MASK_WORDS];
 } pagemap_t;
 
 extern volatile pagemap_t *kernel_pagemap;

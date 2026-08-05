@@ -118,6 +118,14 @@ typedef struct cpu_t {
     uint64_t total_weight;
     uint64_t avg_vruntime;
     uint64_t avg_vruntime_rem;
+
+    spinlock_t        shootdown_lock;
+    struct shootdown_req {
+        pagemap_t *pm;
+        uint64_t   vaddr;
+        uint8_t    type; // 1=单页, 2=单PM全刷, 3=全局全刷
+    } shootdown_queue[32];
+    volatile uint32_t shootdown_count;
 } cpu_t;
 
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);
