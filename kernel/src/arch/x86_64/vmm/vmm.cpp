@@ -92,11 +92,6 @@ namespace VMM {
     #define TLB_FLUSH_VEC    (SCHED_VEC + 2)
 
     namespace LazyTLB {
-        static inline uint32_t MyCpuId() {
-            cpu_t *c = this_cpu();
-            return c ? c->id : 0;
-        }
-
         static inline void cpuid(uint32_t leaf, uint32_t &a, uint32_t &b, uint32_t &c, uint32_t &d) {
             __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(leaf));
         }
@@ -166,13 +161,13 @@ namespace VMM {
 
         void OnAttach(pagemap_t *pm) {
             if (!smp_started || !pm) return;
-            uint32_t me = MyCpuId();
+            uint32_t me = this_cpu()->id;
             BitmapSet(pm->cpus_with_tlb, me);
         }
 
         void OnDetach(pagemap_t *pm) {
             if (!smp_started || !pm || CPUFeatures::has_pcid) return;
-            uint32_t me = MyCpuId();
+            uint32_t me = this_cpu()->id;
             BitmapClear(pm->cpus_with_tlb, me);
         }
 
@@ -181,7 +176,7 @@ namespace VMM {
             LocalInvlpg(pm, vaddr);
 
             if (!smp_started) return;
-            uint32_t me = MyCpuId();
+            uint32_t me = this_cpu()->id;
 
             uint64_t targets[TLB_MASK_WORDS];
             for (int i = 0; i < TLB_MASK_WORDS; i++)
@@ -220,7 +215,7 @@ namespace VMM {
             LocalFullFlush(pm);
             if (!smp_started) return;
 
-            uint32_t me = MyCpuId();
+            uint32_t me = this_cpu()->id;
             uint64_t targets[TLB_MASK_WORDS];
             for (int i = 0; i < TLB_MASK_WORDS; i++)
                 targets[i] = __atomic_load_n(&pm->cpus_with_tlb[i], __ATOMIC_RELAXED);
