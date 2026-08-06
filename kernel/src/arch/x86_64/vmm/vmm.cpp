@@ -56,26 +56,32 @@ namespace VMM {
     }
 
     static spinlock_t pcid_alloc_lock = 0;
-    static uint64_t pcid_bitmap[64] = {0}; //Support 4096 PCID!
+    static uint64_t pcid_bitmap[64] = {0};
 
     static inline uint32_t AllocPCID() {
         if (!CPUFeatures::has_pcid || !CPUFeatures::has_invpcid) return 0;
         spinlock_lock(&pcid_alloc_lock);
+        pcid_bitmap[0] |= 1; // Reserve PCID 0
         for (int i = 0; i < 64; i++) {
             if (pcid_bitmap[i] != ~0ULL) {
                 int bit = __builtin_ffsll(~pcid_bitmap[i]) - 1;
                 uint32_t pcid = i * 64 + bit;
-                if (pcid == 0) continue; // 0 Reserved for NO PCID MODE
                 pcid_bitmap[i] |= (1ULL << bit);
                 spinlock_unlock(&pcid_alloc_lock);
                 return pcid;
             }
         }
         spinlock_unlock(&pcid_alloc_lock);
-        return 0; // 耗尽则退化
+        return 0; 
     }
 
-    // Multi-cpu Bitmap (For PCID Not for pmm)
+    static inline void FreePCID(uint32_t pcid) {
+        if (pcid == 0) return;
+        spinlock_lock(&pcid_alloc_lock);
+        pcid_bitmap[pcid / 64] &= ~(1ULL << (pcid % 64));
+        spinlock_unlock(&pcid_alloc_lock);
+    }
+
     static inline void BitmapSet(uint64_t *map, uint32_t cpu) {
         __atomic_fetch_or(&map[cpu / 64], 1ULL << (cpu % 64), __ATOMIC_RELAXED);
     }
@@ -87,7 +93,6 @@ namespace VMM {
             __atomic_store_n(&map[i], 0, __ATOMIC_RELAXED);
     }
 
-    // Lazy TLB ShutDown
     #define TLB_FLUSH_FULL   ((uint64_t)-1)
     #define TLB_FLUSH_VEC    (SCHED_VEC + 2)
 
@@ -106,7 +111,6 @@ namespace VMM {
             cpuid(7, a, b, c, d);
             CPUFeatures::has_invpcid = (b >> 10) & 1;
 
-            // 只有同时支持 PCID 和 INVPCID 才启用
             if (CPUFeatures::has_pcid && CPUFeatures::has_invpcid) {
                 uint64_t cr4;
                 __asm__ volatile ("movq %%cr4, %0" : "=r"(cr4));
@@ -120,11 +124,10 @@ namespace VMM {
             idt_set_ist(TLB_FLUSH_VEC, 0);
         }
 
-        // 底层本地刷新：支持 PCID 精准刷新
         static inline void LocalInvlpg(pagemap_t *pm, uint64_t vaddr) {
             if (CPUFeatures::has_invpcid) {
                 struct { uint64_t vaddr; uint64_t pcid; } __attribute__((aligned(16))) desc = { vaddr, pm ? pm->pcid : 0 };
-                uint64_t type = 0; // Type 0: 个别地址
+                uint64_t type = 0;
                 __asm__ volatile ("invpcid %1, %0" : : "r"(type), "m"(desc) : "memory");
             } else {
                 __asm__ volatile ("invlpg (%0)" :: "r"(vaddr) : "memory");
@@ -134,7 +137,7 @@ namespace VMM {
         static inline void LocalFullFlush(pagemap_t *pm) {
             if (CPUFeatures::has_invpcid) {
                 struct { uint64_t vaddr; uint64_t pcid; } __attribute__((aligned(16))) desc = { 0, pm ? pm->pcid : 0 };
-                uint64_t type = 1; // Type 1: 单PCID全刷
+                uint64_t type = 1;
                 __asm__ volatile ("invpcid %1, %0" : : "r"(type), "m"(desc) : "memory");
             } else {
                 uint64_t cr3;
@@ -145,16 +148,16 @@ namespace VMM {
         static inline void LocalGlobalFlush() {
             if (CPUFeatures::has_invpcid) {
                 struct { uint64_t vaddr; uint64_t pcid; } __attribute__((aligned(16))) desc = { 0, 0 };
-                uint64_t type = 3; // Type 3: 所有上下文全刷
+                uint64_t type = 3;
                 __asm__ volatile ("invpcid %1, %0" : : "r"(type), "m"(desc) : "memory");
             } else {
                 uint64_t cr4;
                 __asm__ volatile ("movq %%cr4, %0" : "=r"(cr4));
-                cr4 &= ~(1ULL << 7); // 清除 PGE
+                cr4 &= ~(1ULL << 7); 
                 __asm__ volatile ("movq %0, %%cr4" :: "r"(cr4) : "memory");
                 uint64_t cr3;
                 __asm__ volatile ("movq %%cr3, %0\n\tmovq %0, %%cr3" : "=&r"(cr3) :: "memory");
-                cr4 |= (1ULL << 7); // 恢复 PGE
+                cr4 |= (1ULL << 7); 
                 __asm__ volatile ("movq %0, %%cr4" :: "r"(cr4) : "memory");
             }
         }
@@ -174,7 +177,6 @@ namespace VMM {
         void ShootdownPage(pagemap_t *pm, uint64_t vaddr) {
             if (!pm) return;
             LocalInvlpg(pm, vaddr);
-
             if (!smp_started) return;
             uint32_t me = this_cpu()->id;
 
@@ -195,7 +197,6 @@ namespace VMM {
                     uint64_t rf;
                     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rf) :: "memory");
                     spinlock_lock(&target->shootdown_lock);
-                    
                     if (target->shootdown_count < 32) {
                         target->shootdown_queue[target->shootdown_count++] = {pm, vaddr, 1};
                     } else {
@@ -277,6 +278,7 @@ namespace VMM {
             LAPIC::EOI();
         }
     }
+
     namespace Useless {
         uint64_t *NewLevel(uint64_t *level, uint64_t entry) {
             uint64_t *new_level = PMM::Request();
@@ -347,7 +349,8 @@ namespace VMM {
         kernel_pagemap->vma_cursor = nullptr;
         kernel_pagemap->vm_mappings = nullptr;
         kernel_pagemap->pt_lock = 0;
-        kernel_pagemap->pcid = 0;
+        
+        kernel_pagemap->pcid = AllocPCID();
         BitmapClearAll(kernel_pagemap->cpus_with_tlb);
         _memset(kernel_pagemap->toplvl, 0, PAGE_SIZE);
 
@@ -453,7 +456,8 @@ namespace VMM {
         VMM::Map(kernel_pagemap, vaddr, paddr, MM_READ | MM_WRITE);
     }
 
-    void Unmap(pagemap_t *pagemap, uint64_t vaddr){
+    // Fast unmap without sending IPI, used for batch operations
+    void UnmapNoFlush(pagemap_t *pagemap, uint64_t vaddr){
         uint64_t *pml4 = (uint64_t*)pagemap->toplvl;
 #if CONFIG_VMM_5LVL_MAP == 1
         if(IsPM5LVL){
@@ -470,7 +474,6 @@ namespace VMM {
         if (!PAGE_EXISTS(pde_val)) return;
         if (pde_val & VMM_PS_BIT) { 
             pdpt[PDPTE(vaddr)] = 0; 
-            LazyTLB::ShootdownFull(pagemap);
             return; 
         }
 
@@ -479,12 +482,15 @@ namespace VMM {
         if (!PAGE_EXISTS(pte_val)) return;
         if (pte_val & VMM_PS_BIT) { 
             pd[PDE(vaddr)] = 0; 
-            LazyTLB::ShootdownFull(pagemap);
             return; 
         }
 
         uint64_t *pt = HIGHER_HALF(PTE_MASK(pte_val));
         pt[PTE(vaddr)] = 0;
+    }
+
+    void Unmap(pagemap_t *pagemap, uint64_t vaddr){
+        UnmapNoFlush(pagemap, vaddr);
         LazyTLB::ShootdownPage(pagemap, vaddr);
     }
 
@@ -523,9 +529,9 @@ namespace VMM {
         }
 
         uint64_t cr3_val = PHYSICAL((uint64_t)pagemap->toplvl);
-        if (CPUFeatures::has_pcid) {
+        if (CPUFeatures::has_pcid && pagemap->pcid != 0) {
             cr3_val |= pagemap->pcid;
-            cr3_val |= (1ULL << 63);
+            cr3_val |= (1ULL << 63); // Bit 63 prevents hardware TLB flush
         }
         __asm__ volatile ("movq %0, %%cr3" : : "r"(cr3_val) : "memory");
         
@@ -612,7 +618,10 @@ namespace VMM {
                 }
             }
             void* phys_ptr = PMM::Request();
-            if (!phys_ptr) { kerrorln("PMM: OOM in Alloc"); break; }
+            if (!phys_ptr) {
+                kerrorln("PMM: OOM in Alloc");
+                goto err_unmap_alloc;
+            }
             VMM::Map4K(pagemap, cv, (uint64_t)phys_ptr, flags);
             mapped += 1;
         }
@@ -620,6 +629,42 @@ namespace VMM {
         VMM::NewMapping(pagemap, addr, page_count, flags);
         spinlock_unlock(&pagemap->vma_lock);
         return (void*)addr;
+
+    err_unmap_alloc:
+        uint64_t rollback_v = addr;
+        uint64_t rollback_end = addr + mapped * PAGE_SIZE;
+        while (rollback_v < rollback_end) {
+            Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, rollback_v);
+            if (info.size == 0) { rollback_v += PAGE_SIZE; continue; }
+
+            if (info.size == PAGE_1GB) {
+                Useless::PageInfo next = VMM::Useless::GetPageInfo(pagemap, rollback_v + PAGE_1GB);
+                if (next.size == PAGE_1GB && next.phys == info.phys + PAGE_1GB) {
+                    PMM::Free2GB((void*)info.phys);
+                    VMM::UnmapNoFlush(pagemap, rollback_v + PAGE_1GB);
+                    rollback_v += PAGE_2GB;
+                } else {
+                    // Split 1GB into 512 2MB pages to free safely
+                    for (uint32_t j = 0; j < 512; j++)
+                        PMM::Free2MB((void*)(info.phys + j * PAGE_2MB));
+                    rollback_v += PAGE_1GB;
+                }
+            } else if (info.size == PAGE_2MB) {
+                PMM::Free2MB((void*)info.phys);
+                rollback_v += PAGE_2MB;
+            } else {
+                PMM::Free((void*)info.phys);
+                rollback_v += PAGE_SIZE;
+            }
+            VMM::UnmapNoFlush(pagemap, rollback_v - info.size);
+        }
+        LazyTLB::ShootdownFull(pagemap);
+
+        vma_region_t *region = VMM::VMA::FindRegion(pagemap, addr);
+        if (region) VMM::VMA::RemoveRegion(region);
+        
+        spinlock_unlock(&pagemap->vma_lock);
+        return nullptr;
     }
 
     void *EAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags) {
@@ -651,7 +696,10 @@ namespace VMM {
                 }
             }
             void* phys_ptr = PMM::Request();
-            if (!phys_ptr) { kerrorln("PMM: OOM in EAlloc"); break; }
+            if (!phys_ptr) {
+                kerrorln("PMM: OOM in EAlloc");
+                goto err_unmap_ealloc;
+            }
             VMM::Map4K(pagemap, cv, (uint64_t)phys_ptr, flags);
             mapped += 1;
         }
@@ -659,6 +707,41 @@ namespace VMM {
         VMM::NewMapping(pagemap, addr, page_count, flags);
         spinlock_unlock(&pagemap->vma_lock);
         return (void*)addr;
+
+    err_unmap_ealloc:
+        uint64_t rollback_v = addr;
+        uint64_t rollback_end = addr + mapped * PAGE_SIZE;
+        while (rollback_v < rollback_end) {
+            Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, rollback_v);
+            if (info.size == 0) { rollback_v += PAGE_SIZE; continue; }
+
+            if (info.size == PAGE_1GB) {
+                Useless::PageInfo next = VMM::Useless::GetPageInfo(pagemap, rollback_v + PAGE_1GB);
+                if (next.size == PAGE_1GB && next.phys == info.phys + PAGE_1GB) {
+                    PMM::Free2GB((void*)info.phys);
+                    VMM::UnmapNoFlush(pagemap, rollback_v + PAGE_1GB);
+                    rollback_v += PAGE_2GB;
+                } else {
+                    for (uint32_t j = 0; j < 512; j++)
+                        PMM::Free2MB((void*)(info.phys + j * PAGE_2MB));
+                    rollback_v += PAGE_1GB;
+                }
+            } else if (info.size == PAGE_2MB) {
+                PMM::Free2MB((void*)info.phys);
+                rollback_v += PAGE_2MB;
+            } else {
+                PMM::Free((void*)info.phys);
+                rollback_v += PAGE_SIZE;
+            }
+            VMM::UnmapNoFlush(pagemap, rollback_v - info.size);
+        }
+        LazyTLB::ShootdownFull(pagemap);
+
+        vma_region_t *region = VMM::VMA::FindRegion(pagemap, addr);
+        if (region) VMM::VMA::RemoveRegion(region);
+        
+        spinlock_unlock(&pagemap->vma_lock);
+        return nullptr;
     }
 
     void Free(pagemap_t *pagemap, void *ptr){
@@ -682,9 +765,10 @@ namespace VMM {
                 Useless::PageInfo next = VMM::Useless::GetPageInfo(pagemap, v + PAGE_1GB);
                 if (next.size == PAGE_1GB && next.phys == info.phys + PAGE_1GB) {
                     PMM::Free2GB((void*)info.phys);
-                    VMM::Unmap(pagemap, v + PAGE_1GB);
+                    VMM::UnmapNoFlush(pagemap, v + PAGE_1GB);
                     v += PAGE_2GB;
                 } else {
+                    // Split 1GB into 512 2MB pages to free safely
                     for (uint32_t j = 0; j < 512; j++)
                         PMM::Free2MB((void*)(info.phys + j * PAGE_2MB));
                     v += PAGE_1GB;
@@ -696,9 +780,10 @@ namespace VMM {
                 PMM::Free((void*)info.phys);
                 v += PAGE_SIZE;
             }
-            VMM::Unmap(pagemap, v - info.size);
+            VMM::UnmapNoFlush(pagemap, v - info.size);
         }
 
+        // Batch shootdown after all pages are unmapped
         LazyTLB::ShootdownFull(pagemap);
 
         vm_mapping_t *m = pagemap->vm_mappings;
@@ -783,22 +868,23 @@ namespace VMM {
                             Useless::PageInfo n = VMM::Useless::GetPageInfo(pagemap, v+PAGE_1GB);
                             if (n.size == PAGE_1GB && n.phys == info.phys + PAGE_1GB) {
                                 PMM::Free2GB((void*)info.phys);
-                                VMM::Unmap(pagemap, v);
-                                VMM::Unmap(pagemap, v + PAGE_1GB);
+                                VMM::UnmapNoFlush(pagemap, v);
+                                VMM::UnmapNoFlush(pagemap, v + PAGE_1GB);
                                 v += PAGE_2GB;
                             } else {
+                                // Split 1GB into 512 2MB pages to free safely
                                 for (uint32_t j = 0; j < 512; j++)
                                     PMM::Free2MB((void*)(info.phys + j*PAGE_2MB));
-                                VMM::Unmap(pagemap, v);
+                                VMM::UnmapNoFlush(pagemap, v);
                                 v += PAGE_1GB;
                             }
                         } else if(info.size == PAGE_2MB) {
                             PMM::Free2MB((void*)info.phys);
-                            VMM::Unmap(pagemap, v);
+                            VMM::UnmapNoFlush(pagemap, v);
                             v += PAGE_2MB;
                         } else {
                             PMM::Free((void*)info.phys);
-                            VMM::Unmap(pagemap, v);
+                            VMM::UnmapNoFlush(pagemap, v);
                             v += PAGE_SIZE;
                         }
                     } else {
@@ -830,6 +916,7 @@ namespace VMM {
         }
         pagemap->vm_mappings = nullptr;
 
+        // Batch shootdown after all pages are unmapped
         LazyTLB::ShootdownFull(pagemap);
 
         spinlock_unlock(&pagemap->pt_lock);
@@ -838,6 +925,7 @@ namespace VMM {
 
     void DestroyPM(pagemap_t *pagemap){
         VMM::CleanPM(pagemap);
+        FreePCID(pagemap->pcid);
         PMM::Free(PHYSICAL(pagemap->toplvl));
         PMM::Free(PHYSICAL(pagemap));
     }
@@ -895,7 +983,7 @@ namespace VMM {
 
         if (info.size == PAGE_1GB) {
             uint64_t page_start = fault_addr & ~(PAGE_1GB - 1);
-            VMM::Unmap(pagemap, page_start); 
+            VMM::UnmapNoFlush(pagemap, page_start); 
             
             for (int j = 0; j < 512; j++) {
                 uint64_t v = page_start + j * PAGE_2MB;
@@ -910,17 +998,25 @@ namespace VMM {
                 __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)p), PAGE_2MB);
                 VMM::Map2M(pagemap, v, new_phys, new_flags);
             }
+            // Free the old 1GB page by splitting it into 2MB chunks
+            for (uint32_t j = 0; j < 512; j++) {
+                PMM::Free2MB((void*)(old_phys + j * PAGE_2MB));
+            }
             LazyTLB::ShootdownFull(pagemap);
         } else if (info.size == PAGE_2MB) {
             uint64_t page_start = fault_addr & ~(PAGE_2MB - 1);
             uint64_t new_phys = (uint64_t)PMM::Request2MB();
             __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)old_phys), PAGE_2MB);
             VMM::Map2M(pagemap, page_start, new_phys, new_flags);
+            // TODO: Should not free directly if COW ref count > 1
+            // PMM::Free2MB((void*)old_phys); 
             LazyTLB::ShootdownPage(pagemap, page_start);
         } else {
             uint64_t new_phys = (uint64_t)PMM::Request();
             __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)old_phys), PAGE_SIZE);
             VMM::Map4K(pagemap, fault_addr, new_phys, new_flags);
+            // TODO: Should not free directly if COW ref count > 1
+            // PMM::Free((void*)old_phys);
             LazyTLB::ShootdownPage(pagemap, fault_addr);
         }
         
