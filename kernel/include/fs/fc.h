@@ -18,8 +18,6 @@ extern "C" {
  *  Macro Configuration
  * ============================================================ */
 #define FC_MAX_CPUS              128
-#define FC_DEFAULT_MAX_ENTRIES   1024
-#define FC_DEFAULT_MAX_MEMORY    (16ULL * 1024 * 1024)
 
 #define FC_MIN_IO_LEN_TO_CACHE   4096
 #define FC_MIN_FREQ_TO_CACHE     2       
@@ -100,15 +98,16 @@ typedef struct file_cache_cpu {
     
     uint64_t total_cache_bytes;   
     uint64_t dirty_cache_bytes;
+    uint64_t smoothed_cache_bytes; 
+    
+    uint64_t soft_limit;
+    uint64_t hard_limit;
     
     uint64_t avg_io_cache;
     uint64_t avg_freq_cache;
     uint64_t avg_osc_cache;
     
     uint32_t total_entries;       
-    uint32_t max_entries;
-    uint64_t base_memory;          
-    
     uint32_t evict_scan_window;
     int32_t  evict_hit_count;
     uint32_t evict_miss_count;
@@ -129,8 +128,9 @@ typedef struct file_cache_cpu {
 /* ===================== API ===================== */
 
 void    file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id, 
-                            uint32_t max_entries, uint64_t max_mem,
                             void (*writeback_cb)(const uint8_t*, uint32_t, void*, size_t));
+
+void    file_cache_set_limits(file_cache_cpu_t *s, uint64_t soft_limit, uint64_t hard_limit);
 
 void*   file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                        size_t io_len, size_t *out_len, file_cache_entry_t **out_entry);

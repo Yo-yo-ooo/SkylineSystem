@@ -8,7 +8,6 @@ extern "C" void *__memcpy(void *d, const void *s, uint64_t n);
 extern void  spinlock_lock(spinlock_t* lock);
 extern void  spinlock_unlock(spinlock_t* lock);
 
-// 内部静态注册表
 static file_cache_cpu_t *g_fc_cpus[FC_MAX_CPUS];
 static uint32_t g_num_active_cpus = 0;
 static spinlock_t g_fc_init_lock = 0;
@@ -21,8 +20,8 @@ static void fc_update_averages_internal(file_cache_cpu_t *s) {
         s->avg_io_cache = 0;
     }
     
-    if (s->total_cache_bytes > 0) {
-        s->avg_freq_cache = s->total_cache_freq / s->total_cache_bytes;
+    if (s->smoothed_cache_bytes > 0) {
+        s->avg_freq_cache = s->total_cache_freq / s->smoothed_cache_bytes;
     } else {
         s->avg_freq_cache = 0;
     }
@@ -32,6 +31,8 @@ static void fc_update_averages_internal(file_cache_cpu_t *s) {
     } else {
         s->avg_osc_cache = 0;
     }
+
+    s->smoothed_cache_bytes = (s->smoothed_cache_bytes * 7 + s->total_cache_bytes) / 8;
 }
 
 static bool file_cache_should_cache(file_cache_cpu_t *s, uint64_t freq, uint64_t target_cache_len, uint64_t osc_count) {
@@ -85,13 +86,21 @@ static void fc_lru_move_to_back(file_cache_cpu_t *s, file_cache_entry_t *e) {
     fc_lru_push_back(s, e);
 }
 
-static file_cache_entry_t *fc_pick_victim(file_cache_cpu_t *s) {
+static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
     file_cache_entry_t *clean_fallback = NULL;
     int32_t scan_cnt = 0;
     bool hit = false;
     
     for (file_cache_entry_t *cur = s->lru_head; cur && scan_cnt < s->evict_scan_window; cur = cur->lru_next) {
-        if (cur->pending_reclaim && cur->pin_count == 0) return cur;
+        if (cur->pending_reclaim && cur->pin_count == 0) {
+            fc_lru_remove(s, cur);
+            s->total_cache_bytes -= cur->data_len;
+            s->total_cache_io    -= cur->total_io_len;
+            s->total_cache_freq  -= cur->access_freq;
+            s->total_entries--;
+            s->evictions++;
+            return cur;
+        }
         
         if (cur->pin_count == 0 && cur->state == FC_STATE_CACHED && !cur->is_dirty) {
             bool is_protected = (cur->osc_count > 0 && s->avg_osc_cache > 0 && cur->osc_count > s->avg_osc_cache);
@@ -112,13 +121,24 @@ static file_cache_entry_t *fc_pick_victim(file_cache_cpu_t *s) {
                     }
                     s->evict_hit_count = 0;
                 }
-                return cur; 
+                void *art_val = art_delete(&s->index, cur->key, cur->key_len);
+                if (art_val) {
+                    fc_lru_remove(s, cur);
+                    s->total_cache_bytes -= cur->data_len;
+                    s->total_cache_io    -= cur->total_io_len;
+                    s->total_cache_freq  -= cur->access_freq;
+                    s->total_entries--;
+                    s->evictions++;
+                    return cur;
+                } else {
+                    cur->pending_reclaim = true;
+                }
             }
             scan_cnt++;
         }
     }
     
-    if (!hit) {
+    if (!hit && clean_fallback) {
         s->evict_hit_count = 0;
         s->evict_miss_count++;
         if (s->evict_miss_count >= 8) s->evict_hit_threshold = FC_EVICT_HIT_THRESHOLD * 2;
@@ -126,8 +146,18 @@ static file_cache_entry_t *fc_pick_victim(file_cache_cpu_t *s) {
             s->evict_scan_window = s->evict_scan_window * 5 / 4;
             if (s->evict_scan_window > FC_EVICT_WINDOW_MAX) s->evict_scan_window = FC_EVICT_WINDOW_MAX;
         }
+        void *art_val = art_delete(&s->index, clean_fallback->key, clean_fallback->key_len);
+        if (art_val) {
+            fc_lru_remove(s, clean_fallback);
+            s->total_cache_bytes -= clean_fallback->data_len;
+            s->total_cache_io    -= clean_fallback->total_io_len;
+            s->total_cache_freq  -= clean_fallback->access_freq;
+            s->total_entries--;
+            s->evictions++;
+            return clean_fallback;
+        }
     }
-    return clean_fallback; 
+    return NULL; 
 }
 
 static void fc_entry_free(file_cache_entry_t *e) {
@@ -137,36 +167,7 @@ static void fc_entry_free(file_cache_entry_t *e) {
     kfree(e);
 }
 
-static int32_t fc_evict_one(file_cache_cpu_t *s) {
-    file_cache_entry_t *v = fc_pick_victim(s);
-    if (!v) return -1;
-
-    if (v->pending_reclaim) {
-        fc_lru_remove(s, v);
-        s->total_cache_bytes -= v->data_len;
-        s->total_cache_io    -= v->total_io_len;
-        s->total_cache_freq  -= v->access_freq;
-        s->total_entries--;
-        s->evictions++;
-        fc_entry_free(v);
-        return 0;
-    }
-
-    v->state = FC_STATE_EVICTING;
-    void *art_val = art_delete(&s->index, v->key, v->key_len);
-    if (!art_val) {
-        v->state = FC_STATE_CACHED;
-        v->pending_reclaim = true; 
-        return -1; 
-    }
-    fc_lru_remove(s, v);
-
-    s->total_cache_bytes -= v->data_len;
-    s->total_cache_io    -= v->total_io_len;
-    s->total_cache_freq  -= v->access_freq;
-    s->total_entries--;
-    s->evictions++;
-    
+static void fc_update_oscillate(file_cache_cpu_t *s, file_cache_entry_t *v) {
     fc_oscillate_t *osc = (fc_oscillate_t *)art_search(&s->oscillate_tree, v->key, v->key_len);
     if (!osc) {
         osc = (fc_oscillate_t *)kmalloc(sizeof(fc_oscillate_t));
@@ -190,14 +191,10 @@ static int32_t fc_evict_one(file_cache_cpu_t *s) {
         if (v->file_size > 0) osc->file_size = v->file_size;
         osc->file_id = v->file_id;
     }
-    
-    fc_entry_free(v);
-    return 0;
 }
 
 /* ===================== Init ===================== */
 void file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id, 
-                        uint32_t max_entries, uint64_t max_mem,
                         void (*writeback_cb)(const uint8_t*, uint32_t, void*, size_t)) {
     if (!s) return;
     art_tree_init(&s->index);
@@ -213,23 +210,30 @@ void file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id,
     s->total_oscillations = 0;
     s->max_file_size = 0;
     s->total_cache_bytes = 0; s->dirty_cache_bytes = 0;
+    s->smoothed_cache_bytes = 0;
+    s->soft_limit = 0; s->hard_limit = 0; 
     s->avg_io_cache = 0; s->avg_freq_cache = 0; s->avg_osc_cache = 0;
     s->total_entries = 0;
-    s->max_entries = max_entries ? max_entries : FC_DEFAULT_MAX_ENTRIES;
-    s->base_memory = max_mem ? max_mem : FC_DEFAULT_MAX_MEMORY;
     s->evict_scan_window = 64;
     s->evict_hit_count = 0; s->evict_miss_count = 0; s->evict_hit_threshold = FC_EVICT_HIT_THRESHOLD;
     s->hits = 0; s->misses = 0; s->evictions = 0;
     s->migrations_in = 0; s->migrations_out = 0;
     s->writeback_cb = writeback_cb;
 
-    // 修复竞态：使用锁保护全局注册表
     spinlock_lock(&g_fc_init_lock);
     if (cpu_id < FC_MAX_CPUS) {
         g_fc_cpus[cpu_id] = s;
         if (cpu_id + 1 > g_num_active_cpus) g_num_active_cpus = cpu_id + 1;
     }
     spinlock_unlock(&g_fc_init_lock);
+}
+
+void file_cache_set_limits(file_cache_cpu_t *s, uint64_t soft_limit, uint64_t hard_limit) {
+    if (!s) return;
+    spinlock_lock(&s->lock);
+    s->soft_limit = soft_limit;
+    s->hard_limit = hard_limit;
+    spinlock_unlock(&s->lock);
 }
 
 /* ===================== Broadcast Invalidation ===================== */
@@ -239,6 +243,9 @@ static void fc_broadcast_invalidate(file_cache_cpu_t *src_s, const uint8_t *key,
         file_cache_cpu_t *s = g_fc_cpus[i];
         if (!s) continue;
         
+        file_cache_entry_t *entry_to_free = NULL;
+        fc_oscillate_t *osc_to_free = NULL;
+
         spinlock_lock(&s->lock);
         file_cache_entry_t *e = (file_cache_entry_t *)art_search(&s->index, key, key_len);
         if (e) {
@@ -253,18 +260,20 @@ static void fc_broadcast_invalidate(file_cache_cpu_t *src_s, const uint8_t *key,
                     s->total_cache_io    -= e->total_io_len;
                     s->total_cache_freq  -= e->access_freq;
                     s->total_entries--;
-                    fc_entry_free(e);
+                    entry_to_free = e;
                 } else {
                     e->pending_reclaim = true;
                 }
             }
         }
-        fc_oscillate_t *osc = (fc_oscillate_t *)art_delete(&s->oscillate_tree, key, key_len);
-        if (osc) {
-            s->total_oscillations -= osc->osc_count;
-            kfree(osc);
+        osc_to_free = (fc_oscillate_t *)art_delete(&s->oscillate_tree, key, key_len);
+        if (osc_to_free) {
+            s->total_oscillations -= osc_to_free->osc_count;
         }
         spinlock_unlock(&s->lock);
+
+        if (entry_to_free) fc_entry_free(entry_to_free);
+        if (osc_to_free) kfree(osc_to_free);
     }
 }
 
@@ -300,6 +309,11 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
         spinlock_lock(&rs->lock);
         file_cache_entry_t *re = (file_cache_entry_t *)art_search(&rs->index, key, key_len);
         if (re && !re->is_dirty && re->pin_count == 0 && re->state == FC_STATE_CACHED) {
+            if (s->soft_limit > 0 && s->smoothed_cache_bytes + re->data_len > s->soft_limit) {
+                spinlock_unlock(&rs->lock);
+                continue; 
+            }
+
             void *art_val = art_delete(&rs->index, re->key, re->key_len);
             if (art_val) {
                 fc_lru_remove(rs, re);
@@ -311,21 +325,6 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                 spinlock_unlock(&rs->lock);
                 
                 spinlock_lock(&s->lock);
-                // 修复：纯本地配额硬上限检查
-                if (s->total_entries + 1 > s->max_entries || s->total_cache_bytes + re->data_len > s->base_memory) {
-                    // 本地配额已满，放回原 CPU
-                    spinlock_unlock(&s->lock);
-                    spinlock_lock(&rs->lock);
-                    art_insert(&rs->index, re->key, re->key_len, (void *)re);
-                    fc_lru_push_back(rs, re);
-                    rs->total_entries++;
-                    rs->total_cache_bytes += re->data_len;
-                    rs->total_cache_io += re->total_io_len;
-                    rs->total_cache_freq += re->access_freq;
-                    spinlock_unlock(&rs->lock);
-                    return NULL;
-                }
-                
                 re->cpu_id = s->cpu_id;
                 art_insert(&s->index, re->key, re->key_len, (void *)re);
                 fc_lru_push_back(s, re);
@@ -355,6 +354,7 @@ void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
     if (!s || !e) return;
     
     spinlock_lock(&s->lock);
+    bool need_free = false;
     if (e->pin_count > 0) e->pin_count--;
 
     if (e->pin_count == 0 && (e->state == FC_STATE_INVALID || e->pending_reclaim)) {
@@ -362,23 +362,29 @@ void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
             void *art_val = art_delete(&s->index, e->key, e->key_len);
             if (!art_val) {
                 e->pending_reclaim = true;
-                spinlock_unlock(&s->lock);
-                return;
+            } else {
+                fc_lru_remove(s, e);
+                s->total_cache_bytes -= e->data_len;
+                if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
+                s->total_cache_io    -= e->total_io_len;
+                s->total_cache_freq  -= e->access_freq;
+                s->total_entries--;
+                need_free = true;
             }
+        } else {
+            fc_lru_remove(s, e);
+            s->total_cache_bytes -= e->data_len;
+            if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
+            s->total_cache_io    -= e->total_io_len;
+            s->total_cache_freq  -= e->access_freq;
+            s->total_entries--;
+            need_free = true;
         }
-        fc_lru_remove(s, e);
-        s->total_cache_bytes -= e->data_len;
-        if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
-        s->total_cache_io    -= e->total_io_len;
-        s->total_cache_freq  -= e->access_freq;
-        s->total_entries--;
-        fc_entry_free(e);
     }
     spinlock_unlock(&s->lock);
+    if (need_free) fc_entry_free(e); 
 }
-int32_t file_cache_promote_locked(file_cache_cpu_t *s,
-                           const uint8_t *key, uint32_t key_len,
-                           void *data, size_t data_len, bool is_dirty, uint64_t file_size, uint64_t file_id, bool *out_need_broadcast);
+
 /* ===================== Record IO & Promote ===================== */
 int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                              size_t io_len, void *data_if_promote, uint64_t file_size, uint64_t file_id) {
@@ -406,20 +412,19 @@ int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
 
     fc_oscillate_t *osc = (fc_oscillate_t *)art_search(&s->oscillate_tree, key, key_len);
     uint64_t cur_freq = osc ? osc->freq + 1 : 1;
-    uint64_t cur_io   = osc ? osc->io_len + io_len : io_len;
     uint64_t cur_osc  = osc ? osc->osc_count : 0;
     uint64_t cur_fsize = osc ? osc->file_size : file_size;
-    uint64_t cur_fid   = osc ? osc->file_id : file_id;
 
     if (cur_fsize > 0 && cur_fsize > s->max_file_size) {
         s->max_file_size = cur_fsize;
     }
+    spinlock_unlock(&s->lock);
 
     bool should = file_cache_should_cache(s, cur_freq, io_len, cur_osc);
     if (should && data_if_promote) {
-        bool need_broadcast = false;
-        int32_t r = file_cache_promote_locked(s, key, key_len, data_if_promote, io_len, false, cur_fsize, cur_fid, &need_broadcast);
+        int32_t r = file_cache_promote(s, key, key_len, data_if_promote, io_len, false, cur_fsize, file_id);
         if (r != 0) {
+            spinlock_lock(&s->lock);
             if (!osc) {
                 osc = (fc_oscillate_t *)kmalloc(sizeof(fc_oscillate_t));
                 if (osc) {
@@ -430,19 +435,14 @@ int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
             } else {
                 osc->freq++; osc->io_len += io_len;
                 if (file_size > 0) osc->file_size = file_size;
-                if (file_id != 0) osc->file_id = file_id;
             }
-        } else {
-            if (osc) {
-                s->total_oscillations -= osc->osc_count;
-                art_delete(&s->oscillate_tree, key, key_len);
-                kfree(osc);
-            }
+            spinlock_unlock(&s->lock);
+            kfree(data_if_promote);
+            return r;
         }
-        spinlock_unlock(&s->lock);
-        if (r != 0) kfree(data_if_promote);
-        return (r == 0) ? (int32_t)io_len : r;
+        return (int32_t)io_len;
     } else {
+        spinlock_lock(&s->lock);
         if (!osc) {
             osc = (fc_oscillate_t *)kmalloc(sizeof(fc_oscillate_t));
             if (osc) {
@@ -452,8 +452,6 @@ int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
             }
         } else {
             osc->freq++; osc->io_len += io_len;
-            if (file_size > 0) osc->file_size = file_size;
-            if (file_id != 0) osc->file_id = file_id;
         }
         spinlock_unlock(&s->lock);
         if (!should && data_if_promote) kfree(data_if_promote); 
@@ -461,13 +459,61 @@ int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
     }
 }
 
-int32_t file_cache_promote_locked(file_cache_cpu_t *s,
-                           const uint8_t *key, uint32_t key_len,
-                           void *data, size_t data_len, bool is_dirty, uint64_t file_size, uint64_t file_id, bool *out_need_broadcast) {
-    *out_need_broadcast = false;
+static int fc_try_evict_for_space(file_cache_cpu_t *s, uint64_t need_space, file_cache_entry_t **victims, int max_victims) {
+    int vic_cnt = 0;
+    while (s->hard_limit > 0 && s->total_cache_bytes + need_space > s->hard_limit && vic_cnt < max_victims) {
+        file_cache_entry_t *v = fc_pick_and_unlink_victim(s);
+        if (v) {
+            fc_update_oscillate(s, v);
+            victims[vic_cnt++] = v;
+        } else {
+            break;
+        }
+    }
+    return vic_cnt;
+}
+
+int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
+                           void *data, size_t data_len, bool is_dirty, uint64_t file_size, uint64_t file_id) {
+    if (!s || !key || key_len == 0 || !data || data_len == 0) return -1;
+
+    file_cache_entry_t *e = (file_cache_entry_t *)kcalloc(1, sizeof(file_cache_entry_t));
+    if (!e) return FC_ERR_NO_MEMORY;
+
+    e->key = (uint8_t *)kmalloc(key_len);
+    if (!e->key) {
+        kfree(e);
+        return FC_ERR_NO_MEMORY;
+    }
+    __memcpy(e->key, key, key_len);
+    e->key_len = key_len;
+    e->cpu_id = s->cpu_id;
+    e->pending_reclaim = false;
+    e->is_dirty = is_dirty;
+    e->file_size = file_size;
+    e->file_id = file_id;
+    e->data = data;
+    e->data_len = data_len;
+    e->state = FC_STATE_CACHED;
+    e->pin_count = 0;
+    e->create_tick = s->clock;
+    e->last_access_tick = s->clock;
+    e->total_io_len = data_len;
+
+    bool need_broadcast = false;
+    file_cache_entry_t *victims[8] = {0};
+    int vic_cnt = 0;
+    void *old_data_to_free = NULL;
+
+    spinlock_lock(&s->lock);
+    
+    if (file_size > 0 && file_size > s->max_file_size) {
+        s->max_file_size = file_size;
+    }
+
     file_cache_entry_t *exist = (file_cache_entry_t *)art_search(&s->index, key, key_len);
     if (exist) {
-        if (exist->data) kfree(exist->data);
+        old_data_to_free = exist->data; 
         s->total_cache_bytes -= exist->data_len;
         if (exist->is_dirty) s->dirty_cache_bytes -= exist->data_len;
         s->total_cache_io    -= exist->total_io_len;
@@ -484,52 +530,32 @@ int32_t file_cache_promote_locked(file_cache_cpu_t *s,
         s->total_cache_io += exist->total_io_len;
         fc_lru_move_to_back(s, exist);
         
-        if (is_dirty) *out_need_broadcast = true;
+        if (is_dirty) need_broadcast = true;
+        spinlock_unlock(&s->lock);
+        
+        if (old_data_to_free) kfree(old_data_to_free);
+        kfree(e->key); kfree(e); 
+        if (need_broadcast) fc_broadcast_invalidate(s, key, key_len);
         return 0;
     }
 
     if (is_dirty && s->total_cache_bytes > 0 && 
         (s->dirty_cache_bytes * 100 / s->total_cache_bytes) > FC_DIRTY_RATIO_LIMIT) {
-        return FC_ERR_NO_MEMORY; 
+        spinlock_unlock(&s->lock);
+        kfree(e->key); kfree(e);
+        return FC_ERR_NO_MEMORY;
     }
 
-    int32_t evict_cnt = 0;
-    bool need_evict = (s->total_entries + 1 > s->max_entries) ||
-                      (s->total_cache_bytes + data_len > s->base_memory);
-                      
-    while (need_evict && evict_cnt < 8) {
-        if (fc_evict_one(s) != 0) break;
-        need_evict = (s->total_entries + 1 > s->max_entries) ||
-                     (s->total_cache_bytes + data_len > s->base_memory);
-        evict_cnt++;
+    if (s->hard_limit > 0 && s->total_cache_bytes + data_len > s->hard_limit) {
+        vic_cnt = fc_try_evict_for_space(s, data_len, victims, 8);
+        if (s->total_cache_bytes + data_len > s->hard_limit) {
+            spinlock_unlock(&s->lock);
+            kfree(e->key); kfree(e);
+            for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
+            return FC_ERR_NO_MEMORY;
+        }
     }
 
-    if (s->total_entries + 1 > s->max_entries || s->total_cache_bytes + data_len > s->base_memory) {
-        kfree(data); return FC_ERR_NO_MEMORY;
-    }
-
-    file_cache_entry_t *e = (file_cache_entry_t *)kcalloc(1, sizeof(file_cache_entry_t));
-    if (!e) { kfree(data); return -3; }
-
-    e->key = (uint8_t *)kmalloc(key_len);
-    if (!e->key) { kfree(e); kfree(data); return -3; }
-    
-    __memcpy(e->key, key, key_len);
-    e->key_len = key_len;
-    e->cpu_id = s->cpu_id;
-    e->pending_reclaim = false;
-    e->is_dirty = is_dirty;
-    e->file_size = file_size;
-    e->file_id = file_id;
-
-    e->data = data;
-    e->data_len = data_len;
-    e->state = FC_STATE_CACHED;
-    e->pin_count = 0;
-    e->create_tick = s->clock;
-    e->last_access_tick = s->clock;
-    e->total_io_len = data_len;
-    
     fc_oscillate_t *osc = (fc_oscillate_t *)art_search(&s->oscillate_tree, key, key_len);
     if (osc) {
         e->access_freq = osc->freq;
@@ -541,7 +567,10 @@ int32_t file_cache_promote_locked(file_cache_cpu_t *s,
 
     art_insert(&s->index, e->key, e->key_len, (void *)e);
     if (art_search(&s->index, e->key, e->key_len) != e) {
-        kfree(e->key); kfree(e); kfree(data); return -4;
+        spinlock_unlock(&s->lock);
+        kfree(e->key); kfree(e);
+        for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
+        return -4;
     }
 
     fc_lru_push_back(s, e);
@@ -551,31 +580,13 @@ int32_t file_cache_promote_locked(file_cache_cpu_t *s,
     s->total_cache_io    += e->total_io_len;
     s->total_cache_freq  += e->access_freq;
 
-    if (is_dirty) *out_need_broadcast = true;
-    return 0;
-}
-
-int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
-                           void *data, size_t data_len, bool is_dirty, uint64_t file_size, uint64_t file_id) {
-    if (!s || !key || key_len == 0 || !data || data_len == 0) return -1;
-    
-    bool need_broadcast = false;
-
-    spinlock_lock(&s->lock);
-    if (file_size > 0 && file_size > s->max_file_size) {
-        s->max_file_size = file_size;
-    }
-
-    int32_t r = file_cache_promote_locked(s, key, key_len, data, data_len, is_dirty, file_size, file_id, &need_broadcast);
+    if (is_dirty) need_broadcast = true;
     spinlock_unlock(&s->lock);
 
-    if (r == 0 && need_broadcast) {
-        fc_broadcast_invalidate(s, key, key_len);
-    } else if (r != 0) {
-        kfree(data);
-    }
+    for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
+    if (need_broadcast) fc_broadcast_invalidate(s, key, key_len);
     
-    return r;
+    return 0;
 }
 
 int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len) {
@@ -589,16 +600,19 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
     if (!src || load_factor < 80) return;
     
     uint32_t best_dst = -1;
-    uint32_t lowest_load = 100;
+    uint64_t lowest_load = 100;
+    
+    uint64_t src_load = (src->soft_limit > 0) ? (src->smoothed_cache_bytes * 100 / src->soft_limit) : 0;
+    if (src_load < 80) return;
+
     for (uint32_t i = 0; i < g_num_active_cpus; i++) {
         if (i == src->cpu_id || !g_fc_cpus[i]) continue;
         file_cache_cpu_t *dst = g_fc_cpus[i];
-        if (dst->total_entries < dst->max_entries) {
-            uint32_t proxy_load = (dst->total_entries * 100) / dst->max_entries;
-            if (proxy_load < lowest_load) {
-                lowest_load = proxy_load;
-                best_dst = i;
-            }
+        
+        uint64_t dst_load = (dst->soft_limit > 0) ? (dst->smoothed_cache_bytes * 100 / dst->soft_limit) : 0;
+        if (dst_load < lowest_load) {
+            lowest_load = dst_load;
+            best_dst = i;
         }
     }
     if (best_dst == (uint32_t)-1) return;
@@ -613,6 +627,9 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
         spinlock_lock(&src->lock);
     }
 
+    file_cache_entry_t *victims[FC_MIGRATE_BATCH_SIZE] = {0};
+    int vic_cnt = 0;
+
     int32_t migrated = 0;
     while (migrated < FC_MIGRATE_BATCH_SIZE && src->lru_head) {
         file_cache_entry_t *e = src->lru_head;
@@ -621,9 +638,8 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
             continue;
         }
 
-        // 纯本地配额检查
-        if (dst->total_entries + 1 > dst->max_entries || dst->total_cache_bytes + e->data_len > dst->base_memory) {
-            break; // 目标满了
+        if (dst->soft_limit > 0 && dst->smoothed_cache_bytes + e->data_len > dst->soft_limit) {
+            break;
         }
 
         fc_oscillate_t *osc = (fc_oscillate_t *)art_delete(&src->oscillate_tree, e->key, e->key_len);
@@ -640,7 +656,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
                 src->total_cache_freq  -= e->access_freq;
                 src->total_entries--;
                 src->migrations_out++;
-                fc_entry_free(e);
+                victims[vic_cnt++] = e;
             } else {
                 e->pending_reclaim = true;
             }
@@ -697,6 +713,8 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
 
     spinlock_unlock(&src->lock);
     spinlock_unlock(&dst->lock);
+
+    for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
 }
 
 /* ===================== CPU Idle Handler & Writeback ===================== */
@@ -714,28 +732,35 @@ static int fc_free_file_stat_cb(void *data, const uint8_t *key, uint32_t key_len
 void file_cache_idle_handler(file_cache_cpu_t *s) {
     if (!s) return;
     
-    // 均值更新
     spinlock_lock(&s->lock);
     fc_update_averages_internal(s);
     spinlock_unlock(&s->lock);
 
+    file_cache_entry_t *victims[FC_IDLE_FLUSH_BATCH * 2] = {0};
+    int vic_cnt = 0;
+
     // Phase 1: 回收孤儿节点
     spinlock_lock(&s->lock);
     file_cache_entry_t *cur = s->lru_head;
-    while (cur && s->total_entries > 0) {
+    while (cur && vic_cnt < FC_IDLE_FLUSH_BATCH) {
         file_cache_entry_t *next = cur->lru_next;
         if (cur->pending_reclaim && cur->pin_count == 0) {
-            fc_lru_remove(s, cur);
-            s->total_cache_bytes -= cur->data_len;
-            if (cur->is_dirty) s->dirty_cache_bytes -= cur->data_len;
-            s->total_cache_io    -= cur->total_io_len;
-            s->total_cache_freq  -= cur->access_freq;
-            s->total_entries--;
-            fc_entry_free(cur);
+            void *art_val = art_delete(&s->index, cur->key, cur->key_len);
+            if (art_val) {
+                fc_lru_remove(s, cur);
+                s->total_cache_bytes -= cur->data_len;
+                if (cur->is_dirty) s->dirty_cache_bytes -= cur->data_len;
+                s->total_cache_io    -= cur->total_io_len;
+                s->total_cache_freq  -= cur->access_freq;
+                s->total_entries--;
+                victims[vic_cnt++] = cur;
+            }
         }
         cur = next;
     }
     spinlock_unlock(&s->lock);
+    for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
+    vic_cnt = 0;
 
     // Phase 2: 刷脏页
     file_cache_entry_t *flush_list[FC_IDLE_FLUSH_BATCH];
@@ -776,7 +801,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
         
         file_cache_entry_t *exist = (file_cache_entry_t *)art_search(&s->index, e->key, e->key_len);
         if (exist) {
-            fc_entry_free(e);
+            fc_entry_free(e); 
         } else {
             art_insert(&s->index, e->key, e->key_len, (void *)e);
             fc_lru_push_back(s, e);
@@ -788,15 +813,15 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
     }
     spinlock_unlock(&s->lock);
 
-    // Phase 3.5: 配额裁剪 (拆分持锁区间)
+    // Phase 3.5: 配额裁剪
     spinlock_lock(&s->lock);
-    if (s->max_file_size > 0 && s->base_memory > 0) {
+    if (s->max_file_size > 0 && s->smoothed_cache_bytes > 0) {
         art_tree file_stats_tree;
         art_tree_init(&file_stats_tree);
         
         file_cache_entry_t *e_quota = s->lru_tail;
         uint32_t quota_scan_cnt = 0;
-        while (e_quota && quota_scan_cnt < FC_QUOTA_SCAN_BATCH) {
+        while (e_quota && quota_scan_cnt < FC_QUOTA_SCAN_BATCH && vic_cnt < FC_IDLE_FLUSH_BATCH) {
             file_cache_entry_t *prev = e_quota->lru_prev;
             if (e_quota->file_id != 0 && e_quota->pin_count == 0 && e_quota->state == FC_STATE_CACHED && !e_quota->is_dirty) {
                 uint64_t fid = e_quota->file_id;
@@ -805,7 +830,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                     stat = (fc_file_stat_t *)kmalloc(sizeof(fc_file_stat_t));
                     if (!stat) { e_quota = prev; quota_scan_cnt++; continue; }
                     stat->total_cached = 0;
-                    stat->quota = (s->base_memory * e_quota->file_size) / s->max_file_size;
+                    stat->quota = (s->smoothed_cache_bytes * e_quota->file_size) / s->max_file_size;
                     art_insert(&file_stats_tree, (const uint8_t*)&fid, sizeof(fid), (void*)stat);
                 }
                 
@@ -822,32 +847,8 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                             s->total_cache_freq -= e_quota->access_freq;
                             s->total_entries--;
                             s->evictions++;
-                            
-                            fc_oscillate_t *osc = (fc_oscillate_t *)art_search(&s->oscillate_tree, e_quota->key, e_quota->key_len);
-                            if (!osc) {
-                                osc = (fc_oscillate_t *)kmalloc(sizeof(fc_oscillate_t));
-                                if (osc) {
-                                    osc->freq = e_quota->access_freq;
-                                    osc->io_len = e_quota->total_io_len;
-                                    osc->osc_count = e_quota->osc_count + 1;
-                                    if (osc->osc_count > FC_OSC_COUNT_LIMIT) osc->osc_count = FC_OSC_COUNT_LIMIT;
-                                    osc->file_size = e_quota->file_size;
-                                    osc->file_id = e_quota->file_id;
-                                    art_insert(&s->oscillate_tree, e_quota->key, e_quota->key_len, (void *)osc);
-                                    s->total_oscillations += osc->osc_count;
-                                }
-                            } else {
-                                osc->freq += e_quota->access_freq;
-                                osc->io_len += e_quota->total_io_len;
-                                s->total_oscillations -= osc->osc_count; 
-                                osc->osc_count += (e_quota->osc_count + 1);
-                                if (osc->osc_count > FC_OSC_COUNT_LIMIT) osc->osc_count = FC_OSC_COUNT_LIMIT;
-                                s->total_oscillations += osc->osc_count;
-                                if (e_quota->file_size > 0) osc->file_size = e_quota->file_size;
-                                osc->file_id = e_quota->file_id;
-                            }
-                            
-                            fc_entry_free(e_quota);
+                            fc_update_oscillate(s, e_quota);
+                            victims[vic_cnt++] = e_quota;
                         } else {
                             e_quota->pending_reclaim = true;
                         }
@@ -859,18 +860,19 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
             e_quota = prev;
             quota_scan_cnt++;
         }
-        
         art_iter(&file_stats_tree, fc_free_file_stat_cb, NULL);
         art_tree_destroy(&file_stats_tree);
     }
     spinlock_unlock(&s->lock);
+    for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
+    vic_cnt = 0;
 
     // Phase 3: 动态由最冷端向最热端判断
     spinlock_lock(&s->lock);
     cur = s->lru_head;
     int32_t scan_cnt = 0;
     uint64_t batch_max_size = 0; 
-    while (cur && scan_cnt < FC_IDLE_REVERSE_SCAN) {
+    while (cur && scan_cnt < FC_IDLE_REVERSE_SCAN && vic_cnt < FC_IDLE_FLUSH_BATCH) {
         file_cache_entry_t *next = cur->lru_next;
         if (cur->file_size > batch_max_size) batch_max_size = cur->file_size;
         if (cur->pin_count == 0 && cur->state == FC_STATE_CACHED && !cur->is_dirty) {
@@ -883,32 +885,8 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                     s->total_cache_freq  -= cur->access_freq;
                     s->total_entries--;
                     s->evictions++;
-
-                    fc_oscillate_t *osc = (fc_oscillate_t *)art_search(&s->oscillate_tree, cur->key, cur->key_len);
-                    if (!osc) {
-                        osc = (fc_oscillate_t *)kmalloc(sizeof(fc_oscillate_t));
-                        if (osc) {
-                            osc->freq = cur->access_freq;
-                            osc->io_len = cur->total_io_len;
-                            osc->osc_count = cur->osc_count + 1;
-                            if (osc->osc_count > FC_OSC_COUNT_LIMIT) osc->osc_count = FC_OSC_COUNT_LIMIT;
-                            osc->file_size = cur->file_size;
-                            osc->file_id = cur->file_id;
-                            art_insert(&s->oscillate_tree, cur->key, cur->key_len, (void *)osc);
-                            s->total_oscillations += osc->osc_count;
-                        }
-                    } else {
-                        osc->freq += cur->access_freq;
-                        osc->io_len += cur->total_io_len;
-                        s->total_oscillations -= osc->osc_count; 
-                        osc->osc_count += (cur->osc_count + 1);
-                        if (osc->osc_count > FC_OSC_COUNT_LIMIT) osc->osc_count = FC_OSC_COUNT_LIMIT;
-                        s->total_oscillations += osc->osc_count;
-                        if (cur->file_size > 0) osc->file_size = cur->file_size;
-                        osc->file_id = cur->file_id;
-                    }
-
-                    fc_entry_free(cur);
+                    fc_update_oscillate(s, cur);
+                    victims[vic_cnt++] = cur;
                 } else {
                     cur->pending_reclaim = true;
                 }
@@ -923,18 +901,21 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
     } else if (s->lru_head == NULL) {
         s->max_file_size = 0; 
     }
-    spinlock_unlock(&s->lock);
 
-    // Phase 4: 强制驱逐
-    spinlock_lock(&s->lock);
-    if (s->total_cache_bytes > (s->base_memory * 90) / 100) {
-        int32_t evicted = 0;
-        while (evicted < FC_IDLE_FLUSH_BATCH && s->total_entries > 0) {
-            if (fc_evict_one(s) == 0) evicted++;
-            else break;
+    // Phase 4: 硬水位强制驱逐
+    if (s->hard_limit > 0 && s->total_cache_bytes > s->hard_limit) {
+        while (s->total_cache_bytes > s->hard_limit && vic_cnt < FC_IDLE_FLUSH_BATCH) {
+            file_cache_entry_t *v = fc_pick_and_unlink_victim(s);
+            if (v) {
+                fc_update_oscillate(s, v);
+                victims[vic_cnt++] = v;
+            } else {
+                break;
+            }
         }
     }
     spinlock_unlock(&s->lock);
+    for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
 }
 
 /* ===================== Periodic Tick & Oscillate Decay ===================== */

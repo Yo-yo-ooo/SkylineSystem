@@ -74,7 +74,7 @@ void __init x86_64_init(void){
     InitFunc("PIT & RTC",PIT::InitPIT());
     InitFunc("HPET",HPET::InitHPET());
     bsp_cpu->file_cache = (file_cache_cpu_t*)kmalloc(sizeof(file_cache_cpu_t));
-    file_cache_cpu_init(bsp_cpu->file_cache, bsp_cpu->id, 1024, 16 * 1024 * 1024, file_cache_writeback_callback);
+    file_cache_cpu_init(bsp_cpu->file_cache, bsp_cpu->id,file_cache_writeback_callback);
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
     InitFunc("SIMD Core 0",simd_cpu_init(this_cpu()));

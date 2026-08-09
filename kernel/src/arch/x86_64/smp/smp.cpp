@@ -119,7 +119,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     cpu->timer_last_tick = PIT::TimeSinceBootMS();
 
     cpu->file_cache = (file_cache_cpu_t*)kmalloc(sizeof(file_cache_cpu_t));
-    file_cache_cpu_init(cpu->file_cache, cpu->id, 1024, 16 * 1024 * 1024, file_cache_writeback_callback);
+    file_cache_cpu_init(cpu->file_cache, cpu->id, file_cache_writeback_callback);
     spinlock_lock(&smp_lock);
     kpok("Initialized CPU (Logical:%d, APIC:%d).\n", logical_id, mp_info->lapic_id);
     started_count++;
