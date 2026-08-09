@@ -9,6 +9,9 @@
 #include <arch/x86_64/simd/simd.h>
 #include <klib/algorithm/queue.h>
 #include <klib/algorithm/art.h>
+#include <arch/x86_64/interrupt/gdt.h>
+#include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/lapic/lapic.h>
 
 extern art_tree *pid2proc_tree;
 extern spinlock_t PID2PROC_TREE_LOCK;

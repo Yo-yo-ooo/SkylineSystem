@@ -5,6 +5,7 @@
 #include <arch/x86_64/schedule/sched.h>
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
+#include <mem/pmm.h>
 
 extern volatile bool IsPM5LVL;
 

@@ -7,7 +7,16 @@
 #include <arch/x86_64/simd/simd.h>
 #include <arch/x86_64/cpu/vf.h>
 #include <klib/algorithm/rbtree.h>
+#include <arch/x86_64/interrupt/gdt.h>
+#include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/cpu.h>
+#include <arch/x86_64/lapic/lapic.h>
 
+extern "C" void file_cache_writeback_callback(
+    const uint8_t *key, 
+    uint32_t key_len, void *data, size_t data_len
+);
 
 cpu_t ZeroCPU = {0};
 cpu_t *bsp_cpu = &ZeroCPU;

@@ -3,7 +3,9 @@
 #include <klib/kio.h>
 #include <conf.h>
 #include <arch/x86_64/drivers/hpet/hpet.h>
-
+#include <arch/x86_64/lapic/lapic.h>
+#include <klib/kio.h>
+#include <acpi/madt.h>
 
 static volatile uint64_t lapic_address = 0;
 

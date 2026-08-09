@@ -12,6 +12,9 @@
 #include <klib/algorithm/art.h>
 #include <atomic/atomic.h>
 #include <fs/fc.h>
+#include <arch/x86_64/lapic/lapic.h>
+#include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/interrupt/gdt.h>
 
 #ifndef THREAD_TRANSFER
 #define THREAD_TRANSFER 4

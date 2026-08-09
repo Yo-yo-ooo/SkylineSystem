@@ -1,12 +1,19 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
 #include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/interrupt/idt.h>
+#include <klib/kio.h>
+#include <arch/x86_64/rtc/rtc.h>
+#include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/lapic/lapic.h>
+#include <arch/x86_64/smp/smp.h>
+#include <fs/fc.h>
 
 extern uint64_t mktime (uint32_t year, uint32_t mon,
     uint32_t day, uint32_t hour,
     uint32_t min, uint32_t sec);
 
-#include <fs/fc.h>
+
 
 namespace PIT
 {

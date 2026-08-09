@@ -10,6 +10,8 @@
 #include <klib/algorithm/queue.h>
 #include <klib/algorithm/art.h>
 #include <atomic/atomic.h>
+#include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/lapic/lapic.h>
 
 #define TIMER_MAX_TIMEOUT_MS (TV_SIZE * TV_SIZE * TV_SIZE)
 

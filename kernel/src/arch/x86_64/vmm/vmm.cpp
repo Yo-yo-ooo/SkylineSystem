@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
 #include <limine.h>
-#include <smp/smp.h>
+#include <arch/x86_64/smp/smp.h>
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
+#include <klib/klib.h>
+#include <arch/x86_64/lapic/lapic.h>
+#include <mem/pmm.h>
+#include <klib/kio.h>
+#include <arch/x86_64/schedule/sched.h>
 
 #define VMM_PS_BIT (1ULL << 7)
 

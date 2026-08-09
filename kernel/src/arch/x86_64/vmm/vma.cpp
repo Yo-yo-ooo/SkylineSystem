@@ -4,7 +4,9 @@
 #include <limine.h>
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
+#include <mem/pmm.h>
 #include <klib/algorithm/rbtree.h>
+#include <klib/klib.h>
 
 extern volatile bool IsPM5LVL;
 

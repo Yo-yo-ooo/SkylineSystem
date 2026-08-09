@@ -13,7 +13,17 @@
 #include <arch/x86_64/drivers/hpet/hpet.h>
 #include <drivers/framebuffer/fb.h>
 #include <klib/renderer/rnd.h>
+#include <arch/x86_64/interrupt/gdt.h>
+#include <arch/x86_64/interrupt/idt.h>
+#include <mem/pmm.h>
+#include <arch/x86_64/vmm/vmm.h>
+#include <arch/x86_64/ioapic/ioapic.h>
+#include <arch/x86_64/schedule/sched.h>
 #include <atomic/atomic.h>
+#include <arch/x86_64/cpu.h>
+#include <arch/x86_64/lapic/lapic.h>
+#include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/rtc/rtc.h>
 #include <drivers/mouse/x86/ps2mouse.h>
 
 #define PIC1_COMMAND 0x20
@@ -23,7 +33,7 @@
 uint32_t PrintFSERIAL = 0;
 
 extern cpu_t *bsp_cpu;
-extern void file_cache_writeback_callback(
+extern "C" void file_cache_writeback_callback(
     const uint8_t *key, 
     uint32_t key_len, void *data, size_t data_len
 );

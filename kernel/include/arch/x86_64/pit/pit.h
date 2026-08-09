@@ -3,7 +3,8 @@
 #pragma once
 #include <stdint.h>
 #include <klib/kio.h>
-#include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/interrupt/idt.h>
+
 namespace PIT
 {
     extern uint64_t TicksSinceBoot;
