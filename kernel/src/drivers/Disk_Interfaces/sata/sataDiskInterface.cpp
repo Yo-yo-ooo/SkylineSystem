@@ -5,7 +5,6 @@
 #include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
 #include <mem/heap.h>
 #include <mem/pmm.h>
-#include <arch/x86_64/allin.h>
 
 #include <drivers/ahci/ahci.h>
 #include <drivers/dev/dev.h>

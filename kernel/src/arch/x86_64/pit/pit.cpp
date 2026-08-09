@@ -1,10 +1,12 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-#include <arch/x86_64/allin.h>
+#include <arch/x86_64/pit/pit.h>
 
 extern uint64_t mktime (uint32_t year, uint32_t mon,
     uint32_t day, uint32_t hour,
     uint32_t min, uint32_t sec);
+
+#include <fs/fc.h>
 
 namespace PIT
 {
@@ -124,6 +126,10 @@ namespace PIT
 
     void Tick(){
         TickHandle();
+        cpu_t *cpu = this_cpu();
+        if (cpu && cpu->file_cache) {
+            file_cache_tick(cpu->file_cache);
+        }
     }
     
     uint64_t TimeSinceBootMS()

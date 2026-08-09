@@ -1,6 +1,6 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-#include <arch/x86_64/allin.h>
+#include <arch/x86_64/rtc/rtc.h>
 #define CURRENT_YEAR_STR        (__DATE__ + 7)                            // Change this each year!
 
 // https://wiki.osdev.org/CMOS#RTC_Update_In_Progress

@@ -14,6 +14,7 @@
 typedef struct thread_t thread_t;
 
 #include <arch/x86_64/schedule/syscall.h>
+#include <fs/fc.h>
 
 #define PMM_PCP_MAX 256    
 #define PMM_PCP_BATCH 64   
@@ -48,6 +49,8 @@ typedef struct {
     void* freelist[8]; 
     uint32_t count[8]; 
 } cpu_slab_t;
+
+
 
 typedef struct cpu_t {
     struct cpu_t* self;          
@@ -126,6 +129,7 @@ typedef struct cpu_t {
         uint8_t    type; // 1=单页, 2=单PM全刷, 3=全局全刷
     } shootdown_queue[32];
     volatile uint32_t shootdown_count;
+    file_cache_cpu_t *file_cache;
 } cpu_t;
 
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);

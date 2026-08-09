@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
 #include <limine.h>
-#include <arch/x86_64/allin.h>
+#include <smp/smp.h>
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 

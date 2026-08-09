@@ -1,6 +1,5 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-#include <arch/x86_64/allin.h>
 #include <limine.h>
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/interrupt/gdt.h>
@@ -56,6 +55,7 @@ void EnableFSGSBASE(cpu_t *cpu) {
     cpu->OverLoadableFuncs.WRFSBASE = WRFSBASE_V1;
 }
 
+
 void smp_cpu_init(struct limine_mp_info *mp_info) {
     VMM::SwitchPageMap(kernel_pagemap);
     
@@ -109,6 +109,8 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     _memset(cpu->tv2, 0, sizeof(cpu->tv2));
     cpu->timer_last_tick = PIT::TimeSinceBootMS();
 
+    cpu->file_cache = (file_cache_cpu_t*)kmalloc(sizeof(file_cache_cpu_t));
+    file_cache_cpu_init(cpu->file_cache, cpu->id, 1024, 16 * 1024 * 1024, file_cache_writeback_callback);
     spinlock_lock(&smp_lock);
     kpok("Initialized CPU (Logical:%d, APIC:%d).\n", logical_id, mp_info->lapic_id);
     started_count++;

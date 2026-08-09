@@ -1,6 +1,5 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-#include <arch/x86_64/allin.h>
 #include <arch/x86_64/ioapic/ioapic.h>
 
 #define REDTBL(n) (0x10 + 2 * n)

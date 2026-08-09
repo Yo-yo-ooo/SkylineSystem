@@ -1,6 +1,5 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-#include <arch/x86_64/allin.h>
 #include <arch/pinc.h>
 #include <drivers/ahci/ahci.h>
 #include <drivers/ata/ata.h>
@@ -8,7 +7,7 @@
 #include <drivers/dev/dev.h>
 #include <fs/lwext4/ext4.h>
 #include <fs/lwext4/blockdev/blockdev.h>
-
+#include <fs/fc.h>
 #include <arch/x86_64/simd/simd.h>
 #include <mem/heap.h>
 #include <arch/x86_64/drivers/hpet/hpet.h>
@@ -24,6 +23,10 @@
 uint32_t PrintFSERIAL = 0;
 
 extern cpu_t *bsp_cpu;
+extern void file_cache_writeback_callback(
+    const uint8_t *key, 
+    uint32_t key_len, void *data, size_t data_len
+);
 
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
@@ -60,6 +63,8 @@ void __init x86_64_init(void){
     InitFunc("IOAPIC",IOAPIC::Init());
     InitFunc("PIT & RTC",PIT::InitPIT());
     InitFunc("HPET",HPET::InitHPET());
+    bsp_cpu->file_cache = (file_cache_cpu_t*)kmalloc(sizeof(file_cache_cpu_t));
+    file_cache_cpu_init(bsp_cpu->file_cache, bsp_cpu->id, 1024, 16 * 1024 * 1024, file_cache_writeback_callback);
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
     InitFunc("SIMD Core 0",simd_cpu_init(this_cpu()));

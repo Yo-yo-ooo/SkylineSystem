@@ -211,4 +211,59 @@ void fd_manager_destroy(fd_manager_t* manager) {
     manager->next_fd_hint = 0;
 }
 
+
+void file_cache_writeback_callback(
+    const uint8_t *key, 
+    uint32_t key_len, void *data, size_t data_len
+) {
+    if (!key || key_len == 0 || !data || data_len == 0) return;
+
+    // 1. 分配内存并拷贝路径，确保以 '\0' 结尾
+    char *kpath = (char *)kmalloc(key_len + 1);
+    if (!kpath) return;
+    __memcpy(kpath, key, key_len);
+    kpath[key_len] = '\0';
+
+    // 2. 获取挂载点和文件系统操作表
+    __hmap_s_mp *MP = GetMount(kpath);
+    if (!MP) {
+        kfree(kpath);
+        return; // 文件系统未挂载或路径无效，丢弃此脏页
+    }
+
+    // 3. 分配底层文件描述符结构
+    void *filedesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
+    if (!filedesc) {
+        kfree(kpath);
+        return;
+    }
+    _memset(filedesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
+
+    // 4. 以只写模式打开文件
+    // 假设您的内核定义了 O_WRONLY (通常为 0x1)
+    int32_t err = MP->FSOPS->open(filedesc, kpath, 0x1); 
+    if (err < 0) {
+        kfree(filedesc);
+        kfree(kpath);
+        return; // 文件可能已被删除，无法打开则丢弃脏页
+    }
+
+    // 5. 将文件指针定位到开头 (SEEK_SET = 0)
+    MP->FSOPS->lseek(filedesc, 0, 0);
+
+    // 6. 将脏数据写回磁盘
+    size_t wcnt = 0;
+    err = MP->FSOPS->write(filedesc, data, data_len, &wcnt);
+    
+    if (err != 0 || wcnt != data_len) {
+        // 可选：打印警告日志，说明写入不完整
+        // kinfo("[FC_WRITEBACK] Incomplete writeback for %s (wrote %zu/%zu)\n", kpath, wcnt, data_len);
+    }
+
+    // 7. 关闭文件并释放资源
+    MP->FSOPS->close(filedesc);
+    kfree(filedesc);
+    kfree(kpath);
+}
+
 } // extern "C"

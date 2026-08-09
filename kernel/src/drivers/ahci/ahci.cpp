@@ -2,10 +2,10 @@
 //SPDX-License-Identifier: GPL-2.0-only
 #ifdef __x86_64__
 #include <drivers/ahci/ahci.h>
-#include <allin.h>
-#include <arch/x86_64/allin.h>
 #include <drivers/Disk_Interfaces/sata/sataDiskInterface.h>
-
+#include <klib/kio.h>
+#include <mem/pmm.h>
+#include <arch/x86_64/pit/pit.h>
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 namespace AHCI 

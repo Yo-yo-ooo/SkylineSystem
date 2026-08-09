@@ -1,7 +1,8 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
 #include <stddef.h>
-#include <arch/x86_64/allin.h>
+#include <klib/klib.h>
+#include <arch/x86_64/schedule/sched.h>
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 

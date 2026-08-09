@@ -1,9 +1,12 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
 #ifdef __x86_64__
-#include <arch/x86_64/allin.h>
 #include <drivers/keyboard/x86/keyboard.h>
 #include <flanterm/flanterm.h>
+#include <arch/x86_64/ioapic/ioapic.h>
+#include <arch/x86_64/lapic/lapic.h>
+#include <arch/x86_64/smp/smp.h>
+#include <klib/kio.h>
 #include <drivers/keyboard/x86/keyboard_map.h>
 
 bool keyboard_pressed = false;
