@@ -67,6 +67,9 @@ struct alignas(16) __hmap_s_mp {
 typedef struct fd_t {
     rb_node_t node;         // 必须在第一位，用于 container_of 宏
     int32_t   fd;           // FD 编号，作为红黑树的 Key
+    char *path;
+    uint32_t         path_len;   // The length of file path
+    uint64_t         file_size;  
     void     *filedesc;
     FS_PDESC *FSOPS;
     void     *MP;

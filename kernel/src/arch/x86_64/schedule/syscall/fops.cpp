@@ -6,6 +6,7 @@
 #include <elf/elf.h>
 #include <mem/pmm.h>
 #include <fs/fd.h>
+#include <fs/fc.h>
 
 extern volatile bool IsPM5LVL;
 
@@ -23,22 +24,51 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     if (buf >= user_space_end) return -EFAULT;
     if (count > user_space_end - buf) return -EFAULT;
 
-    // 检查 kmalloc 是否失败
+    // Try Cache Hit
+    file_cache_entry_t *cache_entry = NULL;
+    size_t out_len = 0;
+    cpu_t *cpu = this_cpu();
+    
+    void *cached_data = file_cache_get(cpu->file_cache, FD->path, FD->path_len, count, &out_len, &cache_entry);
+    
+    if (cached_data) {
+        
+        // Cache Hit, Copy Data to Userland directly
+        if (count <= out_len) {
+            if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf, cached_data, count)) {
+                file_cache_put(cpu->file_cache, cache_entry);
+                return -EFAULT;
+            }
+            file_cache_put(cpu->file_cache, cache_entry);
+            return count;
+        }
+        file_cache_put(cpu->file_cache, cache_entry);
+    }
+
+    // Cache Miss: Hardware
     void* kbuf = kmalloc(count);
     if (!kbuf) return -ENOMEM;
     
     size_t total_read = 0;
     FD->FSOPS->read(FD->filedesc, kbuf, count, &total_read);
     
-    // 只拷贝实际读取的字节数，防止越界读 kbuf 和写穿用户态
     if (total_read > 0) {
+        
         if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf, kbuf, total_read)) {
-            kfree(kbuf); // 发生错误也要释放内存
+            kfree(kbuf);
             return -EFAULT;
+        }
+
+        
+        void *cache_buf = kmalloc(total_read);
+        if (cache_buf) {
+            __memcpy(cache_buf, kbuf, total_read);
+            // is_dirty = false, file_id 使用 fd 指针或 inode 号
+            file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, total_read, cache_buf, FD->file_size, (uint64_t)FD->filedesc);
         }
     }
 
-    kfree(kbuf); // 彻底修复内存泄漏
+    kfree(kbuf);
     return (int64_t)total_read;
 }
 
@@ -63,7 +93,7 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         return -EFAULT;
     }
 
-    // 不要直接把用户态指针传给文件系统，先拷贝到内核缓冲区
+   
     void* kbuf = kmalloc(count);
     if (!kbuf) return -ENOMEM;
 
@@ -72,10 +102,25 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         return -EFAULT;
     }
 
+    
     size_t wcnt = 0;
     int32_t status = FD->FSOPS->write(FD->filedesc, kbuf, count, &wcnt);
     
-    kfree(kbuf); // 修复内存泄漏
+    if (status == 0 && wcnt > 0) {
+        
+        void *cache_buf = kmalloc(wcnt);
+        if (cache_buf) {
+            __memcpy(cache_buf, kbuf, wcnt);
+            int32_t r = file_cache_promote(this_cpu()->file_cache, FD->path, FD->path_len, cache_buf, wcnt, true, FD->file_size, (uint64_t)FD->filedesc);
+            if (r != 0) {
+                kfree(cache_buf); 
+            }
+        }
+        
+        FD->file_size += wcnt;
+    }
+
+    kfree(kbuf); 
 
     if (status != 0) return (int64_t)status;
     return (int64_t)wcnt;
@@ -159,13 +204,29 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
     
     int32_t err = MP->FSOPS->open(fd_struct->filedesc, kpath, flags);
 
-    kfree(kpath); 
-
     if (err < 0) {
         kfree(fd_struct->filedesc);
         fd_free(proc->FDMan, fd_idx);
+        kfree(kpath);
         return err; 
     }
+
+    
+    fd_struct->path = (uint8_t*)kmalloc(path_len);
+    if (fd_struct->path) {
+        __memcpy(fd_struct->path, kpath, path_len);
+        fd_struct->path_len = path_len;
+        fd_struct->file_size = MP->FSOPS->fsize(fd_struct->filedesc); // Get File Size
+    } else {
+        
+        MP->FSOPS->close(fd_struct->filedesc);
+        kfree(fd_struct->filedesc);
+        fd_free(proc->FDMan, fd_idx);
+        kfree(kpath);
+        return -ENOMEM;
+    }
+
+    kfree(kpath); 
 
     return (uint64_t)fd_idx;
 }
@@ -176,6 +237,12 @@ uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5()){
     fd_t *FD = fd_get(proc->FDMan,fd);
     if(!FD){return -EBADF;}
     int32_t res = FD->FSOPS->close(FD->filedesc);
+    
+    if (FD->path) {
+        kfree(FD->path);
+        FD->path = NULL;
+    }
+
     fd_free(proc->FDMan,fd);
     return res;
 }
@@ -184,4 +251,3 @@ uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4()){
     IGNV_4();
     return -ENOSYS; // Function not implemented
 }
-
