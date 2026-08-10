@@ -2,6 +2,15 @@
 //SPDX-License-Identifier: MIT
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+int *_errno();
+#ifdef __cplusplus
+}
+#endif
+#define errno (*_errno())
+
 #define EPERM            1
 #define ENOENT           2
 #define ESRCH            3

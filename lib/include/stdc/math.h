@@ -8,6 +8,9 @@
 extern "C" {
 #endif
 
+#define INFINITY __builtin_inf()
+#define NAN      __builtin_nan("")
+
 float ceilf(float x);
 float  sqrtf(float x);
 float  sinf(float x);
