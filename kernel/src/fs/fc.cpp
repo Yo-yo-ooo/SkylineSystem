@@ -407,6 +407,9 @@ int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
         s->total_cache_freq++;
         fc_lru_move_to_back(s, e);
         spinlock_unlock(&s->lock);
+        
+        // 修复 Bug 1: 条目已存在，data_if_promote 未被消费，必须释放
+        if (data_if_promote) kfree(data_if_promote);
         return 0;
     }
 
@@ -513,6 +516,14 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
 
     file_cache_entry_t *exist = (file_cache_entry_t *)art_search(&s->index, key, key_len);
     if (exist) {
+        // 修复 Bug 2: 当 exist 被 pin 时直接替换会导致 Use-After-Free
+        if (exist->pin_count > 0) {
+            spinlock_unlock(&s->lock);
+            kfree(e->key);
+            kfree(e);
+            return FC_ERR_NO_MEMORY;
+        }
+        
         old_data_to_free = exist->data; 
         s->total_cache_bytes -= exist->data_len;
         if (exist->is_dirty) s->dirty_cache_bytes -= exist->data_len;
@@ -630,38 +641,42 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
     file_cache_entry_t *victims[FC_MIGRATE_BATCH_SIZE] = {0};
     int vic_cnt = 0;
 
+    // 修复 Bug 3: 修复因节点均被 pin 导致无限循环卡死的问题
     int32_t migrated = 0;
-    while (migrated < FC_MIGRATE_BATCH_SIZE && src->lru_head) {
-        file_cache_entry_t *e = src->lru_head;
-        if (e->pin_count > 0 || e->state != FC_STATE_CACHED || e->is_dirty) {
-            fc_lru_move_to_back(src, e); 
+    int32_t scanned = 0;
+    file_cache_entry_t *cur = src->lru_head;
+    while (cur && migrated < FC_MIGRATE_BATCH_SIZE && scanned < src->total_entries) {
+        file_cache_entry_t *next = cur->lru_next;
+        scanned++;
+        if (cur->pin_count > 0 || cur->state != FC_STATE_CACHED || cur->is_dirty) {
+            cur = next;
             continue;
         }
 
-        if (dst->soft_limit > 0 && dst->smoothed_cache_bytes + e->data_len > dst->soft_limit) {
+        if (dst->soft_limit > 0 && dst->smoothed_cache_bytes + cur->data_len > dst->soft_limit) {
             break;
         }
 
-        fc_oscillate_t *osc = (fc_oscillate_t *)art_delete(&src->oscillate_tree, e->key, e->key_len);
+        fc_oscillate_t *osc = (fc_oscillate_t *)art_delete(&src->oscillate_tree, cur->key, cur->key_len);
         if (osc) {
             src->total_oscillations -= osc->osc_count;
         }
 
-        if (art_search(&dst->index, e->key, e->key_len) != NULL) {
-            void *art_val = art_delete(&src->index, e->key, e->key_len);
+        if (art_search(&dst->index, cur->key, cur->key_len) != NULL) {
+            void *art_val = art_delete(&src->index, cur->key, cur->key_len);
             if (art_val) {
-                fc_lru_remove(src, e);
-                src->total_cache_bytes -= e->data_len;
-                src->total_cache_io    -= e->total_io_len;
-                src->total_cache_freq  -= e->access_freq;
+                fc_lru_remove(src, cur);
+                src->total_cache_bytes -= cur->data_len;
+                src->total_cache_io    -= cur->total_io_len;
+                src->total_cache_freq  -= cur->access_freq;
                 src->total_entries--;
                 src->migrations_out++;
-                victims[vic_cnt++] = e;
+                victims[vic_cnt++] = cur;
             } else {
-                e->pending_reclaim = true;
+                cur->pending_reclaim = true;
             }
             if (osc) {
-                fc_oscillate_t *dst_osc = (fc_oscillate_t *)art_search(&dst->oscillate_tree, e->key, e->key_len);
+                fc_oscillate_t *dst_osc = (fc_oscillate_t *)art_search(&dst->oscillate_tree, cur->key, cur->key_len);
                 if (dst_osc) {
                     dst_osc->freq += osc->freq;
                     dst_osc->io_len += osc->io_len;
@@ -669,46 +684,49 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
                     dst->total_oscillations += osc->osc_count;
                     kfree(osc);
                 } else {
-                    art_insert(&dst->oscillate_tree, e->key, e->key_len, (void *)osc);
+                    art_insert(&dst->oscillate_tree, cur->key, cur->key_len, (void *)osc);
                     dst->total_oscillations += osc->osc_count;
                 }
             }
+            cur = next;
             continue;
         }
 
-        void *art_val = art_delete(&src->index, e->key, e->key_len);
+        void *art_val = art_delete(&src->index, cur->key, cur->key_len);
         if (!art_val) {
-            e->pending_reclaim = true;
+            cur->pending_reclaim = true;
             if (osc) {
-                art_insert(&src->oscillate_tree, e->key, e->key_len, (void *)osc);
+                art_insert(&src->oscillate_tree, cur->key, cur->key_len, (void *)osc);
                 src->total_oscillations += osc->osc_count;
             }
+            cur = next;
             continue;
         }
-        fc_lru_remove(src, e);
-        src->total_cache_bytes -= e->data_len;
-        src->total_cache_io    -= e->total_io_len;
-        src->total_cache_freq  -= e->access_freq;
+        fc_lru_remove(src, cur);
+        src->total_cache_bytes -= cur->data_len;
+        src->total_cache_io    -= cur->total_io_len;
+        src->total_cache_freq  -= cur->access_freq;
         src->total_entries--;
         src->migrations_out++;
 
-        e->cpu_id = best_dst;
-        art_insert(&dst->index, e->key, e->key_len, (void *)e);
-        fc_lru_push_back(dst, e);
+        cur->cpu_id = best_dst;
+        art_insert(&dst->index, cur->key, cur->key_len, (void *)cur);
+        fc_lru_push_back(dst, cur);
         
         dst->total_entries++;
-        dst->total_cache_bytes += e->data_len;
-        dst->total_cache_io += e->total_io_len;
-        dst->total_cache_freq += e->access_freq;
-        if (e->file_size > dst->max_file_size) dst->max_file_size = e->file_size;
+        dst->total_cache_bytes += cur->data_len;
+        dst->total_cache_io += cur->total_io_len;
+        dst->total_cache_freq += cur->access_freq;
+        if (cur->file_size > dst->max_file_size) dst->max_file_size = cur->file_size;
         dst->migrations_in++;
 
         if (osc) {
-            art_insert(&dst->oscillate_tree, e->key, e->key_len, (void *)osc);
+            art_insert(&dst->oscillate_tree, cur->key, cur->key_len, (void *)osc);
             dst->total_oscillations += osc->osc_count;
         }
 
         migrated++;
+        cur = next;
     }
 
     spinlock_unlock(&src->lock);
@@ -769,6 +787,8 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
     spinlock_lock(&s->lock);
     cur = s->lru_head;
     while (cur && flush_cnt < FC_IDLE_FLUSH_BATCH) {
+        // 修复 Bug 4: remove 之前保存 next，否则 cur->lru_next 会被清空导致循环提前结束
+        file_cache_entry_t *next = cur->lru_next; 
         if (cur->is_dirty && cur->pin_count == 0) {
             void *art_val = art_delete(&s->index, cur->key, cur->key_len);
             if (art_val) {
@@ -783,7 +803,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                 cur->pending_reclaim = true;
             }
         }
-        cur = cur->lru_next;
+        cur = next; 
     }
     spinlock_unlock(&s->lock);
 

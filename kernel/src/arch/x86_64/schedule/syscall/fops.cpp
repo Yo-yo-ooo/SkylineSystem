@@ -24,24 +24,31 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     if (buf >= user_space_end) return -EFAULT;
     if (count > user_space_end - buf) return -EFAULT;
 
-    // Try Cache Hit
     file_cache_entry_t *cache_entry = NULL;
     size_t out_len = 0;
     cpu_t *cpu = this_cpu();
     
+    // 获取当前文件偏移量，解决缓存未包含偏移导致的数据错位 Bug
+    uint64_t cur_offset = FD->FSOPS->lseek(FD->filedesc, 0, SEEK_CUR);
+    
     void *cached_data = file_cache_get(cpu->file_cache, FD->path, FD->path_len, count, &out_len, &cache_entry);
     
     if (cached_data) {
-        
-        // Cache Hit, Copy Data to Userland directly
-        if (count <= out_len) {
-            if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf, cached_data, count)) {
+        // 严格判断：读取的范围必须在缓存覆盖的数据范围之内
+        if (cur_offset + count <= out_len) {
+            // 缓存命中，且偏移量安全。直接将对应偏移的数据拷贝给用户态
+            if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf, (void*)((uint64_t)cached_data + cur_offset), count)) {
                 file_cache_put(cpu->file_cache, cache_entry);
                 return -EFAULT;
             }
             file_cache_put(cpu->file_cache, cache_entry);
+            
+            // 读取成功后，推进文件描述符的偏移量
+            FD->FSOPS->lseek(FD->filedesc, cur_offset + count, SEEK_SET);
+            file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, count, NULL, FD->file_size, (uint64_t)FD->filedesc);
             return count;
         }
+        // 读取范围超出缓存范围，放弃缓存，回退到硬件读取
         file_cache_put(cpu->file_cache, cache_entry);
     }
 
@@ -49,6 +56,9 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     void* kbuf = kmalloc(count);
     if (!kbuf) return -ENOMEM;
     
+    // 确保文件偏移量正确（前面 lseek 可能未改变，但保险起见恢复状态）
+    FD->FSOPS->lseek(FD->filedesc, cur_offset, SEEK_SET);
+
     size_t total_read = 0;
     FD->FSOPS->read(FD->filedesc, kbuf, count, &total_read);
     
@@ -59,12 +69,16 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
             return -EFAULT;
         }
 
-        
-        void *cache_buf = kmalloc(total_read);
-        if (cache_buf) {
-            __memcpy(cache_buf, kbuf, total_read);
-            // is_dirty = false, file_id 使用 fd 指针或 inode 号
-            file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, total_read, cache_buf, FD->file_size, (uint64_t)FD->filedesc);
+        // 只有从 offset 0 开始读取的数据，才能安全作为整个文件的缓存前缀进行记录/提升
+        if (cur_offset == 0) {
+            void *cache_buf = kmalloc(total_read);
+            if (cache_buf) {
+                __memcpy(cache_buf, kbuf, total_read);
+                file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, total_read, cache_buf, FD->file_size, (uint64_t)FD->filedesc);
+            }
+        } else {
+            // 非零偏移读取，不进行 promote，但仍记录 IO 统计以供启发式策略使用
+            file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, total_read, NULL, FD->file_size, (uint64_t)FD->filedesc);
         }
     }
 
@@ -93,7 +107,6 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         return -EFAULT;
     }
 
-   
     void* kbuf = kmalloc(count);
     if (!kbuf) return -ENOMEM;
 
@@ -102,22 +115,53 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
         return -EFAULT;
     }
 
-    
+    // 获取写入前的偏移量
+    uint64_t cur_offset = FD->FSOPS->lseek(FD->filedesc, 0, SEEK_CUR);
+
     size_t wcnt = 0;
     int32_t status = FD->FSOPS->write(FD->filedesc, kbuf, count, &wcnt);
     
     if (status == 0 && wcnt > 0) {
+        cpu_t *cpu = this_cpu();
+        size_t out_len = 0;
+        file_cache_entry_t *cache_entry = NULL;
         
-        void *cache_buf = kmalloc(wcnt);
-        if (cache_buf) {
-            __memcpy(cache_buf, kbuf, wcnt);
-            int32_t r = file_cache_promote(this_cpu()->file_cache, FD->path, FD->path_len, cache_buf, wcnt, true, FD->file_size, (uint64_t)FD->filedesc);
-            if (r != 0) {
-                kfree(cache_buf); 
+        // 尝试获取缓存
+        void *cached_data = file_cache_get(cpu->file_cache, FD->path, FD->path_len, wcnt, &out_len, &cache_entry);
+        
+        if (cached_data) {
+            // 缓存命中修改逻辑：如果写入的范围完全在缓存覆盖范围内
+            if (cur_offset + wcnt <= out_len) {
+                // 直接在内存中修改缓存对应位置的数据 (Write-through 策略)
+                __memcpy((void*)((uint64_t)cached_data + cur_offset), kbuf, wcnt);
+                // 因为数据已经同步写入磁盘了，所以不需要标记脏页，缓存与磁盘保持一致
+            } else {
+                // 写入超出了缓存范围，现有缓存不再能代表文件前缀，使其失效
+                file_cache_put(cpu->file_cache, cache_entry);
+                file_cache_invalidate(cpu->file_cache, FD->path, FD->path_len);
+                cache_entry = NULL;
+            }
+            if (cache_entry) {
+                file_cache_put(cpu->file_cache, cache_entry);
+            }
+            file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
+        } else {
+            // 缓存未命中。如果是从 offset 0 开始写，则可以将这批数据作为新的缓存块 promote
+            if (cur_offset == 0) {
+                void *cache_buf = kmalloc(wcnt);
+                if (cache_buf) {
+                    __memcpy(cache_buf, kbuf, wcnt);
+                    // is_dirty = false，因为 FSOPS->write 已经同步落盘
+                    int32_t r = file_cache_promote(cpu->file_cache, FD->path, FD->path_len, cache_buf, wcnt, false, FD->file_size, (uint64_t)FD->filedesc);
+                    if (r != 0) kfree(cache_buf); 
+                }
+            } else {
+                file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
             }
         }
         
-        FD->file_size += wcnt;
+        // 修复 Bug 5: 不能盲目 +=，必须从文件系统获取真实大小
+        FD->file_size = FD->FSOPS->fsize(FD->filedesc);
     }
 
     kfree(kbuf); 
@@ -211,12 +255,13 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
         return err; 
     }
 
-    
-    fd_struct->path = (uint8_t*)kmalloc(path_len);
+    // 修复 Bug 6: 额外分配1字节用于 NUL 终止符，防止越界读
+    fd_struct->path = (uint8_t*)kmalloc(path_len + 1);
     if (fd_struct->path) {
         __memcpy(fd_struct->path, kpath, path_len);
+        fd_struct->path[path_len] = '\0'; // 显式添加 NUL
         fd_struct->path_len = path_len;
-        fd_struct->file_size = MP->FSOPS->fsize(fd_struct->filedesc); // Get File Size
+        fd_struct->file_size = MP->FSOPS->fsize(fd_struct->filedesc); 
     } else {
         
         MP->FSOPS->close(fd_struct->filedesc);
