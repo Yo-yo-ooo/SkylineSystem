@@ -5,13 +5,7 @@
 
 // Calculate recursion depth limit for introsort
 static inline int get_depth_limit(size_t nmemb) {
-#ifdef _MSC_VER
-    unsigned long count;
-    _BitScanReverse64(&count, (unsigned __int64)nmemb);
-    return (int)count + 3;
-#else
     return 64 - __builtin_clzll(nmemb) + 2;
-#endif
 }
 
 // Forward‑declaration for dispatch to specialized fast‑path
