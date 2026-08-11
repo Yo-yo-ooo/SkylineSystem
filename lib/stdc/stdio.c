@@ -25,7 +25,7 @@ static inline void file_spin_unlock(volatile uint8_t *lock) {
     atomic_clear(lock, ATOMIC_RELEASE);
 }
 
-FILE* fopen(const char * restrict filename, const char * restrict mode) {
+FILE* fopen(const char * __restrict__ filename, const char * __restrict__ mode) {
     if (!filename || !mode) return NULL;
 
     int32_t flags = 0;
@@ -92,7 +92,7 @@ int fclose(FILE *stream) {
     return (res >= 0) ? 0 : -1;
 }
 
-size_t fread(void * restrict ptr, size_t size, size_t nmemb, FILE * restrict stream) {
+size_t fread(void * __restrict__ ptr, size_t size, size_t nmemb, FILE * __restrict__ stream) {
     if (!ptr || !stream || size == 0 || nmemb == 0) return 0;
 
     if (nmemb > (SIZE_MAX / size)) return 0; // 防溢出
@@ -151,7 +151,7 @@ size_t fread(void * restrict ptr, size_t size, size_t nmemb, FILE * restrict str
 }
 
 
-int fseek(FILE * restrict stream, long offset, int whence) {
+int fseek(FILE * __restrict__ stream, long offset, int whence) {
     if (!stream) return -1;
 
     file_spin_lock(&stream->lock);
@@ -190,7 +190,7 @@ int fseek(FILE * restrict stream, long offset, int whence) {
 }
 
 /* 标准C ftell 返回 long；内部offset是64位，做截断转换 */
-long ftell(FILE * restrict stream) {
+long ftell(FILE * __restrict__ stream) {
     if (!stream) return -1L;
 
     int64_t off = (int64_t)atomic_load_8(&stream->offset, ATOMIC_ACQUIRE);
