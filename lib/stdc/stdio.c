@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <base/arch/x86_64/syscall.h>
 #include <stdio.h>
+#include <limits.h>
 #include <atomic/atomic.h>
 
 static inline void file_spin_lock(volatile uint8_t *lock) {
@@ -24,11 +25,7 @@ static inline void file_spin_unlock(volatile uint8_t *lock) {
     atomic_clear(lock, ATOMIC_RELEASE);
 }
 
-
-// ==========================================
-// fopen / fclose
-// ==========================================
-FILE* fopen(const char* filename, const char* mode) {
+FILE* fopen(const char * restrict filename, const char * restrict mode) {
     if (!filename || !mode) return NULL;
 
     int32_t flags = 0;
@@ -76,34 +73,34 @@ FILE* fopen(const char* filename, const char* mode) {
     return stream;
 }
 
+
 size_t fsize(FILE *stream) {
     if (!stream) return 0;
-    // fsize 是无状态的，直接原子读取 file_size 即可，无需加锁
     return atomic_load_8(&stream->file_size, ATOMIC_ACQUIRE);
 }
 
-int32_t fclose(FILE *stream) {
+int fclose(FILE *stream) {
     if (!stream) return -1;
-    // 关闭前加锁，防止其他线程还在读写
+
     file_spin_lock(&stream->lock);
     int32_t res = sys_fclose(stream->fd);
-    if (stream->buffer) free(stream->buffer); 
-    // 注意：解锁后 stream 内存已被释放，这里的解锁仅是为了规范
-    file_spin_unlock(&stream->lock);
-    free(stream); 
-    return res;
+    if (stream->buffer)
+        free(stream->buffer);
+    file_spin_unlock(&stream->lock); // 先解锁，再free，修复UB
+    free(stream);
+
+    return (res >= 0) ? 0 : -1;
 }
 
-size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
+size_t fread(void * restrict ptr, size_t size, size_t nmemb, FILE * restrict stream) {
     if (!ptr || !stream || size == 0 || nmemb == 0) return 0;
-    
+
     if (nmemb > (SIZE_MAX / size)) return 0; // 防溢出
-    
+
     size_t bytes_to_read = size * nmemb;
     size_t total_read = 0;
     uint8_t *dest = (uint8_t *)ptr;
 
-    // 进入原子临界区：保护 buf_pos, offset 以及内核文件指针的强一致性
     file_spin_lock(&stream->lock);
 
     if (stream->file_size > 0) {
@@ -116,7 +113,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
             bytes_to_read = remaining_in_file;
         }
     }
-    
+
     if (bytes_to_read == 0) {
         file_spin_unlock(&stream->lock);
         return 0;
@@ -126,11 +123,11 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
         if (stream->buf_pos < stream->buf_size) {
             size_t avail = stream->buf_size - stream->buf_pos;
             size_t to_copy = (bytes_to_read - total_read < avail) ? (bytes_to_read - total_read) : avail;
-            
+
             memcpy(dest + total_read, stream->buffer + stream->buf_pos, to_copy);
-            
+
             stream->buf_pos += to_copy;
-            stream->offset += to_copy; 
+            stream->offset += to_copy;
             total_read += to_copy;
             continue;
         }
@@ -138,22 +135,23 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream) {
         size_t remaining_request = bytes_to_read - total_read;
         if (remaining_request >= stream->buf_capacity) {
             size_t r = sys_fread(stream->fd, (uint64_t)(dest + total_read), remaining_request);
-            stream->offset += r; 
+            stream->offset += r;
             total_read += r;
-            if (r == 0) break; 
+            if (r == 0) break;
             continue;
         }
 
         stream->buf_pos = 0;
         stream->buf_size = sys_fread(stream->fd, (uint64_t)stream->buffer, stream->buf_capacity);
-        if (stream->buf_size == 0) break; 
+        if (stream->buf_size == 0) break;
     }
 
     file_spin_unlock(&stream->lock);
-    return total_read / size; 
+    return total_read / size;
 }
 
-int32_t fseek(FILE* stream, int64_t offset, int32_t whence) {
+
+int fseek(FILE * restrict stream, long offset, int whence) {
     if (!stream) return -1;
 
     file_spin_lock(&stream->lock);
@@ -164,34 +162,42 @@ int32_t fseek(FILE* stream, int64_t offset, int32_t whence) {
     int64_t new_offset = 0;
     switch (whence) {
         case SEEK_SET:
-            new_offset = offset;
+            new_offset = (int64_t)offset;
             break;
         case SEEK_CUR:
-            new_offset = stream->offset + offset;
+            new_offset = stream->offset + (int64_t)offset;
             break;
         case SEEK_END:
-            new_offset = stream->file_size + offset; 
+            new_offset = stream->file_size + (int64_t)offset;
             break;
         default:
             file_spin_unlock(&stream->lock);
-            return EINVAL;
+            errno = EINVAL;
+            return -1;
     }
 
     if (new_offset < 0 || (uint64_t)new_offset > stream->file_size) {
         file_spin_unlock(&stream->lock);
-        return EINVAL;
+        errno = EINVAL;
+        return -1;
     }
 
     stream->offset = new_offset;
     int64_t res = sys_flseek(stream->fd, new_offset, SEEK_SET);
-    
+
     file_spin_unlock(&stream->lock);
     return (res >= 0) ? 0 : -1;
 }
 
-int64_t ftell(FILE* stream) {
-    if (!stream) return -1;
-    // ftell 仅读取单个 offset 变量，x86_64 上 64位读取本身是原子的
-    // 加上原子加载指令保证内存序（防止读到中间态）
-    return (int64_t)atomic_load_8(&stream->offset, ATOMIC_ACQUIRE);
+/* 标准C ftell 返回 long；内部offset是64位，做截断转换 */
+long ftell(FILE * restrict stream) {
+    if (!stream) return -1L;
+
+    int64_t off = (int64_t)atomic_load_8(&stream->offset, ATOMIC_ACQUIRE);
+    /* 标准ftell只能返回long；超出long范围返回‑1并置errno */
+    if (off > LONG_MAX || off < LONG_MIN) {
+        errno = EOVERFLOW;
+        return -1L;
+    }
+    return (long)off;
 }

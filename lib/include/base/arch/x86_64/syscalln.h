@@ -17,4 +17,6 @@
 #define SYSCALL_DEV_MMAP        21
 #define SYSCALL_DEV_IOCTL       26
 
+#define SYSCALL_EXIT            9
+
 #endif

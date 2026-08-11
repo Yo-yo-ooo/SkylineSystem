@@ -14,7 +14,7 @@
 #define LN2       0.69314718055994530942
 #define EPS       1e-15
 
-
+int isnan(double x){return __builtin_isnan(x);}
 
 float fabsf(float x) {
     union { float f; uint32_t i; } v = { .f = x };

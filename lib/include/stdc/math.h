@@ -11,6 +11,8 @@ extern "C" {
 #define INFINITY __builtin_inf()
 #define NAN      __builtin_nan("")
 
+int isnan(double x);
+
 float ceilf(float x);
 float  sqrtf(float x);
 float  sinf(float x);
@@ -40,6 +42,12 @@ double log(double x);
 double exp(double x);
 double pow(double x, double y);
 double ceil(double x);
+
+#ifdef __x86_64__
+static inline long double floorl(long double x){
+    return (long double)floor((double)x);
+}
+#endif
 
 #ifdef __cplusplus
 }

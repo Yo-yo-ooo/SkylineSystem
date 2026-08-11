@@ -40,6 +40,7 @@ uint64_t sys_flseek(int32_t fd_idx, uint64_t offset, uint64_t whence);
 uint64_t sys_fopen(uint64_t path, uint64_t flags);
 uint64_t sys_fclose(int32_t fd);
 uint64_t sys_fsize(int32_t fd);
+void sys_exit(uint64_t status);
 
 #ifdef __cplusplus
 }

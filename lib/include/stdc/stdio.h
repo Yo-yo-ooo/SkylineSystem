@@ -37,12 +37,14 @@ typedef struct {
     volatile uint8_t lock;
 } FILE;
 
-int32_t fclose(FILE *stream);
+/* stdio.h 标准原型（C89/C99） */
+int fclose(FILE *stream);
 size_t fsize(FILE *stream);
-FILE *fopen(const char* filename, const char* mode);
-size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
-int32_t fseek(FILE* stream, int64_t offset, int32_t whence);
-int64_t ftell(FILE* stream);
+FILE *fopen(const char * restrict filename, const char * restrict mode);
+size_t fread(void * restrict ptr, size_t size, size_t nmemb, FILE * restrict stream);
+int fseek(FILE * restrict stream, long offset, int whence);
+long ftell(FILE * restrict stream);
+
 
 #ifdef __cplusplus
 }

@@ -31,3 +31,5 @@ uint64_t sys_fclose(int32_t fd)
 {return syscall(SYSCALL_FCLOSE,fd,0,0,0,0,0);}
 uint64_t sys_fsize(int32_t fd)
 {return syscall(SYSCALL_FSIZE,fd,0,0,0,0,0);}
+void sys_exit(uint64_t status)
+{(void)status;syscall(SYSCALL_FSIZE,0,0,0,0,0,0);}
