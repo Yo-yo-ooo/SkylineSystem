@@ -212,7 +212,7 @@ void fd_manager_destroy(fd_manager_t* manager) {
 }
 
 
-void file_cache_writeback_callback(
+int32_t file_cache_writeback_callback(
     const uint8_t *key, 
     uint32_t key_len, void *data, size_t data_len
 ) {
@@ -228,14 +228,14 @@ void file_cache_writeback_callback(
     __hmap_s_mp *MP = GetMount(kpath);
     if (!MP) {
         kfree(kpath);
-        return; // 文件系统未挂载或路径无效，丢弃此脏页
+        return ENODATA; // 文件系统未挂载或路径无效，丢弃此脏页
     }
 
     // 3. 分配底层文件描述符结构
     void *filedesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
     if (!filedesc) {
         kfree(kpath);
-        return;
+        return ENOMEM;
     }
     _memset(filedesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
 
@@ -245,7 +245,7 @@ void file_cache_writeback_callback(
     if (err < 0) {
         kfree(filedesc);
         kfree(kpath);
-        return; // 文件可能已被删除，无法打开则丢弃脏页
+        return EIO; // 文件可能已被删除，无法打开则丢弃脏页
     }
 
     // 5. 将文件指针定位到开头 (SEEK_SET = 0)
@@ -256,8 +256,7 @@ void file_cache_writeback_callback(
     err = MP->FSOPS->write(filedesc, data, data_len, &wcnt);
     
     if (err != 0 || wcnt != data_len) {
-        // 可选：打印警告日志，说明写入不完整
-        // kinfo("[FC_WRITEBACK] Incomplete writeback for %s (wrote %zu/%zu)\n", kpath, wcnt, data_len);
+        kinfo("[FC_WRITEBACK] Incomplete writeback for %s (wrote %zu/%zu)\n", kpath, wcnt, data_len);
     }
 
     // 7. 关闭文件并释放资源

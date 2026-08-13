@@ -14,37 +14,16 @@
 extern "C" {
 #endif
 
-/* ============================================================
- *  Macro Configuration
- * ============================================================ */
 #define FC_MAX_CPUS              128
-
-#define FC_MIN_IO_LEN_TO_CACHE   4096
-#define FC_MIN_FREQ_TO_CACHE     2       
-
-#define FC_EVICT_HIT_THRESHOLD   4
-#define FC_EVICT_WINDOW_MIN      16
-#define FC_EVICT_WINDOW_MAX      256
-
-#define FC_MIGRATE_BATCH_SIZE    8
-#define FC_IDLE_FLUSH_BATCH      16
-#define FC_IDLE_REVERSE_SCAN     32      
-#define FC_DIRTY_RATIO_LIMIT     70 
-
-#define FC_HISTORY_DECAY_TICKS   1000
-#define FC_DECAY_CACHE_BATCH     128
-#define FC_DECAY_OSC_BATCH       256
-#define FC_QUOTA_SCAN_BATCH      512      
-
-#define FC_MIN_RESIDENCE_TICKS   100      
-#define FC_OSC_COUNT_LIMIT       64       
-
 #define FC_ERR_NO_MEMORY         -2
+#define FC_ERR_FLUSHING          -3  // 表示因正在刷脏而临时拒绝写入
 
 typedef enum {
-    FC_STATE_CACHED    = 0,
-    FC_STATE_EVICTING  = 1,
-    FC_STATE_INVALID   = 2
+    FC_STATE_CACHED           = 0,
+    FC_STATE_EVICTING         = 1,
+    FC_STATE_INVALID          = 2,
+    FC_STATE_WRITEBACK_FAILED = 3,
+    FC_STATE_FLUSHING         = 4
 } fc_state_t;
 
 typedef struct fc_oscillate {
@@ -74,12 +53,12 @@ typedef struct file_cache_entry {
     uint32_t            cpu_id;       
     bool                is_dirty;     
     bool                pending_reclaim;
+    uint8_t             writeback_retries;
 
     struct file_cache_entry *lru_prev;
     struct file_cache_entry *lru_next;
 } file_cache_entry_t;
 
-/* 纯 Per-CPU 缓存实例 */
 typedef struct file_cache_cpu {
     art_tree             index;          
     art_tree             oscillate_tree; 
@@ -122,13 +101,17 @@ typedef struct file_cache_cpu {
     uint64_t clock;
     uint64_t last_decay_tick;
 
-    void (*writeback_cb)(const uint8_t *key, uint32_t key_len, void *data, size_t data_len);
+    uint32_t io_congestion;
+    uint64_t total_writeback_failures;
+
+    int32_t (*writeback_cb)(const uint8_t *key, uint32_t key_len, void *data, size_t data_len);
 } file_cache_cpu_t;
 
-/* ===================== API ===================== */
+int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id);
 
 void    file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id, 
-                            void (*writeback_cb)(const uint8_t*, uint32_t, void*, size_t));
+                            int32_t (*writeback_cb)(const uint8_t*, uint32_t, void*, size_t));
+void    file_cache_cpu_destroy(file_cache_cpu_t *s); // 用于销毁分片并释放对象池
 
 void    file_cache_set_limits(file_cache_cpu_t *s, uint64_t soft_limit, uint64_t hard_limit);
 
