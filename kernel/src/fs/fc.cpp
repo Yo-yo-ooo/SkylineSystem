@@ -62,8 +62,10 @@ static void fc_oscillate_free(file_cache_cpu_t *s, fc_oscillate_t *osc) {
         kfree(node);
     }
 }
+#pragma endregion
 
 /* ===================== Outlier Statistics Algorithm ===================== */
+#pragma region Outlier Statistics Algorithm
 typedef struct {
     uint64_t count;
     uint64_t sum_freq;
@@ -79,6 +81,7 @@ static int fc_collect_stats_cb(void *data, const uint8_t *key, uint32_t key_len,
     return 0;
 }
 #pragma endregion
+
 /* ===================== Heuristic Strategy (Dynamic Adaptive) ===================== */
 #pragma region Heuristic Strategy (Dynamic Adaptive)
 static void fc_update_averages_internal(file_cache_cpu_t *s) {
@@ -98,12 +101,44 @@ static void fc_update_averages_internal(file_cache_cpu_t *s) {
     if (s->evict_hit_threshold < 2) s->evict_hit_threshold = 2;
 }
 
-static bool file_cache_should_cache(file_cache_cpu_t *s, uint64_t freq, uint64_t target_cache_len, uint64_t osc_count) {
+// 【修改】增加 key 和 key_len 参数，用于试探性准入的伪随机采样
+static bool file_cache_should_cache(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len, 
+                                    uint64_t freq, uint64_t target_cache_len, uint64_t osc_count) {
     if (s->io_congestion >= 90) return false;
+
+    // 【修改】极小文件试探性准入：取代一刀切的 freq<3 拒绝，以概率放行探测热点
+    if (target_cache_len > 0 && target_cache_len < FC_TINY_FILE_THRESHOLD) {
+        if (osc_count == 0 && freq < 3) {
+            // 基础放行概率：freq=1 时 1/8，freq=2 时 1/4
+            uint32_t sample_mod = (freq <= 1) ? 8 : 4;
+            
+            // 动态反压：如果微小文件占用已超过配额的 80%，将准入概率减半 (mod 翻倍)
+            if (s->soft_limit > 0) {
+                uint64_t tiny_limit = (s->soft_limit / 100) * 15;
+                if (tiny_limit > 0 && s->tiny_cache_bytes * 10 > tiny_limit * 8) {
+                    sample_mod <<= 1;
+                }
+            }
+            
+            // 轻量级伪随机采样，无锁安全
+            uint32_t pseudo_rand = (uint32_t)(s->clock ^ (key_len > 0 ? (uint64_t)key[0] : 0));
+            if ((pseudo_rand & (sample_mod - 1)) != 0) {
+                return false;
+            }
+        }
+    }
+
     if (osc_count > 0 && s->avg_osc_cache > 0) {
         if (osc_count > s->avg_osc_cache) return true; 
     }
     if (s->soft_limit == 0 || s->total_cache_bytes < s->soft_limit) {
+        // 小文件配额检查：小文件总占用不得超过软限制的 15%
+        if (target_cache_len < 4096 && s->soft_limit > 0) {
+            uint64_t tiny_limit = (s->soft_limit / 100) * 15;
+            if (tiny_limit > 0 && s->tiny_cache_bytes + target_cache_len > tiny_limit) {
+                return false; 
+            }
+        }
         return true;
     }
     if (freq >= s->avg_freq_cache || target_cache_len >= s->avg_io_cache) {
@@ -127,6 +162,7 @@ static bool file_cache_should_evict(file_cache_cpu_t *s, file_cache_entry_t *cur
     return true;
 }
 #pragma endregion
+
 /* ===================== LRU Operations ===================== */
 #pragma region  LRU Operations
 static void fc_lru_remove(file_cache_cpu_t *s, file_cache_entry_t *e) {
@@ -160,6 +196,7 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
         if (cur->pending_reclaim && cur->pin_count == 0) {
             fc_lru_remove(s, cur);
             s->total_cache_bytes -= cur->data_len;
+            if (cur->data_len < 4096) s->tiny_cache_bytes -= cur->data_len;
             s->total_cache_io    -= cur->total_io_len;
             s->total_cache_freq  -= cur->access_freq;
             s->total_entries--;
@@ -188,6 +225,7 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
                 if (art_val) {
                     fc_lru_remove(s, cur);
                     s->total_cache_bytes -= cur->data_len;
+                    if (cur->data_len < 4096) s->tiny_cache_bytes -= cur->data_len;
                     s->total_cache_io    -= cur->total_io_len;
                     s->total_cache_freq  -= cur->access_freq;
                     s->total_entries--;
@@ -208,6 +246,7 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
         if (art_val) {
             fc_lru_remove(s, clean_fallback);
             s->total_cache_bytes -= clean_fallback->data_len;
+            if (clean_fallback->data_len < 4096) s->tiny_cache_bytes -= clean_fallback->data_len;
             s->total_cache_io    -= clean_fallback->total_io_len;
             s->total_cache_freq  -= clean_fallback->access_freq;
             s->total_entries--;
@@ -220,7 +259,10 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
 
 static void fc_entry_free(file_cache_entry_t *e) {
     if (!e) return;
-    if (e->data) kfree(e->data);
+    // 如果 data 不在 inline_data 上，才需要 kfree
+    if (e->data && e->data != e->inline_data) {
+        kfree(e->data);
+    }
     if (e->key)  kfree(e->key);
     kfree(e);
 }
@@ -269,6 +311,7 @@ void file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id,
     s->max_file_size = 0;
     s->total_cache_bytes = 0; s->dirty_cache_bytes = 0;
     s->smoothed_cache_bytes = 0;
+    s->tiny_cache_bytes = 0; 
     s->soft_limit = 0; s->hard_limit = 0; 
     s->avg_io_cache = 4096; s->avg_freq_cache = 2; s->avg_osc_cache = 0;
     s->total_entries = 0;
@@ -292,19 +335,15 @@ void file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id,
 void file_cache_cpu_destroy(file_cache_cpu_t *s) {
     if (!s) return;
 
-    // 1. 从全局数组中注销
     spinlock_lock(&g_fc_init_lock);
     if (s->cpu_id < FC_MAX_CPUS && g_fc_cpus[s->cpu_id] == s) {
         g_fc_cpus[s->cpu_id] = NULL;
     }
     spinlock_unlock(&g_fc_init_lock);
 
-    // 2. 销毁当前分片缓存条目和索引树 (由调用方根据情况释放 LRU 上的 entry，这里仅处理树结构)
-    // 注意: 实际场景中可能需要先遍历 lru_head 释放所有 entry，此处假定上层已处理或简单释放。
     art_tree_destroy(&s->index);
     art_tree_destroy(&s->oscillate_tree);
 
-    // 3. 清理该 CPU 对应的对象池，防止内存泄漏
     spinlock_lock(&g_osc_pool_locks[s->cpu_id]);
     fc_oscillate_node_t *node = g_osc_free_lists[s->cpu_id];
     while (node) {
@@ -345,6 +384,7 @@ static void fc_broadcast_invalidate(file_cache_cpu_t *src_s, const uint8_t *key,
                 if (art_val) {
                     fc_lru_remove(s, e);
                     s->total_cache_bytes -= e->data_len;
+                    if (e->data_len < 4096) s->tiny_cache_bytes -= e->data_len;
                     if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
                     s->total_cache_io    -= e->total_io_len;
                     s->total_cache_freq  -= e->access_freq;
@@ -409,6 +449,7 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
             if (art_val) {
                 fc_lru_remove(rs, re);
                 rs->total_cache_bytes -= re->data_len;
+                if (re->data_len < 4096) rs->tiny_cache_bytes -= re->data_len;
                 rs->total_cache_io    -= re->total_io_len;
                 rs->total_cache_freq  -= re->access_freq;
                 rs->total_entries--;
@@ -422,6 +463,7 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                 
                 s->total_entries++;
                 s->total_cache_bytes += re->data_len;
+                if (re->data_len < 4096) s->tiny_cache_bytes += re->data_len;
                 s->total_cache_io += re->total_io_len;
                 s->total_cache_freq += re->access_freq;
                 if (re->file_size > s->max_file_size) s->max_file_size = re->file_size;
@@ -456,6 +498,7 @@ void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
             } else {
                 fc_lru_remove(s, e);
                 s->total_cache_bytes -= e->data_len;
+                if (e->data_len < 4096) s->tiny_cache_bytes -= e->data_len;
                 if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
                 s->total_cache_io    -= e->total_io_len;
                 s->total_cache_freq  -= e->access_freq;
@@ -465,6 +508,7 @@ void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
         } else {
             fc_lru_remove(s, e);
             s->total_cache_bytes -= e->data_len;
+            if (e->data_len < 4096) s->tiny_cache_bytes -= e->data_len;
             if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
             s->total_cache_io    -= e->total_io_len;
             s->total_cache_freq  -= e->access_freq;
@@ -476,6 +520,7 @@ void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
     if (need_free) fc_entry_free(e); 
 }
 #pragma endregion
+
 /* ===================== Record IO & Promote ===================== */
 #pragma region Record IO & Promote
 int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
@@ -514,7 +559,8 @@ int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
     }
     spinlock_unlock(&s->lock);
 
-    bool should = file_cache_should_cache(s, cur_freq, io_len, cur_osc);
+    // 【修改】传入 key 和 key_len 以支持试探性准入采样
+    bool should = file_cache_should_cache(s, key, key_len, cur_freq, io_len, cur_osc);
     if (should && data_if_promote) {
         int32_t r = file_cache_promote(s, key, key_len, data_if_promote, io_len, false, cur_fsize, file_id);
         if (r != 0) {
@@ -571,7 +617,14 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
                            void *data, size_t data_len, bool is_dirty, uint64_t file_size, uint64_t file_id) {
     if (!s || !key || key_len == 0 || !data || data_len == 0) return -1;
 
-    file_cache_entry_t *e = (file_cache_entry_t *)kcalloc(1, sizeof(file_cache_entry_t));
+    // 如果数据足够小，分配时直接带上内联空间
+    size_t alloc_size = sizeof(file_cache_entry_t);
+    bool use_inline = (data_len <= FC_INLINE_DATA_SIZE);
+    if (use_inline) {
+        alloc_size += data_len; 
+    }
+
+    file_cache_entry_t *e = (file_cache_entry_t *)kcalloc(1, alloc_size);
     if (!e) return FC_ERR_NO_MEMORY;
 
     e->key = (uint8_t *)kmalloc(key_len);
@@ -586,7 +639,6 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
     e->is_dirty = is_dirty;
     e->file_size = file_size;
     e->file_id = file_id;
-    e->data = data;
     e->data_len = data_len;
     e->state = FC_STATE_CACHED;
     e->pin_count = 0;
@@ -618,15 +670,15 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
             spinlock_unlock(&s->lock);
             kfree(e->key);
             kfree(e);
-            // 新增：明确返回因刷脏导致的暂时不可写，方便上层降级处理
             if (exist->state == FC_STATE_FLUSHING) {
                 return FC_ERR_FLUSHING;
             }
             return FC_ERR_NO_MEMORY;
         }
         
-        old_data_to_free = exist->data; 
+        old_data_to_free = (exist->data != exist->inline_data) ? exist->data : NULL; 
         s->total_cache_bytes -= exist->data_len;
+        if (exist->data_len < 4096) s->tiny_cache_bytes -= exist->data_len;
         if (exist->is_dirty) s->dirty_cache_bytes -= exist->data_len;
         s->total_cache_io    -= exist->total_io_len;
         
@@ -639,6 +691,7 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
         if (file_id != 0) exist->file_id = file_id;
         
         s->total_cache_bytes += data_len;
+        if (data_len < 4096) s->tiny_cache_bytes += data_len;
         if (is_dirty) s->dirty_cache_bytes += data_len;
         s->total_cache_io += exist->total_io_len;
         fc_lru_move_to_back(s, exist);
@@ -692,9 +745,19 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
     fc_lru_push_back(s, e);
     s->total_entries++;
     s->total_cache_bytes += data_len;
+    if (data_len < 4096) s->tiny_cache_bytes += data_len;
     if (is_dirty) s->dirty_cache_bytes += data_len;
     s->total_cache_io    += e->total_io_len;
     s->total_cache_freq  += e->access_freq;
+
+    // 此时才真正接管或拷贝外部传入的数据
+    if (use_inline) {
+        __memcpy(e->inline_data, data, data_len);
+        e->data = e->inline_data;
+        kfree(data); 
+    } else {
+        e->data = data;
+    }
 
     if (is_dirty) need_broadcast = true;
     spinlock_unlock(&s->lock);
@@ -710,7 +773,7 @@ int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t 
     fc_broadcast_invalidate(s, key, key_len);
     return 0;
 }
-#pragma region 
+#pragma endregion
 
 /* ===================== Synchronous Fsync Interface (跨核 & 分批) ===================== */
 #pragma region Synchronous Fsync Interface
@@ -719,13 +782,11 @@ int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t 
 int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id) {
     if (!s) return -1;
     
-    // 固定批量大小分配，防止 OOM
     file_cache_entry_t **flush_list = (file_cache_entry_t**)kmalloc(sizeof(file_cache_entry_t*) * FSYNC_BATCH_SIZE);
     if (!flush_list) return -1;
     
     int32_t final_rc = 0;
     
-    // 遍历所有 CPU 分片，保证跨核脏页全量持久化
     for (uint32_t i = 0; i < g_num_active_cpus; i++) {
         file_cache_cpu_t *target_s = g_fc_cpus[i];
         if (!target_s) continue;
@@ -733,7 +794,6 @@ int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id) {
         while (true) {
             uint32_t flush_cnt = 0;
             
-            // 1. 收集脏页并标记 FLUSHING
             spinlock_lock(&target_s->lock);
             file_cache_entry_t *cur = target_s->lru_head;
             while (cur && flush_cnt < FSYNC_BATCH_SIZE) {
@@ -747,12 +807,10 @@ int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id) {
             }
             spinlock_unlock(&target_s->lock);
             
-            // 若未收集到脏页，说明当前分片处理完毕
             if (flush_cnt == 0) {
                 break; 
             }
             
-            // 2. 同步执行刷盘
             if (target_s->writeback_cb) {
                 for (uint32_t j = 0; j < flush_cnt; j++) {
                     file_cache_entry_t *e = flush_list[j];
@@ -770,7 +828,6 @@ int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id) {
                 }
             }
             
-            // 3. 恢复状态并清理脏标记
             spinlock_lock(&target_s->lock);
             for (uint32_t j = 0; j < flush_cnt; j++) {
                 file_cache_entry_t *e = flush_list[j];
@@ -794,6 +851,7 @@ int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id) {
     return final_rc;
 }
 #pragma endregion
+
 /* ===================== CPU Load Check & Migration ===================== */
 #pragma region  CPU Load Check & Migration
 
@@ -865,6 +923,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
             if (art_val) {
                 fc_lru_remove(src, cur);
                 src->total_cache_bytes -= cur->data_len;
+                if (cur->data_len < 4096) src->tiny_cache_bytes -= cur->data_len;
                 src->total_cache_io    -= cur->total_io_len;
                 src->total_cache_freq  -= cur->access_freq;
                 src->total_entries--;
@@ -902,6 +961,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
         }
         fc_lru_remove(src, cur);
         src->total_cache_bytes -= cur->data_len;
+        if (cur->data_len < 4096) src->tiny_cache_bytes -= cur->data_len;
         src->total_cache_io    -= cur->total_io_len;
         src->total_cache_freq  -= cur->access_freq;
         src->total_entries--;
@@ -913,6 +973,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
         
         dst->total_entries++;
         dst->total_cache_bytes += cur->data_len;
+        if (cur->data_len < 4096) dst->tiny_cache_bytes += cur->data_len;
         dst->total_cache_io += cur->total_io_len;
         dst->total_cache_freq += cur->access_freq;
         if (cur->file_size > dst->max_file_size) dst->max_file_size = cur->file_size;
@@ -934,6 +995,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
     kfree(victims);
 }
 #pragma endregion
+
 /* ===================== CPU Idle Handler & Writeback ===================== */
 #pragma region CPU Idle Handler & Writeback
 typedef struct {
@@ -950,7 +1012,6 @@ static int fc_free_file_stat_cb(void *data, const uint8_t *key, uint32_t key_len
 void file_cache_idle_handler(file_cache_cpu_t *s) {
     if (!s) return;
     
-    // Phase 0: 离群统计算法与拥塞度动态控制
     spinlock_lock(&s->lock);
     fc_stats_ctx_t stats_ctx = {0, 0, 0};
     art_iter(&s->oscillate_tree, fc_collect_stats_cb, &stats_ctx);
@@ -988,6 +1049,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
             if (art_val) {
                 fc_lru_remove(s, cur);
                 s->total_cache_bytes -= cur->data_len;
+                if (cur->data_len < 4096) s->tiny_cache_bytes -= cur->data_len;
                 if (cur->is_dirty) s->dirty_cache_bytes -= cur->data_len;
                 s->total_cache_io    -= cur->total_io_len;
                 s->total_cache_freq  -= cur->access_freq;
@@ -1001,7 +1063,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
     for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
     vic_cnt = 0;
 
-    // Phase 2: 刷脏页 (不摘除索引，状态机控制并发，消除抖动)
+    // Phase 2: 刷脏页
     uint32_t max_flush = dyn_flush_batch;
     if (s->io_congestion >= 90) max_flush = 0;       
     else if (s->io_congestion >= 70) max_flush = 1;   
@@ -1064,7 +1126,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
     }
     kfree(flush_list);
 
-    // Phase 3.5: 配额裁剪 (动态扫描限制)
+    // Phase 3.5: 配额裁剪
     spinlock_lock(&s->lock);
     if (s->max_file_size > 0 && s->smoothed_cache_bytes > 0) {
         art_tree file_stats_tree;
@@ -1098,6 +1160,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                         if (art_val) {
                             fc_lru_remove(s, e_quota);
                             s->total_cache_bytes -= e_quota->data_len;
+                            if (e_quota->data_len < 4096) s->tiny_cache_bytes -= e_quota->data_len;
                             s->total_cache_io -= e_quota->total_io_len;
                             s->total_cache_freq -= e_quota->access_freq;
                             s->total_entries--;
@@ -1139,6 +1202,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                 if (art_val) {
                     fc_lru_remove(s, cur);
                     s->total_cache_bytes -= cur->data_len;
+                    if (cur->data_len < 4096) s->tiny_cache_bytes -= cur->data_len;
                     s->total_cache_io    -= cur->total_io_len;
                     s->total_cache_freq  -= cur->access_freq;
                     s->total_entries--;

@@ -18,6 +18,9 @@ extern "C" {
 #define FC_ERR_NO_MEMORY         -2
 #define FC_ERR_FLUSHING          -3  // 表示因正在刷脏而临时拒绝写入
 
+#define FC_INLINE_DATA_SIZE      64  // 64字节以内直接内联到结构体，省去一次kmalloc
+#define FC_TINY_FILE_THRESHOLD   512 // 小于此阈值视为微小文件，执行严格准入
+
 typedef enum {
     FC_STATE_CACHED           = 0,
     FC_STATE_EVICTING         = 1,
@@ -57,6 +60,8 @@ typedef struct file_cache_entry {
 
     struct file_cache_entry *lru_prev;
     struct file_cache_entry *lru_next;
+    
+    uint8_t             inline_data[0]; 
 } file_cache_entry_t;
 
 typedef struct file_cache_cpu {
@@ -78,6 +83,7 @@ typedef struct file_cache_cpu {
     uint64_t total_cache_bytes;   
     uint64_t dirty_cache_bytes;
     uint64_t smoothed_cache_bytes; 
+    uint64_t tiny_cache_bytes;      // Track <4KB File Cached bytes
     
     uint64_t soft_limit;
     uint64_t hard_limit;
@@ -111,7 +117,7 @@ int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id);
 
 void    file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id, 
                             int32_t (*writeback_cb)(const uint8_t*, uint32_t, void*, size_t));
-void    file_cache_cpu_destroy(file_cache_cpu_t *s); // 用于销毁分片并释放对象池
+void    file_cache_cpu_destroy(file_cache_cpu_t *s); 
 
 void    file_cache_set_limits(file_cache_cpu_t *s, uint64_t soft_limit, uint64_t hard_limit);
 
