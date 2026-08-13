@@ -14,7 +14,7 @@ CC  := gcc
 CXX := g++
 AS  := as
 
-LDFLAGS := -entry=_start -static -nostdlib -m elf_x86_64 -z noexecstack -T ./console.ld
+LDFLAGS := -entry=_start -static -nostdlib -m elf_x86_64 -z noexecstack
 
 CFLAGS := -nostdlib -nostdinc \
     -I../../ablib/freestndchdrs/$(BUILD_ARCH)/include \
