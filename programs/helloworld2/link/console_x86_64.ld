@@ -32,4 +32,4 @@ SECTIONS
     .bss : {
         *(.bss)
     } :phdr_data
-}
+} 

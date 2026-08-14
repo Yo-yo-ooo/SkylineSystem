@@ -14,12 +14,26 @@
 extern "C" {
 #endif
 
+#pragma region Constants & Macros
+
 #define FC_MAX_CPUS              128
 #define FC_ERR_NO_MEMORY         -2
-#define FC_ERR_FLUSHING          -3  // 表示因正在刷脏而临时拒绝写入
+#define FC_ERR_FLUSHING          -3
 
-#define FC_INLINE_DATA_SIZE      64  // 64字节以内直接内联到结构体，省去一次kmalloc
-#define FC_TINY_FILE_THRESHOLD   512 // 小于此阈值视为微小文件，执行严格准入
+#define FC_INLINE_DATA_SIZE      64
+#define FC_TINY_FILE_THRESHOLD   4096
+#define FC_FSYNC_BATCH_SIZE      256
+
+#ifndef unlikely
+#define unlikely(x)  __builtin_expect(!!(x), 0)
+#endif
+#ifndef likely
+#define likely(x)    __builtin_expect(!!(x), 1)
+#endif
+
+#pragma endregion
+
+#pragma region Data Structures
 
 typedef enum {
     FC_STATE_CACHED           = 0,
@@ -42,6 +56,7 @@ typedef struct file_cache_entry {
     uint32_t            key_len;
     void               *data;
     size_t              data_len;
+    uint32_t            crc32;          
 
     uint64_t            access_freq;
     uint64_t            total_io_len;
@@ -83,7 +98,7 @@ typedef struct file_cache_cpu {
     uint64_t total_cache_bytes;   
     uint64_t dirty_cache_bytes;
     uint64_t smoothed_cache_bytes; 
-    uint64_t tiny_cache_bytes;      // Track <4KB File Cached bytes
+    uint64_t tiny_cache_bytes;      
     
     uint64_t soft_limit;
     uint64_t hard_limit;
@@ -103,6 +118,7 @@ typedef struct file_cache_cpu {
     uint64_t evictions;
     uint64_t migrations_in;
     uint64_t migrations_out;
+    uint64_t readahead_evictions; 
 
     uint64_t clock;
     uint64_t last_decay_tick;
@@ -112,6 +128,10 @@ typedef struct file_cache_cpu {
 
     int32_t (*writeback_cb)(const uint8_t *key, uint32_t key_len, void *data, size_t data_len);
 } file_cache_cpu_t;
+
+#pragma endregion
+
+#pragma region Public API
 
 int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id);
 
@@ -131,11 +151,16 @@ int32_t file_cache_record_io(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
 int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                            void *data, size_t data_len, bool is_dirty, uint64_t file_size, uint64_t file_id);
 
+int32_t file_cache_readahead(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
+                             void *data, size_t data_len, uint64_t file_size, uint64_t file_id);
+
 int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len);
 
 void    file_cache_check_load(file_cache_cpu_t *s, uint32_t load_factor);
 void    file_cache_idle_handler(file_cache_cpu_t *s);
 void    file_cache_tick(file_cache_cpu_t *s);
+
+#pragma endregion
 
 #ifdef __cplusplus
 }
