@@ -203,65 +203,105 @@ static void SyncKillProcThreads(proc_t *proc, thread_t *except_thread) {
     }
 }
 
-static proc_t* DestroyProcResources(proc_t *proc) {
-    uint64_t rflags;
-    proc_t *to_delete_list = nullptr;
+/* ============================================================
+ *  Per-CPU 进程异步资源回收机制 (带水位线控制)
+ * ============================================================ */
+#define PROC_ZOMBIE_HIGH_WATERMARK 8
+#define PROC_ZOMBIE_LOW_WATERMARK 2
+#define PROC_ZOMBIE_BATCH 4
 
-    rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
-    proc_t *child = proc->children;
-    proc_t *prev = nullptr;
-    while (child) {
-        proc_t *next_child = child->sibling;
-        if (__sync_lock_test_and_set(&child->exiting, 1) == 0) {
-            child->parent = nullptr;
-            child->sibling = nullptr;
-            if (!to_delete_list) {
-                to_delete_list = child;
-                prev = child;
-            } else {
-                prev->sibling = child;
-                prev = child;
-            }
-        } else {
-            child->parent = nullptr;
-        }
-        child = next_child;
+static proc_t *proc_zombie_list[MAX_CPU] = {nullptr};
+static uint32_t proc_zombie_count[MAX_CPU] = {0};
+
+static void EnqueueProcZombie(proc_t *proc) {
+    uint64_t flags = irq_save();
+    cpu_t *cpu = this_cpu();
+    if (cpu) {
+        proc->sibling = proc_zombie_list[cpu->id];
+        proc_zombie_list[cpu->id] = proc;
+        proc_zombie_count[cpu->id]++;
+    } else {
+        // 极端兜底情况，挂入 CPU 0
+        proc->sibling = proc_zombie_list[0];
+        proc_zombie_list[0] = proc;
+        proc_zombie_count[0]++;
     }
-    proc->children = nullptr;
-    spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
-
-    rflags = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
-    art_delete(pid2proc_tree, proc->id, 8);
-    spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, rflags);
-
-    // 注意：FDMan 的销毁已在 FinalizeProcExit 中提前完成，防止阻塞导致 UAF
-    if (proc->FDMan) { 
-        proc->FDMan = nullptr; 
-    }
-    if (proc->pagemap && proc->pagemap != kernel_pagemap) {
-        // 页表已在 FinalizeProcExit 中提前销毁
-        proc->pagemap = nullptr;
-    }
-
-    kfree(proc);
-    return to_delete_list;
+    irq_restore(flags);
 }
 
-static void DestroyProcList(proc_t *proc_list) {
-    proc_t *to_delete_list = proc_list;
-    while (to_delete_list) {
-        proc_t *curr = to_delete_list;
-        to_delete_list = curr->sibling;
-        curr->sibling = nullptr;
-
-        SyncKillProcThreads(curr, nullptr);
-        proc_t *new_children = DestroyProcResources(curr);
+namespace Schedule {
+    // 在 sched_idle 中被调用，安全地销毁部分已退出的进程资源
+    void DrainProcZombieList(cpu_t *cpu) {
+        if (!cpu) return;
         
-        if (new_children) {
-            proc_t *tail = new_children;
-            while (tail->sibling) tail = tail->sibling;
-            tail->sibling = to_delete_list;
-            to_delete_list = new_children;
+        uint64_t rflags = irq_save();
+        uint32_t count = proc_zombie_count[cpu->id];
+        if (count == 0) {
+            irq_restore(rflags);
+            return;
+        }
+        
+        // 轻量批量回收策略
+        uint32_t to_reclaim;
+        if (count >= PROC_ZOMBIE_HIGH_WATERMARK) {
+            to_reclaim = count - PROC_ZOMBIE_LOW_WATERMARK; // 积压过多，回收至低水位
+        } else {
+            to_reclaim = (count > PROC_ZOMBIE_BATCH) ? PROC_ZOMBIE_BATCH : count; // 积压不多，每次只回收一小批
+        }
+        if (to_reclaim > count) to_reclaim = count;
+        
+        proc_t *batch = nullptr;
+        for (uint32_t i = 0; i < to_reclaim; i++) {
+            proc_t *p = proc_zombie_list[cpu->id];
+            if (!p) break;
+            proc_zombie_list[cpu->id] = p->sibling;
+            proc_zombie_count[cpu->id]--;
+            
+            p->sibling = batch;
+            batch = p;
+        }
+        irq_restore(rflags);
+        
+        // 在开中断下安全销毁
+        proc_t *p = batch;
+        while (p) {
+            proc_t *next = p->sibling;
+            
+            uint64_t flags = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
+            art_delete(pid2proc_tree, p->id, 8);
+            spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, flags);
+
+            flags = spin_lock_irqsave(&PROC_LIST_LOCK);
+            proc_t *child = p->children;
+            while (child) {
+                proc_t *next_child = child->sibling;
+                if (__sync_lock_test_and_set(&child->exiting, 1) == 0) {
+                    child->parent = nullptr;
+                    child->sibling = nullptr;
+                    EnqueueProcZombie(child); // 将子进程继续挂入 Per-CPU 队列
+                } else {
+                    child->parent = nullptr;
+                }
+                child = next_child;
+            }
+            p->children = nullptr;
+            spin_unlock_irqrestore(&PROC_LIST_LOCK, flags);
+
+            // 在空闲态执行可能阻塞的 VMM 销毁操作
+            if (p->pagemap && p->pagemap != kernel_pagemap) {
+                VMM::DestroyPM(p->pagemap);
+                p->pagemap = nullptr;
+            }
+
+            // FDMan 应当在 FinalizeProcExit 中同步关闭，此处作兜底防御
+            if (p->FDMan) { 
+                fd_manager_destroy(p->FDMan); 
+                kfree(p->FDMan); 
+                p->FDMan = nullptr; 
+            }
+
+            kfree(p);
+            p = next;
         }
     }
 }
@@ -365,7 +405,17 @@ namespace Schedule {
         }
         spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
 
-        DestroyProcList(proc);
+        SyncKillProcThreads(proc, nullptr);
+
+        // 关闭 FDMan 可能触发阻塞，所以必须在退出上下文中同步完成
+        if (proc->FDMan) { 
+            fd_manager_destroy(proc->FDMan); 
+            kfree(proc->FDMan); 
+            proc->FDMan = nullptr; 
+        }
+
+        // 将进程结构体挂入 Per-CPU 僵尸队列，交由 idle 异步回收
+        EnqueueProcZombie(proc);
     }
 
     static void FinalizeProcExit(proc_t *proc, cpu_t *cpu) {
@@ -392,7 +442,6 @@ namespace Schedule {
                 if (sibling) sibling->sibling = proc->sibling;
             }
             proc->parent = nullptr;
-            proc->sibling = nullptr;
         }
         spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
 
@@ -407,25 +456,25 @@ namespace Schedule {
         }
 
         VMM::SwitchPageMap(kernel_pagemap);
-        if (pm_to_destroy && pm_to_destroy != kernel_pagemap) {
-            VMM::DestroyPM(pm_to_destroy);
-        }
+        // 保留 pm_to_destroy 指针以供 idle 销毁
+        proc->pagemap = pm_to_destroy;
 
+        // 关闭 FDMan 可能触发阻塞，所以必须在退出上下文中同步完成
         if (proc->FDMan) { 
             fd_manager_destroy(proc->FDMan); 
             kfree(proc->FDMan); 
             proc->FDMan = nullptr; 
         }
 
-        // 所有可能阻塞的操作完成后，最后标记为 ZOMBIE
+        // 将进程结构体挂入 Per-CPU 僵尸队列，交由 idle 异步回收
+        EnqueueProcZombie(proc);
+
+        // 标记线程为 ZOMBIE，Switch 会将其自动放入僵尸队列
         rflags = spin_lock_irqsave(&cpu->sched_lock);
         curr_thread->state = THREAD_ZOMBIE;
         spin_unlock_irqrestore(&cpu->sched_lock, rflags);
 
-        kinfoln("Delete PROC %d", pid);
-
-        proc_t *children = DestroyProcResources(proc);
-        DestroyProcList(children);
+        kinfoln("Exit PROC %d", pid);
 
         // 不开中断，直接触发调度，Switch 会永远切走，不会返回
         Schedule::Yield();
@@ -461,14 +510,10 @@ namespace Schedule {
             __atomic_store_n(&curr_thread->state, THREAD_ZOMBIE, __ATOMIC_RELEASE);
             spin_unlock_irqrestore(&cpu->sched_lock, rflags);
 
-            // 不开中断，直接触发调度
             Schedule::Yield();
             while(1) { asm volatile("hlt"); }
         }
         
-        Serial::Writelnf("THREAD EXIT!!");
-        
-        // 直接在当前线程的 16KB 内核栈上执行
         FinalizeProcExit(proc, cpu);
         while(1) { asm volatile("hlt"); }
     }

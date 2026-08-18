@@ -44,6 +44,62 @@ static_assert(sizeof(sched_prio_to_weight)/sizeof(sched_prio_to_weight[0]) == 16
 
 volatile bool need_resched_flags[MAX_CPU] = {false};
 
+
+static inline uint64_t sced_rdtsc() {
+    uint32_t lo, hi;
+    asm volatile("lfence; rdtsc" : "=a"(lo), "=d"(hi) :: "memory");
+    return ((uint64_t)hi << 32) | lo;
+}
+
+struct dyn_adjust_ctx {
+    uint64_t last_tsc;
+    uint64_t last_ctx_sw;
+    uint64_t idle_tsc;
+    uint64_t total_tsc;
+    uint64_t last_adjust_ms;
+};
+static dyn_adjust_ctx dyn_ctx[MAX_CPU] = {0};
+
+static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread, uint64_t now_ms) {
+    uint32_t id = cpu->id;
+    
+    // 修复：入口处钳位基准值，防止初始异常导致逻辑失效
+    if (cpu->base_quantum < 2) cpu->base_quantum = 2;
+    if (cpu->base_quantum > 15) cpu->base_quantum = 15;
+
+    uint64_t cur_tsc = sced_rdtsc();
+    
+    if (dyn_ctx[id].last_tsc != 0) {
+        uint64_t elapsed = cur_tsc - dyn_ctx[id].last_tsc;
+        if (curr_thread == cpu->idle_thread) {
+            dyn_ctx[id].idle_tsc += elapsed;
+        }
+        dyn_ctx[id].total_tsc += elapsed;
+    }
+    dyn_ctx[id].last_tsc = cur_tsc;
+    
+    if (now_ms - dyn_ctx[id].last_adjust_ms > 100) {
+        if (dyn_ctx[id].total_tsc > 0) {
+            uint64_t idle_ratio = (dyn_ctx[id].idle_tsc * 100) / dyn_ctx[id].total_tsc;
+            uint64_t ctx_sw = cpu->sched_stats.context_switches - dyn_ctx[id].last_ctx_sw;
+            
+            if (idle_ratio > 50) {
+                if (cpu->base_quantum < 15) cpu->base_quantum++;
+            } else if (idle_ratio < 10 && ctx_sw > 500) {
+                if (cpu->base_quantum > 2) cpu->base_quantum--;
+            } else {
+                if (cpu->base_quantum > 5) cpu->base_quantum--;
+                else if (cpu->base_quantum < 5) cpu->base_quantum++;
+            }
+        }
+        
+        dyn_ctx[id].idle_tsc = 0;
+        dyn_ctx[id].total_tsc = 0;
+        dyn_ctx[id].last_ctx_sw = cpu->sched_stats.context_switches;
+        dyn_ctx[id].last_adjust_ms = now_ms;
+    }
+}
+
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     if (!thread || thread == cpu->idle_thread) return cpu->base_quantum;
     if (thread->custom_quantum > 0) return thread->custom_quantum;
@@ -79,6 +135,9 @@ void sched_idle() {
         spin_unlock_irqrestore(&cpu->sched_lock, rflags);
 
         reclaim_zombie_list(cpu, zombie_head);
+        
+        Schedule::DrainProcZombieList(cpu);
+        
         file_cache_idle_handler(cpu->file_cache);
         asm volatile("sti; hlt; cli" ::: "memory");
     }
@@ -87,14 +146,14 @@ void sched_idle() {
 static inline thread_t* safe_get_current_thread(cpu_t *cpu) {
     thread_t *t = cpu->current_thread;
     if ((uintptr_t)t < 0xFFFF800000000000) {
-        kerror("Invalid current_thread pointer: %p, resetting to idle\n", t);
+        kwarn("Invalid current_thread pointer: %p, resetting to idle\n", t);
         t = cpu->idle_thread;
         cpu->current_thread = t;
     }
     return t;
 }
 
-cpu_t *get_lw_cpu(cpu_t *ref_cpu) {
+cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr) {
     cpu_t *lw_cpu = nullptr;
     uint32_t ref_mask = ref_cpu ? cpu_simd_mask(ref_cpu) : 0;
     for (int32_t i = 0; i <= smp_last_cpu; i++) {
@@ -392,6 +451,8 @@ namespace Schedule {
             thread_t *curr_thread = safe_get_current_thread(cpu);
             uint64_t now = PIT::TimeSinceBootMS();
 
+            dynamic_adjust_quantum(cpu, curr_thread, now);
+
             if (curr_thread && curr_thread != cpu->idle_thread) {
                 uint64_t delta = now - curr_thread->last_run_time;
                 curr_thread->last_run_time = now;
@@ -431,7 +492,6 @@ namespace Schedule {
             spinlock_lock(&cpu->sched_lock);
 
             thread_t *zombie_to_free = nullptr;
-            thread_t *zombie_tail = nullptr;
             if (cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD) {
                 int moved = 0;
                 thread_t *z = cpu->zombie_list;
@@ -439,7 +499,6 @@ namespace Schedule {
                     thread_t *next = z->zombie_next;
                     z->zombie_next = zombie_to_free;
                     zombie_to_free = z;
-                    if (!zombie_tail) zombie_tail = z;
                     z = next;
                     moved++;
                 }
@@ -450,12 +509,7 @@ namespace Schedule {
             }
 
             uint32_t curr_state = curr_thread ? curr_thread->state : 0xFFFFFFFF;
-
             if (curr_thread && curr_state == THREAD_ZOMBIE && curr_thread != cpu->idle_thread) {
-                if (curr_thread->on_rq) {
-                    RemoveFromQueue(cpu, curr_thread);
-                }
-                cpu->current_thread = cpu->idle_thread;
                 curr_thread->zombie_next = cpu->zombie_list;
                 cpu->zombie_list = curr_thread;
                 cpu->zombie_count++;
@@ -470,6 +524,8 @@ namespace Schedule {
 
             reclaim_zombie_list(cpu, zombie_to_free);
 
+            irq_restore(rflags);
+
             if ((cpu->tick_count & 0x1F) == 0) TryPush(cpu);
 
             if (!next_thread) {
@@ -477,6 +533,7 @@ namespace Schedule {
                 if (!next_thread) next_thread = cpu->idle_thread;
             }
 
+            rflags = irq_save();
 
             uint64_t quantum = cpu->base_quantum;
             bool is_switch = (next_thread != curr_thread);
@@ -502,7 +559,7 @@ namespace Schedule {
 
             if (!curr_thread || curr_thread->pagemap != next_thread->pagemap) {
                 VMM::SwitchPageMap(next_thread->pagemap);
-                asm volatile("cli");
+                //asm volatile("cli");
             }
 
             cpu->OverLoadableFuncs.WRFSBASE(next_thread->fs);
@@ -579,6 +636,10 @@ namespace Schedule {
             Internal::RemoveFromQueue(cpu, idle_t);
             spin_unlock_irqrestore(&cpu->sched_lock, rflags);
             cpu->idle_thread = idle_t;
+            
+            // 修复：补充上下文切换基线初始化
+            dyn_ctx[i].last_adjust_ms = PIT::TimeSinceBootMS();
+            dyn_ctx[i].last_ctx_sw = cpu->sched_stats.context_switches;
         }
         atomic_store_8((volatile uint8_t*)&PIT::TickHandle, (uint64_t)(uintptr_t)&PIT::Tick_, 0);
     }

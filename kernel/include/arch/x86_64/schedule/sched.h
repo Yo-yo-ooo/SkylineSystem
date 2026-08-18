@@ -147,6 +147,7 @@ static inline bool spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags) {
 namespace Schedule{
     extern uint64_t procl_count;
     extern procl_t *sched_proclist;
+    void DrainProcZombieList(cpu_t *cpu);
 
     namespace Internal{
         void Switch(context_t *ctx);
