@@ -108,6 +108,7 @@ struct flanterm_context {
     void (*callback)(struct flanterm_context *, uint64_t, uint64_t, uint64_t, uint64_t);
 };
 
+
 void flanterm_write(struct flanterm_context *ctx, const char *buf, size_t count);
 void flanterm_flush(struct flanterm_context *ctx);
 void flanterm_full_refresh(struct flanterm_context *ctx);

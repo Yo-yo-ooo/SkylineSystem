@@ -1,19 +1,27 @@
 OUTPUT_FORMAT("elf64-x86-64")
-ENTRY(_start) /* 或者你的入口 */
+ENTRY(_start)
 
-/* 1. 显式定义程序头模板 */
 PHDRS
 {
-    phdr_text  PT_LOAD FLAGS(5); /* R+X = 5 */
-    phdr_rodata PT_LOAD FLAGS(4); /* R = 4 */
-    phdr_data  PT_LOAD FLAGS(6); /* R+W = 6 */
+    phdr_rw     PT_LOAD FLAGS(6); /* RW */
+    phdr_text   PT_LOAD FLAGS(5); /* RX */
+    phdr_rodata PT_LOAD FLAGS(4); /* RO */
+    phdr_data   PT_LOAD FLAGS(6); /* RW */
+    phdr_tls    PT_TLS;           /* TLS 段程序头 */
 }
 
 SECTIONS
 {
     . = 0x400000;
     
-    /* 2. 将段绑定到对应的程序头 */
+    .prepad : {
+        FILL(0);
+        . = . + 0xFFF;
+        BYTE(0);
+    } :phdr_rw
+
+    . = ALIGN(0x1000);
+
     .text : {
         *(.text)
         KEEP(*(.GUI_C))
@@ -29,7 +37,18 @@ SECTIONS
         *(.data)
     } :phdr_data
 
+    /* 新增：TLS 段 */
+    .tdata : {
+        *(.tdata)
+        *(.tdata.*)
+    } :phdr_tls :phdr_data
+
+    .tbss : {
+        *(.tbss)
+        *(.tbss.*)
+    } :phdr_tls :phdr_data
+
     .bss : {
         *(.bss)
     } :phdr_data
-} 
+}

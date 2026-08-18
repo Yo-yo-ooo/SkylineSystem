@@ -10,27 +10,45 @@
 #define HEAP_MAGIC 0xdead424E //Dead SkylineSystem
 #define SLAB_MAGIC (uint32_t)0xdead424E //Dead SkylineSystem
 
+
+struct slab_page_t;
 typedef struct slab_cache_t {
-    void *slabs;
-    uint64_t obj_size;
-    void* global_free_list; // 全局空闲链表头，用于 Per-CPU 批量取对象
-    uint32_t size_class;    // 记录当前 Cache 属于哪个档位 (0-7)，方便释放时快速定位
-    uint64_t free_idx;      // 兼容字段
-    bool used;
-    struct slab_cache_t *empty_cache;
+    uint32_t obj_size;
+    uint32_t size_class;
+    spinlock_t lock;
+    void *global_free_list;
+    uint64_t global_free_count;
+    slab_page_t *partial;
+    slab_page_t *full;
+    slab_page_t *empty;
+    slab_page_t *empty_tail; 
+    uint32_t empty_count;
+    uint64_t alloc_count;
+    uint64_t free_count;
+    uint64_t cache_hit_count;
+    uint64_t total_pages; 
+    bool has_redzone;       //  标记该大小类是否启用红区
 } slab_cache_t;
 
-
+/* 
 PACK(typedef struct slab_obj_t{
     slab_cache_t *cache;    // 8 bytes
     uint32_t magic;         // 4 bytes
     uint32_t _padding;      // 4 bytes
 }) slab_obj_t;
-
-PACK(typedef struct slab_page_t{
-    uint32_t magic;
-    uint64_t page_count;
-}) slab_page_t;
+ */
+typedef struct slab_page_t{
+    uint64_t magic;
+    union {
+        slab_cache_t *cache;
+        uint64_t page_count;
+    };
+    slab_page_t *next;
+    slab_page_t *prev;
+    void *freelist;
+    uint32_t inuse;
+    uint32_t objects;
+} slab_page_t;
 
 namespace SLAB{
     void Init();

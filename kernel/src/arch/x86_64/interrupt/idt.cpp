@@ -164,12 +164,12 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     cpu_t *cpu = this_cpu();
     bool from_user = ((ctx->cs & 3) == 3);
 
-    if (ctx->int_no == SCHED_VEC || ctx->int_no == SCHED_VEC + 1) {
+    /* if (ctx->int_no == SCHED_VEC || ctx->int_no == SCHED_VEC + 1) {
         if (cpu) cpu->preempt_count++;
         Schedule::Internal::Switch(ctx);
         if (cpu) cpu->preempt_count--;
         return;
-    }
+    } */
 
     if (cpu) cpu->preempt_count++;
 

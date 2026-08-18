@@ -153,7 +153,7 @@ file kernel
 * [Yo-yo-ooo](https://github.com/Yo-yo-ooo/)
 * [marceldobehere](https://github.com/marceldobehere)
 * [Arty3](https://github.com/Arty3)
-* 人造人(qq:1440332527)
+* 人造人(In QQ)
 
 
 ## Connect

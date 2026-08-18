@@ -185,7 +185,23 @@ namespace Elf64
         void* offset;
         bool works;
     };
-
-
 }
 
+typedef struct SysExecveReq{
+    uint64_t Addr; // ELF PHDR Address
+    // Parse Execve ARG COMMAND See: SYSCALL Execve Command(High 32Bits)
+    // Cmd=0: Read-Only MMAP
+    // Cmd=1: Read+Write MMAP
+    // ResID(Low 32bits) System Resource ID
+    uint64_t CmdResID; 
+    uint64_t DATAAddr; // Write/Mmap Data Address
+    uint64_t Size; // MMAP Size
+};
+
+//Align To 4K
+// Standard system call(execve) argument
+PACK(typedef struct SysExecveARG{
+    SysExecveReq Reqs[127];
+    uint64_t AvailBitmap[3];
+    uint64_t Next; // Next Ptr To More Reqs
+});

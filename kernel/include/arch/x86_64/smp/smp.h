@@ -45,9 +45,10 @@ typedef struct sched_stats_t {
 
 typedef void (*interrupt_handler_t)(context_t*);
 
+#define MAX_SLAB_ORDER 7
 typedef struct {
-    void* freelist[8]; 
-    uint32_t count[8]; 
+    void* freelist[MAX_SLAB_ORDER]; 
+    uint32_t count[MAX_SLAB_ORDER]; 
 } cpu_slab_t;
 
 

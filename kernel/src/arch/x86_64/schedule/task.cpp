@@ -1,30 +1,54 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
+// task.cpp - Task Lifecycle Management
 #include <elf/elf.h>
 #include <arch/x86_64/schedule/sched.h>
-#include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
-#include <arch/x86_64/schedule/syscall.h>
 #include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/simd/simd.h>
 #include <klib/algorithm/queue.h>
 #include <klib/algorithm/art.h>
-#include <arch/x86_64/interrupt/gdt.h>
-#include <arch/x86_64/pit/pit.h>
+#include <atomic/atomic.h>
+#include <fs/fc.h>
 #include <arch/x86_64/lapic/lapic.h>
+#include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/interrupt/gdt.h>
 
-extern art_tree *pid2proc_tree;
-extern spinlock_t PID2PROC_TREE_LOCK;
-extern spinlock_t PROC_LIST_LOCK;
+#define WAIT_THREAD_TIMEOUT_MS 1000ULL
 
-#ifndef THREAD_TRANSFER
-#define THREAD_TRANSFER 4
-#endif
+extern uint32_t sched_prio_to_weight[16];
+extern cpu_t *get_lw_cpu(cpu_t *ref_cpu);
+
+art_tree *pid2proc_tree = nullptr;
+spinlock_t PID2PROC_TREE_LOCK = 0;
+spinlock_t PROC_LIST_LOCK = 0;
+uint64_t sched_pid = 0;
+uint64_t sched_tid = 0;
+
+extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
+                  uint64_t *tls_offset = nullptr,
+                  uint64_t *tls_memsz = nullptr,
+                  uint64_t *tls_filesz = nullptr,
+                  uint64_t *tls_align = nullptr);
+
+static inline void detach_thread_from_proc(thread_t *thread) {
+    if (thread->parent && thread->parent->threads) {
+        if (thread->next == thread) {
+            thread->parent->threads = nullptr;
+        } else {
+            if (thread->parent->threads == thread) thread->parent->threads = thread->next;
+            thread->prev->next = thread->next;
+            thread->next->prev = thread->prev;
+        }
+    }
+    thread->parent = nullptr;
+    thread->next = thread->prev = nullptr;
+}
 
 static inline void wait_for_transfer(thread_t *t) {
     uint64_t wait_start = PIT::TimeSinceBootMS();
     while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == THREAD_TRANSFER) {
-        if (PIT::TimeSinceBootMS() - wait_start > 1000) { 
+        if (PIT::TimeSinceBootMS() - wait_start > WAIT_THREAD_TIMEOUT_MS) { 
             Panic("Thread stuck in TRANSFER state for too long!");
         }
         asm volatile("pause");
@@ -37,7 +61,6 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
         
         uint32_t target_cpu_num = __atomic_load_n(&target->cpu_num, __ATOMIC_ACQUIRE);
         if (target_cpu_num >= MAX_CPU || !smp_cpu_list[target_cpu_num]) {
-            // Transient migration state, retry instead of fallback to prevent cross-CPU list corruption
             asm volatile("pause");
             continue; 
         }
@@ -52,15 +75,12 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
         bool need_ipi = false;
         uint64_t rflags;
         if (timer_cpu && timer_cpu != t_cpu) {
-            // Prevent ABBA deadlock by enforcing global lock order (lower CPU ID first)
             cpu_t *lock1 = (t_cpu->id < timer_cpu->id) ? t_cpu : timer_cpu;
             cpu_t *lock2 = (t_cpu->id < timer_cpu->id) ? timer_cpu : t_cpu;
 
-            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-            spinlock_lock(&lock1->sched_lock);
+            rflags = spin_lock_irqsave(&lock1->sched_lock);
             spinlock_lock(&lock2->sched_lock);
 
-            // Re-validate state, target CPU, and timer CPU under locks to prevent race conditions
             uint32_t cur_target_cpu = __atomic_load_n(&target->cpu_num, __ATOMIC_ACQUIRE);
             uint32_t cur_timer_cpu = __atomic_load_n(&target->timer_cpu, __ATOMIC_ACQUIRE);
             
@@ -68,13 +88,19 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
                 cur_target_cpu != target_cpu_num ||
                 (target->timer_bucket != nullptr && cur_timer_cpu != timer_cpu_num)) {
                 spinlock_unlock(&lock2->sched_lock);
-                spinlock_unlock(&lock1->sched_lock);
-                asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+                spin_unlock_irqrestore(&lock1->sched_lock, rflags);
                 continue;
             }
 
             target->state = THREAD_ZOMBIE;
-            target->pagemap = kernel_pagemap;
+
+            if (t_cpu->current_thread != target) {
+                if (!target->IsForkThread && target->pagemap != kernel_pagemap) {
+                    if (target->stack && target->stack != target->kernel_stack) { VMM::Free(target->pagemap, target->stack); target->stack = 0; }
+                    if (target->sig_stack) { VMM::Free(target->pagemap, target->sig_stack); target->sig_stack = 0; }
+                    if (target->tls_base) { VMM::Free(target->pagemap, target->tls_base); target->tls_base = 0; }
+                }
+            }
 
             if (target->timer_bucket != nullptr && cur_timer_cpu == timer_cpu->id) {
                 Schedule::Internal::TimerRemove(target);
@@ -93,11 +119,9 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
             }
 
             spinlock_unlock(&lock2->sched_lock);
-            spinlock_unlock(&lock1->sched_lock);
-            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+            spin_unlock_irqrestore(&lock1->sched_lock, rflags);
         } else {
-            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-            spinlock_lock(&t_cpu->sched_lock);
+            rflags = spin_lock_irqsave(&t_cpu->sched_lock);
 
             uint32_t cur_target_cpu = __atomic_load_n(&target->cpu_num, __ATOMIC_ACQUIRE);
             uint32_t cur_timer_cpu = __atomic_load_n(&target->timer_cpu, __ATOMIC_ACQUIRE);
@@ -105,13 +129,19 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
             if (__atomic_load_n(&target->state, __ATOMIC_ACQUIRE) == THREAD_ZOMBIE ||
                 cur_target_cpu != target_cpu_num ||
                 (target->timer_bucket != nullptr && cur_timer_cpu != target_cpu_num)) {
-                spinlock_unlock(&t_cpu->sched_lock);
-                asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+                spin_unlock_irqrestore(&t_cpu->sched_lock, rflags);
                 continue;
             }
 
             target->state = THREAD_ZOMBIE;
-            target->pagemap = kernel_pagemap;
+
+            if (t_cpu->current_thread != target) {
+                if (!target->IsForkThread && target->pagemap != kernel_pagemap) {
+                    if (target->stack && target->stack != target->kernel_stack) { VMM::Free(target->pagemap, target->stack); target->stack = 0; }
+                    if (target->sig_stack) { VMM::Free(target->pagemap, target->sig_stack); target->sig_stack = 0; }
+                    if (target->tls_base) { VMM::Free(target->pagemap, target->tls_base); target->tls_base = 0; }
+                }
+            }
 
             if (target->on_rq) {
                 Schedule::Internal::RemoveFromQueue(t_cpu, target);
@@ -127,15 +157,112 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
                 t_cpu->zombie_list = target;
                 t_cpu->zombie_count++;
             }
-            spinlock_unlock(&t_cpu->sched_lock);
-            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+            spin_unlock_irqrestore(&t_cpu->sched_lock, rflags);
         }
 
-        // Send IPI outside the sched_lock to reduce lock holding time
         if (need_ipi) {
             LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC + 1);
         }
         return;
+    }
+}
+
+static void SyncKillProcThreads(proc_t *proc, thread_t *except_thread) {
+    if (!proc) return;
+    cpu_t *self_cpu = this_cpu();
+
+    while (true) {
+        thread_t *batch[64];
+        int count = 0;
+        uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
+        thread_t *t = proc->threads;
+        if (t) {
+            thread_t *start = t;
+            do {
+                thread_t *next = t->next;
+                if (t != except_thread && count < 64) {
+                    detach_thread_from_proc(t);
+                    batch[count++] = t;
+                }
+                t = next;
+            } while (t != start && proc->threads);
+        }
+        spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+
+        if (count == 0) break;
+
+        bool need_wait[64] = {false};
+        for (int i = 0; i < count; i++) {
+            kill_thread_batch(batch[i], self_cpu, need_wait[i]);
+        }
+        for (int i = 0; i < count; i++) {
+            if (need_wait[i]) {
+                Schedule::WaitForThreadOffCpu(batch[i]);
+            }
+        }
+    }
+}
+
+static proc_t* DestroyProcResources(proc_t *proc) {
+    uint64_t rflags;
+    proc_t *to_delete_list = nullptr;
+
+    rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
+    proc_t *child = proc->children;
+    proc_t *prev = nullptr;
+    while (child) {
+        proc_t *next_child = child->sibling;
+        if (__sync_lock_test_and_set(&child->exiting, 1) == 0) {
+            child->parent = nullptr;
+            child->sibling = nullptr;
+            if (!to_delete_list) {
+                to_delete_list = child;
+                prev = child;
+            } else {
+                prev->sibling = child;
+                prev = child;
+            }
+        } else {
+            child->parent = nullptr;
+        }
+        child = next_child;
+    }
+    proc->children = nullptr;
+    spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+
+    rflags = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
+    art_delete(pid2proc_tree, proc->id, 8);
+    spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, rflags);
+
+    // 注意：FDMan 的销毁已在 FinalizeProcExit 中提前完成，防止阻塞导致 UAF
+    if (proc->FDMan) { 
+        proc->FDMan = nullptr; 
+    }
+    if (proc->pagemap && proc->pagemap != kernel_pagemap) {
+        // 页表已在 FinalizeProcExit 中提前销毁
+        proc->pagemap = nullptr;
+    }
+
+    kfree(proc);
+    return to_delete_list;
+}
+
+static void DestroyProcList(proc_t *proc_list) {
+    proc_t *to_delete_list = proc_list;
+    while (to_delete_list) {
+        proc_t *curr = to_delete_list;
+        to_delete_list = curr->sibling;
+        curr->sibling = nullptr;
+
+        SyncKillProcThreads(curr, nullptr);
+        proc_t *new_children = DestroyProcResources(curr);
+        
+        if (new_children) {
+            proc_t *tail = new_children;
+            while (tail->sibling) tail = tail->sibling;
+            tail->sibling = to_delete_list;
+            to_delete_list = new_children;
+        }
     }
 }
 
@@ -146,156 +273,86 @@ namespace Schedule {
             if (timer_cpu_num < MAX_CPU) {
                 cpu_t *timer_cpu = smp_cpu_list[timer_cpu_num];
                 if (timer_cpu) {
-                    uint64_t rflags;
-                    asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-                    spinlock_lock(&timer_cpu->sched_lock);
+                    uint64_t rflags = spin_lock_irqsave(&timer_cpu->sched_lock);
                     if (thread->timer_bucket != nullptr && __atomic_load_n(&thread->timer_cpu, __ATOMIC_ACQUIRE) == timer_cpu_num) {
-                        Schedule::Internal::TimerRemove(thread);
+                        Internal::TimerRemove(thread);
                     }
-                    spinlock_unlock(&timer_cpu->sched_lock);
-                    asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+                    spin_unlock_irqrestore(&timer_cpu->sched_lock, rflags);
                 }
             }
         }
         cpu_t *cpu = get_cpu(thread->cpu_num);
         if (thread->fx_area) VMM::Free(kernel_pagemap, thread->fx_area);
         if (thread->kernel_stack) VMM::Free(kernel_pagemap, thread->kernel_stack);
-        if (!thread->IsForkThread) {
-            if (thread->pagemap != kernel_pagemap) {
-                if (thread->stack && thread->stack != thread->kernel_stack) VMM::Free(thread->pagemap, thread->stack);
-                if (thread->sig_stack) VMM::Free(thread->pagemap, thread->sig_stack);
-                if (thread->tls_base) VMM::Free(thread->pagemap, thread->tls_base);
+    }
+
+    void KillThread(thread_t *thread) {
+        if (!thread) return;
+        wait_for_transfer(thread);
+
+        cpu_t *cpu = get_cpu(thread->cpu_num);
+        if (!cpu) return;
+        bool was_running = false;
+
+        uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
+        detach_thread_from_proc(thread);
+        spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+
+        rflags = spin_lock_irqsave(&cpu->sched_lock);
+        thread->state = THREAD_ZOMBIE;
+        was_running = (cpu->current_thread == thread);
+
+        if (!was_running) {
+            if (!thread->IsForkThread && thread->pagemap != kernel_pagemap) {
+                if (thread->stack && thread->stack != thread->kernel_stack) { VMM::Free(thread->pagemap, thread->stack); thread->stack = 0; }
+                if (thread->sig_stack) { VMM::Free(thread->pagemap, thread->sig_stack); thread->sig_stack = 0; }
+                if (thread->tls_base) { VMM::Free(thread->pagemap, thread->tls_base); thread->tls_base = 0; }
             }
+        }
+
+        if (thread->on_rq) {
+            Internal::RemoveFromQueue(cpu, thread);
+            thread->zombie_next = cpu->zombie_list;
+            cpu->zombie_list = thread;
+            cpu->zombie_count++;
+        } else if (thread->timer_bucket != nullptr) {
+            Internal::TimerRemove(thread);
+            thread->zombie_next = cpu->zombie_list;
+            cpu->zombie_list = thread;
+            cpu->zombie_count++;
+        }
+        spin_unlock_irqrestore(&cpu->sched_lock, rflags);
+
+        if (was_running) {
+            cpu_t *cur_cpu = this_cpu();
+            if (cpu != cur_cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
         }
     }
 
-    static void SyncKillProcThreads(proc_t *proc, thread_t *except_thread) {
-        if (!proc) return;
-        cpu_t *self_cpu = this_cpu();
+    void KillProcessThreads(proc_t *proc) {
+        SyncKillProcThreads(proc, nullptr);
+    }
 
+    void WaitForThreadOffCpu(thread_t *thread) {
+        if (!thread) return;
+        uint64_t start_time = PIT::TimeSinceBootMS();
         while (true) {
-            thread_t *batch[64];
-            int count = 0;
-            uint64_t rflags;
-
-            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-            spinlock_lock(&PROC_LIST_LOCK);
-            thread_t *t = proc->threads;
-            if (t) {
-                thread_t *start = t;
-                do {
-                    thread_t *next = t->next;
-                    if (t != except_thread && count < 64) {
-                        if (t->next == t) {
-                            proc->threads = nullptr;
-                        } else {
-                            if (proc->threads == t) proc->threads = t->next;
-                            t->prev->next = t->next;
-                            t->next->prev = t->prev;
-                        }
-                        t->parent = nullptr;
-                        t->next = t->prev = nullptr;
-                        batch[count++] = t;
-                    }
-                    t = next;
-                } while (t != start && proc->threads);
-            }
-            spinlock_unlock(&PROC_LIST_LOCK);
-            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
-
-            if (count == 0) break;
-
-            bool need_wait[64] = {false};
-
-            for (int i = 0; i < count; i++) {
-                kill_thread_batch(batch[i], self_cpu, need_wait[i]);
-            }
-
-            for (int i = 0; i < count; i++) {
-                if (need_wait[i]) {
-                    Schedule::WaitForThreadOffCpu(batch[i]);
-                }
-            }
-        }
-    }
-
-    static proc_t* DestroyProcResources(proc_t *proc) {
-        uint64_t rflags;
-        proc_t *to_delete_list = nullptr;
-
-        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-        spinlock_lock(&PID2PROC_TREE_LOCK);
-        art_delete(pid2proc_tree, proc->id, 8);
-        spinlock_unlock(&PID2PROC_TREE_LOCK);
-        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
-
-        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-        spinlock_lock(&PROC_LIST_LOCK);
-        proc_t *child = proc->children;
-        proc_t *prev = nullptr;
-        while (child) {
-            proc_t *next_child = child->sibling;
-            if (__sync_lock_test_and_set(&child->exiting, 1) == 0) {
-                child->parent = nullptr;
-                child->sibling = nullptr;
-                if (!to_delete_list) {
-                    to_delete_list = child;
-                    prev = child;
-                } else {
-                    prev->sibling = child;
-                    prev = child;
-                }
-            } else {
-                child->parent = nullptr;
-            }
-            child = next_child;
-        }
-        proc->children = nullptr;
-        spinlock_unlock(&PROC_LIST_LOCK);
-        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
-
-        if (proc->FDMan) { fd_manager_destroy(proc->FDMan); kfree(proc->FDMan); proc->FDMan = nullptr; }
-        if (proc->pagemap && proc->pagemap != kernel_pagemap) {
-            VMM::DestroyPM(proc->pagemap);
-            proc->pagemap = nullptr;
-        }
-
-        kfree(proc);
-        return to_delete_list;
-    }
-
-    // Core iterative destruction logic, decoupled from permission checks and re-used by all paths
-    static void DestroyProcList(proc_t *proc_list) {
-        proc_t *to_delete_list = proc_list;
-        while (to_delete_list) {
-            proc_t *curr = to_delete_list;
-            to_delete_list = curr->sibling;
-            curr->sibling = nullptr;
-
-            SyncKillProcThreads(curr, nullptr);
-            proc_t *new_children = DestroyProcResources(curr);
-            
-            // Prepend new children to the pending list (iterative, no recursion)
-            if (new_children) {
-                proc_t *tail = new_children;
-                while (tail->sibling) {
-                    tail = tail->sibling;
-                }
-                tail->sibling = to_delete_list;
-                to_delete_list = new_children;
-            }
+            uint32_t cpu_num = __atomic_load_n(&thread->cpu_num, __ATOMIC_ACQUIRE);
+            if (cpu_num >= MAX_CPU) break;
+            cpu_t *cpu = smp_cpu_list[cpu_num];
+            if (!cpu) break;
+            thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
+            if (curr != thread) break;
+            if (PIT::TimeSinceBootMS() - start_time > WAIT_THREAD_TIMEOUT_MS) Panic("WaitForThreadOffCpu: Thread stuck on CPU (timeout)");
+            asm volatile("pause");
         }
     }
 
     void DeleteProc(proc_t *proc) {
         if (!proc) return;
-        
-        // Atomically acquire destruction rights first to prevent UAF races
         if (__sync_lock_test_and_set(&proc->exiting, 1) != 0) return;
 
-        uint64_t rflags;
-        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-        spinlock_lock(&PROC_LIST_LOCK);
+        uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
         if (proc->parent) {
             if (proc->parent->children == proc) proc->parent->children = proc->sibling;
             else {
@@ -306,8 +363,7 @@ namespace Schedule {
             proc->parent = nullptr;
             proc->sibling = nullptr;
         }
-        spinlock_unlock(&PROC_LIST_LOCK);
-        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+        spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
 
         DestroyProcList(proc);
     }
@@ -318,11 +374,7 @@ namespace Schedule {
         
         SyncKillProcThreads(proc, curr_thread);
 
-        uint64_t rflags;
-        // Merge PROC_LIST_LOCK critical sections to detach thread and proc from lists
-        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-        spinlock_lock(&PROC_LIST_LOCK);
-        
+        uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
         if (curr_thread->next == curr_thread) proc->threads = nullptr;
         else {
             if (proc->threads == curr_thread) proc->threads = curr_thread->next;
@@ -342,37 +394,41 @@ namespace Schedule {
             proc->parent = nullptr;
             proc->sibling = nullptr;
         }
-        
-        spinlock_unlock(&PROC_LIST_LOCK);
-        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+        spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
 
         pagemap_t *pm_to_destroy = proc->pagemap;
         proc->pagemap = nullptr;
         curr_thread->pagemap = kernel_pagemap;
-        curr_thread->stack = 0;
-        curr_thread->sig_stack = 0;
-        curr_thread->tls_base = 0;
+        
+        if (!curr_thread->IsForkThread && pm_to_destroy != kernel_pagemap) {
+            if (curr_thread->stack && curr_thread->stack != curr_thread->kernel_stack) { VMM::Free(pm_to_destroy, curr_thread->stack); curr_thread->stack = 0; }
+            if (curr_thread->sig_stack) { VMM::Free(pm_to_destroy, curr_thread->sig_stack); curr_thread->sig_stack = 0; }
+            if (curr_thread->tls_base) { VMM::Free(pm_to_destroy, curr_thread->tls_base); curr_thread->tls_base = 0; }
+        }
 
         VMM::SwitchPageMap(kernel_pagemap);
         if (pm_to_destroy && pm_to_destroy != kernel_pagemap) {
             VMM::DestroyPM(pm_to_destroy);
         }
 
-        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-        spinlock_lock(&cpu->sched_lock);
+        if (proc->FDMan) { 
+            fd_manager_destroy(proc->FDMan); 
+            kfree(proc->FDMan); 
+            proc->FDMan = nullptr; 
+        }
+
+        // 所有可能阻塞的操作完成后，最后标记为 ZOMBIE
+        rflags = spin_lock_irqsave(&cpu->sched_lock);
         curr_thread->state = THREAD_ZOMBIE;
-        spinlock_unlock(&cpu->sched_lock);
-        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+        spin_unlock_irqrestore(&cpu->sched_lock, rflags);
 
         kinfoln("Delete PROC %d", pid);
 
         proc_t *children = DestroyProcResources(proc);
-        
-        asm volatile("sti");
-        // Re-use the unified iterative destruction logic
         DestroyProcList(children);
 
-        LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+        // 不开中断，直接触发调度，Switch 会永远切走，不会返回
+        Schedule::Yield();
         while(true) { asm volatile("hlt"); }
     }
 
@@ -384,9 +440,7 @@ namespace Schedule {
         if (__sync_lock_test_and_set(&proc->exiting, 1) != 0) {
             VMM::SwitchPageMap(kernel_pagemap);
             
-            uint64_t rflags;
-            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-            spinlock_lock(&PROC_LIST_LOCK);
+            uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
             if (curr_thread->parent) {
                 if (curr_thread->next == curr_thread) proc->threads = nullptr;
                 else {
@@ -397,40 +451,25 @@ namespace Schedule {
                 curr_thread->parent = nullptr;
                 curr_thread->next = curr_thread->prev = nullptr;
             }
-            spinlock_unlock(&PROC_LIST_LOCK);
+            spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
             
-            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
-            spinlock_lock(&cpu->sched_lock);
+            rflags = spin_lock_irqsave(&cpu->sched_lock);
             curr_thread->pagemap = kernel_pagemap;
             curr_thread->stack = 0;
             curr_thread->sig_stack = 0;
             curr_thread->tls_base = 0;
             __atomic_store_n(&curr_thread->state, THREAD_ZOMBIE, __ATOMIC_RELEASE);
-            spinlock_unlock(&cpu->sched_lock);
-            asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+            spin_unlock_irqrestore(&cpu->sched_lock, rflags);
 
-            asm volatile("sti");
-            LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+            // 不开中断，直接触发调度
+            Schedule::Yield();
             while(1) { asm volatile("hlt"); }
         }
         
         Serial::Writelnf("THREAD EXIT!!");
-        VMM::SwitchPageMap(kernel_pagemap);
-
-        uint64_t exit_rsp = (uint64_t)&cpu->exit_stack[4096];
-        exit_rsp &= ~0xFULL; 
         
-        TSS::SetRSP(cpu->id, 0, (void*)exit_rsp);
-        cpu->kernel_stack = exit_rsp;
-        asm volatile (
-            "mov %0, %%rsp \n\t"
-            "mov %1, %%rdi \n\t"
-            "mov %2, %%rsi \n\t"
-            "call *%3      \n\t"
-            :
-            : "r"(exit_rsp), "r"(proc), "r"(cpu), "r"(&FinalizeProcExit)
-            : "memory", "rdi", "rsi"
-            );
+        // 直接在当前线程的 16KB 内核栈上执行
+        FinalizeProcExit(proc, cpu);
         while(1) { asm volatile("hlt"); }
     }
 
@@ -438,5 +477,303 @@ namespace Schedule {
         asm volatile("cli"); LAPIC::StopTimer();
         proc_t *curr_proc = Schedule::this_proc();
         PROC_KILL(curr_proc, code);
+    }
+
+    /* ================= 进程与线程创建接口 ================= */
+    namespace Internal {
+        void ProcessAddThread(proc_t *parent, thread_t *thread) {
+            uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
+            if (!parent->threads) {
+                parent->threads = thread;
+                thread->next = thread;
+                thread->prev = thread;
+            } else {
+                thread->next = parent->threads;
+                thread->prev = parent->threads->prev;
+                parent->threads->prev->next = thread;
+                parent->threads->prev = thread;
+            }
+            spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+        }
+    }
+
+    proc_t *NewProcess(bool user, bool Trusted = true) {
+        proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
+        if (!proc) return nullptr;
+        _memset(proc, 0, sizeof(proc_t));
+        proc->id = atomic_add_fetch_8(&sched_pid, 1, ATOMIC_RELAXED);
+        proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
+        if (user && !proc->pagemap) { kfree(proc); return nullptr; }
+        proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
+        if (!proc->FDMan) { if (user) VMM::DestroyPM(proc->pagemap); kfree(proc); return nullptr; }
+        fd_manager_init(proc->FDMan);
+        proc->fd_count = 0;
+        proc->IsTrusted = Trusted;
+        uint64_t rflags = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
+        art_insert(pid2proc_tree, (const uint8_t*)&proc->id, 8, proc);
+        spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, rflags);
+        return proc;
+    }
+
+    void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]) {
+        if (argc <= 0 || !argv || !envp) return;
+        char **kernel_argv = nullptr, **kernel_envp = nullptr;
+        uint64_t *thread_argv = nullptr, *thread_envp = nullptr;
+        int32_t envc = 0; uint64_t offset = 0;
+        uint64_t stack_top = 0; pagemap_t *restore = nullptr;
+
+        kernel_argv = (char**)kmalloc(argc * sizeof(char*));
+        if (!kernel_argv) return;
+        for (int32_t i = 0; i < argc; i++) kernel_argv[i] = nullptr;
+        for (int32_t i = 0; i < argc; i++) {
+            if(!argv[i]) goto cleanup;
+            int32_t size = strlen(argv[i]) + 1;
+            kernel_argv[i] = (char*)kmalloc(size);
+            if (!kernel_argv[i]) goto cleanup;
+            __memcpy(kernel_argv[i], argv[i], size);
+        }
+
+        while (envp[envc++]); envc -= 1;
+        if (envc > 0) {
+            kernel_envp = (char**)kmalloc(envc * sizeof(char*));
+            if (!kernel_envp) goto cleanup;
+            for (int32_t i = 0; i < envc; i++) kernel_envp[i] = nullptr;
+            for (int32_t i = 0; i < envc; i++) {
+                if(!envp[i]) goto cleanup;
+                int32_t size = strlen(envp[i]) + 1;
+                kernel_envp[i] = (char*)kmalloc(size);
+                if (!kernel_envp[i]) goto cleanup;
+                __memcpy(kernel_envp[i], envp[i], size);
+            }
+        }
+
+        thread_argv = (uint64_t*)kmalloc(argc * sizeof(uint64_t));
+        if (!thread_argv) goto cleanup;
+        stack_top = thread->ctx.rsp;
+        if ((argc + envc) % 2 == 0) offset = 8;
+        restore = VMM::SwitchPageMap(thread->pagemap);
+        for (int32_t i = 0; i < argc; i++) {
+            int32_t size = strlen(kernel_argv[i]) + 1;
+            offset += ALIGN_UP(size, 16);
+            thread_argv[i] = stack_top - offset;
+            __memcpy((void*)(stack_top - offset), kernel_argv[i], size);
+        }
+
+        if (envc > 0) {
+            thread_envp = (uint64_t*)kmalloc(envc * sizeof(uint64_t));
+            if(!thread_envp) { VMM::SwitchPageMap(restore); goto cleanup; }
+            for (int32_t i = 0; i < envc; i++) {
+                int32_t size = strlen(kernel_envp[i]) + 1;
+                offset += ALIGN_UP(size, 16);
+                thread_envp[i] = stack_top - offset;
+                __memcpy((void*)(stack_top - offset), kernel_envp[i], size);
+            }
+        }
+
+        offset += 8; *(uint64_t*)(stack_top - offset) = 0;
+        for (int32_t i = envc - 1; i >= 0; i--) { offset += 8; *(uint64_t*)(stack_top - offset) = thread_envp[i]; }
+        offset += 8; *(uint64_t*)(stack_top - offset) = 0;
+        for (int32_t i = argc - 1; i >= 0; i--) { offset += 8; *(uint64_t*)(stack_top - offset) = thread_argv[i]; }
+        offset += 8; *(uint64_t*)(stack_top - offset) = argc;
+        VMM::SwitchPageMap(restore);
+        thread->ctx.rsp = stack_top - offset;
+
+    cleanup:
+        if (kernel_argv) { for (int32_t i = 0; i < argc; i++) if (kernel_argv[i]) kfree(kernel_argv[i]); kfree(kernel_argv); }
+        if (kernel_envp) { for (int32_t i = 0; i < envc; i++) if (kernel_envp[i]) kfree(kernel_envp[i]); kfree(kernel_envp); }
+        if (thread_argv) kfree(thread_argv);
+        if (thread_envp) kfree(thread_envp);
+    }
+
+    thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry) {
+        thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+        if (!thread) return nullptr;
+        _memset(thread, 0, sizeof(thread_t));
+        thread->timer_cpu = cpu_num;
+        thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
+        thread->cpu_num = cpu_num; thread->parent = parent;
+        thread->pagemap = parent->pagemap;
+        thread->priority = priority > 15 ? 15 : priority;
+        thread->weight = sched_prio_to_weight[thread->priority];
+        cpu_t *cpu = get_cpu(cpu_num);
+        uint64_t base_vruntime = cpu->avg_vruntime;
+        uint64_t half_slice = cpu->base_quantum / 2;
+        thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
+        if (!thread->fx_area) { kfree(thread); return nullptr; }
+        _memset(thread->fx_area, 0, cpu->XsaveSize);
+        cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
+        uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+        if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(thread); return nullptr; }
+        _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
+        thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
+        thread->stack = kernel_stack; thread->ctx.rip = (uint64_t)entry;
+        thread->ctx.cs = 0x08; thread->ctx.ss = 0x10; thread->ctx.rflags = 0x202;
+        thread->ctx.rsp = thread->kernel_rsp; thread->thread_stack = thread->ctx.rsp;
+        thread->state = THREAD_RUNNING;
+        Schedule::Internal::ProcessAddThread(parent, thread);
+        
+        uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
+        cpu->has_runnable_thread = true;
+        Internal::InsertToQueue(cpu, thread);
+        spin_unlock_irqrestore(&cpu->sched_lock, rflags);
+        return thread;
+    }
+
+    thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]) {
+        thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+        if (!thread) return nullptr;
+        _memset(thread, 0, sizeof(thread_t));
+        thread->timer_cpu = cpu_num;
+        thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
+        thread->cpu_num = cpu_num; thread->parent = parent; thread->pagemap = parent->pagemap;
+        thread->priority = priority > 15 ? 15 : priority;
+        thread->weight = sched_prio_to_weight[thread->priority];
+        cpu_t *cpu = get_cpu(cpu_num);
+        uint64_t base_vruntime = cpu->avg_vruntime;
+        uint64_t half_slice = cpu->base_quantum / 2;
+        thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
+
+        __hmap_s_mp *MP = GetMount(Path);
+        if(!MP) { kerrorln("Cannot Find Mount Point!!!"); kfree(thread); return nullptr; }
+        void *FileDesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
+        if (!FileDesc) { kfree(thread); return nullptr; }
+        _memset(FileDesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
+        if(MP->FSOPS->open(FileDesc, Path, O_RDONLY) != 0) { kfree(FileDesc); kfree(thread); return nullptr; }
+        uint64_t FSize = MP->FSOPS->fsize(FileDesc);
+        uint8_t *buffer = (uint8_t*)kmalloc(FSize);
+        if (!buffer) { MP->FSOPS->close(FileDesc); kfree(FileDesc); kfree(thread); return nullptr; }
+        MP->FSOPS->read(FileDesc, buffer, FSize, 0);
+        MP->FSOPS->close(FileDesc); kfree(FileDesc);
+
+        uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
+        _memset(&thread->ctx, 0, sizeof(context_t));
+        thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align);
+        if (thread->ctx.rip == 0) { kerrorln("ELF load failed!"); kfree(buffer); kfree(thread); return nullptr; }
+
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
+        if (!thread->fx_area) { kfree(buffer); kfree(thread); return nullptr; }
+        _memset(thread->fx_area, 0, cpu->XsaveSize);
+        cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
+        uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+        if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(buffer); kfree(thread); return nullptr; }
+        _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
+        thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
+        uint64_t thread_stack = (uint64_t)VMM::Alloc(thread->pagemap, 8, true);
+        if (!thread_stack) { VMM::Free(kernel_pagemap, thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); kfree(buffer); kfree(thread); return nullptr; }
+        thread->stack = thread_stack; thread->thread_stack = thread_stack + 8 * PAGE_SIZE;
+        uint64_t sig_stack = (uint64_t)VMM::Alloc(thread->pagemap, 1, true);
+        if (!sig_stack) { VMM::Free(kernel_pagemap, thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); VMM::Free(thread->pagemap, (void*)thread_stack); kfree(buffer); kfree(thread); return nullptr; }
+        thread->sig_stack = sig_stack;
+        thread->ctx.cs = 0x23; thread->ctx.ss = 0x1b; thread->ctx.rflags = 0x202;
+        thread->ctx.rsp = thread->thread_stack;
+        PrepareUserStack(thread, argc, argv, envp);
+        thread->thread_stack = thread->ctx.rsp;
+
+        if (tls_memsz > 0) {
+            if (tls_align == 0) tls_align = 16;
+            uint64_t total_tls_size = ALIGN_UP(tls_memsz, tls_align) + 8;
+            uint64_t tls_pages = DIV_ROUND_UP(total_tls_size, PAGE_SIZE);
+            uint64_t tls_mem = (uint64_t)VMM::Alloc(thread->pagemap, tls_pages, true);
+            if (!tls_mem) {
+                kfree(buffer);
+                VMM::Free(kernel_pagemap, thread->fx_area);
+                VMM::Free(kernel_pagemap, (void*)kernel_stack);
+                VMM::Free(thread->pagemap, (void*)thread_stack);
+                VMM::Free(thread->pagemap, (void*)sig_stack);
+                kfree(thread);
+                return nullptr;
+            }
+            uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
+            VMM::SwitchPageMap(thread->pagemap);
+            __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
+            *(uint64_t*)tcb_base = tcb_base;
+            VMM::SwitchPageMap(kernel_pagemap);
+            thread->fs = tcb_base; thread->tls_base = tls_mem; thread->tls_pages = tls_pages;
+        }
+
+        kfree(buffer);
+        thread->state = THREAD_RUNNING;
+        Schedule::Internal::ProcessAddThread(parent, thread);
+        
+        uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
+        cpu->has_runnable_thread = true;
+        Internal::InsertToQueue(cpu, thread);
+        spin_unlock_irqrestore(&cpu->sched_lock, rflags);
+        return thread;
+    }
+
+    thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame) {
+        thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+        if (!thread) return nullptr;
+        _memset(thread, 0, sizeof(thread_t));
+        cpu_t *parent_cpu = get_cpu(parent->cpu_num);
+        cpu_t *cpu = get_lw_cpu(parent_cpu);
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
+        if (!thread->fx_area) { kfree(thread); return nullptr; }
+
+        uint64_t rflags = spin_lock_irqsave(&parent_cpu->sched_lock);
+        if (parent_cpu->current_thread == parent && parent->fx_area) {
+            parent_cpu->OverLoadableFuncs.StoreSIMDState(parent->fx_area, parent_cpu->XsaveMaskLo, parent_cpu->XsaveMaskHi);
+        }
+        __memcpy(thread->fx_area, parent->fx_area, cpu->XsaveSize);
+        spin_unlock_irqrestore(&parent_cpu->sched_lock, rflags);
+
+        uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+        if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(thread); return nullptr; }
+        _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
+
+        thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
+        thread->cpu_num = cpu->id; thread->parent = proc; thread->IsForkThread = true; thread->pagemap = proc->pagemap;
+        thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + 4 * PAGE_SIZE;
+        thread->stack = parent->stack; thread->sig_stack = parent->sig_stack;
+        thread->tls_base = parent->tls_base; thread->tls_pages = parent->tls_pages;
+        thread->timer_cpu = cpu->id;
+        Schedule::Internal::ProcessAddThread(proc, thread);
+        __memcpy(&thread->ctx, frame, sizeof(context_t));
+        thread->ctx.rsp = ((context_t*)frame)->rsp;
+        thread->ctx.cs = 0x23; thread->ctx.ss = 0x1b; thread->ctx.rflags = ((syscall_frame_t*)frame)->r11;
+        thread->ctx.rax = 0; thread->ctx.rip = ((syscall_frame_t*)frame)->rcx;
+        thread->thread_stack = thread->ctx.rsp; thread->fs = rdmsr(FS_BASE); thread->state = THREAD_RUNNING;
+        thread->priority = parent->priority; thread->weight = parent->weight;
+        
+        uint64_t base_vruntime = cpu->avg_vruntime;
+        uint64_t half_slice = cpu->base_quantum / 2;
+        thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
+
+        rflags = spin_lock_irqsave(&cpu->sched_lock);
+        cpu->has_runnable_thread = true;
+        Internal::InsertToQueue(cpu, thread);
+        spin_unlock_irqrestore(&cpu->sched_lock, rflags);
+        return thread;
+    }
+
+    proc_t *ForkProcess() {
+        proc_t *parent = this_proc();
+        if (!parent) return nullptr;
+        proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
+        if (!proc) return nullptr;
+        _memset(proc, 0, sizeof(proc_t));
+        proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED); proc->parent = parent;
+        proc->pagemap = VMM::Fork(parent->pagemap);
+        if (!proc->pagemap) { kfree(proc); return nullptr; }
+        proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
+        if (!proc->FDMan) { VMM::DestroyPM(proc->pagemap); kfree(proc); return nullptr; }
+
+        uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
+        __memcpy(proc->FDMan, parent->FDMan, sizeof(fd_manager_t));
+        proc->fd_count = parent->fd_count;
+        if (!parent->children) parent->children = proc;
+        else {
+            proc_t *last = parent->children;
+            while (last->sibling) last = last->sibling;
+            last->sibling = proc;
+        }
+        spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+
+        rflags = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
+        art_insert(pid2proc_tree, (const uint8_t*)&proc->id, 8, proc);
+        spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, rflags);
+        return proc;
     }
 }

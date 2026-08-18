@@ -17,6 +17,10 @@ extern "C++" {
 #define TFLAGS_WAITING 1
 #define SCHED_PREEMPTION_MAX 16
 
+#ifndef THREAD_TRANSFER
+#define THREAD_TRANSFER 4
+#endif
+
 typedef struct proc_t proc_t;
 #include <fs/fd.h>
 
@@ -51,7 +55,7 @@ typedef struct thread_t {
     struct proc_t *parent;
     uint64_t wakeup_tick;
 
-    bool IsTrusted;
+    
     
     uint64_t timer_wakeup;       
     thread_t* timer_next;        
@@ -89,6 +93,7 @@ typedef struct proc_t {
     int32_t fd_count;
     fd_manager_t *FDMan;
     volatile int32_t exiting;
+    bool IsTrusted;
 } proc_t;
 
 typedef struct procl{
@@ -106,6 +111,38 @@ typedef struct KernelResource {
 #define THREAD_QUEUE_CNT 16
 
 extern rb_sharded_root_t res_tree;
+
+static inline uint64_t irq_save() {
+    uint64_t flags;
+    asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(flags) :: "memory");
+    return flags;
+}
+
+static inline void irq_restore(uint64_t flags) {
+    asm volatile("push %0\n\tpopfq" :: "r"(flags) : "memory");
+}
+
+static inline uint64_t spin_lock_irqsave(spinlock_t *lock) {
+    uint64_t flags = irq_save();
+    spinlock_lock(lock);
+    return flags;
+}
+
+static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags) {
+    spinlock_unlock(lock);
+    irq_restore(flags);
+}
+
+static inline bool spin_trylock(spinlock_t *lock) {
+    return __sync_bool_compare_and_swap(lock, 0, 1);
+}
+static inline bool spin_trylock_irqsave(spinlock_t *lock, uint64_t *flags) {
+    *flags = irq_save();
+    if (spin_trylock(lock)) return true;
+    irq_restore(*flags);
+    return false;
+}
+
 
 namespace Schedule{
     extern uint64_t procl_count;
@@ -134,7 +171,7 @@ namespace Schedule{
     void Init();
     void Install();
 
-    proc_t *NewProcess(bool user);
+    proc_t *NewProcess(bool user,bool Trusted = true);
     void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]);
     thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry);
     thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]);

@@ -5,20 +5,26 @@
 #include <klib/errno.h>
 #include <elf/elf.h>
 #include <mem/pmm.h>
+#include <atomic/atomic.h>
 
 void execve_cleanup(int argc, int envc, char **argv, char **envp) {
-    for (int i = 0; i < argc; i++)
-        kfree(argv[i]);
-    kfree(argv);
-    for (int j = 0; j < envc; j++)
-        kfree(envp[j]);
-    kfree(envp);
+    if (argv) {
+        for (int i = 0; i < argc; i++)
+            if (argv[i]) kfree(argv[i]);
+        kfree(argv);
+    }
+    if (envp) {
+        for (int j = 0; j < envc; j++)
+            if (envp[j]) kfree(envp[j]);
+        kfree(envp);
+    }
 }
 
 extern uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 
-// [修改 1] 增加可选的 out 参数以返回 TLS 信息，兼容原有的调用
+extern cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr);
+
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap, 
                   uint64_t *tls_offset = nullptr, 
                   uint64_t *tls_memsz = nullptr, 
@@ -52,7 +58,6 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
     for (int i = 0; i < hdr->e_phnum; i++) {
         Elf64::Elf64_Phdr *phdr = &phdrs[i];
         if (phdr->p_type == 1) {
-            // Load this segment into memory at the correct virtual address
             uint64_t start = ALIGN_DOWN(phdr->p_vaddr, PAGE_SIZE);
             uint64_t end = ALIGN_UP(phdr->p_vaddr + phdr->p_memsz, PAGE_SIZE);
             uint64_t flags = MM_READ | MM_WRITE | MM_USER;
@@ -64,15 +69,13 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
             VMM::NewMapping(pagemap, start, (end - start) / PAGE_SIZE, flags);
             __memcpy((void*)phdr->p_vaddr, (void*)(data + phdr->p_offset), phdr->p_filesz);
             if (phdr->p_memsz > phdr->p_filesz)
-                _memset((void*)(phdr->p_vaddr + phdr->p_filesz), 0, phdr->p_memsz - phdr->p_filesz); // Zero out BSS
+                _memset((void*)(phdr->p_vaddr + phdr->p_filesz), 0, phdr->p_memsz - phdr->p_filesz);
             if (end > max_vaddr)
                 max_vaddr = end;
-            kinfoln("ELF LOADER PT_LOAD: vaddr=[0x%lx~0x%lx], "
-                "filesz=0x%lx, memsz=0x%lx, flags=0x%x", 
-            phdr->p_vaddr, phdr->p_vaddr + phdr->p_memsz, 
-            phdr->p_filesz, phdr->p_memsz, phdr->p_flags);
+            kinfoln("ELF LOADER PT_LOAD: vaddr=[0x%lx~0x%lx], filesz=0x%lx, memsz=0x%lx, flags=0x%x", 
+                    phdr->p_vaddr, phdr->p_vaddr + phdr->p_memsz, 
+                    phdr->p_filesz, phdr->p_memsz, phdr->p_flags);
         } 
-        // [修改 2] 探测 TLS 段 (PT_TLS = 7)
         else if (phdr->p_type == 7) { 
             if (tls_offset) *tls_offset = phdr->p_offset;
             if (tls_memsz)  *tls_memsz  = phdr->p_memsz;
@@ -85,25 +88,35 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
 
     VMM::SwitchPageMap(kernel_pagemap);
     max_vaddr += PAGE_SIZE;
-
-    // Sets the start of the VMA, the first free region to start allocating.
     VMM::VMA::SetStart(pagemap, max_vaddr, 1);
     kpokln("LOAD ELF!");
 
     return hdr->e_entry;
 }
 
+extern uint64_t sched_tid;
+extern uint32_t sched_prio_to_weight[16];
 
 uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
-    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
-        IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    // Copy pathname to kernel
+    uint64_t EXECVE_ARG, uint64_t ign_1, uint64_t ign_2) {
+    
+    IGNORE_VALUE(ign_1); IGNORE_VALUE(ign_2);
+
+    if(!is_user_address(u_pathname) || !is_user_address(u_argv)
+    || !is_user_address(u_envp) || !is_user_address(EXECVE_ARG))
+        return -EFAULT;
+    if((Schedule::this_proc()->IsTrusted == false) && EXECVE_ARG)
+        return -EPERM;
+    
+    //User-Mode Trusted Process Mapping Control, UTPMC
+    SysExecveARG *pearg = (SysExecveARG*)EXECVE_ARG;
+
     const char* pathname_ = (const char*)u_pathname;
     const char* argv_ = (const char*)u_argv;
     const char* envp_ = (const char*)u_envp;
     char *pathname = (char*)kmalloc(strlen(pathname_)+1);
     __memcpy(pathname, pathname_, strlen(pathname_)+1);
-    // Copy argv, envp to kernel
+    
     int argc = 0;
     if (argv_) {
         while (argv_[argc++]);
@@ -130,93 +143,199 @@ uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         envp[i] = env;
         __memcpy(env, envp_[i], size);
     }
-    proc_t *proc = Schedule::this_proc();
-    thread_t *thread = Schedule::this_thread();
-    
-    if(sys_fopen(pathname_,O_RDONLY,NULL,NULL,NULL,NULL) == -1){
+
+    // Create New Process
+    // PROCESS NOT TRUST PROCESS AS DEFAULT FOR SAFE
+    proc_t *parent = Schedule::NewProcess(true, false);
+    if (!parent) {
         execve_cleanup(argc, envc, argv, envp);
-        return (uint64_t)((int64_t)-1);
+        kfree(pathname);
+        return -ENOMEM;
     }
-    Schedule::PAUSE();
-    
-    VMM::SwitchPageMap(kernel_pagemap);
-    // Destroy old page map
-    VMM::DestroyPM(thread->pagemap);
-    pagemap_t *new_pagemap = VMM::NewPM();
-    thread->pagemap = proc->pagemap = new_pagemap;
-    thread->sig_deliver = 0;
-    thread->sig_mask = 0;
-    _memset(thread->fx_area, 0, 512);
-    *(uint16_t *)(thread->fx_area + 0x00) = 0x037F;
-    *(uint32_t *)(thread->fx_area + 0x18) = 0x1F80;
 
-    // Load ELF
-    static ext4_file f;
-    ext4_fopen(&f,pathname_,"r");
-    uint8_t *buffer = (uint8_t*)kmalloc(f.fsize);
-    ext4_fread(&f,buffer,f.fsize,NULL);
-    
-    // [修改 3] 接收 TLS 参数并准备分配
+    thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
+    if (!thread) {
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(pathname);
+        kfree(parent);
+        return -ENOMEM;
+    }
+    _memset(thread, 0, sizeof(thread_t));
+
+
+    cpu_t *cpu = get_lw_cpu();
+    if (!cpu) {
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(pathname);
+        kfree(thread);
+        kfree(parent);
+        return -EFAULT;
+    }
+    uint32_t cpu_num = cpu->id;
+    uint32_t priority = Schedule::this_thread()->priority;
+
+    thread->timer_cpu = cpu_num;
+    thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
+    thread->cpu_num = cpu_num; 
+    thread->parent = parent; 
+    thread->pagemap = parent->pagemap;
+    thread->priority = priority > 15 ? 15 : priority;
+    thread->weight = sched_prio_to_weight[thread->priority];
+
+    uint64_t base_vruntime = cpu->avg_vruntime;
+    uint64_t half_slice = cpu->base_quantum / 2;
+    thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
+
+    __hmap_s_mp *MP = GetMount(pathname);
+    if(!MP) { 
+        kerrorln("Cannot Find Mount Point!!!"); 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(pathname);
+        kfree(thread);
+        kfree(parent);
+        return -ENOENT; 
+    }
+    void *FileDesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
+    if (!FileDesc) { 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(pathname);
+        kfree(thread);
+        kfree(parent);
+        return -ENOMEM; 
+    }
+    _memset(FileDesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
+    if(MP->FSOPS->open(FileDesc, pathname, O_RDONLY) != 0) { 
+        kfree(FileDesc); 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(pathname);
+        kfree(thread);
+        kfree(parent);
+        return -EACCES; 
+    }
+    uint64_t FSize = MP->FSOPS->fsize(FileDesc);
+    uint8_t *buffer = (uint8_t*)kmalloc(FSize);
+    if (!buffer) { 
+        MP->FSOPS->close(FileDesc); 
+        kfree(FileDesc); 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(pathname);
+        kfree(thread);
+        kfree(parent);
+        return -ENOMEM; 
+    }
+    MP->FSOPS->read(FileDesc, buffer, FSize, 0);
+    MP->FSOPS->close(FileDesc); 
+    kfree(FileDesc);
+    kfree(pathname); // Free PathName
+
     uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
+    _memset(&thread->ctx, 0, sizeof(context_t));
     thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align);
-
-    // Buid Thread Local Storage (TLS)
-    if (tls_memsz > 0) {
-        if (tls_align == 0) tls_align = 16;
-        
-        // 按照 x86_64 ABI，FS 寄存器指向 TCB (Thread Control Block)，而 TLS 数据位于 TCB 之前 (即负偏移)
-        // 我们分配空间：对齐后的 TLS 大小 + 8 字节(用来存放指向自己的指针)
-        uint64_t total_tls_size = ALIGN_UP(tls_memsz, tls_align) + 8;
-        uint64_t tls_pages = DIV_ROUND_UP(total_tls_size, PAGE_SIZE);
-        uint64_t tls_mem = (uint64_t)VMM::Alloc(thread->pagemap, tls_pages, true);
-        
-        uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
-        uint64_t tls_data_start = tcb_base - ALIGN_UP(tls_memsz, tls_align);
-        
-        // 临时切换到用户态页表，以允许内核将 ELF buffer 中的初始化数据写入用户态 TLS 空间
-        VMM::SwitchPageMap(thread->pagemap);
-        
-        __memcpy((void*)tls_data_start, (void*)(buffer + tls_offset), tls_filesz);
-        // (未初始化的 .tbss 数据已经被 VMM::Alloc 的 true 参数清零)
-        
-        // x86_64 约定 fs:0 必须指向自身
-        *(uint64_t*)tcb_base = tcb_base;
-        
-        VMM::SwitchPageMap(kernel_pagemap); // 切回内核页表继续执行
-        
-        thread->fs = tcb_base;
-    } else {
-        thread->fs = 0;
+    if (thread->ctx.rip == 0) { 
+        kerrorln("ELF load failed!"); 
+        kfree(buffer); 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(thread);
+        kfree(parent);
+        return -EINVAL; 
     }
 
-    // [修改 4] 释放 ELF 读取产生的资源，防止内存泄漏
-    kfree(buffer);
-    ext4_fclose(&f);
-
-    thread->ctx.cs = 0x23;
-    thread->ctx.ss = 0x1b;
-    thread->ctx.rflags = 0x202;
-
-    // Thread stack (32 KB)
+    thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
+    if (!thread->fx_area) { 
+        kfree(buffer); 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(thread);
+        kfree(parent);
+        return -ENOMEM; 
+    }
+    _memset(thread->fx_area, 0, cpu->XsaveSize);
+    cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
+    
+    uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+    if (!kernel_stack) { 
+        VMM::Free(kernel_pagemap, thread->fx_area); 
+        kfree(buffer); 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(thread);
+        kfree(parent);
+        return -ENOMEM; 
+    }
+    _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
+    thread->kernel_stack = kernel_stack; 
+    thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
+    
     uint64_t thread_stack = (uint64_t)VMM::Alloc(thread->pagemap, 8, true);
-    uint64_t thread_stack_top = thread_stack + 8 * PAGE_SIZE;
-    thread->stack = thread_stack;
-
-    // Sig stack (4 KB)
+    if (!thread_stack) { 
+        VMM::Free(kernel_pagemap, thread->fx_area); 
+        VMM::Free(kernel_pagemap, (void*)kernel_stack); 
+        kfree(buffer); 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(thread);
+        kfree(parent);
+        return -ENOMEM; 
+    }
+    thread->stack = thread_stack; 
+    thread->thread_stack = thread_stack + 8 * PAGE_SIZE;
+    
     uint64_t sig_stack = (uint64_t)VMM::Alloc(thread->pagemap, 1, true);
+    if (!sig_stack) { 
+        VMM::Free(kernel_pagemap, thread->fx_area); 
+        VMM::Free(kernel_pagemap, (void*)kernel_stack); 
+        VMM::Free(thread->pagemap, (void*)thread_stack); 
+        kfree(buffer); 
+        execve_cleanup(argc, envc, argv, envp);
+        kfree(thread);
+        kfree(parent);
+        return -ENOMEM; 
+    }
     thread->sig_stack = sig_stack;
 
-    // Set up stack (argc, argv, env)
-    thread->ctx.rsp = thread_stack_top;
+    thread->ctx.cs = 0x23; 
+    thread->ctx.ss = 0x1b; 
+    thread->ctx.rflags = 0x202;
+    thread->ctx.rsp = thread->thread_stack;
     Schedule::PrepareUserStack(thread, argc, argv, envp);
     thread->thread_stack = thread->ctx.rsp;
 
+    if (tls_memsz > 0) {
+        if (tls_align == 0) tls_align = 16;
+        uint64_t total_tls_size = ALIGN_UP(tls_memsz, tls_align) + 8;
+        uint64_t tls_pages = DIV_ROUND_UP(total_tls_size, PAGE_SIZE);
+        uint64_t tls_mem = (uint64_t)VMM::Alloc(thread->pagemap, tls_pages, true);
+        if (!tls_mem) { 
+            kfree(buffer); 
+            execve_cleanup(argc, envc, argv, envp);
+            VMM::Free(kernel_pagemap, thread->fx_area); 
+            VMM::Free(kernel_pagemap, (void*)kernel_stack); 
+            VMM::Free(thread->pagemap, (void*)thread_stack);
+            VMM::Free(thread->pagemap, (void*)sig_stack);
+            kfree(thread);
+            kfree(parent);
+            return -ENOMEM; 
+        }
+        uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
+        VMM::SwitchPageMap(thread->pagemap);
+        __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
+        *(uint64_t*)tcb_base = tcb_base;
+        VMM::SwitchPageMap(kernel_pagemap);
+        thread->fs = tcb_base; 
+        thread->tls_base = tls_mem; 
+        thread->tls_pages = tls_pages;
+    }
+
+    kfree(buffer);
     execve_cleanup(argc, envc, argv, envp);
 
-    VMM::SwitchPageMap(new_pagemap);
-    __asm__ volatile ("swapgs");
-    this_cpu()->current_thread = nullptr;
-    Schedule::Resume();
-    return 0;
-}
+    thread->state = THREAD_RUNNING;
+    Schedule::Internal::ProcessAddThread(parent, thread);
+    
+    uint64_t rflags;
+    asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
+    spinlock_lock(&cpu->sched_lock);
+    cpu->has_runnable_thread = true;
+    Schedule::Internal::InsertToQueue(cpu, thread);
+    spinlock_unlock(&cpu->sched_lock);
+    asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
+    return parent->id;
+}

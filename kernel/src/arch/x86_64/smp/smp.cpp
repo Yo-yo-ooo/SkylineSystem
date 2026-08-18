@@ -79,6 +79,11 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     
     cpu_t *cpu = smp_cpu_list[logical_id];
     cpu->self = cpu;
+    //_memset(&cpu->cslab, 0, sizeof(cpu_slab_t));
+    for (int i = 0; i < MAX_SLAB_ORDER; i++) {
+        cpu->cslab.freelist[i] = nullptr;
+        cpu->cslab.count[i] = 0;
+    }
     wrmsr(KERNEL_GS_BASE, (uint64_t)cpu);
     wrmsr(IA32_GS_MSR,(uint64_t)cpu);
 
@@ -163,6 +168,7 @@ void smp_init() {
             continue;
         
         cpu_t *new_cpu = (cpu_t*)kmalloc(sizeof(cpu_t));
+        memset_fscpuf(new_cpu, 0, sizeof(cpu_t));
         new_cpu->lapic_id = mp_info->lapic_id;      
         new_cpu->id = next_logical_id;              
         
@@ -182,7 +188,7 @@ void smp_init() {
 }
 
 extern "C" cpu_t *this_cpu() {
-    if(!smp_started)
+    if(unlikely(!smp_started))
         return bsp_cpu;
     cpu_t *cpu;
     asm volatile("movq %%gs:0, %0" : "=r"(cpu) : : "memory");
