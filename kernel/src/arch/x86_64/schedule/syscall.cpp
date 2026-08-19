@@ -11,6 +11,7 @@
 static uint64_t 
 SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){return NULL;}
 
+__attribute__((aligned(64)))
 uint64_t (*syscall_lists[512])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = \
     {SYSCALL_NULL};
 
@@ -73,6 +74,8 @@ void syscall_init() {
     syscall_lists[24] = sys_dbgsout;
     syscall_lists[25] = sys_dev_getinfo;
     syscall_lists[26] = sys_dev_ioctl;
+
+    __builtin_prefetch((const void*)syscall_lists,0,0);
     
 
     uint64_t efer = rdmsr(IA32_EFER);

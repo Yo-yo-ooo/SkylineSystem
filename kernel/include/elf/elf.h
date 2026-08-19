@@ -189,11 +189,15 @@ namespace Elf64
 
 typedef struct SysExecveReq{
     uint64_t Addr; // ELF PHDR Address
-    // Parse Execve ARG COMMAND See: SYSCALL Execve Command(High 32Bits)
+    // Parse Execve ARG COMMAND See: SYSCALL Execve Command
     // Cmd=0: Read-Only MMAP
     // Cmd=1: Read+Write MMAP
-    // ResID(Low 32bits) System Resource ID
-    uint64_t CmdResID; 
+    // Cmd=2: Read-Only MEM ALLOC MAPPING(Pages)
+    // Cmd=3: Read-Write MEM ALLOC MAPPING(Pages)
+    uint64_t CmdID;
+    // High 32Bit: Res Type(Driver Type)
+    // Low  32Bit: Res IDX(Driver IDX) 
+    uint64_t ResID;
     uint64_t DATAAddr; // Write/Mmap Data Address
     uint64_t Size; // MMAP Size
 };
@@ -201,7 +205,8 @@ typedef struct SysExecveReq{
 //Align To 4K
 // Standard system call(execve) argument
 PACK(typedef struct SysExecveARG{
-    SysExecveReq Reqs[127];
+    SysExecveReq Reqs[101];
     uint64_t AvailBitmap[3];
     uint64_t Next; // Next Ptr To More Reqs
+    uint8_t Padding[24];
 });

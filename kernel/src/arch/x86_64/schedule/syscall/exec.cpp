@@ -109,7 +109,7 @@ uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         return -EPERM;
     
     //User-Mode Trusted Process Mapping Control, UTPMC
-    SysExecveARG *pearg = (SysExecveARG*)EXECVE_ARG;
+    //SysExecveARG *pearg = (SysExecveARG*)EXECVE_ARG;
 
     const char* pathname_ = (const char*)u_pathname;
     const char* argv_ = (const char*)u_argv;
