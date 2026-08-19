@@ -84,6 +84,25 @@ namespace VMM{
             return region;
         }
 
+        // 检查 [start, start + page_count * PAGE_SIZE) 是否完全空闲（无任何重叠）
+        bool IsRangeFree(pagemap_t *pagemap, uint64_t start, uint64_t page_count) {
+            uint64_t end = start + page_count * PAGE_SIZE;
+            
+            // 1. 检查头部重叠：找 start <= target_start 的最大节点，看它的 end 是否超过了 target_start
+            vma_region_t *prev_r = vma_tree_find_le(&pagemap->vma_tree, start);
+            if (prev_r && (prev_r->start + prev_r->page_count * PAGE_SIZE) > start) {
+                return false; // 发生了重叠
+            }
+            
+            // 2. 检查尾部/中间重叠：找 start > target_start 的最小节点，看它的 start 是否小于 target_end
+            vma_region_t *next_r = vma_tree_find_gt(&pagemap->vma_tree, start);
+            if (next_r && next_r->start < end) {
+                return false; // 发生了重叠
+            }
+            
+            return true;
+        }
+
         void RemoveRegion(vma_region_t *region) {
             if (region->rb_root) {
                 rb_erase(region->rb_root, &region->rb_node);

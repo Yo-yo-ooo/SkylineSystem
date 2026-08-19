@@ -70,7 +70,7 @@ void syscall_init() {
     syscall_lists[18] = sys_arch_prctl;
     syscall_lists[20] = sys_getrandom;
     syscall_lists[21] = sys_dev_mmap;
-    syscall_lists[23] = sys_fork;
+    syscall_lists[23] = sys_pmmap;
     syscall_lists[24] = sys_dbgsout;
     syscall_lists[25] = sys_dev_getinfo;
     syscall_lists[26] = sys_dev_ioctl;
