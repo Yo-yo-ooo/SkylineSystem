@@ -671,7 +671,7 @@ namespace VMM {
         LazyTLB::ShootdownFull(pagemap);
 
         vma_region_t *region = VMM::VMA::FindRegion(pagemap, addr);
-        if (region) VMM::VMA::RemoveRegion(region);
+        if (region) VMM::VMA::RemoveRegion(pagemap,region);
         
         spinlock_unlock(&pagemap->pt_lock);
         spinlock_unlock(&pagemap->vma_lock);
@@ -756,7 +756,7 @@ namespace VMM {
         LazyTLB::ShootdownFull(pagemap);
 
         vma_region_t *region = VMM::VMA::FindRegion(pagemap, addr);
-        if (region) VMM::VMA::RemoveRegion(region);
+        if (region) VMM::VMA::RemoveRegion(pagemap,region);
         
         spinlock_unlock(&pagemap->pt_lock);
         spinlock_unlock(&pagemap->vma_lock);
@@ -818,7 +818,7 @@ namespace VMM {
             } while (m != start_m);
         }
 
-        VMM::VMA::RemoveRegion(region);
+        VMM::VMA::RemoveRegion(pagemap,region);
 
         spinlock_unlock(&pagemap->pt_lock);
         spinlock_unlock(&pagemap->vma_lock);
@@ -918,7 +918,7 @@ namespace VMM {
                     }
                 }
             }
-            VMM::VMA::RemoveRegion(r);
+            VMM::VMA::RemoveRegion(pagemap,r);
             r = next;
         }
         PMM::Free(PHYSICAL(pagemap->vma_head));

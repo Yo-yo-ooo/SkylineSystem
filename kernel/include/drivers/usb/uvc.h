@@ -6,31 +6,23 @@
 namespace USB::UVC {
 
 struct VideoStream {
-    uint8_t altSetting; 
-    uint8_t endpointAddr; 
-    uint16_t endpointMPS; 
-    uint8_t endpointInterval;
-    uint16_t width; 
-    uint16_t height; 
-    uint32_t frameInterval;
-    uint32_t maxPayloadSize; 
-    uint8_t formatIndex; 
-    uint8_t frameIndex;
+    uint8_t altSetting; uint8_t endpointAddr; uint16_t endpointMPS; uint8_t endpointInterval;
+    uint16_t width; uint16_t height; uint32_t frameInterval;
+    uint32_t maxPayloadSize; uint8_t formatIndex; uint8_t frameIndex;
 };
 
 struct Device {
-    USB::Device* usbDev;
-    Interface* vsIfce; // Video Streaming Interface
+    USB::Device* usbDev; Interface* vsIfce;
     VideoStream streams[8];
-    uint8_t numStreams;
-    uint8_t activeStream;
-    uint8_t* frameBuf;  // 设备独立缓冲区
+    uint8_t numStreams; uint8_t activeStream;
+    uint8_t* frameBuf;
     uint32_t frameOffset;
     uint32_t frameCapacity;
     uint8_t fidPrev;
 };
 
 void Init(USB::Device* dev, Interface* ifce);
+void Deinit(USB::Device* dev); // 新增
 bool StartStream(Device* uvc, uint8_t altSetting);
 bool StopStream (Device* uvc);
 

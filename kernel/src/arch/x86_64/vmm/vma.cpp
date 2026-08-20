@@ -88,22 +88,28 @@ namespace VMM{
         bool IsRangeFree(pagemap_t *pagemap, uint64_t start, uint64_t page_count) {
             uint64_t end = start + page_count * PAGE_SIZE;
             
-            // 1. 检查头部重叠：找 start <= target_start 的最大节点，看它的 end 是否超过了 target_start
             vma_region_t *prev_r = vma_tree_find_le(&pagemap->vma_tree, start);
             if (prev_r && (prev_r->start + prev_r->page_count * PAGE_SIZE) > start) {
-                return false; // 发生了重叠
+                return false; 
             }
             
-            // 2. 检查尾部/中间重叠：找 start > target_start 的最小节点，看它的 start 是否小于 target_end
             vma_region_t *next_r = vma_tree_find_gt(&pagemap->vma_tree, start);
             if (next_r && next_r->start < end) {
-                return false; // 发生了重叠
+                return false; 
             }
             
             return true;
         }
 
-        void RemoveRegion(vma_region_t *region) {
+        // 修复：增加 pagemap 参数，安全处理 vma_cursor 缓存失效问题
+        void RemoveRegion(pagemap_t *pagemap, vma_region_t *region) {
+            if (!pagemap || !region) return;
+
+            // 如果游标正好指向要删除的节点，将游标回退到前一个节点
+            if (pagemap->vma_cursor == region) {
+                pagemap->vma_cursor = region->prev;
+            }
+
             if (region->rb_root) {
                 rb_erase(region->rb_root, &region->rb_node);
                 region->rb_root = nullptr;
@@ -128,6 +134,7 @@ namespace VMM{
             const uint64_t lo   = pagemap->vma_head->start;
             const uint64_t hi   = is_user_address(0) ? 0xFFFF800000000000ULL : USER_SPACE_END_5LVL;
 
+            // 1. Hint 优先路径
             if (hint >= lo && hint + need <= hi) {
                 vma_region_t *prev_r = vma_tree_find_le(&pagemap->vma_tree, hint);
                 vma_region_t *next_r = vma_tree_find_gt(&pagemap->vma_tree, hint);
@@ -145,55 +152,66 @@ namespace VMM{
                 }
             }
 
+            // 2. Next-Fit 搜索路径
             vma_region_t *best_after = nullptr;
             uint64_t      best_addr  = 0;
-            uint64_t      best_gap   = UINT64_MAX;
+            bool          found      = false; // 修复：引入 found 标志位消除地址 0 的误判
+            
+            rb_node_t *start_node = (pagemap->vma_cursor && pagemap->vma_cursor != pagemap->vma_head) 
+                                    ? &pagemap->vma_cursor->rb_node 
+                                    : rb_first(pagemap->vma_tree.node);
 
-            rb_node_t *prev = nullptr;
-            rb_node_t *cur  = rb_first(pagemap->vma_tree.node);
-
-            while (cur) {
-                vma_region_t *cur_r  = container_of(cur,  vma_region_t, rb_node);
-                vma_region_t *prev_r = prev ? container_of(prev, vma_region_t, rb_node) : nullptr;
-
-                uint64_t prev_end  = prev_r ? (prev_r->start + prev_r->page_count * PAGE_SIZE) : lo;
-                uint64_t cur_start = cur_r->start;
-                uint64_t gap       = cur_start - prev_end;
-
-                if (gap >= need && gap < best_gap) {
-                    best_after = prev_r;
-                    best_addr  = prev_end;
-                    best_gap   = gap;
-                }
-
-                prev = cur;
-                cur  = rb_next(cur);
-            }
-
-            if (prev) {
-                vma_region_t *prev_r   = container_of(prev, vma_region_t, rb_node);
-                uint64_t      prev_end = prev_r->start + prev_r->page_count * PAGE_SIZE;
-                uint64_t      gap      = hi - prev_end;
-                if (gap >= need && gap < best_gap) {
-                    best_after = prev_r;
-                    best_addr  = prev_end;
-                    best_gap   = gap;
-                }
-            } else {
+            if (!start_node) {
                 if (hi - lo >= need) {
                     best_addr = lo;
-                    best_gap  = hi - lo;
+                    found = true;
+                }
+            } else {
+                rb_node_t *cur_node = start_node;
+                bool is_first_iteration = true;
+                
+                while (cur_node && (is_first_iteration || cur_node != start_node)) {
+                    is_first_iteration = false;
+                    vma_region_t *cur_r = container_of(cur_node, vma_region_t, rb_node);
+                    rb_node_t *next_node = rb_next(cur_node);
+                    
+                    uint64_t prev_end = cur_r->start + cur_r->page_count * PAGE_SIZE;
+                    uint64_t cur_start = next_node ? container_of(next_node, vma_region_t, rb_node)->start : hi;
+                    
+                    if (cur_start - prev_end >= need) {
+                        best_after = cur_r;
+                        best_addr  = prev_end;
+                        found = true;
+                        break;
+                    }
+                    
+                    if (next_node) {
+                        cur_node = next_node;
+                    } else {
+                        cur_node = rb_first(pagemap->vma_tree.node);
+                        if (cur_node) {
+                            vma_region_t *first_r = container_of(cur_node, vma_region_t, rb_node);
+                            if (first_r->start - lo >= need) {
+                                best_after = nullptr; 
+                                best_addr  = lo;
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 
-            if (best_gap == UINT64_MAX)
-                return 0;
+            // 修复：使用 found 判断是否成功找到空洞
+            if (!found) {
+                return 0; 
+            }
 
             vma_region_t *after = best_after ? best_after : pagemap->vma_head;
             vma_region_t *r = InsertRegion(after, best_addr, page_count, flags);
             r->rb_root = &pagemap->vma_tree;
             rb_insert(&pagemap->vma_tree, &r->rb_node, vma_rb_cmp);
-            pagemap->vma_cursor = r;
+            pagemap->vma_cursor = r; 
             return best_addr;
         }
 

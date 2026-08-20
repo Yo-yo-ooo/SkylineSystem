@@ -1,6 +1,5 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-// usb/hid.cpp
 #include <drivers/usb/hid.h>
 #include <drivers/usb/xhci.h>
 #include <klib/kio.h>
@@ -46,22 +45,23 @@ void UnregisterMouse(MouseCallback cb) {
 
 static void interruptInCallback(uint8_t* data, uint32_t len, void* ctx) {
     Device* dev = (Device*)ctx;
-    Interface* ifce = (Interface*)dev->driverCtx;
+    // 检查设备是否正在销毁
+    if (!dev->driverCtx) { kfree(data); return; }
     
-    // 处理带 Report ID 的情况
+    Interface* ifce = (Interface*)dev->driverCtx;
     uint8_t* reportData = data;
     if (len > sizeof(HIDReport) && data[0] != 0) {
-        reportData = data + 1; // 偏移掉 Report ID
+        reportData = data + 1;
         len--;
     }
 
     spinlock_lock(&g_cbLock);
-    if (ifce->desc.bInterfaceProtocol == 1) { // Keyboard
+    if (ifce->desc.bInterfaceProtocol == 1) {
         if (len >= sizeof(HIDReport)) {
             HIDReport* r = (HIDReport*)reportData;
             for (uint8_t i = 0; i < g_kbCbCount; i++) g_kbCallbacks[i](*r);
         }
-    } else if (ifce->desc.bInterfaceProtocol == 2) { // Mouse
+    } else if (ifce->desc.bInterfaceProtocol == 2) {
         if (len >= sizeof(MouseReport)) {
             MouseReport* r = (MouseReport*)reportData;
             for (uint8_t i = 0; i < g_msCbCount; i++) g_msCallbacks[i](*r);
@@ -81,13 +81,9 @@ static void interruptInCallback(uint8_t* data, uint32_t len, void* ctx) {
 void Init(Device* dev, Interface* ifce) {
     dev->driverCtx = ifce;
     if (ifce->desc.bInterfaceSubClass == 0x01) {
-        if (!ControlTransfer(dev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, HID_SET_PROTOCOL, 0, ifce->desc.bInterfaceNumber, nullptr, 0)) {
-            kprintf("[HID] SET_PROTOCOL failed on slot %u\n", dev->slotID);
-        }
+        ControlTransfer(dev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, HID_SET_PROTOCOL, 0, ifce->desc.bInterfaceNumber, nullptr, 0);
     }
-    if (!ControlTransfer(dev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, HID_SET_IDLE, 0, ifce->desc.bInterfaceNumber, nullptr, 0)) {
-        kprintf("[HID] SET_IDLE failed on slot %u\n", dev->slotID);
-    }
+    ControlTransfer(dev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, HID_SET_IDLE, 0, ifce->desc.bInterfaceNumber, nullptr, 0);
 
     for (uint8_t i = 0; i < ifce->numEndpoints; i++) {
         Endpoint& e = ifce->endpoints[i];
@@ -97,6 +93,11 @@ void Init(Device* dev, Interface* ifce) {
             break;
         }
     }
+}
+
+void Deinit(Device* dev) {
+    // 标记销毁，回调触发时会自动释放 buffer 并停止重投递
+    dev->driverCtx = nullptr; 
 }
 
 } // namespace USB::HID

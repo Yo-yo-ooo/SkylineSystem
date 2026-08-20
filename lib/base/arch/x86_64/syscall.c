@@ -32,4 +32,9 @@ uint64_t sys_fclose(int32_t fd)
 uint64_t sys_fsize(int32_t fd)
 {return syscall(SYSCALL_FSIZE,fd,0,0,0,0,0);}
 void sys_exit(uint64_t status)
-{(void)status;syscall(SYSCALL_FSIZE,0,0,0,0,0,0);}
+{(void)status;syscall(SYSCALL_EXIT,0,0,0,0,0,0);}
+uint64_t sys_pmmap(
+    uint64_t pid, uint64_t mode,
+    uint64_t proc_addr, uint64_t tproc_addr, uint64_t flag, uint64_t length
+) {return syscall(SYSCALL_PMMAP,pid,mode,proc_addr,tproc_addr,flag,length);}
+uint64_t sched_yield(){return syscall(SYSCALL_YIELD,0,0,0,0,0,0);}

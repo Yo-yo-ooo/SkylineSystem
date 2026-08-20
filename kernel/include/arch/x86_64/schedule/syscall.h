@@ -92,8 +92,9 @@ uint64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 uint64_t sys_fopen(uint64_t path, uint64_t flags, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
-uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
-    uint64_t EXECVE_ARG,uint64_t ign_1,uint64_t ign_2);
+uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
+    GENERATE_IGN3());
+uint64_t sys_launch(uint64_t pid,GENERATE_IGN5());
 uint64_t sys_getpid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
     uint64_t ign_3,uint64_t ign_4,uint64_t ign_5);
 uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t mode, \

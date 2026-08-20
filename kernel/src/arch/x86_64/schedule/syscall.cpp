@@ -61,16 +61,21 @@ void syscall_init() {
     syscall_lists[SYSCALL_FLSEEK] = sys_flseek;
     syscall_lists[SYSCALL_FSIZE] = sys_fsize;
     
-    syscall_lists[7] = sys_gettid;
-    syscall_lists[8] = sys_getpid;
-    syscall_lists[9] = sys_exit;
-    syscall_lists[12] = sys_munmap;
-    syscall_lists[13] = sys_mmap;
-    syscall_lists[14] = sched_yield;
+    syscall_lists[SYSCALL_GETTID] = sys_gettid;
+    syscall_lists[SYSCALL_GETPID] = sys_getpid;
+    syscall_lists[SYSCALL_EXIT] = sys_exit;
+    syscall_lists[SYSCALL_PMMAP] = sys_pmmap;
+    syscall_lists[SYSCALL_YIELD] = sched_yield;
+    syscall_lists[SYSCALL_LOAD] = sys_load;
+    syscall_lists[SYSCALL_LAUNCH] = sys_launch;
+
+    syscall_lists[SYSCALL_MMAP] = sys_mmap;
+    syscall_lists[SYSCALL_MUNMAP] = sys_munmap;
+    
     syscall_lists[18] = sys_arch_prctl;
     syscall_lists[20] = sys_getrandom;
     syscall_lists[21] = sys_dev_mmap;
-    syscall_lists[23] = sys_pmmap;
+    
     syscall_lists[24] = sys_dbgsout;
     syscall_lists[25] = sys_dev_getinfo;
     syscall_lists[26] = sys_dev_ioctl;

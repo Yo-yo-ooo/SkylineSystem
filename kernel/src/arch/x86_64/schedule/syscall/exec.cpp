@@ -97,15 +97,18 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
 extern uint64_t sched_tid;
 extern uint32_t sched_prio_to_weight[16];
 
-uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
-    uint64_t EXECVE_ARG, uint64_t ign_1, uint64_t ign_2) {
+art_tree *NOT_RUNQ_P;
+spinlock_t NOT_RUNQ_LOCK = 0;
+
+uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
+    GENERATE_IGN3()) {
     
-    IGNORE_VALUE(ign_1); IGNORE_VALUE(ign_2);
+    IGNV_3();
 
     if(!is_user_address(u_pathname) || !is_user_address(u_argv)
-    || !is_user_address(u_envp) || !is_user_address(EXECVE_ARG))
+    || !is_user_address(u_envp) /* || !is_user_address(EXECVE_ARG) */)
         return -EFAULT;
-    if((Schedule::this_proc()->IsTrusted == false) && EXECVE_ARG)
+    if((Schedule::this_proc()->IsTrusted == false)/*  && EXECVE_ARG */)
         return -EPERM;
     
     //User-Mode Trusted Process Mapping Control, UTPMC
@@ -326,9 +329,20 @@ uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     kfree(buffer);
     execve_cleanup(argc, envc, argv, envp);
 
+    spinlock_lock(&NOT_RUNQ_LOCK);
+    art_insert(NOT_RUNQ_P, (const uint8_t*)&parent->id, 8, parent);
+    spinlock_unlock(&NOT_RUNQ_LOCK);
+
+    return parent->id;
+}
+
+uint64_t sys_launch(uint64_t pid,GENERATE_IGN5()){
+    IGNV_5();
+    cpu_t *cpu = this_cpu();
+    proc_t* proc = (proc_t*)art_search(NOT_RUNQ_P,(const uint8_t*)&pid,8);
+    thread_t *thread = proc->threads;
     thread->state = THREAD_RUNNING;
-    Schedule::Internal::ProcessAddThread(parent, thread);
-    
+    Schedule::Internal::ProcessAddThread(proc, thread);
     uint64_t rflags;
     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
     spinlock_lock(&cpu->sched_lock);
@@ -336,6 +350,4 @@ uint64_t sys_execve(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     Schedule::Internal::InsertToQueue(cpu, thread);
     spinlock_unlock(&cpu->sched_lock);
     asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
-
-    return parent->id;
 }

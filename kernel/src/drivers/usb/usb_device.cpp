@@ -4,7 +4,6 @@
 #include <drivers/usb/xhci.h>
 #include <klib/algorithm/rbtree.h>
 #include <klib/kio.h>
-#include <klib/klib.h>
 #include <drivers/usb/hid.h>
 #include <drivers/usb/msc.h>
 #include <drivers/usb/uac.h>
@@ -34,7 +33,6 @@ Device* CreateDevice(uint8_t slot, uint8_t port, USB_SPEED speed, DeviceDescript
     _memset(d, 0, sizeof(*d));
     d->slotID = slot; d->port = port; d->speed = speed; d->desc = dd;
     
-    // 完整拷贝配置描述符
     d->cfgBuf = kmalloc(cfgLen);
     __memcpy(d->cfgBuf, cfgBuf, cfgLen);
     d->cfgLen = cfgLen;
@@ -86,10 +84,9 @@ void DestroyDevice(uint8_t slotID) {
         USBDeviceEntry* entry = container_of(found, USBDeviceEntry, node);
         Device* dev = entry->dev;
         
-        // 调用驱动的卸载钩子
-        if (dev->driverCtx) {
-            // 在实际实现中，这里应根据接口类调用对应的 Destroy 函数
-            // 此处简单释放框架资源
+        // 调用类驱动注册的卸载钩子，防止 UAF 和资源泄漏
+        if (dev->onRemove) {
+            dev->onRemove(dev);
         }
         
         rb_erase(&g_usbDevices, &entry->node);
@@ -110,16 +107,28 @@ void RouteDeviceToClassDriver(Device* dev) {
             if (e.type != EP_TYPE::CONTROL_IN && e.type != EP_TYPE::CONTROL_OUT) {
                 if (!XHCI::ConfigureEndpoint(dev->slotID, e.address, e.type, e.maxPacketSize, e.interval)) {
                     kprintf("[USB] Failed to configure EP 0x%02x for slot %u\n", e.address, dev->slotID);
-                    continue; // 失败回滚逻辑可在此扩展
+                    continue;
                 }
                 e.configured = true;
             }
         }
         switch (ifce.desc.bInterfaceClass) {
-            case CC_HID: HID::Init(dev, &ifce); break;
-            case CC_MSC: MSC::Init(dev, &ifce); break;
-            case CC_AUDIO: UAC::Init(dev, &ifce); break;
-            case CC_Video: UVC::Init(dev, &ifce); break;
+            case CC_HID: 
+                HID::Init(dev, &ifce); 
+                dev->onRemove = [](Device* d){ HID::Deinit(d); };
+                break;
+            case CC_MSC: 
+                MSC::Init(dev, &ifce); 
+                dev->onRemove = [](Device* d){ MSC::Deinit(d); };
+                break;
+            case CC_AUDIO: 
+                UAC::Init(dev, &ifce); 
+                dev->onRemove = [](Device* d){ UAC::Deinit(d); };
+                break;
+            case CC_Video: 
+                UVC::Init(dev, &ifce); 
+                dev->onRemove = [](Device* d){ UVC::Deinit(d); };
+                break;
         }
     }
 }

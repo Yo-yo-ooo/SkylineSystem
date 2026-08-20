@@ -6,31 +6,26 @@
 namespace USB::UAC {
 
 struct AudioStreamingInterface {
-    uint8_t altSetting;
-    uint16_t formatTag;
-    uint8_t numChannels;
-    uint8_t bitsPerSample;
-    uint32_t sampleRate;
-    uint8_t endpointAddr;
-    uint16_t endpointMPS;
-    uint8_t endpointInterval;
+    uint8_t altSetting; uint16_t formatTag; uint8_t numChannels;
+    uint8_t bitsPerSample; uint32_t sampleRate;
+    uint8_t endpointAddr; uint16_t endpointMPS; uint8_t endpointInterval;
 };
-
+using AudioSampleCallback = void(*)(int16_t* samples, uint32_t numFrames, uint8_t numChannels, void* ctx);
 struct Device {
-    USB::Device* usbDev;
-    Interface* streamIfce;
+    USB::Device* usbDev; Interface* streamIfce;
     AudioStreamingInterface streams[8];
-    uint8_t numStreams;
-    uint8_t activeStream;
-    void* frameBuf; // 设备独立缓冲区
+    uint8_t numStreams; uint8_t activeStream;
+    void* frameBuf;
     uint32_t frameCapacity;
+    AudioSampleCallback callback; // 将回调改为设备私有
 };
 
 void Init(USB::Device* dev, Interface* ifce);
+void Deinit(USB::Device* dev); // 新增
 bool StartStream(Device* uac, uint8_t altSetting);
 bool StopStream (Device* uac);
 
-using AudioSampleCallback = void(*)(int16_t* samples, uint32_t numFrames, uint8_t numChannels, void* ctx);
-void RegisterAudioCallback(AudioSampleCallback cb);
+
+void RegisterAudioCallback(Device* uac, AudioSampleCallback cb); // 修改签名
 
 } // namespace USB::UAC

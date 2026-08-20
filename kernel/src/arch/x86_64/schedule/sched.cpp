@@ -25,6 +25,7 @@
 #define SCHED_HUNGER_THRESHOLD (1024ULL * 1024ULL * 5)
 
 extern art_tree *pid2proc_tree;
+extern art_tree *NOT_RUNQ_P;
 extern spinlock_t PID2PROC_TREE_LOCK;
 extern spinlock_t PROC_LIST_LOCK;
 extern uint64_t sched_pid;
@@ -618,6 +619,10 @@ namespace Schedule {
         if (!pid2proc_tree) {
             pid2proc_tree = (art_tree*)kmalloc(sizeof(art_tree));
             if (art_tree_init(pid2proc_tree) != 0) Panic("ART TREE INIT FAILED!");
+        }
+        if(!NOT_RUNQ_P){
+            NOT_RUNQ_P = (art_tree*)kmalloc(sizeof(art_tree));
+            if (art_tree_init(NOT_RUNQ_P) != 0) Panic("ART TREE INIT FAILED!");
         }
         idt_install_irq(SCHED_VEC, (void*)Schedule::Internal::Preempt);
         idt_install_irq(SCHED_VEC + 1, (void*)Schedule::Internal::Switch);

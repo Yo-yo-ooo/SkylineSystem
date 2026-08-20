@@ -75,7 +75,7 @@ enum CC : uint8_t {
 struct TRBRingState {
     volatile TRB* base;
     volatile TRB* enqueue;
-    volatile TRB* dequeue; // 用于追踪消费位置防止满溢
+    volatile TRB* dequeue; 
     uint8_t cycle;
     spinlock_t lock;
 };
@@ -92,7 +92,8 @@ void InitXHCIFromPCI(PCI::PCIHeader0* hdr);
 void PollEventRing();
 void HandlePortChange(uint8_t port);
 bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed);
-void DestroyDevice(uint8_t slotID); // 新增：销毁设备
+void DestroyDevice(uint8_t slotID);
+void ResetEndpoint(uint8_t slotID, uint8_t epAddr); // 新增：复位端点
 
 bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, uint16_t len, bool inDir);
 bool SubmitNormalTransfer(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t len, bool inDir, bool isoch);

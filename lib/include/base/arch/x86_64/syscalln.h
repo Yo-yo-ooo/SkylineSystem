@@ -11,12 +11,18 @@
 #define SYSCALL_FLSEEK          4
 #define SYSCALL_FSIZE           5
 
-#define SYSCALL_MMAP            13
-#define SYSCALL_MUNMAP          12
+#define SYSCALL_GETTID          7
+#define SYSCALL_GETPID          8
+#define SYSCALL_EXIT            9
+#define SYSCALL_PMMAP           10
+#define SYSCALL_YIELD           11
+#define SYSCALL_LOAD            12
+#define SYSCALL_LAUNCH          13
+
+#define SYSCALL_MMAP            14
+#define SYSCALL_MUNMAP          15
 
 #define SYSCALL_DEV_MMAP        21
 #define SYSCALL_DEV_IOCTL       26
-
-#define SYSCALL_EXIT            9
 
 #endif

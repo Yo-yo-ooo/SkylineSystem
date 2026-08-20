@@ -56,7 +56,7 @@ uint64_t sys_kill(uint64_t pid,uint64_t sig, uint64_t ign_0, \
 
     asm volatile("cli");    // 必须关中断，保证切换过程绝对原子
     LAPIC::StopTimer();
-    proc_t *proc = (proc_t*)art_search(pid2proc_tree,pid,8);
+    proc_t *proc = (proc_t*)art_search(pid2proc_tree,(const uint8_t*)&pid,8);
     Schedule::PROC_KILL(proc);
 
     return 0;
@@ -82,7 +82,7 @@ uint64_t sys_pmmap(
 
     // 1. 查找目标进程
     spinlock_lock(&PID2PROC_TREE_LOCK);
-    proc_t *proc = (proc_t*)art_search(pid2proc_tree, pid, 8);
+    proc_t *proc = (proc_t*)art_search(pid2proc_tree, (const uint8_t*)&pid, 8);
     spinlock_unlock(&PID2PROC_TREE_LOCK);
     if (!proc) return -ESRCH;
 
@@ -140,7 +140,7 @@ uint64_t sys_pmmap(
             
             // 移除刚才预留的 VMA 区域
             vma_region_t *r = VMM::VMA::FindRegion(proc->pagemap, tproc_addr);
-            if (r) VMM::VMA::RemoveRegion(r);
+            if (r) VMM::VMA::RemoveRegion(proc->pagemap,r);
 
             spinlock_unlock(&proc->pagemap->pt_lock);
             spinlock_unlock(&proc->pagemap->vma_lock);

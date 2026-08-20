@@ -41,6 +41,11 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags);
 uint64_t sys_fclose(int32_t fd);
 uint64_t sys_fsize(int32_t fd);
 void sys_exit(uint64_t status);
+uint64_t sys_pmmap(
+    uint64_t pid, uint64_t mode,
+    uint64_t proc_addr, uint64_t tproc_addr, uint64_t flag, uint64_t length
+);
+uint64_t sched_yield();
 
 #ifdef __cplusplus
 }

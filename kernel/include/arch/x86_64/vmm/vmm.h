@@ -143,7 +143,7 @@ namespace VMM{
         void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count);
         vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags);
         vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags);
-        void RemoveRegion(vma_region_t *region);
+        void RemoveRegion(pagemap_t *pagemap,vma_region_t *region);
         bool IsRangeFree(pagemap_t *pagemap, uint64_t start, uint64_t page_count);
         
         // 新增：优化后的查找和分配接口

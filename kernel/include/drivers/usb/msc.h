@@ -20,11 +20,12 @@ struct Device {
     uint8_t bulkInEp; uint8_t bulkOutEp;
     uint16_t bulkInMPS; uint16_t bulkOutMPS;
     uint32_t maxLUN; uint64_t numBlocks;
-    uint32_t blockSize; // 动态块大小
-    volatile uint32_t tagCounter; // 动态 Tag
+    uint32_t blockSize;
+    volatile uint32_t tagCounter;
 };
 
 void Init(USB::Device* dev, Interface* ifce);
+void Deinit(USB::Device* dev); // 新增
 bool ReadBlock (Device* msc, uint32_t lba, void* buf);
 bool WriteBlock(Device* msc, uint32_t lba, const void* buf);
 

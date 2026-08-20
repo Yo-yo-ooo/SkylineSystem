@@ -1,6 +1,5 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-// usb/uvc.cpp
 #include <drivers/usb/uvc.h>
 #include <drivers/usb/xhci.h>
 #include <klib/kio.h>
@@ -19,6 +18,8 @@ PACK(struct UVCPayloadHeader {
 
 static void isochCallback(uint8_t* data, uint32_t len, void* ctx) {
     Device* uvc = (Device*)ctx;
+    if (!uvc->usbDev) { kfree(data); return; } // 正在销毁
+
     if (data && len >= sizeof(UVCPayloadHeader)) {
         UVCPayloadHeader* hdr = (UVCPayloadHeader*)data;
         uint8_t fid = hdr->flags & 0x01;
@@ -62,10 +63,8 @@ void Init(USB::Device* dev, Interface* ifce) {
     uint8_t* p = (uint8_t*)dev->cfgBuf;
     uint8_t* end = p + dev->cfgLen;
     uint8_t targetIf = ifce->desc.bInterfaceNumber;
-
     uint8_t curFormatIndex = 0;
 
-    // 解析 VS 接口，提取格式/帧参数以及等时端点
     while (p + 2 <= end) {
         uint8_t len = p[0]; uint8_t type = p[1];
         if (len < 2 || p + len > end) break;
@@ -75,35 +74,31 @@ void Init(USB::Device* dev, Interface* ifce) {
                 ifd->bInterfaceNumber == targetIf) {
                 
                 if (ifd->bAlternateSetting == 0) {
-                    // Alt Setting 0 包含了 Format 和 Frame 描述符
                     uint8_t* ep_ptr = p + len;
                     while(ep_ptr + 2 <= end) {
                         uint8_t ep_len = ep_ptr[0]; uint8_t ep_type = ep_ptr[1];
                         if (ep_len < 2 || ep_ptr + ep_len > end) break;
                         if (ep_type == DT_INTERFACE) break;
                         
-                        if (ep_type == 0x24 && ep_len >= 3) { // CS_INTERFACE
+                        if (ep_type == 0x24 && ep_len >= 3) {
                             uint8_t subtype = ep_ptr[2];
-                            if ((subtype == 0x04 || subtype == 0x06) && ep_len >= 5) { // VS_FORMAT_UNCOMPRESSED / MJPEG
-                                curFormatIndex = ep_ptr[3]; // bFormatIndex
-                            } else if ((subtype == 0x05 || subtype == 0x07) && ep_len >= 26) { // VS_FRAME_UNCOMPRESSED / MJPEG
+                            if ((subtype == 0x04 || subtype == 0x06) && ep_len >= 5) {
+                                curFormatIndex = ep_ptr[3];
+                            } else if ((subtype == 0x05 || subtype == 0x07) && ep_len >= 26) {
                                 if (uvc->numStreams < 8 && uvc->streams[0].formatIndex == 0) {
                                     uvc->streams[0].formatIndex = curFormatIndex;
-                                    uvc->streams[0].frameIndex = ep_ptr[3]; // bFrameIndex
+                                    uvc->streams[0].frameIndex = ep_ptr[3];
                                     uvc->streams[0].width = *(uint16_t*)&ep_ptr[5];
                                     uvc->streams[0].height = *(uint16_t*)&ep_ptr[7];
-                                    uvc->streams[0].frameInterval = *(uint32_t*)&ep_ptr[25]; // dwDefaultFrameInterval
+                                    uvc->streams[0].frameInterval = *(uint32_t*)&ep_ptr[25];
                                 }
                             }
                         }
                         ep_ptr += ep_len;
                     }
                 } else if (ifd->bAlternateSetting > 0 && uvc->numStreams < 8) {
-                    // Alt Setting > 0 包含具体的等时端点
                     int stream_idx = uvc->numStreams;
                     uvc->streams[stream_idx].altSetting = ifd->bAlternateSetting;
-                    
-                    // 继承 Alt 0 中解析出的格式参数
                     uvc->streams[stream_idx].formatIndex = uvc->streams[0].formatIndex;
                     uvc->streams[stream_idx].frameIndex = uvc->streams[0].frameIndex;
                     uvc->streams[stream_idx].width = uvc->streams[0].width;
@@ -118,7 +113,7 @@ void Init(USB::Device* dev, Interface* ifce) {
                         
                         if (ep_type == DT_ENDPOINT) {
                             EndpointDescriptor* epd = (EndpointDescriptor*)ep_ptr;
-                            if ((epd->bmAttributes & 0x3) == 1) { // Isochronous
+                            if ((epd->bmAttributes & 0x3) == 1) {
                                 uvc->streams[stream_idx].endpointAddr = epd->bEndpointAddress;
                                 uvc->streams[stream_idx].endpointMPS = epd->wMaxPacketSize & 0x7FF;
                                 uvc->streams[stream_idx].endpointInterval = epd->bInterval;
@@ -136,24 +131,31 @@ void Init(USB::Device* dev, Interface* ifce) {
     }
 }
 
+void Deinit(USB::Device* dev) {
+    Device* uvc = (Device*)dev->driverCtx;
+    if (uvc) {
+        StopStream(uvc);
+        uvc->usbDev = nullptr;
+        kfree(uvc);
+        dev->driverCtx = nullptr;
+    }
+}
+
 bool StartStream(Device* uvc, uint8_t altSetting) {
     int idx = -1;
     for (uint8_t i = 0; i < uvc->numStreams; i++) if (uvc->streams[i].altSetting == altSetting) { idx = i; break; }
     if (idx < 0) return false;
     uvc->activeStream = idx;
 
-    // 执行 PROBE/COMMIT 协商
     uint8_t probe[34] = {};
     probe[2] = uvc->streams[idx].formatIndex;
     probe[3] = uvc->streams[idx].frameIndex;
     *(uint32_t*)&probe[4] = uvc->streams[idx].frameInterval;
     
-    USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, 0x01, 0x0100, uvc->vsIfce->desc.bInterfaceNumber, probe, 34);
-    USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, 0x81, 0x0100, uvc->vsIfce->desc.bInterfaceNumber, probe, 34);
-    USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, 0x01, 0x0200, uvc->vsIfce->desc.bInterfaceNumber, probe, 34);
-    
-    // 切换接口设置，开启数据流
-    USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, altSetting, uvc->vsIfce->desc.bInterfaceNumber, nullptr, 0);
+    if (!USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, 0x01, 0x0100, uvc->vsIfce->desc.bInterfaceNumber, probe, 34)) return false;
+    if (!USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, 0x81, 0x0100, uvc->vsIfce->desc.bInterfaceNumber, probe, 34)) return false;
+    if (!USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_CLS | USB_REQ_RCPT_IF, 0x01, 0x0200, uvc->vsIfce->desc.bInterfaceNumber, probe, 34)) return false;
+    if (!USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, altSetting, uvc->vsIfce->desc.bInterfaceNumber, nullptr, 0)) return false;
 
     uvc->frameCapacity = uvc->streams[idx].maxPayloadSize * 64;
     uvc->frameBuf = (uint8_t*)kmalloc(uvc->frameCapacity);
@@ -167,7 +169,9 @@ bool StartStream(Device* uvc, uint8_t altSetting) {
 }
 
 bool StopStream(Device* uvc) {
-    USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, 0, uvc->vsIfce->desc.bInterfaceNumber, nullptr, 0);
+    if (uvc->activeStream < uvc->numStreams) {
+        USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, 0, uvc->vsIfce->desc.bInterfaceNumber, nullptr, 0);
+    }
     if (uvc->frameBuf) { kfree(uvc->frameBuf); uvc->frameBuf = nullptr; uvc->frameCapacity = 0; }
     return true;
 }
