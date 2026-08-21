@@ -9,6 +9,17 @@
 #include <drivers/usb/uac.h>
 #include <drivers/usb/uvc.h>
 
+static inline uint64_t usb_irq_save() {
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) :: "memory");
+    return flags;
+}
+static inline void usb_irq_restore(uint64_t flags) {
+    __asm__ volatile("pushq %0; popfq" :: "r"(flags) : "memory");
+}
+#define USB_SPIN_LOCK_IRQSAVE(lock, flags) do { flags = usb_irq_save(); spinlock_lock(lock); } while(0)
+#define USB_SPIN_UNLOCK_IRQRESTORE(lock, flags) do { spinlock_unlock(lock); usb_irq_restore(flags); } while(0)
+
 namespace USB {
 
 struct USBDeviceEntry {
@@ -68,15 +79,17 @@ Device* CreateDevice(uint8_t slot, uint8_t port, USB_SPEED speed, DeviceDescript
     rb_init_node(&entry->node);
     entry->key = slot; entry->dev = d;
     
-    spinlock_lock(&g_usbDevicesLock);
+    uint64_t flags;
+    USB_SPIN_LOCK_IRQSAVE(&g_usbDevicesLock, flags);
     rb_insert(&g_usbDevices, &entry->node, usb_dev_cmp);
-    spinlock_unlock(&g_usbDevicesLock);
+    USB_SPIN_UNLOCK_IRQRESTORE(&g_usbDevicesLock, flags);
     
     return d;
 }
 
 void DestroyDevice(uint8_t slotID) {
-    spinlock_lock(&g_usbDevicesLock);
+    uint64_t flags;
+    USB_SPIN_LOCK_IRQSAVE(&g_usbDevicesLock, flags);
     
     USBDeviceEntry key_entry; key_entry.key = slotID;
     rb_node_t* found = rb_search(&g_usbDevices, &key_entry.node, usb_dev_cmp);
@@ -84,7 +97,7 @@ void DestroyDevice(uint8_t slotID) {
         USBDeviceEntry* entry = container_of(found, USBDeviceEntry, node);
         Device* dev = entry->dev;
         
-        // 调用类驱动注册的卸载钩子，防止 UAF 和资源泄漏
+        // 调用类驱动注册的卸载钩子，仅释放内存，不触碰硬件
         if (dev->onRemove) {
             dev->onRemove(dev);
         }
@@ -96,7 +109,7 @@ void DestroyDevice(uint8_t slotID) {
         kfree(dev);
     }
     
-    spinlock_unlock(&g_usbDevicesLock);
+    USB_SPIN_UNLOCK_IRQRESTORE(&g_usbDevicesLock, flags);
 }
 
 void RouteDeviceToClassDriver(Device* dev) {

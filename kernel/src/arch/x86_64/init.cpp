@@ -118,9 +118,9 @@ void __init x86_64_init(void){
     proc_t *proc2 = Schedule::NewProcess(true);
     thread_t *desktop2 = Schedule::NewThread(proc2, 0, 1, 
         "/mp/hw.elf", 1, argv, envp);  
-    proc_t *proc3 = Schedule::NewProcess(true);
+    /*proc_t *proc3 = Schedule::NewProcess(true);
     thread_t *desktop3 = Schedule::NewThread(proc3, 0, 1, 
-        "/mp/hw2.elf", 1, argv, envp);  
+        "/mp/hw2.elf", 1, argv, envp);   */
     kinfoln("desktop PROCESS: %d",proc->id);
     asm volatile("sti");
     LAPIC::IPI(smp_bsp_cpu,SCHED_VEC + 1);

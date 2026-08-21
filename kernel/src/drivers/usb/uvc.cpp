@@ -5,6 +5,11 @@
 #include <klib/kio.h>
 #include <pdef.h>
 
+#ifdef __x86_64__
+#include <arch/x86_64/pit/pit.h>
+extern void usleep_usec(uint64_t x);
+#endif
+
 namespace USB::UVC {
 
 static FrameCallback g_frameCb = nullptr;
@@ -18,7 +23,7 @@ PACK(struct UVCPayloadHeader {
 
 static void isochCallback(uint8_t* data, uint32_t len, void* ctx) {
     Device* uvc = (Device*)ctx;
-    if (!uvc->usbDev) { kfree(data); return; } // 正在销毁
+    if (!uvc->usbDev || uvc->stopping) { return; }
 
     if (data && len >= sizeof(UVCPayloadHeader)) {
         UVCPayloadHeader* hdr = (UVCPayloadHeader*)data;
@@ -59,6 +64,7 @@ void Init(USB::Device* dev, Interface* ifce) {
     _memset(uvc, 0, sizeof(*uvc));
     uvc->usbDev = dev; uvc->vsIfce = ifce; dev->driverCtx = uvc;
     uvc->fidPrev = 0xFF;
+    uvc->stopping = true;
 
     uint8_t* p = (uint8_t*)dev->cfgBuf;
     uint8_t* end = p + dev->cfgLen;
@@ -134,8 +140,9 @@ void Init(USB::Device* dev, Interface* ifce) {
 void Deinit(USB::Device* dev) {
     Device* uvc = (Device*)dev->driverCtx;
     if (uvc) {
-        StopStream(uvc);
-        uvc->usbDev = nullptr;
+        uvc->stopping = true;
+        if (uvc->frameBuf) { kfree(uvc->frameBuf); uvc->frameBuf = nullptr; uvc->frameCapacity = 0; }
+        if (uvc->isochBuf) { kfree(uvc->isochBuf); uvc->isochBuf = nullptr; }
         kfree(uvc);
         dev->driverCtx = nullptr;
     }
@@ -145,6 +152,8 @@ bool StartStream(Device* uvc, uint8_t altSetting) {
     int idx = -1;
     for (uint8_t i = 0; i < uvc->numStreams; i++) if (uvc->streams[i].altSetting == altSetting) { idx = i; break; }
     if (idx < 0) return false;
+    
+    uvc->stopping = false;
     uvc->activeStream = idx;
 
     uint8_t probe[34] = {};
@@ -159,20 +168,36 @@ bool StartStream(Device* uvc, uint8_t altSetting) {
 
     uvc->frameCapacity = uvc->streams[idx].maxPayloadSize * 64;
     uvc->frameBuf = (uint8_t*)kmalloc(uvc->frameCapacity);
+    if (!uvc->frameBuf) {
+        USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, 0, uvc->vsIfce->desc.bInterfaceNumber, nullptr, 0);
+        return false;
+    }
+    
     uvc->frameOffset = 0; uvc->fidPrev = 0xFF;
 
     uint8_t ep = uvc->streams[idx].endpointAddr;
     uint16_t mps = uvc->streams[idx].endpointMPS;
     uint8_t* buf = (uint8_t*)kmalloc(mps);
+    if (!buf) {
+        kfree(uvc->frameBuf);
+        uvc->frameBuf = nullptr;
+        USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, 0, uvc->vsIfce->desc.bInterfaceNumber, nullptr, 0);
+        return false;
+    }
+    
+    uvc->isochBuf = buf;
     XHCI::StartAsyncIsoch(uvc->usbDev->slotID, ep, buf, mps, (ep & 0x80) != 0, isochCallback, uvc);
     return true;
 }
 
 bool StopStream(Device* uvc) {
+    uvc->stopping = true;
     if (uvc->activeStream < uvc->numStreams) {
         USB::ControlTransfer(uvc->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, 0, uvc->vsIfce->desc.bInterfaceNumber, nullptr, 0);
     }
+    usleep_usec(20000);
     if (uvc->frameBuf) { kfree(uvc->frameBuf); uvc->frameBuf = nullptr; uvc->frameCapacity = 0; }
+    if (uvc->isochBuf) { kfree(uvc->isochBuf); uvc->isochBuf = nullptr; }
     return true;
 }
 

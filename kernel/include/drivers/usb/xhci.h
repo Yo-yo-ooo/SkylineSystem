@@ -8,6 +8,10 @@
 #include <drivers/usb/usb.h>
 #include <klib/klib.h>
 
+#define usb_spin_lock_irqsave(lock, flags) do { flags = irq_save(); spinlock_lock(lock); } while(0)
+#define usb_spin_unlock_irqrestore(lock, flags) do { spinlock_unlock(lock); irq_restore(flags); } while(0)
+
+
 namespace XHCI {
 
 enum TRB_TYPE : uint8_t {
@@ -70,6 +74,7 @@ enum CC : uint8_t {
     CC_RING_UNDERRUN=14, CC_RING_OVERRUN=15, CC_VF_EVENT=16, CC_PARAM=17,
     CC_BW_OVERRUN=18, CC_CTX_STATE=19, CC_NO_PING_RESP=20, CC_EV_RING_FULL=21,
     CC_INCOMPAT_DEV=22, CC_MISSED_SRV=23, CC_CMD_RING_STOP=24, CC_XACT_ERR=25,
+    CC_STOPPED=26, // 新增：表示被主动停止的传输
 };
 
 struct TRBRingState {
@@ -93,7 +98,7 @@ void PollEventRing();
 void HandlePortChange(uint8_t port);
 bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed);
 void DestroyDevice(uint8_t slotID);
-void ResetEndpoint(uint8_t slotID, uint8_t epAddr); // 新增：复位端点
+void ResetEndpoint(uint8_t slotID, uint8_t epAddr);
 
 bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, uint16_t len, bool inDir);
 bool SubmitNormalTransfer(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t len, bool inDir, bool isoch);

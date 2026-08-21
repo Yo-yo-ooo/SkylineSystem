@@ -9,8 +9,13 @@ namespace USB::HID {
 PACK(struct HIDReport { uint8_t modifiers; uint8_t reserved; uint8_t keys[6]; });
 PACK(struct MouseReport { uint8_t buttons; int8_t x; int8_t y; int8_t wheel; });
 
+struct HIDCtx {
+    Interface* ifce;
+    uint8_t* intBuf;
+};
+
 void Init(Device* dev, Interface* ifce);
-void Deinit(Device* dev); // 新增
+void Deinit(Device* dev);
 
 using KeyboardCallback = void(*)(const HIDReport&);
 using MouseCallback     = void(*)(const MouseReport&);

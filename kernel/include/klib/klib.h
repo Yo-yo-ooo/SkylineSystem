@@ -85,61 +85,85 @@ uint64_t kld_64 (const uint8_t* ptr);
 void qsort(void *base, size_t num, size_t width, int32_t (*sort)(const void *e1, const void *e2));
 
 
-namespace Interrupt{
+namespace Interrupt {
     // 返回 1 表示中断开启，0 表示中断关闭
     static inline int32_t State() {
     #ifdef __x86_64__
-        u64 rflags; 
-        __asm__ volatile (
-            "pushfq     \n\t" 
-            "popq %0    \n\t" 
-            : "=r"(rflags) 
-            : 
-            : "memory" 
-        ); 
-        return (rflags >> 9) & 1; 
+        uint64_t rflags;
+        __asm__ volatile ("pushfq\n\tpopq %0" : "=r"(rflags) :: "memory");
+        return (rflags >> 9) & 1;
     #elif defined(__aarch64__)
         uint64_t daif;
-        asm volatile("mrs %0, daif" : "=r"(daif));
-        // 检查第 7 位 (IRQ)，注意：DAIF 位为 1 是屏蔽，所以取反
-        return !(daif & (1 << 7));
-    #else defined(__riscv)
+        __asm__ volatile ("mrs %0, daif" : "=r"(daif));
+        return !(daif & (1u << 7));
+    #elif defined(__riscv)
         uint64_t sstatus;
-        asm volatile("csrr %0, sstatus" : "=r"(sstatus));
-        // 检查第 1 位 (SIE)
-        return (sstatus & (1 << 1)) ? 1 : 0;
+        __asm__ volatile ("csrr %0, sstatus" : "=r"(sstatus));
+        return (sstatus >> 1) & 1;
+    #else
+    #error "Interrupt: unsupported architecture"
     #endif
     }
 
-    // 屏蔽 IRQ (DAIF 中的 I 位)
     static inline void Mask() {
     #ifdef __x86_64__
-        asm volatile("cli" ::: "memory");
+        __asm__ volatile ("cli" ::: "memory");
     #elif defined(__aarch64__)
-        // #2 对应 DAIF 寄存器的 I 位 (bit 7)
-        // 使用 msr 指令直接置位
-        asm volatile("msr daifset, #2" ::: "memory");
+        // DAIFSet imm 是位选择掩码: bit0=F, bit1=I, bit2=A, bit3=D
+        __asm__ volatile ("msr daifset, #2" ::: "memory");
     #elif defined(__riscv)
-        // csrci 指令：CSR Clear Immediate (将立即数对应的位清零)
-        // 2 对应 sstatus 寄存器的 SIE 位 (bit 1)
-        asm volatile("csrci sstatus, 2" ::: "memory");
+        __asm__ volatile ("csrci sstatus, 2" ::: "memory");
     #endif
     }
 
-    // 开启 IRQ
     static inline void Unmask() {
     #ifdef __x86_64__
-        asm volatile ("sti" ::: "memory");
+        __asm__ volatile ("sti" ::: "memory");
     #elif defined(__aarch64__)
-        // 使用 msr 指令直接清除 I 位
-        asm volatile("msr daifclr, #2" ::: "memory");
+        __asm__ volatile ("msr daifclr, #2" ::: "memory");
     #elif defined(__riscv)
-        // csrsi 指令：CSR Set Immediate (将立即数对应的位设置为 1)
-        asm volatile("csrsi sstatus, 2" ::: "memory");
+        __asm__ volatile ("csrsi sstatus, 2" ::: "memory");
     #endif
-        
+    }
+
+    // --- 嵌套安全的 save/restore ---
+    // 保存当前状态并屏蔽中断；返回 true = 进入前中断是开的。
+    static inline bool SaveMask() {
+        bool was = State();
+        Mask();
+        return was;
+    }
+    // 仅当进入前是开的才恢复（之前本来就关则保持关）。
+    static inline void Restore(bool was) {
+        if (was) Unmask();
     }
 }
+
+// 只关中断，不拿锁（保护 per-CPU 数据）
+struct IrqSave {
+    bool prev;
+    IrqSave()  { prev = Interrupt::SaveMask(); }
+    ~IrqSave() { Interrupt::Restore(prev); }
+    IrqSave(const IrqSave&)            = delete;
+    IrqSave& operator=(const IrqSave&) = delete;
+};
+
+// 关中断 + 拿全局锁（顺序: 先关中断再拿锁，
+// 防止拿锁后被本核中断、中断处理程序又来抢同一把锁）
+struct IrqSpinGuard {
+    spinlock_t* l;
+    bool prev;
+    explicit IrqSpinGuard(spinlock_t* lock) : l(lock) {
+        prev = Interrupt::SaveMask();
+        spinlock_lock(l);
+    }
+    ~IrqSpinGuard() {
+        spinlock_unlock(l);
+        Interrupt::Restore(prev);
+    }
+    IrqSpinGuard(const IrqSpinGuard&)            = delete;
+    IrqSpinGuard& operator=(const IrqSpinGuard&) = delete;
+};
 
 
 extern "C" {

@@ -6,20 +6,6 @@
 
 namespace PMM{
 
-    extern volatile uint8_t *bitmap;
-    // 升级为三级位图：L2 (2MB块), L3 (2GB块)
-    extern volatile uint64_t *bitmap_l2;
-    extern volatile uint64_t *bitmap_l3;
-
-    extern volatile uint64_t bitmap_size;
-    // 同步更新大小变量
-    extern volatile uint64_t bitmap_l2_size;
-    extern volatile uint64_t bitmap_l3_size;
-    extern volatile uint64_t bitmap_last_free;
-
-    extern volatile uint64_t pmm_bitmap_start;
-    extern volatile uint64_t pmm_bitmap_size;
-    extern volatile uint64_t pmm_bitmap_pages;
 
     void bitmap_clear_(uint64_t bit);
     void bitmap_set_(uint64_t bit);

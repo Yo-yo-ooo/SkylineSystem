@@ -4,1076 +4,573 @@
 #include <limine.h>
 #include <klib/klib.h>
 
+#if defined(__x86_64__)
+  #include <arch/x86_64/smp/smp.h>
+  #define PMM_HAS_PCP 1   // per-CPU single-page cache
+#endif
+
+static_assert(PAGE_SIZE == 4096, "PMM bitmap geometry assumes 4KiB pages");
+
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_memmap_request memmap_request = {
     .id = LIMINE_MEMMAP_REQUEST_ID,
     .revision = 0
 };
 
-volatile spinlock_t pmm_lock = 0;
-volatile struct limine_memmap_response* pmm_memmap = nullptr;
-
-// --- 3-Level Bitmap Configuration ---
-// L1: 1 bit = 1 page (4KB)
-// L2: 1 bit = 512 L1 bits = 2MB
-// L3: 1 bit = 1024 L2 bits = 2GB
-#define L1_BITS_PER_L2_BIT 512
-#define L2_BITS_PER_L3_BIT 1024
-
-#ifdef __x86_64__
-#include <arch/x86_64/smp/smp.h>
+// NOTE: `volatile` removed everywhere. Cross-core visibility is provided by
+// the pmm_lock acquire/release barriers; volatile only defeated optimization.
+spinlock_t pmm_lock = 0;
+struct limine_memmap_response* pmm_memmap = nullptr;
 
 namespace PMM {
-    volatile uint8_t *bitmap = nullptr;
-    volatile uint64_t *bitmap_l2 = nullptr;
-    volatile uint64_t *bitmap_l3 = nullptr;
-    // --- Delayed init tracker: 1 bit per L2 (2MB) block. 0 = L1 region not yet populated. ---
-    volatile uint8_t *init_bitmap = nullptr;
-    volatile uint64_t init_bitmap_size = 0;
 
-    volatile uint64_t bitmap_size = 0;
-    volatile uint64_t bitmap_l2_size = 0;
-    volatile uint64_t bitmap_l3_size = 0;
-    volatile uint64_t bitmap_last_free = 1;
+// ---------------------------------------------------------------------------
+// 3-level bitmap geometry
+//   L1: 1 bit = 1 page (4KiB)   L2: 1 bit = 512 L1 bits (2MiB)
+//   L3: 1 bit = 1024 L2 bits (2GiB)
+// ---------------------------------------------------------------------------
+static constexpr uint64_t L2_PAGES    = 512;                   // pages / L2 block
+static constexpr uint64_t L2_PER_L3   = 1024;                  // L2 blocks / L3 block
+static constexpr uint64_t L3_PAGES    = L2_PAGES * L2_PER_L3;  // pages / L3 block
+static constexpr uint64_t L2_L1_WORDS = L2_PAGES / 64;         // 8
+static constexpr uint64_t L3_L2_WORDS = L2_PER_L3 / 64;        // 16
+static constexpr uint64_t L2_SIZE     = L2_PAGES * PAGE_SIZE;  // 2MiB
+static constexpr uint64_t NO_BIT      = ~0ULL;
 
-    volatile uint64_t pmm_bitmap_start = 0;
-    volatile uint64_t pmm_bitmap_size = 0;
-    volatile uint64_t pmm_bitmap_pages = 0;
+// All state below is only touched while holding pmm_lock (Init is single-threaded).
+static uint64_t* l1_map;    // per-page occupancy, lazily populated per 2MiB block
+static uint64_t* l2_map;    // L2 block full
+static uint64_t* l3_map;    // L3 block full
+static uint64_t* init_map;  // per-L2-block: L1 population done?
 
-    // ===================================================================
-    // Delayed L1 initialization + lazy occupancy marking
-    // Populates 512 L1 bits of a single 2MB block on first access by
-    // consulting the memmap. Idempotent and race-free under pmm_lock.
-    // ===================================================================
-    static inline void ensure_l2_init(uint64_t l2_bit) {
-        if (bitmap_get((void*)PMM::init_bitmap, l2_bit)) return;
+static uint64_t l1_map_size, l2_map_size, l3_map_size, init_map_size; // bytes
+static uint64_t total_l2_bits, total_l3_bits;
+static uint64_t bitmap_last_free = 1;
 
-        uint64_t l1_start = l2_bit * L1_BITS_PER_L2_BIT;
-        uint64_t l1_end   = l1_start + L1_BITS_PER_L2_BIT;
-        if (l1_end > pmm_bitmap_pages) l1_end = pmm_bitmap_pages;
+// Exported for the rest of the kernel (sync pmm.h: drop `volatile`).
+uint64_t pmm_bitmap_pages = 0;
+uint64_t pmm_bitmap_start = 0;
+uint64_t pmm_bitmap_size  = 0;
 
-        if (l1_start < pmm_bitmap_pages) {
-            // Default: every page in this 2MB block considered occupied
-            for (uint64_t i = l1_start; i < l1_end; i++) {
-                bitmap_set((void*)PMM::bitmap, i);
+// ---------------------------------------------------------------------------
+// Locking: also block interrupts on x86_64 so an interrupt handler that
+// allocates cannot deadlock against a lock holder on this CPU.
+// Assumes Interrupt::Mask/Unmask are nestable; otherwise use irqsave-style.
+// ---------------------------------------------------------------------------
+static inline void pmm_lock_acquire() {
+#ifdef PMM_HAS_PCP
+    Interrupt::Mask();
+#endif
+    spinlock_lock(&pmm_lock);
+}
+static inline void pmm_lock_release() {
+    spinlock_unlock(&pmm_lock);
+#ifdef PMM_HAS_PCP
+    Interrupt::Unmask();
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Word-level bitmap primitives
+// ---------------------------------------------------------------------------
+static inline bool bit_test(const uint64_t* map, uint64_t i) {
+    return (map[i >> 6] >> (i & 63)) & 1ULL;
+}
+static inline void bit_set(uint64_t* map, uint64_t i) {
+    map[i >> 6] |= 1ULL << (i & 63);
+}
+static inline void bit_clear(uint64_t* map, uint64_t i) {
+    map[i >> 6] &= ~(1ULL << (i & 63));
+}
+
+// Clear / set bit range [first, last) in one pass over the covered words.
+static inline void bits_clear(uint64_t* map, uint64_t first, uint64_t last) {
+    if (first >= last) return;
+    uint64_t wf = first >> 6, wl = (last - 1) >> 6;
+    if (wf == wl) {
+        uint64_t m = (~0ULL << (first & 63)) & (~0ULL >> (63 - ((last - 1) & 63)));
+        map[wf] &= ~m;
+        return;
+    }
+    map[wf] &= ~0ULL << (first & 63);
+    for (uint64_t w = wf + 1; w < wl; w++) map[w] = 0;
+    map[wl] &= ~(~0ULL >> (63 - ((last - 1) & 63)));
+}
+static inline void bits_set(uint64_t* map, uint64_t first, uint64_t last) {
+    if (first >= last) return;
+    uint64_t wf = first >> 6, wl = (last - 1) >> 6;
+    if (wf == wl) {
+        uint64_t m = (~0ULL << (first & 63)) & (~0ULL >> (63 - ((last - 1) & 63)));
+        map[wf] |= m;
+        return;
+    }
+    map[wf] |= ~0ULL << (first & 63);
+    for (uint64_t w = wf + 1; w < wl; w++) map[w] = ~0ULL;
+    map[wl] |= ~0ULL >> (63 - ((last - 1) & 63));
+}
+
+// ---------------------------------------------------------------------------
+// Lazy L1 population: first touch of a 2MiB block defaults to "fully
+// occupied", then clears pages the firmware reports USABLE (word-level).
+// Idempotent. Caller holds pmm_lock (Init runs single-threaded).
+// ---------------------------------------------------------------------------
+static void ensure_l2_init(uint64_t l2_bit) {
+    if (bit_test(init_map, l2_bit)) return;
+
+    uint64_t wb = l2_bit * L2_L1_WORDS;
+    for (uint64_t i = 0; i < L2_L1_WORDS; i++) l1_map[wb + i] = ~0ULL;
+
+    uint64_t region_start = l2_bit * L2_SIZE;
+    uint64_t region_end   = region_start + L2_SIZE;
+
+    for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+        const struct limine_memmap_entry* e = pmm_memmap->entries[i];
+        if (e->type != LIMINE_MEMMAP_USABLE) continue;
+
+        uint64_t e_start = e->base, e_end = e->base + e->length;
+        if (e_end <= region_start || e_start >= region_end) continue;
+
+        uint64_t s = e_start > region_start ? e_start : region_start;
+        uint64_t t = e_end   < region_end   ? e_end   : region_end;
+        s = (s + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
+        t &= ~(uint64_t)(PAGE_SIZE - 1);
+        if (s < t) bits_clear(l1_map, s / PAGE_SIZE, t / PAGE_SIZE);
+    }
+
+    bit_set(init_map, l2_bit);
+}
+
+static inline bool l2_block_full(uint64_t l2_bit) {
+    uint64_t wb = l2_bit * L2_L1_WORDS;
+    for (uint64_t i = 0; i < L2_L1_WORDS; i++)
+        if (l1_map[wb + i] != ~0ULL) return false;
+    return true;
+}
+
+// Called after an L2 bit became 1: set the L3 bit if its block is now full.
+static inline void l2_full_propagate(uint64_t l2_bit) {
+    uint64_t l3_bit = l2_bit / L2_PER_L3;
+    uint64_t wb = l3_bit * L3_L2_WORDS;
+    for (uint64_t i = 0; i < L3_L2_WORDS; i++)
+        if (l2_map[wb + i] != ~0ULL) return;
+    bit_set(l3_map, l3_bit);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk transitions: maintain L1 + L2 + L3 together, one pass per 2MiB block.
+// Caller holds pmm_lock. Requires start + n <= pmm_bitmap_pages.
+// ---------------------------------------------------------------------------
+static void mark_allocated(uint64_t start, uint64_t n) {
+    uint64_t end = start + n;
+    uint64_t first_l2 = start / L2_PAGES;
+    uint64_t last_l2  = (end - 1) / L2_PAGES;
+
+    for (uint64_t l2 = first_l2; l2 <= last_l2; l2++) {
+        ensure_l2_init(l2);
+        uint64_t b0 = (l2 == first_l2) ? start : l2 * L2_PAGES;
+        uint64_t b1 = (l2 == last_l2)  ? end   : (l2 + 1) * L2_PAGES;
+        bits_set(l1_map, b0, b1);
+        if (l2_block_full(l2)) {          // check runs once per block, not per page
+            bit_set(l2_map, l2);
+            l2_full_propagate(l2);
+        }
+    }
+}
+
+static void mark_free(uint64_t start, uint64_t n) {
+    uint64_t end = start + n;
+    uint64_t first_l2 = start / L2_PAGES;
+    uint64_t last_l2  = (end - 1) / L2_PAGES;
+
+    for (uint64_t l2 = first_l2; l2 <= last_l2; l2++) {
+        ensure_l2_init(l2);
+        uint64_t b0 = (l2 == first_l2) ? start : l2 * L2_PAGES;
+        uint64_t b1 = (l2 == last_l2)  ? end   : (l2 + 1) * L2_PAGES;
+        bits_clear(l1_map, b0, b1);
+        bit_clear(l2_map, l2);                 // clearing an already-clear bit is fine
+        bit_clear(l3_map, l2 / L2_PER_L3);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Scanner: find n contiguous free pages in [from, to). Read-only.
+// Skips full 2GiB / 2MiB blocks via L3/L2, full words, and uses ctz to land
+// directly on the first free bit of a partially-free word.
+// ---------------------------------------------------------------------------
+static uint64_t scan_for_run(uint64_t from, uint64_t to, uint64_t n) {
+    if (n == 0 || from >= to) return NO_BIT;
+
+    uint64_t run = 0, run_start = 0;
+    uint64_t bit = from;
+    uint64_t inited_l2 = NO_BIT;
+
+    while (bit < to) {
+        if (run == 0) {
+            if ((bit & (L3_PAGES - 1)) == 0) {            // 2GiB skip
+                uint64_t l3 = bit / L3_PAGES;
+                if (l3 < total_l3_bits && bit_test(l3_map, l3)) {
+                    bit += L3_PAGES;
+                    continue;
+                }
             }
-
-            // Lazy occupancy marking: clear L1 bits for pages that the
-            // firmware reports as USABLE within this 2MB region.
-            uint64_t region_start_addr = l1_start * PAGE_SIZE;
-            uint64_t region_end_addr   = l1_end   * PAGE_SIZE;
-
-            for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-                struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-                if (entry->type != LIMINE_MEMMAP_USABLE) continue;
-
-                uint64_t entry_start = entry->base;
-                uint64_t entry_end   = entry->base + entry->length;
-                if (entry_end <= region_start_addr || entry_start >= region_end_addr) continue;
-
-                uint64_t ov_start = entry_start > region_start_addr ? entry_start : region_start_addr;
-                uint64_t ov_end   = entry_end   < region_end_addr   ? entry_end   : region_end_addr;
-
-                // Page-align the overlap window
-                ov_start = (ov_start + (PAGE_SIZE - 1)) & ~((uint64_t)PAGE_SIZE - 1);
-                ov_end   = ov_end & ~((uint64_t)PAGE_SIZE - 1);
-
-                for (uint64_t addr = ov_start; addr < ov_end; addr += PAGE_SIZE) {
-                    uint64_t bit = addr / PAGE_SIZE;
-                    if (bit < pmm_bitmap_pages) {
-                        bitmap_clear((void*)PMM::bitmap, bit);
-                    }
+            if ((bit & (L2_PAGES - 1)) == 0) {            // 2MiB skip
+                uint64_t l2 = bit / L2_PAGES;
+                if (l2 < total_l2_bits && bit_test(l2_map, l2)) {
+                    bit += L2_PAGES;
+                    continue;
                 }
             }
         }
 
-        bitmap_set((void*)PMM::init_bitmap, l2_bit);
-    }
-
-    static inline void bitmap_set_sync(uint64_t bit) {
-        uint64_t l2_bit = bit / L1_BITS_PER_L2_BIT;
-        ensure_l2_init(l2_bit);
-
-        bitmap_set((void*)PMM::bitmap, bit);
-
-        uint64_t l1_base_idx64 = (l2_bit * L1_BITS_PER_L2_BIT) / 64;
-        bool l2_full = true;
-
-        for (int i = 0; i < (L1_BITS_PER_L2_BIT / 64); i++) {
-            uint64_t idx = l1_base_idx64 + i;
-            if (idx >= (bitmap_size / 8)) { l2_full = false; break; }
-            if (((uint64_t*)PMM::bitmap)[idx] != 0xFFFFFFFFFFFFFFFF) { l2_full = false; break; }
+        uint64_t cur_l2 = bit / L2_PAGES;
+        if (cur_l2 != inited_l2) {                        // init each block once
+            ensure_l2_init(cur_l2);
+            inited_l2 = cur_l2;
         }
 
-        if (l2_full && !bitmap_get((void*)PMM::bitmap_l2, l2_bit)) {
-            bitmap_set((void*)PMM::bitmap_l2, l2_bit);
-
-            uint64_t l3_bit = l2_bit / L2_BITS_PER_L3_BIT;
-            uint64_t l2_base_idx64 = (l3_bit * L2_BITS_PER_L3_BIT) / 64;
-            bool l3_full = true;
-
-            for (int i = 0; i < (L2_BITS_PER_L3_BIT / 64); i++) {
-                uint64_t idx = l2_base_idx64 + i;
-                if (idx >= (bitmap_l2_size / 8)) { l3_full = false; break; }
-                if (((uint64_t*)PMM::bitmap_l2)[idx] != 0xFFFFFFFFFFFFFFFF) { l3_full = false; break; }
-            }
-
-            if (l3_full) {
-                bitmap_set((void*)PMM::bitmap_l3, l3_bit);
+        if ((bit & 63) == 0) {
+            uint64_t w = l1_map[bit >> 6];
+            if (run == 0) {
+                if (w == ~0ULL) { bit += 64; continue; }  // fully occupied word
+                uint64_t skip = __builtin_ctzll(~w);      // first free bit in word
+                if (skip != 0) { bit += skip; continue; }
+                // skip == 0: first bit is free, fall through to generic path
+            } else if (w == 0) {
+                uint64_t take = 64;                       // fully free word
+                if (run + take > n) take = n - run;
+                if (bit + take > to) take = to - bit;
+                run += take; bit += take;
+                if (run == n) return run_start;
+                continue;
+            } else {
+                uint64_t take = __builtin_ctzll(w);       // leading free bits
+                if (run + take > n) take = n - run;
+                if (bit + take > to) take = to - bit;
+                if (take != 0) {
+                    run += take; bit += take;
+                    if (run == n) return run_start;
+                    continue;
+                }
+                // take == 0: current bit occupied, fall through (resets run)
             }
         }
+
+        if (!bit_test(l1_map, bit)) {
+            if (run == 0) run_start = bit;
+            if (++run == n) return run_start;
+        } else {
+            run = 0;
+        }
+        bit++;
     }
+    return NO_BIT;
+}
 
-    static inline void bitmap_clear_sync(uint64_t bit) {
-        uint64_t l2_bit = bit / L1_BITS_PER_L2_BIT;
-        ensure_l2_init(l2_bit);
+// Allocate n contiguous pages. Caller holds pmm_lock.
+static void* alloc_pages_locked(uint64_t n) {
+    uint64_t hint = bitmap_last_free;
+    if (hint > pmm_bitmap_pages) hint = pmm_bitmap_pages;
 
-        bitmap_clear((void*)PMM::bitmap, bit);
+    uint64_t bit = NO_BIT;
+    if (hint < pmm_bitmap_pages)
+        bit = scan_for_run(hint, pmm_bitmap_pages, n);
+    if (bit == NO_BIT && hint > 0)
+        bit = scan_for_run(0, hint, n);                   // wrap around, no rescan
+    if (bit == NO_BIT) return nullptr;
 
-        if (bitmap_get((void*)PMM::bitmap_l2, l2_bit)) {
-            bitmap_clear((void*)PMM::bitmap_l2, l2_bit);
-            uint64_t l3_bit = l2_bit / L2_BITS_PER_L3_BIT;
-            if (bitmap_get((void*)PMM::bitmap_l3, l3_bit)) {
-                bitmap_clear((void*)PMM::bitmap_l3, l3_bit);
-            }
+    mark_allocated(bit, n);
+    bitmap_last_free = bit + n;
+    return (void*)(bit * PAGE_SIZE);
+}
+
+// ---------------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------------
+void Init() {
+    pmm_memmap = memmap_request.response;
+    if (!pmm_memmap) Panic("PMM: Limine memmap response is NULL!");
+
+    // Normalize entry lengths to page granularity (was fallback-only before).
+    for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+        struct limine_memmap_entry* e = pmm_memmap->entries[i];
+        if (e->length & (PAGE_SIZE - 1)) {
+            kwarn("PMM: memmap entry #%lu not page-aligned (length=%lu), truncating\n",
+                  (unsigned long)i, (unsigned long)e->length);
+            e->length &= ~(uint64_t)(PAGE_SIZE - 1);
         }
     }
 
-    void Init() {
-        pmm_memmap = memmap_request.response;
-        uint64_t max_phys_addr = 0;
+    uint64_t max_phys = 0;
+    for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+        struct limine_memmap_entry* e = pmm_memmap->entries[i];
+        uint64_t top = e->base + e->length;
+        if (top > max_phys) max_phys = top;
+    }
+    if (max_phys == 0) Panic("PMM: empty memory map!");
 
-        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            uint64_t top = entry->base + entry->length;
-            if (top > max_phys_addr) max_phys_addr = top;
-        }
+    pmm_bitmap_pages = (max_phys + PAGE_SIZE - 1) / PAGE_SIZE;
 
-        pmm_bitmap_pages = max_phys_addr / PAGE_SIZE;
+    uint64_t l1_bits = pmm_bitmap_pages;
+    total_l2_bits = (l1_bits + L2_PAGES - 1) / L2_PAGES;
+    total_l3_bits = (total_l2_bits + L2_PER_L3 - 1) / L2_PER_L3;
 
-        uint64_t l1_bits = pmm_bitmap_pages;
-        uint64_t l2_bits = ALIGN_UP(l1_bits, L1_BITS_PER_L2_BIT) / L1_BITS_PER_L2_BIT;
-        uint64_t l3_bits = ALIGN_UP(l2_bits, L2_BITS_PER_L3_BIT) / L2_BITS_PER_L3_BIT;
+    // Size maps by block count so that every block-level word access is
+    // in-bounds by construction (tail blocks' out-of-range bits read as 1).
+    l1_map_size   = ALIGN_UP(total_l2_bits * L2_L1_WORDS * 8, PAGE_SIZE);
+    l2_map_size   = ALIGN_UP(total_l3_bits * L3_L2_WORDS * 8, PAGE_SIZE);
+    l3_map_size   = ALIGN_UP((total_l3_bits + 63) / 64 * 8, PAGE_SIZE);
+    init_map_size = ALIGN_UP((total_l2_bits + 63) / 64 * 8, PAGE_SIZE);
 
-        bitmap_size      = ALIGN_UP(l1_bits / 8, PAGE_SIZE);
-        bitmap_l2_size   = ALIGN_UP(l2_bits / 8, PAGE_SIZE);
-        bitmap_l3_size   = ALIGN_UP(l3_bits / 8, PAGE_SIZE);
-        init_bitmap_size = ALIGN_UP(l2_bits / 8, PAGE_SIZE);
+    uint64_t total_meta = l1_map_size + l2_map_size + l3_map_size + init_map_size;
 
-        uint64_t total_meta_size = bitmap_size + bitmap_l2_size + bitmap_l3_size + init_bitmap_size;
+    // Place metadata at the *tail* of the first large-enough USABLE region:
+    // low pages stay free (DMA / 1:1 mappings) and the region start is intact.
+    bool placed = false;
+    for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+        struct limine_memmap_entry* e = pmm_memmap->entries[i];
+        if (e->type != LIMINE_MEMMAP_USABLE || e->length < total_meta) continue;
 
-        bool meta_placed = false;
-        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
+        e->length -= total_meta;
+        uint64_t meta_base = e->base + e->length;
 
-            if (entry->type == LIMINE_MEMMAP_USABLE && entry->length >= total_meta_size) {
-                PMM::bitmap      = (uint8_t*)HIGHER_HALF(entry->base);
-                PMM::bitmap_l2   = (uint64_t*)((uintptr_t)PMM::bitmap + bitmap_size);
-                PMM::bitmap_l3   = (uint64_t*)((uintptr_t)PMM::bitmap_l2 + bitmap_l2_size);
-                PMM::init_bitmap = (uint8_t*)((uintptr_t)PMM::bitmap_l3 + bitmap_l3_size);
+        l1_map   = (uint64_t*)HIGHER_HALF(meta_base);
+        l2_map   = (uint64_t*)((uintptr_t)l1_map + l1_map_size);
+        l3_map   = (uint64_t*)((uintptr_t)l2_map + l2_map_size);
+        init_map = (uint64_t*)((uintptr_t)l3_map + l3_map_size);
 
-                // L1: everything starts as occupied; lazy init clears usable pages per 2MB block
-                memset_fscpuf((void*)PMM::bitmap,      0xFF, bitmap_size);
-                memset_fscpuf((void*)PMM::bitmap_l2,   0xFF, bitmap_l2_size);
-                memset_fscpuf((void*)PMM::bitmap_l3,   0xFF, bitmap_l3_size);
-                memset_fscpuf((void*)PMM::init_bitmap, 0x00, init_bitmap_size);
+        memset_fscpuf(l1_map,   0xFF, l1_map_size);
+        memset_fscpuf(l2_map,   0xFF, l2_map_size);
+        memset_fscpuf(l3_map,   0xFF, l3_map_size);
+        memset_fscpuf(init_map, 0x00, init_map_size);
+        placed = true;
+        break;
+    }
+    if (!placed) Panic("PMM: failed to place bitmap metadata!");
 
-                entry->base   += total_meta_size;
-                entry->length -= total_meta_size;
+    // Build the L2 summary directly from the memmap (word-level range clears).
+    for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+        struct limine_memmap_entry* e = pmm_memmap->entries[i];
+        if (e->type != LIMINE_MEMMAP_USABLE || e->length == 0) continue;
+        uint64_t end = e->base + e->length;
+        if (end == 0) continue;  // base+length wrapped around
+        bits_clear(l2_map, e->base / L2_SIZE, (end - 1) / L2_SIZE + 1);
+    }
 
-                meta_placed = true;
+    // Derive L3 from L2.
+    for (uint64_t l3 = 0; l3 < total_l3_bits; l3++) {
+        uint64_t wb = l3 * L3_L2_WORDS;
+        for (uint64_t i = 0; i < L3_L2_WORDS; i++) {
+            if (l2_map[wb + i] != ~0ULL) {
+                bit_clear(l3_map, l3);
                 break;
             }
         }
-
-        if (!meta_placed) Panic("PMM: Failed to allocate metadata bitmap!");
-
-        // --- Lazy occupancy marking: compute L2 at 2MB granularity from memmap ---
-        uint64_t region_size_2mb = (uint64_t)L1_BITS_PER_L2_BIT * PAGE_SIZE;
-        uint64_t total_l2_bits   = bitmap_l2_size * 8;
-        uint64_t total_l3_bits   = bitmap_l3_size * 8;
-
-        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            if (entry->type != LIMINE_MEMMAP_USABLE) continue;
-
-            uint64_t start_addr = entry->base;
-            uint64_t end_addr   = entry->base + entry->length;
-            if (end_addr == 0) continue;
-
-            uint64_t start_l2 = start_addr / region_size_2mb;
-            uint64_t end_l2   = (end_addr - 1) / region_size_2mb;
-
-            for (uint64_t l2_bit = start_l2; l2_bit <= end_l2; l2_bit++) {
-                if (l2_bit < total_l2_bits) {
-                    bitmap_clear((void*)PMM::bitmap_l2, l2_bit);
-                }
-            }
-        }
-
-        // Compute L3 from L2: clear L3 bit if any L2 bit inside is 0 (not full)
-        for (uint64_t l3_bit = 0; l3_bit < total_l3_bits; l3_bit++) {
-            uint64_t l2_start = l3_bit * L2_BITS_PER_L3_BIT;
-            uint64_t l2_end   = l2_start + L2_BITS_PER_L3_BIT;
-            if (l2_end > total_l2_bits) l2_end = total_l2_bits;
-
-            bool all_full = true;
-            for (uint64_t b = l2_start; b < l2_end; b++) {
-                if (!bitmap_get((void*)PMM::bitmap_l2, b)) { all_full = false; break; }
-            }
-            if (!all_full) {
-                bitmap_clear((void*)PMM::bitmap_l3, l3_bit);
-            }
-        }
-
-        bitmap_set_sync(0);
-        pmm_bitmap_start = (uintptr_t)PMM::bitmap;
-        pmm_bitmap_size  = bitmap_size;
-        bitmap_last_free = 1;
     }
 
-    void* GlobalRequestSingle() {
-        uint64_t max_l1_idx64 = bitmap_size / 8;
-        uint64_t max_l2_idx64 = bitmap_l2_size / 8;
-        uint64_t max_l3_idx64 = bitmap_l3_size / 8;
+    mark_allocated(0, 1);  // physical page 0 must never be handed out (NULL)
 
-        uint64_t start_l1_idx64 = bitmap_last_free / 64;
-        uint64_t start_l2_idx64 = (bitmap_last_free / L1_BITS_PER_L2_BIT) / 64;
-        uint64_t start_l3_idx64 = ((bitmap_last_free / L1_BITS_PER_L2_BIT) / L2_BITS_PER_L3_BIT) / 64;
+    pmm_bitmap_start = (uint64_t)l1_map;
+    pmm_bitmap_size  = l1_map_size;
+    bitmap_last_free = 1;
+}
 
-        uint64_t cur_l1_start = start_l1_idx64;
-        uint64_t cur_l2_start = start_l2_idx64;
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+void* Request(uint64_t n = 1) {
+    if (n == 0 || n > pmm_bitmap_pages) return nullptr;
 
-        auto scan_l1 = [&](uint64_t l1_start, uint64_t l1_end) -> void* {
-            for (uint64_t k = l1_start; k < l1_end && k < max_l1_idx64; k++) {
-                // Lazy-init the L2 block that owns this 64-bit L1 slot
-                uint64_t first_bit = k * 64;
-                uint64_t l2_bit = first_bit / L1_BITS_PER_L2_BIT;
-                ensure_l2_init(l2_bit);
+#ifdef PMM_HAS_PCP
+    if (n == 1) {
+        cpu_t* cpu = this_cpu();
+        Interrupt::Mask();  // protect the per-CPU cache (nestable Mask assumed)
 
-                if (((uint64_t*)PMM::bitmap)[k] != 0xFFFFFFFFFFFFFFFF) {
-                    uint64_t absolute_bit = k * 64 + __builtin_ctzll(~((uint64_t*)PMM::bitmap)[k]);
-                    if (absolute_bit >= pmm_bitmap_pages) return nullptr;
-                    bitmap_set_sync(absolute_bit);
-                    bitmap_last_free = absolute_bit + 1;
-                    return (void*)(absolute_bit * PAGE_SIZE);
-                }
-            }
-            return nullptr;
-        };
-
-        auto scan_l2 = [&](uint64_t l2_start, uint64_t l2_end) -> void* {
-            for (uint64_t j = l2_start; j < l2_end && j < max_l2_idx64; j++) {
-                if (((uint64_t*)PMM::bitmap_l2)[j] != 0xFFFFFFFFFFFFFFFF) {
-                    uint64_t l2_bit = j * 64 + __builtin_ctzll(~((uint64_t*)PMM::bitmap_l2)[j]);
-                    uint64_t l1_base_idx64 = (l2_bit * L1_BITS_PER_L2_BIT) / 64;
-                    uint64_t l1_end_idx64 = l1_base_idx64 + (L1_BITS_PER_L2_BIT / 64);
-                    uint64_t l1_start = (j == l2_start) ? cur_l1_start : l1_base_idx64;
-                    void* ret = scan_l1(l1_start, l1_end_idx64);
-                    if (ret) return ret;
-                    cur_l1_start = 0;
-                }
-            }
-            return nullptr;
-        };
-
-        for (uint64_t i = start_l3_idx64; i < max_l3_idx64; i++) {
-            if (((uint64_t*)PMM::bitmap_l3)[i] != 0xFFFFFFFFFFFFFFFF) {
-                uint64_t l3_bit = i * 64 + __builtin_ctzll(~((uint64_t*)PMM::bitmap_l3)[i]);
-                uint64_t l2_base_idx64 = (l3_bit * L2_BITS_PER_L3_BIT) / 64;
-                uint64_t l2_end_idx64 = l2_base_idx64 + (L2_BITS_PER_L3_BIT / 64);
-                uint64_t l2_start = (i == start_l3_idx64) ? cur_l2_start : l2_base_idx64;
-                void* ret = scan_l2(l2_start, l2_end_idx64);
-                if (ret) return ret;
-                cur_l2_start = 0;
-                cur_l1_start = 0;
-            }
-        }
-
-        cur_l1_start = 0; cur_l2_start = 0;
-        for (uint64_t i = 0; i <= start_l3_idx64 && i < max_l3_idx64; i++) {
-            if (((uint64_t*)PMM::bitmap_l3)[i] != 0xFFFFFFFFFFFFFFFF) {
-                uint64_t l3_bit = i * 64 + __builtin_ctzll(~((uint64_t*)PMM::bitmap_l3)[i]);
-                uint64_t l2_base_idx64 = (l3_bit * L2_BITS_PER_L3_BIT) / 64;
-                uint64_t l2_end_idx64 = l2_base_idx64 + (L2_BITS_PER_L3_BIT / 64);
-                void* ret = scan_l2(l2_base_idx64, l2_end_idx64);
-                if (ret) return ret;
-            }
-        }
-        return nullptr;
-    }
-
-    void* Request(uint64_t n = 1) {
-        if (n == 0) return nullptr;
-
-        if (n == 1) {
-            Interrupt::Mask();
-            cpu_t* cpu = this_cpu();
-            if (cpu && cpu->pmm_cache_count > 0) {
-                return cpu->pmm_cache[--cpu->pmm_cache_count];
-            }
-
-            spinlock_lock(&pmm_lock);
-            void* ret_page = GlobalRequestSingle();
-
-            if (ret_page && cpu && cpu->pmm_cache_count < PMM_PCP_MAX) {
-                for (int i = 0; i < PMM_PCP_BATCH; i++) {
-                    if (cpu->pmm_cache_count >= PMM_PCP_MAX) break;
-                    void* cache_page = GlobalRequestSingle();
-                    if (!cache_page) break;
-                    cpu->pmm_cache[cpu->pmm_cache_count++] = cache_page;
-                }
-            }
-            spinlock_unlock(&pmm_lock);
+        if (cpu && cpu->pmm_cache_count > 0) {
+            void* page = cpu->pmm_cache[--cpu->pmm_cache_count];
             Interrupt::Unmask();
-            return ret_page;
+            return page;
         }
 
-        spinlock_lock(&pmm_lock);
-        uint64_t start_bit = 0, free_count = 0;
-        uint64_t current_bit = bitmap_last_free;
-        bool wrapped = false;
-
-        uint64_t l3_block_pages = L2_BITS_PER_L3_BIT * L1_BITS_PER_L2_BIT;
-        uint64_t l2_block_pages = L1_BITS_PER_L2_BIT;
-
-        while (true) {
-            if (current_bit >= pmm_bitmap_pages) {
-                if (wrapped) break;
-                current_bit = 0; wrapped = true; free_count = 0; continue;
+        pmm_lock_acquire();
+        void* page = alloc_pages_locked(1);
+        if (page && cpu) {
+            for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count < PMM_PCP_MAX; i++) {
+                void* extra = alloc_pages_locked(1);
+                if (!extra) break;
+                cpu->pmm_cache[cpu->pmm_cache_count++] = extra;
             }
-
-            uint64_t l3_bit = (current_bit / L1_BITS_PER_L2_BIT) / L2_BITS_PER_L3_BIT;
-            if (free_count == 0 && (current_bit % l3_block_pages == 0) && l3_bit < (bitmap_l3_size * 8)) {
-                if (bitmap_get((void*)PMM::bitmap_l3, l3_bit)) { current_bit += l3_block_pages; continue; }
-            }
-
-            uint64_t l2_bit = current_bit / L1_BITS_PER_L2_BIT;
-            if (free_count == 0 && (current_bit % l2_block_pages == 0) && l2_bit < (bitmap_l2_size * 8)) {
-                if (bitmap_get((void*)PMM::bitmap_l2, l2_bit)) { current_bit += l2_block_pages; continue; }
-            }
-
-            // Ensure L1 region is lazily populated before touching L1 bits
-            ensure_l2_init(l2_bit);
-
-            uint64_t idx64 = current_bit / 64;
-            if (free_count == 0 && (current_bit % 64 == 0)) {
-                if (((uint64_t*)PMM::bitmap)[idx64] == 0xFFFFFFFFFFFFFFFF) { current_bit += 64; continue; }
-            }
-
-            if (!bitmap_get((void*)PMM::bitmap, current_bit)) {
-                if (free_count == 0) start_bit = current_bit;
-                if (++free_count == n) {
-                    for (uint64_t i = start_bit; i < start_bit + n; i++) bitmap_set_sync(i);
-                    bitmap_last_free = start_bit + n;
-                    spinlock_unlock(&pmm_lock);
-                    return (void*)(start_bit * PAGE_SIZE);
-                }
-            } else {
-                free_count = 0;
-            }
-            current_bit++;
         }
-        kerror("PMM Out of contiguous memory (%lu pages)!\n", n);
-        spinlock_unlock(&pmm_lock);
-        return nullptr;
+        pmm_lock_release();
+        Interrupt::Unmask();
+        return page;
     }
+#endif
 
-    // --- 2MB Page Allocation ---
-    void* Request2MB() {
-        spinlock_lock(&pmm_lock);
-        uint64_t max_l2_idx64 = bitmap_l2_size / 8;
+    pmm_lock_acquire();
+    void* page = alloc_pages_locked(n);
+    pmm_lock_release();
 
-        for (uint64_t i = 0; i < max_l2_idx64; i++) {
-            if (((uint64_t*)PMM::bitmap_l2)[i] != 0xFFFFFFFFFFFFFFFF) {
-                uint64_t bits = ~((uint64_t*)PMM::bitmap_l2)[i];
-                while (bits) {
-                    uint64_t l2_bit = i * 64 + __builtin_ctzll(bits);
-                    uint64_t l1_start_bit = l2_bit * L1_BITS_PER_L2_BIT;
-                    uint64_t l1_end_bit = l1_start_bit + L1_BITS_PER_L2_BIT;
+    if (!page) kerror("PMM: out of contiguous physical memory (%lu pages)\n",
+                      (unsigned long)n);
+    return page;
+}
 
-                    if (l1_end_bit > pmm_bitmap_pages) {
-                        bits &= bits - 1; continue;
-                    }
+void Free(void* ptr, uint64_t n = 1) {
+    if (!ptr || n == 0) return;
 
-                    // Lazy-init this 2MB block before inspecting L1
-                    ensure_l2_init(l2_bit);
+#ifdef PMM_HAS_PCP
+    if (n == 1) {
+        cpu_t* cpu = this_cpu();
+        if (cpu) {
+            Interrupt::Mask();  // FIX: was missing, raced with interrupt handlers
 
-                    bool is_contiguous = true;
-                    uint64_t start_idx64 = l1_start_bit / 64;
-                    uint64_t end_idx64 = (l1_end_bit - 1) / 64;
-
-                    for (uint64_t j = start_idx64; j <= end_idx64; j++) {
-                        if (((uint64_t*)PMM::bitmap)[j] != 0) {
-                            is_contiguous = false;
-                            break;
-                        }
-                    }
-
-                    if (is_contiguous) {
-                        for (uint64_t j = l1_start_bit; j < l1_end_bit; j++) bitmap_set((void*)PMM::bitmap, j);
-                        bitmap_set((void*)PMM::bitmap_l2, l2_bit);
-
-                        uint64_t l3_bit = l2_bit / L2_BITS_PER_L3_BIT;
-                        uint64_t l2_base_idx64_l3 = (l3_bit * L2_BITS_PER_L3_BIT) / 64;
-                        bool l3_full = true;
-                        for (uint64_t j = l2_base_idx64_l3; j < l2_base_idx64_l3 + (L2_BITS_PER_L3_BIT / 64); j++) {
-                            if (j >= (bitmap_l2_size / 8) || ((uint64_t*)PMM::bitmap_l2)[j] != 0xFFFFFFFFFFFFFFFF) { l3_full = false; break; }
-                        }
-                        if (l3_full) bitmap_set((void*)PMM::bitmap_l3, l3_bit);
-
-                        if (l1_start_bit < bitmap_last_free) bitmap_last_free = l1_start_bit;
-                        spinlock_unlock(&pmm_lock);
-                        return (void*)(l1_start_bit * PAGE_SIZE);
-                    }
-                    bits &= bits - 1;
-                }
-            }
-        }
-        spinlock_unlock(&pmm_lock);
-        return nullptr;
-    }
-
-    // --- 2GB Page Allocation ---
-    void* Request2GB() {
-        spinlock_lock(&pmm_lock);
-        uint64_t max_l3_idx64 = bitmap_l3_size / 8;
-
-        for (uint64_t i = 0; i < max_l3_idx64; i++) {
-            if (((uint64_t*)PMM::bitmap_l3)[i] != 0xFFFFFFFFFFFFFFFF) {
-                uint64_t bits = ~((uint64_t*)PMM::bitmap_l3)[i];
-                while (bits) {
-                    uint64_t l3_bit = i * 64 + __builtin_ctzll(bits);
-                    uint64_t l2_start_bit = l3_bit * L2_BITS_PER_L3_BIT;
-                    uint64_t l2_end_bit = l2_start_bit + L2_BITS_PER_L3_BIT;
-
-                    if (l2_end_bit > (bitmap_l2_size * 8)) l2_end_bit = bitmap_l2_size * 8;
-
-                    bool is_l2_clear = true;
-                    uint64_t l2_start_idx64 = l2_start_bit / 64;
-                    uint64_t l2_end_idx64 = (l2_end_bit - 1) / 64;
-                    for (uint64_t j = l2_start_idx64; j <= l2_end_idx64; j++) {
-                        if (((uint64_t*)PMM::bitmap_l2)[j] != 0) { is_l2_clear = false; break; }
-                    }
-
-                    if (is_l2_clear) {
-                        uint64_t l1_start_bit = l2_start_bit * L1_BITS_PER_L2_BIT;
-                        uint64_t l1_end_bit = l1_start_bit + (L2_BITS_PER_L3_BIT * L1_BITS_PER_L2_BIT);
-                        if (l1_end_bit > pmm_bitmap_pages) l1_end_bit = pmm_bitmap_pages;
-
-                        // Lazy-init every L2 block in this 2GB region
-                        for (uint64_t l2b = l2_start_bit; l2b < l2_end_bit; l2b++) {
-                            ensure_l2_init(l2b);
-                        }
-
-                        bool is_l1_clear = true;
-                        uint64_t l1_start_idx64 = l1_start_bit / 64;
-                        uint64_t l1_end_idx64 = (l1_end_bit - 1) / 64;
-                        for (uint64_t j = l1_start_idx64; j <= l1_end_idx64; j++) {
-                            if (((uint64_t*)PMM::bitmap)[j] != 0) { is_l1_clear = false; break; }
-                        }
-
-                        if (is_l1_clear) {
-                            for (uint64_t j = l1_start_bit; j < l1_end_bit; j++) bitmap_set((void*)PMM::bitmap, j);
-                            for (uint64_t j = l2_start_bit; j < l2_end_bit; j++) bitmap_set((void*)PMM::bitmap_l2, j);
-                            bitmap_set((void*)PMM::bitmap_l3, l3_bit);
-
-                            if (l1_start_bit < bitmap_last_free) bitmap_last_free = l1_start_bit;
-                            spinlock_unlock(&pmm_lock);
-                            return (void*)(l1_start_bit * PAGE_SIZE);
-                        }
-                    }
-                    bits &= bits - 1;
-                }
-            }
-        }
-        spinlock_unlock(&pmm_lock);
-        return nullptr;
-    }
-
-    void Free(void *ptr, uint64_t n = 1) {
-        if (!ptr || n == 0) return;
-
-        if (n == 1) {
-            cpu_t* cpu = this_cpu();
-            if (cpu) {
-                if (cpu->pmm_cache_count < PMM_PCP_MAX) {
-                    cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
-                    return;
-                }
-
-                spinlock_lock(&pmm_lock);
-                for (int i = 0; i < PMM_PCP_BATCH; i++) {
-                    if (cpu->pmm_cache_count == 0) break;
-                    uint64_t bit = (uint64_t)cpu->pmm_cache[--cpu->pmm_cache_count] / PAGE_SIZE;
-                    bitmap_clear_sync(bit);
-                    if (bit < bitmap_last_free) bitmap_last_free = bit;
-                }
-                spinlock_unlock(&pmm_lock);
-
+            if (cpu->pmm_cache_count < PMM_PCP_MAX) {
                 cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
+                Interrupt::Unmask();
                 return;
             }
+
+            // Cache full: flush a batch back to the global bitmap.
+            pmm_lock_acquire();
+            for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count > 0; i++) {
+                uint64_t bit = (uint64_t)cpu->pmm_cache[--cpu->pmm_cache_count] / PAGE_SIZE;
+                mark_free(bit, 1);
+                if (bit < bitmap_last_free) bitmap_last_free = bit;
+            }
+            pmm_lock_release();
+
+            cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
+            Interrupt::Unmask();
+            return;
         }
-
-        uint64_t start_bit = (uint64_t)ptr / PAGE_SIZE;
-        spinlock_lock(&pmm_lock);
-        for (uint64_t i = 0; i < n; i++) bitmap_clear_sync(start_bit + i);
-        if (start_bit < bitmap_last_free) bitmap_last_free = start_bit;
-        spinlock_unlock(&pmm_lock);
     }
+#endif
 
-    // --- 2MB Page Free ---
-    void Free2MB(void* ptr) {
-        if (!ptr) return;
-        uint64_t l1_start_bit = (uint64_t)ptr / PAGE_SIZE;
-        if (l1_start_bit % L1_BITS_PER_L2_BIT != 0) return;
+    uint64_t start = (uint64_t)ptr / PAGE_SIZE;
+    if (start >= pmm_bitmap_pages) return;
+    if (n > pmm_bitmap_pages - start) n = pmm_bitmap_pages - start;  // defensive clamp
 
-        uint64_t l2_bit = l1_start_bit / L1_BITS_PER_L2_BIT;
-
-        spinlock_lock(&pmm_lock);
-        ensure_l2_init(l2_bit);
-
-        uint64_t l1_end_bit = l1_start_bit + L1_BITS_PER_L2_BIT;
-        for (uint64_t i = l1_start_bit; i < l1_end_bit; i++) bitmap_clear((void*)PMM::bitmap, i);
-
-        bitmap_clear((void*)PMM::bitmap_l2, l2_bit);
-        uint64_t l3_bit = l2_bit / L2_BITS_PER_L3_BIT;
-        if (bitmap_get((void*)PMM::bitmap_l3, l3_bit)) {
-            bitmap_clear((void*)PMM::bitmap_l3, l3_bit);
-        }
-
-        if (l1_start_bit < bitmap_last_free) bitmap_last_free = l1_start_bit;
-        spinlock_unlock(&pmm_lock);
-    }
-
-    // --- 2GB Page Free ---
-    void Free2GB(void* ptr) {
-        if (!ptr) return;
-        uint64_t l1_start_bit = (uint64_t)ptr / PAGE_SIZE;
-        if (l1_start_bit % (L1_BITS_PER_L2_BIT * L2_BITS_PER_L3_BIT) != 0) return;
-
-        uint64_t l2_start_bit = l1_start_bit / L1_BITS_PER_L2_BIT;
-        uint64_t l3_bit = l2_start_bit / L2_BITS_PER_L3_BIT;
-
-        spinlock_lock(&pmm_lock);
-        uint64_t l1_end_bit = l1_start_bit + (L1_BITS_PER_L2_BIT * L2_BITS_PER_L3_BIT);
-        uint64_t l2_end_bit = l2_start_bit + L2_BITS_PER_L3_BIT;
-
-        for (uint64_t l2b = l2_start_bit; l2b < l2_end_bit; l2b++) {
-            ensure_l2_init(l2b);
-        }
-
-        for (uint64_t i = l1_start_bit; i < l1_end_bit; i++) bitmap_clear((void*)PMM::bitmap, i);
-        for (uint64_t i = l2_start_bit; i < l2_end_bit; i++) bitmap_clear((void*)PMM::bitmap_l2, i);
-        bitmap_clear((void*)PMM::bitmap_l3, l3_bit);
-
-        if (l1_start_bit < bitmap_last_free) bitmap_last_free = l1_start_bit;
-        spinlock_unlock(&pmm_lock);
-    }
+    pmm_lock_acquire();
+    mark_free(start, n);
+    if (start < bitmap_last_free) bitmap_last_free = start;
+    pmm_lock_release();
 }
 
-#else
-// =======================================================================
-// Fallback Branch: General Architecture (No SMP/PCP, Pure L3 Bitmap)
-// =======================================================================
+// --- 2MiB allocation ---
+void* Request2MB() {
+    pmm_lock_acquire();
 
-namespace PMM {
-    volatile uint8_t *bitmap = nullptr;
-    volatile uint64_t *bitmap_l2 = nullptr;
-    volatile uint64_t *bitmap_l3 = nullptr;
-    volatile uint8_t *init_bitmap = nullptr;
-    volatile uint64_t init_bitmap_size = 0;
+    for (uint64_t w = 0, words = l2_map_size / 8; w < words; w++) {
+        uint64_t pending = ~l2_map[w];
+        while (pending) {
+            uint64_t l2_bit = w * 64 + __builtin_ctzll(pending);
+            pending &= pending - 1;
 
-    volatile uint64_t bitmap_size = 0;
-    volatile uint64_t bitmap_l2_size = 0;
-    volatile uint64_t bitmap_l3_size = 0;
-    volatile uint64_t bitmap_last_free = 1;
-
-    volatile uint64_t pmm_bitmap_start = 0;
-    volatile uint64_t pmm_bitmap_size = 0;
-    volatile uint64_t pmm_bitmap_pages = 0;
-
-    static inline void ensure_l2_init(uint64_t l2_bit) {
-        if (bitmap_get((void*)PMM::init_bitmap, l2_bit)) return;
-
-        uint64_t l1_start = l2_bit * L1_BITS_PER_L2_BIT;
-        uint64_t l1_end   = l1_start + L1_BITS_PER_L2_BIT;
-        if (l1_end > pmm_bitmap_pages) l1_end = pmm_bitmap_pages;
-
-        if (l1_start < pmm_bitmap_pages) {
-            for (uint64_t i = l1_start; i < l1_end; i++) {
-                bitmap_set((void*)PMM::bitmap, i);
-            }
-
-            uint64_t region_start_addr = l1_start * PAGE_SIZE;
-            uint64_t region_end_addr   = l1_end   * PAGE_SIZE;
-
-            for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-                struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-                if (entry->type != LIMINE_MEMMAP_USABLE) continue;
-
-                uint64_t entry_start = entry->base;
-                uint64_t entry_end   = entry->base + entry->length;
-                if (entry_end <= region_start_addr || entry_start >= region_end_addr) continue;
-
-                uint64_t ov_start = entry_start > region_start_addr ? entry_start : region_start_addr;
-                uint64_t ov_end   = entry_end   < region_end_addr   ? entry_end   : region_end_addr;
-
-                ov_start = (ov_start + (PAGE_SIZE - 1)) & ~((uint64_t)PAGE_SIZE - 1);
-                ov_end   = ov_end & ~((uint64_t)PAGE_SIZE - 1);
-
-                for (uint64_t addr = ov_start; addr < ov_end; addr += PAGE_SIZE) {
-                    uint64_t bit = addr / PAGE_SIZE;
-                    if (bit < pmm_bitmap_pages) {
-                        bitmap_clear((void*)PMM::bitmap, bit);
-                    }
-                }
-            }
-        }
-
-        bitmap_set((void*)PMM::init_bitmap, l2_bit);
-    }
-
-    static inline void bitmap_set_sync(uint64_t bit) {
-        uint64_t l2_bit = bit / L1_BITS_PER_L2_BIT;
-        ensure_l2_init(l2_bit);
-
-        bitmap_set((void*)PMM::bitmap, bit);
-
-        uint64_t l1_base_idx64 = (l2_bit * L1_BITS_PER_L2_BIT) / 64;
-        bool l2_full = true;
-
-        for (int i = 0; i < (L1_BITS_PER_L2_BIT / 64); i++) {
-            uint64_t idx = l1_base_idx64 + i;
-            if (idx >= (bitmap_size / 8)) { l2_full = false; break; }
-            if (((uint64_t*)PMM::bitmap)[idx] != 0xFFFFFFFFFFFFFFFF) { l2_full = false; break; }
-        }
-
-        if (l2_full && !bitmap_get((void*)PMM::bitmap_l2, l2_bit)) {
-            bitmap_set((void*)PMM::bitmap_l2, l2_bit);
-
-            uint64_t l3_bit = l2_bit / L2_BITS_PER_L3_BIT;
-            uint64_t l2_base_idx64 = (l3_bit * L2_BITS_PER_L3_BIT) / 64;
-            bool l3_full = true;
-
-            for (int i = 0; i < (L2_BITS_PER_L3_BIT / 64); i++) {
-                uint64_t idx = l2_base_idx64 + i;
-                if (idx >= (bitmap_l2_size / 8)) { l3_full = false; break; }
-                if (((uint64_t*)PMM::bitmap_l2)[idx] != 0xFFFFFFFFFFFFFFFF) { l3_full = false; break; }
-            }
-
-            if (l3_full) {
-                bitmap_set((void*)PMM::bitmap_l3, l3_bit);
-            }
-        }
-    }
-
-    static inline void bitmap_clear_sync(uint64_t bit) {
-        uint64_t l2_bit = bit / L1_BITS_PER_L2_BIT;
-        ensure_l2_init(l2_bit);
-
-        bitmap_clear((void*)PMM::bitmap, bit);
-
-        if (bitmap_get((void*)PMM::bitmap_l2, l2_bit)) {
-            bitmap_clear((void*)PMM::bitmap_l2, l2_bit);
-            uint64_t l3_bit = l2_bit / L2_BITS_PER_L3_BIT;
-            if (bitmap_get((void*)PMM::bitmap_l3, l3_bit)) {
-                bitmap_clear((void*)PMM::bitmap_l3, l3_bit);
-            }
-        }
-    }
-
-    void Init() {
-        pmm_memmap = memmap_request.response;
-
-        // Sanitize entry lengths (same behavior as before)
-        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            if (entry->length % PAGE_SIZE != 0) {
-                kinfoln("ENTRY LENGTH: %d", entry->length);
-                kwarn("Memory map entry length is NOT divisible by the page size. \n");
-                entry->length = (entry->length / PAGE_SIZE) * PAGE_SIZE;
-            }
-        }
-
-        // For lazy init we must index L1 by absolute page index (addr/PAGE_SIZE),
-        // so pmm_bitmap_pages must be derived from max physical address.
-        uint64_t max_phys_addr = 0;
-        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            uint64_t top = entry->base + entry->length;
-            if (top > max_phys_addr) max_phys_addr = top;
-        }
-        pmm_bitmap_pages = max_phys_addr / PAGE_SIZE;
-
-        uint64_t l1_bits = pmm_bitmap_pages;
-        uint64_t l2_bits = ALIGN_UP(l1_bits, L1_BITS_PER_L2_BIT) / L1_BITS_PER_L2_BIT;
-        uint64_t l3_bits = ALIGN_UP(l2_bits, L2_BITS_PER_L3_BIT) / L2_BITS_PER_L3_BIT;
-
-        bitmap_size      = ALIGN_UP(l1_bits / 8, PAGE_SIZE);
-        bitmap_l2_size   = ALIGN_UP(l2_bits / 8, PAGE_SIZE);
-        bitmap_l3_size   = ALIGN_UP(l3_bits / 8, PAGE_SIZE);
-        init_bitmap_size = ALIGN_UP(l2_bits / 8, PAGE_SIZE);
-
-        uint64_t total_meta_size = bitmap_size + bitmap_l2_size + bitmap_l3_size + init_bitmap_size;
-
-        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            if (entry->length >= total_meta_size && entry->type == LIMINE_MEMMAP_USABLE) {
-                PMM::bitmap      = HIGHER_HALF((uint8_t*)entry->base);
-                PMM::bitmap_l2   = (uint64_t*)((uint64_t)PMM::bitmap + bitmap_size);
-                PMM::bitmap_l3   = (uint64_t*)((uint64_t)PMM::bitmap_l2 + bitmap_l2_size);
-                PMM::init_bitmap = (uint8_t*)((uint64_t)PMM::bitmap_l3 + bitmap_l3_size);
-
-                entry->length -= total_meta_size;
-                entry->base   += total_meta_size;
-
-                memset_fscpuf((void*)PMM::bitmap,      0xFF, bitmap_size);
-                memset_fscpuf((void*)PMM::bitmap_l2,   0xFF, bitmap_l2_size);
-                memset_fscpuf((void*)PMM::bitmap_l3,   0xFF, bitmap_l3_size);
-                memset_fscpuf((void*)PMM::init_bitmap, 0x00, init_bitmap_size);
-                break;
-            }
-        }
-
-        // Lazy occupancy marking: compute L2 from memmap at 2MB granularity
-        uint64_t region_size_2mb = (uint64_t)L1_BITS_PER_L2_BIT * PAGE_SIZE;
-        uint64_t total_l2_bits   = bitmap_l2_size * 8;
-        uint64_t total_l3_bits   = bitmap_l3_size * 8;
-
-        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
-            struct limine_memmap_entry *entry = pmm_memmap->entries[i];
-            if (entry->type != LIMINE_MEMMAP_USABLE) continue;
-
-            uint64_t start_addr = entry->base;
-            uint64_t end_addr   = entry->base + entry->length;
-            if (end_addr == 0) continue;
-
-            uint64_t start_l2 = start_addr / region_size_2mb;
-            uint64_t end_l2   = (end_addr - 1) / region_size_2mb;
-
-            for (uint64_t l2_bit = start_l2; l2_bit <= end_l2; l2_bit++) {
-                if (l2_bit < total_l2_bits) {
-                    bitmap_clear((void*)PMM::bitmap_l2, l2_bit);
-                }
-            }
-        }
-
-        // Compute L3 from L2
-        for (uint64_t l3_bit = 0; l3_bit < total_l3_bits; l3_bit++) {
-            uint64_t l2_start = l3_bit * L2_BITS_PER_L3_BIT;
-            uint64_t l2_end   = l2_start + L2_BITS_PER_L3_BIT;
-            if (l2_end > total_l2_bits) l2_end = total_l2_bits;
-
-            bool all_full = true;
-            for (uint64_t b = l2_start; b < l2_end; b++) {
-                if (!bitmap_get((void*)PMM::bitmap_l2, b)) { all_full = false; break; }
-            }
-            if (!all_full) {
-                bitmap_clear((void*)PMM::bitmap_l3, l3_bit);
-            }
-        }
-
-        bitmap_set_sync(0);
-        pmm_bitmap_start = (uint64_t)PMM::bitmap;
-        pmm_bitmap_size  = bitmap_size;
-        bitmap_last_free = 1;
-    }
-
-    static void* GlobalRequestSingle() {
-        uint64_t max_l1_idx64 = bitmap_size / 8;
-        uint64_t max_l2_idx64 = bitmap_l2_size / 8;
-        uint64_t max_l3_idx64 = bitmap_l3_size / 8;
-
-        uint64_t start_l1_idx64 = bitmap_last_free / 64;
-        uint64_t start_l2_idx64 = (bitmap_last_free / L1_BITS_PER_L2_BIT) / 64;
-        uint64_t start_l3_idx64 = ((bitmap_last_free / L1_BITS_PER_L2_BIT) / L2_BITS_PER_L3_BIT) / 64;
-
-        uint64_t cur_l1_start = start_l1_idx64;
-        uint64_t cur_l2_start = start_l2_idx64;
-
-        auto scan_l1 = [&](uint64_t l1_start, uint64_t l1_end) -> void* {
-            for (uint64_t k = l1_start; k < l1_end && k < max_l1_idx64; k++) {
-                uint64_t first_bit = k * 64;
-                uint64_t l2_bit = first_bit / L1_BITS_PER_L2_BIT;
-                ensure_l2_init(l2_bit);
-
-                if (((uint64_t*)PMM::bitmap)[k] != 0xFFFFFFFFFFFFFFFF) {
-                    uint64_t absolute_bit = k * 64 + __builtin_ctzll(~((uint64_t*)PMM::bitmap)[k]);
-                    if (absolute_bit >= pmm_bitmap_pages) return nullptr;
-                    bitmap_set_sync(absolute_bit);
-                    bitmap_last_free = absolute_bit + 1;
-                    return (void*)(absolute_bit * PAGE_SIZE);
-                }
-            }
-            return nullptr;
-        };
-
-        auto scan_l2 = [&](uint64_t l2_start, uint64_t l2_end) -> void* {
-            for (uint64_t j = l2_start; j < l2_end && j < max_l2_idx64; j++) {
-                if (((uint64_t*)PMM::bitmap_l2)[j] != 0xFFFFFFFFFFFFFFFF) {
-                    uint64_t l2_bit = j * 64 + __builtin_ctzll(~((uint64_t*)PMM::bitmap_l2)[j]);
-                    uint64_t l1_base_idx64 = (l2_bit * L1_BITS_PER_L2_BIT) / 64;
-                    uint64_t l1_end_idx64 = l1_base_idx64 + (L1_BITS_PER_L2_BIT / 64);
-                    uint64_t l1_start = (j == l2_start) ? cur_l1_start : l1_base_idx64;
-                    void* ret = scan_l1(l1_start, l1_end_idx64);
-                    if (ret) return ret;
-                    cur_l1_start = 0;
-                }
-            }
-            return nullptr;
-        };
-
-        for (uint64_t i = start_l3_idx64; i < max_l3_idx64; i++) {
-            if (((uint64_t*)PMM::bitmap_l3)[i] != 0xFFFFFFFFFFFFFFFF) {
-                uint64_t l3_bit = i * 64 + __builtin_ctzll(~((uint64_t*)PMM::bitmap_l3)[i]);
-                uint64_t l2_base_idx64 = (l3_bit * L2_BITS_PER_L3_BIT) / 64;
-                uint64_t l2_end_idx64 = l2_base_idx64 + (L2_BITS_PER_L3_BIT / 64);
-                uint64_t l2_start = (i == start_l3_idx64) ? cur_l2_start : l2_base_idx64;
-                void* ret = scan_l2(l2_start, l2_end_idx64);
-                if (ret) return ret;
-                cur_l2_start = 0;
-                cur_l1_start = 0;
-            }
-        }
-
-        cur_l1_start = 0; cur_l2_start = 0;
-        for (uint64_t i = 0; i <= start_l3_idx64 && i < max_l3_idx64; i++) {
-            if (((uint64_t*)PMM::bitmap_l3)[i] != 0xFFFFFFFFFFFFFFFF) {
-                uint64_t l3_bit = i * 64 + __builtin_ctzll(~((uint64_t*)PMM::bitmap_l3)[i]);
-                uint64_t l2_base_idx64 = (l3_bit * L2_BITS_PER_L3_BIT) / 64;
-                uint64_t l2_end_idx64 = l2_base_idx64 + (L2_BITS_PER_L3_BIT / 64);
-                void* ret = scan_l2(l2_base_idx64, l2_end_idx64);
-                if (ret) return ret;
-            }
-        }
-        return nullptr;
-    }
-
-    void* Request(uint64_t n = 1) {
-        if (n == 0) return nullptr;
-
-        spinlock_lock(&pmm_lock);
-
-        if (n == 1) {
-            void* ret = GlobalRequestSingle();
-            spinlock_unlock(&pmm_lock);
-            return ret;
-        }
-
-        uint64_t start_bit = 0, free_count = 0;
-        uint64_t current_bit = bitmap_last_free;
-        bool wrapped = false;
-
-        uint64_t l3_block_pages = L2_BITS_PER_L3_BIT * L1_BITS_PER_L2_BIT;
-        uint64_t l2_block_pages = L1_BITS_PER_L2_BIT;
-
-        while (true) {
-            if (current_bit >= pmm_bitmap_pages) {
-                if (wrapped) break;
-                current_bit = 0; wrapped = true; free_count = 0; continue;
-            }
-
-            uint64_t l3_bit = (current_bit / L1_BITS_PER_L2_BIT) / L2_BITS_PER_L3_BIT;
-            if (free_count == 0 && (current_bit % l3_block_pages == 0) && l3_bit < (bitmap_l3_size * 8)) {
-                if (bitmap_get((void*)PMM::bitmap_l3, l3_bit)) { current_bit += l3_block_pages; continue; }
-            }
-
-            uint64_t l2_bit = current_bit / L1_BITS_PER_L2_BIT;
-            if (free_count == 0 && (current_bit % l2_block_pages == 0) && l2_bit < (bitmap_l2_size * 8)) {
-                if (bitmap_get((void*)PMM::bitmap_l2, l2_bit)) { current_bit += l2_block_pages; continue; }
-            }
+            uint64_t start = l2_bit * L2_PAGES;
+            if (start + L2_PAGES > pmm_bitmap_pages) continue;  // incomplete tail block
 
             ensure_l2_init(l2_bit);
 
-            uint64_t idx64 = current_bit / 64;
-            if (free_count == 0 && (current_bit % 64 == 0)) {
-                if (((uint64_t*)PMM::bitmap)[idx64] == 0xFFFFFFFFFFFFFFFF) { current_bit += 64; continue; }
+            uint64_t wb = l2_bit * L2_L1_WORDS;
+            bool is_free = true;
+            for (uint64_t i = 0; i < L2_L1_WORDS; i++) {
+                if (l1_map[wb + i] != 0) { is_free = false; break; }
             }
+            if (!is_free) continue;
 
-            if (!bitmap_get((void*)PMM::bitmap, current_bit)) {
-                if (free_count == 0) start_bit = current_bit;
-                if (++free_count == n) {
-                    for (uint64_t i = start_bit; i < start_bit + n; i++) bitmap_set_sync(i);
-                    bitmap_last_free = start_bit + n;
-                    spinlock_unlock(&pmm_lock);
-                    return (void*)(start_bit * PAGE_SIZE);
-                }
-            } else {
-                free_count = 0;
-            }
-            current_bit++;
+            bits_set(l1_map, start, start + L2_PAGES);  // 8 words, not 512 bit-ops
+            bit_set(l2_map, l2_bit);
+            l2_full_propagate(l2_bit);
+
+            if (start < bitmap_last_free) bitmap_last_free = start;
+            pmm_lock_release();
+            return (void*)(start * PAGE_SIZE);
         }
-        kerror("PMM Out of contiguous memory (%lu pages)!\n", n);
-        spinlock_unlock(&pmm_lock);
-        return nullptr;
     }
 
-    // --- 2MB Page Allocation ---
-    void* Request2MB() {
-        spinlock_lock(&pmm_lock);
-        uint64_t max_l2_idx64 = bitmap_l2_size / 8;
-
-        for (uint64_t i = 0; i < max_l2_idx64; i++) {
-            if (((uint64_t*)PMM::bitmap_l2)[i] != 0xFFFFFFFFFFFFFFFF) {
-                uint64_t bits = ~((uint64_t*)PMM::bitmap_l2)[i];
-                while (bits) {
-                    uint64_t l2_bit = i * 64 + __builtin_ctzll(bits);
-                    uint64_t l1_start_bit = l2_bit * L1_BITS_PER_L2_BIT;
-                    uint64_t l1_end_bit = l1_start_bit + L1_BITS_PER_L2_BIT;
-
-                    if (l1_end_bit > pmm_bitmap_pages) {
-                        bits &= bits - 1; continue;
-                    }
-
-                    ensure_l2_init(l2_bit);
-
-                    bool is_contiguous = true;
-                    uint64_t start_idx64 = l1_start_bit / 64;
-                    uint64_t end_idx64 = (l1_end_bit - 1) / 64;
-
-                    for (uint64_t j = start_idx64; j <= end_idx64; j++) {
-                        if (((uint64_t*)PMM::bitmap)[j] != 0) { is_contiguous = false; break; }
-                    }
-
-                    if (is_contiguous) {
-                        for (uint64_t j = l1_start_bit; j < l1_end_bit; j++) bitmap_set((void*)PMM::bitmap, j);
-                        bitmap_set((void*)PMM::bitmap_l2, l2_bit);
-
-                        uint64_t l3_bit = l2_bit / L2_BITS_PER_L3_BIT;
-                        uint64_t l2_base_idx64_l3 = (l3_bit * L2_BITS_PER_L3_BIT) / 64;
-                        bool l3_full = true;
-                        for (uint64_t j = l2_base_idx64_l3; j < l2_base_idx64_l3 + (L2_BITS_PER_L3_BIT / 64); j++) {
-                            if (j >= (bitmap_l2_size / 8) || ((uint64_t*)PMM::bitmap_l2)[j] != 0xFFFFFFFFFFFFFFFF) { l3_full = false; break; }
-                        }
-                        if (l3_full) bitmap_set((void*)PMM::bitmap_l3, l3_bit);
-
-                        if (l1_start_bit < bitmap_last_free) bitmap_last_free = l1_start_bit;
-                        spinlock_unlock(&pmm_lock);
-                        return (void*)(l1_start_bit * PAGE_SIZE);
-                    }
-                    bits &= bits - 1;
-                }
-            }
-        }
-        spinlock_unlock(&pmm_lock);
-        return nullptr;
-    }
-
-    // --- 2GB Page Allocation ---
-    void* Request2GB() {
-        spinlock_lock(&pmm_lock);
-        uint64_t max_l3_idx64 = bitmap_l3_size / 8;
-
-        for (uint64_t i = 0; i < max_l3_idx64; i++) {
-            if (((uint64_t*)PMM::bitmap_l3)[i] != 0xFFFFFFFFFFFFFFFF) {
-                uint64_t bits = ~((uint64_t*)PMM::bitmap_l3)[i];
-                while (bits) {
-                    uint64_t l3_bit = i * 64 + __builtin_ctzll(bits);
-                    uint64_t l2_start_bit = l3_bit * L2_BITS_PER_L3_BIT;
-                    uint64_t l2_end_bit = l2_start_bit + L2_BITS_PER_L3_BIT;
-
-                    if (l2_end_bit > (bitmap_l2_size * 8)) l2_end_bit = bitmap_l2_size * 8;
-
-                    bool is_l2_clear = true;
-                    uint64_t l2_start_idx64 = l2_start_bit / 64;
-                    uint64_t l2_end_idx64 = (l2_end_bit - 1) / 64;
-                    for (uint64_t j = l2_start_idx64; j <= l2_end_idx64; j++) {
-                        if (((uint64_t*)PMM::bitmap_l2)[j] != 0) { is_l2_clear = false; break; }
-                    }
-
-                    if (is_l2_clear) {
-                        uint64_t l1_start_bit = l2_start_bit * L1_BITS_PER_L2_BIT;
-                        uint64_t l1_end_bit = l1_start_bit + (L2_BITS_PER_L3_BIT * L1_BITS_PER_L2_BIT);
-                        if (l1_end_bit > pmm_bitmap_pages) l1_end_bit = pmm_bitmap_pages;
-
-                        for (uint64_t l2b = l2_start_bit; l2b < l2_end_bit; l2b++) {
-                            ensure_l2_init(l2b);
-                        }
-
-                        bool is_l1_clear = true;
-                        uint64_t l1_start_idx64 = l1_start_bit / 64;
-                        uint64_t l1_end_idx64 = (l1_end_bit - 1) / 64;
-                        for (uint64_t j = l1_start_idx64; j <= l1_end_idx64; j++) {
-                            if (((uint64_t*)PMM::bitmap)[j] != 0) { is_l1_clear = false; break; }
-                        }
-
-                        if (is_l1_clear) {
-                            for (uint64_t j = l1_start_bit; j < l1_end_bit; j++) bitmap_set((void*)PMM::bitmap, j);
-                            for (uint64_t j = l2_start_bit; j < l2_end_bit; j++) bitmap_set((void*)PMM::bitmap_l2, j);
-                            bitmap_set((void*)PMM::bitmap_l3, l3_bit);
-
-                            if (l1_start_bit < bitmap_last_free) bitmap_last_free = l1_start_bit;
-                            spinlock_unlock(&pmm_lock);
-                            return (void*)(l1_start_bit * PAGE_SIZE);
-                        }
-                    }
-                    bits &= bits - 1;
-                }
-            }
-        }
-        spinlock_unlock(&pmm_lock);
-        return nullptr;
-    }
-
-    void Free(void *ptr, uint64_t n = 1) {
-        if (!ptr || n == 0) return;
-        uint64_t start_bit = (uint64_t)ptr / PAGE_SIZE;
-
-        spinlock_lock(&pmm_lock);
-        for (uint64_t i = 0; i < n; i++) bitmap_clear_sync(start_bit + i);
-        if (start_bit < bitmap_last_free) bitmap_last_free = start_bit;
-        spinlock_unlock(&pmm_lock);
-    }
-
-    // --- 2MB Page Free ---
-    void Free2MB(void* ptr) {
-        if (!ptr) return;
-        uint64_t l1_start_bit = (uint64_t)ptr / PAGE_SIZE;
-        if (l1_start_bit % L1_BITS_PER_L2_BIT != 0) return;
-
-        uint64_t l2_bit = l1_start_bit / L1_BITS_PER_L2_BIT;
-
-        spinlock_lock(&pmm_lock);
-        ensure_l2_init(l2_bit);
-
-        uint64_t l1_end_bit = l1_start_bit + L1_BITS_PER_L2_BIT;
-        for (uint64_t i = l1_start_bit; i < l1_end_bit; i++) bitmap_clear((void*)PMM::bitmap, i);
-
-        bitmap_clear((void*)PMM::bitmap_l2, l2_bit);
-        uint64_t l3_bit = l2_bit / L2_BITS_PER_L3_BIT;
-        if (bitmap_get((void*)PMM::bitmap_l3, l3_bit)) {
-            bitmap_clear((void*)PMM::bitmap_l3, l3_bit);
-        }
-
-        if (l1_start_bit < bitmap_last_free) bitmap_last_free = l1_start_bit;
-        spinlock_unlock(&pmm_lock);
-    }
-
-    // --- 2GB Page Free ---
-    void Free2GB(void* ptr) {
-        if (!ptr) return;
-        uint64_t l1_start_bit = (uint64_t)ptr / PAGE_SIZE;
-        if (l1_start_bit % (L1_BITS_PER_L2_BIT * L2_BITS_PER_L3_BIT) != 0) return;
-
-        uint64_t l2_start_bit = l1_start_bit / L1_BITS_PER_L2_BIT;
-        uint64_t l3_bit = l2_start_bit / L2_BITS_PER_L3_BIT;
-
-        spinlock_lock(&pmm_lock);
-        uint64_t l1_end_bit = l1_start_bit + (L1_BITS_PER_L2_BIT * L2_BITS_PER_L3_BIT);
-        uint64_t l2_end_bit = l2_start_bit + L2_BITS_PER_L3_BIT;
-
-        for (uint64_t l2b = l2_start_bit; l2b < l2_end_bit; l2b++) {
-            ensure_l2_init(l2b);
-        }
-
-        for (uint64_t i = l1_start_bit; i < l1_end_bit; i++) bitmap_clear((void*)PMM::bitmap, i);
-        for (uint64_t i = l2_start_bit; i < l2_end_bit; i++) bitmap_clear((void*)PMM::bitmap_l2, i);
-        bitmap_clear((void*)PMM::bitmap_l3, l3_bit);
-
-        if (l1_start_bit < bitmap_last_free) bitmap_last_free = l1_start_bit;
-        spinlock_unlock(&pmm_lock);
-    }
+    pmm_lock_release();
+    return nullptr;
 }
-#endif
+
+// --- 2GiB allocation ---
+void* Request2GB() {
+    pmm_lock_acquire();
+
+    for (uint64_t w = 0, words = l3_map_size / 8; w < words; w++) {
+        uint64_t pending = ~l3_map[w];
+        while (pending) {
+            uint64_t l3_bit = w * 64 + __builtin_ctzll(pending);
+            pending &= pending - 1;
+
+            uint64_t start = l3_bit * L3_PAGES;
+            // FIX: skip incomplete tail blocks — old code returned a region
+            // smaller than 2GiB while the caller assumed a full 2GiB.
+            if (start + L3_PAGES > pmm_bitmap_pages) continue;
+
+            uint64_t wb = l3_bit * L3_L2_WORDS;
+            bool l2_clear = true;
+            for (uint64_t i = 0; i < L3_L2_WORDS; i++) {
+                if (l2_map[wb + i] != 0) { l2_clear = false; break; }
+            }
+            if (!l2_clear) continue;
+
+            uint64_t l2_first = l3_bit * L2_PER_L3;
+            bool l1_clear = true;
+            for (uint64_t l2 = l2_first; l2 < l2_first + L2_PER_L3 && l1_clear; l2++) {
+                ensure_l2_init(l2);
+                uint64_t w1 = l2 * L2_L1_WORDS;
+                for (uint64_t i = 0; i < L2_L1_WORDS; i++) {
+                    if (l1_map[w1 + i] != 0) { l1_clear = false; break; }
+                }
+            }
+            if (!l1_clear) continue;
+
+            bits_set(l1_map, start, start + L3_PAGES);
+            bits_set(l2_map, l2_first, l2_first + L2_PER_L3);
+            bit_set(l3_map, l3_bit);
+
+            if (start < bitmap_last_free) bitmap_last_free = start;
+            pmm_lock_release();
+            return (void*)(start * PAGE_SIZE);
+        }
+    }
+
+    pmm_lock_release();
+    return nullptr;
+}
+
+void Free2MB(void* ptr) {
+    if (!ptr) return;
+    uint64_t start = (uint64_t)ptr / PAGE_SIZE;
+
+    if (start & (L2_PAGES - 1)) return;                 // must be 2MiB-aligned
+    if (start + L2_PAGES > pmm_bitmap_pages) return;    // FIX: bounds check
+
+    pmm_lock_acquire();
+    ensure_l2_init(start / L2_PAGES);
+    bits_clear(l1_map, start, start + L2_PAGES);
+    bit_clear(l2_map, start / L2_PAGES);
+    bit_clear(l3_map, start / L3_PAGES);
+    if (start < bitmap_last_free) bitmap_last_free = start;
+    pmm_lock_release();
+}
+
+void Free2GB(void* ptr) {
+    if (!ptr) return;
+    uint64_t start = (uint64_t)ptr / PAGE_SIZE;
+
+    if (start & (L3_PAGES - 1)) return;                 // must be 2GiB-aligned
+    if (start + L3_PAGES > pmm_bitmap_pages) return;    // FIX: bounds check
+
+    uint64_t l2_first = start / L2_PAGES;
+    pmm_lock_acquire();
+    for (uint64_t l2 = l2_first; l2 < l2_first + L2_PER_L3; l2++)
+        ensure_l2_init(l2);
+    bits_clear(l1_map, start, start + L3_PAGES);
+    bits_clear(l2_map, l2_first, l2_first + L2_PER_L3);
+    bit_clear(l3_map, start / L3_PAGES);
+    if (start < bitmap_last_free) bitmap_last_free = start;
+    pmm_lock_release();
+}
+
+} // namespace PMM

@@ -17,15 +17,16 @@ struct Device {
     uint8_t numStreams; uint8_t activeStream;
     void* frameBuf;
     uint32_t frameCapacity;
-    AudioSampleCallback callback; // 将回调改为设备私有
+    AudioSampleCallback callback;
+    volatile bool stopping;
 };
 
 void Init(USB::Device* dev, Interface* ifce);
-void Deinit(USB::Device* dev); // 新增
+void Deinit(USB::Device* dev);
 bool StartStream(Device* uac, uint8_t altSetting);
 bool StopStream (Device* uac);
 
 
-void RegisterAudioCallback(Device* uac, AudioSampleCallback cb); // 修改签名
+void RegisterAudioCallback(Device* uac, AudioSampleCallback cb);
 
 } // namespace USB::UAC

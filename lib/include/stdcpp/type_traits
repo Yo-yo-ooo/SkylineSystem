@@ -1,0 +1,1644 @@
+// <type_traits> — Complete C++ Standard Library type traits implementation
+// Covers C++11 / C++14 / C++17 / C++20 / C++23 / C++26
+//
+// Targets GCC / Clang compiler intrinsics.
+// Suitable for freestanding / kernel / custom libc use (std / SkylineSystem).
+//
+// SPDX-License-Identifier: MIT
+
+#ifndef _STDCPP_TYPE_TRAITS_H
+#define _STDCPP_TYPE_TRAITS_H
+
+// ============================================================================
+// Standard version detection
+// ============================================================================
+#if defined(__cplusplus)
+#  if __cplusplus >= 201103L
+#    define _STDCPP_CXX11 1
+#  endif
+#  if __cplusplus >= 201402L
+#    define _STDCPP_CXX14 1
+#  endif
+#  if __cplusplus >= 201703L
+#    define _STDCPP_CXX17 1
+#  endif
+#  if __cplusplus >= 202002L
+#    define _STDCPP_CXX20 1
+#  endif
+#  if __cplusplus >= 202302L
+#    define _STDCPP_CXX23 1
+#  endif
+#  if __cplusplus > 202302L
+#    define _STDCPP_CXX26 1
+#  endif
+#endif
+
+#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER)
+#  define _STDCPP_GNU 1
+#endif
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define _STDCPP_MSVC 1
+#endif
+
+// GCC version-dependent intrinsic availability
+#if defined(__GNUC__) && !defined(__clang__)
+#  define _STDCPP_GCC_VER (__GNUC__ * 100 + __GNUC_MINOR__)
+#  if _STDCPP_GCC_VER >= 1200
+#    define _STDCPP_HAS_LAYOUT_INTRINSICS 1
+#    define _STDCPP_HAS_REF_TEMP_INTRINSICS 1
+#  endif
+#  if _STDCPP_GCC_VER >= 1300
+#    define _STDCPP_HAS_SCOPED_ENUM 1
+#    define _STDCPP_HAS_IMPLICIT_LIFETIME 1
+#  endif
+#elif defined(__clang__)
+#  if __has_feature(is_layout_compatible)
+#    define _STDCPP_HAS_LAYOUT_INTRINSICS 1
+#  endif
+#  if __has_feature(reference_binds_to_temporary)
+#    define _STDCPP_HAS_REF_TEMP_INTRINSICS 1
+#  endif
+#  if __has_feature(is_scoped_enum)
+#    define _STDCPP_HAS_SCOPED_ENUM 1
+#  endif
+#  if __has_feature(is_implicit_lifetime)
+#    define _STDCPP_HAS_IMPLICIT_LIFETIME 1
+#  endif
+#endif
+
+#ifdef _STDCPP_CXX11
+
+namespace std {
+
+// ============================================================================
+// Primitive utilities needed by everything else
+// ============================================================================
+
+// --- integral_constant / true_type / false_type ----------------------------
+template <typename T, T v>
+struct integral_constant {
+    static constexpr T value = v;
+    using value_type = T;
+    using type = integral_constant<T, v>;
+    constexpr operator value_type() const noexcept { return value; }
+#ifdef _STDCPP_CXX14
+    constexpr value_type operator()() const noexcept { return value; }
+#endif
+};
+template <typename T, T v>
+constexpr T integral_constant<T, v>::value;
+
+using true_type  = integral_constant<bool, true>;
+using false_type = integral_constant<bool, false>;
+
+// --- type_identity (C++20 std, used internally from C++11) -----------------
+template <typename T>
+struct type_identity { using type = T; };
+
+// --- minimal <cstddef> / <cstdint> replacements ----------------------------
+using size_t = decltype(sizeof(0));
+using int8_t   = signed char;
+using int16_t  = short;
+using int32_t  = int;
+using int64_t  = long long;
+using uint8_t  = unsigned char;
+using uint16_t = unsigned short;
+using uint32_t = unsigned int;
+using uint64_t = unsigned long long;
+using int_least8_t   = signed char;
+using int_least16_t  = short;
+using int_least32_t  = int;
+using int_least64_t  = long long;
+using uint_least8_t  = unsigned char;
+using uint_least16_t = unsigned short;
+using uint_least32_t = unsigned int;
+using uint_least64_t = unsigned long long;
+#ifdef __SIZEOF_INT128__
+using int128_t  = __int128;
+using uint128_t = unsigned __int128;
+#endif
+
+// --- forward declarations (needed for two-phase lookup) --------------------
+template <typename T> struct remove_const;
+template <typename T> struct remove_volatile;
+template <typename T> struct remove_cv;
+template <typename T> struct remove_reference;
+template <typename T> struct add_rvalue_reference;
+template <typename T> struct is_function;
+template <typename T> struct is_member_pointer;
+template <typename T> struct is_member_object_pointer;
+template <bool B, typename T, typename F> struct conditional;
+template <typename... T> struct common_type;
+template <typename T> struct decay;
+
+// declval must be declared before use in dependent contexts (two-phase lookup)
+template <typename T>
+typename add_rvalue_reference<T>::type declval() noexcept;
+
+// ============================================================================
+// Primary type categories  [meta.unary.cat]
+// ============================================================================
+
+// --- is_void ---------------------------------------------------------------
+template <typename T> struct is_void : false_type {};
+template <> struct is_void<void> : true_type {};
+
+// --- is_null_pointer -------------------------------------------------------
+template <typename T> struct is_null_pointer : false_type {};
+template <> struct is_null_pointer<decltype(nullptr)> : true_type {};
+
+// --- is_integral -----------------------------------------------------------
+namespace _detail {
+template <typename T> struct is_integral_base : false_type {};
+template <> struct is_integral_base<bool>               : true_type {};
+template <> struct is_integral_base<char>               : true_type {};
+template <> struct is_integral_base<signed char>        : true_type {};
+template <> struct is_integral_base<unsigned char>      : true_type {};
+template <> struct is_integral_base<wchar_t>            : true_type {};
+template <> struct is_integral_base<char16_t>           : true_type {};
+template <> struct is_integral_base<char32_t>           : true_type {};
+template <> struct is_integral_base<short>              : true_type {};
+template <> struct is_integral_base<unsigned short>     : true_type {};
+template <> struct is_integral_base<int>                : true_type {};
+template <> struct is_integral_base<unsigned int>       : true_type {};
+template <> struct is_integral_base<long>               : true_type {};
+template <> struct is_integral_base<unsigned long>      : true_type {};
+template <> struct is_integral_base<long long>          : true_type {};
+template <> struct is_integral_base<unsigned long long> : true_type {};
+#ifdef __SIZEOF_INT128__
+template <> struct is_integral_base<__int128>           : true_type {};
+template <> struct is_integral_base<unsigned __int128>  : true_type {};
+#endif
+} // namespace _detail
+
+template <typename T>
+struct is_integral
+    : _detail::is_integral_base<typename remove_cv<T>::type> {};
+
+// --- is_floating_point -----------------------------------------------------
+namespace _detail {
+template <typename T> struct is_fp_base : false_type {};
+template <> struct is_fp_base<float>       : true_type {};
+template <> struct is_fp_base<double>      : true_type {};
+template <> struct is_fp_base<long double> : true_type {};
+} // namespace _detail
+
+template <typename T>
+struct is_floating_point
+    : _detail::is_fp_base<typename remove_cv<T>::type> {};
+
+// --- is_array --------------------------------------------------------------
+template <typename T>           struct is_array       : false_type {};
+template <typename T>           struct is_array<T[]>  : true_type {};
+template <typename T, size_t N> struct is_array<T[N]> : true_type {};
+
+// --- is_pointer ------------------------------------------------------------
+namespace _detail {
+template <typename T> struct is_pointer_base : false_type {};
+template <typename T> struct is_pointer_base<T*> : true_type {};
+} // namespace _detail
+
+template <typename T>
+struct is_pointer
+    : _detail::is_pointer_base<typename remove_cv<T>::type> {};
+
+// --- is_lvalue_reference / is_rvalue_reference -----------------------------
+template <typename T> struct is_lvalue_reference     : false_type {};
+template <typename T> struct is_lvalue_reference<T&> : true_type {};
+
+template <typename T> struct is_rvalue_reference      : false_type {};
+template <typename T> struct is_rvalue_reference<T&&> : true_type {};
+
+// --- is_member_pointer -----------------------------------------------------
+namespace _detail {
+template <typename T> struct is_member_pointer_base : false_type {};
+template <typename T, typename C>
+struct is_member_pointer_base<T C::*> : true_type {};
+
+template <typename T> struct is_member_obj_ptr_base : false_type {};
+template <typename T, typename C>
+struct is_member_obj_ptr_base<T C::*>
+    : integral_constant<bool, !is_function<T>::value> {};
+} // namespace _detail
+
+template <typename T>
+struct is_member_pointer
+    : _detail::is_member_pointer_base<typename remove_cv<T>::type> {};
+
+template <typename T>
+struct is_member_object_pointer
+    : _detail::is_member_obj_ptr_base<typename remove_cv<T>::type> {};
+
+template <typename T>
+struct is_member_function_pointer
+    : integral_constant<bool,
+        is_member_pointer<T>::value &&
+        !is_member_object_pointer<T>::value> {};
+
+// --- is_enum / is_union / is_class -----------------------------------------
+#ifdef _STDCPP_GNU
+template <typename T> struct is_enum
+    : integral_constant<bool, __is_enum(T)> {};
+template <typename T> struct is_union
+    : integral_constant<bool, __is_union(T)> {};
+template <typename T> struct is_class
+    : integral_constant<bool, __is_class(T)> {};
+#else
+template <typename T> struct is_enum : false_type {};
+template <typename T> struct is_union : false_type {};
+namespace _detail {
+template <typename T> true_type  is_class_test(int T::*);
+template <typename>   false_type is_class_test(...);
+}
+template <typename T> struct is_class
+    : decltype(_detail::is_class_test<T>(0)) {};
+#endif
+
+// --- is_function -----------------------------------------------------------
+namespace _detail {
+template <typename T> struct is_function_base : false_type {};
+
+// Macro to generate cv/ref-qualified function type specializations
+#define _STDCPP_IS_FUNC(CV, REF, NOEXCEPT)                                       \
+template <typename R, typename... A>                                          \
+struct is_function_base<R(A... ) CV REF NOEXCEPT> : true_type {};            \
+template <typename R, typename... A>                                          \
+struct is_function_base<R(A..., ...) CV REF NOEXCEPT> : true_type {};
+
+_STDCPP_IS_FUNC( , , )
+_STDCPP_IS_FUNC(const, , )
+_STDCPP_IS_FUNC(volatile, , )
+_STDCPP_IS_FUNC(const volatile, , )
+_STDCPP_IS_FUNC( , &, )
+_STDCPP_IS_FUNC(const, &, )
+_STDCPP_IS_FUNC(volatile, &, )
+_STDCPP_IS_FUNC(const volatile, &, )
+_STDCPP_IS_FUNC( , &&, )
+_STDCPP_IS_FUNC(const, &&, )
+_STDCPP_IS_FUNC(volatile, &&, )
+_STDCPP_IS_FUNC(const volatile, &&, )
+#ifdef _STDCPP_CXX17
+_STDCPP_IS_FUNC( , , noexcept)
+_STDCPP_IS_FUNC(const, , noexcept)
+_STDCPP_IS_FUNC(volatile, , noexcept)
+_STDCPP_IS_FUNC(const volatile, , noexcept)
+_STDCPP_IS_FUNC( , &, noexcept)
+_STDCPP_IS_FUNC(const, &, noexcept)
+_STDCPP_IS_FUNC(volatile, &, noexcept)
+_STDCPP_IS_FUNC(const volatile, &, noexcept)
+_STDCPP_IS_FUNC( , &&, noexcept)
+_STDCPP_IS_FUNC(const, &&, noexcept)
+_STDCPP_IS_FUNC(volatile, &&, noexcept)
+_STDCPP_IS_FUNC(const volatile, &&, noexcept)
+#endif
+#undef _STDCPP_IS_FUNC
+} // namespace _detail
+
+template <typename T>
+struct is_function
+    : _detail::is_function_base<typename remove_cv<T>::type> {};
+
+// ============================================================================
+// Composite type categories  [meta.unary.comp]
+// ============================================================================
+
+template <typename T>
+struct is_reference : integral_constant<bool,
+    is_lvalue_reference<T>::value || is_rvalue_reference<T>::value> {};
+
+template <typename T>
+struct is_arithmetic : integral_constant<bool,
+    is_integral<T>::value || is_floating_point<T>::value> {};
+
+template <typename T>
+struct is_fundamental : integral_constant<bool,
+    is_arithmetic<T>::value || is_void<T>::value ||
+    is_null_pointer<T>::value> {};
+
+template <typename T>
+struct is_object : integral_constant<bool,
+    !is_function<T>::value && !is_reference<T>::value && !is_void<T>::value> {};
+
+template <typename T>
+struct is_scalar : integral_constant<bool,
+    is_arithmetic<T>::value || is_enum<T>::value || is_pointer<T>::value ||
+    is_member_pointer<T>::value || is_null_pointer<T>::value> {};
+
+template <typename T>
+struct is_compound : integral_constant<bool, !is_fundamental<T>::value> {};
+
+// ============================================================================
+// Type properties  [meta.unary.prop]
+// ============================================================================
+
+template <typename T> struct is_const          : false_type {};
+template <typename T> struct is_const<const T> : true_type  {};
+
+template <typename T> struct is_volatile             : false_type {};
+template <typename T> struct is_volatile<volatile T> : true_type  {};
+
+#ifdef _STDCPP_GNU
+template <typename T> struct is_trivial
+    : integral_constant<bool, __is_trivial(T)> {};
+template <typename T> struct is_trivially_copyable
+    : integral_constant<bool, __is_trivially_copyable(T)> {};
+template <typename T> struct is_standard_layout
+    : integral_constant<bool, __is_standard_layout(T)> {};
+template <typename T> struct is_pod
+    : integral_constant<bool, __is_pod(T)> {};
+#if !defined(_STDCPP_CXX20)
+// is_literal_type was deprecated in C++17 and removed in C++20.
+template <typename T> struct is_literal_type
+    : integral_constant<bool, __is_literal_type(T)> {};
+#endif
+template <typename T> struct has_virtual_destructor
+    : integral_constant<bool, __has_virtual_destructor(T)> {};
+template <typename T> struct is_empty
+    : integral_constant<bool, __is_empty(T)> {};
+template <typename T> struct is_polymorphic
+    : integral_constant<bool, __is_polymorphic(T)> {};
+template <typename T> struct is_abstract
+    : integral_constant<bool, __is_abstract(T)> {};
+#else
+template <typename T> struct is_trivial              : false_type {};
+template <typename T> struct is_trivially_copyable   : false_type {};
+template <typename T> struct is_standard_layout      : false_type {};
+template <typename T> struct is_pod                  : false_type {};
+#if !defined(_STDCPP_CXX20)
+template <typename T> struct is_literal_type         : is_scalar<T> {};
+#endif
+template <typename T> struct has_virtual_destructor  : false_type {};
+template <typename T> struct is_empty                : false_type {};
+template <typename T> struct is_polymorphic          : false_type {};
+template <typename T> struct is_abstract             : false_type {};
+#endif
+
+// --- is_signed / is_unsigned -----------------------------------------------
+namespace _detail {
+template <typename T, bool = is_arithmetic<T>::value>
+struct is_signed_base : integral_constant<bool, T(-1) < T(0)> {};
+template <typename T>
+struct is_signed_base<T, false> : false_type {};
+
+template <typename T, bool = is_arithmetic<T>::value>
+struct is_unsigned_base : integral_constant<bool, T(0) < T(-1)> {};
+template <typename T>
+struct is_unsigned_base<T, false> : false_type {};
+} // namespace _detail
+
+template <typename T>
+struct is_signed : _detail::is_signed_base<T>::type {};
+template <typename T>
+struct is_unsigned : _detail::is_unsigned_base<T>::type {};
+
+// --- alignment_of ----------------------------------------------------------
+template <typename T>
+struct alignment_of
+    : integral_constant<size_t,
+#ifdef _STDCPP_GNU
+        __alignof__(T)
+#else
+        alignof(T)
+#endif
+      > {};
+
+// --- rank / extent ---------------------------------------------------------
+template <typename T>           struct rank      : integral_constant<size_t, 0> {};
+template <typename T>           struct rank<T[]> : integral_constant<size_t, rank<T>::value + 1> {};
+template <typename T, size_t N> struct rank<T[N]> : integral_constant<size_t, rank<T>::value + 1> {};
+
+template <typename T, unsigned I = 0>
+struct extent : integral_constant<size_t, 0> {};
+template <typename T>
+struct extent<T[], 0> : integral_constant<size_t, 0> {};
+template <typename T, unsigned I>
+struct extent<T[], I> : integral_constant<size_t, extent<T, I - 1>::value> {};
+template <typename T, size_t N>
+struct extent<T[N], 0> : integral_constant<size_t, N> {};
+template <typename T, size_t N, unsigned I>
+struct extent<T[N], I> : integral_constant<size_t, extent<T, I - 1>::value> {};
+
+// --- aligned_storage / aligned_union ---------------------------------------
+namespace _detail {
+// Union of fundamental types to determine maximum native alignment.
+union max_align {
+    char c; short s; int i; long l; long long ll;
+    float f; double d; long double ld;
+    void* p; void (*fp)();
+};
+
+template <size_t...> struct max_size;
+template <size_t X> struct max_size<X> : integral_constant<size_t, X> {};
+template <size_t X, size_t Y, size_t... R>
+struct max_size<X, Y, R...> : integral_constant<size_t,
+    (X >= Y ? max_size<X, R...>::value : max_size<Y, R...>::value)> {};
+
+template <size_t...> struct max_align_of;
+template <size_t X> struct max_align_of<X> : integral_constant<size_t, X> {};
+template <size_t X, size_t Y, size_t... R>
+struct max_align_of<X, Y, R...> : integral_constant<size_t,
+    (X >= Y ? max_align_of<X, R...>::value : max_align_of<Y, R...>::value)> {};
+} // namespace _detail
+
+template <size_t Len,
+          size_t Align = alignment_of<_detail::max_align>::value>
+struct aligned_storage {
+    struct type {
+        alignas(Align) unsigned char data[Len];
+    };
+};
+
+template <size_t Len, typename... T>
+struct aligned_union {
+    static constexpr size_t alignment_value =
+        _detail::max_align_of<alignment_of<T>::value...>::value;
+private:
+    static constexpr size_t max_size_ =
+        _detail::max_size<Len, sizeof(T)...>::value;
+public:
+    struct type {
+        alignas(alignment_value) unsigned char data[max_size_];
+    };
+};
+
+// ============================================================================
+// Type relationships  [meta.rel]
+// ============================================================================
+
+template <typename T, typename U> struct is_same : false_type {};
+template <typename T>             struct is_same<T, T> : true_type {};
+
+#ifdef _STDCPP_GNU
+template <typename Base, typename Derived>
+struct is_base_of : integral_constant<bool,
+    __is_base_of(Base, Derived) || is_same<Base, Derived>::value> {};
+#else
+namespace _detail {
+template <typename B, typename D>
+auto is_base_of_test(int) -> decltype(static_cast<B*>(static_cast<D*>(nullptr)), true_type{});
+template <typename, typename>
+false_type is_base_of_test(...);
+}
+template <typename Base, typename Derived>
+struct is_base_of : decltype(_detail::is_base_of_test<Base, Derived>(0)) {};
+#endif
+
+#ifdef _STDCPP_GNU
+// Portable SFINAE implementation (works on GCC and Clang)
+namespace _detail {
+template <typename From, typename To, bool = is_void<To>::value>
+struct is_convertible_impl {
+    template <typename T>
+    static void sink(T) noexcept;
+    template <typename F, typename T>
+    static auto test(int) -> decltype(sink<T>(declval<F>()), true_type{});
+    template <typename, typename>
+    static auto test(...) -> false_type;
+    using type = decltype(test<From, To>(0));
+};
+// Anything converts to void (including void -> void)
+template <typename From, typename To>
+struct is_convertible_impl<From, To, true> : true_type {};
+} // namespace _detail
+template <typename From, typename To>
+struct is_convertible
+    : _detail::is_convertible_impl<From, To>::type {};
+#else
+namespace _detail {
+template <typename To> void conv_test(To) noexcept;
+template <typename From, typename To>
+auto is_convertible_test(int) -> decltype(conv_test<To>(declval<From>()), true_type{});
+template <typename, typename>
+false_type is_convertible_test(...);
+}
+template <typename From, typename To>
+struct is_convertible : decltype(_detail::is_convertible_test<From, To>(0)) {};
+#endif
+
+// ============================================================================
+// CV modifications  [meta.trans.cv]
+// ============================================================================
+
+template <typename T> struct remove_const          { using type = T; };
+template <typename T> struct remove_const<const T> { using type = T; };
+
+template <typename T> struct remove_volatile             { using type = T; };
+template <typename T> struct remove_volatile<volatile T> { using type = T; };
+
+template <typename T>
+struct remove_cv {
+    using type = typename remove_volatile<typename remove_const<T>::type>::type;
+};
+
+template <typename T> struct add_const    { using type = const T; };
+template <typename T> struct add_volatile { using type = volatile T; };
+template <typename T> struct add_cv       { using type = const volatile T; };
+
+// ============================================================================
+// Reference modifications  [meta.trans.ref]
+// ============================================================================
+
+template <typename T> struct remove_reference      { using type = T; };
+template <typename T> struct remove_reference<T&>  { using type = T; };
+template <typename T> struct remove_reference<T&&> { using type = T; };
+
+namespace _detail {
+template <typename T> auto add_lref_test(int) -> type_identity<T&>;
+template <typename T> auto add_lref_test(...) -> type_identity<T>;
+template <typename T> auto add_rref_test(int) -> type_identity<T&&>;
+template <typename T> auto add_rref_test(...) -> type_identity<T>;
+} // namespace _detail
+
+template <typename T>
+struct add_lvalue_reference : decltype(_detail::add_lref_test<T>(0)) {};
+template <typename T>
+struct add_rvalue_reference : decltype(_detail::add_rref_test<T>(0)) {};
+
+// ============================================================================
+// Pointer modifications  [meta.trans.ptr]
+// ============================================================================
+
+template <typename T> struct remove_pointer                    { using type = T; };
+template <typename T> struct remove_pointer<T*>                { using type = T; };
+template <typename T> struct remove_pointer<T* const>          { using type = T; };
+template <typename T> struct remove_pointer<T* volatile>       { using type = T; };
+template <typename T> struct remove_pointer<T* const volatile> { using type = T; };
+
+namespace _detail {
+template <typename T>
+auto add_pointer_test(int)
+    -> type_identity<typename remove_reference<T>::type*>;
+template <typename T>
+auto add_pointer_test(...) -> type_identity<T>;
+} // namespace _detail
+
+template <typename T>
+struct add_pointer : decltype(_detail::add_pointer_test<T>(0)) {};
+
+// ============================================================================
+// Sign modifications  [meta.trans.sign]
+// ============================================================================
+
+namespace _detail {
+template <typename T> struct make_signed_base   { using type = T; };
+template <> struct make_signed_base<char>               { using type = signed char; };
+template <> struct make_signed_base<signed char>        { using type = signed char; };
+template <> struct make_signed_base<unsigned char>      { using type = signed char; };
+template <> struct make_signed_base<short>              { using type = short; };
+template <> struct make_signed_base<unsigned short>     { using type = short; };
+template <> struct make_signed_base<int>                { using type = int; };
+template <> struct make_signed_base<unsigned int>       { using type = int; };
+template <> struct make_signed_base<long>               { using type = long; };
+template <> struct make_signed_base<unsigned long>      { using type = long; };
+template <> struct make_signed_base<long long>          { using type = long long; };
+template <> struct make_signed_base<unsigned long long> { using type = long long; };
+template <> struct make_signed_base<wchar_t>            { using type = wchar_t; };
+template <> struct make_signed_base<char16_t>           { using type = int_least16_t; };
+template <> struct make_signed_base<char32_t>           { using type = int_least32_t; };
+#ifdef __SIZEOF_INT128__
+template <> struct make_signed_base<__int128>           { using type = __int128; };
+template <> struct make_signed_base<unsigned __int128>  { using type = __int128; };
+#endif
+
+template <typename T> struct make_unsigned_base { using type = T; };
+template <> struct make_unsigned_base<char>               { using type = unsigned char; };
+template <> struct make_unsigned_base<signed char>        { using type = unsigned char; };
+template <> struct make_unsigned_base<unsigned char>      { using type = unsigned char; };
+template <> struct make_unsigned_base<short>              { using type = unsigned short; };
+template <> struct make_unsigned_base<unsigned short>     { using type = unsigned short; };
+template <> struct make_unsigned_base<int>                { using type = unsigned int; };
+template <> struct make_unsigned_base<unsigned int>       { using type = unsigned int; };
+template <> struct make_unsigned_base<long>               { using type = unsigned long; };
+template <> struct make_unsigned_base<unsigned long>      { using type = unsigned long; };
+template <> struct make_unsigned_base<long long>          { using type = unsigned long long; };
+template <> struct make_unsigned_base<unsigned long long> { using type = unsigned long long; };
+template <> struct make_unsigned_base<wchar_t>            { using type = wchar_t; };
+template <> struct make_unsigned_base<char16_t>           { using type = uint_least16_t; };
+template <> struct make_unsigned_base<char32_t>           { using type = uint_least32_t; };
+#ifdef __SIZEOF_INT128__
+template <> struct make_unsigned_base<__int128>           { using type = unsigned __int128; };
+template <> struct make_unsigned_base<unsigned __int128>  { using type = unsigned __int128; };
+#endif
+} // namespace _detail
+
+template <typename T>
+struct make_signed
+    : _detail::make_signed_base<typename remove_cv<T>::type> {};
+template <typename T>
+struct make_unsigned
+    : _detail::make_unsigned_base<typename remove_cv<T>::type> {};
+
+// ============================================================================
+// Array modifications  [meta.trans.arr]
+// ============================================================================
+
+template <typename T>           struct remove_extent       { using type = T; };
+template <typename T>           struct remove_extent<T[]>  { using type = T; };
+template <typename T, size_t N> struct remove_extent<T[N]> { using type = T; };
+
+template <typename T> struct remove_all_extents          { using type = T; };
+template <typename T> struct remove_all_extents<T[]>     { using type = typename remove_all_extents<T>::type; };
+template <typename T, size_t N>
+struct remove_all_extents<T[N]> { using type = typename remove_all_extents<T>::type; };
+
+// ============================================================================
+// Other transformations  [meta.trans.other]
+// ============================================================================
+
+// --- conditional -----------------------------------------------------------
+template <bool B, typename T, typename F> struct conditional      { using type = T; };
+template <typename T, typename F>         struct conditional<false, T, F> { using type = F; };
+
+// --- enable_if -------------------------------------------------------------
+template <bool B, typename T = void> struct enable_if {};
+template <typename T>                struct enable_if<true, T> { using type = T; };
+
+// --- decay -----------------------------------------------------------------
+template <typename T>
+struct decay {
+private:
+    using U = typename remove_reference<T>::type;
+public:
+    using type = typename conditional<
+        is_array<U>::value,
+        typename remove_extent<U>::type*,
+        typename conditional<
+            is_function<U>::value,
+            typename add_pointer<U>::type,
+            typename remove_cv<U>::type
+        >::type
+    >::type;
+};
+
+// --- common_type -----------------------------------------------------------
+template <typename... T> struct common_type;
+
+namespace _detail {
+// C++11-compatible void_t
+template <typename...> struct make_void { using type = void; };
+template <typename... T> using void_t_impl = typename make_void<T...>::type;
+
+template <typename T, typename U, typename = void>
+struct common_type_3way {};
+template <typename T, typename U>
+struct common_type_3way<T, U, void_t_impl<
+    decltype(true ? declval<T>() : declval<U>())>>
+{
+    using type = decltype(true ? declval<T>() : declval<U>());
+};
+
+template <typename T, typename U, bool =
+    !is_same<T, typename decay<T>::type>::value ||
+    !is_same<U, typename decay<U>::type>::value>
+struct common_type_recurse : common_type<typename decay<T>::type,
+                                         typename decay<U>::type> {};
+template <typename T, typename U>
+struct common_type_recurse<T, U, false> : common_type_3way<T, U> {};
+} // namespace _detail
+
+template <typename T>
+struct common_type<T> : common_type<T, T> {};
+
+template <typename T, typename U>
+struct common_type<T, U> : _detail::common_type_recurse<T, U> {};
+
+template <typename T, typename U, typename V, typename... W>
+struct common_type<T, U, V, W...>
+    : common_type<typename common_type<T, U>::type, V, W...> {};
+
+template <> struct common_type<> {};
+
+// --- underlying_type -------------------------------------------------------
+#ifdef _STDCPP_GNU
+template <typename T>
+struct underlying_type { using type = __underlying_type(T); };
+#else
+template <typename T>
+struct underlying_type {
+    using type = typename conditional<
+        sizeof(T) == 1, int8_t, typename conditional<
+            sizeof(T) == 2, int16_t, typename conditional<
+                sizeof(T) == 4, int32_t, int64_t
+            >::type
+        >::type
+    >::type;
+};
+#endif
+
+// --- result_of (C++11; deprecated C++17; removed C++20) --------------------
+namespace _detail {
+template <typename F, typename... A>
+struct result_of_impl {
+private:
+    template <typename G, typename... B>
+    static auto test(int)
+        -> type_identity<decltype(declval<G>()(declval<B>()...))>;
+    template <typename, typename...>
+    static auto test(...) -> void;
+public:
+    using type = typename decltype(test<F, A...>(0))::type;
+};
+} // namespace _detail
+
+template <typename> struct result_of;
+template <typename F, typename... A>
+struct result_of<F(A...)> : _detail::result_of_impl<F, A...> {};
+
+// ============================================================================
+// Constructible / assignable / destructible  [meta.unary.prop]
+// ============================================================================
+
+#ifdef _STDCPP_GNU
+
+template <typename T, typename... A>
+struct is_constructible
+    : integral_constant<bool, __is_constructible(T, A...)> {};
+template <typename T>
+struct is_default_constructible
+    : integral_constant<bool, __is_constructible(T)> {};
+template <typename T>
+struct is_copy_constructible
+    : integral_constant<bool, __is_constructible(T, const T&)> {};
+template <typename T>
+struct is_move_constructible
+    : integral_constant<bool, __is_constructible(T, T&&)> {};
+
+template <typename T, typename U>
+struct is_assignable
+    : integral_constant<bool, __is_assignable(T, U)> {};
+template <typename T>
+struct is_copy_assignable
+    : integral_constant<bool, __is_assignable(T&, const T&)> {};
+template <typename T>
+struct is_move_assignable
+    : integral_constant<bool, __is_assignable(T&, T&&)> {};
+
+// Destructible: GCC lacks __is_destructible; use SFINAE + pseudo-dtor
+namespace _detail {
+template <typename T>
+struct is_destructible_test {
+private:
+    template <typename U>
+    static auto test(int) -> decltype(declval<U&>().~U(), true_type{});
+    template <typename>
+    static auto test(...) -> false_type;
+public:
+    using type = decltype(test<T>(0));
+};
+
+// For arrays, test the base element type; for non-arrays, test T directly.
+template <typename T>
+struct is_destructible_impl
+    : is_destructible_test<typename remove_all_extents<T>::type>::type {};
+
+template <typename T>
+struct is_nothrow_destructible_test {
+private:
+    using U = typename remove_all_extents<T>::type;
+    template <typename X>
+    static auto test(int) -> integral_constant<bool,
+        noexcept(declval<X&>().~X())>;
+    template <typename>
+    static auto test(...) -> false_type;
+public:
+    using type = decltype(test<U>(0));
+};
+} // namespace _detail
+
+template <typename T>
+struct is_destructible : integral_constant<bool,
+    is_reference<T>::value ||
+    (!is_void<T>::value && !is_function<T>::value &&
+     _detail::is_destructible_impl<T>::value)> {};
+
+template <typename T, typename... A>
+struct is_trivially_constructible
+    : integral_constant<bool, __is_trivially_constructible(T, A...)> {};
+template <typename T>
+struct is_trivially_default_constructible
+    : integral_constant<bool, __is_trivially_constructible(T)> {};
+template <typename T>
+struct is_trivially_copy_constructible
+    : integral_constant<bool, __is_trivially_constructible(T, const T&)> {};
+template <typename T>
+struct is_trivially_move_constructible
+    : integral_constant<bool, __is_trivially_constructible(T, T&&)> {};
+
+template <typename T, typename U>
+struct is_trivially_assignable
+    : integral_constant<bool, __is_trivially_assignable(T, U)> {};
+template <typename T>
+struct is_trivially_copy_assignable
+    : integral_constant<bool, __is_trivially_assignable(T&, const T&)> {};
+template <typename T>
+struct is_trivially_move_assignable
+    : integral_constant<bool, __is_trivially_assignable(T&, T&&)> {};
+
+template <typename T>
+struct is_trivially_destructible : integral_constant<bool,
+    is_reference<T>::value ||
+    is_scalar<typename remove_all_extents<T>::type>::value ||
+    (is_class<typename remove_all_extents<T>::type>::value &&
+     __has_trivial_destructor(typename remove_all_extents<T>::type) &&
+     is_destructible<T>::value)> {};
+
+template <typename T, typename... A>
+struct is_nothrow_constructible
+    : integral_constant<bool, __is_nothrow_constructible(T, A...)> {};
+template <typename T>
+struct is_nothrow_default_constructible
+    : integral_constant<bool, __is_nothrow_constructible(T)> {};
+template <typename T>
+struct is_nothrow_copy_constructible
+    : integral_constant<bool, __is_nothrow_constructible(T, const T&)> {};
+template <typename T>
+struct is_nothrow_move_constructible
+    : integral_constant<bool, __is_nothrow_constructible(T, T&&)> {};
+
+template <typename T, typename U>
+struct is_nothrow_assignable
+    : integral_constant<bool, __is_nothrow_assignable(T, U)> {};
+template <typename T>
+struct is_nothrow_copy_assignable
+    : integral_constant<bool, __is_nothrow_assignable(T&, const T&)> {};
+template <typename T>
+struct is_nothrow_move_assignable
+    : integral_constant<bool, __is_nothrow_assignable(T&, T&&)> {};
+
+template <typename T>
+struct is_nothrow_destructible : integral_constant<bool,
+    is_reference<T>::value ||
+    (!is_void<T>::value && !is_function<T>::value &&
+     is_destructible<T>::value &&
+     _detail::is_nothrow_destructible_test<T>::type::value)> {};
+
+#else // SFINAE fallbacks
+
+namespace _detail {
+template <typename T, typename = void, typename... A>
+struct is_constructible_impl : false_type {};
+template <typename T, typename... A>
+struct is_constructible_impl<T,
+    decltype(void(static_cast<T>(declval<A>()...))), A...> : true_type {};
+} // namespace _detail
+template <typename T, typename... A>
+struct is_constructible : _detail::is_constructible_impl<T, void, A...> {};
+template <typename T>
+struct is_default_constructible : is_constructible<T> {};
+template <typename T>
+struct is_copy_constructible : is_constructible<T, const T&> {};
+template <typename T>
+struct is_move_constructible : is_constructible<T, T&&> {};
+
+namespace _detail {
+template <typename T, typename U, typename = void>
+struct is_assignable_impl : false_type {};
+template <typename T, typename U>
+struct is_assignable_impl<T, U,
+    decltype(void(declval<T>() = declval<U>()))> : true_type {};
+} // namespace _detail
+template <typename T, typename U>
+struct is_assignable : _detail::is_assignable_impl<T, U> {};
+template <typename T>
+struct is_copy_assignable : is_assignable<T&, const T&> {};
+template <typename T>
+struct is_move_assignable : is_assignable<T&, T&&> {};
+
+namespace _detail {
+template <typename T, typename = void>
+struct is_destructible_impl : false_type {};
+template <typename T>
+struct is_destructible_impl<T, decltype(declval<T&>().~T())> : true_type {};
+} // namespace _detail
+template <typename T>
+struct is_destructible : _detail::is_destructible_impl<T> {};
+
+// Trivial / nothrow conservatively map to plain versions without intrinsics
+template <typename T, typename... A>
+struct is_trivially_constructible : is_constructible<T, A...> {};
+template <typename T>
+struct is_trivially_default_constructible : is_default_constructible<T> {};
+template <typename T>
+struct is_trivially_copy_constructible : is_copy_constructible<T> {};
+template <typename T>
+struct is_trivially_move_constructible : is_move_constructible<T> {};
+template <typename T, typename U>
+struct is_trivially_assignable : is_assignable<T, U> {};
+template <typename T>
+struct is_trivially_copy_assignable : is_copy_assignable<T> {};
+template <typename T>
+struct is_trivially_move_assignable : is_move_assignable<T> {};
+template <typename T>
+struct is_trivially_destructible : is_destructible<T> {};
+
+template <typename T, typename... A>
+struct is_nothrow_constructible : is_constructible<T, A...> {};
+template <typename T>
+struct is_nothrow_default_constructible : is_default_constructible<T> {};
+template <typename T>
+struct is_nothrow_copy_constructible : is_copy_constructible<T> {};
+template <typename T>
+struct is_nothrow_move_constructible : is_move_constructible<T> {};
+template <typename T, typename U>
+struct is_nothrow_assignable : is_assignable<T, U> {};
+template <typename T>
+struct is_nothrow_copy_assignable : is_copy_assignable<T> {};
+template <typename T>
+struct is_nothrow_move_assignable : is_move_assignable<T> {};
+template <typename T>
+struct is_nothrow_destructible : is_destructible<T> {};
+
+#endif // _STDCPP_GNU
+
+// ============================================================================
+// Inline definitions of forward/move/declval (after remove_reference etc.)
+// ============================================================================
+
+template <typename T>
+constexpr T&& forward(typename remove_reference<T>::type& t) noexcept {
+    return static_cast<T&&>(t);
+}
+template <typename T>
+constexpr T&& forward(typename remove_reference<T>::type&& t) noexcept {
+    static_assert(!is_lvalue_reference<T>::value,
+                  "forward: cannot forward rvalue as lvalue reference");
+    return static_cast<T&&>(t);
+}
+template <typename T>
+constexpr typename remove_reference<T>::type&& move(T&& t) noexcept {
+    return static_cast<typename remove_reference<T>::type&&>(t);
+}
+template <typename T>
+typename add_rvalue_reference<T>::type declval() noexcept {
+    // Must only be used in unevaluated contexts; no definition is provided.
+}
+
+// --- minimal swap (for is_swappable) ---------------------------------------
+template <typename T>
+constexpr void swap(T& a, T& b)
+    noexcept(is_nothrow_move_constructible<T>::value &&
+             is_nothrow_move_assignable<T>::value)
+{
+    T tmp = static_cast<T&&>(a);
+    a = static_cast<T&&>(b);
+    b = static_cast<T&&>(tmp);
+}
+
+} // namespace std
+
+#endif // _STDCPP_CXX11
+
+// ============================================================================
+//
+//                         C++14  EXTENSIONS
+//
+// ============================================================================
+
+#ifdef _STDCPP_CXX14
+
+namespace std {
+
+// --- _t transformation aliases ---------------------------------------------
+template <typename T> using remove_const_t          = typename remove_const<T>::type;
+template <typename T> using remove_volatile_t       = typename remove_volatile<T>::type;
+template <typename T> using remove_cv_t             = typename remove_cv<T>::type;
+template <typename T> using add_const_t             = typename add_const<T>::type;
+template <typename T> using add_volatile_t          = typename add_volatile<T>::type;
+template <typename T> using add_cv_t                = typename add_cv<T>::type;
+template <typename T> using remove_reference_t      = typename remove_reference<T>::type;
+template <typename T> using add_lvalue_reference_t  = typename add_lvalue_reference<T>::type;
+template <typename T> using add_rvalue_reference_t  = typename add_rvalue_reference<T>::type;
+template <typename T> using remove_pointer_t        = typename remove_pointer<T>::type;
+template <typename T> using add_pointer_t           = typename add_pointer<T>::type;
+template <typename T> using make_signed_t           = typename make_signed<T>::type;
+template <typename T> using make_unsigned_t         = typename make_unsigned<T>::type;
+template <typename T> using remove_extent_t         = typename remove_extent<T>::type;
+template <typename T> using remove_all_extents_t    = typename remove_all_extents<T>::type;
+template <typename T> using decay_t                 = typename decay<T>::type;
+template <bool B, typename T = void>
+using enable_if_t = typename enable_if<B, T>::type;
+template <bool B, typename T, typename F>
+using conditional_t = typename conditional<B, T, F>::type;
+template <typename... T>
+using common_type_t = typename common_type<T...>::type;
+template <typename T>
+using underlying_type_t = typename underlying_type<T>::type;
+template <typename F>
+using result_of_t = typename result_of<F>::type;
+template <typename T>
+using type_identity_t = typename type_identity<T>::type;
+template <size_t Len, size_t Align = alignment_of<_detail::max_align>::value>
+using aligned_storage_t = typename aligned_storage<Len, Align>::type;
+template <size_t Len, typename... T>
+using aligned_union_t = typename aligned_union<Len, T...>::type;
+
+// --- is_final (C++14) ------------------------------------------------------
+#ifdef _STDCPP_GNU
+template <typename T>
+struct is_final : integral_constant<bool, __is_final(T)> {};
+#else
+template <typename T> struct is_final : false_type {};
+#endif
+
+} // namespace std
+
+#endif // _STDCPP_CXX14
+
+// ============================================================================
+//
+//                         C++17  EXTENSIONS
+//
+// ============================================================================
+
+#ifdef _STDCPP_CXX17
+
+namespace std {
+
+// --- bool_constant ---------------------------------------------------------
+template <bool B>
+using bool_constant = integral_constant<bool, B>;
+
+// --- void_t ----------------------------------------------------------------
+template <typename...> using void_t = void;
+
+// --- _v variable templates -------------------------------------------------
+template <typename T> inline constexpr bool is_void_v                 = is_void<T>::value;
+template <typename T> inline constexpr bool is_null_pointer_v         = is_null_pointer<T>::value;
+template <typename T> inline constexpr bool is_integral_v             = is_integral<T>::value;
+template <typename T> inline constexpr bool is_floating_point_v       = is_floating_point<T>::value;
+template <typename T> inline constexpr bool is_array_v                = is_array<T>::value;
+template <typename T> inline constexpr bool is_pointer_v              = is_pointer<T>::value;
+template <typename T> inline constexpr bool is_lvalue_reference_v     = is_lvalue_reference<T>::value;
+template <typename T> inline constexpr bool is_rvalue_reference_v     = is_rvalue_reference<T>::value;
+template <typename T> inline constexpr bool is_member_object_pointer_v = is_member_object_pointer<T>::value;
+template <typename T> inline constexpr bool is_member_function_pointer_v = is_member_function_pointer<T>::value;
+template <typename T> inline constexpr bool is_enum_v                 = is_enum<T>::value;
+template <typename T> inline constexpr bool is_union_v                = is_union<T>::value;
+template <typename T> inline constexpr bool is_class_v                = is_class<T>::value;
+template <typename T> inline constexpr bool is_function_v             = is_function<T>::value;
+template <typename T> inline constexpr bool is_reference_v            = is_reference<T>::value;
+template <typename T> inline constexpr bool is_arithmetic_v           = is_arithmetic<T>::value;
+template <typename T> inline constexpr bool is_fundamental_v          = is_fundamental<T>::value;
+template <typename T> inline constexpr bool is_object_v               = is_object<T>::value;
+template <typename T> inline constexpr bool is_member_pointer_v       = is_member_pointer<T>::value;
+template <typename T> inline constexpr bool is_scalar_v               = is_scalar<T>::value;
+template <typename T> inline constexpr bool is_compound_v             = is_compound<T>::value;
+template <typename T> inline constexpr bool is_const_v                = is_const<T>::value;
+template <typename T> inline constexpr bool is_volatile_v             = is_volatile<T>::value;
+template <typename T> inline constexpr bool is_trivial_v              = is_trivial<T>::value;
+template <typename T> inline constexpr bool is_trivially_copyable_v   = is_trivially_copyable<T>::value;
+template <typename T> inline constexpr bool is_standard_layout_v      = is_standard_layout<T>::value;
+template <typename T> inline constexpr bool is_pod_v                  = is_pod<T>::value;
+#if !defined(_STDCPP_CXX20)
+template <typename T> inline constexpr bool is_literal_type_v         = is_literal_type<T>::value;
+#endif
+template <typename T> inline constexpr bool has_virtual_destructor_v  = has_virtual_destructor<T>::value;
+template <typename T> inline constexpr bool is_empty_v                = is_empty<T>::value;
+template <typename T> inline constexpr bool is_polymorphic_v          = is_polymorphic<T>::value;
+template <typename T> inline constexpr bool is_abstract_v             = is_abstract<T>::value;
+template <typename T> inline constexpr bool is_final_v                = is_final<T>::value;
+template <typename T> inline constexpr bool is_signed_v               = is_signed<T>::value;
+template <typename T> inline constexpr bool is_unsigned_v             = is_unsigned<T>::value;
+template <typename T> inline constexpr size_t alignment_of_v          = alignment_of<T>::value;
+template <typename T> inline constexpr size_t rank_v                  = rank<T>::value;
+template <typename T, unsigned I = 0>
+inline constexpr size_t extent_v = extent<T, I>::value;
+
+template <typename T, typename U>
+inline constexpr bool is_same_v = is_same<T, U>::value;
+template <typename B, typename D>
+inline constexpr bool is_base_of_v = is_base_of<B, D>::value;
+template <typename F, typename T>
+inline constexpr bool is_convertible_v = is_convertible<F, T>::value;
+
+template <typename T, typename... A>
+inline constexpr bool is_constructible_v = is_constructible<T, A...>::value;
+template <typename T>
+inline constexpr bool is_default_constructible_v = is_default_constructible<T>::value;
+template <typename T>
+inline constexpr bool is_copy_constructible_v = is_copy_constructible<T>::value;
+template <typename T>
+inline constexpr bool is_move_constructible_v = is_move_constructible<T>::value;
+template <typename T, typename U>
+inline constexpr bool is_assignable_v = is_assignable<T, U>::value;
+template <typename T>
+inline constexpr bool is_copy_assignable_v = is_copy_assignable<T>::value;
+template <typename T>
+inline constexpr bool is_move_assignable_v = is_move_assignable<T>::value;
+template <typename T>
+inline constexpr bool is_destructible_v = is_destructible<T>::value;
+template <typename T, typename... A>
+inline constexpr bool is_trivially_constructible_v = is_trivially_constructible<T, A...>::value;
+template <typename T>
+inline constexpr bool is_trivially_default_constructible_v = is_trivially_default_constructible<T>::value;
+template <typename T>
+inline constexpr bool is_trivially_copy_constructible_v = is_trivially_copy_constructible<T>::value;
+template <typename T>
+inline constexpr bool is_trivially_move_constructible_v = is_trivially_move_constructible<T>::value;
+template <typename T, typename U>
+inline constexpr bool is_trivially_assignable_v = is_trivially_assignable<T, U>::value;
+template <typename T>
+inline constexpr bool is_trivially_copy_assignable_v = is_trivially_copy_assignable<T>::value;
+template <typename T>
+inline constexpr bool is_trivially_move_assignable_v = is_trivially_move_assignable<T>::value;
+template <typename T>
+inline constexpr bool is_trivially_destructible_v = is_trivially_destructible<T>::value;
+template <typename T, typename... A>
+inline constexpr bool is_nothrow_constructible_v = is_nothrow_constructible<T, A...>::value;
+template <typename T>
+inline constexpr bool is_nothrow_default_constructible_v = is_nothrow_default_constructible<T>::value;
+template <typename T>
+inline constexpr bool is_nothrow_copy_constructible_v = is_nothrow_copy_constructible<T>::value;
+template <typename T>
+inline constexpr bool is_nothrow_move_constructible_v = is_nothrow_move_constructible<T>::value;
+template <typename T, typename U>
+inline constexpr bool is_nothrow_assignable_v = is_nothrow_assignable<T, U>::value;
+template <typename T>
+inline constexpr bool is_nothrow_copy_assignable_v = is_nothrow_copy_assignable<T>::value;
+template <typename T>
+inline constexpr bool is_nothrow_move_assignable_v = is_nothrow_move_assignable<T>::value;
+template <typename T>
+inline constexpr bool is_nothrow_destructible_v = is_nothrow_destructible<T>::value;
+
+// --- Logical operators -----------------------------------------------------
+template <typename...> struct conjunction : true_type {};
+template <typename B> struct conjunction<B> : B {};
+template <typename B, typename... Bn>
+struct conjunction<B, Bn...>
+    : conditional<bool(B::value), conjunction<Bn...>, B>::type {};
+
+template <typename...> struct disjunction : false_type {};
+template <typename B> struct disjunction<B> : B {};
+template <typename B, typename... Bn>
+struct disjunction<B, Bn...>
+    : conditional<bool(B::value), B, disjunction<Bn...>>::type {};
+
+template <typename B>
+struct negation : bool_constant<!bool(B::value)> {};
+
+template <typename... B>
+inline constexpr bool conjunction_v = conjunction<B...>::value;
+template <typename... B>
+inline constexpr bool disjunction_v = disjunction<B...>::value;
+template <typename B>
+inline constexpr bool negation_v = negation<B>::value;
+
+// --- invoke / invoke_result ------------------------------------------------
+namespace _detail {
+template <int N> struct invoke_prio : invoke_prio<N-1> {};
+template <> struct invoke_prio<0> {};
+
+// Regular callable
+template <typename F, typename... A>
+constexpr auto invoke_do(invoke_prio<3>, F&& f, A&&... a)
+    noexcept(noexcept(forward<F>(f)(forward<A>(a)...)))
+    -> decltype(forward<F>(f)(forward<A>(a)...))
+{
+    return forward<F>(f)(forward<A>(a)...);
+}
+
+// Member function pointer + reference/value object
+template <typename MP, typename T, typename... A,
+          enable_if_t<is_member_function_pointer<
+              remove_reference_t<MP>>::value, int> = 0>
+constexpr auto invoke_do(invoke_prio<2>, MP&& f, T&& t, A&&... a)
+    noexcept(noexcept((forward<T>(t).*f)(forward<A>(a)...)))
+    -> decltype((forward<T>(t).*f)(forward<A>(a)...))
+{
+    return (forward<T>(t).*f)(forward<A>(a)...);
+}
+
+// Member object pointer + reference/value object
+template <typename MP, typename T,
+          enable_if_t<is_member_object_pointer<
+              remove_reference_t<MP>>::value, int> = 0>
+constexpr auto invoke_do(invoke_prio<1>, MP&& m, T&& t)
+    noexcept(noexcept(forward<T>(t).*m))
+    -> decltype(forward<T>(t).*m)
+{
+    return forward<T>(t).*m;
+}
+
+// Member pointer + pointer-like object (dereference and retry)
+template <typename MP, typename T, typename... A>
+constexpr auto invoke_do(invoke_prio<0>, MP&& f, T&& t, A&&... a)
+    noexcept(noexcept(invoke_do(invoke_prio<3>(),
+                          forward<MP>(f), *forward<T>(t), forward<A>(a)...)))
+    -> decltype(invoke_do(invoke_prio<3>(),
+                          forward<MP>(f), *forward<T>(t), forward<A>(a)...))
+{
+    return invoke_do(invoke_prio<3>(),
+                     forward<MP>(f), *forward<T>(t), forward<A>(a)...);
+}
+} // namespace _detail
+
+template <typename F, typename... A>
+constexpr auto invoke(F&& f, A&&... a)
+    noexcept(noexcept(_detail::invoke_do(
+        _detail::invoke_prio<3>(), forward<F>(f), forward<A>(a)...)))
+    -> decltype(_detail::invoke_do(
+        _detail::invoke_prio<3>(), forward<F>(f), forward<A>(a)...))
+{
+    return _detail::invoke_do(
+        _detail::invoke_prio<3>(), forward<F>(f), forward<A>(a)...);
+}
+
+namespace _detail {
+template <typename F, typename... A>
+struct invoke_result_impl {
+private:
+    template <typename G, typename... B>
+    static auto test(int)
+        -> type_identity<decltype(invoke_do(
+            invoke_prio<3>(), declval<G>(), declval<B>()...))>;
+    template <typename, typename...>
+    static auto test(...) -> void;
+public:
+    using type = typename decltype(test<F, A...>(0))::type;
+};
+} // namespace _detail
+
+template <typename F, typename... A>
+struct invoke_result : _detail::invoke_result_impl<F, A...> {};
+
+template <typename F, typename... A>
+using invoke_result_t = typename invoke_result<F, A...>::type;
+
+// --- is_invocable / is_invocable_r / nothrow variants ----------------------
+namespace _detail {
+template <typename, typename = void, typename...>
+struct is_invocable_impl : false_type {};
+template <typename F, typename... A>
+struct is_invocable_impl<F, void_t<invoke_result_t<F, A...>>, A...>
+    : true_type {};
+
+template <typename R, typename, typename = void, typename...>
+struct is_invocable_r_impl : false_type {};
+template <typename R, typename F, typename... A>
+struct is_invocable_r_impl<R, F, void_t<invoke_result_t<F, A...>>, A...>
+    : integral_constant<bool,
+        is_void<R>::value ||
+        is_convertible_v<invoke_result_t<F, A...>, R>> {};
+} // namespace _detail
+
+template <typename F, typename... A>
+struct is_invocable : _detail::is_invocable_impl<F, void, A...> {};
+
+template <typename R, typename F, typename... A>
+struct is_invocable_r : _detail::is_invocable_r_impl<R, F, void, A...> {};
+
+template <typename F, typename... A>
+struct is_nothrow_invocable : integral_constant<bool,
+    is_invocable<F, A...>::value &&
+    noexcept(invoke(declval<F>(), declval<A>()...))> {};
+
+template <typename R, typename F, typename... A>
+struct is_nothrow_invocable_r : integral_constant<bool,
+    is_invocable_r<R, F, A...>::value &&
+    noexcept(invoke(declval<F>(), declval<A>()...))> {};
+
+template <typename F, typename... A>
+inline constexpr bool is_invocable_v = is_invocable<F, A...>::value;
+template <typename R, typename F, typename... A>
+inline constexpr bool is_invocable_r_v = is_invocable_r<R, F, A...>::value;
+template <typename F, typename... A>
+inline constexpr bool is_nothrow_invocable_v = is_nothrow_invocable<F, A...>::value;
+template <typename R, typename F, typename... A>
+inline constexpr bool is_nothrow_invocable_r_v = is_nothrow_invocable_r<R, F, A...>::value;
+
+// --- is_swappable / is_swappable_with --------------------------------------
+namespace _detail {
+// ADL swap fallback
+using std::swap;
+
+template <typename T, typename U, typename = void>
+struct is_swappable_with_impl : false_type {};
+template <typename T, typename U>
+struct is_swappable_with_impl<T, U,
+    void_t<decltype(swap(declval<T>(), declval<U>()))>> : true_type {};
+} // namespace _detail
+
+template <typename T, typename U>
+struct is_swappable_with
+    : _detail::is_swappable_with_impl<T, U> {};
+
+template <typename T>
+struct is_swappable : is_swappable_with<T&, T&> {};
+
+template <typename T, typename U>
+struct is_nothrow_swappable_with : integral_constant<bool,
+    is_swappable_with<T, U>::value &&
+    noexcept(swap(declval<T>(), declval<U>()))> {};
+
+template <typename T>
+struct is_nothrow_swappable : is_nothrow_swappable_with<T&, T&> {};
+
+template <typename T, typename U>
+inline constexpr bool is_swappable_with_v = is_swappable_with<T, U>::value;
+template <typename T>
+inline constexpr bool is_swappable_v = is_swappable<T>::value;
+template <typename T, typename U>
+inline constexpr bool is_nothrow_swappable_with_v = is_nothrow_swappable_with<T, U>::value;
+template <typename T>
+inline constexpr bool is_nothrow_swappable_v = is_nothrow_swappable<T>::value;
+
+// --- is_aggregate (C++17) --------------------------------------------------
+#ifdef _STDCPP_GNU
+template <typename T>
+struct is_aggregate : integral_constant<bool, __is_aggregate(T)> {};
+#else
+template <typename T> struct is_aggregate : false_type {};
+#endif
+template <typename T>
+inline constexpr bool is_aggregate_v = is_aggregate<T>::value;
+
+} // namespace std
+
+#endif // _STDCPP_CXX17
+
+// ============================================================================
+//
+//                         C++20  EXTENSIONS
+//
+// ============================================================================
+
+#ifdef _STDCPP_CXX20
+
+namespace std {
+
+// --- remove_cvref ----------------------------------------------------------
+template <typename T>
+struct remove_cvref {
+    using type = remove_cv_t<remove_reference_t<T>>;
+};
+template <typename T>
+using remove_cvref_t = typename remove_cvref<T>::type;
+
+// --- is_bounded_array / is_unbounded_array ---------------------------------
+template <typename T>           struct is_bounded_array     : false_type {};
+template <typename T, size_t N> struct is_bounded_array<T[N]> : true_type {};
+template <typename T>           struct is_unbounded_array    : false_type {};
+template <typename T>           struct is_unbounded_array<T[]> : true_type {};
+
+template <typename T>
+inline constexpr bool is_bounded_array_v = is_bounded_array<T>::value;
+template <typename T>
+inline constexpr bool is_unbounded_array_v = is_unbounded_array<T>::value;
+
+// --- is_scoped_enum --------------------------------------------------------
+#if defined(_STDCPP_HAS_SCOPED_ENUM)
+template <typename T>
+struct is_scoped_enum : integral_constant<bool, __is_scoped_enum(T)> {};
+#else
+namespace _detail {
+template <typename T, bool = is_enum<T>::value>
+struct is_scoped_enum_impl : false_type {};
+template <typename T>
+struct is_scoped_enum_impl<T, true>
+    : integral_constant<bool,
+        !is_convertible<T, underlying_type_t<T>>::value> {};
+} // namespace _detail
+template <typename T>
+struct is_scoped_enum : _detail::is_scoped_enum_impl<T> {};
+#endif
+template <typename T>
+inline constexpr bool is_scoped_enum_v = is_scoped_enum<T>::value;
+
+// --- is_nothrow_convertible ------------------------------------------------
+#ifdef _STDCPP_GNU
+template <typename From, typename To>
+struct is_nothrow_convertible : integral_constant<bool,
+    is_convertible<From, To>::value &&
+    __is_nothrow_constructible(To, From)> {};
+#else
+template <typename From, typename To>
+struct is_nothrow_convertible : is_convertible<From, To> {};
+#endif
+template <typename From, typename To>
+inline constexpr bool is_nothrow_convertible_v = is_nothrow_convertible<From, To>::value;
+
+// --- is_layout_compatible / is_pointer_interconvertible_base_of ------------
+#if defined(_STDCPP_HAS_LAYOUT_INTRINSICS)
+template <typename T, typename U>
+struct is_layout_compatible
+    : integral_constant<bool, __is_layout_compatible(T, U)> {};
+template <typename Base, typename Derived>
+struct is_pointer_interconvertible_base_of
+    : integral_constant<bool, __is_pointer_interconvertible_base_of(Base, Derived)> {};
+#else
+template <typename T, typename U> struct is_layout_compatible : false_type {};
+template <typename B, typename D> struct is_pointer_interconvertible_base_of : false_type {};
+#endif
+template <typename T, typename U>
+inline constexpr bool is_layout_compatible_v = is_layout_compatible<T, U>::value;
+template <typename B, typename D>
+inline constexpr bool is_pointer_interconvertible_base_of_v =
+    is_pointer_interconvertible_base_of<B, D>::value;
+
+// --- is_corresponding_member / is_pointer_interconvertible_with_class ------
+#if defined(_STDCPP_HAS_LAYOUT_INTRINSICS)
+template <typename S1, typename M1, typename S2, typename M2>
+struct is_corresponding_member : integral_constant<bool,
+    __is_corresponding_member(S1, S2, M1, M2)> {};
+template <typename S, typename M>
+struct is_pointer_interconvertible_with_class : integral_constant<bool,
+    __is_pointer_interconvertible_with_class(S, M)> {};
+#else
+template <typename S1, typename M1, typename S2, typename M2>
+struct is_corresponding_member : false_type {};
+template <typename S, typename M>
+struct is_pointer_interconvertible_with_class : false_type {};
+#endif
+
+// --- common_reference ------------------------------------------------------
+namespace _detail {
+template <typename T, typename U, typename = void>
+struct common_ref_3way {};
+template <typename T, typename U>
+struct common_ref_3way<T, U,
+    void_t<decltype(false ? declval<T>() : declval<U>())>>
+{
+    using type = decltype(false ? declval<T>() : declval<U>());
+};
+
+template <typename T, typename U, bool =
+    !is_same<T, remove_cvref_t<T>>::value ||
+    !is_same<U, remove_cvref_t<U>>::value>
+struct common_ref_recurse
+    : common_ref_3way<T, U> {};
+template <typename T, typename U>
+struct common_ref_recurse<T, U, true>
+    : common_ref_3way<remove_cvref_t<T>, remove_cvref_t<U>> {};
+} // namespace _detail
+
+template <typename... T> struct common_reference;
+template <typename T> struct common_reference<T> { using type = T; };
+template <typename T, typename U>
+struct common_reference<T, U> : _detail::common_ref_recurse<T, U> {};
+template <typename T, typename U, typename V, typename... W>
+struct common_reference<T, U, V, W...>
+    : common_reference<typename common_reference<T, U>::type, V, W...> {};
+
+template <typename... T>
+using common_reference_t = typename common_reference<T...>::type;
+
+// --- basic_common_reference (user-customizable) ----------------------------
+template <typename T, typename U, typename = void>
+struct basic_common_reference {};
+
+// --- unwrap_reference / unwrap_ref_decay -----------------------------------
+namespace _detail {
+template <typename T> struct unwrap_ref_impl { using type = T; };
+} // namespace _detail
+template <typename T>
+struct unwrap_reference : _detail::unwrap_ref_impl<T> {};
+template <typename T>
+using unwrap_reference_t = typename unwrap_reference<T>::type;
+
+template <typename T>
+struct unwrap_ref_decay : unwrap_reference<decay_t<T>> {};
+template <typename T>
+using unwrap_ref_decay_t = typename unwrap_ref_decay<T>::type;
+
+// --- compare_three_way_result ----------------------------------------------
+namespace _detail {
+template <typename T, typename U, typename = void>
+struct cmp_3way_impl {};
+template <typename T, typename U>
+struct cmp_3way_impl<T, U,
+    void_t<decltype(declval<T>() <=> declval<U>())>>
+{
+    using type = decltype(declval<T>() <=> declval<U>());
+};
+} // namespace _detail
+template <typename T, typename U = T>
+struct compare_three_way_result : _detail::cmp_3way_impl<T, U> {};
+template <typename T, typename U = T>
+using compare_three_way_result_t = typename compare_three_way_result<T, U>::type;
+
+// --- is_constant_evaluated (C++20) -----------------------------------------
+constexpr bool is_constant_evaluated() noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_is_constant_evaluated();
+#else
+    return true; // conservative fallback
+#endif
+}
+
+} // namespace std
+
+#endif // _STDCPP_CXX20
+
+// ============================================================================
+//
+//                         C++23  EXTENSIONS
+//
+// ============================================================================
+
+#ifdef _STDCPP_CXX23
+
+namespace std {
+
+// --- is_implicit_lifetime --------------------------------------------------
+#if defined(_STDCPP_HAS_IMPLICIT_LIFETIME)
+template <typename T>
+struct is_implicit_lifetime
+    : integral_constant<bool, __is_implicit_lifetime(T)> {};
+#else
+// Conservative fallback: scalar types and arrays thereof are implicit-lifetime
+template <typename T>
+struct is_implicit_lifetime : integral_constant<bool,
+    is_scalar<typename remove_all_extents<T>::type>::value ||
+    is_trivially_copyable<T>::value> {};
+#endif
+template <typename T>
+inline constexpr bool is_implicit_lifetime_v = is_implicit_lifetime<T>::value;
+
+// --- is_referenceable ------------------------------------------------------
+namespace _detail {
+template <typename T, typename = void>
+struct is_referenceable_impl : false_type {};
+template <typename T>
+struct is_referenceable_impl<T, void_t<T&>> : true_type {};
+} // namespace _detail
+template <typename T>
+struct is_referenceable : _detail::is_referenceable_impl<T> {};
+template <typename T>
+inline constexpr bool is_referenceable_v = is_referenceable<T>::value;
+
+// --- to_underlying ---------------------------------------------------------
+template <typename E>
+constexpr underlying_type_t<E> to_underlying(E e) noexcept {
+    return static_cast<underlying_type_t<E>>(e);
+}
+
+// --- forward_like ----------------------------------------------------------
+template <typename T, typename U>
+[[nodiscard]] constexpr auto&& forward_like(U&& x) noexcept {
+    using T_noref = remove_reference_t<T>;
+    using U_noref = remove_reference_t<U>;
+    using U_cv = conditional_t<
+        is_const<T_noref>::value, const U_noref, U_noref>;
+    using U_cv2 = conditional_t<
+        is_volatile<T_noref>::value, volatile U_cv, U_cv>;
+    if constexpr (is_rvalue_reference<T>::value) {
+        return static_cast<U_cv2&&>(x);
+    } else {
+        return static_cast<U_cv2&>(x);
+    }
+}
+
+// --- reference_constructs/converts_from_temporary --------------------------
+#if defined(_STDCPP_HAS_REF_TEMP_INTRINSICS)
+template <typename T, typename U>
+struct reference_constructs_from_temporary
+    : integral_constant<bool, __reference_constructs_from_temporary(T, U)> {};
+template <typename T, typename U>
+struct reference_converts_from_temporary
+    : integral_constant<bool, __reference_converts_from_temporary(T, U)> {};
+#else
+template <typename T, typename U> struct reference_constructs_from_temporary : false_type {};
+template <typename T, typename U> struct reference_converts_from_temporary : false_type {};
+#endif
+template <typename T, typename U>
+inline constexpr bool reference_constructs_from_temporary_v =
+    reference_constructs_from_temporary<T, U>::value;
+template <typename T, typename U>
+inline constexpr bool reference_converts_from_temporary_v =
+    reference_converts_from_temporary<T, U>::value;
+
+} // namespace std
+
+#endif // _STDCPP_CXX23
+
+// ============================================================================
+//
+//                         C++26  EXTENSIONS
+//
+// ============================================================================
+
+#ifdef _STDCPP_CXX26
+
+namespace std {
+
+// --- is_virtual_base_of ----------------------------------------------------
+// No widely available compiler intrinsic yet; conservative fallback.
+template <typename Base, typename Derived>
+struct is_virtual_base_of : false_type {};
+template <typename Base, typename Derived>
+inline constexpr bool is_virtual_base_of_v =
+    is_virtual_base_of<Base, Derived>::value;
+
+// --- is_trivially_relocatable (C++26) --------------------------------------
+template <typename T>
+struct is_trivially_relocatable
+    : integral_constant<bool, is_trivially_copyable_v<T>> {};
+template <typename T>
+inline constexpr bool is_trivially_relocatable_v =
+    is_trivially_relocatable<T>::value;
+
+} // namespace std
+
+#endif // _STDCPP_CXX26
+
+#endif // _STDCPP_TYPE_TRAITS_H

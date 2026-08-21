@@ -4,13 +4,18 @@
 #include <drivers/usb/xhci.h>
 #include <klib/kio.h>
 
+#ifdef __x86_64__
+#include <arch/x86_64/pit/pit.h>
+extern void usleep_usec(uint64_t x);
+#endif
+
 namespace USB::UAC {
 
 void RegisterAudioCallback(Device* uac, AudioSampleCallback cb) { uac->callback = cb; }
 
 static void isochCallback(uint8_t* data, uint32_t len, void* ctx) {
     Device* uac = (Device*)ctx;
-    if (!uac->usbDev) { kfree(data); return; } // 设备正在销毁
+    if (!uac->usbDev || uac->stopping) { return; }
 
     if (uac->callback && data && uac->activeStream < uac->numStreams) {
         uint32_t numFrames = len / (uac->streams[uac->activeStream].numChannels * (uac->streams[uac->activeStream].bitsPerSample / 8));
@@ -26,6 +31,7 @@ void Init(USB::Device* dev, Interface* ifce) {
     Device* uac = (Device*)kmalloc(sizeof(Device));
     _memset(uac, 0, sizeof(*uac));
     uac->usbDev = dev; uac->streamIfce = ifce; dev->driverCtx = uac;
+    uac->stopping = true; // 初始处于停止状态
 
     uint8_t* p = (uint8_t*)dev->cfgBuf;
     uint8_t* end = p + dev->cfgLen;
@@ -81,8 +87,9 @@ void Init(USB::Device* dev, Interface* ifce) {
 void Deinit(USB::Device* dev) {
     Device* uac = (Device*)dev->driverCtx;
     if (uac) {
-        StopStream(uac);
-        uac->usbDev = nullptr; // 阻止回调继续投递
+        uac->stopping = true;
+        // 不调用 StopStream，直接释放内存
+        if (uac->frameBuf) { kfree(uac->frameBuf); uac->frameBuf = nullptr; }
         kfree(uac);
         dev->driverCtx = nullptr;
     }
@@ -94,6 +101,8 @@ bool StartStream(Device* uac, uint8_t altSetting) {
         if (uac->streams[i].altSetting == altSetting) { idx = i; break; }
     }
     if (idx < 0) return false;
+    
+    uac->stopping = false; // 恢复回调执行
     uac->activeStream = idx;
 
     if (!USB::ControlTransfer(uac->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, altSetting, uac->streamIfce->desc.bInterfaceNumber, nullptr, 0)) {
@@ -108,9 +117,12 @@ bool StartStream(Device* uac, uint8_t altSetting) {
 }
 
 bool StopStream(Device* uac) {
+    uac->stopping = true; // 先阻止回调访问缓冲区及重新投递
     if (uac->activeStream < uac->numStreams) {
         USB::ControlTransfer(uac->usbDev->slotID, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_IF, USB::SET_INTERFACE, 0, uac->streamIfce->desc.bInterfaceNumber, nullptr, 0);
     }
+    // 等待硬件排干在途 TRB，防止释放内存后硬件继续 DMA 写入
+    usleep_usec(20000); 
     if (uac->frameBuf) { kfree(uac->frameBuf); uac->frameBuf = nullptr; }
     return true;
 }

@@ -338,6 +338,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
 
 uint64_t sys_launch(uint64_t pid,GENERATE_IGN5()){
     IGNV_5();
+    //kinfoln("HIT SYSCALL LAUNCH!");
     cpu_t *cpu = this_cpu();
     proc_t* proc = (proc_t*)art_search(NOT_RUNQ_P,(const uint8_t*)&pid,8);
     thread_t *thread = proc->threads;

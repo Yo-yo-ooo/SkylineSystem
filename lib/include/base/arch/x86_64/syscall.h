@@ -46,6 +46,8 @@ uint64_t sys_pmmap(
     uint64_t proc_addr, uint64_t tproc_addr, uint64_t flag, uint64_t length
 );
 uint64_t sched_yield();
+uint64_t sys_load(uint64_t pathname, uint64_t argv, uint64_t envp);
+uint64_t sys_launch(uint64_t pid);
 
 #ifdef __cplusplus
 }

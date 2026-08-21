@@ -35,7 +35,7 @@ static volatile struct limine_paging_mode_request paging_mode_request = {
 
 volatile bool IsPM5LVL = (paging_mode_request.response->mode == REQ_TOP_LVL);
 
-extern volatile spinlock_t pmm_lock;
+extern spinlock_t pmm_lock;
 #define PHYS_BASE(x) (x - executable_vaddr + executable_paddr)
 
 volatile pagemap_t* kernel_pagemap = nullptr;

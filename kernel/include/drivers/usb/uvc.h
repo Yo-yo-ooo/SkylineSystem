@@ -16,13 +16,15 @@ struct Device {
     VideoStream streams[8];
     uint8_t numStreams; uint8_t activeStream;
     uint8_t* frameBuf;
+    uint8_t* isochBuf;
     uint32_t frameOffset;
     uint32_t frameCapacity;
     uint8_t fidPrev;
+    volatile bool stopping;
 };
 
 void Init(USB::Device* dev, Interface* ifce);
-void Deinit(USB::Device* dev); // 新增
+void Deinit(USB::Device* dev);
 bool StartStream(Device* uvc, uint8_t altSetting);
 bool StopStream (Device* uvc);
 

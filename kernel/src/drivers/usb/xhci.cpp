@@ -47,9 +47,6 @@ static uint8_t g_evtRingCycle = 1;
 static ERSTEntry* g_erst = nullptr;
 static spinlock_t g_evtRingLock = 0;
 
-#define spin_lock_irqsave(lock, flags) do { flags = irq_save(); spinlock_lock(lock); } while(0)
-#define spin_unlock_irqrestore(lock, flags) do { spinlock_unlock(lock); irq_restore(flags); } while(0)
-
 static SlotInfo g_slots[MAX_SLOTS];
 
 struct PendingCommand {
@@ -61,7 +58,7 @@ struct PendingTransfer {
     rb_node_t node; uint64_t trbPtr;
     volatile bool completed; CC completionCode; uint32_t transferred;
     bool async; void* callback; void* ctx; void* buf; uint32_t len;
-    uint8_t slotID; // 新增：记录所属槽位，用于销毁清理
+    uint8_t slotID;
 };
 
 static rb_root_t g_pendingCmds;
@@ -101,16 +98,15 @@ static inline void writeOp(uint32_t off, uint32_t v) { *((volatile uint32_t*)((u
 static inline uint32_t readOp(uint32_t off) { return *((volatile uint32_t*)((uint64_t)g_op + off)); }
 static inline void ringDoorbell(uint8_t slot, uint8_t target) { *((volatile uint32_t*)((uint64_t)g_doorbells + (slot * 4))) = target; }
 
-// 追踪并入队 TRB (用于触发事件的最后一个 TRB)
 static bool EnqueueAndTrack(TRBRingState* ring, uint8_t slotID, uint8_t dbTarget, const TRB& trb, PendingTransfer* pt) {
     uint64_t flags;
-    spin_lock_irqsave(&ring->lock, flags);
+    usb_spin_lock_irqsave(&ring->lock, flags);
     
     uint32_t idx = ((uint64_t)ring->enqueue - (uint64_t)ring->base) / sizeof(TRB);
     volatile TRB* next = (idx == TRANSFER_RING_SIZE - 1) ? ring->base : ring->enqueue + 1;
     
     if (next == ring->dequeue) {
-        spin_unlock_irqrestore(&ring->lock, flags);
+        usb_spin_unlock_irqrestore(&ring->lock, flags);
         return false; 
     }
 
@@ -118,9 +114,9 @@ static bool EnqueueAndTrack(TRBRingState* ring, uint8_t slotID, uint8_t dbTarget
     pt->slotID = slotID;
     
     uint64_t pflags;
-    spin_lock_irqsave(&g_pendingTransfersLock, pflags);
+    usb_spin_lock_irqsave(&g_pendingTransfersLock, pflags);
     rb_insert(&g_pendingTransfers, &pt->node, pending_xfer_cmp);
-    spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
+    usb_spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
 
     if (idx == TRANSFER_RING_SIZE - 1) {
         ring->enqueue->parameter = virt_to_phys((void*)ring->base);
@@ -135,7 +131,7 @@ static bool EnqueueAndTrack(TRBRingState* ring, uint8_t slotID, uint8_t dbTarget
     ring->enqueue->control = (trb.control & ~1u) | ring->cycle;
     ring->enqueue++;
     
-    spin_unlock_irqrestore(&ring->lock, flags);
+    usb_spin_unlock_irqrestore(&ring->lock, flags);
     ringDoorbell(slotID, dbTarget);
     return true;
 }
@@ -150,7 +146,7 @@ static void processEvent(volatile TRB* evt) {
             uint64_t trbPtr = evt->parameter;
             uint32_t xferred = evt->status >> 17;
             
-            // 1. 先推进 dequeue (在任何入队或回调之前)
+            // 1. 先推进 dequeue
             if (slotID > 0 && slotID <= MAX_SLOTS) {
                 for (int i = 0; i < 31; i++) {
                     TRBRingState* ring = &g_slots[slotID].rings[i];
@@ -160,10 +156,10 @@ static void processEvent(volatile TRB* evt) {
                         if (trbPtr >= rs && trbPtr < re) {
                             volatile TRB* vt = (volatile TRB*)(trbPtr + hhdm_offset);
                             uint64_t rf;
-                            spin_lock_irqsave(&ring->lock, rf);
+                            usb_spin_lock_irqsave(&ring->lock, rf);
                             uint32_t idx = vt - ring->base;
                             ring->dequeue = (idx == TRANSFER_RING_SIZE - 1) ? ring->base : vt + 1;
-                            spin_unlock_irqrestore(&ring->lock, rf);
+                            usb_spin_unlock_irqrestore(&ring->lock, rf);
                             break;
                         }
                     }
@@ -173,7 +169,7 @@ static void processEvent(volatile TRB* evt) {
             // 2. 处理 pending transfer
             PendingTransfer* async_pt = nullptr;
             uint64_t flags;
-            spin_lock_irqsave(&g_pendingTransfersLock, flags);
+            usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
             PendingTransfer key; key.trbPtr = trbPtr;
             rb_node_t* found = rb_search(&g_pendingTransfers, &key.node, pending_xfer_cmp);
             if (found) {
@@ -187,9 +183,9 @@ static void processEvent(volatile TRB* evt) {
                     pt->completed = true;
                 }
             }
-            spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
+            usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
 
-            // 3. 锁外执行回调，避免死锁
+            // 3. 锁外执行回调
             if (async_pt) {
                 ((void(*)(uint8_t*, uint32_t, void*))async_pt->callback)((uint8_t*)async_pt->buf, xferred, async_pt->ctx);
                 kfree(async_pt);
@@ -199,7 +195,7 @@ static void processEvent(volatile TRB* evt) {
         case TRB_COMMAND_COMPLETION: {
             uint64_t cmdTrbPtr = evt->parameter;
             uint64_t flags;
-            spin_lock_irqsave(&g_pendingCmdsLock, flags);
+            usb_spin_lock_irqsave(&g_pendingCmdsLock, flags);
             PendingCommand key; key.trbPtr = cmdTrbPtr;
             rb_node_t* found = rb_search(&g_pendingCmds, &key.node, pending_cmd_cmp);
             if (found) {
@@ -208,7 +204,7 @@ static void processEvent(volatile TRB* evt) {
                 pc->slotID = slotID;
                 pc->completed = true;
             }
-            spin_unlock_irqrestore(&g_pendingCmdsLock, flags);
+            usb_spin_unlock_irqrestore(&g_pendingCmdsLock, flags);
             break;
         }
         case TRB_PORT_STATUS_CHANGE: {
@@ -222,7 +218,7 @@ static void processEvent(volatile TRB* evt) {
 
 void PollEventRing() {
     uint64_t flags;
-    spin_lock_irqsave(&g_evtRingLock, flags);
+    usb_spin_lock_irqsave(&g_evtRingLock, flags);
     while (true) {
         volatile TRB* trb = g_evtRingDeq;
         uint8_t cv = (trb->control & 1u);
@@ -235,17 +231,17 @@ void PollEventRing() {
             g_evtRingDeq = g_evtRing;
             g_evtRingCycle ^= 1;
         }
-        spin_unlock_irqrestore(&g_evtRingLock, flags);
+        usb_spin_unlock_irqrestore(&g_evtRingLock, flags);
         
         processEvent(&evtCopy);
         
-        spin_lock_irqsave(&g_evtRingLock, flags);
+        usb_spin_lock_irqsave(&g_evtRingLock, flags);
     }
     
     uint64_t erdp = virt_to_phys((void*)g_evtRingDeq) | (1u << 3);
     g_intRegs->erdp_lo = (uint32_t)erdp;
     g_intRegs->erdp_hi = (uint32_t)(erdp >> 32);
-    spin_unlock_irqrestore(&g_evtRingLock, flags);
+    usb_spin_unlock_irqrestore(&g_evtRingLock, flags);
 }
 
 uint8_t SubmitCommandBlocking(volatile TRB* cmdTrb, uint32_t timeoutMs) {
@@ -254,7 +250,7 @@ uint8_t SubmitCommandBlocking(volatile TRB* cmdTrb, uint32_t timeoutMs) {
     pc.completed = false;
 
     uint64_t flags;
-    spin_lock_irqsave(&g_cmdRingLock, flags);
+    usb_spin_lock_irqsave(&g_cmdRingLock, flags);
     uint32_t idx = ((uint64_t)g_cmdRingEnq - (uint64_t)g_cmdRing) / sizeof(TRB);
     if (idx == CMD_RING_SIZE - 1) {
         g_cmdRingEnq->parameter = virt_to_phys((void*)g_cmdRing);
@@ -268,11 +264,11 @@ uint8_t SubmitCommandBlocking(volatile TRB* cmdTrb, uint32_t timeoutMs) {
     g_cmdRingEnq->status = cmdTrb->status;
     g_cmdRingEnq->control = (cmdTrb->control & ~1u) | g_cmdRingCycle;
     g_cmdRingEnq++;
-    spin_unlock_irqrestore(&g_cmdRingLock, flags);
+    usb_spin_unlock_irqrestore(&g_cmdRingLock, flags);
 
-    spin_lock_irqsave(&g_pendingCmdsLock, flags);
+    usb_spin_lock_irqsave(&g_pendingCmdsLock, flags);
     rb_insert(&g_pendingCmds, &pc.node, pending_cmd_cmp);
-    spin_unlock_irqrestore(&g_pendingCmdsLock, flags);
+    usb_spin_unlock_irqrestore(&g_pendingCmdsLock, flags);
     
     ringDoorbell(0, 0);
     
@@ -282,9 +278,9 @@ uint8_t SubmitCommandBlocking(volatile TRB* cmdTrb, uint32_t timeoutMs) {
         usleep_usec(1);
     }
     
-    spin_lock_irqsave(&g_pendingCmdsLock, flags);
+    usb_spin_lock_irqsave(&g_pendingCmdsLock, flags);
     rb_erase(&g_pendingCmds, &pc.node);
-    spin_unlock_irqrestore(&g_pendingCmdsLock, flags);
+    usb_spin_unlock_irqrestore(&g_pendingCmdsLock, flags);
     
     if (!pc.completed) return 0;
     return pc.slotID;
@@ -383,8 +379,6 @@ void InitXHCIFromPCI(PCI::PCIHeader0* hdr) {
     cmd |= USBCMD_INTE | USBCMD_HSEE | USBCMD_EWE | USBCMD_RUN;
     writeOp(offsetof(OpRegs, usbcmd), cmd);
 
-    // idt_install_irq(0x40, XHCI_IRQHandler); 
-
     for (uint32_t p = 1; p <= g_maxPorts; p++) {
         volatile OpRegs::PortReg* portReg = &g_op->ports[p-1];
         if (!(portReg->portsc & PORTSC_PP)) {
@@ -460,14 +454,15 @@ bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed) {
     freeDMA(inputCtx);
 
     USB::DeviceDescriptor devDesc = {};
-    USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_DEVICE << 8), 0, &devDesc, 8);
-    USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_DEVICE << 8), 0, &devDesc, sizeof(devDesc));
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_DEVICE << 8), 0, &devDesc, 8)) return false;
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_DEVICE << 8), 0, &devDesc, sizeof(devDesc))) return false;
 
     uint8_t cfgBuf[1024] = {};
-    USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_CONFIG << 8), 0, cfgBuf, sizeof(USB::ConfigDescriptor));
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_CONFIG << 8), 0, cfgBuf, sizeof(USB::ConfigDescriptor))) return false;
     uint16_t totalLen = ((USB::ConfigDescriptor*)cfgBuf)->wTotalLength;
-    USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_CONFIG << 8), 0, cfgBuf, totalLen);
-    USB::ControlTransfer(slot, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::SET_CONFIGURATION, 1, 0, nullptr, 0);
+    if (totalLen > sizeof(cfgBuf)) totalLen = sizeof(cfgBuf);
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_CONFIG << 8), 0, cfgBuf, totalLen)) return false;
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::SET_CONFIGURATION, 1, 0, nullptr, 0)) return false;
 
     USB::Device* dev = USB::CreateDevice(slot, port, speed, devDesc, cfgBuf, totalLen);
     USB::RouteDeviceToClassDriver(dev);
@@ -484,23 +479,26 @@ void DestroyDevice(uint8_t slotID) {
     // 2. 排干事件环
     PollEventRing();
     
-    // 3. 清除该 slot 的所有 pending transfer，防止 UAF 和野指针
+    // 3. 清除该 slot 的所有 pending transfer
     uint64_t flags;
-    spin_lock_irqsave(&g_pendingTransfersLock, flags);
+    usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
     rb_node_t* node = rb_first(g_pendingTransfers.node);
     while (node) {
         rb_node_t* next = rb_next(node);
         PendingTransfer* pt = container_of(node, PendingTransfer, node);
         if (pt->slotID == slotID) {
-            rb_erase(&g_pendingTransfers, &pt->node);
             if (pt->async) {
-                if (pt->buf) kfree(pt->buf);
-                kfree(pt);
+                rb_erase(&g_pendingTransfers, &pt->node);
+                kfree(pt); 
+            } else {
+                // 同步传输在栈上，仅标记完成唤醒等待线程，由等待线程自行清理
+                pt->completionCode = CC_STOPPED;
+                pt->completed = true;
             }
         }
         node = next;
     }
-    spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
+    usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
     
     // 4. 释放 rings 和设备上下文
     for (int i = 0; i < 31; i++) {
@@ -528,7 +526,7 @@ void ResetEndpoint(uint8_t slotID, uint8_t epAddr) {
     SubmitCommandBlocking(&resetCmd, 1000);
 
     struct SetDequeueCtx { uint64_t dequeuePtr; uint32_t reserved[2]; };
-    SetDequeueCtx ctx; // 使用栈分配，因为该命令是同步的
+    SetDequeueCtx ctx;
     ctx.dequeuePtr = virt_to_phys((void*)g_slots[slotID].rings[epIdx].base) | 1u;
     
     TRB setDeqCmd = {}; setDeqCmd.parameter = virt_to_phys(&ctx);
@@ -537,7 +535,7 @@ void ResetEndpoint(uint8_t slotID, uint8_t epAddr) {
 
     // 清理 stale pending entries
     uint64_t flags;
-    spin_lock_irqsave(&g_pendingTransfersLock, flags);
+    usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
     rb_node_t* node = rb_first(g_pendingTransfers.node);
     while (node) {
         rb_node_t* next = rb_next(node);
@@ -546,27 +544,31 @@ void ResetEndpoint(uint8_t slotID, uint8_t epAddr) {
             uint64_t ring_phys_start = virt_to_phys((void*)g_slots[slotID].rings[epIdx].base);
             uint64_t ring_phys_end = ring_phys_start + TRANSFER_RING_SIZE * sizeof(TRB);
             if (pt->trbPtr >= ring_phys_start && pt->trbPtr < ring_phys_end) {
-                rb_erase(&g_pendingTransfers, &pt->node);
-                if (pt->async && pt->buf) kfree(pt->buf);
-                kfree(pt);
+                if (pt->async) {
+                    rb_erase(&g_pendingTransfers, &pt->node);
+                    kfree(pt);
+                } else {
+                    pt->completionCode = CC_STOPPED;
+                    pt->completed = true;
+                }
             }
         }
         node = next;
     }
-    spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
+    usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
 
-    spin_lock_irqsave(&g_slots[slotID].rings[epIdx].lock, flags);
+    usb_spin_lock_irqsave(&g_slots[slotID].rings[epIdx].lock, flags);
     g_slots[slotID].rings[epIdx].enqueue = g_slots[slotID].rings[epIdx].base;
     g_slots[slotID].rings[epIdx].dequeue = g_slots[slotID].rings[epIdx].base;
     g_slots[slotID].rings[epIdx].cycle = 1;
-    spin_unlock_irqrestore(&g_slots[slotID].rings[epIdx].lock, flags);
+    usb_spin_unlock_irqrestore(&g_slots[slotID].rings[epIdx].lock, flags);
 }
 
 bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, uint16_t len, bool inDir) {
     TRBRingState* ring = &g_slots[slotID].rings[0];
     
     uint64_t flags;
-    spin_lock_irqsave(&ring->lock, flags);
+    usb_spin_lock_irqsave(&ring->lock, flags);
     
     volatile TRB* start_enqueue = ring->enqueue;
     uint8_t start_cycle = ring->cycle;
@@ -597,7 +599,7 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
     
     if (!try_enqueue(setupTrb)) {
         ring->enqueue = start_enqueue; ring->cycle = start_cycle;
-        spin_unlock_irqrestore(&ring->lock, flags);
+        usb_spin_unlock_irqrestore(&ring->lock, flags);
         return false;
     }
     
@@ -607,7 +609,7 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
         dataTrb.control = (TRB_DATA_STAGE << 10) | (1u << 5) | (inDir ? (1u << 16) : 0);
         if (!try_enqueue(dataTrb)) {
             ring->enqueue = start_enqueue; ring->cycle = start_cycle;
-            spin_unlock_irqrestore(&ring->lock, flags);
+            usb_spin_unlock_irqrestore(&ring->lock, flags);
             return false;
         }
     }
@@ -619,24 +621,24 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
     pt.slotID = slotID; pt.trbPtr = status_trb_ptr;
     
     uint64_t pflags;
-    spin_lock_irqsave(&g_pendingTransfersLock, pflags);
+    usb_spin_lock_irqsave(&g_pendingTransfersLock, pflags);
     rb_insert(&g_pendingTransfers, &pt.node, pending_xfer_cmp);
-    spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
+    usb_spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
     
     TRB statusTrb = {};
     statusTrb.control = (TRB_STATUS_STAGE << 10) | (1u << 5) | (inDir ? 0 : (1u << 16));
     if (!try_enqueue(statusTrb)) {
-        spin_lock_irqsave(&g_pendingTransfersLock, pflags);
+        usb_spin_lock_irqsave(&g_pendingTransfersLock, pflags);
         rb_erase(&g_pendingTransfers, &pt.node);
-        spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
+        usb_spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
         
         ring->enqueue = start_enqueue; ring->cycle = start_cycle;
-        spin_unlock_irqrestore(&ring->lock, flags);
+        usb_spin_unlock_irqrestore(&ring->lock, flags);
         return false;
     }
     
     ringDoorbell(slotID, 1);
-    spin_unlock_irqrestore(&ring->lock, flags);
+    usb_spin_unlock_irqrestore(&ring->lock, flags);
     
     for(uint32_t i=0; i<100000; i++) {
         if (pt.completed) break;
@@ -644,9 +646,9 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
         usleep_usec(10);
     }
     
-    spin_lock_irqsave(&g_pendingTransfersLock, pflags);
+    usb_spin_lock_irqsave(&g_pendingTransfersLock, pflags);
     rb_erase(&g_pendingTransfers, &pt.node);
-    spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
+    usb_spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
     
     return pt.completed && (pt.completionCode == CC_SUCCESS || pt.completionCode == CC_SHORT_PKT);
 }
@@ -669,9 +671,9 @@ bool SubmitNormalTransfer(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t le
         usleep_usec(10);
     }
     uint64_t flags;
-    spin_lock_irqsave(&g_pendingTransfersLock, flags);
+    usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
     rb_erase(&g_pendingTransfers, &pt.node);
-    spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
+    usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
     
     return pt.completed && (pt.completionCode == CC_SUCCESS || pt.completionCode == CC_SHORT_PKT);
 }
@@ -724,9 +726,9 @@ void StartAsyncInterrupt(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t len
     
     if (!EnqueueAndTrack(ring, slotID, epIdx + 1, trb, pt)) {
         uint64_t flags;
-        spin_lock_irqsave(&g_pendingTransfersLock, flags);
+        usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
         rb_erase(&g_pendingTransfers, &pt->node);
-        spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
+        usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
         kfree(pt);
     }
 }
@@ -743,9 +745,9 @@ void StartAsyncIsoch(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t len, bo
     
     if (!EnqueueAndTrack(ring, slotID, epIdx + 1, trb, pt)) {
         uint64_t flags;
-        spin_lock_irqsave(&g_pendingTransfersLock, flags);
+        usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
         rb_erase(&g_pendingTransfers, &pt->node);
-        spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
+        usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
         kfree(pt);
     }
 }

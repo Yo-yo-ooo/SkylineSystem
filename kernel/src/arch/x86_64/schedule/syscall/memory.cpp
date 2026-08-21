@@ -10,7 +10,7 @@
 
 #define SYS_MAP_FAILED ((uint64_t)-1ULL)
 
-extern volatile spinlock_t pmm_lock;
+extern spinlock_t pmm_lock;
 extern "C" void mmu_invlpg(uint64_t vaddr);
 
 uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags, uint64_t offset) {
