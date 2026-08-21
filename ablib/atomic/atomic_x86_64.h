@@ -53,6 +53,18 @@
 
 #define X86_ATOMIC_MAX_LOCKFREE 8
 
+extern void _atomic_invalid_load_mo(void)  __attribute__((error("atomic_load: mo must be relaxed/consume/acquire/seq_cst")));
+extern void _atomic_invalid_store_mo(void) __attribute__((error("atomic_store: mo must be relaxed/release/seq_cst")));
+
+#define _ATOMIC_CHECK_LOAD_MO(mo) do { \
+    if (__builtin_constant_p(mo) && \
+        ((mo) == ATOMIC_RELEASE || (mo) == ATOMIC_ACQ_REL)) _atomic_invalid_load_mo(); \
+} while (0)
+#define _ATOMIC_CHECK_STORE_MO(mo) do { \
+    if (__builtin_constant_p(mo) && \
+        ((mo) == ATOMIC_ACQUIRE || (mo) == ATOMIC_CONSUME || (mo) == ATOMIC_ACQ_REL)) _atomic_invalid_store_mo(); \
+} while (0)
+
 /* ---------------- 编译器屏障与判定宏 ---------------- */
 #define _ATOMIC_COMPILER_BARRIER() __asm__ __volatile__("" ::: "memory")
 
@@ -97,6 +109,7 @@ ATOMIC_EXT ATOMIC_INLINE void atomic_signal_fence(int mo) {
 /* ---------------- load ---------------- */
 #define _ATOMIC_LOAD_X86(SUFFIX, TYPE, INSN, CONSTRAINT) \
 ATOMIC_EXT ATOMIC_INLINE TYPE atomic_load_##SUFFIX(const volatile void *p, int mo) { \
+    _ATOMIC_CHECK_LOAD_MO(mo); \
     TYPE v; \
     __asm__ __volatile__(INSN " %1, %0" : CONSTRAINT(v) : "m"(*(const volatile TYPE*)p)); \
     if (_ATOMIC_POST_BAR(mo)) _ATOMIC_COMPILER_BARRIER(); \
@@ -112,6 +125,7 @@ _ATOMIC_LOAD_X86(8, uint64_t, "movq", "=r")
 /* ---------------- store ---------------- */
 #define _ATOMIC_STORE_X86(SUFFIX, TYPE, INSN, CONSTRAINT) \
 ATOMIC_EXT ATOMIC_INLINE void atomic_store_##SUFFIX(volatile void *p, TYPE v, int mo) { \
+    _ATOMIC_CHECK_STORE_MO(mo); \
     if (_ATOMIC_PRE_BAR(mo)) _ATOMIC_COMPILER_BARRIER(); \
     __asm__ __volatile__(INSN " %1, %0" : "=m"(*(volatile TYPE*)p) : CONSTRAINT(v)); \
     if (mo == ATOMIC_SEQ_CST) __asm__ __volatile__("mfence" ::: "memory"); \

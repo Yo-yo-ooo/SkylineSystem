@@ -26,6 +26,19 @@
 #  define STDCPP_UTL_CXX26 (__cplusplus > 202302L)
 #endif
 
+// Prevent system headers from re-defining pair / rel_ops when this
+// header is included alongside <thread>, <tuple>, <algorithm>, etc.
+#ifndef _STL_PAIR_H
+#  define _STL_PAIR_H 1
+#endif
+#ifndef _STL_RELOPS_H
+#  define _STL_RELOPS_H 1
+#endif
+// Prevent system <utility> from re-defining tuple_size<pair>, get<I>, etc.
+#ifndef _GLIBCXX_UTILITY
+#  define _GLIBCXX_UTILITY 1
+#endif
+
 //=============================================================
 //  C++98 / C++03 section
 //=============================================================
@@ -155,6 +168,13 @@ constexpr T&& forward(typename remove_reference<T>::type&& t) noexcept
     return static_cast<T&&>(t);
 }
 
+// libstdc++ internal helper used by <bits/stl_iterator.h> etc.
+template<class T>
+struct __move_if_noexcept_cond
+    : integral_constant<bool,
+        !is_nothrow_move_constructible<T>::value
+            && is_copy_constructible<T>::value> {};
+
 template<class T>
 constexpr typename conditional<
     !is_nothrow_move_constructible<T>::value
@@ -168,6 +188,10 @@ template<class T>
 inline T* addressof(T& r) noexcept
 { return reinterpret_cast<T*>(
     const_cast<char*>(&reinterpret_cast<const volatile char&>(r))); }
+
+// libstdc++ internal __addressof (used by <bits/std_mutex.h> etc.)
+template<class T>
+inline T* __addressof(T& r) noexcept { return addressof(r); }
 #endif // _MOVE_H
 
 //=============================================================

@@ -383,35 +383,32 @@ void* Request(uint64_t n = 1) {
 #ifdef PMM_HAS_PCP
     if (n == 1) {
         cpu_t* cpu = this_cpu();
-        Interrupt::Mask();  // protect the per-CPU cache (nestable Mask assumed)
+        if (cpu) {
+            IrqSave irq;                                // 只保护 per-CPU cache
+            if (cpu->pmm_cache_count > 0)
+                return cpu->pmm_cache[--cpu->pmm_cache_count];
 
-        if (cpu && cpu->pmm_cache_count > 0) {
-            void* page = cpu->pmm_cache[--cpu->pmm_cache_count];
-            Interrupt::Unmask();
-            return page;
-        }
-
-        pmm_lock_acquire();
-        void* page = alloc_pages_locked(1);
-        if (page && cpu) {
-            for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count < PMM_PCP_MAX; i++) {
-                void* extra = alloc_pages_locked(1);
-                if (!extra) break;
-                cpu->pmm_cache[cpu->pmm_cache_count++] = extra;
+            IrqSpinGuard g(&pmm_lock);                  // 嵌套安全：内层 Restore 不开中断
+            void* page = alloc_pages_locked(1);
+            if (page) {
+                for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count < PMM_PCP_MAX; i++) {
+                    void* extra = alloc_pages_locked(1);
+                    if (!extra) break;
+                    cpu->pmm_cache[cpu->pmm_cache_count++] = extra;
+                }
             }
+            return page;                                // 两个 guard 按逆序自动释放
         }
-        pmm_lock_release();
-        Interrupt::Unmask();
-        return page;
     }
 #endif
 
-    pmm_lock_acquire();
-    void* page = alloc_pages_locked(n);
-    pmm_lock_release();
-
-    if (!page) kerror("PMM: out of contiguous physical memory (%lu pages)\n",
-                      (unsigned long)n);
+    void* page;
+    {
+        IrqSpinGuard g(&pmm_lock);
+        page = alloc_pages_locked(n);
+    }   // 先解锁
+    if (!page)   // 日志放锁外：kerror 若内部有锁，锁内调用会死锁
+        kerror("PMM: out of contiguous physical memory (%lu pages)\n", (unsigned long)n);
     return page;
 }
 
@@ -422,25 +419,20 @@ void Free(void* ptr, uint64_t n = 1) {
     if (n == 1) {
         cpu_t* cpu = this_cpu();
         if (cpu) {
-            Interrupt::Mask();  // FIX: was missing, raced with interrupt handlers
-
+            IrqSave irq;                                // FIX: 原代码此路径没关中断
             if (cpu->pmm_cache_count < PMM_PCP_MAX) {
                 cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
-                Interrupt::Unmask();
                 return;
             }
-
-            // Cache full: flush a batch back to the global bitmap.
-            pmm_lock_acquire();
-            for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count > 0; i++) {
-                uint64_t bit = (uint64_t)cpu->pmm_cache[--cpu->pmm_cache_count] / PAGE_SIZE;
-                mark_free(bit, 1);
-                if (bit < bitmap_last_free) bitmap_last_free = bit;
+            {   // cache 满：回吐一批到全局位图
+                IrqSpinGuard g(&pmm_lock);
+                for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count > 0; i++) {
+                    uint64_t bit = (uint64_t)cpu->pmm_cache[--cpu->pmm_cache_count] / PAGE_SIZE;
+                    mark_free(bit, 1);
+                    if (bit < bitmap_last_free) bitmap_last_free = bit;
+                }
             }
-            pmm_lock_release();
-
             cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
-            Interrupt::Unmask();
             return;
         }
     }
@@ -448,17 +440,17 @@ void Free(void* ptr, uint64_t n = 1) {
 
     uint64_t start = (uint64_t)ptr / PAGE_SIZE;
     if (start >= pmm_bitmap_pages) return;
-    if (n > pmm_bitmap_pages - start) n = pmm_bitmap_pages - start;  // defensive clamp
+    if (n > pmm_bitmap_pages - start) n = pmm_bitmap_pages - start;
 
-    pmm_lock_acquire();
+    IrqSpinGuard g(&pmm_lock);
     mark_free(start, n);
     if (start < bitmap_last_free) bitmap_last_free = start;
-    pmm_lock_release();
 }
 
 // --- 2MiB allocation ---
 void* Request2MB() {
-    pmm_lock_acquire();
+    //pmm_lock_acquire();
+    IrqSpinGuard guard(&pmm_lock);
 
     for (uint64_t w = 0, words = l2_map_size / 8; w < words; w++) {
         uint64_t pending = ~l2_map[w];
@@ -483,18 +475,19 @@ void* Request2MB() {
             l2_full_propagate(l2_bit);
 
             if (start < bitmap_last_free) bitmap_last_free = start;
-            pmm_lock_release();
+            //pmm_lock_release();
             return (void*)(start * PAGE_SIZE);
         }
     }
 
-    pmm_lock_release();
+    //pmm_lock_release();
     return nullptr;
 }
 
 // --- 2GiB allocation ---
 void* Request2GB() {
-    pmm_lock_acquire();
+    //pmm_lock_acquire();
+    IrqSpinGuard guard(&pmm_lock);
 
     for (uint64_t w = 0, words = l3_map_size / 8; w < words; w++) {
         uint64_t pending = ~l3_map[w];
@@ -535,7 +528,7 @@ void* Request2GB() {
         }
     }
 
-    pmm_lock_release();
+    //pmm_lock_release();
     return nullptr;
 }
 
@@ -546,13 +539,14 @@ void Free2MB(void* ptr) {
     if (start & (L2_PAGES - 1)) return;                 // must be 2MiB-aligned
     if (start + L2_PAGES > pmm_bitmap_pages) return;    // FIX: bounds check
 
-    pmm_lock_acquire();
+    //pmm_lock_acquire();
+    IrqSpinGuard guard(&pmm_lock);
     ensure_l2_init(start / L2_PAGES);
     bits_clear(l1_map, start, start + L2_PAGES);
     bit_clear(l2_map, start / L2_PAGES);
     bit_clear(l3_map, start / L3_PAGES);
     if (start < bitmap_last_free) bitmap_last_free = start;
-    pmm_lock_release();
+    //pmm_lock_release();
 }
 
 void Free2GB(void* ptr) {
@@ -563,14 +557,15 @@ void Free2GB(void* ptr) {
     if (start + L3_PAGES > pmm_bitmap_pages) return;    // FIX: bounds check
 
     uint64_t l2_first = start / L2_PAGES;
-    pmm_lock_acquire();
+    //pmm_lock_acquire();
+    IrqSpinGuard guard(&pmm_lock);
     for (uint64_t l2 = l2_first; l2 < l2_first + L2_PER_L3; l2++)
         ensure_l2_init(l2);
     bits_clear(l1_map, start, start + L3_PAGES);
     bits_clear(l2_map, l2_first, l2_first + L2_PER_L3);
     bit_clear(l3_map, start / L3_PAGES);
     if (start < bitmap_last_free) bitmap_last_free = start;
-    pmm_lock_release();
+    //pmm_lock_release();
 }
 
 } // namespace PMM

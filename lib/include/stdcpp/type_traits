@@ -13,22 +13,22 @@
 // Standard version detection
 // ============================================================================
 #if defined(__cplusplus)
-#  if __cplusplus >= 201103L
+#  if __cplusplus >= 201103L && !defined(_STDCPP_CXX11)
 #    define _STDCPP_CXX11 1
 #  endif
-#  if __cplusplus >= 201402L
+#  if __cplusplus >= 201402L && !defined(_STDCPP_CXX14)
 #    define _STDCPP_CXX14 1
 #  endif
-#  if __cplusplus >= 201703L
+#  if __cplusplus >= 201703L && !defined(_STDCPP_CXX17)
 #    define _STDCPP_CXX17 1
 #  endif
-#  if __cplusplus >= 202002L
+#  if __cplusplus >= 202002L && !defined(_STDCPP_CXX20)
 #    define _STDCPP_CXX20 1
 #  endif
-#  if __cplusplus >= 202302L
+#  if __cplusplus >= 202302L && !defined(_STDCPP_CXX23)
 #    define _STDCPP_CXX23 1
 #  endif
-#  if __cplusplus > 202302L
+#  if __cplusplus > 202302L && !defined(_STDCPP_CXX26)
 #    define _STDCPP_CXX26 1
 #  endif
 #endif

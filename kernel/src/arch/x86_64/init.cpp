@@ -38,6 +38,7 @@ extern "C" int32_t file_cache_writeback_callback(
     uint32_t key_len, void *data, size_t data_len
 );
 
+
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
     WELCOME_X86_64

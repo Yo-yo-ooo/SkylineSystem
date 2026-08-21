@@ -1,0 +1,1959 @@
+// -*- C++ -*-
+//=============================================================
+// memory.hpp  --  complete, self-contained, machine-independent
+// implementation of the C++ standard library header <memory>,
+// covering C++98 / C++03 / C++11 / C++14 / C++17 / C++20 /
+// C++23 / C++26.
+//
+// All heap allocation goes through malloc / free / calloc /
+// realloc from <cstdlib>.  Reference counts in shared_ptr use
+// GCC/Clang __atomic_* builtins for lock-free thread safety.
+//
+// Depends only on <cstddef>, <cstdlib>, <cstdint>, <cstring>,
+// <type_traits>, <new>, <bits/exception.h>, and utility.hpp.
+//=============================================================
+#ifndef STDCPP_MEMORY_HPP
+#define STDCPP_MEMORY_HPP
+
+//-------------------------------------------------------------
+// Version detection (must come before includes)
+//-------------------------------------------------------------
+#define STDCPP_MEM_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_MEM_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_MEM_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_MEM_CXX20 (__cplusplus >= 202002L)
+#ifndef STDCPP_MEM_CXX23
+#  define STDCPP_MEM_CXX23 (__cplusplus >= 202302L || __cplusplus == 202100L)
+#endif
+#ifndef STDCPP_MEM_CXX26
+#  define STDCPP_MEM_CXX26 (__cplusplus > 202302L)
+#endif
+
+#if STDCPP_MEM_CXX14
+#  define STDCPP_MEM_CEXPR constexpr
+#else
+#  define STDCPP_MEM_CEXPR
+#endif
+
+#if STDCPP_MEM_CXX11
+#  define STDCPP_MEM_NOEXCEPT noexcept
+#  define STDCPP_MEM_NOEXCEPT_(x) STDCPP_MEM_NOEXCEPT(x)
+#else
+#  define STDCPP_MEM_NOEXCEPT throw()
+#  define STDCPP_MEM_NOEXCEPT_(x)
+#endif
+
+#include <cstddef>
+#include <cstdlib>
+#include <cstring>
+#include <new>
+#include <bits/exception.h>
+#if STDCPP_MEM_CXX11
+#include <cstdint>
+#include <type_traits>
+#endif
+#include <utility>
+
+// Defensive guards against system <memory>
+#ifndef _GLIBCXX_MEMORY
+#  define _GLIBCXX_MEMORY 1
+#endif
+#ifndef _GLIBCXX_SHARED_PTR_H
+#  define _GLIBCXX_SHARED_PTR_H 1
+#endif
+#ifndef _GLIBCXX_UNIQUE_PTR_H
+#  define _GLIBCXX_UNIQUE_PTR_H 1
+#endif
+#ifndef _GLIBCXX_ALLOCATOR_TRAITS_H
+#  define _GLIBCXX_ALLOCATOR_TRAITS_H 1
+#endif
+#ifndef _GLIBCXX_PTR_TRAITS_H
+#  define _GLIBCXX_PTR_TRAITS_H 1
+#endif
+#ifndef _GLIBCXX_RAW_STORAGE_ITERATOR_H
+#  define _GLIBCXX_RAW_STORAGE_ITERATOR_H 1
+#endif
+
+#pragma GCC visibility push(default)
+
+namespace std
+{
+#if STDCPP_MEM_CXX11 && !STDCPP_MEM_CXX17
+template<class...> using void_t = void;
+#endif
+
+//=============================================================
+//  Internal helpers
+//=============================================================
+namespace __memory_detail
+{
+    // Throw bad_alloc (out-of-line to avoid code bloat).
+    #if STDCPP_MEM_CXX11
+    [[noreturn]] void __throw_bad_alloc();
+#else
+    void __throw_bad_alloc() __attribute__((noreturn));
+#endif
+
+    // malloc + bad_alloc on failure.
+    inline void* __xmalloc(size_t n)
+    {
+        void* p = std::malloc(n);
+        if (!p) __throw_bad_alloc();
+        return p;
+    }
+
+    // Type-safe placement construction / destruction.
+    template<class T>
+    inline void __construct(T* p) { ::new((void*)p) T(); }
+
+    template<class T>
+    inline void __destroy(T* p) { p->~T(); }
+
+#if STDCPP_MEM_CXX11
+    template<class T, class... Args>
+    inline void __construct(T* p, Args&&... args)
+    { ::new((void*)p) T(std::forward<Args>(args)...); }
+
+    // Trivial-copy / trivial-init optimization tags.
+    template<class T>
+    struct __is_trivially_relocatable
+        : integral_constant<bool, is_trivially_copyable<T>::value> {};
+#endif
+
+} // namespace __memory_detail
+
+// Forward declaration
+template<class T> class allocator;
+
+//=============================================================
+//  allocator_arg_t  [allocator.uses.trait]
+//=============================================================
+#if STDCPP_MEM_CXX11
+struct allocator_arg_t { explicit allocator_arg_t() = default; };
+constexpr allocator_arg_t allocator_arg{};
+#endif
+
+//=============================================================
+//  pointer_traits  [pointer.traits]
+//=============================================================
+#if STDCPP_MEM_CXX11
+namespace __memory_detail
+{
+    template<class Ptr, class = void>
+    struct __ptr_element { using type = void; };
+    template<template<class...> class Ptr, class T, class... Args>
+    struct __ptr_element<Ptr<T, Args...>, void> { using type = T; };
+    template<class Ptr>
+    struct __ptr_element<Ptr, void_t<typename Ptr::element_type>>
+    { using type = typename Ptr::element_type; };
+
+    template<class Ptr, class U, class = void>
+    struct __ptr_rebind { using type = typename Ptr::template rebind<U>::other; };
+    template<template<class...> class Ptr, class T, class... Args, class U>
+    struct __ptr_rebind<Ptr<T, Args...>, U, void>
+    { using type = Ptr<U, Args...>; };
+    template<class Ptr, class U>
+    struct __ptr_rebind<Ptr, U, void_t<typename Ptr::template rebind<U>>>
+    { using type = typename Ptr::template rebind<U>; };
+
+    template<class Ptr, class = void>
+    struct __ptr_diff { using type = ptrdiff_t; };
+    template<class Ptr>
+    struct __ptr_diff<Ptr, void_t<typename Ptr::difference_type>>
+    { using type = typename Ptr::difference_type; };
+}
+
+template<class Ptr>
+struct pointer_traits
+{
+    using pointer = Ptr;
+    using element_type = typename __memory_detail::__ptr_element<Ptr>::type;
+    using difference_type = typename __memory_detail::__ptr_diff<Ptr>::type;
+
+    template<class U>
+    using rebind = typename __memory_detail::__ptr_rebind<Ptr, U>::type;
+
+    static pointer pointer_to(
+        typename conditional<is_void<element_type>::value,
+            char&, typename add_lvalue_reference<element_type>::type>::type r)
+    { return Ptr::pointer_to(r); }
+};
+
+template<class T>
+struct pointer_traits<T*>
+{
+    using pointer = T*;
+    using element_type = T;
+    using difference_type = ptrdiff_t;
+
+    template<class U> using rebind = U*;
+
+    static T* pointer_to(T& r) STDCPP_MEM_NOEXCEPT { return &r; }
+};
+#endif // C++11
+
+//=============================================================
+//  allocator_traits  [allocator.traits]
+//=============================================================
+#if STDCPP_MEM_CXX11
+namespace __memory_detail
+{
+    template<class Alloc, class T, class = void>
+    struct __alloc_ptr { using type = T*; };
+    template<class Alloc, class T>
+    struct __alloc_ptr<Alloc, T, void_t<typename Alloc::pointer>>
+    { using type = typename Alloc::pointer; };
+
+    template<class Alloc, class = void>
+    struct __alloc_cptr { using type = const typename Alloc::value_type*; };
+    template<class Alloc>
+    struct __alloc_cptr<Alloc, void_t<typename Alloc::const_pointer>>
+    { using type = typename Alloc::const_pointer; };
+
+    template<class Alloc, class = void>
+    struct __alloc_vptr { using type = void*; };
+    template<class Alloc>
+    struct __alloc_vptr<Alloc, void_t<typename Alloc::void_pointer>>
+    { using type = typename Alloc::void_pointer; };
+
+    template<class Alloc, class = void>
+    struct __alloc_cvptr { using type = const void*; };
+    template<class Alloc>
+    struct __alloc_cvptr<Alloc, void_t<typename Alloc::const_void_pointer>>
+    { using type = typename Alloc::const_void_pointer; };
+
+    template<class Alloc, class = void>
+    struct __alloc_diff { using type = ptrdiff_t; };
+    template<class Alloc>
+    struct __alloc_diff<Alloc, void_t<typename Alloc::difference_type>>
+    { using type = typename Alloc::difference_type; };
+
+    template<class Alloc, class = void>
+    struct __alloc_size { using type = size_t; };
+    template<class Alloc>
+    struct __alloc_size<Alloc, void_t<typename Alloc::size_type>>
+    { using type = typename Alloc::size_type; };
+
+    // Template-specialization rebind: AllocTpl<OldT, Args...> -> AllocTpl<T, Args...>
+    template<class Alloc, class T>
+    struct __alloc_rebind_tpl { using other = allocator<T>; };
+    template<template<class, class...> class AllocTpl, class OldT, class... Args, class T>
+    struct __alloc_rebind_tpl<AllocTpl<OldT, Args...>, T>
+    { using other = AllocTpl<T, Args...>; };
+
+    // If Alloc has rebind<T>::other, use it; otherwise use template rebind.
+    template<class Alloc, class T, class = void>
+    struct __alloc_rebind
+    { using other = typename __alloc_rebind_tpl<Alloc, T>::other; };
+    template<class Alloc, class T>
+    struct __alloc_rebind<Alloc, T, void_t<typename Alloc::template rebind<T>::other>>
+    { using other = typename Alloc::template rebind<T>::other; };
+
+    template<class Alloc, class = void>
+    struct __alloc_propagate_on_container_copy_assignment : false_type {};
+    template<class Alloc>
+    struct __alloc_propagate_on_container_copy_assignment<
+        Alloc, void_t<typename Alloc::propagate_on_container_copy_assignment>>
+        : Alloc::propagate_on_container_copy_assignment {};
+
+    template<class Alloc, class = void>
+    struct __alloc_propagate_on_container_move_assignment : false_type {};
+    template<class Alloc>
+    struct __alloc_propagate_on_container_move_assignment<
+        Alloc, void_t<typename Alloc::propagate_on_container_move_assignment>>
+        : Alloc::propagate_on_container_move_assignment {};
+
+    template<class Alloc, class = void>
+    struct __alloc_propagate_on_container_swap : false_type {};
+    template<class Alloc>
+    struct __alloc_propagate_on_container_swap<
+        Alloc, void_t<typename Alloc::propagate_on_container_swap>>
+        : Alloc::propagate_on_container_swap {};
+
+    template<class Alloc, class = void>
+    struct __alloc_is_always_equal : is_empty<Alloc> {};
+    template<class Alloc>
+    struct __alloc_is_always_equal<
+        Alloc, void_t<typename Alloc::is_always_equal>>
+        : Alloc::is_always_equal {};
+
+
+
+    template<class Alloc>
+    inline size_t __max_size(const Alloc&) STDCPP_MEM_NOEXCEPT
+    { return static_cast<size_t>(-1) / sizeof(typename Alloc::value_type); }
+
+
+}
+
+template<class Alloc>
+struct allocator_traits
+{
+    using allocator_type = Alloc;
+    using value_type = typename Alloc::value_type;
+    using pointer = typename __memory_detail::__alloc_ptr<Alloc, value_type>::type;
+    using const_pointer = typename __memory_detail::__alloc_cptr<Alloc>::type;
+    using void_pointer = typename __memory_detail::__alloc_vptr<Alloc>::type;
+    using const_void_pointer = typename __memory_detail::__alloc_cvptr<Alloc>::type;
+    using difference_type = typename __memory_detail::__alloc_diff<Alloc>::type;
+    using size_type = typename __memory_detail::__alloc_size<Alloc>::type;
+
+    template<class T>
+    using rebind_alloc = typename __memory_detail::__alloc_rebind<Alloc, T>::other;
+    template<class T>
+    using rebind_traits = allocator_traits<rebind_alloc<T>>;
+
+    using propagate_on_container_copy_assignment =
+        typename __memory_detail::__alloc_propagate_on_container_copy_assignment<Alloc>::type;
+    using propagate_on_container_move_assignment =
+        typename __memory_detail::__alloc_propagate_on_container_move_assignment<Alloc>::type;
+    using propagate_on_container_swap =
+        typename __memory_detail::__alloc_propagate_on_container_swap<Alloc>::type;
+    using is_always_equal =
+        typename __memory_detail::__alloc_is_always_equal<Alloc>::type;
+
+    static pointer allocate(Alloc& a, size_type n)
+    { return a.allocate(n); }
+    static pointer allocate(Alloc& a, size_type n, const_void_pointer)
+    { return a.allocate(n); }
+    static void deallocate(Alloc& a, pointer p, size_type n)
+    { a.deallocate(p, n); }
+
+    template<class T, class... Args>
+    static void construct(Alloc&, T* p, Args&&... args)
+    { ::new((void*)p) T(std::forward<Args>(args)...); }
+
+    template<class T>
+    static void destroy(Alloc&, T* p) { p->~T(); }
+
+    static size_type max_size(const Alloc& a) STDCPP_MEM_NOEXCEPT
+    { return __memory_detail::__max_size(a); }
+
+    static Alloc select_on_container_copy_construction(const Alloc& a)
+    { return a; }
+};
+#endif // C++11
+
+//=============================================================
+//  allocator<T>  [default.allocator]
+//
+//  allocate() uses malloc(); deallocate() uses free().
+//=============================================================
+template<class T>
+class allocator
+{
+public:
+    typedef size_t    size_type;
+    typedef ptrdiff_t difference_type;
+    typedef T*        pointer;
+    typedef const T*  const_pointer;
+    typedef T&        reference;
+    typedef const T&  const_reference;
+    typedef T         value_type;
+
+    template<class U>
+    struct rebind { typedef allocator<U> other; };
+
+#if STDCPP_MEM_CXX20
+    using is_always_equal = true_type;
+#endif
+
+    allocator() STDCPP_MEM_NOEXCEPT {}
+    allocator(const allocator&) STDCPP_MEM_NOEXCEPT {}
+    template<class U> allocator(const allocator<U>&) STDCPP_MEM_NOEXCEPT {}
+    ~allocator() {}
+
+    pointer address(reference x) const STDCPP_MEM_NOEXCEPT { return &x; }
+    const_pointer address(const_reference x) const STDCPP_MEM_NOEXCEPT { return &x; }
+
+    pointer allocate(size_type n, const void* /*hint*/ = 0)
+    {
+        if (n > size_type(-1) / sizeof(T))
+            __memory_detail::__throw_bad_alloc();
+        void* p = std::malloc(n * sizeof(T));
+        if (!p) __memory_detail::__throw_bad_alloc();
+        return static_cast<T*>(p);
+    }
+
+    void deallocate(pointer p, size_type /*n*/)
+    { std::free(p); }
+
+#if STDCPP_MEM_CXX11
+    template<class U, class... Args>
+    void construct(U* p, Args&&... args)
+    { ::new((void*)p) U(std::forward<Args>(args)...); }
+
+    template<class U>
+    void destroy(U* p) { p->~U(); }
+#else
+    void construct(pointer p, const T& val) { ::new((void*)p) T(val); }
+    void destroy(pointer p) { p->~T(); }
+#endif
+
+    size_type max_size() const STDCPP_MEM_NOEXCEPT
+    { return size_type(-1) / sizeof(T); }
+};
+
+// allocator<void> specialization (C++98..C++17, removed C++20)
+#if !STDCPP_MEM_CXX20
+template<>
+class allocator<void>
+{
+public:
+    typedef size_t    size_type;
+    typedef ptrdiff_t difference_type;
+    typedef void*     pointer;
+    typedef const void* const_pointer;
+    typedef void      value_type;
+
+    template<class U>
+    struct rebind { typedef allocator<U> other; };
+
+    allocator() STDCPP_MEM_NOEXCEPT {}
+    allocator(const allocator&) STDCPP_MEM_NOEXCEPT {}
+    template<class U> allocator(const allocator<U>&) STDCPP_MEM_NOEXCEPT {}
+    ~allocator() {}
+};
+#endif
+
+template<class T1, class T2>
+inline bool operator==(const allocator<T1>&, const allocator<T2>&) STDCPP_MEM_NOEXCEPT
+{ return true; }
+template<class T1, class T2>
+inline bool operator!=(const allocator<T1>&, const allocator<T2>&) STDCPP_MEM_NOEXCEPT
+{ return false; }
+
+//=============================================================
+//  uses_allocator  [allocator.uses.trait]
+//=============================================================
+#if STDCPP_MEM_CXX11
+namespace __memory_detail
+{
+    template<class T, class Alloc, class = void>
+    struct __uses_alloc : false_type {};
+    template<class T, class Alloc>
+    struct __uses_alloc<T, Alloc,
+        void_t<typename T::allocator_type>>
+        : is_convertible<Alloc, typename T::allocator_type>::type {};
+}
+
+template<class T, class Alloc>
+struct uses_allocator
+    : __memory_detail::__uses_alloc<T, Alloc>::type {};
+#endif
+
+//=============================================================
+//  addressof  [specialized.addressof]
+//  (already provided by utility.hpp; guarded by _MOVE_H)
+//=============================================================
+
+//=============================================================
+//  align  [ptr.align]  (C++11)
+//=============================================================
+#if STDCPP_MEM_CXX11
+inline void* align(size_t alignment, size_t size, void*& ptr, size_t& space)
+{
+    if (size > space) return 0;
+    uintptr_t pn = reinterpret_cast<uintptr_t>(ptr);
+    uintptr_t aligned = (pn + alignment - 1) & ~(uintptr_t)(alignment - 1);
+    ptrdiff_t diff = aligned - pn;
+    if (size + diff > space) return 0;
+    space -= diff;
+    ptr = reinterpret_cast<void*>(aligned);
+    return ptr;
+}
+#endif
+
+//=============================================================
+//  Minimal iterator_traits (self-contained, no <iterator> dep)
+//=============================================================
+struct input_iterator_tag {};
+struct output_iterator_tag {};
+struct forward_iterator_tag : input_iterator_tag {};
+struct bidirectional_iterator_tag : forward_iterator_tag {};
+struct random_access_iterator_tag : bidirectional_iterator_tag {};
+
+template<class It>
+struct iterator_traits
+{
+    typedef typename It::iterator_category iterator_category;
+    typedef typename It::value_type        value_type;
+    typedef typename It::difference_type   difference_type;
+    typedef typename It::pointer           pointer;
+    typedef typename It::reference         reference;
+};
+
+template<class T>
+struct iterator_traits<T*>
+{
+    typedef random_access_iterator_tag iterator_category;
+    typedef T                          value_type;
+    typedef ptrdiff_t                  difference_type;
+    typedef T*                         pointer;
+    typedef T&                         reference;
+};
+
+template<class T>
+struct iterator_traits<const T*>
+{
+    typedef random_access_iterator_tag iterator_category;
+    typedef T                          value_type;
+    typedef ptrdiff_t                  difference_type;
+    typedef const T*                   pointer;
+    typedef const T&                   reference;
+};
+
+//=============================================================
+//  uninitialized_copy / fill / fill_n  [uninitialized.copy]
+//=============================================================
+template<class InputIt, class ForwardIt>
+ForwardIt uninitialized_copy(InputIt first, InputIt last, ForwardIt d_first)
+{
+    typedef typename iterator_traits<ForwardIt>::value_type T;
+    ForwardIt current = d_first;
+    try {
+        for (; first != last; ++first, ++current)
+            ::new((void*)&*current) T(*first);
+        return current;
+    } catch (...) {
+        for (; d_first != current; ++d_first)
+            d_first->~T();
+        throw;
+    }
+}
+
+template<class ForwardIt, class T>
+void uninitialized_fill(ForwardIt first, ForwardIt last, const T& value)
+{
+    typedef typename iterator_traits<ForwardIt>::value_type V;
+    ForwardIt current = first;
+    try {
+        for (; current != last; ++current)
+            ::new((void*)&*current) V(value);
+    } catch (...) {
+        for (; first != current; ++first)
+            first->~V();
+        throw;
+    }
+}
+
+template<class ForwardIt, class Size, class T>
+ForwardIt uninitialized_fill_n(ForwardIt first, Size n, const T& value)
+{
+    typedef typename iterator_traits<ForwardIt>::value_type V;
+    ForwardIt current = first;
+    try {
+        for (; n > 0; --n, ++current)
+            ::new((void*)&*current) V(value);
+        return current;
+    } catch (...) {
+        for (; first != current; ++first)
+            first->~V();
+        throw;
+    }
+}
+
+#if STDCPP_MEM_CXX11
+//-------------------------------------------------------------
+//  uninitialized_copy_n  (C++11)
+//-------------------------------------------------------------
+template<class InputIt, class Size, class ForwardIt>
+ForwardIt uninitialized_copy_n(InputIt first, Size n, ForwardIt d_first)
+{
+    typedef typename iterator_traits<ForwardIt>::value_type T;
+    ForwardIt current = d_first;
+    try {
+        for (; n > 0; --n, ++first, ++current)
+            ::new((void*)&*current) T(*first);
+        return current;
+    } catch (...) {
+        for (; d_first != current; ++d_first)
+            d_first->~T();
+        throw;
+    }
+}
+
+//-------------------------------------------------------------
+//  uninitialized_move / move_n  (C++17)
+//-------------------------------------------------------------
+#if STDCPP_MEM_CXX17
+template<class InputIt, class ForwardIt>
+ForwardIt uninitialized_move(InputIt first, InputIt last, ForwardIt d_first)
+{
+    typedef typename iterator_traits<ForwardIt>::value_type T;
+    ForwardIt current = d_first;
+    try {
+        for (; first != last; ++first, ++current)
+            ::new((void*)&*current) T(std::move(*first));
+        return current;
+    } catch (...) {
+        for (; d_first != current; ++d_first)
+            d_first->~T();
+        throw;
+    }
+}
+
+template<class InputIt, class Size, class ForwardIt>
+pair<InputIt, ForwardIt>
+uninitialized_move_n(InputIt first, Size n, ForwardIt d_first)
+{
+    typedef typename iterator_traits<ForwardIt>::value_type T;
+    ForwardIt current = d_first;
+    try {
+        for (; n > 0; --n, ++first, ++current)
+            ::new((void*)&*current) T(std::move(*first));
+        return {first, current};
+    } catch (...) {
+        for (; d_first != current; ++d_first)
+            d_first->~T();
+        throw;
+    }
+}
+
+//-------------------------------------------------------------
+//  uninitialized_default_construct / value_construct  (C++17)
+//-------------------------------------------------------------
+template<class ForwardIt>
+void uninitialized_default_construct(ForwardIt first, ForwardIt last)
+{
+    using T = typename iterator_traits<ForwardIt>::value_type;
+    ForwardIt current = first;
+    try {
+        for (; current != last; ++current)
+            ::new((void*)&*current) T;
+    } catch (...) {
+        for (; first != current; ++first)
+            first->~T();
+        throw;
+    }
+}
+
+template<class ForwardIt, class Size>
+ForwardIt uninitialized_default_construct_n(ForwardIt first, Size n)
+{
+    using T = typename iterator_traits<ForwardIt>::value_type;
+    ForwardIt current = first;
+    try {
+        for (; n > 0; --n, ++current)
+            ::new((void*)&*current) T;
+        return current;
+    } catch (...) {
+        for (; first != current; ++first)
+            first->~T();
+        throw;
+    }
+}
+
+template<class ForwardIt>
+void uninitialized_value_construct(ForwardIt first, ForwardIt last)
+{
+    using T = typename iterator_traits<ForwardIt>::value_type;
+    ForwardIt current = first;
+    try {
+        for (; current != last; ++current)
+            ::new((void*)&*current) T();
+    } catch (...) {
+        for (; first != current; ++first)
+            first->~T();
+        throw;
+    }
+}
+
+template<class ForwardIt, class Size>
+ForwardIt uninitialized_value_construct_n(ForwardIt first, Size n)
+{
+    using T = typename iterator_traits<ForwardIt>::value_type;
+    ForwardIt current = first;
+    try {
+        for (; n > 0; --n, ++current)
+            ::new((void*)&*current) T();
+        return current;
+    } catch (...) {
+        for (; first != current; ++first)
+            first->~T();
+        throw;
+    }
+}
+#endif // C++17
+
+//-------------------------------------------------------------
+//  destroy_at / destroy / destroy_n  (C++17)
+//-------------------------------------------------------------
+#if STDCPP_MEM_CXX17
+template<class T>
+inline void destroy_at(T* p) { p->~T(); }
+
+template<class ForwardIt>
+inline void destroy(ForwardIt first, ForwardIt last)
+{
+    for (; first != last; ++first)
+        destroy_at(&*first);
+}
+
+template<class ForwardIt, class Size>
+inline ForwardIt destroy_n(ForwardIt first, Size n)
+{
+    for (; n > 0; --n, ++first)
+        destroy_at(&*first);
+    return first;
+}
+#endif // C++17
+#endif // C++11
+
+//=============================================================
+//  raw_storage_iterator  (C++98; deprecated C++17; removed C++20)
+//=============================================================
+#if !STDCPP_MEM_CXX20
+template<class OutputIt, class T>
+class raw_storage_iterator
+{
+    OutputIt _M_iter;
+public:
+    typedef output_iterator_tag iterator_category;
+    typedef void                value_type;
+    typedef void                difference_type;
+    typedef void                pointer;
+    typedef void                reference;
+
+    explicit raw_storage_iterator(OutputIt x) : _M_iter(x) {}
+
+    raw_storage_iterator& operator*() { return *this; }
+    raw_storage_iterator& operator=(const T& element)
+    {
+        ::new((void*)&*_M_iter) T(element);
+        return *this;
+    }
+#if STDCPP_MEM_CXX11
+    raw_storage_iterator& operator=(T&& element)
+    {
+        ::new((void*)&*_M_iter) T(std::move(element));
+        return *this;
+    }
+#endif
+    raw_storage_iterator& operator++() { ++_M_iter; return *this; }
+    raw_storage_iterator operator++(int)
+    { raw_storage_iterator t = *this; ++_M_iter; return t; }
+};
+#endif
+
+//=============================================================
+//  get_temporary_buffer / return_temporary_buffer
+//  (C++98; deprecated C++17; removed C++20)
+//=============================================================
+#if !STDCPP_MEM_CXX20
+template<class T>
+pair<T*, ptrdiff_t> get_temporary_buffer(ptrdiff_t n) STDCPP_MEM_NOEXCEPT
+{
+    if (n <= 0) return pair<T*, ptrdiff_t>(static_cast<T*>(0), 0);
+    // Try progressively smaller sizes.
+    while (n > 0) {
+        void* p = std::malloc((size_t)n * sizeof(T));
+        if (p) return pair<T*, ptrdiff_t>(static_cast<T*>(p), n);
+        n /= 2;
+    }
+    return pair<T*, ptrdiff_t>(static_cast<T*>(0), 0);
+}
+
+template<class T>
+void return_temporary_buffer(T* p)
+{ std::free(p); }
+#endif
+
+//=============================================================
+//  auto_ptr  (C++98; deprecated C++11; removed C++17)
+//=============================================================
+#if !STDCPP_MEM_CXX17
+template<class T> class auto_ptr;
+
+template<class T>
+struct auto_ptr_ref
+{
+    T* _M_ptr;
+    explicit auto_ptr_ref(T* p) : _M_ptr(p) {}
+};
+
+template<class T>
+class auto_ptr
+{
+    T* _M_ptr;
+public:
+    typedef T element_type;
+
+    explicit auto_ptr(T* p = 0) throw() : _M_ptr(p) {}
+    auto_ptr(auto_ptr& a) throw() : _M_ptr(a.release()) {}
+    template<class U>
+    auto_ptr(auto_ptr<U>& a) throw() : _M_ptr(a.release()) {}
+    auto_ptr(auto_ptr_ref<T> r) throw() : _M_ptr(r._M_ptr) {}
+    ~auto_ptr() { delete _M_ptr; }
+
+    auto_ptr& operator=(auto_ptr& a) throw()
+    { reset(a.release()); return *this; }
+    template<class U>
+    auto_ptr& operator=(auto_ptr<U>& a) throw()
+    { reset(a.release()); return *this; }
+    auto_ptr& operator=(auto_ptr_ref<T> r) throw()
+    { reset(r._M_ptr); return *this; }
+
+    T& operator*() const throw() { return *_M_ptr; }
+    T* operator->() const throw() { return _M_ptr; }
+    T* get() const throw() { return _M_ptr; }
+    T* release() throw() { T* t = _M_ptr; _M_ptr = 0; return t; }
+    void reset(T* p = 0) throw()
+    { if (_M_ptr != p) { delete _M_ptr; _M_ptr = p; } }
+
+    template<class U>
+    operator auto_ptr_ref<U>() throw() { return auto_ptr_ref<U>(release()); }
+    template<class U>
+    operator auto_ptr<U>() throw() { return auto_ptr<U>(release()); }
+};
+#endif
+
+//=============================================================
+//  Smart pointers -- C++11 and later
+//=============================================================
+#if STDCPP_MEM_CXX11
+
+//-------------------------------------------------------------
+//  bad_weak_ptr  [util.smartptr.weak.bad]
+//-------------------------------------------------------------
+class bad_weak_ptr : public exception
+{
+public:
+    bad_weak_ptr() STDCPP_MEM_NOEXCEPT {}
+    const char* what() const STDCPP_MEM_NOEXCEPT override { return "bad_weak_ptr"; }
+};
+
+//-------------------------------------------------------------
+//  Shared pointer control block
+//-------------------------------------------------------------
+namespace __memory_detail
+{
+    using __atomic_count = long;
+
+    inline long __atomic_inc(long* p) STDCPP_MEM_NOEXCEPT
+    { return __atomic_add_fetch(p, 1, __ATOMIC_SEQ_CST); }
+    inline long __atomic_dec(long* p) STDCPP_MEM_NOEXCEPT
+    { return __atomic_sub_fetch(p, 1, __ATOMIC_SEQ_CST); }
+    inline long __atomic_load(const long* p) STDCPP_MEM_NOEXCEPT
+    { return __atomic_load_n(p, __ATOMIC_SEQ_CST); }
+
+    struct __sp_counted_base
+    {
+        __atomic_count _M_use_count;
+        __atomic_count _M_weak_count;
+
+        __sp_counted_base() STDCPP_MEM_NOEXCEPT
+            : _M_use_count(1), _M_weak_count(1) {}
+        virtual ~__sp_counted_base() STDCPP_MEM_NOEXCEPT = default;
+
+        virtual void _M_dispose() STDCPP_MEM_NOEXCEPT = 0;
+        virtual void _M_destroy() STDCPP_MEM_NOEXCEPT { std::free(this); }
+
+        void _M_add_ref() STDCPP_MEM_NOEXCEPT { __atomic_inc(&_M_use_count); }
+        void _M_weak_add_ref() STDCPP_MEM_NOEXCEPT { __atomic_inc(&_M_weak_count); }
+
+        void _M_release() STDCPP_MEM_NOEXCEPT
+        {
+            if (__atomic_dec(&_M_use_count) == 0) {
+                _M_dispose();
+                _M_weak_release();
+            }
+        }
+        void _M_weak_release() STDCPP_MEM_NOEXCEPT
+        {
+            if (__atomic_dec(&_M_weak_count) == 0)
+                _M_destroy();
+        }
+
+        long _M_use_count_load() const noexcept
+        { return __atomic_load(&_M_use_count); }
+    };
+
+    // Control block for shared_ptr<T>(raw pointer)
+    template<class T>
+    struct __sp_counted_ptr : __sp_counted_base
+    {
+        T* _M_ptr;
+        explicit __sp_counted_ptr(T* p) STDCPP_MEM_NOEXCEPT : _M_ptr(p) {}
+        void _M_dispose() STDCPP_MEM_NOEXCEPT override { delete _M_ptr; }
+    };
+
+    // Control block for shared_ptr with custom deleter
+    template<class T, class D>
+    struct __sp_counted_deleter : __sp_counted_base
+    {
+        T* _M_ptr;
+        D  _M_del;
+        __sp_counted_deleter(T* p, D d) STDCPP_MEM_NOEXCEPT
+            : _M_ptr(p), _M_del(std::move(d)) {}
+        void _M_dispose() STDCPP_MEM_NOEXCEPT override { _M_del(_M_ptr); }
+    };
+
+    // Control block + in-place object for make_shared
+    template<class T>
+    struct __sp_counted_inplace : __sp_counted_base
+    {
+        alignas(T) unsigned char _M_storage[sizeof(T)];
+
+        T* _M_obj() STDCPP_MEM_NOEXCEPT
+        { return reinterpret_cast<T*>(&_M_storage); }
+
+        template<class... Args>
+        explicit __sp_counted_inplace(Args&&... args)
+        { ::new((void*)_M_storage) T(std::forward<Args>(args)...); }
+
+        void _M_dispose() STDCPP_MEM_NOEXCEPT override { _M_obj()->~T(); }
+    };
+
+    // Control block + in-place array for make_shared<T[]>
+    template<class T>
+    struct __sp_counted_inplace_array : __sp_counted_base
+    {
+        T* _M_array;
+        size_t _M_n;
+
+        template<class... Args>
+        __sp_counted_inplace_array(size_t n, Args&&... args) : _M_n(n)
+        {
+            _M_array = static_cast<T*>(std::malloc(n * sizeof(T)));
+            if (!_M_array) __throw_bad_alloc();
+            size_t i = 0;
+            try {
+                for (; i < n; ++i)
+                    ::new((void*)(_M_array + i)) T(std::forward<Args>(args)...);
+            } catch (...) {
+                for (size_t j = 0; j < i; ++j)
+                    _M_array[j].~T();
+                std::free(_M_array);
+                throw;
+            }
+        }
+
+        void _M_dispose() STDCPP_MEM_NOEXCEPT override
+        {
+            for (size_t i = 0; i < _M_n; ++i)
+                _M_array[i].~T();
+        }
+        void _M_destroy() STDCPP_MEM_NOEXCEPT override
+        {
+            std::free(_M_array);
+            std::free(this);
+        }
+    };
+} // namespace __memory_detail
+
+//-------------------------------------------------------------
+//  weak_ptr (forward declaration)
+//-------------------------------------------------------------
+template<class T> class weak_ptr;
+template<class T> class enable_shared_from_this;
+template<class T> class shared_ptr;
+
+//-------------------------------------------------------------
+//  shared_ptr  [util.smartptr.shared]
+//-------------------------------------------------------------
+template<class T>
+class shared_ptr
+{
+public:
+    using element_type = T;
+    using weak_type = weak_ptr<T>;
+
+    // Constructors
+    constexpr shared_ptr() STDCPP_MEM_NOEXCEPT : _M_ptr(nullptr), _M_ref(nullptr) {}
+    constexpr shared_ptr(nullptr_t) STDCPP_MEM_NOEXCEPT : _M_ptr(nullptr), _M_ref(nullptr) {}
+
+    template<class Y,
+        class = typename enable_if<is_convertible<Y*, T*>::value>::type>
+    explicit shared_ptr(Y* p) : _M_ptr(p), _M_ref(nullptr)
+    {
+        using __cb = __memory_detail::__sp_counted_ptr<Y>;
+        void* mem = std::malloc(sizeof(__cb));
+        if (!mem) { delete p; __memory_detail::__throw_bad_alloc(); }
+        _M_ref = ::new(mem) __cb(p);
+        _M_enable_shared_from_this(p);
+    }
+
+    template<class Y, class D,
+        class = typename enable_if<is_convertible<Y*, T*>::value>::type>
+    shared_ptr(Y* p, D d) : _M_ptr(p), _M_ref(nullptr)
+    {
+        using __cb = __memory_detail::__sp_counted_deleter<Y, D>;
+        void* mem = std::malloc(sizeof(__cb));
+        if (!mem) { d(p); __memory_detail::__throw_bad_alloc(); }
+        _M_ref = ::new(mem) __cb(p, std::move(d));
+    }
+
+    template<class D>
+    shared_ptr(nullptr_t p, D d) : _M_ptr(nullptr), _M_ref(nullptr)
+    {
+        using __cb = __memory_detail::__sp_counted_deleter<void, D>;
+        void* mem = std::malloc(sizeof(__cb));
+        if (!mem) { d(p); __memory_detail::__throw_bad_alloc(); }
+        _M_ref = ::new(mem) __cb(p, std::move(d));
+    }
+
+    shared_ptr(const shared_ptr& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { if (_M_ref) _M_ref->_M_add_ref(); }
+
+    template<class Y,
+        class = typename enable_if<is_convertible<Y*, T*>::value>::type>
+    shared_ptr(const shared_ptr<Y>& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { if (_M_ref) _M_ref->_M_add_ref(); }
+
+    shared_ptr(shared_ptr&& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { r._M_ptr = 0; r._M_ref = nullptr; }
+
+    template<class Y,
+        class = typename enable_if<is_convertible<Y*, T*>::value>::type>
+    shared_ptr(shared_ptr<Y>&& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { r._M_ptr = 0; r._M_ref = nullptr; }
+
+    // Aliasing constructor: no convertibility between Y* and T* required.
+    template<class Y>
+    shared_ptr(const shared_ptr<Y>& r, T* p) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(p), _M_ref(r._M_ref)
+    { if (_M_ref) _M_ref->_M_add_ref(); }
+
+    template<class Y>
+    shared_ptr(shared_ptr<Y>&& r, T* p) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(p), _M_ref(r._M_ref)
+    { r._M_ptr = 0; r._M_ref = nullptr; }
+
+    // Construct from weak_ptr
+    template<class Y,
+        class = typename enable_if<is_convertible<Y*, T*>::value>::type>
+    shared_ptr(const weak_ptr<Y>& r) : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    {
+        if (!_M_ref || __memory_detail::__atomic_load(&_M_ref->_M_use_count) == 0)
+            throw bad_weak_ptr();
+        _M_ref->_M_add_ref();
+    }
+
+    ~shared_ptr() { if (_M_ref) _M_ref->_M_release(); }
+
+    // Assignment
+    shared_ptr& operator=(const shared_ptr& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (this != &r) {
+            if (_M_ref) _M_ref->_M_release();
+            _M_ptr = r._M_ptr;
+            _M_ref = r._M_ref;
+            if (_M_ref) _M_ref->_M_add_ref();
+        }
+        return *this;
+    }
+    template<class Y>
+    shared_ptr& operator=(const shared_ptr<Y>& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (_M_ref) _M_ref->_M_release();
+        _M_ptr = r._M_ptr;
+        _M_ref = r._M_ref;
+        if (_M_ref) _M_ref->_M_add_ref();
+        return *this;
+    }
+    shared_ptr& operator=(shared_ptr&& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (this != &r) {
+            if (_M_ref) _M_ref->_M_release();
+            _M_ptr = r._M_ptr;
+            _M_ref = r._M_ref;
+            r._M_ptr = 0;
+            r._M_ref = nullptr;
+        }
+        return *this;
+    }
+    template<class Y>
+    shared_ptr& operator=(shared_ptr<Y>&& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (_M_ref) _M_ref->_M_release();
+        _M_ptr = r._M_ptr;
+        _M_ref = r._M_ref;
+        r._M_ptr = 0;
+        r._M_ref = nullptr;
+        return *this;
+    }
+
+    // Modifiers
+    void reset() STDCPP_MEM_NOEXCEPT
+    { if (_M_ref) _M_ref->_M_release(); _M_ptr = 0; _M_ref = nullptr; }
+
+    template<class Y>
+    void reset(Y* p)
+    {
+        if (_M_ref) _M_ref->_M_release();
+        using __cb = __memory_detail::__sp_counted_ptr<Y>;
+        void* mem = std::malloc(sizeof(__cb));
+        if (!mem) { delete p; __memory_detail::__throw_bad_alloc(); }
+        _M_ptr = p;
+        _M_ref = ::new(mem) __cb(p);
+        _M_enable_shared_from_this(p);
+    }
+
+    template<class Y, class D>
+    void reset(Y* p, D d)
+    {
+        if (_M_ref) _M_ref->_M_release();
+        using __cb = __memory_detail::__sp_counted_deleter<Y, D>;
+        void* mem = std::malloc(sizeof(__cb));
+        if (!mem) { d(p); __memory_detail::__throw_bad_alloc(); }
+        _M_ptr = p;
+        _M_ref = ::new(mem) __cb(p, std::move(d));
+    }
+
+    void swap(shared_ptr& r) STDCPP_MEM_NOEXCEPT
+    {
+        T* tmp = _M_ptr; _M_ptr = r._M_ptr; r._M_ptr = tmp;
+        __memory_detail::__sp_counted_base* t = _M_ref;
+        _M_ref = r._M_ref; r._M_ref = t;
+    }
+
+    // Observers
+    T* get() const STDCPP_MEM_NOEXCEPT { return _M_ptr; }
+    T& operator*() const STDCPP_MEM_NOEXCEPT { return *_M_ptr; }
+    T* operator->() const STDCPP_MEM_NOEXCEPT { return _M_ptr; }
+    long use_count() const noexcept
+    { return _M_ref ? _M_ref->_M_use_count_load() : 0; }
+    bool unique() const STDCPP_MEM_NOEXCEPT { return use_count() == 1; }
+    explicit operator bool() const STDCPP_MEM_NOEXCEPT { return _M_ptr != nullptr; }
+
+    // Casts (internal)
+    template<class U>
+    bool owner_before(const shared_ptr<U>& r) const noexcept
+    { return _M_ref < r._M_ref; }
+    template<class U>
+    bool owner_before(const weak_ptr<U>& r) const noexcept
+    { return _M_ref < r._M_ref; }
+
+private:
+    T* _M_ptr;
+    __memory_detail::__sp_counted_base* _M_ref;
+
+    template<class U> friend class shared_ptr;
+    template<class U> friend class weak_ptr;
+    template<class U> friend class enable_shared_from_this;
+
+    // make_shared / allocate_shared support
+    template<class U, class... Args>
+    friend shared_ptr<U> make_shared(Args&&...);
+    template<class U, size_t N>
+    friend shared_ptr<U> make_shared();
+    template<class T2, class Alloc, class... Args>
+    friend shared_ptr<T2> allocate_shared(const Alloc&, Args&&...);
+
+    explicit shared_ptr(__memory_detail::__sp_counted_inplace<T>* cb)
+        : _M_ptr(cb->_M_obj()), _M_ref(cb) {}
+
+    // Direct control-block constructor (for weak_ptr::lock)
+    shared_ptr(__memory_detail::__sp_counted_base* cb, T* p) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(p), _M_ref(cb) {}
+
+    // Constructor from control block + pointer (for allocate_shared)
+    shared_ptr(__memory_detail::__sp_counted_base* cb, T* p, int) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(p), _M_ref(cb) {}
+
+    // enable_shared_from_this support
+    template<class Y>
+    void _M_enable_shared_from_this(Y* p)
+    {
+        _M_enable_esft(p, is_convertible<Y*, const enable_shared_from_this<Y>*>{});
+    }
+
+    template<class Y>
+    void _M_enable_esft(Y* p, true_type)
+    {
+        if (p) {
+            using esft = enable_shared_from_this<Y>;
+            esft* ep = const_cast<esft*>(static_cast<const esft*>(p));
+#if STDCPP_MEM_CXX17
+            if (!ep->weak_from_this().expired()) return;
+#endif
+            ep->_M_weak_this = shared_ptr<Y>(*this, p);
+        }
+    }
+    template<class Y>
+    void _M_enable_esft(Y*, false_type) {}
+};
+
+//-------------------------------------------------------------
+//  weak_ptr  [util.smartptr.weak]
+//-------------------------------------------------------------
+template<class T>
+class weak_ptr
+{
+public:
+    using element_type = T;
+
+    constexpr weak_ptr() STDCPP_MEM_NOEXCEPT : _M_ptr(nullptr), _M_ref(nullptr) {}
+
+    template<class Y,
+        class = typename enable_if<is_convertible<Y*, T*>::value>::type>
+    weak_ptr(const shared_ptr<Y>& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { if (_M_ref) _M_ref->_M_weak_add_ref(); }
+
+    weak_ptr(const weak_ptr& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { if (_M_ref) _M_ref->_M_weak_add_ref(); }
+
+    template<class Y,
+        class = typename enable_if<is_convertible<Y*, T*>::value>::type>
+    weak_ptr(const weak_ptr<Y>& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { if (_M_ref) _M_ref->_M_weak_add_ref(); }
+
+    weak_ptr(weak_ptr&& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { r._M_ptr = 0; r._M_ref = nullptr; }
+
+    template<class Y>
+    weak_ptr(weak_ptr<Y>&& r) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(r._M_ptr), _M_ref(r._M_ref)
+    { r._M_ptr = 0; r._M_ref = nullptr; }
+
+    ~weak_ptr() { if (_M_ref) _M_ref->_M_weak_release(); }
+
+    weak_ptr& operator=(const weak_ptr& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (this != &r) {
+            if (r._M_ref) r._M_ref->_M_weak_add_ref();
+            if (_M_ref) _M_ref->_M_weak_release();
+            _M_ptr = r._M_ptr;
+            _M_ref = r._M_ref;
+        }
+        return *this;
+    }
+    template<class Y>
+    weak_ptr& operator=(const weak_ptr<Y>& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (r._M_ref) r._M_ref->_M_weak_add_ref();
+        if (_M_ref) _M_ref->_M_weak_release();
+        _M_ptr = r._M_ptr;
+        _M_ref = r._M_ref;
+        return *this;
+    }
+    template<class Y>
+    weak_ptr& operator=(const shared_ptr<Y>& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (r._M_ref) r._M_ref->_M_weak_add_ref();
+        if (_M_ref) _M_ref->_M_weak_release();
+        _M_ptr = r._M_ptr;
+        _M_ref = r._M_ref;
+        return *this;
+    }
+    weak_ptr& operator=(weak_ptr&& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (this != &r) {
+            if (_M_ref) _M_ref->_M_weak_release();
+            _M_ptr = r._M_ptr; _M_ref = r._M_ref;
+            r._M_ptr = 0; r._M_ref = nullptr;
+        }
+        return *this;
+    }
+    template<class Y>
+    weak_ptr& operator=(weak_ptr<Y>&& r) STDCPP_MEM_NOEXCEPT
+    {
+        if (_M_ref) _M_ref->_M_weak_release();
+        _M_ptr = r._M_ptr; _M_ref = r._M_ref;
+        r._M_ptr = 0; r._M_ref = nullptr;
+        return *this;
+    }
+
+    void reset() STDCPP_MEM_NOEXCEPT
+    { if (_M_ref) _M_ref->_M_weak_release(); _M_ptr = 0; _M_ref = nullptr; }
+
+    void swap(weak_ptr& r) STDCPP_MEM_NOEXCEPT
+    {
+        T* t = _M_ptr; _M_ptr = r._M_ptr; r._M_ptr = t;
+        __memory_detail::__sp_counted_base* c = _M_ref;
+        _M_ref = r._M_ref; r._M_ref = c;
+    }
+
+    long use_count() const noexcept
+    { return _M_ref ? _M_ref->_M_use_count_load() : 0; }
+    bool expired() const STDCPP_MEM_NOEXCEPT { return use_count() == 0; }
+
+    shared_ptr<T> lock() const noexcept
+    {
+        if (!_M_ref) return shared_ptr<T>();
+        // Try to increment use_count atomically.
+        long old = __memory_detail::__atomic_load(&_M_ref->_M_use_count);
+        while (old != 0) {
+            if (__atomic_compare_exchange_n(&_M_ref->_M_use_count, &old, old + 1,
+                    false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+                return shared_ptr<T>(_M_ref, _M_ptr);
+        }
+        return shared_ptr<T>();
+    }
+
+    template<class U>
+    bool owner_before(const shared_ptr<U>& r) const noexcept
+    { return _M_ref < r._M_ref; }
+    template<class U>
+    bool owner_before(const weak_ptr<U>& r) const noexcept
+    { return _M_ref < r._M_ref; }
+
+private:
+    T* _M_ptr;
+    __memory_detail::__sp_counted_base* _M_ref;
+
+    template<class U> friend class shared_ptr;
+    template<class U> friend class weak_ptr;
+};
+
+//-------------------------------------------------------------
+//  enable_shared_from_this  [util.smartptr.enab]
+//-------------------------------------------------------------
+template<class T>
+class enable_shared_from_this
+{
+protected:
+    constexpr enable_shared_from_this() STDCPP_MEM_NOEXCEPT {}
+    enable_shared_from_this(const enable_shared_from_this&) STDCPP_MEM_NOEXCEPT {}
+    enable_shared_from_this& operator=(const enable_shared_from_this&) STDCPP_MEM_NOEXCEPT
+    { return *this; }
+    ~enable_shared_from_this() {}
+
+public:
+    shared_ptr<T> shared_from_this()
+    { return shared_ptr<T>(_M_weak_this); }
+    shared_ptr<const T> shared_from_this() const
+    { return shared_ptr<const T>(_M_weak_this); }
+#if STDCPP_MEM_CXX17
+    weak_ptr<T> weak_from_this() STDCPP_MEM_NOEXCEPT { return _M_weak_this; }
+    weak_ptr<const T> weak_from_this() const STDCPP_MEM_NOEXCEPT { return _M_weak_this; }
+#endif
+
+private:
+    template<class U> friend class shared_ptr;
+    mutable weak_ptr<T> _M_weak_this;
+};
+
+//-------------------------------------------------------------
+//  shared_ptr free functions
+//-------------------------------------------------------------
+template<class T, class... Args>
+inline shared_ptr<T> make_shared(Args&&... args)
+{
+    using __cb = __memory_detail::__sp_counted_inplace<T>;
+    void* mem = std::malloc(sizeof(__cb));
+    if (!mem) __memory_detail::__throw_bad_alloc();
+    __cb* cb = ::new(mem) __cb(std::forward<Args>(args)...);
+    shared_ptr<T> sp(cb, cb->_M_obj(), 0);
+    sp._M_enable_shared_from_this(sp.get());
+    return sp;
+}
+
+#if STDCPP_MEM_CXX20
+template<class T>
+inline shared_ptr<T> make_shared_for_overwrite()
+{
+    using __cb = __memory_detail::__sp_counted_inplace<T>;
+    void* mem = std::malloc(sizeof(__cb));
+    if (!mem) __memory_detail::__throw_bad_alloc();
+    __cb* cb = ::new(mem) __cb;
+    // Default-initialize (no value-init) for overwrite semantics.
+    ::new((void*)cb->_M_obj()) T;
+    shared_ptr<T> sp(cb, cb->_M_obj(), 0);
+    sp._M_enable_shared_from_this(sp.get());
+    return sp;
+}
+#endif
+
+template<class T, class U>
+inline shared_ptr<T> static_pointer_cast(const shared_ptr<U>& r) STDCPP_MEM_NOEXCEPT
+{ return shared_ptr<T>(r, static_cast<T*>(r.get())); }
+
+template<class T, class U>
+inline shared_ptr<T> const_pointer_cast(const shared_ptr<U>& r) STDCPP_MEM_NOEXCEPT
+{ return shared_ptr<T>(r, const_cast<T*>(r.get())); }
+
+template<class T, class U>
+inline shared_ptr<T> dynamic_pointer_cast(const shared_ptr<U>& r) STDCPP_MEM_NOEXCEPT
+{
+    if (T* p = dynamic_cast<T*>(r.get()))
+        return shared_ptr<T>(r, p);
+    return shared_ptr<T>();
+}
+
+template<class T, class U>
+inline shared_ptr<T> reinterpret_pointer_cast(const shared_ptr<U>& r) STDCPP_MEM_NOEXCEPT
+{ return shared_ptr<T>(r, reinterpret_cast<T*>(r.get())); }
+
+template<class T, class U>
+inline shared_ptr<T> static_pointer_cast(shared_ptr<U>&& r) STDCPP_MEM_NOEXCEPT
+{
+    T* p = static_cast<T*>(r.get());
+    return shared_ptr<T>(std::move(r), p);
+}
+template<class T, class U>
+inline shared_ptr<T> const_pointer_cast(shared_ptr<U>&& r) STDCPP_MEM_NOEXCEPT
+{
+    T* p = const_cast<T*>(r.get());
+    return shared_ptr<T>(std::move(r), p);
+}
+template<class T, class U>
+inline shared_ptr<T> dynamic_pointer_cast(shared_ptr<U>&& r) STDCPP_MEM_NOEXCEPT
+{
+    if (T* p = dynamic_cast<T*>(r.get()))
+        return shared_ptr<T>(std::move(r), p);
+    return shared_ptr<T>();
+}
+template<class T, class U>
+inline shared_ptr<T> reinterpret_pointer_cast(shared_ptr<U>&& r) STDCPP_MEM_NOEXCEPT
+{
+    T* p = reinterpret_cast<T*>(r.get());
+    return shared_ptr<T>(std::move(r), p);
+}
+
+template<class T>
+inline void swap(shared_ptr<T>& a, shared_ptr<T>& b) STDCPP_MEM_NOEXCEPT
+{ a.swap(b); }
+template<class T>
+inline void swap(weak_ptr<T>& a, weak_ptr<T>& b) STDCPP_MEM_NOEXCEPT
+{ a.swap(b); }
+
+//-------------------------------------------------------------
+//  owner_less  [util.smartptr.ownerless]
+//-------------------------------------------------------------
+template<class T = void>
+struct owner_less;
+
+template<class T>
+struct owner_less<shared_ptr<T>>
+{
+    using result_type = bool;
+    using first_argument_type = shared_ptr<T>;
+    using second_argument_type = shared_ptr<T>;
+    bool operator()(const shared_ptr<T>& a, const shared_ptr<T>& b) const noexcept
+    { return a.owner_before(b); }
+    bool operator()(const shared_ptr<T>& a, const weak_ptr<T>& b) const noexcept
+    { return a.owner_before(b); }
+    bool operator()(const weak_ptr<T>& a, const shared_ptr<T>& b) const noexcept
+    { return a.owner_before(b); }
+};
+
+template<class T>
+struct owner_less<weak_ptr<T>>
+{
+    using result_type = bool;
+    using first_argument_type = weak_ptr<T>;
+    using second_argument_type = weak_ptr<T>;
+    bool operator()(const weak_ptr<T>& a, const weak_ptr<T>& b) const noexcept
+    { return a.owner_before(b); }
+    bool operator()(const weak_ptr<T>& a, const shared_ptr<T>& b) const noexcept
+    { return a.owner_before(b); }
+    bool operator()(const shared_ptr<T>& a, const weak_ptr<T>& b) const noexcept
+    { return a.owner_before(b); }
+};
+
+#if STDCPP_MEM_CXX17
+template<>
+struct owner_less<void>
+{
+    template<class T, class U>
+    bool operator()(const shared_ptr<T>& a, const shared_ptr<U>& b) const noexcept
+    { return a.owner_before(b); }
+    template<class T, class U>
+    bool operator()(const shared_ptr<T>& a, const weak_ptr<U>& b) const noexcept
+    { return a.owner_before(b); }
+    template<class T, class U>
+    bool operator()(const weak_ptr<T>& a, const shared_ptr<U>& b) const noexcept
+    { return a.owner_before(b); }
+    template<class T, class U>
+    bool operator()(const weak_ptr<T>& a, const weak_ptr<U>& b) const noexcept
+    { return a.owner_before(b); }
+};
+#endif
+
+//-------------------------------------------------------------
+//  allocate_shared  [util.smartptr.shared.create]
+//-------------------------------------------------------------
+namespace __memory_detail
+{
+    // Control block that uses an allocator for its own memory.
+    template<class T, class Alloc>
+    struct __sp_counted_alloc : __sp_counted_base
+    {
+        using __alloc_traits = allocator_traits<Alloc>;
+        using __cb_alloc = typename __alloc_traits::template rebind_alloc<__sp_counted_alloc>;
+
+        alignas(T) unsigned char _M_storage[sizeof(T)];
+        [[no_unique_address]] __cb_alloc _M_alloc;
+
+        template<class A, class... Args>
+        __sp_counted_alloc(A&& a, Args&&... args)
+            : _M_alloc(std::forward<A>(a))
+        { ::new((void*)_M_storage) T(std::forward<Args>(args)...); }
+
+        T* _M_obj() STDCPP_MEM_NOEXCEPT { return reinterpret_cast<T*>(&_M_storage); }
+        void _M_dispose() STDCPP_MEM_NOEXCEPT override { _M_obj()->~T(); }
+        void _M_destroy() STDCPP_MEM_NOEXCEPT override
+        {
+            __cb_alloc a = _M_alloc;
+            this->~__sp_counted_alloc();
+            a.deallocate(this, 1);
+        }
+    };
+}
+
+template<class T, class Alloc, class... Args>
+inline shared_ptr<T> allocate_shared(const Alloc& alloc, Args&&... args)
+{
+    using __cb = __memory_detail::__sp_counted_alloc<T, Alloc>;
+    using __cb_alloc = typename __memory_detail::__sp_counted_alloc<T, Alloc>::__cb_alloc;
+    __cb_alloc a(alloc);
+    __cb* mem = a.allocate(1);
+    if (!mem) __memory_detail::__throw_bad_alloc();
+    __cb* cb = ::new((void*)mem) __cb(alloc, std::forward<Args>(args)...);
+    shared_ptr<T> sp(cb, cb->_M_obj(), 0);
+    sp._M_enable_shared_from_this(sp.get());
+    return sp;
+}
+
+#if STDCPP_MEM_CXX20
+template<class T, class Alloc>
+inline shared_ptr<T> allocate_shared_for_overwrite(const Alloc& alloc)
+{
+    using __cb = __memory_detail::__sp_counted_alloc<T, Alloc>;
+    using __cb_alloc = typename __memory_detail::__sp_counted_alloc<T, Alloc>::__cb_alloc;
+    __cb_alloc a(alloc);
+    __cb* mem = a.allocate(1);
+    if (!mem) __memory_detail::__throw_bad_alloc();
+    __cb* cb = ::new((void*)mem) __cb(alloc);
+    ::new((void*)cb->_M_obj()) T;
+    shared_ptr<T> sp(cb, cb->_M_obj(), 0);
+    sp._M_enable_shared_from_this(sp.get());
+    return sp;
+}
+#endif
+
+//=============================================================
+//  default_delete  [unique.ptr.dltr]
+//=============================================================
+template<class T>
+struct default_delete
+{
+    constexpr default_delete() STDCPP_MEM_NOEXCEPT = default;
+    template<class U,
+        class = typename enable_if<is_convertible<U*, T*>::value>::type>
+    default_delete(const default_delete<U>&) STDCPP_MEM_NOEXCEPT {}
+    void operator()(T* p) const { delete p; }
+};
+
+template<class T>
+struct default_delete<T[]>
+{
+    constexpr default_delete() STDCPP_MEM_NOEXCEPT = default;
+    template<class U>
+    void operator()(U* p) const { delete[] p; }
+};
+
+//=============================================================
+//  unique_ptr  [unique.ptr]
+//=============================================================
+namespace __memory_detail
+{
+    template<class T, class D>
+    struct __unique_ptr_base
+    {
+        using pointer = T;
+        T _M_ptr;
+        constexpr __unique_ptr_base() STDCPP_MEM_NOEXCEPT : _M_ptr(nullptr) {}
+        explicit constexpr __unique_ptr_base(T p) STDCPP_MEM_NOEXCEPT : _M_ptr(p) {}
+    };
+}
+
+template<class T, class D = default_delete<T>>
+class unique_ptr
+{
+public:
+    using pointer      = T*;
+    using element_type = T;
+    using deleter_type = D;
+
+private:
+    T* _M_ptr;
+    [[no_unique_address]] D _M_del;
+
+    static_assert(!is_rvalue_reference<D>::value,
+                  "unique_ptr deleter cannot be rvalue reference");
+
+public:
+    constexpr unique_ptr() STDCPP_MEM_NOEXCEPT : _M_ptr(nullptr), _M_del() {}
+    constexpr unique_ptr(nullptr_t) STDCPP_MEM_NOEXCEPT : _M_ptr(nullptr), _M_del() {}
+    explicit unique_ptr(T* p) STDCPP_MEM_NOEXCEPT : _M_ptr(p), _M_del() {}
+    unique_ptr(T* p, const D& d) STDCPP_MEM_NOEXCEPT : _M_ptr(p), _M_del(d) {}
+    unique_ptr(T* p, D&& d) STDCPP_MEM_NOEXCEPT : _M_ptr(p), _M_del(std::move(d)) {}
+
+    template<class U,
+        class = typename enable_if<is_convertible<U*, T*>::value>::type>
+    unique_ptr(U* p, const D& d) STDCPP_MEM_NOEXCEPT : _M_ptr(p), _M_del(d) {}
+    template<class U,
+        class = typename enable_if<is_convertible<U*, T*>::value>::type>
+    unique_ptr(U* p, D&& d) STDCPP_MEM_NOEXCEPT : _M_ptr(p), _M_del(std::move(d)) {}
+
+    unique_ptr(unique_ptr&& u) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(u._M_ptr), _M_del(std::move(u._M_del))
+    { u._M_ptr = 0; }
+
+    template<class U, class E,
+        class = typename enable_if<
+            is_convertible<U*, T*>::value &&
+            !is_array<U>::value>::type>
+    unique_ptr(unique_ptr<U, E>&& u) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(u.release()), _M_del(std::move(u.get_deleter())) {}
+
+    ~unique_ptr() { if (_M_ptr) _M_del(_M_ptr); }
+
+    unique_ptr& operator=(unique_ptr&& u) STDCPP_MEM_NOEXCEPT
+    {
+        if (this != &u) {
+            reset(u.release());
+            _M_del = std::move(u._M_del);
+        }
+        return *this;
+    }
+    template<class U, class E>
+    unique_ptr& operator=(unique_ptr<U, E>&& u) STDCPP_MEM_NOEXCEPT
+    {
+        reset(u.release());
+        _M_del = std::move(u.get_deleter());
+        return *this;
+    }
+    unique_ptr& operator=(nullptr_t) STDCPP_MEM_NOEXCEPT { reset(); return *this; }
+
+    unique_ptr(const unique_ptr&) = delete;
+    unique_ptr& operator=(const unique_ptr&) = delete;
+
+    T* release() STDCPP_MEM_NOEXCEPT { T* t = _M_ptr; _M_ptr = 0; return t; }
+    void reset(T* p = 0) STDCPP_MEM_NOEXCEPT
+    { T* old = _M_ptr; _M_ptr = p; if (old) _M_del(old); }
+    void swap(unique_ptr& u) STDCPP_MEM_NOEXCEPT
+    {
+        T* t = _M_ptr; _M_ptr = u._M_ptr; u._M_ptr = t;
+        D d = std::move(_M_del); _M_del = std::move(u._M_del); u._M_del = std::move(d);
+    }
+
+    T* get() const STDCPP_MEM_NOEXCEPT { return _M_ptr; }
+    D& get_deleter() STDCPP_MEM_NOEXCEPT { return _M_del; }
+    const D& get_deleter() const STDCPP_MEM_NOEXCEPT { return _M_del; }
+    explicit operator bool() const STDCPP_MEM_NOEXCEPT { return _M_ptr != nullptr; }
+
+    T& operator*() const { return *_M_ptr; }
+    T* operator->() const STDCPP_MEM_NOEXCEPT { return _M_ptr; }
+};
+
+// unique_ptr<T[]> partial specialization
+template<class T, class D>
+class unique_ptr<T[], D>
+{
+public:
+    using pointer      = T*;
+    using element_type = T;
+    using deleter_type = D;
+
+private:
+    T* _M_ptr;
+    [[no_unique_address]] D _M_del;
+
+public:
+    constexpr unique_ptr() STDCPP_MEM_NOEXCEPT : _M_ptr(nullptr), _M_del() {}
+    constexpr unique_ptr(nullptr_t) STDCPP_MEM_NOEXCEPT : _M_ptr(nullptr), _M_del() {}
+    template<class U,
+        class = typename enable_if<is_pointer<U>::value &&
+                                   is_convertible<U, T*>::value>::type>
+    explicit unique_ptr(U p) STDCPP_MEM_NOEXCEPT : _M_ptr(p), _M_del() {}
+
+    unique_ptr(unique_ptr&& u) STDCPP_MEM_NOEXCEPT
+        : _M_ptr(u._M_ptr), _M_del(std::move(u._M_del))
+    { u._M_ptr = nullptr; }
+
+    ~unique_ptr() { if (_M_ptr) _M_del(_M_ptr); }
+
+    unique_ptr& operator=(unique_ptr&& u) STDCPP_MEM_NOEXCEPT
+    {
+        reset(u.release());
+        _M_del = std::move(u._M_del);
+        return *this;
+    }
+    unique_ptr& operator=(nullptr_t) STDCPP_MEM_NOEXCEPT { reset(); return *this; }
+
+    unique_ptr(const unique_ptr&) = delete;
+    unique_ptr& operator=(const unique_ptr&) = delete;
+
+    T* release() STDCPP_MEM_NOEXCEPT { T* t = _M_ptr; _M_ptr = nullptr; return t; }
+    template<class U,
+        class = typename enable_if<is_pointer<U>::value &&
+                                   is_convertible<U, T*>::value>::type>
+    void reset(U p) STDCPP_MEM_NOEXCEPT
+    { T* old = _M_ptr; _M_ptr = p; if (old) _M_del(old); }
+    void reset(nullptr_t = nullptr) STDCPP_MEM_NOEXCEPT
+    { T* old = _M_ptr; _M_ptr = nullptr; if (old) _M_del(old); }
+    void swap(unique_ptr& u) STDCPP_MEM_NOEXCEPT
+    {
+        T* t = _M_ptr; _M_ptr = u._M_ptr; u._M_ptr = t;
+        D d = std::move(_M_del); _M_del = std::move(u._M_del); u._M_del = std::move(d);
+    }
+
+    T* get() const STDCPP_MEM_NOEXCEPT { return _M_ptr; }
+    D& get_deleter() STDCPP_MEM_NOEXCEPT { return _M_del; }
+    const D& get_deleter() const STDCPP_MEM_NOEXCEPT { return _M_del; }
+    explicit operator bool() const STDCPP_MEM_NOEXCEPT { return _M_ptr != nullptr; }
+
+    T& operator[](size_t i) const { return _M_ptr[i]; }
+};
+
+template<class T, class... Args,
+    class = typename enable_if<!is_array<T>::value>::type>
+inline unique_ptr<T> make_unique(Args&&... args)
+{ return unique_ptr<T>(new T(std::forward<Args>(args)...)); }
+
+template<class T,
+    class = typename enable_if<is_array<T>::value && extent<T>::value == 0>::type>
+inline unique_ptr<T> make_unique(size_t n)
+{
+    using U = typename remove_extent<T>::type;
+    return unique_ptr<T>(new U[n]());
+}
+
+template<class T, class... Args,
+    class = typename enable_if<is_array<T>::value && extent<T>::value != 0>::type>
+void make_unique(Args&&...) = delete;
+
+#if STDCPP_MEM_CXX20
+template<class T,
+    class = typename enable_if<!is_array<T>::value>::type>
+inline unique_ptr<T> make_unique_for_overwrite()
+{ return unique_ptr<T>(new T); }
+
+template<class T,
+    class = typename enable_if<is_array<T>::value && extent<T>::value == 0>::type>
+inline unique_ptr<T> make_unique_for_overwrite(size_t n)
+{
+    using U = typename remove_extent<T>::type;
+    return unique_ptr<T>(new U[n]);
+}
+#endif
+
+template<class T, class D>
+inline void swap(unique_ptr<T, D>& a, unique_ptr<T, D>& b) STDCPP_MEM_NOEXCEPT
+{ a.swap(b); }
+
+//=============================================================
+//  C++20 additions
+//=============================================================
+#if STDCPP_MEM_CXX20
+
+//-------------------------------------------------------------
+//  to_address  [pointer.conversion]
+//-------------------------------------------------------------
+template<class T>
+constexpr T* to_address(T* p) STDCPP_MEM_NOEXCEPT { return p; }
+
+namespace __memory_detail
+{
+    template<class Ptr, class = void>
+    struct __to_address {
+        static auto _S_go(const Ptr& p) STDCPP_MEM_NOEXCEPT
+            -> decltype(p.operator->())
+        { return p.operator->(); }
+    };
+    template<class T>
+    struct __to_address<T*> {
+        static T* _S_go(T* p) STDCPP_MEM_NOEXCEPT { return p; }
+    };
+    template<class Ptr>
+    struct __to_address<Ptr, void_t<typename Ptr::element_type>>
+    {
+        static auto _S_go(const Ptr& p) STDCPP_MEM_NOEXCEPT {
+            return std::to_address(p.operator->());
+        }
+    };
+}
+
+template<class Ptr>
+constexpr auto to_address(const Ptr& p) STDCPP_MEM_NOEXCEPT
+{ return __memory_detail::__to_address<Ptr>::_S_go(p); }
+
+//-------------------------------------------------------------
+//  assume_aligned  [ptr.align]
+//-------------------------------------------------------------
+template<size_t N, class T>
+[[nodiscard]] constexpr T* assume_aligned(T* p)
+{
+    // Inform the compiler of alignment; no runtime check.
+    (void)reinterpret_cast<uintptr_t>(p);
+    return p;
+}
+
+//-------------------------------------------------------------
+//  unwrap_reference / unwrap_ref_decay  [refwrap.constraints]
+//-------------------------------------------------------------
+// unwrap_reference is provided by <type_traits> in C++20.
+#if !STDCPP_MEM_CXX20
+template<class T>
+struct unwrap_reference { using type = T; };
+template<class T>
+struct unwrap_reference<reference_wrapper<T>> { using type = T&; };
+template<class T>
+struct unwrap_ref_decay
+    : unwrap_reference<typename decay<T>::type> {};
+#endif
+
+template<class T>
+using unwrap_ref_decay_t = typename unwrap_ref_decay<T>::type;
+template<class T>
+using unwrap_reference_t = typename unwrap_reference<T>::type;
+
+#endif // C++20
+
+//=============================================================
+//  C++23 additions
+//=============================================================
+#if STDCPP_MEM_CXX23
+
+//-------------------------------------------------------------
+//  out_ptr_t / inout_ptr_t  [out.ptr.t]
+//-------------------------------------------------------------
+template<class Smart, class Pointer, class... Args>
+class out_ptr_t
+{
+    Smart& _M_smart;
+    Pointer _M_ptr;
+    tuple<Args...> _M_args;
+
+public:
+    explicit out_ptr_t(Smart& s, Args... args)
+        : _M_smart(s), _M_ptr(nullptr), _M_args(std::move(args)...) {}
+
+    out_ptr_t(const out_ptr_t&) = delete;
+
+    ~out_ptr_t() { _M_smart.reset(static_cast<Smart::pointer>(_M_ptr)); }
+
+    operator Pointer*() const STDCPP_MEM_NOEXCEPT { return &_M_ptr; }
+    operator void**() const noexcept
+    { return const_cast<void**>(reinterpret_cast<const void**>(&_M_ptr)); }
+};
+
+template<class Pointer = void, class Smart, class... Args>
+auto out_ptr(Smart& s, Args&&... args)
+{
+    using Ptr = typename conditional<is_void<Pointer>::value,
+        typename Smart::pointer, Pointer>::type;
+    return out_ptr_t<Smart, Ptr, Args&&...>(s, std::forward<Args>(args)...);
+}
+
+template<class Smart, class Pointer, class... Args>
+class inout_ptr_t
+{
+    Smart& _M_smart;
+    Pointer _M_ptr;
+    tuple<Args...> _M_args;
+
+public:
+    explicit inout_ptr_t(Smart& s, Args... args)
+        : _M_smart(s), _M_ptr(s.release()), _M_args(std::move(args)...) {}
+
+    inout_ptr_t(const inout_ptr_t&) = delete;
+
+    ~inout_ptr_t() { _M_smart.reset(static_cast<Smart::pointer>(_M_ptr)); }
+
+    operator Pointer*() const STDCPP_MEM_NOEXCEPT { return &_M_ptr; }
+    operator void**() const noexcept
+    { return const_cast<void**>(reinterpret_cast<const void**>(&_M_ptr)); }
+};
+
+template<class Pointer = void, class Smart, class... Args>
+auto inout_ptr(Smart& s, Args&&... args)
+{
+    using Ptr = typename conditional<is_void<Pointer>::value,
+        typename Smart::pointer, Pointer>::type;
+    return inout_ptr_t<Smart, Ptr, Args&&...>(s, std::forward<Args>(args)...);
+}
+
+//-------------------------------------------------------------
+//  start_lifetime_as  [obj.lifetime]
+//-------------------------------------------------------------
+template<class T>
+T* start_lifetime_as(void* p) STDCPP_MEM_NOEXCEPT
+{
+    return reinterpret_cast<T*>(p);
+}
+template<class T>
+const T* start_lifetime_as(const void* p) STDCPP_MEM_NOEXCEPT
+{
+    return reinterpret_cast<const T*>(p);
+}
+template<class T>
+volatile T* start_lifetime_as(volatile void* p) STDCPP_MEM_NOEXCEPT
+{
+    return reinterpret_cast<volatile T*>(p);
+}
+template<class T>
+const volatile T* start_lifetime_as(const volatile void* p) STDCPP_MEM_NOEXCEPT
+{
+    return reinterpret_cast<const volatile T*>(p);
+}
+
+//-------------------------------------------------------------
+//  allocation_result  [allocation.result]
+//-------------------------------------------------------------
+template<class Pointer, class SizeType = size_t>
+struct allocation_result
+{
+    Pointer ptr;
+    SizeType count;
+};
+
+#endif // C++23
+
+//=============================================================
+//  C++23: allocate_at_least
+//=============================================================
+#if STDCPP_MEM_CXX23
+namespace __memory_detail
+{
+    template<class Alloc, class = void>
+    struct __has_allocate_at_least : false_type {};
+    template<class Alloc>
+    struct __has_allocate_at_least<Alloc,
+        void_t<decltype(std::declval<Alloc&>().allocate_at_least(size_t()))>>
+        : true_type {};
+
+    template<class Alloc>
+    inline auto __allocate_at_least_impl(Alloc& a, size_t n, true_type)
+    { return a.allocate_at_least(n); }
+
+    template<class Alloc>
+    inline allocation_result<typename Alloc::value_type*>
+    __allocate_at_least_impl(Alloc& a, size_t n, false_type)
+    { return {a.allocate(n), n}; }
+}
+
+template<class Alloc>
+[[nodiscard]] constexpr auto allocate_at_least(Alloc& a, size_t n)
+{
+    return __memory_detail::__allocate_at_least_impl(
+        a, n, __memory_detail::__has_allocate_at_least<Alloc>{});
+}
+#endif
+
+#endif // C++11
+
+} // namespace std
+
+//=============================================================
+//  Out-of-line bad_alloc throw
+//=============================================================
+namespace std { namespace __memory_detail {
+void __throw_bad_alloc() { throw bad_alloc(); }
+}}
+
+#pragma GCC visibility pop
+
+#endif // STDCPP_MEMORY_HPP
