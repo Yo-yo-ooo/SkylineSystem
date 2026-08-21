@@ -21,33 +21,33 @@
 // It is intended as a standalone replacement, used with freestanding
 // / minimal include sets such as <cstdio> / <cassert>.
 //=============================================================
-#ifndef FTL_FUNCTIONAL_HPP
-#define FTL_FUNCTIONAL_HPP
+#ifndef STDCPP_FUNCTIONAL_HPP
+#define STDCPP_FUNCTIONAL_HPP
 
 //-------------------------------------------------------------
 // Version detection (must come before any conditional includes).
 // GCC/clang use non-final experimental values (e.g. 202100L for
 // the C++23 draft); accept those as the corresponding standard.
-// A value may be overridden on the command line (-DFTL_CXX26=1).
+// A value may be overridden on the command line (-DSTDCPP_CXX26=1).
 //-------------------------------------------------------------
-#define FTL_CXX98 1
-#define FTL_CXX11 (__cplusplus >= 201103L)
-#define FTL_CXX14 (__cplusplus >= 201402L)
-#define FTL_CXX17 (__cplusplus >= 201703L)
-#define FTL_CXX20 (__cplusplus >= 202002L)
-#ifndef FTL_CXX23
-#  define FTL_CXX23 (__cplusplus >= 202302L || __cplusplus == 202100L)
+#define STDCPP_CXX98 1
+#define STDCPP_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_CXX20 (__cplusplus >= 202002L)
+#ifndef STDCPP_CXX23
+#  define STDCPP_CXX23 (__cplusplus >= 202302L || __cplusplus == 202100L)
 #endif
-#ifndef FTL_CXX26
-#  define FTL_CXX26 (__cplusplus > 202302L)
+#ifndef STDCPP_CXX26
+#  define STDCPP_CXX26 (__cplusplus > 202302L)
 #endif
 
 #include <cstddef>
 #include <cstring>
-#include <exception>
+#include <bits/exception.h>
 #include <new>
 #include <typeinfo>
-#if FTL_CXX11
+#if STDCPP_CXX11
 #include <cstdint>
 #include <type_traits>
 #include <utility>
@@ -55,53 +55,53 @@
 #include <initializer_list>
 #endif
 
-#if FTL_CXX11
-#  define FTL_CONSTEXPR     constexpr
-#  define FTL_NOEXCEPT      noexcept
-#  define FTL_NOEXCEPT_(...)  noexcept(__VA_ARGS__)
+#if STDCPP_CXX11
+#  define STDCPP_CONSTEXPR     constexpr
+#  define STDCPP_NOEXCEPT      noexcept
+#  define STDCPP_NOEXCEPT_(...)  noexcept(__VA_ARGS__)
 #else
-#  define FTL_CONSTEXPR
-#  define FTL_NOEXCEPT      throw()
-#  define FTL_NOEXCEPT_(...)
+#  define STDCPP_CONSTEXPR
+#  define STDCPP_NOEXCEPT      throw()
+#  define STDCPP_NOEXCEPT_(...)
 #endif
 
-#if FTL_CXX14
-#  define FTL_CONSTEXPR14 constexpr
+#if STDCPP_CXX14
+#  define STDCPP_CONSTEXPR14 constexpr
 #else
-#  define FTL_CONSTEXPR14
+#  define STDCPP_CONSTEXPR14
 #endif
 
-#if FTL_CXX17
-#  define FTL_CONSTEXPR17 constexpr
-#  define FTL_INLINE_VAR   inline
+#if STDCPP_CXX17
+#  define STDCPP_CONSTEXPR17 constexpr
+#  define STDCPP_INLINE_VAR   inline
 #else
-#  define FTL_CONSTEXPR17
-#  define FTL_INLINE_VAR   static
+#  define STDCPP_CONSTEXPR17
+#  define STDCPP_INLINE_VAR   static
 #endif
 
-#if FTL_CXX20
-#  define FTL_CONSTEXPR20 constexpr
+#if STDCPP_CXX20
+#  define STDCPP_CONSTEXPR20 constexpr
 #else
-#  define FTL_CONSTEXPR20
+#  define STDCPP_CONSTEXPR20
 #endif
 
-#if FTL_CXX23
-#  define FTL_CONSTEXPR23 constexpr
+#if STDCPP_CXX23
+#  define STDCPP_CONSTEXPR23 constexpr
 #else
-#  define FTL_CONSTEXPR23
+#  define STDCPP_CONSTEXPR23
 #endif
 
 // default template argument for transparent functors (C++14)
-#if FTL_CXX14
-#  define FTL_DFLT_VOID = void
+#if STDCPP_CXX14
+#  define STDCPP_DFLT_VOID = void
 #else
-#  define FTL_DFLT_VOID
+#  define STDCPP_DFLT_VOID
 #endif
 
-#if FTL_CXX11
-#  define FTL_DFLT_NULLPTR = nullptr
+#if STDCPP_CXX11
+#  define STDCPP_DFLT_NULLPTR = nullptr
 #else
-#  define FTL_DFLT_NULLPTR = 0
+#  define STDCPP_DFLT_NULLPTR = 0
 #endif
 
 namespace std
@@ -115,7 +115,7 @@ namespace std
 //  removed in C++17.  They are defined here for C++98..C++14.
 //
 //=============================================================
-#if !FTL_CXX17
+#if !STDCPP_CXX17
 
 template<class Arg, class Result>
 struct unary_function
@@ -144,25 +144,25 @@ struct binary_function
 //  comparators are provided for all versions.
 //
 //=============================================================
-#if FTL_CXX17
+#if STDCPP_CXX17
 // binary_function / unary_function were removed; no base class.
-#  define FTL_BIN_BASE(T1,T2,R)
-#  define FTL_UN_BASE(T,R)
+#  define STDCPP_BIN_BASE(T1,T2,R)
+#  define STDCPP_UN_BASE(T,R)
 #else
-#  define FTL_BIN_BASE(T1,T2,R) : binary_function<T1,T2,R>
-#  define FTL_UN_BASE(T,R)    : unary_function<T,R>
+#  define STDCPP_BIN_BASE(T1,T2,R) : binary_function<T1,T2,R>
+#  define STDCPP_UN_BASE(T,R)    : unary_function<T,R>
 #endif
 
 // ---- arithmetic ------------------------------------------------
-#define FTL_DEFINE_BINOP(name, op)                                         \
-template<class T FTL_DFLT_VOID> struct name FTL_BIN_BASE(T,T,T) {          \
-    FTL_CONSTEXPR T operator()(const T& x, const T& y) const               \
+#define STDCPP_DEFINE_BINOP(name, op)                                         \
+template<class T STDCPP_DFLT_VOID> struct name STDCPP_BIN_BASE(T,T,T) {          \
+    STDCPP_CONSTEXPR T operator()(const T& x, const T& y) const               \
     { return x op y; }                                                     \
 };                                                                         \
-FTL_DEFINE_BINOP_VOID(name, op)
+STDCPP_DEFINE_BINOP_VOID(name, op)
 
-#if FTL_CXX14
-#  define FTL_DEFINE_BINOP_VOID(name, op)                                  \
+#if STDCPP_CXX14
+#  define STDCPP_DEFINE_BINOP_VOID(name, op)                                  \
 template<> struct name<void> {                                             \
     template<class T, class U>                                             \
     constexpr auto operator()(T&& t, U&& u) const                          \
@@ -171,26 +171,26 @@ template<> struct name<void> {                                             \
     typedef void is_transparent;                                           \
 };
 #else
-#  define FTL_DEFINE_BINOP_VOID(name, op)
+#  define STDCPP_DEFINE_BINOP_VOID(name, op)
 #endif
 
-FTL_DEFINE_BINOP(plus,       +)
-FTL_DEFINE_BINOP(minus,      -)
-FTL_DEFINE_BINOP(multiplies, *)
-FTL_DEFINE_BINOP(divides,    /)
-FTL_DEFINE_BINOP(modulus,    %)
+STDCPP_DEFINE_BINOP(plus,       +)
+STDCPP_DEFINE_BINOP(minus,      -)
+STDCPP_DEFINE_BINOP(multiplies, *)
+STDCPP_DEFINE_BINOP(divides,    /)
+STDCPP_DEFINE_BINOP(modulus,    %)
 
-#undef FTL_DEFINE_BINOP_VOID
-#undef FTL_DEFINE_BINOP
+#undef STDCPP_DEFINE_BINOP_VOID
+#undef STDCPP_DEFINE_BINOP
 
-#define FTL_DEFINE_UNOP(name, op)                                          \
-template<class T FTL_DFLT_VOID> struct name FTL_UN_BASE(T,T) {             \
-    FTL_CONSTEXPR T operator()(const T& x) const { return op x; }          \
+#define STDCPP_DEFINE_UNOP(name, op)                                          \
+template<class T STDCPP_DFLT_VOID> struct name STDCPP_UN_BASE(T,T) {             \
+    STDCPP_CONSTEXPR T operator()(const T& x) const { return op x; }          \
 };                                                                         \
-FTL_DEFINE_UNOP_VOID(name, op)
+STDCPP_DEFINE_UNOP_VOID(name, op)
 
-#if FTL_CXX14
-#  define FTL_DEFINE_UNOP_VOID(name, op)                                   \
+#if STDCPP_CXX14
+#  define STDCPP_DEFINE_UNOP_VOID(name, op)                                   \
 template<> struct name<void> {                                             \
     template<class T>                                                      \
     constexpr auto operator()(T&& t) const                                 \
@@ -199,24 +199,24 @@ template<> struct name<void> {                                             \
     typedef void is_transparent;                                           \
 };
 #else
-#  define FTL_DEFINE_UNOP_VOID(name, op)
+#  define STDCPP_DEFINE_UNOP_VOID(name, op)
 #endif
 
-FTL_DEFINE_UNOP(negate, -)
+STDCPP_DEFINE_UNOP(negate, -)
 
-#undef FTL_DEFINE_UNOP_VOID
-#undef FTL_DEFINE_UNOP
+#undef STDCPP_DEFINE_UNOP_VOID
+#undef STDCPP_DEFINE_UNOP
 
 // ---- comparisons -----------------------------------------------
-#define FTL_DEFINE_CMPOP(name, op)                                         \
-template<class T FTL_DFLT_VOID> struct name FTL_BIN_BASE(T,T,bool) {       \
-    FTL_CONSTEXPR bool operator()(const T& x, const T& y) const            \
+#define STDCPP_DEFINE_CMPOP(name, op)                                         \
+template<class T STDCPP_DFLT_VOID> struct name STDCPP_BIN_BASE(T,T,bool) {       \
+    STDCPP_CONSTEXPR bool operator()(const T& x, const T& y) const            \
     { return x op y; }                                                     \
 };                                                                         \
-FTL_DEFINE_CMPOP_VOID(name, op)
+STDCPP_DEFINE_CMPOP_VOID(name, op)
 
-#if FTL_CXX14
-#  define FTL_DEFINE_CMPOP_VOID(name, op)                                  \
+#if STDCPP_CXX14
+#  define STDCPP_DEFINE_CMPOP_VOID(name, op)                                  \
 template<> struct name<void> {                                             \
     template<class T, class U>                                             \
     constexpr auto operator()(T&& t, U&& u) const                          \
@@ -225,53 +225,53 @@ template<> struct name<void> {                                             \
     typedef void is_transparent;                                           \
 };
 #else
-#  define FTL_DEFINE_CMPOP_VOID(name, op)
+#  define STDCPP_DEFINE_CMPOP_VOID(name, op)
 #endif
 
-FTL_DEFINE_CMPOP(equal_to,      ==)
-FTL_DEFINE_CMPOP(not_equal_to,  !=)
-FTL_DEFINE_CMPOP(greater,       >)
-FTL_DEFINE_CMPOP(less,          <)
-FTL_DEFINE_CMPOP(greater_equal, >=)
-FTL_DEFINE_CMPOP(less_equal,    <=)
+STDCPP_DEFINE_CMPOP(equal_to,      ==)
+STDCPP_DEFINE_CMPOP(not_equal_to,  !=)
+STDCPP_DEFINE_CMPOP(greater,       >)
+STDCPP_DEFINE_CMPOP(less,          <)
+STDCPP_DEFINE_CMPOP(greater_equal, >=)
+STDCPP_DEFINE_CMPOP(less_equal,    <=)
 
-#undef FTL_DEFINE_CMPOP_VOID
-#undef FTL_DEFINE_CMPOP
+#undef STDCPP_DEFINE_CMPOP_VOID
+#undef STDCPP_DEFINE_CMPOP
 
 // C++98 pointer specializations: comparing unrelated pointers with
 // the built-in < is undefined, so the library functors impose a
 // total order via an integer cast.
-#define FTL_DEFINE_CMPOP_PTR(name, op)                                     \
-template<class T> struct name<T*> FTL_BIN_BASE(T*,T*,bool) {               \
+#define STDCPP_DEFINE_CMPOP_PTR(name, op)                                     \
+template<class T> struct name<T*> STDCPP_BIN_BASE(T*,T*,bool) {               \
     bool operator()(T* x, T* y) const {                                    \
         return reinterpret_cast<__UINTPTR_TYPE__>(x)                        \
             op reinterpret_cast<__UINTPTR_TYPE__>(y);                      \
     }                                                                      \
 };                                                                         \
-template<class T> struct name<const T*> FTL_BIN_BASE(const T*,const T*,bool) { \
+template<class T> struct name<const T*> STDCPP_BIN_BASE(const T*,const T*,bool) { \
     bool operator()(const T* x, const T* y) const {                        \
         return reinterpret_cast<__UINTPTR_TYPE__>(x)                        \
             op reinterpret_cast<__UINTPTR_TYPE__>(y);                      \
     }                                                                      \
 };
 
-FTL_DEFINE_CMPOP_PTR(greater,       >)
-FTL_DEFINE_CMPOP_PTR(less,          <)
-FTL_DEFINE_CMPOP_PTR(greater_equal, >=)
-FTL_DEFINE_CMPOP_PTR(less_equal,    <=)
+STDCPP_DEFINE_CMPOP_PTR(greater,       >)
+STDCPP_DEFINE_CMPOP_PTR(less,          <)
+STDCPP_DEFINE_CMPOP_PTR(greater_equal, >=)
+STDCPP_DEFINE_CMPOP_PTR(less_equal,    <=)
 
-#undef FTL_DEFINE_CMPOP_PTR
+#undef STDCPP_DEFINE_CMPOP_PTR
 
 // ---- logical ---------------------------------------------------
-#define FTL_DEFINE_BINOP_BOOL(name, op)                                    \
-template<class T FTL_DFLT_VOID> struct name FTL_BIN_BASE(T,T,bool) {       \
-    FTL_CONSTEXPR bool operator()(const T& x, const T& y) const            \
+#define STDCPP_DEFINE_BINOP_BOOL(name, op)                                    \
+template<class T STDCPP_DFLT_VOID> struct name STDCPP_BIN_BASE(T,T,bool) {       \
+    STDCPP_CONSTEXPR bool operator()(const T& x, const T& y) const            \
     { return x op y; }                                                     \
 };                                                                         \
-FTL_DEFINE_BINOP_BOOL_VOID(name, op)
+STDCPP_DEFINE_BINOP_BOOL_VOID(name, op)
 
-#if FTL_CXX14
-#  define FTL_DEFINE_BINOP_BOOL_VOID(name, op)                             \
+#if STDCPP_CXX14
+#  define STDCPP_DEFINE_BINOP_BOOL_VOID(name, op)                             \
 template<> struct name<void> {                                             \
     template<class T, class U>                                             \
     constexpr auto operator()(T&& t, U&& u) const                          \
@@ -280,23 +280,23 @@ template<> struct name<void> {                                             \
     typedef void is_transparent;                                           \
 };
 #else
-#  define FTL_DEFINE_BINOP_BOOL_VOID(name, op)
+#  define STDCPP_DEFINE_BINOP_BOOL_VOID(name, op)
 #endif
 
-FTL_DEFINE_BINOP_BOOL(logical_and, &&)
-FTL_DEFINE_BINOP_BOOL(logical_or,  ||)
+STDCPP_DEFINE_BINOP_BOOL(logical_and, &&)
+STDCPP_DEFINE_BINOP_BOOL(logical_or,  ||)
 
-#undef FTL_DEFINE_BINOP_BOOL_VOID
-#undef FTL_DEFINE_BINOP_BOOL
+#undef STDCPP_DEFINE_BINOP_BOOL_VOID
+#undef STDCPP_DEFINE_BINOP_BOOL
 
-#define FTL_DEFINE_UNOP_BOOL(name, op)                                     \
-template<class T FTL_DFLT_VOID> struct name FTL_UN_BASE(T,bool) {          \
-    FTL_CONSTEXPR bool operator()(const T& x) const { return op x; }       \
+#define STDCPP_DEFINE_UNOP_BOOL(name, op)                                     \
+template<class T STDCPP_DFLT_VOID> struct name STDCPP_UN_BASE(T,bool) {          \
+    STDCPP_CONSTEXPR bool operator()(const T& x) const { return op x; }       \
 };                                                                         \
-FTL_DEFINE_UNOP_BOOL_VOID(name, op)
+STDCPP_DEFINE_UNOP_BOOL_VOID(name, op)
 
-#if FTL_CXX14
-#  define FTL_DEFINE_UNOP_BOOL_VOID(name, op)                              \
+#if STDCPP_CXX14
+#  define STDCPP_DEFINE_UNOP_BOOL_VOID(name, op)                              \
 template<> struct name<void> {                                             \
     template<class T>                                                      \
     constexpr auto operator()(T&& t) const                                 \
@@ -305,24 +305,24 @@ template<> struct name<void> {                                             \
     typedef void is_transparent;                                           \
 };
 #else
-#  define FTL_DEFINE_UNOP_BOOL_VOID(name, op)
+#  define STDCPP_DEFINE_UNOP_BOOL_VOID(name, op)
 #endif
 
-FTL_DEFINE_UNOP_BOOL(logical_not, !)
+STDCPP_DEFINE_UNOP_BOOL(logical_not, !)
 
-#undef FTL_DEFINE_UNOP_BOOL_VOID
-#undef FTL_DEFINE_UNOP_BOOL
+#undef STDCPP_DEFINE_UNOP_BOOL_VOID
+#undef STDCPP_DEFINE_UNOP_BOOL
 
 // ---- bitwise ---------------------------------------------------
-#define FTL_DEFINE_BIT_BINOP(name, op)                                     \
-template<class T FTL_DFLT_VOID> struct name FTL_BIN_BASE(T,T,T) {          \
-    FTL_CONSTEXPR T operator()(const T& x, const T& y) const               \
+#define STDCPP_DEFINE_BIT_BINOP(name, op)                                     \
+template<class T STDCPP_DFLT_VOID> struct name STDCPP_BIN_BASE(T,T,T) {          \
+    STDCPP_CONSTEXPR T operator()(const T& x, const T& y) const               \
     { return x op y; }                                                     \
 };                                                                         \
-FTL_DEFINE_BIT_BINOP_VOID(name, op)
+STDCPP_DEFINE_BIT_BINOP_VOID(name, op)
 
-#if FTL_CXX14
-#  define FTL_DEFINE_BIT_BINOP_VOID(name, op)                              \
+#if STDCPP_CXX14
+#  define STDCPP_DEFINE_BIT_BINOP_VOID(name, op)                              \
 template<> struct name<void> {                                             \
     template<class T, class U>                                             \
     constexpr auto operator()(T&& t, U&& u) const                          \
@@ -331,18 +331,18 @@ template<> struct name<void> {                                             \
     typedef void is_transparent;                                           \
 };
 #else
-#  define FTL_DEFINE_BIT_BINOP_VOID(name, op)
+#  define STDCPP_DEFINE_BIT_BINOP_VOID(name, op)
 #endif
 
-FTL_DEFINE_BIT_BINOP(bit_and, &)
-FTL_DEFINE_BIT_BINOP(bit_or,  |)
-FTL_DEFINE_BIT_BINOP(bit_xor, ^)
+STDCPP_DEFINE_BIT_BINOP(bit_and, &)
+STDCPP_DEFINE_BIT_BINOP(bit_or,  |)
+STDCPP_DEFINE_BIT_BINOP(bit_xor, ^)
 
-#undef FTL_DEFINE_BIT_BINOP_VOID
-#undef FTL_DEFINE_BIT_BINOP
+#undef STDCPP_DEFINE_BIT_BINOP_VOID
+#undef STDCPP_DEFINE_BIT_BINOP
 
-#if FTL_CXX14
-template<class T = void> struct bit_not FTL_UN_BASE(T,T) {
+#if STDCPP_CXX14
+template<class T = void> struct bit_not STDCPP_UN_BASE(T,T) {
     constexpr T operator()(const T& x) const { return ~x; }
 };
 template<> struct bit_not<void> {
@@ -360,7 +360,7 @@ template<> struct bit_not<void> {
 //  (deprecated in C++11, removed in C++17).
 //
 //=============================================================
-#if !FTL_CXX17
+#if !STDCPP_CXX17
 
 // ---- binder1st / binder2nd ------------------------------------
 template<class Op>
@@ -379,7 +379,7 @@ public:
     operator()(const typename Op::second_argument_type& x) const
     { return op(value, x); }
 
-#if FTL_CXX11
+#if STDCPP_CXX11
     typename Op::result_type
     operator()(typename Op::second_argument_type& x) const
     { return op(value, x); }
@@ -410,7 +410,7 @@ public:
     operator()(const typename Op::first_argument_type& x) const
     { return op(x, value); }
 
-#if FTL_CXX11
+#if STDCPP_CXX11
     typename Op::result_type
     operator()(typename Op::first_argument_type& x) const
     { return op(x, value); }
@@ -462,7 +462,7 @@ ptr_fun(Result (*x)(Arg1, Arg2))
 // ---- mem_fun family -------------------------------------------
 // PREFIX is "" / "const_" / "volatile_" / "const_volatile_".
 // CV     is "" / "const" / "volatile" / "const volatile".
-#define FTL_MEM_FUN_T(PREFIX, CV)                                           \
+#define STDCPP_MEM_FUN_T(PREFIX, CV)                                           \
 template<class R, class T>                                                 \
 class PREFIX##mem_fun_t : public unary_function<T*, R> {                   \
     typedef R (T::*_Fptr)() CV;                                            \
@@ -496,12 +496,12 @@ public:                                                                    \
     R operator()(T& p, A a) const { return (p.*_M_pm)(a); }                \
 };
 
-FTL_MEM_FUN_T(/* prefix */, /* cv */)
-FTL_MEM_FUN_T(const_,          const)
-FTL_MEM_FUN_T(volatile_,       volatile)
-FTL_MEM_FUN_T(const_volatile_, const volatile)
+STDCPP_MEM_FUN_T(/* prefix */, /* cv */)
+STDCPP_MEM_FUN_T(const_,          const)
+STDCPP_MEM_FUN_T(volatile_,       volatile)
+STDCPP_MEM_FUN_T(const_volatile_, const volatile)
 
-#undef FTL_MEM_FUN_T
+#undef STDCPP_MEM_FUN_T
 
 // mem_fun() factories
 template<class R, class T>
@@ -568,7 +568,7 @@ public:
     explicit unary_negate(const Pred& x) : pred(x) {}
     bool operator()(const typename Pred::argument_type& x) const
     { return !pred(x); }
-#if FTL_CXX11
+#if STDCPP_CXX11
     bool operator()(typename Pred::argument_type& x) const
     { return !pred(x); }
 #endif
@@ -590,7 +590,7 @@ public:
     bool operator()(const typename Pred::first_argument_type& x,
                     const typename Pred::second_argument_type& y) const
     { return !pred(x, y); }
-#if FTL_CXX11
+#if STDCPP_CXX11
     bool operator()(typename Pred::first_argument_type& x,
                     typename Pred::second_argument_type& y) const
     { return !pred(x, y); }
@@ -611,7 +611,7 @@ inline binary_negate<Pred> not2(const Pred& pred)
 //  references, decltype, ...).
 //
 //=============================================================
-#if FTL_CXX11
+#if STDCPP_CXX11
 
 namespace std
 {
@@ -690,7 +690,7 @@ namespace __ftl
     };
 
     template<class F, class... Args>
-    FTL_CONSTEXPR14
+    STDCPP_CONSTEXPR14
     auto __x_invoke(F&& f, Args&&... args)
         -> decltype(__x_invoke_impl(
               std::declval<typename __x_invoke_first<F, Args...>::type>(),
@@ -703,7 +703,7 @@ namespace __ftl
 
     // INVOKE<R>: same as INVOKE but with an explicit return type R.
     template<class R, class F, class... Args>
-    inline FTL_CONSTEXPR14
+    inline STDCPP_CONSTEXPR14
     typename enable_if<!is_void<R>::value, R>::type
     __x_invoke_r(F&& f, Args&&... args)
     {
@@ -712,7 +712,7 @@ namespace __ftl
     }
 
     template<class R, class F, class... Args>
-    inline FTL_CONSTEXPR14
+    inline STDCPP_CONSTEXPR14
     typename enable_if<is_void<R>::value, R>::type
     __x_invoke_r(F&& f, Args&&... args)
     {
@@ -721,12 +721,12 @@ namespace __ftl
 
     // addressof without including <memory>
     template<class T>
-    inline T* __addressof(T& r) FTL_NOEXCEPT
+    inline T* __addressof(T& r) STDCPP_NOEXCEPT
     { return __builtin_addressof(r); }
 
     // index_sequence / make_index_sequence (C++14 has them in <utility>;
     // for C++11 we provide a minimal implementation inside __ftl).
-#if FTL_CXX14
+#if STDCPP_CXX14
     using std::index_sequence;
     using std::make_index_sequence;
 #else
@@ -751,47 +751,47 @@ namespace __ftl
     template<class> struct __is_refwrap : false_type {};
     template<class U> struct __is_refwrap<reference_wrapper<U>> : true_type {};
 
-#if !FTL_CXX17
+#if !STDCPP_CXX17
     // Deprecated result_type / argument_type typedefs exposed by
     // reference_wrapper's operator() in C++11/14.
     template<class> struct __refwrap_types {};
 
-#  define FTL_RW_T0(R)       typedef R result_type;
-#  define FTL_RW_T1(R,A1)    typedef R result_type; typedef A1 argument_type;
-#  define FTL_RW_T2(R,A1,A2) typedef R result_type; \
+#  define STDCPP_RW_T0(R)       typedef R result_type;
+#  define STDCPP_RW_T1(R,A1)    typedef R result_type; typedef A1 argument_type;
+#  define STDCPP_RW_T2(R,A1,A2) typedef R result_type; \
     typedef A1 first_argument_type; typedef A2 second_argument_type;
 
     // free function types (no cv-qualifiers)
-    template<class R> struct __refwrap_types<R()> { FTL_RW_T0(R) };
-    template<class R,class A1> struct __refwrap_types<R(A1)> { FTL_RW_T1(R,A1) };
-    template<class R,class A1,class A2> struct __refwrap_types<R(A1,A2)> { FTL_RW_T2(R,A1,A2) };
+    template<class R> struct __refwrap_types<R()> { STDCPP_RW_T0(R) };
+    template<class R,class A1> struct __refwrap_types<R(A1)> { STDCPP_RW_T1(R,A1) };
+    template<class R,class A1,class A2> struct __refwrap_types<R(A1,A2)> { STDCPP_RW_T2(R,A1,A2) };
     // free function pointers (no cv-qualifiers)
     template<class R> struct __refwrap_types<R(*)()> : __refwrap_types<R()> {};
     template<class R,class A1> struct __refwrap_types<R(*)(A1)> : __refwrap_types<R(A1)> {};
     template<class R,class A1,class A2> struct __refwrap_types<R(*)(A1,A2)> : __refwrap_types<R(A1,A2)> {};
     // member function pointers (with each cv qualification)
-#  define FTL_RW_MEM(CV)                                                     \
+#  define STDCPP_RW_MEM(CV)                                                     \
     template<class R,class C> struct __refwrap_types<R (C::*)() CV>          \
-        { FTL_RW_T0(R) };                                                    \
+        { STDCPP_RW_T0(R) };                                                    \
     template<class R,class C,class A1> struct __refwrap_types<R (C::*)(A1) CV> \
-        { FTL_RW_T1(R,A1) };                                                 \
+        { STDCPP_RW_T1(R,A1) };                                                 \
     template<class R,class C,class A1,class A2>                              \
-    struct __refwrap_types<R (C::*)(A1,A2) CV> { FTL_RW_T2(R,A1,A2) };
+    struct __refwrap_types<R (C::*)(A1,A2) CV> { STDCPP_RW_T2(R,A1,A2) };
 
-    FTL_RW_MEM(/* plain */)
-    FTL_RW_MEM(const)
-    FTL_RW_MEM(volatile)
-    FTL_RW_MEM(const volatile)
-#  undef FTL_RW_MEM
-#  undef FTL_RW_T0
-#  undef FTL_RW_T1
-#  undef FTL_RW_T2
+    STDCPP_RW_MEM(/* plain */)
+    STDCPP_RW_MEM(const)
+    STDCPP_RW_MEM(volatile)
+    STDCPP_RW_MEM(const volatile)
+#  undef STDCPP_RW_MEM
+#  undef STDCPP_RW_T0
+#  undef STDCPP_RW_T1
+#  undef STDCPP_RW_T2
 #endif
 }
 
 template<class T>
 class reference_wrapper
-#if !FTL_CXX17
+#if !STDCPP_CXX17
     : public __ftl::__refwrap_types<T>
 #endif
 {
@@ -806,24 +806,24 @@ public:
     template<class U, class = typename enable_if<
         !__ftl::__is_refwrap<typename decay<U>::type>::value,
         decltype(static_cast<T&>(std::declval<U>()), 0)>::type>
-    FTL_CONSTEXPR
-    reference_wrapper(U&& u) FTL_NOEXCEPT
+    STDCPP_CONSTEXPR
+    reference_wrapper(U&& u) STDCPP_NOEXCEPT
         : _M_data(__ftl::__addressof(u)) {}
 
-    reference_wrapper(const reference_wrapper&) FTL_NOEXCEPT = default;
+    reference_wrapper(const reference_wrapper&) STDCPP_NOEXCEPT = default;
 
-    FTL_CONSTEXPR operator T&() const FTL_NOEXCEPT { return *_M_data; }
-    FTL_CONSTEXPR T& get() const FTL_NOEXCEPT { return *_M_data; }
+    STDCPP_CONSTEXPR operator T&() const STDCPP_NOEXCEPT { return *_M_data; }
+    STDCPP_CONSTEXPR T& get() const STDCPP_NOEXCEPT { return *_M_data; }
 
-#if FTL_CXX17
+#if STDCPP_CXX17
     template<class... Args>
-    FTL_CONSTEXPR20
+    STDCPP_CONSTEXPR20
     invoke_result_t<T&, Args...>
     operator()(Args&&... args) const
     { return __ftl::__x_invoke(get(), std::forward<Args>(args)...); }
 #else
     template<class... Args>
-    FTL_CONSTEXPR14
+    STDCPP_CONSTEXPR14
     typename result_of<T&(Args&&...)>::type
     operator()(Args&&... args) const
     { return __ftl::__x_invoke(get(), std::forward<Args>(args)...); }
@@ -835,25 +835,25 @@ public:
 
 // ---- ref / cref ------------------------------------------------
 template<class T>
-inline FTL_CONSTEXPR reference_wrapper<T> ref(T& t) FTL_NOEXCEPT
+inline STDCPP_CONSTEXPR reference_wrapper<T> ref(T& t) STDCPP_NOEXCEPT
 { return reference_wrapper<T>(t); }
 
 template<class T>
-inline FTL_CONSTEXPR reference_wrapper<T>
-ref(reference_wrapper<T> t) FTL_NOEXCEPT
+inline STDCPP_CONSTEXPR reference_wrapper<T>
+ref(reference_wrapper<T> t) STDCPP_NOEXCEPT
 { return t; }
 
 template<class T>
 void ref(const T&&) = delete;
 
 template<class T>
-inline FTL_CONSTEXPR reference_wrapper<const T>
-cref(const T& t) FTL_NOEXCEPT
+inline STDCPP_CONSTEXPR reference_wrapper<const T>
+cref(const T& t) STDCPP_NOEXCEPT
 { return reference_wrapper<const T>(t); }
 
 template<class T>
-inline FTL_CONSTEXPR reference_wrapper<const T>
-cref(reference_wrapper<T> t) FTL_NOEXCEPT
+inline STDCPP_CONSTEXPR reference_wrapper<const T>
+cref(reference_wrapper<T> t) STDCPP_NOEXCEPT
 { return { t.get() }; }
 
 template<class T>
@@ -862,7 +862,7 @@ void cref(const T&&) = delete;
 // ---- unwrap_reference / unwrap_ref_decay (C++17) --------------
 // In C++20 these were moved into <type_traits>, so only define them
 // ourselves for plain C++17.
-#if FTL_CXX17 && !FTL_CXX20
+#if STDCPP_CXX17 && !STDCPP_CXX20
 template<class T> struct unwrap_reference { typedef T type; };
 template<class T> struct unwrap_reference<reference_wrapper<T>> { typedef T& type; };
 
@@ -881,7 +881,7 @@ using unwrap_ref_decay_t = typename unwrap_ref_decay<T>::type;
 //=============================================================
 // libstdc++ already defines std::identity in <bits/ranges_cmp.h>
 // (pulled in transitively by <tuple> in C++20 mode).
-#if FTL_CXX20 && !defined(_RANGES_CMP_H)
+#if STDCPP_CXX20 && !defined(_RANGES_CMP_H)
 struct identity
 {
     template<class T>
@@ -894,41 +894,41 @@ struct identity
 //=============================================================
 //  hash  [unord.hash]
 //=============================================================
-#if FTL_CXX17
+#if STDCPP_CXX17
 template<class T> struct hash {};
 #else
 template<class T> struct hash : unary_function<T, size_t> {};
 #endif
 
-#define FTL_HASH_INT(T)                                                     \
+#define STDCPP_HASH_INT(T)                                                     \
 template<> struct hash<T> {                                                 \
-    FTL_CONSTEXPR size_t operator()(T v) const FTL_NOEXCEPT                 \
+    STDCPP_CONSTEXPR size_t operator()(T v) const STDCPP_NOEXCEPT                 \
     { return static_cast<size_t>(v); }                                      \
 };
 
-FTL_HASH_INT(bool)
-FTL_HASH_INT(char)
-FTL_HASH_INT(signed char)
-FTL_HASH_INT(unsigned char)
-FTL_HASH_INT(short)
-FTL_HASH_INT(unsigned short)
-FTL_HASH_INT(int)
-FTL_HASH_INT(unsigned int)
-FTL_HASH_INT(long)
-FTL_HASH_INT(unsigned long)
-FTL_HASH_INT(long long)
-FTL_HASH_INT(unsigned long long)
-#if FTL_CXX20
-FTL_HASH_INT(char8_t)
+STDCPP_HASH_INT(bool)
+STDCPP_HASH_INT(char)
+STDCPP_HASH_INT(signed char)
+STDCPP_HASH_INT(unsigned char)
+STDCPP_HASH_INT(short)
+STDCPP_HASH_INT(unsigned short)
+STDCPP_HASH_INT(int)
+STDCPP_HASH_INT(unsigned int)
+STDCPP_HASH_INT(long)
+STDCPP_HASH_INT(unsigned long)
+STDCPP_HASH_INT(long long)
+STDCPP_HASH_INT(unsigned long long)
+#if STDCPP_CXX20
+STDCPP_HASH_INT(char8_t)
 #endif
-FTL_HASH_INT(char16_t)
-FTL_HASH_INT(char32_t)
-FTL_HASH_INT(wchar_t)
-#undef FTL_HASH_INT
+STDCPP_HASH_INT(char16_t)
+STDCPP_HASH_INT(char32_t)
+STDCPP_HASH_INT(wchar_t)
+#undef STDCPP_HASH_INT
 
 namespace __ftl
 {
-    inline size_t __hash_float_bits(const void* p, size_t n) FTL_NOEXCEPT
+    inline size_t __hash_float_bits(const void* p, size_t n) STDCPP_NOEXCEPT
     {
         // -0.0 and +0.0 must hash equal; the caller has already handled 0.
         const unsigned char* b = static_cast<const unsigned char*>(p);
@@ -939,21 +939,21 @@ namespace __ftl
     }
 }
 
-#define FTL_HASH_FLOAT(T, UT)                                               \
+#define STDCPP_HASH_FLOAT(T, UT)                                               \
 template<> struct hash<T> {                                                 \
-    size_t operator()(T v) const FTL_NOEXCEPT {                             \
+    size_t operator()(T v) const STDCPP_NOEXCEPT {                             \
         if (v == T(0)) return 0;                                            \
         UT u; std::memcpy(&u, &v, sizeof(T));                               \
         return static_cast<size_t>(u);                                      \
     }                                                                       \
 };
 
-FTL_HASH_FLOAT(float,       uint32_t)
-FTL_HASH_FLOAT(double,      uint64_t)
-#undef FTL_HASH_FLOAT
+STDCPP_HASH_FLOAT(float,       uint32_t)
+STDCPP_HASH_FLOAT(double,      uint64_t)
+#undef STDCPP_HASH_FLOAT
 
 template<> struct hash<long double> {
-    size_t operator()(long double v) const FTL_NOEXCEPT {
+    size_t operator()(long double v) const STDCPP_NOEXCEPT {
         if (v == 0.0L) return 0;
         return __ftl::__hash_float_bits(&v, sizeof(long double));
     }
@@ -961,12 +961,12 @@ template<> struct hash<long double> {
 
 // pointer hash
 template<class T> struct hash<T*> {
-    size_t operator()(T* p) const FTL_NOEXCEPT
+    size_t operator()(T* p) const STDCPP_NOEXCEPT
     { return reinterpret_cast<size_t>(p); }
 };
 
 template<> struct hash<nullptr_t> {
-    size_t operator()(nullptr_t) const FTL_NOEXCEPT { return 0; }
+    size_t operator()(nullptr_t) const STDCPP_NOEXCEPT { return 0; }
 };
 
 //=============================================================
@@ -986,11 +986,11 @@ struct owner_less<shared_ptr<T>>
     typedef shared_ptr<T> first_argument_type;
     typedef shared_ptr<T> second_argument_type;
 
-    bool operator()(const shared_ptr<T>& a, const shared_ptr<T>& b) const FTL_NOEXCEPT
+    bool operator()(const shared_ptr<T>& a, const shared_ptr<T>& b) const STDCPP_NOEXCEPT
     { return a.owner_before(b); }
-    bool operator()(const shared_ptr<T>& a, const weak_ptr<T>& b) const FTL_NOEXCEPT
+    bool operator()(const shared_ptr<T>& a, const weak_ptr<T>& b) const STDCPP_NOEXCEPT
     { return a.owner_before(b); }
-    bool operator()(const weak_ptr<T>& a, const shared_ptr<T>& b) const FTL_NOEXCEPT
+    bool operator()(const weak_ptr<T>& a, const shared_ptr<T>& b) const STDCPP_NOEXCEPT
     { return a.owner_before(b); }
 };
 
@@ -1001,19 +1001,19 @@ struct owner_less<weak_ptr<T>>
     typedef weak_ptr<T> first_argument_type;
     typedef weak_ptr<T> second_argument_type;
 
-    bool operator()(const weak_ptr<T>& a, const weak_ptr<T>& b) const FTL_NOEXCEPT
+    bool operator()(const weak_ptr<T>& a, const weak_ptr<T>& b) const STDCPP_NOEXCEPT
     { return a.owner_before(b); }
-    bool operator()(const shared_ptr<T>& a, const weak_ptr<T>& b) const FTL_NOEXCEPT
+    bool operator()(const shared_ptr<T>& a, const weak_ptr<T>& b) const STDCPP_NOEXCEPT
     { return a.owner_before(b); }
-    bool operator()(const weak_ptr<T>& a, const shared_ptr<T>& b) const FTL_NOEXCEPT
+    bool operator()(const weak_ptr<T>& a, const shared_ptr<T>& b) const STDCPP_NOEXCEPT
     { return a.owner_before(b); }
 };
 
-#if FTL_CXX17
+#if STDCPP_CXX17
 template<> struct owner_less<void>
 {
     template<class T, class U>
-    bool operator()(const T& a, const U& b) const FTL_NOEXCEPT
+    bool operator()(const T& a, const U& b) const STDCPP_NOEXCEPT
     { return a.owner_before(b); }
     using is_transparent = void;
 };
@@ -1027,7 +1027,7 @@ template<> struct owner_less<void>
 //=============================================================
 //  mem_fn  [func.memfn]
 //=============================================================
-#if !FTL_CXX17
+#if !STDCPP_CXX17
 namespace __ftl
 {
     template<class R, class C, class... A>
@@ -1046,7 +1046,7 @@ namespace __ftl
 
     template<class MP> struct __mfn_traits {};
 
-#  define FTL_MFN_TRAITS(CV, REF)                                           \
+#  define STDCPP_MFN_TRAITS(CV, REF)                                           \
     template<class R, class C, class... A>                                  \
     struct __mfn_traits<R (C::*)(A...) CV REF>                              \
         : __mfn_ub<R, CV C*, A...> {};                                      \
@@ -1054,42 +1054,42 @@ namespace __ftl
     struct __mfn_traits<R (C::*)(A..., ...) CV REF>                         \
         : __mfn_ub<R, CV C*, A...> {};
 
-    FTL_MFN_TRAITS(,   )
-    FTL_MFN_TRAITS(const,)
-    FTL_MFN_TRAITS(volatile,)
-    FTL_MFN_TRAITS(const volatile,)
-    FTL_MFN_TRAITS(,   &)
-    FTL_MFN_TRAITS(const,&)
-    FTL_MFN_TRAITS(volatile,&)
-    FTL_MFN_TRAITS(const volatile,&)
-    FTL_MFN_TRAITS(,   &&)
-    FTL_MFN_TRAITS(const,&&)
-    FTL_MFN_TRAITS(volatile,&&)
-    FTL_MFN_TRAITS(const volatile,&&)
-#  undef FTL_MFN_TRAITS
+    STDCPP_MFN_TRAITS(,   )
+    STDCPP_MFN_TRAITS(const,)
+    STDCPP_MFN_TRAITS(volatile,)
+    STDCPP_MFN_TRAITS(const volatile,)
+    STDCPP_MFN_TRAITS(,   &)
+    STDCPP_MFN_TRAITS(const,&)
+    STDCPP_MFN_TRAITS(volatile,&)
+    STDCPP_MFN_TRAITS(const volatile,&)
+    STDCPP_MFN_TRAITS(,   &&)
+    STDCPP_MFN_TRAITS(const,&&)
+    STDCPP_MFN_TRAITS(volatile,&&)
+    STDCPP_MFN_TRAITS(const volatile,&&)
+#  undef STDCPP_MFN_TRAITS
 }
 #endif
 
 template<class MP>
 class _Mem_fn
-#if !FTL_CXX17
+#if !STDCPP_CXX17
     : public __ftl::__mfn_traits<MP>
 #endif
 {
     MP _M_pm;
 public:
-    FTL_CONSTEXPR explicit _Mem_fn(MP pm) FTL_NOEXCEPT : _M_pm(pm) {}
+    STDCPP_CONSTEXPR explicit _Mem_fn(MP pm) STDCPP_NOEXCEPT : _M_pm(pm) {}
 
     template<class... Args>
-    FTL_CONSTEXPR20
+    STDCPP_CONSTEXPR20
     auto operator()(Args&&... args) const
         -> decltype(__ftl::__x_invoke(_M_pm, std::forward<Args>(args)...))
     { return __ftl::__x_invoke(_M_pm, std::forward<Args>(args)...); }
 };
 
 template<class R, class C>
-inline FTL_CONSTEXPR
-_Mem_fn<R C::*> mem_fn(R C::* pm) FTL_NOEXCEPT
+inline STDCPP_CONSTEXPR
+_Mem_fn<R C::*> mem_fn(R C::* pm) STDCPP_NOEXCEPT
 { return _Mem_fn<R C::*>(pm); }
 
 //=============================================================
@@ -1104,7 +1104,7 @@ template<class T> struct is_placeholder : integral_constant<int, 0> {};
 //=============================================================
 namespace placeholders
 {
-    template<int N> struct _Ph { FTL_CONSTEXPR _Ph() FTL_NOEXCEPT {} };
+    template<int N> struct _Ph { STDCPP_CONSTEXPR _Ph() STDCPP_NOEXCEPT {} };
 }
 
 template<int N>
@@ -1112,12 +1112,12 @@ struct is_placeholder<placeholders::_Ph<N>> : integral_constant<int, N> {};
 
 namespace placeholders
 {
-#define FTL_PH(N) FTL_INLINE_VAR constexpr _Ph<N> _##N{};
-    FTL_PH(1)  FTL_PH(2)  FTL_PH(3)  FTL_PH(4)  FTL_PH(5)
-    FTL_PH(6)  FTL_PH(7)  FTL_PH(8)  FTL_PH(9)  FTL_PH(10)
-    FTL_PH(11) FTL_PH(12) FTL_PH(13) FTL_PH(14) FTL_PH(15)
-    FTL_PH(16) FTL_PH(17) FTL_PH(18) FTL_PH(19) FTL_PH(20)
-#undef FTL_PH
+#define STDCPP_PH(N) STDCPP_INLINE_VAR constexpr _Ph<N> _##N{};
+    STDCPP_PH(1)  STDCPP_PH(2)  STDCPP_PH(3)  STDCPP_PH(4)  STDCPP_PH(5)
+    STDCPP_PH(6)  STDCPP_PH(7)  STDCPP_PH(8)  STDCPP_PH(9)  STDCPP_PH(10)
+    STDCPP_PH(11) STDCPP_PH(12) STDCPP_PH(13) STDCPP_PH(14) STDCPP_PH(15)
+    STDCPP_PH(16) STDCPP_PH(17) STDCPP_PH(18) STDCPP_PH(19) STDCPP_PH(20)
+#undef STDCPP_PH
 }
 
 //=============================================================
@@ -1127,16 +1127,16 @@ namespace __ftl
 {
     // Auto-unwrap a reference_wrapper stored as a bound argument.
     template<class T>
-    inline T& __mu_unwrap(T& t) FTL_NOEXCEPT { return t; }
+    inline T& __mu_unwrap(T& t) STDCPP_NOEXCEPT { return t; }
     template<class T>
-    inline T& __mu_unwrap(reference_wrapper<T>& r) FTL_NOEXCEPT { return r.get(); }
+    inline T& __mu_unwrap(reference_wrapper<T>& r) STDCPP_NOEXCEPT { return r.get(); }
     template<class T>
-    inline const T& __mu_unwrap(const reference_wrapper<T>& r) FTL_NOEXCEPT { return r.get(); }
+    inline const T& __mu_unwrap(const reference_wrapper<T>& r) STDCPP_NOEXCEPT { return r.get(); }
 
     // Case 1: bound argument is itself a bind expression -> invoke it
     // with all of the outer call arguments.
     template<size_t I, int J, class Bound, class Call, size_t... Ks>
-    inline FTL_CONSTEXPR14
+    inline STDCPP_CONSTEXPR14
     auto __mu(Bound&& b, Call& c, true_type, integral_constant<int,J>,
               index_sequence<Ks...>)
         -> decltype(std::get<I>(b)(std::get<Ks>(c)...))
@@ -1144,7 +1144,7 @@ namespace __ftl
 
     // Case 2: a placeholder -> forward the Nth outer call argument.
     template<size_t I, int J, class Bound, class Call, size_t... Ks>
-    inline FTL_CONSTEXPR14
+    inline STDCPP_CONSTEXPR14
     auto __mu(Bound&& b, Call& c, false_type, integral_constant<int,J>,
               index_sequence<Ks...>)
         -> decltype(std::get<J-1>(c))
@@ -1156,14 +1156,14 @@ namespace __ftl
 
     // Case 3: a plain bound value (reference_wrapper unwrapped).
     template<size_t I, class Bound, class Call, size_t... Ks>
-    inline FTL_CONSTEXPR14
+    inline STDCPP_CONSTEXPR14
     auto __mu(Bound&& b, Call&, false_type, integral_constant<int,0>,
               index_sequence<Ks...>)
         -> decltype(__mu_unwrap(std::get<I>(b)))
     { return __mu_unwrap(std::get<I>(b)); }
 
     template<size_t I, class Bound, class Call>
-    inline FTL_CONSTEXPR14
+    inline STDCPP_CONSTEXPR14
     auto __mu_entry(Bound&& b, Call& c)
         -> decltype(__mu<I>(
             std::forward<Bound>(b), c,
@@ -1183,13 +1183,13 @@ namespace __ftl
     }
 
     template<class Bound, class Call, size_t... Is>
-    inline FTL_CONSTEXPR14
+    inline STDCPP_CONSTEXPR14
     auto __bind_apply(Bound&& b, Call& c, index_sequence<Is...>)
         -> decltype(__x_invoke(std::get<0>(b), __mu_entry<Is+1>(std::forward<Bound>(b), c)...))
     { return __x_invoke(std::get<0>(b), __mu_entry<Is+1>(std::forward<Bound>(b), c)...); }
 
     template<class Bound, class Call>
-    inline FTL_CONSTEXPR14
+    inline STDCPP_CONSTEXPR14
     auto __bind_dispatch(Bound&& b, Call&& c)
         -> decltype(__bind_apply(
             std::forward<Bound>(b), c,
@@ -1211,13 +1211,13 @@ public:
     // The perfect-forwarding constructor must not hijack copy/move.
     template<class G, class... A, class = typename enable_if<
         !is_same<_Bind, typename remove_cv<typename remove_reference<G>::type>::type>::value>::type>
-    FTL_CONSTEXPR20
+    STDCPP_CONSTEXPR20
     explicit _Bind(G&& g, A&&... a)
         : _M_args(std::forward<G>(g), std::forward<A>(a)...) {}
 
     // C++11/14/17: only a const operator().
     template<class... Args>
-    FTL_CONSTEXPR20
+    STDCPP_CONSTEXPR20
     auto operator()(Args&&... args) const
         -> decltype(__ftl::__bind_dispatch(
             _M_args,
@@ -1228,9 +1228,9 @@ public:
             std::forward_as_tuple(std::forward<Args>(args)...));
     }
 
-#if FTL_CXX20
+#if STDCPP_CXX20
     template<class... Args>
-    FTL_CONSTEXPR20
+    STDCPP_CONSTEXPR20
     auto operator()(Args&&... args)
         -> decltype(__ftl::__bind_dispatch(
             _M_args,
@@ -1242,7 +1242,7 @@ public:
     }
 
     template<class... Args>
-    FTL_CONSTEXPR20
+    STDCPP_CONSTEXPR20
     auto operator()(Args&&... args) &&
         -> decltype(__ftl::__bind_dispatch(
             std::move(_M_args),
@@ -1254,7 +1254,7 @@ public:
     }
 
     template<class... Args>
-    FTL_CONSTEXPR20
+    STDCPP_CONSTEXPR20
     auto operator()(Args&&... args) const&&
         -> decltype(__ftl::__bind_dispatch(
             std::move(_M_args),
@@ -1271,7 +1271,7 @@ template<class F, class... BoundArgs>
 struct is_bind_expression<_Bind<F, BoundArgs...>> : true_type {};
 
 template<class F, class... BoundArgs>
-inline FTL_CONSTEXPR20
+inline STDCPP_CONSTEXPR20
 _Bind<typename decay<F>::type, typename decay<BoundArgs>::type...>
 bind(F&& f, BoundArgs&&... args)
 {
@@ -1285,7 +1285,7 @@ bind(F&& f, BoundArgs&&... args)
 class bad_function_call : public exception
 {
 public:
-    const char* what() const FTL_NOEXCEPT override { return "bad_function_call"; }
+    const char* what() const STDCPP_NOEXCEPT override { return "bad_function_call"; }
 };
 
 //=============================================================
@@ -1306,7 +1306,7 @@ namespace __ftl
             decltype(_S_test<typename decay<F>::type>(0))::value;
     };
 
-#if !FTL_CXX17
+#if !STDCPP_CXX17
     template<class R, class... Args> struct __func_base { typedef R result_type; };
     template<class R, class A1> struct __func_base<R, A1> {
         typedef R result_type; typedef A1 argument_type;
@@ -1322,17 +1322,17 @@ template<class> class function; // undefined
 
 template<class R, class... Args>
 class function<R(Args...)>
-#if !FTL_CXX17
+#if !STDCPP_CXX17
     : public __ftl::__func_base<R, Args...>
 #endif
 {
     struct _Base
     {
-        virtual ~_Base() FTL_NOEXCEPT {}
+        virtual ~_Base() STDCPP_NOEXCEPT {}
         virtual R _invoke(Args&&... args) const = 0;
         virtual _Base* _clone(void* where) const = 0;
-        virtual _Base* _move(void* where) FTL_NOEXCEPT = 0;
-        virtual const type_info& _target_type() const FTL_NOEXCEPT = 0;
+        virtual _Base* _move(void* where) STDCPP_NOEXCEPT = 0;
+        virtual const type_info& _target_type() const STDCPP_NOEXCEPT = 0;
     };
 
     template<class F>
@@ -1350,10 +1350,10 @@ class function<R(Args...)>
         }
         _Base* _clone(void* where) const override
         { return where ? ::new (where) _Impl(_f) : new _Impl(_f); }
-        _Base* _move(void* where) FTL_NOEXCEPT override
+        _Base* _move(void* where) STDCPP_NOEXCEPT override
         { return where ? ::new (where) _Impl(std::move(_f))
                        : new _Impl(std::move(_f)); }
-        const type_info& _target_type() const FTL_NOEXCEPT override
+        const type_info& _target_type() const STDCPP_NOEXCEPT override
         { return typeid(F); }
     };
 
@@ -1372,7 +1372,7 @@ class function<R(Args...)>
             && alignof(_Impl<FD>) <= _BufAlign;
     }
 
-    void _M_destroy() FTL_NOEXCEPT
+    void _M_destroy() STDCPP_NOEXCEPT
     {
         if (!_M_ptr) return;
         if (_M_local) _M_ptr->~_Base();
@@ -1414,7 +1414,7 @@ class function<R(Args...)>
         }
     }
 
-    void _M_move_from(function& o) FTL_NOEXCEPT
+    void _M_move_from(function& o) STDCPP_NOEXCEPT
     {
         if (!o._M_ptr) { _M_ptr = nullptr; _M_local = false; return; }
         if (o._M_local) {
@@ -1431,8 +1431,8 @@ class function<R(Args...)>
 public:
     using result_type = R;
 
-    FTL_CONSTEXPR function() FTL_NOEXCEPT : _M_ptr(nullptr), _M_local(false) {}
-    FTL_CONSTEXPR function(nullptr_t) FTL_NOEXCEPT : _M_ptr(nullptr), _M_local(false) {}
+    STDCPP_CONSTEXPR function() STDCPP_NOEXCEPT : _M_ptr(nullptr), _M_local(false) {}
+    STDCPP_CONSTEXPR function(nullptr_t) STDCPP_NOEXCEPT : _M_ptr(nullptr), _M_local(false) {}
 
     template<class F, class = typename enable_if<
         !is_same<typename remove_cv<typename decay<F>::type>::type, function>::value,
@@ -1445,7 +1445,7 @@ public:
     }
 
     function(const function& o) : _M_ptr(nullptr), _M_local(false) { _M_copy_from(o); }
-    function(function&& o) FTL_NOEXCEPT : _M_ptr(nullptr), _M_local(false) { _M_move_from(o); }
+    function(function&& o) STDCPP_NOEXCEPT : _M_ptr(nullptr), _M_local(false) { _M_move_from(o); }
 
     ~function() { _M_destroy(); }
 
@@ -1454,12 +1454,12 @@ public:
         if (this != &o) { _M_destroy(); _M_copy_from(o); }
         return *this;
     }
-    function& operator=(function&& o) FTL_NOEXCEPT
+    function& operator=(function&& o) STDCPP_NOEXCEPT
     {
         if (this != &o) { _M_destroy(); _M_move_from(o); }
         return *this;
     }
-    function& operator=(nullptr_t) FTL_NOEXCEPT { _M_destroy(); return *this; }
+    function& operator=(nullptr_t) STDCPP_NOEXCEPT { _M_destroy(); return *this; }
 
     template<class F>
     typename enable_if<
@@ -1471,7 +1471,7 @@ public:
         return *this;
     }
 
-    void swap(function& o) FTL_NOEXCEPT
+    void swap(function& o) STDCPP_NOEXCEPT
     {
         function tmp(std::move(*this));
         *this = std::move(o);
@@ -1482,7 +1482,7 @@ public:
     void assign(F&& f, A&&... a)
     { function(std::bind(std::forward<F>(f), std::forward<A>(a)...)).swap(*this); }
 
-    explicit operator bool() const FTL_NOEXCEPT { return _M_ptr != nullptr; }
+    explicit operator bool() const STDCPP_NOEXCEPT { return _M_ptr != nullptr; }
 
     R operator()(Args... args) const
     {
@@ -1490,16 +1490,16 @@ public:
         return _M_ptr->_invoke(std::forward<Args>(args)...);
     }
 
-    const type_info& target_type() const FTL_NOEXCEPT
+    const type_info& target_type() const STDCPP_NOEXCEPT
     { return _M_ptr ? _M_ptr->_target_type() : typeid(void); }
 
-    template<class F> F* target() FTL_NOEXCEPT
+    template<class F> F* target() STDCPP_NOEXCEPT
     {
         if (_M_ptr && _M_ptr->_target_type() == typeid(F))
             return &(static_cast<_Impl<F>*>(_M_ptr)->_f);
         return nullptr;
     }
-    template<class F> const F* target() const FTL_NOEXCEPT
+    template<class F> const F* target() const STDCPP_NOEXCEPT
     {
         if (_M_ptr && _M_ptr->_target_type() == typeid(F))
             return &(static_cast<const _Impl<F>*>(_M_ptr)->_f);
@@ -1508,33 +1508,33 @@ public:
 };
 
 template<class R, class... Args>
-inline void swap(function<R(Args...)>& a, function<R(Args...)>& b) FTL_NOEXCEPT
+inline void swap(function<R(Args...)>& a, function<R(Args...)>& b) STDCPP_NOEXCEPT
 { a.swap(b); }
 
 template<class R, class... Args>
-inline bool operator==(const function<R(Args...)>& f, nullptr_t) FTL_NOEXCEPT
+inline bool operator==(const function<R(Args...)>& f, nullptr_t) STDCPP_NOEXCEPT
 { return !f; }
 template<class R, class... Args>
-inline bool operator==(nullptr_t, const function<R(Args...)>& f) FTL_NOEXCEPT
+inline bool operator==(nullptr_t, const function<R(Args...)>& f) STDCPP_NOEXCEPT
 { return !f; }
-#if !FTL_CXX20
+#if !STDCPP_CXX20
 template<class R, class... Args>
-inline bool operator!=(const function<R(Args...)>& f, nullptr_t) FTL_NOEXCEPT
+inline bool operator!=(const function<R(Args...)>& f, nullptr_t) STDCPP_NOEXCEPT
 { return static_cast<bool>(f); }
 template<class R, class... Args>
-inline bool operator!=(nullptr_t, const function<R(Args...)>& f) FTL_NOEXCEPT
+inline bool operator!=(nullptr_t, const function<R(Args...)>& f) STDCPP_NOEXCEPT
 { return static_cast<bool>(f); }
 #endif
 
 //=============================================================
 //  invoke  (C++17)  /  invoke_r  (C++23)
 //=============================================================
-#if FTL_CXX17
+#if STDCPP_CXX17
 template<class F, class... Args>
-inline FTL_CONSTEXPR20
+inline STDCPP_CONSTEXPR20
 invoke_result_t<F, Args...>
 invoke(F&& f, Args&&... args)
-    FTL_NOEXCEPT_(is_nothrow_invocable_v<F, Args...>)
+    STDCPP_NOEXCEPT_(is_nothrow_invocable_v<F, Args...>)
 {
     return __ftl::__x_invoke(std::forward<F>(f), std::forward<Args>(args)...);
 }
@@ -1543,7 +1543,7 @@ invoke(F&& f, Args&&... args)
 //=============================================================
 //  not_fn  (C++17)  [func.not_fn]
 //=============================================================
-#if FTL_CXX17
+#if STDCPP_CXX17
 namespace __ftl
 {
     template<class F>
@@ -1594,10 +1594,10 @@ not_fn(F&& f)
 //=============================================================
 //  invoke_r  (C++23)
 //=============================================================
-#if FTL_CXX23
+#if STDCPP_CXX23
 template<class R, class F, class... Args>
 constexpr R invoke_r(F&& f, Args&&... args)
-    FTL_NOEXCEPT_(is_nothrow_invocable_r_v<R, F, Args...>)
+    STDCPP_NOEXCEPT_(is_nothrow_invocable_r_v<R, F, Args...>)
 {
     return __ftl::__x_invoke_r<R>(std::forward<F>(f), std::forward<Args>(args)...);
 }
@@ -1606,7 +1606,7 @@ constexpr R invoke_r(F&& f, Args&&... args)
 //=============================================================
 //  bind_front  (C++20)  /  bind_back  (C++23)
 //=============================================================
-#if FTL_CXX20
+#if STDCPP_CXX20
 namespace __ftl
 {
     template<class Bound, class Call, size_t... Bs, size_t... Cs>
@@ -1699,7 +1699,7 @@ bind_front(F&& f, BoundArgs&&... args)
 }
 #endif // C++20
 
-#if FTL_CXX23
+#if STDCPP_CXX23
 template<class F, class... BoundArgs>
 class _Bind_back
 {
@@ -1758,7 +1758,7 @@ bind_back(F&& f, BoundArgs&&... args)
 //=============================================================
 //  Searchers  [func.search]  (C++17)
 //=============================================================
-#if FTL_CXX17
+#if STDCPP_CXX17
 namespace __ftl
 {
     // Minimal iterator value type (we do not include <iterator>).
@@ -2034,10 +2034,10 @@ public:
 //=============================================================
 //  move_only_function  (C++23)  [func.move.only.function]
 //=============================================================
-#if FTL_CXX23
+#if STDCPP_CXX23
 template<class... _Sigs> class move_only_function; // primary, undefined
 
-#define FTL_MOF_BUF_INIT()                                                    \
+#define STDCPP_MOF_BUF_INIT()                                                    \
     static constexpr size_t _BufSize = sizeof(void*) * 3;                     \
     static constexpr size_t _BufAlign = alignof(max_align_t);                 \
     typename aligned_storage<_BufSize, _BufAlign>::type _M_buf;               \
@@ -2065,7 +2065,7 @@ template<class... _Sigs> class move_only_function; // primary, undefined
         _M_local = false;                                                     \
     }
 
-#define FTL_MOF_SPEC(_NAMESIG, _QUAL, _INVOKE_F, _NOEXCEPT, _REQ, _CALLPTR)  \
+#define STDCPP_MOF_SPEC(_NAMESIG, _QUAL, _INVOKE_F, _NOEXCEPT, _REQ, _CALLPTR)  \
 template<class R, class... ArgTypes>                                          \
 class move_only_function<R(ArgTypes...) _NAMESIG> {                          \
     struct _Base {                                                            \
@@ -2093,7 +2093,7 @@ class move_only_function<R(ArgTypes...) _NAMESIG> {                          \
             local = false; return p;                                          \
         }                                                                     \
     };                                                                        \
-    FTL_MOF_BUF_INIT()                                                        \
+    STDCPP_MOF_BUF_INIT()                                                        \
 public:                                                                       \
     using result_type = R;                                                    \
     move_only_function() noexcept = default;                                  \
@@ -2155,45 +2155,45 @@ public:                                                                       \
 
 // Helper for swapping when at least one side is heap-allocated.
 // Requirements for each specialization.
-#define FTL_MOF_REQ_PLAIN \
+#define STDCPP_MOF_REQ_PLAIN \
     static_assert(is_constructible<R,                            \
         invoke_result_t<F&, ArgTypes...>>::value,                \
         "move_only_function target has incompatible signature")
-#define FTL_MOF_REQ_CONST \
+#define STDCPP_MOF_REQ_CONST \
     static_assert(is_invocable_r_v<R, const F&, ArgTypes...>,    \
         "const move_only_function target must be const-callable")
-#define FTL_MOF_REQ_NOEX \
+#define STDCPP_MOF_REQ_NOEX \
     static_assert(is_nothrow_invocable_r_v<R, F&, ArgTypes...>,  \
         "noexcept move_only_function target must be nothrow-callable")
-#define FTL_MOF_REQ_CONST_NOEX \
+#define STDCPP_MOF_REQ_CONST_NOEX \
     static_assert(is_nothrow_invocable_r_v<R, const F&, ArgTypes...>, \
         "const noexcept move_only_function target must be const-nothrow-callable")
 
-#define FTL_MOF_CALL_LV  (__ftl::__x_invoke_r<R>(_f, std::forward<ArgTypes>(args)...))
-#define FTL_MOF_CALL_RV  (__ftl::__x_invoke_r<R>(std::move(_f), std::forward<ArgTypes>(args)...))
+#define STDCPP_MOF_CALL_LV  (__ftl::__x_invoke_r<R>(_f, std::forward<ArgTypes>(args)...))
+#define STDCPP_MOF_CALL_RV  (__ftl::__x_invoke_r<R>(std::move(_f), std::forward<ArgTypes>(args)...))
 
 // 12 specializations: ref-qual {none,&,&&} x cv {none,const} x noexcept {none,noexcept}
-FTL_MOF_SPEC(,                 ,                FTL_MOF_CALL_LV, ,          FTL_MOF_REQ_PLAIN, _M_ptr->)
-FTL_MOF_SPEC(noexcept,         ,                FTL_MOF_CALL_LV, noexcept,   FTL_MOF_REQ_NOEX, _M_ptr->)
-FTL_MOF_SPEC(const,            const,           FTL_MOF_CALL_LV, ,          FTL_MOF_REQ_CONST, _M_ptr->)
-FTL_MOF_SPEC(const noexcept,   const,           FTL_MOF_CALL_LV, noexcept,   FTL_MOF_REQ_CONST_NOEX, _M_ptr->)
-FTL_MOF_SPEC(&,                &,               FTL_MOF_CALL_LV, ,          FTL_MOF_REQ_PLAIN, _M_ptr->)
-FTL_MOF_SPEC(& noexcept,       &,               FTL_MOF_CALL_LV, noexcept,   FTL_MOF_REQ_NOEX, _M_ptr->)
-FTL_MOF_SPEC(const &,          const &,         FTL_MOF_CALL_LV, ,          FTL_MOF_REQ_CONST, _M_ptr->)
-FTL_MOF_SPEC(const & noexcept, const &,         FTL_MOF_CALL_LV, noexcept,   FTL_MOF_REQ_CONST_NOEX, _M_ptr->)
-FTL_MOF_SPEC(&&,               &&,              FTL_MOF_CALL_RV, ,          FTL_MOF_REQ_PLAIN, std::move(*_M_ptr).)
-FTL_MOF_SPEC(&& noexcept,      &&,              FTL_MOF_CALL_RV, noexcept,   FTL_MOF_REQ_NOEX, std::move(*_M_ptr).)
-FTL_MOF_SPEC(const &&,         const &&,        FTL_MOF_CALL_RV, ,          FTL_MOF_REQ_CONST, std::move(*_M_ptr).)
-FTL_MOF_SPEC(const && noexcept,const &&,        FTL_MOF_CALL_RV, noexcept,   FTL_MOF_REQ_CONST_NOEX, std::move(*_M_ptr).)
+STDCPP_MOF_SPEC(,                 ,                STDCPP_MOF_CALL_LV, ,          STDCPP_MOF_REQ_PLAIN, _M_ptr->)
+STDCPP_MOF_SPEC(noexcept,         ,                STDCPP_MOF_CALL_LV, noexcept,   STDCPP_MOF_REQ_NOEX, _M_ptr->)
+STDCPP_MOF_SPEC(const,            const,           STDCPP_MOF_CALL_LV, ,          STDCPP_MOF_REQ_CONST, _M_ptr->)
+STDCPP_MOF_SPEC(const noexcept,   const,           STDCPP_MOF_CALL_LV, noexcept,   STDCPP_MOF_REQ_CONST_NOEX, _M_ptr->)
+STDCPP_MOF_SPEC(&,                &,               STDCPP_MOF_CALL_LV, ,          STDCPP_MOF_REQ_PLAIN, _M_ptr->)
+STDCPP_MOF_SPEC(& noexcept,       &,               STDCPP_MOF_CALL_LV, noexcept,   STDCPP_MOF_REQ_NOEX, _M_ptr->)
+STDCPP_MOF_SPEC(const &,          const &,         STDCPP_MOF_CALL_LV, ,          STDCPP_MOF_REQ_CONST, _M_ptr->)
+STDCPP_MOF_SPEC(const & noexcept, const &,         STDCPP_MOF_CALL_LV, noexcept,   STDCPP_MOF_REQ_CONST_NOEX, _M_ptr->)
+STDCPP_MOF_SPEC(&&,               &&,              STDCPP_MOF_CALL_RV, ,          STDCPP_MOF_REQ_PLAIN, std::move(*_M_ptr).)
+STDCPP_MOF_SPEC(&& noexcept,      &&,              STDCPP_MOF_CALL_RV, noexcept,   STDCPP_MOF_REQ_NOEX, std::move(*_M_ptr).)
+STDCPP_MOF_SPEC(const &&,         const &&,        STDCPP_MOF_CALL_RV, ,          STDCPP_MOF_REQ_CONST, std::move(*_M_ptr).)
+STDCPP_MOF_SPEC(const && noexcept,const &&,        STDCPP_MOF_CALL_RV, noexcept,   STDCPP_MOF_REQ_CONST_NOEX, std::move(*_M_ptr).)
 
-#undef FTL_MOF_SPEC
-#undef FTL_MOF_BUF_INIT
-#undef FTL_MOF_CALL_LV
-#undef FTL_MOF_CALL_RV
-#undef FTL_MOF_REQ_PLAIN
-#undef FTL_MOF_REQ_CONST
-#undef FTL_MOF_REQ_NOEX
-#undef FTL_MOF_REQ_CONST_NOEX
+#undef STDCPP_MOF_SPEC
+#undef STDCPP_MOF_BUF_INIT
+#undef STDCPP_MOF_CALL_LV
+#undef STDCPP_MOF_CALL_RV
+#undef STDCPP_MOF_REQ_PLAIN
+#undef STDCPP_MOF_REQ_CONST
+#undef STDCPP_MOF_REQ_NOEX
+#undef STDCPP_MOF_REQ_CONST_NOEX
 
 template<class... S>
 void swap(move_only_function<S...>& a, move_only_function<S...>& b) noexcept
@@ -2203,10 +2203,10 @@ void swap(move_only_function<S...>& a, move_only_function<S...>& b) noexcept
 //=============================================================
 //  function_ref  (C++26)  [func.ref]
 //=============================================================
-#if FTL_CXX26
+#if STDCPP_CXX26
 template<class... _Sigs> class function_ref; // primary, undefined
 
-#define FTL_FREF_SPEC(_NAMESIG, _QUAL, _PTR, _FCV, _NOEXCEPT)                      \
+#define STDCPP_FREF_SPEC(_NAMESIG, _QUAL, _PTR, _FCV, _NOEXCEPT)                      \
 template<class R, class... ArgTypes>                                         \
 class function_ref<R(ArgTypes...) _NAMESIG> {                                \
     using _Thunk = R(*)(_PTR, ArgTypes...);                                  \
@@ -2261,16 +2261,16 @@ public:                                                                      \
     }                                                                        \
 };
 
-FTL_FREF_SPEC(,                ,                void*,      ,       )
-FTL_FREF_SPEC(noexcept,        ,                void*,      ,       noexcept)
-FTL_FREF_SPEC(const,           const,           const void*,const, )
-FTL_FREF_SPEC(const noexcept,  const,           const void*,const, noexcept)
-FTL_FREF_SPEC(&,               &,               void*,      ,       )
-FTL_FREF_SPEC(& noexcept,      &,               void*,      ,       noexcept)
-FTL_FREF_SPEC(const &,         const &,         const void*,const, )
-FTL_FREF_SPEC(const & noexcept,const &,         const void*,const, noexcept)
+STDCPP_FREF_SPEC(,                ,                void*,      ,       )
+STDCPP_FREF_SPEC(noexcept,        ,                void*,      ,       noexcept)
+STDCPP_FREF_SPEC(const,           const,           const void*,const, )
+STDCPP_FREF_SPEC(const noexcept,  const,           const void*,const, noexcept)
+STDCPP_FREF_SPEC(&,               &,               void*,      ,       )
+STDCPP_FREF_SPEC(& noexcept,      &,               void*,      ,       noexcept)
+STDCPP_FREF_SPEC(const &,         const &,         const void*,const, )
+STDCPP_FREF_SPEC(const & noexcept,const &,         const void*,const, noexcept)
 
-#undef FTL_FREF_SPEC
+#undef STDCPP_FREF_SPEC
 
 template<class... S>
 void swap(function_ref<S...>& a, function_ref<S...>& b) noexcept
@@ -2280,10 +2280,10 @@ void swap(function_ref<S...>& a, function_ref<S...>& b) noexcept
 //=============================================================
 //  copyable_function  (C++26)  [func.copyable.function]
 //=============================================================
-#if FTL_CXX26
+#if STDCPP_CXX26
 template<class... _Sigs> class copyable_function; // primary, undefined
 
-#define FTL_CF_BUF_INIT()                                                     \
+#define STDCPP_CF_BUF_INIT()                                                     \
     static constexpr size_t _BufSize = sizeof(void*) * 3;                     \
     static constexpr size_t _BufAlign = alignof(max_align_t);                 \
     typename aligned_storage<_BufSize, _BufAlign>::type _M_buf;               \
@@ -2311,7 +2311,7 @@ template<class... _Sigs> class copyable_function; // primary, undefined
         _M_local = false;                                                     \
     }
 
-#define FTL_CF_SPEC(_NAMESIG, _QUAL, _INVOKE_F, _NOEXCEPT, _REQ, _CALLPTR)             \
+#define STDCPP_CF_SPEC(_NAMESIG, _QUAL, _INVOKE_F, _NOEXCEPT, _REQ, _CALLPTR)             \
 template<class R, class... ArgTypes>                                          \
 class copyable_function<R(ArgTypes...) _NAMESIG> {                           \
     struct _Base {                                                            \
@@ -2349,7 +2349,7 @@ class copyable_function<R(ArgTypes...) _NAMESIG> {                           \
             local = false; return p;                                          \
         }                                                                     \
     };                                                                        \
-    FTL_CF_BUF_INIT()                                                         \
+    STDCPP_CF_BUF_INIT()                                                         \
     void _M_copy_from(const copyable_function& o) {                           \
         if (o._M_ptr) _M_ptr = o._M_ptr->_copy_into(&_M_buf, _M_local);       \
     }                                                                         \
@@ -2415,43 +2415,43 @@ public:                                                                       \
     { return (bool)f._M_ptr; }                                                \
 };
 
-#define FTL_CF_REQ_PLAIN \
+#define STDCPP_CF_REQ_PLAIN \
     static_assert(is_constructible<R, invoke_result_t<F&, ArgTypes...>>::value, \
         "copyable_function target has incompatible signature")
-#define FTL_CF_REQ_CONST \
+#define STDCPP_CF_REQ_CONST \
     static_assert(is_invocable_r_v<R, const F&, ArgTypes...>, \
         "const copyable_function target must be const-callable")
-#define FTL_CF_REQ_NOEX \
+#define STDCPP_CF_REQ_NOEX \
     static_assert(is_nothrow_invocable_r_v<R, F&, ArgTypes...>, \
         "noexcept copyable_function target must be nothrow-callable")
-#define FTL_CF_REQ_CONST_NOEX \
+#define STDCPP_CF_REQ_CONST_NOEX \
     static_assert(is_nothrow_invocable_r_v<R, const F&, ArgTypes...>, \
         "const noexcept copyable_function target must be const-nothrow-callable")
 
-#define FTL_CF_CALL_LV  (__ftl::__x_invoke_r<R>(_f, std::forward<ArgTypes>(args)...))
-#define FTL_CF_CALL_RV  (__ftl::__x_invoke_r<R>(std::move(_f), std::forward<ArgTypes>(args)...))
+#define STDCPP_CF_CALL_LV  (__ftl::__x_invoke_r<R>(_f, std::forward<ArgTypes>(args)...))
+#define STDCPP_CF_CALL_RV  (__ftl::__x_invoke_r<R>(std::move(_f), std::forward<ArgTypes>(args)...))
 
-FTL_CF_SPEC(,                 ,                FTL_CF_CALL_LV, ,          FTL_CF_REQ_PLAIN, _M_ptr->)
-FTL_CF_SPEC(noexcept,         ,                FTL_CF_CALL_LV, noexcept,   FTL_CF_REQ_NOEX, _M_ptr->)
-FTL_CF_SPEC(const,            const,           FTL_CF_CALL_LV, ,          FTL_CF_REQ_CONST, _M_ptr->)
-FTL_CF_SPEC(const noexcept,   const,           FTL_CF_CALL_LV, noexcept,   FTL_CF_REQ_CONST_NOEX, _M_ptr->)
-FTL_CF_SPEC(&,                &,               FTL_CF_CALL_LV, ,          FTL_CF_REQ_PLAIN, _M_ptr->)
-FTL_CF_SPEC(& noexcept,       &,               FTL_CF_CALL_LV, noexcept,   FTL_CF_REQ_NOEX, _M_ptr->)
-FTL_CF_SPEC(const &,          const &,         FTL_CF_CALL_LV, ,          FTL_CF_REQ_CONST, _M_ptr->)
-FTL_CF_SPEC(const & noexcept, const &,         FTL_CF_CALL_LV, noexcept,   FTL_CF_REQ_CONST_NOEX, _M_ptr->)
-FTL_CF_SPEC(&&,               &&,              FTL_CF_CALL_RV, ,          FTL_CF_REQ_PLAIN, std::move(*_M_ptr).)
-FTL_CF_SPEC(&& noexcept,      &&,              FTL_CF_CALL_RV, noexcept,   FTL_CF_REQ_NOEX, std::move(*_M_ptr).)
-FTL_CF_SPEC(const &&,         const &&,        FTL_CF_CALL_RV, ,          FTL_CF_REQ_CONST, std::move(*_M_ptr).)
-FTL_CF_SPEC(const && noexcept,const &&,        FTL_CF_CALL_RV, noexcept,   FTL_CF_REQ_CONST_NOEX, std::move(*_M_ptr).)
+STDCPP_CF_SPEC(,                 ,                STDCPP_CF_CALL_LV, ,          STDCPP_CF_REQ_PLAIN, _M_ptr->)
+STDCPP_CF_SPEC(noexcept,         ,                STDCPP_CF_CALL_LV, noexcept,   STDCPP_CF_REQ_NOEX, _M_ptr->)
+STDCPP_CF_SPEC(const,            const,           STDCPP_CF_CALL_LV, ,          STDCPP_CF_REQ_CONST, _M_ptr->)
+STDCPP_CF_SPEC(const noexcept,   const,           STDCPP_CF_CALL_LV, noexcept,   STDCPP_CF_REQ_CONST_NOEX, _M_ptr->)
+STDCPP_CF_SPEC(&,                &,               STDCPP_CF_CALL_LV, ,          STDCPP_CF_REQ_PLAIN, _M_ptr->)
+STDCPP_CF_SPEC(& noexcept,       &,               STDCPP_CF_CALL_LV, noexcept,   STDCPP_CF_REQ_NOEX, _M_ptr->)
+STDCPP_CF_SPEC(const &,          const &,         STDCPP_CF_CALL_LV, ,          STDCPP_CF_REQ_CONST, _M_ptr->)
+STDCPP_CF_SPEC(const & noexcept, const &,         STDCPP_CF_CALL_LV, noexcept,   STDCPP_CF_REQ_CONST_NOEX, _M_ptr->)
+STDCPP_CF_SPEC(&&,               &&,              STDCPP_CF_CALL_RV, ,          STDCPP_CF_REQ_PLAIN, std::move(*_M_ptr).)
+STDCPP_CF_SPEC(&& noexcept,      &&,              STDCPP_CF_CALL_RV, noexcept,   STDCPP_CF_REQ_NOEX, std::move(*_M_ptr).)
+STDCPP_CF_SPEC(const &&,         const &&,        STDCPP_CF_CALL_RV, ,          STDCPP_CF_REQ_CONST, std::move(*_M_ptr).)
+STDCPP_CF_SPEC(const && noexcept,const &&,        STDCPP_CF_CALL_RV, noexcept,   STDCPP_CF_REQ_CONST_NOEX, std::move(*_M_ptr).)
 
-#undef FTL_CF_SPEC
-#undef FTL_CF_BUF_INIT
-#undef FTL_CF_CALL_LV
-#undef FTL_CF_CALL_RV
-#undef FTL_CF_REQ_PLAIN
-#undef FTL_CF_REQ_CONST
-#undef FTL_CF_REQ_NOEX
-#undef FTL_CF_REQ_CONST_NOEX
+#undef STDCPP_CF_SPEC
+#undef STDCPP_CF_BUF_INIT
+#undef STDCPP_CF_CALL_LV
+#undef STDCPP_CF_CALL_RV
+#undef STDCPP_CF_REQ_PLAIN
+#undef STDCPP_CF_REQ_CONST
+#undef STDCPP_CF_REQ_NOEX
+#undef STDCPP_CF_REQ_CONST_NOEX
 
 template<class... S>
 void swap(copyable_function<S...>& a, copyable_function<S...>& b) noexcept
@@ -2460,5 +2460,5 @@ void swap(copyable_function<S...>& a, copyable_function<S...>& b) noexcept
 
 } // namespace std
 
-#endif // FTL_CXX11
-#endif // FTL_FUNCTIONAL_HPP
+#endif // STDCPP_CXX11
+#endif // STDCPP_FUNCTIONAL_HPP

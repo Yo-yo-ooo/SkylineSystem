@@ -1,0 +1,65 @@
+// -*- C++ -*-
+//=============================================================
+// initializer_list.hpp  --  self-contained implementation of
+// the C++ standard header <initializer_list> (C++11+).
+//
+// The class layout matches the GCC/Itanium C++ ABI so that the
+// compiler-generated brace-initialization code constructs the
+// right object:
+//
+//   const T*  _M_array;
+//   size_t    _M_len;
+//
+// The compiler calls the private (pointer, length) constructor
+// directly, bypassing access control.
+//=============================================================
+#ifndef STDCPP_INITIALIZER_LIST_HPP
+#define STDCPP_INITIALIZER_LIST_HPP
+
+#include <cstddef>
+
+#if __cplusplus >= 201103L
+
+namespace std
+{
+
+template<class E>
+class initializer_list
+{
+public:
+    typedef E           value_type;
+    typedef const E&    reference;
+    typedef const E&    const_reference;
+    typedef size_t      size_type;
+    typedef const E*    iterator;
+    typedef const E*    const_iterator;
+
+private:
+    iterator    _M_array;
+    size_type   _M_len;
+
+    // The compiler can call this private constructor.
+    constexpr initializer_list(const_iterator __a, size_type __l) noexcept
+        : _M_array(__a), _M_len(__l) {}
+
+public:
+    constexpr initializer_list() noexcept
+        : _M_array(nullptr), _M_len(0) {}
+
+    constexpr size_type size() const noexcept { return _M_len; }
+    constexpr const_iterator begin() const noexcept { return _M_array; }
+    constexpr const_iterator end() const noexcept { return begin() + size(); }
+};
+
+template<class T>
+constexpr const T* begin(initializer_list<T> __ils) noexcept
+{ return __ils.begin(); }
+
+template<class T>
+constexpr const T* end(initializer_list<T> __ils) noexcept
+{ return __ils.end(); }
+
+} // namespace std
+
+#endif // C++11
+#endif // STDCPP_INITIALIZER_LIST_HPP

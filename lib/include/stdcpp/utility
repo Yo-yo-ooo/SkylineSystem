@@ -1,0 +1,669 @@
+// -*- C++ -*-
+//=============================================================
+// utility.hpp  --  a complete, self-contained implementation of
+// the C++ standard library header <utility>, covering
+// C++98 / C++03 / C++11 / C++14 / C++17 / C++20 / C++23 / C++26.
+//
+// Depends only on <cstddef> and <type_traits> (plus
+// initializer_list.hpp for in_place? no).
+//=============================================================
+#ifndef STDCPP_UTILITY_HPP
+#define STDCPP_UTILITY_HPP
+
+#include <cstddef>
+
+//-------------------------------------------------------------
+// Version detection
+//-------------------------------------------------------------
+#define STDCPP_UTL_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_UTL_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_UTL_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_UTL_CXX20 (__cplusplus >= 202002L)
+#ifndef STDCPP_UTL_CXX23
+#  define STDCPP_UTL_CXX23 (__cplusplus >= 202302L || __cplusplus == 202100L)
+#endif
+#ifndef STDCPP_UTL_CXX26
+#  define STDCPP_UTL_CXX26 (__cplusplus > 202302L)
+#endif
+
+//=============================================================
+//  C++98 / C++03 section
+//=============================================================
+#if !STDCPP_UTL_CXX11
+namespace std
+{
+
+//-------------------------------------------------------------
+//  rel_ops  [operators]
+//-------------------------------------------------------------
+namespace rel_ops
+{
+    template<class T> bool operator!=(const T& x, const T& y) { return !(x == y); }
+    template<class T> bool operator> (const T& x, const T& y) { return y < x; }
+    template<class T> bool operator<=(const T& x, const T& y) { return !(y < x); }
+    template<class T> bool operator>=(const T& x, const T& y) { return !(x < y); }
+}
+
+//-------------------------------------------------------------
+//  pair  [pairs]  (C++98 subset)
+//-------------------------------------------------------------
+template<class T1, class T2>
+struct pair
+{
+    typedef T1 first_type;
+    typedef T2 second_type;
+
+    T1 first;
+    T2 second;
+
+    pair() : first(), second() {}
+    pair(const T1& a, const T2& b) : first(a), second(b) {}
+
+    template<class U1, class U2>
+    pair(const pair<U1, U2>& p) : first(p.first), second(p.second) {}
+
+    pair(const pair& p) : first(p.first), second(p.second) {}
+
+    pair& operator=(const pair& p)
+    { first = p.first; second = p.second; return *this; }
+
+    template<class U1, class U2>
+    pair& operator=(const pair<U1, U2>& p)
+    { first = p.first; second = p.second; return *this; }
+
+    void swap(pair& o)
+    {
+        T1 tmp = first; first = o.first; o.first = tmp;
+        T2 tmp2 = second; second = o.second; o.second = tmp2;
+    }
+};
+
+template<class T1, class T2>
+inline pair<T1, T2> make_pair(T1 a, T2 b) { return pair<T1, T2>(a, b); }
+
+template<class T1, class T2>
+inline bool operator==(const pair<T1, T2>& a, const pair<T1, T2>& b)
+{ return a.first == b.first && a.second == b.second; }
+template<class T1, class T2>
+inline bool operator<(const pair<T1, T2>& a, const pair<T1, T2>& b)
+{ return a.first < b.first || (!(b.first < a.first) && a.second < b.second); }
+template<class T1, class T2>
+inline bool operator!=(const pair<T1, T2>& a, const pair<T1, T2>& b)
+{ return !(a == b); }
+template<class T1, class T2>
+inline bool operator>(const pair<T1, T2>& a, const pair<T1, T2>& b)
+{ return b < a; }
+template<class T1, class T2>
+inline bool operator<=(const pair<T1, T2>& a, const pair<T1, T2>& b)
+{ return !(b < a); }
+template<class T1, class T2>
+inline bool operator>=(const pair<T1, T2>& a, const pair<T1, T2>& b)
+{ return !(a < b); }
+
+template<class T1, class T2>
+inline void swap(pair<T1, T2>& a, pair<T1, T2>& b) { a.swap(b); }
+
+//-------------------------------------------------------------
+//  swap  [utility.swap]  (C++98)
+//-------------------------------------------------------------
+template<class T>
+inline void swap(T& a, T& b)
+{ T tmp = a; a = b; b = tmp; }
+
+template<class T, size_t N>
+inline void swap(T (&a)[N], T (&b)[N])
+{ for (size_t i = 0; i < N; ++i) swap(a[i], b[i]); }
+
+} // namespace std
+#endif // !STDCPP_UTL_CXX11
+
+//=============================================================
+//  C++11 and later
+//=============================================================
+#if STDCPP_UTL_CXX11
+#include <type_traits>
+
+namespace std
+{
+
+//=============================================================
+//  move / forward / move_if_noexcept  [utility.swap]
+//  If libstdc++'s <bits/move.h> was already pulled in (e.g. by
+//  <exception>), skip these to avoid redefinition.  Otherwise
+//  provide them and block <bits/move.h> from future inclusion.
+//=============================================================
+#ifdef _MOVE_H
+// <bits/move.h> already included by a system header; it provides
+// move/forward/move_if_noexcept/addressof/exchange.
+#  define STDCPP_UTL_SKIP_EXCHANGE 1
+#  define STDCPP_UTL_SKIP_SWAP 1
+#else
+#define _MOVE_H 1
+template<class T>
+constexpr typename remove_reference<T>::type&& move(T&& t) noexcept
+{ return static_cast<typename remove_reference<T>::type&&>(t); }
+
+template<class T>
+constexpr T&& forward(typename remove_reference<T>::type& t) noexcept
+{ return static_cast<T&&>(t); }
+
+template<class T>
+constexpr T&& forward(typename remove_reference<T>::type&& t) noexcept
+{
+    static_assert(!is_lvalue_reference<T>::value,
+        "template argument substituting T is an lvalue reference type");
+    return static_cast<T&&>(t);
+}
+
+template<class T>
+constexpr typename conditional<
+    !is_nothrow_move_constructible<T>::value
+        && is_copy_constructible<T>::value,
+    const T&, T&&>::type
+move_if_noexcept(T& x) noexcept
+{ return std::move(x); }
+
+// addressof  [specialized.addressof]
+template<class T>
+inline T* addressof(T& r) noexcept
+{ return reinterpret_cast<T*>(
+    const_cast<char*>(&reinterpret_cast<const volatile char&>(r))); }
+#endif // _MOVE_H
+
+//=============================================================
+//  swap  [utility.swap]
+//=============================================================
+#ifndef STDCPP_UTL_SKIP_SWAP
+template<class T>
+inline
+#if STDCPP_UTL_CXX20
+constexpr
+#endif
+_Require<__not_<__is_tuple_like<T>>,
+         is_move_constructible<T>,
+         is_move_assignable<T>>
+swap(T& a, T& b)
+noexcept(__and_<is_nothrow_move_constructible<T>,
+                is_nothrow_move_assignable<T>>::value)
+{
+    T tmp(static_cast<T&&>(a));
+    a = static_cast<T&&>(b);
+    b = static_cast<T&&>(tmp);
+}
+
+template<class T, size_t N>
+inline
+#if STDCPP_UTL_CXX20
+constexpr
+#endif
+__enable_if_t<__is_swappable<T>::value>
+swap(T (&a)[N], T (&b)[N])
+noexcept(__is_nothrow_swappable<T>::value)
+{
+    for (size_t i = 0; i < N; ++i) swap(a[i], b[i]);
+}
+#endif // STDCPP_UTL_SKIP_SWAP
+
+//=============================================================
+//  exchange  [utility.exchange]  (C++14)
+//=============================================================
+#if STDCPP_UTL_CXX14
+#ifndef STDCPP_UTL_SKIP_EXCHANGE
+template<class T, class U = T>
+constexpr T exchange(T& obj, U&& new_val)
+{
+    T old = std::move(obj);
+    obj = std::forward<U>(new_val);
+    return old;
+}
+#endif
+#endif
+
+//=============================================================
+//  as_const  [utility.as.const]  (C++17)
+//=============================================================
+#if STDCPP_UTL_CXX17
+template<class T>
+constexpr add_const_t<T>& as_const(T& t) noexcept { return t; }
+template<class T>
+void as_const(const T&&) = delete;
+#endif
+
+//=============================================================
+//  integer_sequence  [intseq]  (C++14)
+//=============================================================
+#if STDCPP_UTL_CXX14
+template<class T, T... I>
+struct integer_sequence
+{
+    typedef T value_type;
+    static constexpr size_t size() noexcept { return sizeof...(I); }
+};
+
+template<size_t... I>
+using index_sequence = integer_sequence<size_t, I...>;
+
+namespace __ftl_utl
+{
+    // Concatenate two integer_sequences.
+    template<class, class> struct __is_cat;
+    template<class T, T... A, T... B>
+    struct __is_cat<integer_sequence<T, A...>, integer_sequence<T, B...>>
+    { using type = integer_sequence<T, A..., (sizeof...(A)+B)...>; };
+
+    template<class T, size_t N>
+    struct __make_is
+        : __is_cat<typename __make_is<T, N/2>::type,
+                   typename __make_is<T, N - N/2>::type> {};
+    template<class T> struct __make_is<T, 0> { using type = integer_sequence<T>; };
+    template<class T> struct __make_is<T, 1> { using type = integer_sequence<T, 0>; };
+}
+
+template<class T, T N>
+using make_integer_sequence =
+    typename __ftl_utl::__make_is<T, (size_t)N>::type;
+
+template<size_t N>
+using make_index_sequence = make_integer_sequence<size_t, N>;
+
+template<class... T>
+using index_sequence_for = make_index_sequence<sizeof...(T)>;
+#endif // C++14
+
+//=============================================================
+//  tuple_size / tuple_element primary templates
+//  (specialized for pair below and by <tuple>)
+//=============================================================
+template<class T> struct tuple_size;
+template<size_t I, class T> struct tuple_element;
+
+// Forward declaration of tuple (defined in tuple.hpp).
+template<class... Ts> class tuple;
+
+namespace __ftl_utl
+{
+    // C++11-compatible index pack for piecewise construction.
+    template<size_t... I> struct __idx_pack {};
+    template<size_t N, size_t... I>
+    struct __mk_pack : __mk_pack<N-1, N-1, I...> {};
+    template<size_t... I>
+    struct __mk_pack<0, I...> { typedef __idx_pack<I...> type; };
+}
+
+// Piecewise construct tag.
+struct piecewise_construct_t { explicit piecewise_construct_t() = default; };
+#if STDCPP_UTL_CXX17
+inline constexpr piecewise_construct_t piecewise_construct{};
+#else
+static constexpr piecewise_construct_t piecewise_construct{};
+#endif
+
+// Forward declaration of pair and get<I>(pair) (defined after pair).
+template<class T1, class T2> struct pair;
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 0, T1&>::type get(pair<T1, T2>&) noexcept;
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 0, const T1&>::type get(const pair<T1, T2>&) noexcept;
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 1, T2&>::type get(pair<T1, T2>&) noexcept;
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 1, const T2&>::type get(const pair<T1, T2>&) noexcept;
+
+//=============================================================
+//  pair  [pairs]
+//=============================================================
+template<class T1, class T2>
+struct pair
+{
+    typedef T1 first_type;
+    typedef T2 second_type;
+
+    T1 first;
+    T2 second;
+
+    // Default constructor (conditionally explicit in C++17).
+#if STDCPP_UTL_CXX17
+    template<bool D = is_default_constructible<T1>::value
+                    && is_default_constructible<T2>::value,
+        typename enable_if<D, int>::type = 0>
+    constexpr pair()
+        noexcept(is_nothrow_default_constructible<T1>::value
+                 && is_nothrow_default_constructible<T2>::value)
+        : first(), second() {}
+#else
+    constexpr pair() : first(), second() {}
+#endif
+
+    // Element constructor.
+    template<class U1 = T1, class U2 = T2,
+        typename enable_if<is_constructible<T1, U1&&>::value
+                    && is_constructible<T2, U2&&>::value, int>::type = 0>
+    constexpr pair(U1&& x, U2&& y)
+        : first(std::forward<U1>(x)), second(std::forward<U2>(y)) {}
+
+    // Converting constructor from another pair.
+    template<class U1, class U2,
+        typename enable_if<is_constructible<T1, const U1&>::value
+                    && is_constructible<T2, const U2&>::value, int>::type = 0>
+    constexpr pair(const pair<U1, U2>& p)
+        : first(p.first), second(p.second) {}
+
+    template<class U1, class U2,
+        typename enable_if<is_constructible<T1, U1&&>::value
+                    && is_constructible<T2, U2&&>::value, int>::type = 0>
+    constexpr pair(pair<U1, U2>&& p)
+        : first(std::forward<U1>(p.first)),
+          second(std::forward<U2>(p.second)) {}
+
+    // Copy / move constructors.
+    constexpr pair(const pair&) = default;
+    constexpr pair(pair&&) = default;
+
+    // Piecewise constructor -- defined in tuple.hpp after tuple is complete.
+    template<class... Args1, class... Args2>
+    pair(piecewise_construct_t,
+         tuple<Args1...> first_args, tuple<Args2...> second_args);
+
+    // Private dispatch constructor for piecewise construction.
+    template<size_t... I1, size_t... I2, class Tuple1, class Tuple2>
+    pair(__ftl_utl::__idx_pack<I1...>, __ftl_utl::__idx_pack<I2...>,
+         Tuple1&& t1, Tuple2&& t2, int);
+
+    pair& operator=(const pair&) = default;
+    pair& operator=(pair&&) = default;
+
+    template<class U1, class U2>
+    constexpr typename enable_if<is_assignable<T1&, const U1&>::value
+                          && is_assignable<T2&, const U2&>::value, pair&>::type
+    operator=(const pair<U1, U2>& p)
+    { first = p.first; second = p.second; return *this; }
+
+    template<class U1, class U2>
+    constexpr typename enable_if<is_assignable<T1&, U1&&>::value
+                          && is_assignable<T2&, U2&&>::value, pair&>::type
+    operator=(pair<U1, U2>&& p)
+    {
+        first = std::forward<U1>(p.first);
+        second = std::forward<U2>(p.second);
+        return *this;
+    }
+
+#if STDCPP_UTL_CXX23
+    // C++23: assignment from a two-element tuple-like type.
+    template<class PairLike,
+        typename enable_if<!is_reference<PairLike>::value, int>::type* = nullptr>
+    constexpr pair& operator=(PairLike&& pl)
+    {
+        first  = std::get<0>(std::forward<PairLike>(pl));
+        second = std::get<1>(std::forward<PairLike>(pl));
+        return *this;
+    }
+#endif
+
+#if STDCPP_UTL_CXX14
+    constexpr
+#endif
+    void swap(pair& o)
+#if STDCPP_UTL_CXX17
+        noexcept(is_nothrow_swappable<T1>::value
+                 && is_nothrow_swappable<T2>::value)
+#endif
+    {
+        using std::swap;
+        swap(first, o.first);
+        swap(second, o.second);
+    }
+};
+
+// Deduction guides (C++17).
+#if STDCPP_UTL_CXX17
+template<class T1, class T2>
+pair(T1, T2) -> pair<T1, T2>;
+template<class T1, class T2>
+pair(pair<T1, T2>) -> pair<T1, T2>;
+#endif
+
+// tuple_size / tuple_element for pair.
+template<class T1, class T2>
+struct tuple_size<pair<T1, T2>>
+    : integral_constant<size_t, 2> {};
+
+template<class T1, class T2>
+struct tuple_element<0, pair<T1, T2>> { typedef T1 type; };
+template<class T1, class T2>
+struct tuple_element<1, pair<T1, T2>> { typedef T2 type; };
+
+#if STDCPP_UTL_CXX14
+template<class T1, class T2>
+struct tuple_size<const pair<T1, T2>>
+    : integral_constant<size_t, 2> {};
+template<size_t I, class T1, class T2>
+struct tuple_element<I, const pair<T1, T2>>
+{ typedef add_const_t<typename tuple_element<I, pair<T1, T2>>::type> type; };
+#endif
+
+// get<I>(pair)
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 0, T1&>::type
+get(pair<T1, T2>& p) noexcept { return p.first; }
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 0, const T1&>::type
+get(const pair<T1, T2>& p) noexcept { return p.first; }
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 0, T1&&>::type
+get(pair<T1, T2>&& p) noexcept { return std::move(p.first); }
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 0, const T1&&>::type
+get(const pair<T1, T2>&& p) noexcept { return std::move(p.first); }
+
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 1, T2&>::type
+get(pair<T1, T2>& p) noexcept { return p.second; }
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 1, const T2&>::type
+get(const pair<T1, T2>& p) noexcept { return p.second; }
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 1, T2&&>::type
+get(pair<T1, T2>&& p) noexcept { return std::move(p.second); }
+template<size_t I, class T1, class T2>
+constexpr typename enable_if<I == 1, const T2&&>::type
+get(const pair<T1, T2>&& p) noexcept { return std::move(p.second); }
+
+// get<T>(pair) (C++14)
+#if STDCPP_UTL_CXX14
+template<class T, class U>
+constexpr T& get(pair<T, U>& p) noexcept { return p.first; }
+template<class T, class U>
+constexpr const T& get(const pair<T, U>& p) noexcept { return p.first; }
+template<class T, class U>
+constexpr T&& get(pair<T, U>&& p) noexcept { return std::move(p.first); }
+template<class T, class U>
+constexpr T& get(pair<U, T>& p) noexcept { return p.second; }
+template<class T, class U>
+constexpr const T& get(const pair<U, T>& p) noexcept { return p.second; }
+template<class T, class U>
+constexpr T&& get(pair<U, T>&& p) noexcept { return std::move(p.second); }
+#endif
+
+// swap for pair
+template<class T1, class T2>
+constexpr void swap(pair<T1, T2>& a, pair<T1, T2>& b)
+    noexcept(noexcept(a.swap(b)))
+{ a.swap(b); }
+
+// make_pair
+template<class T1, class T2>
+constexpr pair<typename decay<T1>::type, typename decay<T2>::type>
+make_pair(T1&& x, T2&& y)
+{
+    return pair<typename decay<T1>::type, typename decay<T2>::type>(
+        std::forward<T1>(x), std::forward<T2>(y));
+}
+
+//=============================================================
+//  in_place  [in.place.syn]  (C++17)
+//=============================================================
+#if STDCPP_UTL_CXX17
+struct in_place_t { explicit in_place_t() = default; };
+inline constexpr in_place_t in_place{};
+
+template<class T> struct in_place_type_t {
+    explicit in_place_type_t() = default;
+};
+template<class T> inline constexpr in_place_type_t<T> in_place_type{};
+
+template<size_t I> struct in_place_index_t {
+    explicit in_place_index_t() = default;
+};
+template<size_t I> inline constexpr in_place_index_t<I> in_place_index{};
+#endif
+
+//=============================================================
+//  rel_ops  [operators]  (C++98, deprecated in C++20)
+//=============================================================
+namespace rel_ops
+{
+    template<class T> bool operator!=(const T& x, const T& y) { return !(x == y); }
+    template<class T> bool operator> (const T& x, const T& y) { return y < x; }
+    template<class T> bool operator<=(const T& x, const T& y) { return !(y < x); }
+    template<class T> bool operator>=(const T& x, const T& y) { return !(x < y); }
+}
+
+//=============================================================
+//  Integer comparison functions  [utility.intcmp]  (C++20)
+//=============================================================
+#if STDCPP_UTL_CXX20
+namespace __ftl_utl
+{
+    template<class T, class U>
+    static constexpr bool __cmp_unsigned() noexcept
+    { return is_unsigned_v<T> == is_unsigned_v<U>; }
+
+    // Both signed or both unsigned -> safe comparison after common type.
+    template<class T, class U>
+    constexpr bool __cmp_eq_same(T t, U u) noexcept {
+        using C = common_type_t<T, U>;
+        return static_cast<C>(t) == static_cast<C>(u);
+    }
+    template<class T, class U>
+    constexpr bool __cmp_lt_same(T t, U u) noexcept {
+        using C = common_type_t<T, U>;
+        return static_cast<C>(t) < static_cast<C>(u);
+    }
+}
+
+template<class T, class U>
+constexpr bool cmp_equal(T t, U u) noexcept
+{
+    static_assert(is_integral_v<T> && is_integral_v<U>,
+        "cmp_equal requires integer types");
+    if constexpr (is_signed_v<T> == is_signed_v<U>)
+        return __ftl_utl::__cmp_eq_same(t, u);
+    else if constexpr (is_signed_v<T>)
+        return t < 0 ? false : __ftl_utl::__cmp_eq_same(static_cast<make_unsigned_t<T>>(t), u);
+    else
+        return u < 0 ? false : __ftl_utl::__cmp_eq_same(t, static_cast<make_unsigned_t<U>>(u));
+}
+
+template<class T, class U>
+constexpr bool cmp_not_equal(T t, U u) noexcept { return !cmp_equal(t, u); }
+
+template<class T, class U>
+constexpr bool cmp_less(T t, U u) noexcept
+{
+    static_assert(is_integral_v<T> && is_integral_v<U>,
+        "cmp_less requires integer types");
+    if constexpr (is_signed_v<T> == is_signed_v<U>)
+        return __ftl_utl::__cmp_lt_same(t, u);
+    else if constexpr (is_signed_v<T>)
+        return t < 0 ? true : __ftl_utl::__cmp_lt_same(static_cast<make_unsigned_t<T>>(t), u);
+    else
+        return u < 0 ? false : __ftl_utl::__cmp_lt_same(t, static_cast<make_unsigned_t<U>>(u));
+}
+
+template<class T, class U>
+constexpr bool cmp_greater(T t, U u) noexcept { return cmp_less(u, t); }
+
+template<class T, class U>
+constexpr bool cmp_less_equal(T t, U u) noexcept { return !cmp_less(u, t); }
+
+template<class T, class U>
+constexpr bool cmp_greater_equal(T t, U u) noexcept { return !cmp_less(t, u); }
+
+template<class R, class T>
+constexpr bool in_range(T t) noexcept
+{
+    static_assert(is_integral<T>::value && is_integral<R>::value,
+        "in_range requires integer types");
+    using UR = make_unsigned_t<R>;
+    constexpr R rmin = is_signed<R>::value
+        ? static_cast<R>(static_cast<UR>(1) << (sizeof(R)*8 - 1)) : R(0);
+    constexpr R rmax = is_signed<R>::value
+        ? static_cast<R>(static_cast<UR>(rmin) - UR(1))
+        : static_cast<R>(~UR(0));
+    return cmp_greater_equal(t, rmin) && cmp_less_equal(t, rmax);
+}
+#endif // C++20
+
+//=============================================================
+//  to_underlying  [utility.underlying]  (C++23)
+//=============================================================
+#if STDCPP_UTL_CXX23
+template<class E>
+constexpr underlying_type_t<E> to_underlying(E e) noexcept
+{ return static_cast<underlying_type_t<E>>(e); }
+#endif
+
+//=============================================================
+//  unreachable  [utility.unreachable]  (C++23)
+//=============================================================
+#if STDCPP_UTL_CXX23
+[[noreturn]] inline constexpr void unreachable()
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_unreachable();
+#endif
+}
+#endif
+
+//=============================================================
+//  forward_like  [utility.forward.like]  (C++23)
+//=============================================================
+#if STDCPP_UTL_CXX23
+namespace __ftl_utl
+{
+    template<class T, class U>
+    using __forward_like_t = conditional_t<
+        is_rvalue_reference_v<T>,
+        remove_reference_t<U>&&,
+        add_lvalue_reference_t<conditional_t<
+            is_const_v<remove_reference_t<T>>,
+            add_const_t<remove_reference_t<U>>,
+            remove_reference_t<U>>>>;
+}
+
+template<class T, class U>
+[[nodiscard]] constexpr auto&& forward_like(U&& x) noexcept
+{
+    static_assert(is_lvalue_reference_v<T>,
+        "T must be an lvalue reference type");
+    return static_cast<__ftl_utl::__forward_like_t<T, U>>(x);
+}
+#endif
+
+//=============================================================
+//  endian  [utility.endian]  (C++20)
+//=============================================================
+#if STDCPP_UTL_CXX20
+enum class endian
+{
+    little = __ORDER_LITTLE_ENDIAN__,
+    big    = __ORDER_BIG_ENDIAN__,
+    native = __BYTE_ORDER__
+};
+#endif
+
+} // namespace std
+
+#endif // C++11
+#endif // STDCPP_UTILITY_HPP
