@@ -349,6 +349,8 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     art_insert(NOT_RUNQ_P, (const uint8_t*)&parent->id, 8, parent);
     spinlock_unlock(&NOT_RUNQ_LOCK);
 
+    kpokln("LOADED PID:%d",parent->id);
+
     return parent->id;                          // 此时 CR3 == caller_pm，sysret 安全
 }
 
