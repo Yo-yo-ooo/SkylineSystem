@@ -42,24 +42,18 @@ void hcf(void) {
 
 
 void spinlock_lock(spinlock_t* l) {
-    for (;;) {
-        if (!__atomic_load_n(l, __ATOMIC_RELAXED) &&
-            !__atomic_exchange_n(l, 1, __ATOMIC_ACQUIRE))
-            return;
-        uint64_t spins = 0;
-        while (__atomic_load_n(l, __ATOMIC_RELAXED)) {
-            __asm__ __volatile__("pause" ::: "memory");
-            if (++spins >= 100000000ULL) {   // 纯自旋 ~1 秒量级，正常竞争不会触发
-                kerrorln("spinlock stuck: lock=%p value=0x%08x",
-                      l, __atomic_load_n(l, __ATOMIC_RELAXED));
-                hcf();
-            }
-        }
-    }
+    while(atomic_test_and_set(l,1))
+#ifdef __x86_64__
+        asm volatile("pause");
+#elif defined(__aarch64__)
+        asm volatile("yield");
+#elif defined (__riscv)
+        asm volatile("pause");
+#endif
 }
 
 void spinlock_unlock(spinlock_t* l) {
-    __atomic_store_n(l, 0, __ATOMIC_RELEASE);
+    atomic_store_4(l,0,0);
 }
 
 extern "C" void *__memcpy(void * d, const void * s, uint64_t n) { 

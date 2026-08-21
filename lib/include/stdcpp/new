@@ -1,0 +1,326 @@
+// -*- C++ -*-
+//=============================================================
+// new.hpp  --  complete, self-contained, machine-independent
+// implementation of the C++ standard library header <new>,
+// covering C++98 / C++03 / C++11 / C++14 / C++17 / C++20 /
+// C++23 / C++26.
+//
+// Provides:
+//   std::bad_alloc, std::bad_array_new_length
+//   std::nothrow_t, std::nothrow
+//   std::new_handler, set_new_handler, get_new_handler
+//   Placement new / delete operators
+//   Global operator new / delete (malloc/free-backed, weak)
+//   std::launder  (C++17)
+//   hardware_destructive/constructive_interference_size  (C++17)
+//
+// All allocation operators ultimately call malloc / free from
+// <cstdlib>.  The new-handler loop follows the standard: call the
+// handler, retry, throw bad_alloc if no handler is installed.
+// Global operators are emitted as weak symbols so they do not
+// conflict with libstdc++ at link time.
+//=============================================================
+#ifndef STDCPP_NEW_HPP
+#define STDCPP_NEW_HPP
+
+//-------------------------------------------------------------
+// Version detection (must come before includes)
+//-------------------------------------------------------------
+#define STDCPP_NEW_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_NEW_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_NEW_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_NEW_CXX20 (__cplusplus >= 202002L)
+#ifndef STDCPP_NEW_CXX23
+#  define STDCPP_NEW_CXX23 (__cplusplus >= 202302L || __cplusplus == 202100L)
+#endif
+#ifndef STDCPP_NEW_CXX26
+#  define STDCPP_NEW_CXX26 (__cplusplus > 202302L)
+#endif
+
+// Prevent the system <new> from being included.
+#ifndef _NEW
+#  define _NEW 1
+#endif
+
+#include <cstddef>
+#include <cstdlib>
+#include <bits/exception.h>
+
+#if STDCPP_NEW_CXX17
+#include <stdlib.h>  // posix_memalign
+#endif
+
+#pragma GCC visibility push(default)
+
+//=============================================================
+//  Exception types and handler infrastructure (all versions)
+//=============================================================
+namespace std
+{
+
+class bad_alloc : public exception
+{
+public:
+    bad_alloc() throw() {}
+    bad_alloc(const bad_alloc&) throw() {}
+    bad_alloc& operator=(const bad_alloc&) throw() { return *this; }
+    ~bad_alloc() throw();
+    const char* what() const throw();
+};
+
+struct nothrow_t
+{
+    explicit nothrow_t() {}
+};
+
+extern const nothrow_t nothrow;
+
+typedef void (*new_handler)();
+
+new_handler set_new_handler(new_handler h) throw();
+
+#if STDCPP_NEW_CXX11
+new_handler get_new_handler() noexcept;
+#endif
+
+#if STDCPP_NEW_CXX11
+class bad_array_new_length : public bad_alloc
+{
+public:
+    bad_array_new_length() throw() {}
+    bad_array_new_length(const bad_array_new_length& o) throw() : bad_alloc(o) {}
+    bad_array_new_length& operator=(const bad_array_new_length&) throw()
+    { return *this; }
+    ~bad_array_new_length() throw();
+    const char* what() const throw();
+};
+#endif
+
+#if STDCPP_NEW_CXX17
+enum class align_val_t : size_t {};
+#endif
+
+namespace __new_detail
+{
+    inline new_handler& __handler_ref()
+    {
+        static new_handler __h = 0;
+        return __h;
+    }
+
+    inline void* __xmalloc(size_t sz)
+    {
+        for (;;) {
+            void* p = std::malloc(sz ? sz : 1);
+            if (p) return p;
+            new_handler h = __handler_ref();
+            if (!h) throw bad_alloc();
+            h();
+        }
+    }
+
+#if STDCPP_NEW_CXX17
+    inline void* __xaligned_alloc(size_t sz, size_t al)
+    {
+        for (;;) {
+            void* p = nullptr;
+            size_t a = al < sizeof(void*) ? sizeof(void*) : al;
+            if (posix_memalign(&p, a, sz ? sz : 1) == 0 && p) return p;
+            new_handler h = __handler_ref();
+            if (!h) throw bad_alloc();
+            h();
+        }
+    }
+#endif
+} // namespace __new_detail
+
+} // namespace std
+
+//-------------------------------------------------------------
+//  Placement new / delete  [new.delete.placement]
+//-------------------------------------------------------------
+inline void* operator new(std::size_t, void* p) throw() { return p; }
+inline void* operator new[](std::size_t, void* p) throw() { return p; }
+inline void  operator delete(void*, void*) throw() {}
+inline void  operator delete[](void*, void*) throw() {}
+
+//-------------------------------------------------------------
+//  Global operator new / delete  [new.delete]
+//-------------------------------------------------------------
+__attribute__((weak))
+void* operator new(std::size_t sz)
+{ return std::__new_detail::__xmalloc(sz); }
+
+__attribute__((weak))
+void* operator new[](std::size_t sz)
+{ return std::__new_detail::__xmalloc(sz); }
+
+#if STDCPP_NEW_CXX11
+__attribute__((weak))
+void* operator new(std::size_t sz, const std::nothrow_t&) noexcept
+{
+    try { return std::__new_detail::__xmalloc(sz); }
+    catch (...) { return nullptr; }
+}
+
+__attribute__((weak))
+void* operator new[](std::size_t sz, const std::nothrow_t&) noexcept
+{
+    try { return std::__new_detail::__xmalloc(sz); }
+    catch (...) { return nullptr; }
+}
+#else
+__attribute__((weak))
+void* operator new(std::size_t sz, const std::nothrow_t&) throw()
+{
+    try { return std::__new_detail::__xmalloc(sz); }
+    catch (...) { return 0; }
+}
+
+__attribute__((weak))
+void* operator new[](std::size_t sz, const std::nothrow_t&) throw()
+{
+    try { return std::__new_detail::__xmalloc(sz); }
+    catch (...) { return 0; }
+}
+#endif
+
+__attribute__((weak))
+void operator delete(void* p)
+#if STDCPP_NEW_CXX11
+noexcept
+#else
+throw()
+#endif
+{ if (p) std::free(p); }
+
+__attribute__((weak))
+void operator delete[](void* p)
+#if STDCPP_NEW_CXX11
+noexcept
+#else
+throw()
+#endif
+{ if (p) std::free(p); }
+
+#if STDCPP_NEW_CXX14
+__attribute__((weak))
+void operator delete(void* p, std::size_t) noexcept
+{ if (p) std::free(p); }
+
+__attribute__((weak))
+void operator delete[](void* p, std::size_t) noexcept
+{ if (p) std::free(p); }
+#endif
+
+#if STDCPP_NEW_CXX11
+__attribute__((weak))
+void operator delete(void* p, const std::nothrow_t&) noexcept
+{ if (p) std::free(p); }
+
+__attribute__((weak))
+void operator delete[](void* p, const std::nothrow_t&) noexcept
+{ if (p) std::free(p); }
+#else
+__attribute__((weak))
+void operator delete(void* p, const std::nothrow_t&) throw()
+{ if (p) std::free(p); }
+
+__attribute__((weak))
+void operator delete[](void* p, const std::nothrow_t&) throw()
+{ if (p) std::free(p); }
+#endif
+
+// C++17: aligned allocation
+#if STDCPP_NEW_CXX17
+__attribute__((weak))
+void* operator new(std::size_t sz, std::align_val_t al)
+{ return std::__new_detail::__xaligned_alloc(sz, static_cast<size_t>(al)); }
+
+__attribute__((weak))
+void* operator new[](std::size_t sz, std::align_val_t al)
+{ return ::operator new(sz, al); }
+
+__attribute__((weak))
+void* operator new(std::size_t sz, std::align_val_t al, const std::nothrow_t&) noexcept
+{
+    try { return ::operator new(sz, al); }
+    catch (...) { return nullptr; }
+}
+
+__attribute__((weak))
+void* operator new[](std::size_t sz, std::align_val_t al, const std::nothrow_t&) noexcept
+{
+    try { return ::operator new(sz, al); }
+    catch (...) { return nullptr; }
+}
+
+__attribute__((weak))
+void operator delete(void* p, std::align_val_t) noexcept
+{ if (p) std::free(p); }
+
+__attribute__((weak))
+void operator delete[](void* p, std::align_val_t) noexcept
+{ if (p) std::free(p); }
+
+__attribute__((weak))
+void operator delete(void* p, std::size_t, std::align_val_t) noexcept
+{ if (p) std::free(p); }
+
+__attribute__((weak))
+void operator delete[](void* p, std::size_t, std::align_val_t) noexcept
+{ if (p) std::free(p); }
+
+__attribute__((weak))
+void operator delete(void* p, std::align_val_t al, const std::nothrow_t&) noexcept
+{ ::operator delete(p, al); }
+
+__attribute__((weak))
+void operator delete[](void* p, std::align_val_t al, const std::nothrow_t&) noexcept
+{ ::operator delete(p, al); }
+#endif // CXX17
+
+//-------------------------------------------------------------
+//  Out-of-line inline definitions
+//-------------------------------------------------------------
+namespace std
+{
+
+inline bad_alloc::~bad_alloc() throw() {}
+inline const char* bad_alloc::what() const throw()
+{ return "std::bad_alloc"; }
+
+#if STDCPP_NEW_CXX11
+inline bad_array_new_length::~bad_array_new_length() throw() {}
+inline const char* bad_array_new_length::what() const throw()
+{ return "std::bad_array_new_length"; }
+#endif
+
+inline new_handler set_new_handler(new_handler h) throw()
+{
+    new_handler old = __new_detail::__handler_ref();
+    __new_detail::__handler_ref() = h;
+    return old;
+}
+
+#if STDCPP_NEW_CXX11
+inline new_handler get_new_handler() noexcept
+{ return __new_detail::__handler_ref(); }
+#endif
+
+const nothrow_t nothrow = nothrow_t();
+
+#if STDCPP_NEW_CXX17
+template<class T>
+constexpr T* launder(T* p) noexcept
+{ return __builtin_launder(p); }
+
+inline constexpr size_t hardware_destructive_interference_size = 64;
+inline constexpr size_t hardware_constructive_interference_size = 64;
+#endif
+
+} // namespace std
+
+#pragma GCC visibility pop
+
+#endif // STDCPP_NEW_HPP
