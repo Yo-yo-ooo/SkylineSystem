@@ -115,7 +115,7 @@ int main(){
     }  
     TTF_DrawText(&fb,TTFFont,200,200,"你好!",0);
     for(;;); */
-    //uint64_t pid = sys_load((uint64_t)"/mp/hw2.elf",0,0);
+    uint64_t pid = sys_load((uint64_t)"/mp/hw2.elf",0,0);
     //sys_launch(pid); 
     //sys_pmmap(pid,0,0,0,0,fb.BufferSize);
     MouseInit();

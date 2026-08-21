@@ -48,12 +48,15 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
 
     if(hdr->e_ident.c[Elf64::EI_CLASS] != Elf64::ELFCLASS64){
         kerrorln("ELF> FILE NOT 64 BIT!");
+        return 0;                    // ★ 4: 原来只打印不返回，32位 ELF 会继续往下跑
     }
 
     Elf64::Elf64_Phdr *phdrs = (Elf64::Elf64_Phdr*)(data + hdr->e_phoff);
     uint64_t max_vaddr = 0;
 
-    VMM::SwitchPageMap(pagemap);
+    // ★ 1: 保存进入时的地址空间，结尾恢复（原来结尾硬编码切 kernel_pagemap，
+    //       sysret 回调用者时 CR3 是内核的 → 用户态取指 #PF，本次故障根因）
+    pagemap_t *restore_pm = VMM::SwitchPageMap(pagemap);
 
     for (int i = 0; i < hdr->e_phnum; i++) {
         Elf64::Elf64_Phdr *phdr = &phdrs[i];
@@ -62,11 +65,18 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
             uint64_t end = ALIGN_UP(phdr->p_vaddr + phdr->p_memsz, PAGE_SIZE);
             uint64_t flags = MM_READ | MM_WRITE | MM_USER;
             for (uint64_t i = start; i < end; i += PAGE_SIZE) {
+                // ★ 5: 两个 PT_LOAD 共享边界页时（很常见），第二段会重新分配
+                //       物理页覆盖第一段尾部数据并泄漏旧页 → 已映射则跳过
+                if (VMM::GetPhysics(pagemap, i))
+                    continue;
                 uint64_t page = (uint64_t)PMM::Request();
                 VMM::Map(pagemap, i, page, flags);
                 kinfoln("  Mapping vaddr=0x%lx -> page=0x%lx", i, page);
             }
             VMM::NewMapping(pagemap, start, (end - start) / PAGE_SIZE, flags);
+            // ★ 登记 VMA：否则 Fork 克隆不到镜像、进程退出时这些页无人释放
+            //   （依赖幂等版 SetStart 的 vma.cpp；旧版 SetStart 会丢弃它，无害）
+            VMM::VMA::AddRegion(pagemap, start, (end - start) / PAGE_SIZE, flags);
             __memcpy((void*)phdr->p_vaddr, (void*)(data + phdr->p_offset), phdr->p_filesz);
             if (phdr->p_memsz > phdr->p_filesz)
                 _memset((void*)(phdr->p_vaddr + phdr->p_filesz), 0, phdr->p_memsz - phdr->p_filesz);
@@ -86,7 +96,8 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
         }
     }
 
-    VMM::SwitchPageMap(kernel_pagemap);
+    // ★ 1: 恢复进入时的地址空间（!smp_started 时 SwitchPageMap 返回 nullptr，兜底内核）
+    VMM::SwitchPageMap(restore_pm ? restore_pm : (pagemap_t*)kernel_pagemap);
     max_vaddr += PAGE_SIZE;
     VMM::VMA::SetStart(pagemap, max_vaddr, 1);
     kpokln("LOAD ELF!");
@@ -114,22 +125,23 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     //User-Mode Trusted Process Mapping Control, UTPMC
     //SysExecveARG *pearg = (SysExecveARG*)EXECVE_ARG;
 
+    // ★ 2: 记住 syscall 进入时的地址空间。“仅加载”意味着退出时必须原样归还，
+    //       否则 sysret 会把调用者送进错误的 CR3
+    cpu_t *my_cpu = this_cpu();
+    pagemap_t *caller_pm = (smp_started && my_cpu && my_cpu->pagemap)
+                               ? my_cpu->pagemap
+                               : (pagemap_t*)kernel_pagemap;
+
     const char* pathname_ = (const char*)u_pathname;
-    const char* argv_ = (const char*)u_argv;
-    const char* envp_ = (const char*)u_envp;
+    char **argv_ = (char**)u_argv;          // ★ 3: 原来声明成 const char*，
+    char **envp_ = (char**)u_envp;          //       argc 计数和 strlen 全按单字节算
     char *pathname = (char*)kmalloc(strlen(pathname_)+1);
     __memcpy(pathname, pathname_, strlen(pathname_)+1);
     
     int argc = 0;
-    if (argv_) {
-        while (argv_[argc++]);
-        argc -= 1;
-    }
+    if (argv_) { while (argv_[argc]) argc++; }
     int envc = 0;
-    if (envp_) {
-        while (envp_[envc++]);
-        envc -= 1;
-    }
+    if (envp_) { while (envp_[envc]) envc++; }
     char **argv = (char**)kmalloc((argc + 1) * 8);
     argv[argc] = nullptr;
     for (int i = 0; i < argc; i++) {
@@ -243,7 +255,8 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         return -EINVAL; 
     }
 
-    thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
+    // ★ 6: user=true 会把这段内核内存映射成 U/S=1 的页，用户程序可直接读写
+    thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
     if (!thread->fx_area) { 
         kfree(buffer); 
         execve_cleanup(argc, envc, argv, envp);
@@ -297,8 +310,11 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     thread->ctx.ss = 0x1b; 
     thread->ctx.rflags = 0x202;
     thread->ctx.rsp = thread->thread_stack;
+    VMM::SwitchPageMap(thread->pagemap);        // ★ 2: 写用户栈需在目标地址空间下
     Schedule::PrepareUserStack(thread, argc, argv, envp);
     thread->thread_stack = thread->ctx.rsp;
+    VMM::SwitchPageMap(caller_pm);              // ★ 2: 恢复（若 PrepareUserStack
+                                                //       内部自己切过，这里也保证归位）
 
     if (tls_memsz > 0) {
         if (tls_align == 0) tls_align = 16;
@@ -320,7 +336,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         VMM::SwitchPageMap(thread->pagemap);
         __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
         *(uint64_t*)tcb_base = tcb_base;
-        VMM::SwitchPageMap(kernel_pagemap);
+        VMM::SwitchPageMap(caller_pm);          // ★ 2: 原来是 kernel_pagemap —— 根因
         thread->fs = tcb_base; 
         thread->tls_base = tls_mem; 
         thread->tls_pages = tls_pages;
@@ -333,15 +349,22 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     art_insert(NOT_RUNQ_P, (const uint8_t*)&parent->id, 8, parent);
     spinlock_unlock(&NOT_RUNQ_LOCK);
 
-    return parent->id;
+    return parent->id;                          // 此时 CR3 == caller_pm，sysret 安全
 }
 
 uint64_t sys_launch(uint64_t pid,GENERATE_IGN5()){
     IGNV_5();
-    //kinfoln("HIT SYSCALL LAUNCH!");
     cpu_t *cpu = this_cpu();
+    if (!cpu) return -EFAULT;
+
+    spinlock_lock(&NOT_RUNQ_LOCK);              // ★ 7: 搜索也要持锁
     proc_t* proc = (proc_t*)art_search(NOT_RUNQ_P,(const uint8_t*)&pid,8);
+    spinlock_unlock(&NOT_RUNQ_LOCK);
+    if (!proc) return -ESRCH;                   // ★ 7: 原来直接解引用，进程不存在即崩
+
     thread_t *thread = proc->threads;
+    if (!thread) return -ESRCH;                 // ★ 7
+
     thread->state = THREAD_RUNNING;
     Schedule::Internal::ProcessAddThread(proc, thread);
     uint64_t rflags;
@@ -351,4 +374,6 @@ uint64_t sys_launch(uint64_t pid,GENERATE_IGN5()){
     Schedule::Internal::InsertToQueue(cpu, thread);
     spinlock_unlock(&cpu->sched_lock);
     asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+
+    return 0;                                   // ★ 7: 原来缺 return，RAX 是垃圾
 }
