@@ -60,6 +60,8 @@ syscall_entry:
 
     call syscall_handler
 
+    mov [rsp + 14*8], rax 
+
     pop r15
     pop r14
     pop r13
