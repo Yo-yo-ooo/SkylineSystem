@@ -40,6 +40,7 @@ SECTIONS
     ld_text_start = .;
 
     .text : {
+        *(.text.hot)
         *(.text .text.*)
     } :text
 

@@ -34,6 +34,7 @@ SECTIONS
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
     .text : {
+        *(.text.hot)
         *(.text .text.*)
     } :text
 
