@@ -44,6 +44,39 @@ typedef unsigned long uintptr_t;
 #endif
 
 /* ============================================================
+ * 分支提示与缓存预取
+ *
+ *  RB_LIKELY/RB_UNLIKELY 放置判据(只标结构性不对称):
+ *   - 空指针/参数守卫、CAS 成功、失败与耗尽路径
+ *   - 阈值构造上罕见的事件(如冷热衰减:阈值 4096/16384 tick)
+ *   - ~50/50 的分支(颜色、左右方向、锁是否启用)一律不标
+ *
+ *  RB_PREFETCH 仅在 x86_64 展开为 prefetcht0;分叉下降
+ *  (search/insert/find_first_ge)中先取双子再比较,比较执行的
+ *  数十个周期里两个候选孩子的行并行在飞。
+ *  单向链式爬升(rb_first/rb_next)不预取:下一行地址只有加载完
+ *  当前行才可知,无前瞻窗口。
+ *  代价:树超出缓存时每级多取一行(未访问孩子的行)——
+ *  带宽换延迟的取舍;需要时可把 locality 3 降为 1 限制 L1 污染。
+ *  安全性:预取指令对 NULL/无效地址永不故障,先取后判合法。
+ *  ARM 移植:aarch64 下 __builtin_prefetch 映射 PRFM,
+ *  需要时把门控条件加上 defined(__aarch64__) 即可。
+ * ============================================================ */
+#if defined(__GNUC__) || defined(__clang__)
+#define RB_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define RB_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define RB_LIKELY(x)   (x)
+#define RB_UNLIKELY(x) (x)
+#endif
+
+#if defined(__x86_64__)
+#define RB_PREFETCH(p) __builtin_prefetch((p), 0, 3)
+#else
+#define RB_PREFETCH(p) ((void)0)
+#endif
+
+/* ============================================================
  *  GCC __atomic 原子操作兼容层
  * ============================================================ */
 #if !defined(__GNUC__) && !defined(__clang__)
@@ -75,6 +108,8 @@ typedef unsigned long uintptr_t;
  *  锁原语与快捷宏
  *  约定：若初始化时传入的锁函数指针为 NULL，则所有锁操作退化为空，
  *        即等价于单线程无锁模式。
+ *  注:此处不标 likely/unlikely —— 真值取决于使用方是否配锁,
+ *      对一半用户必真、另一半必假,统一标注必错一半。
  * ============================================================ */
 typedef void (*rb_lock_fn)(void *lock_ctx);
 typedef void (*rb_unlock_fn)(void *lock_ctx);
@@ -179,6 +214,8 @@ typedef struct rb_stats {
  *  内部辅助：原子状态转移与统计更新
  *  注：stat_inc/dec 在读锁(rb_touch)和写锁(erase/insert)中均可能被调用，
  *  因此必须使用原子操作。
+ *  注:flags 的温度分布数据相关(冷/温/热占比随负载漂移),
+ *  此处分支不标提示。
  * ============================================================ */
 
 static inline void rb_stat_dec(rb_root_t *root, uint8_t flags) {
@@ -202,7 +239,7 @@ static inline void rb_stat_inc(rb_root_t *root, uint8_t flags) {
  * ============================================================ */
 
 static inline void rb_init_node(rb_node_t *node) {
-    if (!node) return;
+    if (RB_UNLIKELY(!node)) return;
     /* 初始化阶段无并发，普通赋值 */
     node->parent       = NULL;
     node->left         = NULL;
@@ -217,7 +254,7 @@ static inline void rb_root_init(rb_root_t *root,
                                 rb_lock_fn wlock, rb_unlock_fn wunlock,
                                 rb_rdlock_fn rlock, rb_rdunlock_fn runlock,
                                 void *lock_ctx) {
-    if (!root) return;
+    if (RB_UNLIKELY(!root)) return;
     /* [OPT] 初始化无并发，全部改为普通赋值 */
     root->node      = NULL;
     root->hint      = NULL;
@@ -241,37 +278,37 @@ static inline void rb_root_init(rb_root_t *root,
 }
 
 static inline void rb_set_decay(rb_root_t *root, uint64_t warm_decay, uint64_t hot_decay) {
-    if (root) {
-        root->warm_decay = warm_decay;
-        root->hot_decay  = hot_decay;
-    }
+    if (RB_UNLIKELY(!root)) return;
+    root->warm_decay = warm_decay;
+    root->hot_decay  = hot_decay;
 }
 
 static inline void rb_set_hint_mask(rb_root_t *root, uint32_t mask) {
-    if (root) root->hint_mask = mask ? mask : RB_HINT_MASK_DEFAULT;
+    if (RB_LIKELY(root)) root->hint_mask = mask ? mask : RB_HINT_MASK_DEFAULT;
 }
 
 /* 推进逻辑时钟。由调用方周期性调用，冷热衰减阈值的时间单位即为 tick 数 */
 static inline void rb_tick(rb_root_t *root) {
-    if (root) RB_ATOMIC_ADD(&root->clock, 1);
+    if (RB_LIKELY(root)) RB_ATOMIC_ADD(&root->clock, 1);
 }
 
 /* ============================================================
  *  rb_pin_node / rb_unpin_node
  *  约束：必须在持有读锁或写锁的情况下调用，防止节点被并发删除导致野指针
+ *  注:重复 pin / 未 pin 就 unpin 属调用方协议违例,按罕见处理
  * ============================================================ */
 
 static inline void rb_pin_node(rb_root_t *root, rb_node_t *node) {
-    if (!root || !node) return;
+    if (RB_UNLIKELY(!root || !node)) return;
 
     uint8_t old = RB_ATOMIC_LOAD(&node->flags);
     for (;;) {
-        if (old & RB_FLAG_PINNED) return;
+        if (RB_UNLIKELY(old & RB_FLAG_PINNED)) return;
 
         uint8_t new_flags = old | RB_FLAG_PINNED;
         uint8_t expected = old;
 
-        if (RB_ATOMIC_CAS(&node->flags, &expected, new_flags)) {
+        if (RB_LIKELY(RB_ATOMIC_CAS(&node->flags, &expected, new_flags))) {
             rb_stat_dec(root, old);
             rb_stat_inc(root, new_flags);
             return;
@@ -281,16 +318,16 @@ static inline void rb_pin_node(rb_root_t *root, rb_node_t *node) {
 }
 
 static inline void rb_unpin_node(rb_root_t *root, rb_node_t *node) {
-    if (!root || !node) return;
+    if (RB_UNLIKELY(!root || !node)) return;
 
     uint8_t old = RB_ATOMIC_LOAD(&node->flags);
     for (;;) {
-        if (!(old & RB_FLAG_PINNED)) return;
+        if (RB_UNLIKELY(!(old & RB_FLAG_PINNED))) return;
 
         uint8_t new_flags = old & ~RB_FLAG_PINNED;
         uint8_t expected = old;
 
-        if (RB_ATOMIC_CAS(&node->flags, &expected, new_flags)) {
+        if (RB_LIKELY(RB_ATOMIC_CAS(&node->flags, &expected, new_flags))) {
             rb_stat_dec(root, old);
             rb_stat_inc(root, new_flags);
             return;
@@ -300,7 +337,7 @@ static inline void rb_unpin_node(rb_root_t *root, rb_node_t *node) {
 }
 
 static inline bool rb_is_pinned(const rb_node_t *node) {
-    if (!node) return false;
+    if (RB_UNLIKELY(!node)) return false;
     return RB_ATOMIC_LOAD(&node->flags) & RB_FLAG_PINNED;
 }
 
@@ -309,7 +346,7 @@ static inline bool rb_is_pinned(const rb_node_t *node) {
  * ============================================================ */
 
 static inline void rb_touch(rb_root_t *root, rb_node_t *node) {
-    if (!root || !node) return;
+    if (RB_UNLIKELY(!root || !node)) return;
 
     uint64_t cur_time = RB_ATOMIC_LOAD(&root->clock);
     uint64_t last_time = RB_ATOMIC_LOAD(&node->access_time);
@@ -325,16 +362,17 @@ static inline void rb_touch(rb_root_t *root, rb_node_t *node) {
     int retries = 0;
     uint8_t cur_flags = RB_ATOMIC_LOAD(&node->flags);
     for (;;) {
-        if (cur_flags & RB_FLAG_PINNED) break;
+        if (RB_UNLIKELY(cur_flags & RB_FLAG_PINNED)) break;
 
         uint8_t cur_temp = cur_flags & RB_FLAG_TEMP_MASK;
         uint8_t new_temp = cur_temp;
         bool should_decay = false;
 
-        if (elapsed > root->hot_decay) {
+        /* 衰减按阈值构造即罕见:warm=4096 tick、hot=16384 tick */
+        if (RB_UNLIKELY(elapsed > root->hot_decay)) {
             new_temp = RB_FLAG_COLD;
             should_decay = true;
-        } else if (elapsed > root->warm_decay) {
+        } else if (RB_UNLIKELY(elapsed > root->warm_decay)) {
             new_temp = (cur_temp == RB_FLAG_HOT) ? RB_FLAG_WARM : RB_FLAG_COLD;
             should_decay = true;
         }
@@ -346,12 +384,13 @@ static inline void rb_touch(rb_root_t *root, rb_node_t *node) {
             new_temp = RB_FLAG_WARM;
         }
 
-        if (new_temp == cur_temp) break;
+        /* 无温度迁移直接退出:已热/已冷的稳定节点是常态 */
+        if (RB_LIKELY(new_temp == cur_temp)) break;
 
         uint8_t expected = cur_flags;
         uint8_t new_flags = (cur_flags & ~RB_FLAG_TEMP_MASK) | new_temp;
         
-        if (RB_ATOMIC_CAS(&node->flags, &expected, new_flags)) {
+        if (RB_LIKELY(RB_ATOMIC_CAS(&node->flags, &expected, new_flags))) {
             rb_stat_dec(root, cur_flags);
             rb_stat_inc(root, new_flags);
             if (should_decay) {
@@ -361,7 +400,7 @@ static inline void rb_touch(rb_root_t *root, rb_node_t *node) {
         }
 
         cur_flags = expected;
-        if (++retries > 4) {
+        if (RB_UNLIKELY(++retries > 4)) {
             RB_SPIN_PAUSE();
             retries = 0;
         }
@@ -370,6 +409,7 @@ static inline void rb_touch(rb_root_t *root, rb_node_t *node) {
 
 /* ============================================================
  *  旋转
+ *  注:node==parent->left/right 为 ~50/50 数据分支,不标
  * ============================================================ */
 
 static inline void rb_rotate_left(rb_node_t *node, rb_node_t **root) {
@@ -377,7 +417,7 @@ static inline void rb_rotate_left(rb_node_t *node, rb_node_t **root) {
     node->right = right->left;
     if (right->left) right->left->parent = node;
     right->parent = node->parent;
-    if (node->parent) {
+    if (RB_LIKELY(node->parent)) {          /* 旋转至根:仅树顶一次 */
         if (node == node->parent->left) node->parent->left = right;
         else node->parent->right = right;
     } else {
@@ -392,7 +432,7 @@ static inline void rb_rotate_right(rb_node_t *node, rb_node_t **root) {
     node->left = left->right;
     if (left->right) left->right->parent = node;
     left->parent = node->parent;
-    if (node->parent) {
+    if (RB_LIKELY(node->parent)) {
         if (node == node->parent->right) node->parent->right = left;
         else node->parent->left = left;
     } else {
@@ -407,14 +447,18 @@ static inline void rb_rotate_right(rb_node_t *node, rb_node_t **root) {
  * ============================================================ */
 
 static inline void rb_insert_raw(rb_root_t *root, rb_node_t *node, rb_compare_t cmp) {
-    if (!root || !node || !cmp) return;
+    if (RB_UNLIKELY(!root || !node || !cmp)) return;
     rb_init_node(node);
 
     rb_node_t *parent  = NULL;
     rb_node_t *current = root->node;
     int cmp_res = 0;
 
-    while (current) {
+    /* [预取] 分叉下降:cmp 回调(间接调用,数十周期)执行期间,
+       两个候选孩子的行并行加载;最后一层的 NULL 孩子预取无害 */
+    while (RB_LIKELY(current)) {
+        RB_PREFETCH(current->left);
+        RB_PREFETCH(current->right);
         parent = current;
         cmp_res = cmp(node, current);
         if (cmp_res < 0) current = current->left;
@@ -422,7 +466,7 @@ static inline void rb_insert_raw(rb_root_t *root, rb_node_t *node, rb_compare_t 
     }
 
     node->parent = parent;
-    if (!parent) root->node = node;
+    if (RB_UNLIKELY(!parent)) root->node = node;      /* 空树首插:每树一次 */
     else if (cmp_res < 0) parent->left = node;
     else parent->right = node;
 
@@ -472,7 +516,7 @@ static inline void rb_insert_raw(rb_root_t *root, rb_node_t *node, rb_compare_t 
 }
 
 static inline void rb_insert(rb_root_t *root, rb_node_t *node, rb_compare_t cmp) {
-    if (!root || !node || !cmp) return;
+    if (RB_UNLIKELY(!root || !node || !cmp)) return;
     RB_WLOCK(root);
     rb_insert_raw(root, node, cmp);
     /* [OPT] 写锁内独占，普通自增即可 */
@@ -485,16 +529,20 @@ static inline void rb_insert(rb_root_t *root, rb_node_t *node, rb_compare_t cmp)
  * ============================================================ */
 
 static inline rb_node_t *rb_search_locked_only(rb_root_t *root, const rb_node_t *key, rb_compare_t cmp) {
-    if (!root || !key || !cmp) return NULL;
+    if (RB_UNLIKELY(!root || !key || !cmp)) return NULL;
 
     rb_node_t *current = NULL;
     rb_node_t *hint_node = RB_ATOMIC_LOAD(&root->hint);
 
+    /* 注:hint 命中率随负载(热 key 集中度)漂移,不标 */
     if (hint_node && cmp(key, hint_node) == 0) {
         current = hint_node;
     } else {
         current = root->node;
-        while (current) {
+        /* [预取] 分叉下降:同 rb_insert_raw */
+        while (RB_LIKELY(current)) {
+            RB_PREFETCH(current->left);
+            RB_PREFETCH(current->right);
             int res = cmp(key, current);
             if (res < 0) current = current->left;
             else if (res > 0) current = current->right;
@@ -502,9 +550,11 @@ static inline rb_node_t *rb_search_locked_only(rb_root_t *root, const rb_node_t 
         }
     }
 
-    if (current) {
+    if (RB_LIKELY(current)) {              /* 存在性查询为主流负载 */
         rb_touch(root, current);
         if (current != hint_node) {
+            /* 注:hint_mask=3 时 1/4 的 tick 会进此分支,
+               25% 不够「罕见」,不标 */
             uint64_t clock = RB_ATOMIC_LOAD(&root->clock);
             if ((clock & root->hint_mask) == 0) {
                 RB_ATOMIC_STORE(&root->hint, current);
@@ -515,7 +565,7 @@ static inline rb_node_t *rb_search_locked_only(rb_root_t *root, const rb_node_t 
 }
 
 static inline rb_node_t *rb_search(rb_root_t *root, const rb_node_t *key, rb_compare_t cmp) {
-    if (!root || !key || !cmp) return NULL;
+    if (RB_UNLIKELY(!root || !key || !cmp)) return NULL;
     RB_RDLOCK(root);
     rb_node_t *res = rb_search_locked_only(root, key, cmp);
     RB_RDUNLOCK(root);
@@ -524,22 +574,24 @@ static inline rb_node_t *rb_search(rb_root_t *root, const rb_node_t *key, rb_com
 
 /* ============================================================
  *  迭代器
+ *  注:以下均为单向链式指针爬升 —— 下一节点地址只有加载完
+ *  当前节点才可知,不存在可提前预取的地址,故不加 RB_PREFETCH。
  * ============================================================ */
 
 static inline rb_node_t *rb_first(rb_node_t *root) {
-    if (!root) return NULL;
+    if (RB_UNLIKELY(!root)) return NULL;
     while (root->left) root = root->left;
     return root;
 }
 
 static inline rb_node_t *rb_last(rb_node_t *root) {
-    if (!root) return NULL;
+    if (RB_UNLIKELY(!root)) return NULL;
     while (root->right) root = root->right;
     return root;
 }
 
 static inline rb_node_t *rb_next(rb_node_t *node) {
-    if (!node) return NULL;
+    if (RB_UNLIKELY(!node)) return NULL;
     if (node->right) return rb_first(node->right);
     rb_node_t *parent = node->parent;
     while (parent && node == parent->right) {
@@ -551,7 +603,7 @@ static inline rb_node_t *rb_next(rb_node_t *node) {
 
 // Helper function to get previous node in RB tree for reverse traversal
 static inline rb_node_t* rb_prev(rb_node_t* node) {
-    if (!node) return NULL;
+    if (RB_UNLIKELY(!node)) return NULL;
     if (node->left) {
         node = node->left;
         while (node->right) node = node->right;
@@ -567,6 +619,7 @@ static inline rb_node_t* rb_prev(rb_node_t* node) {
 
 /* ============================================================
  *  删除
+ *  注:fixup 中颜色/左右分支均 ~50/50,不标
  * ============================================================ */
 
 static inline void rb_erase_fixup(rb_node_t **root, rb_node_t *node, rb_node_t *parent) {
@@ -631,7 +684,7 @@ static inline void rb_erase_fixup(rb_node_t **root, rb_node_t *node, rb_node_t *
 }
 
 static inline void rb_erase_update_stats(rb_root_t *root, rb_node_t *node) {
-    if (!root || !node) return;
+    if (RB_UNLIKELY(!root || !node)) return;
     /* 写锁内读取，普通访问即可 */
     uint8_t old_flags = node->flags; 
     rb_stat_dec(root, old_flags);
@@ -643,7 +696,7 @@ static inline void rb_erase_update_stats(rb_root_t *root, rb_node_t *node) {
 }
 
 static inline void rb_erase_raw(rb_root_t *root, rb_node_t *node) {
-    if (!root || !node || !root->node) return;
+    if (RB_UNLIKELY(!root || !node || !root->node)) return;
 
     rb_node_t *child, *parent;
     uint8_t color;
@@ -709,14 +762,14 @@ static inline void rb_erase_raw(rb_root_t *root, rb_node_t *node) {
 
 static inline void rb_clear_hint_if_match(rb_root_t *root, rb_node_t *node) {
     rb_node_t *hint_node = RB_ATOMIC_LOAD(&root->hint);
-    if (hint_node == node) {
+    if (RB_UNLIKELY(hint_node == node)) {   /* hint 指向热节点,删热节点罕见 */
         rb_node_t *expected = node;
         RB_ATOMIC_CAS(&root->hint, &expected, NULL);
     }
 }
 
 static inline void rb_erase(rb_root_t *root, rb_node_t *node) {
-    if (!root || !node) return;
+    if (RB_UNLIKELY(!root || !node)) return;
     RB_WLOCK(root);
     rb_clear_hint_if_match(root, node);
     rb_erase_raw(root, node);
@@ -730,11 +783,14 @@ static inline void rb_erase(rb_root_t *root, rb_node_t *node) {
  * ============================================================ */
 
 static inline rb_node_t *rb_find_first_ge(rb_node_t *tree, const rb_node_t *lo_key, rb_compare_t cmp) {
-    if (!tree) return NULL;
-    if (!lo_key) return rb_first(tree);
+    if (RB_UNLIKELY(!tree)) return NULL;
+    if (RB_UNLIKELY(!lo_key)) return rb_first(tree);
 
     rb_node_t *start = NULL;
+    /* [预取] 分叉下降:方向由 cmp 结果决定,先取双子 */
     while (tree) {
+        RB_PREFETCH(tree->left);
+        RB_PREFETCH(tree->right);
         if (cmp(tree, lo_key) >= 0) {
             start = tree;
             tree = tree->left;
@@ -751,13 +807,13 @@ static inline size_t rb_snapshot_range(rb_root_t *root,
                                        rb_compare_t cmp,
                                        rb_node_t **out_nodes,
                                        size_t max_nodes) {
-    if (!root || !cmp || !out_nodes || max_nodes == 0) return 0;
+    if (RB_UNLIKELY(!root || !cmp || !out_nodes || max_nodes == 0)) return 0;
     RB_RDLOCK(root);
 
     size_t count = 0;
     rb_node_t *cur = rb_find_first_ge(root->node, lo_key, cmp);
 
-    while (cur && count < max_nodes) {
+    while (RB_LIKELY(cur && count < max_nodes)) {
         if (hi_key && cmp(cur, hi_key) >= 0) break;
         out_nodes[count++] = cur;
         cur = rb_next(cur);
@@ -770,12 +826,12 @@ static inline size_t rb_snapshot_range(rb_root_t *root,
 static inline size_t rb_snapshot_by_flag(rb_root_t *root, uint8_t flag_mask,
                                          bool match_exact, rb_node_t **out_nodes,
                                          size_t max_nodes) {
-    if (!root || !out_nodes || max_nodes == 0) return 0;
+    if (RB_UNLIKELY(!root || !out_nodes || max_nodes == 0)) return 0;
     RB_RDLOCK(root);
 
     size_t count = 0;
     rb_node_t *cur = rb_first(root->node);
-    while (cur && count < max_nodes) {
+    while (RB_LIKELY(cur && count < max_nodes)) {
         uint8_t flags = RB_ATOMIC_LOAD(&cur->flags);
         bool match = match_exact ? ((flags & RB_FLAG_TEMP_MASK) == flag_mask) : ((flags & flag_mask) != 0);
         if (match) out_nodes[count++] = cur;
@@ -791,13 +847,13 @@ static inline size_t rb_erase_range(rb_root_t *root,
                                     const rb_node_t *hi_key,
                                     rb_compare_t cmp,
                                     rb_free_cb_t free_cb, void *arg) {
-    if (!root || !cmp) return 0;
+    if (RB_UNLIKELY(!root || !cmp)) return 0;
     RB_WLOCK(root);
 
     size_t erased = 0;
     rb_node_t *cur = rb_find_first_ge(root->node, lo_key, cmp);
 
-    while (cur) {
+    while (RB_LIKELY(cur)) {
         if (hi_key && cmp(cur, hi_key) >= 0) break;
         rb_node_t *next = rb_next(cur);
 
@@ -818,7 +874,7 @@ static inline size_t rb_erase_range(rb_root_t *root,
  *  O(1) 统计接口
  * ============================================================ */
 static inline void rb_get_stats(rb_root_t *root, rb_stats_t *stats) {
-    if (!root || !stats) return;
+    if (RB_UNLIKELY(!root || !stats)) return;
     
     stats->total   = 0;
     stats->cold    = 0;
@@ -842,7 +898,7 @@ static inline void rb_get_stats(rb_root_t *root, rb_stats_t *stats) {
 
 static inline rb_node_t *rb_reverse_right_chain(rb_node_t *head) {
     rb_node_t *prev = NULL;
-    while (head) {
+    while (RB_LIKELY(head)) {
         rb_node_t *next = head->right;
         head->right = prev;
         prev = head;
@@ -857,7 +913,7 @@ static inline rb_node_t *rb_reverse_right_chain(rb_node_t *head) {
  * ============================================================ */
 
 static inline void rb_postorder_iter(rb_root_t *root, rb_visit_t cb, void *arg) {
-    if (!root || !cb || !root->node) return;
+    if (RB_UNLIKELY(!root || !cb || !root->node)) return;
 
     rb_node_t dump;
     dump.parent = NULL;
@@ -900,7 +956,7 @@ static inline void rb_postorder_iter(rb_root_t *root, rb_visit_t cb, void *arg) 
 }
 
 static inline void rb_clear(rb_root_t *root, rb_free_cb_t free_cb, void *arg) {
-    if (!root || !free_cb) return;
+    if (RB_UNLIKELY(!root || !free_cb)) return;
     RB_WLOCK(root);
     rb_postorder_iter(root, free_cb, arg);
 
@@ -947,11 +1003,11 @@ static inline bool rb_sharded_init(rb_sharded_root_t *sroot,
                                    rb_free_lock_fn free_lock,
                                    rb_alloc_fn mem_alloc,
                                    rb_free_fn mem_free) {
-    if (!sroot || !ops || !ops->hash_fn || !ops->key_of || !ops->cmp)
+    if (RB_UNLIKELY(!sroot || !ops || !ops->hash_fn || !ops->key_of || !ops->cmp))
         return false;
-    if (!mem_alloc || !mem_free)
+    if (RB_UNLIKELY(!mem_alloc || !mem_free))
         return false;
-    if (shard_num == 0 || (shard_num & (shard_num - 1)) != 0)
+    if (RB_UNLIKELY(shard_num == 0 || (shard_num & (shard_num - 1)) != 0))
         return false;
 
     sroot->shard_num  = shard_num;
@@ -960,13 +1016,13 @@ static inline bool rb_sharded_init(rb_sharded_root_t *sroot,
     sroot->mem_alloc = mem_alloc;
     sroot->mem_free  = mem_free;
     sroot->shards = (rb_root_t*)sroot->mem_alloc(sizeof(rb_root_t) * shard_num);
-    if (!sroot->shards) return false;
+    if (RB_UNLIKELY(!sroot->shards)) return false;
 
     sroot->ops = *ops;
 
     for (uint32_t i = 0; i < shard_num; i++) {
         void *ctx = alloc_lock ? alloc_lock(i) : NULL;
-        if (alloc_lock && !ctx) {
+        if (RB_UNLIKELY(alloc_lock && !ctx)) {
             for (uint32_t j = 0; j < i; j++) {
                 if (free_lock) free_lock(sroot->shards[j].lock_ctx);
             }
@@ -982,7 +1038,7 @@ static inline bool rb_sharded_init(rb_sharded_root_t *sroot,
 static inline void rb_sharded_clear(rb_sharded_root_t *sroot,
                                     rb_free_cb_t free_cb, void *arg,
                                     rb_free_lock_fn free_lock) {
-    if (!sroot || !sroot->shards) return;
+    if (RB_UNLIKELY(!sroot || !sroot->shards)) return;
 
     for (uint32_t i = 0; i < sroot->shard_num; i++) {
         rb_clear(&sroot->shards[i], free_cb, arg);
@@ -1004,26 +1060,26 @@ static inline void rb_sharded_clear(rb_sharded_root_t *sroot,
 }
 
 static inline rb_root_t* rb_get_shard(rb_sharded_root_t *sroot, const void *key) {
-    if (!sroot || sroot->shard_num == 0 || !sroot->ops.hash_fn) return NULL;
+    if (RB_UNLIKELY(!sroot || sroot->shard_num == 0 || !sroot->ops.hash_fn)) return NULL;
     return &sroot->shards[sroot->ops.hash_fn(key) & sroot->shard_mask];
 }
 
 static inline void rb_sharded_insert(rb_sharded_root_t *sroot, rb_node_t *node) {
-    if (!sroot || !node || !sroot->ops.key_of) return;
+    if (RB_UNLIKELY(!sroot || !node || !sroot->ops.key_of)) return;
     const void *key = sroot->ops.key_of(node);
     rb_root_t *shard = rb_get_shard(sroot, key);
     rb_insert(shard, node, sroot->ops.cmp);
 }
 
 static inline rb_node_t *rb_sharded_search(rb_sharded_root_t *sroot, const rb_node_t *key_node) {
-    if (!sroot || !key_node || !sroot->ops.key_of) return NULL;
+    if (RB_UNLIKELY(!sroot || !key_node || !sroot->ops.key_of)) return NULL;
     const void *key = sroot->ops.key_of(key_node);
     rb_root_t *shard = rb_get_shard(sroot, key);
     return rb_search(shard, key_node, sroot->ops.cmp);
 }
 
 static inline void rb_sharded_erase(rb_sharded_root_t *sroot, rb_node_t *node) {
-    if (!sroot || !node || !sroot->ops.key_of) return;
+    if (RB_UNLIKELY(!sroot || !node || !sroot->ops.key_of)) return;
     const void *key = sroot->ops.key_of(node);
     rb_root_t *shard = rb_get_shard(sroot, key);
     rb_erase(shard, node);
@@ -1037,7 +1093,7 @@ static inline size_t rb_sharded_erase_range(rb_sharded_root_t *sroot,
                                             const rb_node_t *lo_key,
                                             const rb_node_t *hi_key,
                                             rb_free_cb_t free_cb, void *arg) {
-    if (!sroot || !sroot->ops.cmp) return 0;
+    if (RB_UNLIKELY(!sroot || !sroot->ops.cmp)) return 0;
     size_t total_erased = 0;
 
     for (uint32_t i = 0; i < sroot->shard_num; i++) {
@@ -1049,7 +1105,7 @@ static inline size_t rb_sharded_erase_range(rb_sharded_root_t *sroot,
 
 /* 分片全局统计聚合接口 */
 static inline void rb_sharded_get_stats(rb_sharded_root_t *sroot, rb_stats_t *stats) {
-    if (!sroot || !stats) return;
+    if (RB_UNLIKELY(!sroot || !stats)) return;
     rb_stats_t tmp;
     stats->total = 0;
     stats->cold = 0;
@@ -1077,7 +1133,7 @@ static inline size_t rb_sharded_snapshot_range(rb_sharded_root_t *sroot,
                                                const rb_node_t *hi_key,
                                                rb_node_t **out_nodes,
                                                size_t max_nodes) {
-    if (!sroot || !sroot->ops.cmp || !out_nodes || max_nodes == 0) return 0;
+    if (RB_UNLIKELY(!sroot || !sroot->ops.cmp || !out_nodes || max_nodes == 0)) return 0;
     size_t count = 0;
     for (uint32_t i = 0; i < sroot->shard_num && count < max_nodes; i++) {
         count += rb_snapshot_range(&sroot->shards[i], lo_key, hi_key,
@@ -1090,6 +1146,7 @@ static inline size_t rb_sharded_snapshot_range(rb_sharded_root_t *sroot,
  *  校验接口
  *  约束：会递归遍历整棵树，调用期间必须持有读锁或写锁，
  *        否则并发修改会导致遍历崩溃。
+ *  注:仅调试构建使用,不加预取(遍历本身已把树拉进缓存)
  * ============================================================ */
 #ifndef RB_DISABLE_VALIDATE
 static inline int rb_validate_full_helper(const rb_node_t *n,

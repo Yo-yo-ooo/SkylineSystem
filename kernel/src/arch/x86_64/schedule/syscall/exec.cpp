@@ -356,18 +356,24 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
 
 uint64_t sys_launch(uint64_t pid,GENERATE_IGN5()){
     IGNV_5();
-    cpu_t *cpu = this_cpu();
+    cpu_t *cpu = get_lw_cpu();
     if (!cpu) return -EFAULT;
 
     spinlock_lock(&NOT_RUNQ_LOCK);              // ★ 7: 搜索也要持锁
     proc_t* proc = (proc_t*)art_search(NOT_RUNQ_P,(const uint8_t*)&pid,8);
     spinlock_unlock(&NOT_RUNQ_LOCK);
-    if (!proc) return -ESRCH;                   // ★ 7: 原来直接解引用，进程不存在即崩
+    if (!proc){     // ★ 7: 原来直接解引用，进程不存在即崩
+        kwarnln("sys_launch: PROC NOT FOUND");
+        return -ESRCH;
+    }                   
+    kinfoln("PROC->ID %d",proc->id);
 
     thread_t *thread = proc->threads;
     if (!thread) return -ESRCH;                 // ★ 7
 
     thread->state = THREAD_RUNNING;
+    thread->timer_cpu = cpu->id;
+    thread->cpu_num = cpu->id;
     Schedule::Internal::ProcessAddThread(proc, thread);
     uint64_t rflags;
     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
