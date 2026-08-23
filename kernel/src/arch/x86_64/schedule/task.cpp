@@ -161,7 +161,7 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
         }
 
         if (need_ipi) {
-            LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC + 1);
+            LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC);
         }
         return;
     }
@@ -365,7 +365,7 @@ namespace Schedule {
 
         if (was_running) {
             cpu_t *cur_cpu = this_cpu();
-            if (cpu != cur_cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+            if (cpu != cur_cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
         }
     }
 

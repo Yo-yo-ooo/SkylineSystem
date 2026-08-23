@@ -103,7 +103,7 @@ namespace VMM {
     }
 
     #define TLB_FLUSH_FULL   ((uint64_t)-1)
-    #define TLB_FLUSH_VEC    (SCHED_VEC + 2)
+    #define TLB_FLUSH_VEC    (SCHED_VEC + 1)
 
     namespace LazyTLB {
         static inline void cpuid(uint32_t leaf, uint32_t &a, uint32_t &b, uint32_t &c, uint32_t &d) {

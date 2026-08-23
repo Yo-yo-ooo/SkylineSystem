@@ -102,10 +102,10 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     
     smp_setup_kstack(cpu);
 
-    idt_install_irq_cpu(cpu->id, 48, (void*)Schedule::Internal::Preempt);
-    idt_install_irq_cpu(cpu->id, 49, (void*)Schedule::Internal::Switch);
+    idt_install_irq_cpu(cpu->id, 48, (void*)Schedule::Internal::Switch);
+    //idt_install_irq_cpu(cpu->id, 49, (void*)Schedule::Internal::Switch);
     idt_set_ist_cpu(cpu->id, SCHED_VEC, 0);
-    idt_set_ist_cpu(cpu->id, SCHED_VEC + 1, 0);
+    //idt_set_ist_cpu(cpu->id, SCHED_VEC + 1, 0);
     
     syscall_init();
     smp_setup_thread_queue(cpu);

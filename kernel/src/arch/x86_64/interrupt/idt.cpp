@@ -153,7 +153,7 @@ extern "C" void idt_irq_handler(context_t *ctx) {
     handler(ctx);
     // 统一在外部中断出口处发送 EOI
     if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) {
-        if (ctx->int_no != SCHED_VEC && ctx->int_no != SCHED_VEC + 1) {
+        if (ctx->int_no != SCHED_VEC /* && ctx->int_no != SCHED_VEC + 1 */) {
             LAPIC::EOI();
         }
     }

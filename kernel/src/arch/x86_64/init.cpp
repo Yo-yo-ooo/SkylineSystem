@@ -124,8 +124,8 @@ void __init x86_64_init(void){
         "/mp/hw2.elf", 1, argv, envp);   */
     kinfoln("desktop PROCESS: %d",proc->id);
     asm volatile("sti");
-    LAPIC::IPI(smp_bsp_cpu,SCHED_VEC + 1);
-    LAPIC::IPIOthers(smp_bsp_cpu, SCHED_VEC + 1);
+    LAPIC::IPI(smp_bsp_cpu,SCHED_VEC);
+    LAPIC::IPIOthers(smp_bsp_cpu, SCHED_VEC);
 
     while (true) {
         asm volatile("hlt");

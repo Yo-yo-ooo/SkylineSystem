@@ -576,14 +576,14 @@ namespace Schedule {
             irq_restore(rflags);
         }
 
-        void Preempt(context_t *ctx) { Switch(ctx); }
+        //void Preempt(context_t *ctx) { Switch(ctx); }
     }
 
     void CheckPreempt(context_t *ctx) {
         cpu_t *cpu = this_cpu();
         if (!cpu) return;
         if (__atomic_load_n(&need_resched_flags[cpu->id], __ATOMIC_ACQUIRE) && cpu->preempt_count == 0) {
-            asm volatile("int %0" :: "i"(SCHED_VEC + 1));
+            asm volatile("int %0" :: "i"(SCHED_VEC));
         }
     }
 
@@ -596,7 +596,7 @@ namespace Schedule {
 
         thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
         if (!curr || curr == cpu->idle_thread) {
-            LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+            LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
             return;
         }
 
@@ -608,7 +608,7 @@ namespace Schedule {
 
             cpu_t *cur_cpu = this_cpu();
             if (cpu != cur_cpu) {
-                LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+                LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
             } else {
                 __atomic_store_n(&need_resched_flags[cpu->id], true, __ATOMIC_RELEASE);
             }
@@ -624,10 +624,10 @@ namespace Schedule {
             NOT_RUNQ_P = (art_tree*)kmalloc(sizeof(art_tree));
             if (art_tree_init(NOT_RUNQ_P) != 0) Panic("ART TREE INIT FAILED!");
         }
-        idt_install_irq(SCHED_VEC, (void*)Schedule::Internal::Preempt);
-        idt_install_irq(SCHED_VEC + 1, (void*)Schedule::Internal::Switch);
+        idt_install_irq(SCHED_VEC, (void*)Schedule::Internal::Switch);
+        //idt_install_irq(SCHED_VEC, (void*)Schedule::Internal::Switch);
         idt_set_ist(SCHED_VEC, 0);
-        idt_set_ist(SCHED_VEC + 1, 0);
+        idt_set_ist(SCHED_VEC, 0);
     }
 
     void Install() {
@@ -651,14 +651,14 @@ namespace Schedule {
 
     thread_t* this_thread() { cpu_t* cpu = this_cpu(); return cpu ? cpu->current_thread : nullptr; }
     proc_t *this_proc() { thread_t* t = this_thread(); return t ? t->parent : nullptr; }
-    void Yield() { LAPIC::StopTimer(); asm volatile("int %0" :: "i"(SCHED_VEC + 1)); }
+    void Yield() { LAPIC::StopTimer(); asm volatile("int %0" :: "i"(SCHED_VEC)); }
     void PAUSE() { LAPIC::StopTimer(); }
     void Resume() {
         cpu_t* cur_cpu = this_cpu();
         if (!cur_cpu) return;
         for (int32_t i = 0; i <= smp_last_cpu; i++) {
-            if (smp_cpu_list[i] && i != cur_cpu->id) LAPIC::IPI(smp_cpu_list[i]->lapic_id, SCHED_VEC + 1);
+            if (smp_cpu_list[i] && i != cur_cpu->id) LAPIC::IPI(smp_cpu_list[i]->lapic_id, SCHED_VEC);
         }
-        LAPIC::IPI(cur_cpu->lapic_id, SCHED_VEC + 1);
+        LAPIC::IPI(cur_cpu->lapic_id, SCHED_VEC);
     }
 }

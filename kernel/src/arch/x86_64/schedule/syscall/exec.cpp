@@ -5,6 +5,7 @@
 #include <klib/errno.h>
 #include <elf/elf.h>
 #include <mem/pmm.h>
+#include <arch/x86_64/lapic/lapic.h>
 #include <atomic/atomic.h>
 
 void execve_cleanup(int argc, int envc, char **argv, char **envp) {
@@ -382,6 +383,11 @@ uint64_t sys_launch(uint64_t pid,GENERATE_IGN5()){
     Schedule::Internal::InsertToQueue(cpu, thread);
     spinlock_unlock(&cpu->sched_lock);
     asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+
+    /* if (cpu != this_cpu())
+        LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+    else
+        asm volatile("int %0" :: "i"(SCHED_VEC + 1));   // 本机直接自陷 */
 
     return 0;                                   // ★ 7: 原来缺 return，RAX 是垃圾
 }
