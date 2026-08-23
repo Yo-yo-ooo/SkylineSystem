@@ -49,14 +49,14 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
 
     if(hdr->e_ident.c[Elf64::EI_CLASS] != Elf64::ELFCLASS64){
         kerrorln("ELF> FILE NOT 64 BIT!");
-        return 0;                    // ★ 4: 原来只打印不返回，32位 ELF 会继续往下跑
+        return 0;                    // 原来只打印不返回,32 位 ELF 会继续往下跑
     }
 
     Elf64::Elf64_Phdr *phdrs = (Elf64::Elf64_Phdr*)(data + hdr->e_phoff);
     uint64_t max_vaddr = 0;
 
-    // ★ 1: 保存进入时的地址空间，结尾恢复（原来结尾硬编码切 kernel_pagemap，
-    //       sysret 回调用者时 CR3 是内核的 → 用户态取指 #PF，本次故障根因）
+    // 保存进入时的地址空间,结尾恢复(原来结尾硬编码切 kernel_pagemap,
+    // sysret 回调用者时 CR3 是内核的 → 用户态取指 #PF)
     pagemap_t *restore_pm = VMM::SwitchPageMap(pagemap);
 
     for (int i = 0; i < hdr->e_phnum; i++) {
@@ -66,8 +66,8 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
             uint64_t end = ALIGN_UP(phdr->p_vaddr + phdr->p_memsz, PAGE_SIZE);
             uint64_t flags = MM_READ | MM_WRITE | MM_USER;
             for (uint64_t i = start; i < end; i += PAGE_SIZE) {
-                // ★ 5: 两个 PT_LOAD 共享边界页时（很常见），第二段会重新分配
-                //       物理页覆盖第一段尾部数据并泄漏旧页 → 已映射则跳过
+                // 两个 PT_LOAD 共享边界页时,第二段会重新分配物理页
+                // 覆盖第一段尾部数据并泄漏旧页 → 已映射则跳过
                 if (VMM::GetPhysics(pagemap, i))
                     continue;
                 uint64_t page = (uint64_t)PMM::Request();
@@ -75,8 +75,7 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
                 kinfoln("  Mapping vaddr=0x%lx -> page=0x%lx", i, page);
             }
             VMM::NewMapping(pagemap, start, (end - start) / PAGE_SIZE, flags);
-            // ★ 登记 VMA：否则 Fork 克隆不到镜像、进程退出时这些页无人释放
-            //   （依赖幂等版 SetStart 的 vma.cpp；旧版 SetStart 会丢弃它，无害）
+            // 登记 VMA:否则 Fork 克隆不到镜像、进程退出时这些页无人释放
             VMM::VMA::AddRegion(pagemap, start, (end - start) / PAGE_SIZE, flags);
             __memcpy((void*)phdr->p_vaddr, (void*)(data + phdr->p_offset), phdr->p_filesz);
             if (phdr->p_memsz > phdr->p_filesz)
@@ -97,7 +96,7 @@ uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
         }
     }
 
-    // ★ 1: 恢复进入时的地址空间（!smp_started 时 SwitchPageMap 返回 nullptr，兜底内核）
+    // 恢复进入时的地址空间(!smp_started 时 SwitchPageMap 返回 nullptr,兜底内核)
     VMM::SwitchPageMap(restore_pm ? restore_pm : (pagemap_t*)kernel_pagemap);
     max_vaddr += PAGE_SIZE;
     VMM::VMA::SetStart(pagemap, max_vaddr, 1);
@@ -126,16 +125,16 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     //User-Mode Trusted Process Mapping Control, UTPMC
     //SysExecveARG *pearg = (SysExecveARG*)EXECVE_ARG;
 
-    // ★ 2: 记住 syscall 进入时的地址空间。“仅加载”意味着退出时必须原样归还，
-    //       否则 sysret 会把调用者送进错误的 CR3
+    // 记住 syscall 进入时的地址空间。"仅加载"意味着退出时必须原样归还,
+    // 否则 sysret 会把调用者送进错误的 CR3
     cpu_t *my_cpu = this_cpu();
     pagemap_t *caller_pm = (smp_started && my_cpu && my_cpu->pagemap)
                                ? my_cpu->pagemap
                                : (pagemap_t*)kernel_pagemap;
 
     const char* pathname_ = (const char*)u_pathname;
-    char **argv_ = (char**)u_argv;          // ★ 3: 原来声明成 const char*，
-    char **envp_ = (char**)u_envp;          //       argc 计数和 strlen 全按单字节算
+    char **argv_ = (char**)u_argv;          // 原来声明成 const char*,
+    char **envp_ = (char**)u_envp;          // argc 计数和 strlen 全按单字节算
     char *pathname = (char*)kmalloc(strlen(pathname_)+1);
     __memcpy(pathname, pathname_, strlen(pathname_)+1);
     
@@ -256,7 +255,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         return -EINVAL; 
     }
 
-    // ★ 6: user=true 会把这段内核内存映射成 U/S=1 的页，用户程序可直接读写
+    // user=true 会把这段内核内存映射成 U/S=1 的页,用户程序可直接读写
     thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
     if (!thread->fx_area) { 
         kfree(buffer); 
@@ -311,11 +310,11 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     thread->ctx.ss = 0x1b; 
     thread->ctx.rflags = 0x202;
     thread->ctx.rsp = thread->thread_stack;
-    VMM::SwitchPageMap(thread->pagemap);        // ★ 2: 写用户栈需在目标地址空间下
+    VMM::SwitchPageMap(thread->pagemap);        // 写用户栈需在目标地址空间下
     Schedule::PrepareUserStack(thread, argc, argv, envp);
     thread->thread_stack = thread->ctx.rsp;
-    VMM::SwitchPageMap(caller_pm);              // ★ 2: 恢复（若 PrepareUserStack
-                                                //       内部自己切过，这里也保证归位）
+    VMM::SwitchPageMap(caller_pm);              // 恢复(若 PrepareUserStack
+                                                // 内部自己切过,这里也保证归位)
 
     if (tls_memsz > 0) {
         if (tls_align == 0) tls_align = 16;
@@ -337,7 +336,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         VMM::SwitchPageMap(thread->pagemap);
         __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
         *(uint64_t*)tcb_base = tcb_base;
-        VMM::SwitchPageMap(caller_pm);          // ★ 2: 原来是 kernel_pagemap —— 根因
+        VMM::SwitchPageMap(caller_pm);
         thread->fs = tcb_base; 
         thread->tls_base = tls_mem; 
         thread->tls_pages = tls_pages;
@@ -346,36 +345,71 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     kfree(buffer);
     execve_cleanup(argc, envc, argv, envp);
 
+    // ★★★ 版本 1 唯一新增:登记线程账本 ★★★
+    // 进程-线程从属关系属于生命周期数据(与 NewProcess 把 proc 插进
+    // pid2proc_tree 同性质),不属于调度激活 —— 不碰调度器/运行队列,
+    // "仅加载、不运行"的契约不变。
+    // 不挂链的后果:sys_launch 拿 proc->threads == nullptr;
+    //   进程退出时 SyncKillProcThreads 找不到线程,孤儿线程继续跑在
+    //   被 DestroyPM 的地址空间里(跨回收 UAF)。
+    // 时机:全部资源就绪之后(上方所有失败路径裸 kfree 无需摘链 ——
+    //   线程从未入链),art_insert 之前(NOT_RUNQ 是 launch 的唯一发现
+    //   通道,先挂链再发布,保证 launch 看到的 proc->threads 必然有效)。
+    Schedule::Internal::ProcessAddThread(parent, thread);
+
     spinlock_lock(&NOT_RUNQ_LOCK);
     art_insert(NOT_RUNQ_P, (const uint8_t*)&parent->id, 8, parent);
     spinlock_unlock(&NOT_RUNQ_LOCK);
 
     kpokln("LOADED PID:%d",parent->id);
 
-    return parent->id;                          // 此时 CR3 == caller_pm，sysret 安全
+    return parent->id;                          // 此时 CR3 == caller_pm,sysret 安全
 }
 
 uint64_t sys_launch(uint64_t pid,GENERATE_IGN5()){
     IGNV_5();
+    cpu_t *me = this_cpu();
     cpu_t *cpu = get_lw_cpu();
     if (!cpu) return -EFAULT;
 
-    spinlock_lock(&NOT_RUNQ_LOCK);              // ★ 7: 搜索也要持锁
+    // 搜索 + 摘除同锁:并发 launch 同一 pid 天然串行 ——
+    // 先到者删除树节点,后到者 art_search 落空返回 -ESRCH。
+    // 不摘除的后果:进程退出被 idle 回收后,树里留着悬垂 proc 指针,
+    // 二次 launch 同 pid = 解引用已释放内存
+    spinlock_lock(&NOT_RUNQ_LOCK);
     proc_t* proc = (proc_t*)art_search(NOT_RUNQ_P,(const uint8_t*)&pid,8);
-    spinlock_unlock(&NOT_RUNQ_LOCK);
-    if (!proc){     // ★ 7: 原来直接解引用，进程不存在即崩
+    if (!proc){
+        spinlock_unlock(&NOT_RUNQ_LOCK);
         kwarnln("sys_launch: PROC NOT FOUND");
         return -ESRCH;
     }                   
-    kinfoln("PROC->ID %d",proc->id);
 
     thread_t *thread = proc->threads;
-    if (!thread) return -ESRCH;                 // ★ 7
+    if (!thread){
+        spinlock_unlock(&NOT_RUNQ_LOCK);
+        kwarnln("THIS PROC IS EMPTY!!!");
+        return -ESRCH;   
+    }
+
+    // 双保险:树摘除已防住重复投递,这里再挡状态异常
+    // (on_rq:已在某队列;ZOMBIE:已退出)
+    if (thread->on_rq || thread->state == THREAD_ZOMBIE){
+        spinlock_unlock(&NOT_RUNQ_LOCK);
+        kwarnln("sys_launch: pid %d not launchable", (int)pid);
+        return -EINVAL;
+    }
+
+    art_delete(NOT_RUNQ_P, (const uint8_t*)&pid, 8);   // 成功路径摘除
+    spinlock_unlock(&NOT_RUNQ_LOCK);
+
+    kinfoln("PROC->ID %d",proc->id);
 
     thread->state = THREAD_RUNNING;
     thread->timer_cpu = cpu->id;
     thread->cpu_num = cpu->id;
-    Schedule::Internal::ProcessAddThread(proc, thread);
+    // ★ 注意:此处【不得】再调 ProcessAddThread —— sys_load 已挂链,
+    //   二次挂链在多线程场景会打坏环形链表
+
     uint64_t rflags;
     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
     spinlock_lock(&cpu->sched_lock);
@@ -384,10 +418,12 @@ uint64_t sys_launch(uint64_t pid,GENERATE_IGN5()){
     spinlock_unlock(&cpu->sched_lock);
     asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
-    /* if (cpu != this_cpu())
+    // 唤醒目标 CPU:它可能正 hlt 睡着,队列里有线程它也不知道。
+    // "塞进队列"和"CPU 知道要跑它"是两件事,中间隔着这条 IPI
+    if (cpu != me)
         LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
     else
-        asm volatile("int %0" :: "i"(SCHED_VEC + 1));   // 本机直接自陷 */
+        asm volatile("int %0" :: "i"(SCHED_VEC + 1));   // 本机直接自陷 
 
-    return 0;                                   // ★ 7: 原来缺 return，RAX 是垃圾
+    return 0;
 }
