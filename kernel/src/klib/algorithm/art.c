@@ -6,9 +6,6 @@
 extern void *__memcpy(void * d, const void * s, uint64_t n);
 extern void Panic(const char* message);
 
-/* ========== 优化新增：分支预测与预取宏 ========== */
-#define prefetch_r(x) __builtin_prefetch((x), 0, 3)  // 读预取，高时间局部性
-#define prefetch_w(x) __builtin_prefetch((x), 1, 3)  // 写预取，高时间局部性
 
 /**
  * Macros to manipulate pointer tags
@@ -138,14 +135,14 @@ static art_node** find_child(art_node *n, uint8_t c) {
         case NODE4:
             p.p1 = (art_node4*)n;
             // 预取keys数组，加速循环比较
-            prefetch_r(p.p1->keys);
+            PREFETCH_R(p.p1->keys);
             for (int32_t i=0 ; i < n->num_children; i++) {
                 /* this cast works around a bug in gcc 5.1 when unrolling loops
                  * https://gcc.gnu.org/bugzilla/show_bug.cgi?id=59124
                  */
                 if (unlikely(((uint8_t*)p.p1->keys)[i] == c)) {
                     // 命中时预取子节点内容，减少下一级缓存缺失
-                    prefetch_r(p.p1->children[i]);
+                    PREFETCH_R(p.p1->children[i]);
                     return &p.p1->children[i];
                 }
             }
@@ -157,7 +154,7 @@ static art_node** find_child(art_node *n, uint8_t c) {
             uint32_t bitfield = 0;
             uint32_t mask;
 
-            prefetch_r(p.p2->keys);
+            PREFETCH_R(p.p2->keys);
             // Compare the key to all 16 stored keys
             for (int32_t i = 0; i < 16; ++i) {
                 if (p.p2->keys[i] == c)
@@ -175,7 +172,7 @@ static art_node** find_child(art_node *n, uint8_t c) {
              */
             if (likely(bitfield)) {
                 uint32_t idx = __builtin_ctz(bitfield);
-                prefetch_r(p.p2->children[idx]);
+                PREFETCH_R(p.p2->children[idx]);
                 return &p.p2->children[idx];
             }
             break;
@@ -184,19 +181,19 @@ static art_node** find_child(art_node *n, uint8_t c) {
         case NODE48:
             p.p3 = (art_node48*)n;
             // NODE48是O(1)直接索引，最热路径，预取keys数组
-            prefetch_r(&p.p3->keys[c]);
+            PREFETCH_R(&p.p3->keys[c]);
             uint8_t idx = p.p3->keys[c];
             if (likely(idx)) {
-                prefetch_r(p.p3->children[idx-1]);
+                PREFETCH_R(p.p3->children[idx-1]);
                 return &p.p3->children[idx-1];
             }
             break;
 
         case NODE256:
             p.p4 = (art_node256*)n;
-            prefetch_r(&p.p4->children[c]);
+            PREFETCH_R(&p.p4->children[c]);
             if (likely(p.p4->children[c])) {
-                prefetch_r(p.p4->children[c]);
+                PREFETCH_R(p.p4->children[c]);
                 return &p.p4->children[c];
             }
             break;
@@ -218,7 +215,7 @@ static inline int32_t _min__art(int32_t a, int32_t b) {
  */
 static int32_t check_prefix(const art_node *n, const uint8_t *key, int32_t key_len, int32_t depth) {
     int32_t max_cmp = _min__art(_min__art(n->partial_len, MAX_PREFIX_LEN), key_len - depth);
-    prefetch_r(n->partial);
+    PREFETCH_R(n->partial);
 
     int32_t idx;
     for (idx=0; idx < max_cmp; idx++) {
@@ -254,13 +251,13 @@ void* art_search(const art_tree *t, const uint8_t *key, int32_t key_len) {
     int32_t prefix_len, depth = 0;
 
     // 预取根节点
-    if (likely(n)) prefetch_r(n);
+    if (likely(n)) PREFETCH_R(n);
 
     while (likely(n)) {
         // Might be a leaf
         if (unlikely(IS_LEAF(n))) {
             art_leaf *leaf = LEAF_RAW(n);
-            prefetch_r(leaf);
+            PREFETCH_R(leaf);
             // Check if the expanded path matches
             if (likely(!leaf_matches(leaf, key, key_len, depth))) {
                 return leaf->value;
@@ -293,21 +290,21 @@ static art_leaf* minimum(const art_node *n) {
     int32_t idx;
     switch (n->type) {
         case NODE4:
-            prefetch_r(((const art_node4*)n)->children[0]);
+            PREFETCH_R(((const art_node4*)n)->children[0]);
             return minimum(((const art_node4*)n)->children[0]);
         case NODE16:
-            prefetch_r(((const art_node16*)n)->children[0]);
+            PREFETCH_R(((const art_node16*)n)->children[0]);
             return minimum(((const art_node16*)n)->children[0]);
         case NODE48:
             idx=0;
             while (!((const art_node48*)n)->keys[idx]) idx++;
             idx = ((const art_node48*)n)->keys[idx] - 1;
-            prefetch_r(((const art_node48*)n)->children[idx]);
+            PREFETCH_R(((const art_node48*)n)->children[idx]);
             return minimum(((const art_node48*)n)->children[idx]);
         case NODE256:
             idx=0;
             while (!((const art_node256*)n)->children[idx]) idx++;
-            prefetch_r(((const art_node256*)n)->children[idx]);
+            PREFETCH_R(((const art_node256*)n)->children[idx]);
             return minimum(((const art_node256*)n)->children[idx]);
         default:
             Panic("Abort!");
@@ -323,21 +320,21 @@ static art_leaf* maximum(const art_node *n) {
     int32_t idx;
     switch (n->type) {
         case NODE4:
-            prefetch_r(((const art_node4*)n)->children[n->num_children-1]);
+            PREFETCH_R(((const art_node4*)n)->children[n->num_children-1]);
             return maximum(((const art_node4*)n)->children[n->num_children-1]);
         case NODE16:
-            prefetch_r(((const art_node16*)n)->children[n->num_children-1]);
+            PREFETCH_R(((const art_node16*)n)->children[n->num_children-1]);
             return maximum(((const art_node16*)n)->children[n->num_children-1]);
         case NODE48:
             idx=255;
             while (!((const art_node48*)n)->keys[idx]) idx--;
             idx = ((const art_node48*)n)->keys[idx] - 1;
-            prefetch_r(((const art_node48*)n)->children[idx]);
+            PREFETCH_R(((const art_node48*)n)->children[idx]);
             return maximum(((const art_node48*)n)->children[idx]);
         case NODE256:
             idx=255;
             while (!((const art_node256*)n)->children[idx]) idx--;
-            prefetch_r(((const art_node256*)n)->children[idx]);
+            PREFETCH_R(((const art_node256*)n)->children[idx]);
             return maximum(((const art_node256*)n)->children[idx]);
         default:
             Panic("Abort!");
@@ -417,7 +414,7 @@ static void add_child16(art_node16 *n, art_node **ref, uint8_t c, void *child) {
 
         // Compare the key to all 16 stored keys
         uint32_t bitfield = 0;
-        prefetch_r(n->keys);
+        PREFETCH_R(n->keys);
         for (int32_t i = 0; i < n->n.num_children; ++i) {
             if (c < n->keys[i])
                 bitfield |= (1U << i);
@@ -510,7 +507,7 @@ static int32_t prefix_mismatch(const art_node *n, const uint8_t *key, int32_t ke
     int32_t max_cmp = _min__art(_min__art(MAX_PREFIX_LEN, n->partial_len), key_len - depth);
     int32_t idx;
 
-    prefetch_r(n->partial);
+    PREFETCH_R(n->partial);
     for (idx=0; idx < max_cmp; idx++) {
         if (unlikely(n->partial[idx] != key[depth+idx]))
             return idx;
@@ -830,14 +827,14 @@ static int32_t recursive_iter(art_node *n, art_callback cb, void *data) {
     switch (n->type) {
         case NODE4:
             for (int32_t i=0; i < n->num_children; i++) {
-                prefetch_r(((art_node4*)n)->children[i]);
+                PREFETCH_R(((art_node4*)n)->children[i]);
                 res = recursive_iter(((art_node4*)n)->children[i], cb, data);
                 if (unlikely(res)) return res;
             }
             break;
         case NODE16:
             for (int32_t i=0; i < n->num_children; i++) {
-                prefetch_r(((art_node16*)n)->children[i]);
+                PREFETCH_R(((art_node16*)n)->children[i]);
                 res = recursive_iter(((art_node16*)n)->children[i], cb, data);
                 if (unlikely(res)) return res;
             }
@@ -846,7 +843,7 @@ static int32_t recursive_iter(art_node *n, art_callback cb, void *data) {
             for (int32_t i=0; i < 256; i++) {
                 idx = ((art_node48*)n)->keys[i];
                 if (unlikely(!idx)) continue;
-                prefetch_r(((art_node48*)n)->children[idx-1]);
+                PREFETCH_R(((art_node48*)n)->children[idx-1]);
                 res = recursive_iter(((art_node48*)n)->children[idx-1], cb, data);
                 if (unlikely(res)) return res;
             }
@@ -854,7 +851,7 @@ static int32_t recursive_iter(art_node *n, art_callback cb, void *data) {
         case NODE256:
             for (int32_t i=0; i < 256; i++) {
                 if (unlikely(!((art_node256*)n)->children[i])) continue;
-                prefetch_r(((art_node256*)n)->children[i]);
+                PREFETCH_R(((art_node256*)n)->children[i]);
                 res = recursive_iter(((art_node256*)n)->children[i], cb, data);
                 if (unlikely(res)) return res;
             }
@@ -908,13 +905,13 @@ int32_t art_iter_prefix(art_tree *t, const uint8_t *key, int32_t key_len, art_ca
     art_node *n = t->root;
     int32_t prefix_len, depth = 0;
 
-    if (likely(n)) prefetch_r(n);
+    if (likely(n)) PREFETCH_R(n);
 
     while (likely(n)) {
         // Might be a leaf
         if (unlikely(IS_LEAF(n))) {
             art_leaf *leaf = LEAF_RAW(n);
-            prefetch_r(leaf);
+            PREFETCH_R(leaf);
             // Check if the expanded path matches
             if (likely(!leaf_prefix_matches(leaf, key, key_len))) {
                 return cb(data, (const uint8_t*)leaf->key, leaf->key_len, leaf->value);

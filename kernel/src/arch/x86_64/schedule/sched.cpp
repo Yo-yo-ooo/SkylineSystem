@@ -12,6 +12,7 @@
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/interrupt/gdt.h>
+#include <pdef.h>
 
 #ifndef THREAD_TRANSFER
 #define THREAD_TRANSFER 4
@@ -24,18 +25,7 @@
 #define PREEMPT_THRESHOLD (1024ULL * 1024ULL)
 #define SCHED_HUNGER_THRESHOLD (1024ULL * 1024ULL * 5)
 
-/* ==================== 分支预测提示 ==================== */
-#ifndef likely
-#define likely(x)     __builtin_expect(!!(x), 1)
-#endif
-#ifndef unlikely
-#define unlikely(x)   __builtin_expect(!!(x), 0)
-#endif
 
-/* ==================== 缓存预取 ==================== */
-#define PREFETCH_R(p)    __builtin_prefetch((p), 0, 1)   /* 只读, 流式扫描   */
-#define PREFETCH_RH(p)   __builtin_prefetch((p), 0, 3)   /* 只读, 马上要用   */
-#define PREFETCH_W(p)    __builtin_prefetch((p), 1, 3)   /* 写意图, 马上要写 */
 
 extern art_tree *pid2proc_tree;
 extern art_tree *NOT_RUNQ_P;

@@ -49,6 +49,12 @@
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 
+#ifdef __x86_64__
+#define PREFETCH_R(p)   __builtin_prefetch((p), 0, 1)   /* 流式扫描   */
+#define PREFETCH_RH(p)  __builtin_prefetch((p), 0, 3)   /* 马上要用   */
+#define PREFETCH_W(p)   __builtin_prefetch((p), 1, 3)   /* 即将写入   */
+#endif
+
 #ifndef __cplusplus
 #define max(a, b) ({ \
     __typeof__(a) ta = (a); \
