@@ -230,6 +230,11 @@ static void sys_load_fail(proc_t *proc, thread_t *thread,
             fd_manager_destroy(proc->FDMan);
             kfree(proc->FDMan);
         }
+        if (pid2proc_tree) {
+            uint64_t fl = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
+            art_delete(pid2proc_tree, (const uint8_t*)&proc->id, 8);
+            spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, fl);
+        }
         if (proc->pagemap && proc->pagemap != kernel_pagemap)
             VMM::DestroyPM(proc->pagemap);       // 修复: 整个用户地址空间
         kfree(proc);
@@ -417,6 +422,18 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         return -EINVAL;
     }
 
+    /* 并发回收防御: 进程已入 pid2proc_tree, kill(pid) 可在
+    sys_load 执行期间启动 DeleteProc → idle 回收 kfree(proc)。
+    挂链前把关: exiting 已置位则放弃, proc 交给回收方,
+    本侧只清理 thread 的内核资源 (用户侧随 pagemap 回收)。
+    注: 检查与挂链间仍有窄窗口, 彻底修复需 proc 引用计数。 */
+    if (unlikely(parent->exiting)) {
+        if (thread->fx_area)      VMM::Free(kernel_pagemap, thread->fx_area);
+        if (thread->kernel_stack) VMM::Free(kernel_pagemap, (void*)thread->kernel_stack);
+        kfree(thread);
+        return -ESRCH;
+    }
+
     // 线程账本: 先挂链再发布(launch 侧看到的 proc->threads 必然有效)
     Schedule::Internal::ProcessAddThread(parent, thread);
 
@@ -496,12 +513,6 @@ uint64_t sys_launch(uint64_t pid, GENERATE_IGN5()){
     // 不得再调 ProcessAddThread —— sys_load 已挂链, 二次挂链打坏环形链表
     cpu->has_runnable_thread = true;
     Schedule::Internal::InsertToQueue(cpu, thread);
-
-    if (likely(pid2proc_tree)) {
-        spinlock_lock(&PID2PROC_TREE_LOCK);
-        art_insert(pid2proc_tree, (const uint8_t*)&proc->id, 8, proc);
-        spinlock_unlock(&PID2PROC_TREE_LOCK);
-    }
 
     spinlock_unlock(&cpu->sched_lock);
     asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");

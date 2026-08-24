@@ -1,6 +1,38 @@
 #include <klib/klibc.h>
 #include <klib/algorithm/hmap.h>
 #include <klib/algorithm/rbtree.h>
+#include <pdef.h>
+
+/* ============================================================
+ *  优化总览
+ *  ------------------------------------------------------------
+ *  [分支] likely/unlikely 只标结构性不对称分支:
+ *         分配失败、阈值触发、哈希碰撞(48bit 空间)、参数守卫。
+ *         ~50/50 数据分支(更新 vs 新增、桶空 vs 非空)一律不标。
+ *  [预取] 单操作: 桶头行 → root.node / root.hint 两级目标,
+ *         掩盖 rb_search 首次下降前的依赖缺失;
+ *         批量: scan/iter/free/clear/resize 顺序流预取下一桶;
+ *         resize 重插阶段预取 nodes[i+1];
+ *         单向指针追逐(rb_next/Morris)无前瞻窗口, 不预取。
+ *  [分配] resize: Morris O(n) 收集替代 O(n log n) 逐个 erase;
+ *         先释放旧表再填充, 小表走栈缓冲零分配;
+ *         扩容失败退避重试且操作继续(树桶优雅降级);
+ *         缩容一步落在负载中带, 避免阶梯式连续缩容;
+ *         节点空闲链: delete 回收 / insert 复用, 增删抖动零分配。
+ * ============================================================ */
+
+
+
+
+/* 节点空闲链开关: 置 0 恢复 "delete 即 kfree" 的严格释放语义 */
+#ifndef HASHMAP_NODE_CACHE
+#define HASHMAP_NODE_CACHE 1
+#endif
+
+/* resize 收集阶段: 节点数不超过该值时用栈缓冲, 一次 kmalloc 都省掉 */
+#ifndef HASHMAP_STACK_COLLECT
+#define HASHMAP_STACK_COLLECT 64
+#endif
 
 // Load factor configuration
 #define GROW_AT   60
@@ -33,11 +65,20 @@ static inline uint64_t clip_hash(uint64_t hash) {
     return hash & 0xFFFFFFFFFFFFULL;
 }
 
+/* 上取整到 >=16 的 2 的幂 (统一 new/resize/shrink 三处 round-up 逻辑) */
+static inline size_t hashmap_round_pow2(size_t v) {
+    size_t p = 16;
+    while (p < v) p <<= 1;
+    return p;
+}
+
 // Hashmap node stored inside red-black tree
 // Core design: store map pointer inside node to avoid modifying rb_tree.h comparator signature
-// and eliminate global variables completely
 struct hashmap_node {
-    rb_node_t      rb;          // Red-black tree node (MUST be first member)
+    union {
+        rb_node_t      rb;          // 树内链接 (MUST be first member)
+        struct hashmap_node *cache_next; // [分配] 回收态复用头 8 字节穿空闲链, 不增内存
+    };
     uint64_t       hash;        // 48-bit clipped hash value
     struct hashmap *map;        // Parent hashmap, replaces global context
     const void    *key_ptr;     // Valid only when is_proxy != 0
@@ -57,65 +98,109 @@ struct hashmap_region {
 
 // Main hashmap instance structure
 struct hashmap {
+    /* [OPT] 热路径字段压缩进同一缓存行: 每次 set/get/delete 全部命中 */
     size_t   elsize;
-    size_t   cap;
-    size_t   nbuckets;
-    size_t   count;
     size_t   mask;
+    size_t   count;
     size_t   growat;
     size_t   shrinkat;
+    struct hashmap_region *regions;
+    uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1);
+    int32_t  (*compare)(const void *a, const void *b, void *udata);
+
+    /* ---- 冷路径 ---- */
+    size_t   nbuckets;
+    size_t   cap;
+    struct hashmap_node *freelist;   // [分配] 回收节点空闲链
+    size_t   freecount;
+    void     *spare;
+    void     (*elfree)(void *item);
+    void     *udata;
+    uint64_t seed0;
+    uint64_t seed1;
     uint16_t loadfactor;
     uint8_t  growpower;
     bool     oom;
-    uint64_t seed0;
-    uint64_t seed1;
-    uint64_t (*hash)(const void *item, uint64_t seed0, uint64_t seed1);
-    int32_t  (*compare)(const void *a, const void *b, void *udata);
-    void     (*elfree)(void *item);
-    void     *udata;
-    struct hashmap_region *regions;
-    void     *spare;
 };
 
 // Red-black tree comparator
 // No global variable, no extra context, fully compatible with original rb_tree.h interface
-// Use container_of to restore hashmap_node and retrieve map pointer directly from node
 static int hashmap_rb_cmp(const rb_node_t *a, const rb_node_t *b) {
     struct hashmap_node *na = RB_CONTAINER_OF(a, struct hashmap_node, rb);
     struct hashmap_node *nb = RB_CONTAINER_OF(b, struct hashmap_node, rb);
 
-    if (na->hash < nb->hash) return -1;
-    if (na->hash > nb->hash) return 1;
+    /* [分支] 48bit 哈希空间, 相等 ≈ n²/2⁴⁸ 属罕见事件;
+       绝大多数比较在哈希层就解决, 不进用户比较器 */
+    if (likely(na->hash != nb->hash)) {
+        return na->hash < nb->hash ? -1 : 1;
+    }
 
-    // At least one node carries valid map pointer
+    // 哈希碰撞: 至少一端携带有效 map 指针 (proxy 必有)
     struct hashmap *map = na->map ? na->map : nb->map;
-    if (!map || !map->compare) {
+    if (unlikely(!map || !map->compare)) {
         return 1;
     }
-    if (map && map->compare) {
-        const void *a_data = na->is_proxy ? na->key_ptr : hashmap_node_item(na);
-        const void *b_data = nb->is_proxy ? nb->key_ptr : hashmap_node_item(nb);
-        return (int)map->compare(a_data, b_data, map->udata);
-    }
-    return 0;
+    const void *a_data = na->is_proxy ? na->key_ptr : hashmap_node_item(na);
+    const void *b_data = nb->is_proxy ? nb->key_ptr : hashmap_node_item(nb);
+    return (int)map->compare(a_data, b_data, map->udata);
 }
 
 // Allocate new hashmap node
+// [分配] 优先从空闲链取, 高频增删场景完全绕过 kmalloc/kfree
 static struct hashmap_node *hashmap_node_alloc(struct hashmap *map,
                                                 const void *item,
                                                 uint64_t hash) {
-    size_t total = sizeof(struct hashmap_node) + map->elsize;
-    struct hashmap_node *n = (struct hashmap_node *)kmalloc(total);
-    if (!n) return NULL;
+    struct hashmap_node *n;
+#if HASHMAP_NODE_CACHE
+    if (likely(map->freecount != 0)) {
+        n = map->freelist;
+        map->freelist = n->cache_next;
+        map->freecount--;
+    } else
+#endif
+    {
+        n = (struct hashmap_node *)kmalloc(sizeof(struct hashmap_node) + map->elsize);
+        if (unlikely(!n)) return NULL;
+    }
     n->hash     = hash;
     n->map      = map; // Bind node to parent hashmap
     n->key_ptr  = NULL;
     n->is_proxy = 0;
-    _memset(n->_pad, 0, sizeof(n->_pad));
+    /* [OPT] _pad 是纯对齐填充、从不被读, 去掉 memset;
+       链接字段由 rb_insert 内部的 rb_init_node 重建 */
     if (item && map->elsize) {
         __memcpy(hashmap_node_item(n), item, map->elsize);
     }
     return n;
+}
+
+// [分配] delete 侧: 回收进空闲链 (item 已由 spare 返回给调用方,
+// elfree 语义与原实现一致 —— delete 从不调用 elfree)
+static inline void hashmap_node_release(struct hashmap *map, struct hashmap_node *n) {
+#if HASHMAP_NODE_CACHE
+    n->cache_next = map->freelist;
+    map->freelist = n;
+    map->freecount++;
+#else
+    (void)map;
+    kfree(n);
+#endif
+}
+
+// [分配] 清空/销毁时全量释放回收节点 —— clear 语义 = 完整释放内存
+static void hashmap_cache_drain(struct hashmap *map) {
+#if HASHMAP_NODE_CACHE
+    struct hashmap_node *n = map->freelist;
+    while (n) {
+        struct hashmap_node *next = n->cache_next;
+        kfree(n);
+        n = next;
+    }
+    map->freelist = NULL;
+    map->freecount = 0;
+#else
+    (void)map;
+#endif
 }
 
 // Initialize bucket region
@@ -138,43 +223,91 @@ static void hashmap_clear_region(struct hashmap *map, struct hashmap_region *r) 
     rb_clear(&r->root, hashmap_free_node_cb, map);
 }
 
+/* [分配] resize 收集上下文: 只记录节点指针。
+   注意: rb_clear 走 Morris 后序, 回调期间节点的 right 指针处于
+   反转穿链状态, 绝不能在回调里触碰节点本身 (否则破坏遍历链) */
+struct hashmap_collect_ctx {
+    rb_node_t **nodes;
+    size_t      pos;
+};
+
+static void hashmap_collect_cb(rb_node_t *node, void *arg) {
+    struct hashmap_collect_ctx *ctx = (struct hashmap_collect_ctx *)arg;
+    ctx->nodes[ctx->pos++] = node;
+}
+
 // Resize bucket table (expand or shrink)
+// [分配] 相比原实现:
+//   1) 原来每节点 rb_first+rb_erase+rb_insert, erase 自带 O(log n) fixup;
+//      现在 Morris 后序 O(n) 摘链, 只剩一次插入下降;
+//   2) 先释放旧桶表再填充新表, 缩短 "旧表+新表" 同时存活的峰值窗口;
+//   3) 节点数 <= HASHMAP_STACK_COLLECT 时用栈缓冲, 零额外分配;
+//   4) 任一分配失败时旧表完好无损, 调用方可安全降级。
 static bool hashmap_resize(struct hashmap *map, size_t new_cap) {
-    size_t ncap = 16;
-    if (new_cap < 16) new_cap = 16;
-    while (ncap < new_cap) ncap *= 2;
-    new_cap = ncap;
+    new_cap = hashmap_round_pow2(new_cap);
 
     struct hashmap_region *new_regions = (struct hashmap_region *)
         kmalloc(sizeof(struct hashmap_region) * new_cap);
-    if (!new_regions) return false;
-
+    if (unlikely(!new_regions)) return false;
     for (size_t i = 0; i < new_cap; i++) {
         hashmap_region_init(&new_regions[i]);
     }
 
-    size_t new_mask = new_cap - 1;
+    size_t n = map->count;
+    if (n == 0) {
+        // 空表换壳: 典型场景是 clear(false) 复位 / 缩容到空
+        kfree(map->regions);
+        goto commit;
+    }
 
-    for (size_t i = 0; i < map->nbuckets; i++) {
-        struct hashmap_region *old_r = &map->regions[i];
-        while (old_r->root.node) {
-            rb_node_t *node = rb_first(old_r->root.node);
-            rb_erase(&old_r->root, node);
-
-            struct hashmap_node *hn = RB_CONTAINER_OF(node, struct hashmap_node, rb);
-            size_t new_idx = hn->hash & new_mask;
-            struct hashmap_region *new_r = &new_regions[new_idx];
-            // No need to pass map externally; node contains self-bound map pointer
-            rb_insert(&new_r->root, &hn->rb, hashmap_rb_cmp);
+    rb_node_t *stack_nodes[HASHMAP_STACK_COLLECT];
+    rb_node_t **nodes = stack_nodes;
+    if (unlikely(n > HASHMAP_STACK_COLLECT)) {
+        nodes = (rb_node_t **)kmalloc(n * sizeof(rb_node_t *));
+        if (unlikely(!nodes)) {
+            kfree(new_regions);
+            return false;
         }
     }
 
+    // Phase 1: O(n) 摘下全部节点 (无 erase、无 fixup、无 rebalance)
+    struct hashmap_collect_ctx ctx = { nodes, 0 };
+    for (size_t i = 0; i < map->nbuckets; i++) {
+        /* [预取] 顺序遍历桶数组; Morris 遍历耗时较长,
+           足够下一桶头行落地 */
+        if (likely(i + 1 < map->nbuckets)) {
+            PREFETCH_RH(&map->regions[i + 1].root);
+        }
+        rb_clear(&map->regions[i].root, hashmap_collect_cb, &ctx);
+    }
+
+    // 节点已全部脱链, 旧桶表成为死重, 尽早释放
     kfree(map->regions);
+
+    // Phase 2: 重插到新表
+    size_t moved = ctx.pos;
+    if (unlikely(moved != n)) {
+        map->count = moved;  // 防御: 修复可能的计数漂移(不应发生)
+    }
+    size_t new_mask = new_cap - 1;
+    for (size_t i = 0; i < moved; i++) {
+        /* [预取] nodes 数组本身顺序流由硬件预取器覆盖,
+           但数组元素指向的节点行是随机跳转 —— 提前一拍预取 */
+        if (likely(i + 1 < moved)) {
+            PREFETCH_RH(nodes[i + 1]);
+        }
+        struct hashmap_node *hn = RB_CONTAINER_OF(nodes[i], struct hashmap_node, rb);
+        rb_insert(&new_regions[hn->hash & new_mask].root, &hn->rb, hashmap_rb_cmp);
+    }
+
+    if (nodes != stack_nodes) kfree(nodes);
+
+commit:
     map->regions  = new_regions;
     map->nbuckets = new_cap;
-    map->mask     = new_mask;
-    map->growat   = lf_threshold(map->nbuckets, PCT_TO_LF(map->loadfactor));
-    map->shrinkat = lf_threshold(map->nbuckets, SHRINK_LF);
+    map->mask     = new_cap - 1;
+    map->growat   = lf_threshold(new_cap, PCT_TO_LF(map->loadfactor));
+    map->shrinkat = lf_threshold(new_cap, SHRINK_LF);
     return true;
 }
 
@@ -199,19 +332,13 @@ struct hashmap *hashmap_new_with_allocator(
     void (*elfree)(void *item),
     void *udata)
 {
-    if (elsize == 0) {
+    if (unlikely(elsize == 0)) {
         return NULL;
     }
-    size_t ncap = 16;
-    if (cap < ncap) {
-        cap = ncap;
-    } else {
-        while (ncap < cap) ncap *= 2;
-        cap = ncap;
-    }
+    cap = hashmap_round_pow2(cap);
 
     struct hashmap *map = (struct hashmap *)kmalloc(sizeof(struct hashmap));
-    if (!map) return NULL;
+    if (unlikely(!map)) return NULL;
     _memset(map, 0, sizeof(*map));
 
     map->elsize   = elsize;
@@ -230,7 +357,7 @@ struct hashmap *hashmap_new_with_allocator(
 
     map->regions = (struct hashmap_region *)
         kmalloc(sizeof(struct hashmap_region) * cap);
-    if (!map->regions) {
+    if (unlikely(!map->regions)) {
         kfree(map);
         return NULL;
     }
@@ -238,8 +365,8 @@ struct hashmap *hashmap_new_with_allocator(
         hashmap_region_init(&map->regions[i]);
     }
 
-    map->spare = kmalloc(elsize ? elsize : 1);
-    if (!map->spare) {
+    map->spare = kmalloc(elsize);   // elsize 已保证非零
+    if (unlikely(!map->spare)) {
         kfree(map->regions);
         kfree(map);
         return NULL;
@@ -266,10 +393,15 @@ struct hashmap *hashmap_new(size_t elsize, size_t cap, uint64_t seed0,
 
 // Destroy entire hashmap and free all resources
 void hashmap_free(struct hashmap *map) {
-    if (!map) return;
+    if (unlikely(!map)) return;
     for (size_t i = 0; i < map->nbuckets; i++) {
+        /* [预取] 顺序流: 下一桶头行与当前桶的 Morris 释放重叠 */
+        if (likely(i + 1 < map->nbuckets)) {
+            PREFETCH_RH(&map->regions[i + 1].root);
+        }
         hashmap_clear_region(map, &map->regions[i]);
     }
+    hashmap_cache_drain(map);   // [分配] 回收链也一并释放
     kfree(map->regions);
     if (map->spare) kfree(map->spare);
     kfree(map);
@@ -278,14 +410,20 @@ void hashmap_free(struct hashmap *map) {
 // Clear all entries, optionally reset bucket capacity
 void hashmap_clear(struct hashmap *map, bool update_cap) {
     for (size_t i = 0; i < map->nbuckets; i++) {
+        if (likely(i + 1 < map->nbuckets)) {
+            PREFETCH_RH(&map->regions[i + 1].root);
+        }
         hashmap_clear_region(map, &map->regions[i]);
     }
     map->count = 0;
+    /* [分配] clear 语义 = 完整释放: 回收链同样清空;
+       delete→insert 的抖动复用才是空闲链的目标场景 */
+    hashmap_cache_drain(map);
 
     if (update_cap) {
         map->cap = map->nbuckets;
     } else if (map->nbuckets != map->cap) {
-        hashmap_resize(map, map->cap);
+        hashmap_resize(map, map->cap);   // count==0: 纯换壳, 零节点搬移
     }
 }
 
@@ -295,15 +433,15 @@ static uint64_t get_hash(const struct hashmap *map, const void *key) {
 }
 
 // Initialize proxy node used for search matching
+/* [OPT] 比较器只读 hash/map/is_proxy/key_ptr, rb 链接字段与 _pad
+   从不被读 —— 省掉 rb_init_node + memset 共 ~10 次存储/次操作 */
 static inline void hashmap_build_proxy(struct hashmap_node *proxy,
                                         struct hashmap *map,
                                         uint64_t hash, const void *key) {
-    rb_init_node(&proxy->rb);
     proxy->hash     = hash;
-    proxy->map      = map; // Proxy node also bind parent map pointer
+    proxy->map      = map;
     proxy->key_ptr  = key;
     proxy->is_proxy = 1;
-    _memset(proxy->_pad, 0, sizeof(proxy->_pad));
 }
 
 // Insert or update entry with precomputed hash
@@ -313,22 +451,34 @@ const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
     hash = clip_hash(hash);
     map->oom = false;
 
-    if (map->count >= map->growat) {
-        if (!hashmap_resize(map, map->nbuckets * (1U << map->growpower))) {
+    /* [分支][分配] 扩容点: 摊还触发, 属罕见路径。
+       失败时不再让本次插入整体失败 —— 树桶可优雅降级(桶内树变深),
+       仅退避 25% 负载后重试, 避免OOM期间每次 set 都撞一次 kmalloc */
+    if (unlikely(map->count >= map->growat)) {
+        if (unlikely(!hashmap_resize(map, map->nbuckets << map->growpower))) {
             map->oom = true;
-            return NULL;
+            map->growat = map->count + (map->nbuckets >> 2) + 1;
         }
     }
 
     size_t idx = hash & map->mask;
     struct hashmap_region *r = &map->regions[idx];
 
+    /* [预取] 先发桶头行, 再构造 proxy(独立存储), 与该行到达重叠;
+       随后预取 root.node / root.hint 两个目标 —— 这是 rb_search
+       即将开始的三级指针追逐的头两级 */
+    PREFETCH_RH(&r->root);
+
     struct hashmap_node proxy;
     hashmap_build_proxy(&proxy, map, hash, item);
+
+    PREFETCH_RH(r->root.node);
+    PREFETCH_RH(r->root.hint);
 
     rb_node_t *existing = rb_search(&r->root, &proxy.rb, hashmap_rb_cmp);
 
     if (existing) {
+        /* [分支] 更新 vs 新增是数据相关 (~50/50), 不标 */
         struct hashmap_node *n = RB_CONTAINER_OF(existing, struct hashmap_node, rb);
         void *old_item = hashmap_node_item(n);
         __memcpy(map->spare, old_item, map->elsize);
@@ -337,7 +487,7 @@ const void *hashmap_set_with_hash(struct hashmap *map, const void *item,
     }
 
     struct hashmap_node *n = hashmap_node_alloc(map, item, hash);
-    if (!n) {
+    if (unlikely(!n)) {
         map->oom = true;
         return NULL;
     }
@@ -360,14 +510,22 @@ const void *hashmap_get_with_hash(const struct hashmap *map, const void *key,
     size_t idx = hash & map->mask;
     struct hashmap_region *r = &map->regions[idx];
 
+    PREFETCH_RH(&r->root);
+
     struct hashmap_node proxy;
     hashmap_build_proxy(&proxy, (struct hashmap *)map, hash, key);
 
+    PREFETCH_RH(r->root.node);
+    PREFETCH_RH(r->root.hint);
+
     rb_node_t *found = rb_search(&r->root, &proxy.rb, hashmap_rb_cmp);
 
-    if (!found) return NULL;
-    struct hashmap_node *n = RB_CONTAINER_OF(found, struct hashmap_node, rb);
-    return hashmap_node_item(n);
+    /* [分支] 存在性查询以命中为主流(同 rb_tree.h 的标注口径);
+       若你的负载以 miss 为主, 把提示反过来即可 */
+    if (likely(found)) {
+        return hashmap_node_item(RB_CONTAINER_OF(found, struct hashmap_node, rb));
+    }
+    return NULL;
 }
 
 // Lookup entry (compute hash internally)
@@ -384,24 +542,35 @@ const void *hashmap_delete_with_hash(struct hashmap *map, const void *key,
     size_t idx = hash & map->mask;
     struct hashmap_region *r = &map->regions[idx];
 
+    PREFETCH_RH(&r->root);
+
     struct hashmap_node proxy;
     hashmap_build_proxy(&proxy, map, hash, key);
 
+    PREFETCH_RH(r->root.node);
+    PREFETCH_RH(r->root.hint);
+
     rb_node_t *found = rb_search(&r->root, &proxy.rb, hashmap_rb_cmp);
-    if (!found) {
-        return NULL;
+    if (unlikely(!found)) {
+        return NULL;   // [分支] 删除通常针对存在的键
     }
 
     struct hashmap_node *n = RB_CONTAINER_OF(found, struct hashmap_node, rb);
     __memcpy(map->spare, hashmap_node_item(n), map->elsize);
     rb_erase(&r->root, found);
-    kfree(n);
+    hashmap_node_release(map, n);   // [分配] 回收进空闲链而非 kfree
     map->count--;
 
-    if (map->nbuckets > map->cap && map->count <= map->shrinkat) {
-        size_t new_cap = map->nbuckets / 2;
-        if (new_cap < map->cap) new_cap = map->cap;
-        hashmap_resize(map, new_cap);
+    /* [分支][分配] 缩容点: 低于 10% 才触发, 罕见。
+       一步落在负载中带(~50%), 而非原实现的只减半 ——
+       批量删除时从 "每跌过阈值减半一次" 的 O(log n) 次 resize
+       收敛为少数几次; 中带落点同时远离两侧阈值, 无伸缩抖动 */
+    if (unlikely(map->nbuckets > map->cap && map->count <= map->shrinkat)) {
+        size_t half = map->nbuckets >> 1;
+        size_t target = hashmap_round_pow2(map->count << 1);  // ~50% 负载目标
+        if (target > half) target = half;
+        if (target < map->cap) target = map->cap;
+        hashmap_resize(map, target);   // 尽力而为; 失败仅保持大表, 无害
     }
 
     return map->spare;
@@ -429,7 +598,7 @@ size_t hashmap_nbuckets(const struct hashmap *map) {
 
 // Fetch first item in specified bucket
 const void *hashmap_bucket_item(const struct hashmap *map, size_t i) {
-    if (i >= map->nbuckets) return NULL;
+    if (unlikely(i >= map->nbuckets)) return NULL;
     struct hashmap_region *r = &map->regions[i];
     rb_node_t *first = rb_first(r->root.node);
     if (!first) return NULL;
@@ -439,7 +608,7 @@ const void *hashmap_bucket_item(const struct hashmap *map, size_t i) {
 // Simple probe function by hash position
 const void *hashmap_probe(struct hashmap *map, uint64_t position) {
     size_t idx = (size_t)(position & map->mask);
-    if (idx >= map->nbuckets) return NULL;
+    if (unlikely(idx >= map->nbuckets)) return NULL;
     struct hashmap_region *r = &map->regions[idx];
     rb_node_t *first = rb_first(r->root.node);
     if (!first) return NULL;
@@ -451,12 +620,16 @@ bool hashmap_scan(struct hashmap *map,
     bool (*iter)(const void *item, void *udata), void *udata)
 {
     for (size_t i = 0; i < map->nbuckets; i++) {
+        /* [预取] 桶数组顺序流: 空桶/稀疏桶切换极快时收益最大 */
+        if (likely(i + 1 < map->nbuckets)) {
+            PREFETCH_RH(&map->regions[i + 1].root);
+        }
         struct hashmap_region *r = &map->regions[i];
         rb_node_t *cur = rb_first(r->root.node);
         while (cur) {
             struct hashmap_node *n = RB_CONTAINER_OF(cur, struct hashmap_node, rb);
-            if (!iter(hashmap_node_item(n), udata)) return false;
-            cur = rb_next(cur);
+            if (unlikely(!iter(hashmap_node_item(n), udata))) return false;
+            cur = rb_next(cur);   // 指针追逐, 无前瞻窗口, 不预取
         }
     }
     return true;
@@ -469,12 +642,15 @@ bool hashmap_iter(struct hashmap *map, size_t *i, void **item) {
     uint32_t offset = (uint32_t)(state & 0xFFFFFFFFu);
 
     while (region < map->nbuckets) {
+        if (likely(region + 1 < map->nbuckets)) {
+            PREFETCH_RH(&map->regions[region + 1].root);
+        }
         struct hashmap_region *r = &map->regions[region];
         rb_node_t *cur = rb_first(r->root.node);
         for (uint32_t k = 0; k < offset && cur; k++) {
             cur = rb_next(cur);
         }
-        if (cur) {
+        if (likely(cur)) {
             *item = hashmap_node_item(RB_CONTAINER_OF(cur, struct hashmap_node, rb));
             *i = ((uint64_t)region << 32) | (uint64_t)(offset + 1);
             return true;
@@ -484,6 +660,8 @@ bool hashmap_iter(struct hashmap *map, size_t *i, void **item) {
     }
     return false;
 }
+
+/* ==================== 哈希函数: 与原实现一致, 未改动 ==================== */
 
 // SipHash reference C implementation
 static uint64_t SIP64(const uint8_t *in, const size_t inlen, uint64_t seed0,

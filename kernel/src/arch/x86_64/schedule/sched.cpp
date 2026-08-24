@@ -14,10 +14,6 @@
 #include <arch/x86_64/interrupt/gdt.h>
 #include <pdef.h>
 
-#ifndef THREAD_TRANSFER
-#define THREAD_TRANSFER 4
-#endif
-
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
 #define ZOMBIE_RECLAIM_BATCH 16

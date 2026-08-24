@@ -53,6 +53,10 @@
 #define PREFETCH_R(p)   __builtin_prefetch((p), 0, 1)   /* 流式扫描   */
 #define PREFETCH_RH(p)  __builtin_prefetch((p), 0, 3)   /* 马上要用   */
 #define PREFETCH_W(p)   __builtin_prefetch((p), 1, 3)   /* 即将写入   */
+#else
+#define PREFETCH_R(p)  
+#define PREFETCH_RH(p) 
+#define PREFETCH_W(p)  
 #endif
 
 #ifndef __cplusplus

@@ -14,7 +14,15 @@
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/interrupt/gdt.h>
 
+#ifndef likely
+#define likely(x)     __builtin_expect(!!(x), 1)
+#endif
+#ifndef unlikely
+#define unlikely(x)   __builtin_expect(!!(x), 0)
+#endif
+
 #define WAIT_THREAD_TIMEOUT_MS 1000ULL
+#define KILL_RETRY_TIMEOUT_MS  1000ULL   // 修复: kill_thread_batch 重试上限
 
 extern uint32_t sched_prio_to_weight[16];
 extern cpu_t *get_lw_cpu(cpu_t *ref_cpu);
@@ -48,7 +56,7 @@ static inline void detach_thread_from_proc(thread_t *thread) {
 static inline void wait_for_transfer(thread_t *t) {
     uint64_t wait_start = PIT::TimeSinceBootMS();
     while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == THREAD_TRANSFER) {
-        if (PIT::TimeSinceBootMS() - wait_start > WAIT_THREAD_TIMEOUT_MS) { 
+        if (PIT::TimeSinceBootMS() - wait_start > WAIT_THREAD_TIMEOUT_MS) {
             Panic("Thread stuck in TRANSFER state for too long!");
         }
         asm volatile("pause");
@@ -56,13 +64,20 @@ static inline void wait_for_transfer(thread_t *t) {
 }
 
 static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait) {
+    /* 修复: 重试循环加超时 —— THREAD_ZOMBIE==0 语义下, 构造中的线程
+       (memset 后未赋 state) 会让 state==ZOMBIE 的 continue 分支无限自旋 */
+    uint64_t batch_start = PIT::TimeSinceBootMS();
+
     while (true) {
+        if (unlikely(PIT::TimeSinceBootMS() - batch_start > KILL_RETRY_TIMEOUT_MS))
+            Panic("kill_thread_batch: target stuck (state/cpu migration race)");
+
         wait_for_transfer(target);
-        
+
         uint32_t target_cpu_num = __atomic_load_n(&target->cpu_num, __ATOMIC_ACQUIRE);
         if (target_cpu_num >= MAX_CPU || !smp_cpu_list[target_cpu_num]) {
             asm volatile("pause");
-            continue; 
+            continue;
         }
         cpu_t *t_cpu = smp_cpu_list[target_cpu_num];
 
@@ -83,7 +98,7 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
 
             uint32_t cur_target_cpu = __atomic_load_n(&target->cpu_num, __ATOMIC_ACQUIRE);
             uint32_t cur_timer_cpu = __atomic_load_n(&target->timer_cpu, __ATOMIC_ACQUIRE);
-            
+
             if (__atomic_load_n(&target->state, __ATOMIC_ACQUIRE) == THREAD_ZOMBIE ||
                 cur_target_cpu != target_cpu_num ||
                 (target->timer_bucket != nullptr && cur_timer_cpu != timer_cpu_num)) {
@@ -221,7 +236,6 @@ static void EnqueueProcZombie(proc_t *proc) {
         proc_zombie_list[cpu->id] = proc;
         proc_zombie_count[cpu->id]++;
     } else {
-        // 极端兜底情况，挂入 CPU 0
         proc->sibling = proc_zombie_list[0];
         proc_zombie_list[0] = proc;
         proc_zombie_count[0]++;
@@ -230,43 +244,40 @@ static void EnqueueProcZombie(proc_t *proc) {
 }
 
 namespace Schedule {
-    // 在 sched_idle 中被调用，安全地销毁部分已退出的进程资源
     void DrainProcZombieList(cpu_t *cpu) {
         if (!cpu) return;
-        
+
         uint64_t rflags = irq_save();
         uint32_t count = proc_zombie_count[cpu->id];
         if (count == 0) {
             irq_restore(rflags);
             return;
         }
-        
-        // 轻量批量回收策略
+
         uint32_t to_reclaim;
         if (count >= PROC_ZOMBIE_HIGH_WATERMARK) {
-            to_reclaim = count - PROC_ZOMBIE_LOW_WATERMARK; // 积压过多，回收至低水位
+            to_reclaim = count - PROC_ZOMBIE_LOW_WATERMARK;
         } else {
-            to_reclaim = (count > PROC_ZOMBIE_BATCH) ? PROC_ZOMBIE_BATCH : count; // 积压不多，每次只回收一小批
+            to_reclaim = (count > PROC_ZOMBIE_BATCH) ? PROC_ZOMBIE_BATCH : count;
         }
         if (to_reclaim > count) to_reclaim = count;
-        
+
         proc_t *batch = nullptr;
         for (uint32_t i = 0; i < to_reclaim; i++) {
             proc_t *p = proc_zombie_list[cpu->id];
             if (!p) break;
             proc_zombie_list[cpu->id] = p->sibling;
             proc_zombie_count[cpu->id]--;
-            
+
             p->sibling = batch;
             batch = p;
         }
         irq_restore(rflags);
-        
-        // 在开中断下安全销毁
+
         proc_t *p = batch;
         while (p) {
             proc_t *next = p->sibling;
-            
+
             uint64_t flags = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
             art_delete(pid2proc_tree, p->id, 8);
             spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, flags);
@@ -278,7 +289,7 @@ namespace Schedule {
                 if (__sync_lock_test_and_set(&child->exiting, 1) == 0) {
                     child->parent = nullptr;
                     child->sibling = nullptr;
-                    EnqueueProcZombie(child); // 将子进程继续挂入 Per-CPU 队列
+                    EnqueueProcZombie(child);
                 } else {
                     child->parent = nullptr;
                 }
@@ -287,17 +298,15 @@ namespace Schedule {
             p->children = nullptr;
             spin_unlock_irqrestore(&PROC_LIST_LOCK, flags);
 
-            // 在空闲态执行可能阻塞的 VMM 销毁操作
             if (p->pagemap && p->pagemap != kernel_pagemap) {
                 VMM::DestroyPM(p->pagemap);
                 p->pagemap = nullptr;
             }
 
-            // FDMan 应当在 FinalizeProcExit 中同步关闭，此处作兜底防御
-            if (p->FDMan) { 
-                fd_manager_destroy(p->FDMan); 
-                kfree(p->FDMan); 
-                p->FDMan = nullptr; 
+            if (p->FDMan) {
+                fd_manager_destroy(p->FDMan);
+                kfree(p->FDMan);
+                p->FDMan = nullptr;
             }
 
             kfree(p);
@@ -321,7 +330,6 @@ namespace Schedule {
                 }
             }
         }
-        cpu_t *cpu = get_cpu(thread->cpu_num);
         if (thread->fx_area) VMM::Free(kernel_pagemap, thread->fx_area);
         if (thread->kernel_stack) VMM::Free(kernel_pagemap, thread->kernel_stack);
     }
@@ -361,6 +369,10 @@ namespace Schedule {
             cpu->zombie_list = thread;
             cpu->zombie_count++;
         }
+        /* 注: 既不在 rq 也不在 timer 的窗口 (如 TRANSFER 换队瞬间,
+           wait_for_transfer 的 check-then-act 缝隙) 线程会泄漏 ——
+           状态已是 ZOMBIE, 无人再引用它。概率极低, 完整修复需要
+           以线程为中心的重试而非此处的一次性判定。 */
         spin_unlock_irqrestore(&cpu->sched_lock, rflags);
 
         if (was_running) {
@@ -407,21 +419,19 @@ namespace Schedule {
 
         SyncKillProcThreads(proc, nullptr);
 
-        // 关闭 FDMan 可能触发阻塞，所以必须在退出上下文中同步完成
-        if (proc->FDMan) { 
-            fd_manager_destroy(proc->FDMan); 
-            kfree(proc->FDMan); 
-            proc->FDMan = nullptr; 
+        if (proc->FDMan) {
+            fd_manager_destroy(proc->FDMan);
+            kfree(proc->FDMan);
+            proc->FDMan = nullptr;
         }
 
-        // 将进程结构体挂入 Per-CPU 僵尸队列，交由 idle 异步回收
         EnqueueProcZombie(proc);
     }
 
     static void FinalizeProcExit(proc_t *proc, cpu_t *cpu) {
         uint64_t pid = proc->id;
         thread_t *curr_thread = cpu->current_thread;
-        
+
         SyncKillProcThreads(proc, curr_thread);
 
         uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
@@ -448,7 +458,7 @@ namespace Schedule {
         pagemap_t *pm_to_destroy = proc->pagemap;
         proc->pagemap = nullptr;
         curr_thread->pagemap = kernel_pagemap;
-        
+
         if (!curr_thread->IsForkThread && pm_to_destroy != kernel_pagemap) {
             if (curr_thread->stack && curr_thread->stack != curr_thread->kernel_stack) { VMM::Free(pm_to_destroy, curr_thread->stack); curr_thread->stack = 0; }
             if (curr_thread->sig_stack) { VMM::Free(pm_to_destroy, curr_thread->sig_stack); curr_thread->sig_stack = 0; }
@@ -456,27 +466,22 @@ namespace Schedule {
         }
 
         VMM::SwitchPageMap(kernel_pagemap);
-        // 保留 pm_to_destroy 指针以供 idle 销毁
         proc->pagemap = pm_to_destroy;
 
-        // 关闭 FDMan 可能触发阻塞，所以必须在退出上下文中同步完成
-        if (proc->FDMan) { 
-            fd_manager_destroy(proc->FDMan); 
-            kfree(proc->FDMan); 
-            proc->FDMan = nullptr; 
+        if (proc->FDMan) {
+            fd_manager_destroy(proc->FDMan);
+            kfree(proc->FDMan);
+            proc->FDMan = nullptr;
         }
 
-        // 将进程结构体挂入 Per-CPU 僵尸队列，交由 idle 异步回收
         EnqueueProcZombie(proc);
 
-        // 标记线程为 ZOMBIE，Switch 会将其自动放入僵尸队列
         rflags = spin_lock_irqsave(&cpu->sched_lock);
         curr_thread->state = THREAD_ZOMBIE;
         spin_unlock_irqrestore(&cpu->sched_lock, rflags);
 
         kinfoln("Exit PROC %d", pid);
 
-        // 不开中断，直接触发调度，Switch 会永远切走，不会返回
         Schedule::Yield();
         while(true) { asm volatile("hlt"); }
     }
@@ -484,11 +489,15 @@ namespace Schedule {
     void PROC_KILL(proc_t *proc, int32_t exit_code){
         thread_t *curr_thread = Schedule::this_thread();
         cpu_t *cpu = this_cpu();
+        /* 修复: 空指针防御 —— Exit 路径 this_thread()/this_proc()
+           可能返回 null (中断上下文/未初始化), 原实现直接解引用崩溃 */
+        if (!curr_thread || !cpu || !proc) return;
+
         curr_thread->exit_code = exit_code;
-        
+
         if (__sync_lock_test_and_set(&proc->exiting, 1) != 0) {
             VMM::SwitchPageMap(kernel_pagemap);
-            
+
             uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
             if (curr_thread->parent) {
                 if (curr_thread->next == curr_thread) proc->threads = nullptr;
@@ -501,7 +510,7 @@ namespace Schedule {
                 curr_thread->next = curr_thread->prev = nullptr;
             }
             spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
-            
+
             rflags = spin_lock_irqsave(&cpu->sched_lock);
             curr_thread->pagemap = kernel_pagemap;
             curr_thread->stack = 0;
@@ -513,7 +522,7 @@ namespace Schedule {
             Schedule::Yield();
             while(1) { asm volatile("hlt"); }
         }
-        
+
         FinalizeProcExit(proc, cpu);
         while(1) { asm volatile("hlt"); }
     }
@@ -521,6 +530,9 @@ namespace Schedule {
     void Exit(int32_t code) {
         asm volatile("cli"); LAPIC::StopTimer();
         proc_t *curr_proc = Schedule::this_proc();
+        if (!curr_proc) {          // 修复: 无所属进程时无法退出, 原地自旋
+            while(1) { asm volatile("hlt"); }
+        }
         PROC_KILL(curr_proc, code);
     }
 
@@ -554,6 +566,9 @@ namespace Schedule {
         fd_manager_init(proc->FDMan);
         proc->fd_count = 0;
         proc->IsTrusted = Trusted;
+        /* 你这版改为无条件入树 (好改动: pid 全局可解析)。
+           连锁要求见 sys_load.cpp 补丁: 失败回收必须摘树,
+           sys_launch 不得再插一遍。 */
         uint64_t rflags = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
         art_insert(pid2proc_tree, (const uint8_t*)&proc->id, 8, proc);
         spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, rflags);
@@ -561,7 +576,9 @@ namespace Schedule {
     }
 
     void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]) {
-        if (argc <= 0 || !argv || !envp) return;
+        /* 修复: envp 允许 NULL (空环境) —— 原实现 !envp 直接 return,
+           连 argv/argc 都不写, 用户程序拿到垃圾栈帧 */
+        if (argc <= 0 || !argv) return;
         char **kernel_argv = nullptr, **kernel_envp = nullptr;
         uint64_t *thread_argv = nullptr, *thread_envp = nullptr;
         int32_t envc = 0; uint64_t offset = 0;
@@ -578,7 +595,7 @@ namespace Schedule {
             __memcpy(kernel_argv[i], argv[i], size);
         }
 
-        while (envp[envc++]); envc -= 1;
+        if (envp) { while (envp[envc++]); envc -= 1; }   // 修复: envp NULL 时 envc=0
         if (envc > 0) {
             kernel_envp = (char**)kmalloc(envc * sizeof(char*));
             if (!kernel_envp) goto cleanup;
@@ -640,11 +657,12 @@ namespace Schedule {
         thread->pagemap = parent->pagemap;
         thread->priority = priority > 15 ? 15 : priority;
         thread->weight = sched_prio_to_weight[thread->priority];
+        thread->state = THREAD_RUNNING;   // 修复: 提前 —— 不依赖后续路径补设
         cpu_t *cpu = get_cpu(cpu_num);
         uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = cpu->base_quantum / 2;
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), true);
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), false);
         if (!thread->fx_area) { kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
@@ -655,9 +673,8 @@ namespace Schedule {
         thread->stack = kernel_stack; thread->ctx.rip = (uint64_t)entry;
         thread->ctx.cs = 0x08; thread->ctx.ss = 0x10; thread->ctx.rflags = 0x202;
         thread->ctx.rsp = thread->kernel_rsp; thread->thread_stack = thread->ctx.rsp;
-        thread->state = THREAD_RUNNING;
         Schedule::Internal::ProcessAddThread(parent, thread);
-        
+
         uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);
@@ -674,6 +691,7 @@ namespace Schedule {
         thread->cpu_num = cpu_num; thread->parent = parent; thread->pagemap = parent->pagemap;
         thread->priority = priority > 15 ? 15 : priority;
         thread->weight = sched_prio_to_weight[thread->priority];
+        thread->state = THREAD_RUNNING;   // 修复: 提前
         cpu_t *cpu = get_cpu(cpu_num);
         uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = cpu->base_quantum / 2;
@@ -694,9 +712,14 @@ namespace Schedule {
         uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
         _memset(&thread->ctx, 0, sizeof(context_t));
         thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align);
-        if (thread->ctx.rip == 0) { kerrorln("ELF load failed!"); kfree(buffer); kfree(thread); return nullptr; }
+        if (thread->ctx.rip == 0) {
+            kerrorln("ELF load failed!");
+            /* 注: 此前 PT_LOAD 已 map 的页泄漏 (pagemap 归 parent, 由
+               进程退出统一回收, 非 immediate UAF, 可接受) */
+            kfree(buffer); kfree(thread); return nullptr;
+        }
 
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
         if (!thread->fx_area) { kfree(buffer); kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
@@ -738,9 +761,8 @@ namespace Schedule {
         }
 
         kfree(buffer);
-        thread->state = THREAD_RUNNING;
         Schedule::Internal::ProcessAddThread(parent, thread);
-        
+
         uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
         Internal::InsertToQueue(cpu, thread);
@@ -752,9 +774,14 @@ namespace Schedule {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
+        /* 修复: state 必须在 ProcessAddThread 之前设置 ——
+           THREAD_ZOMBIE==0 语义下, 挂链后再补设存在 ZOMBIE 窗口,
+           并发 SyncKillProcThreads 命中窗口会让 kill_thread_batch
+           在 state==ZOMBIE 的 continue 上无限自旋 (重试循环原本无超时) */
+        thread->state = THREAD_RUNNING;
         cpu_t *parent_cpu = get_cpu(parent->cpu_num);
         cpu_t *cpu = get_lw_cpu(parent_cpu);
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), true);
+        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
         if (!thread->fx_area) { kfree(thread); return nullptr; }
 
         uint64_t rflags = spin_lock_irqsave(&parent_cpu->sched_lock);
@@ -774,14 +801,14 @@ namespace Schedule {
         thread->stack = parent->stack; thread->sig_stack = parent->sig_stack;
         thread->tls_base = parent->tls_base; thread->tls_pages = parent->tls_pages;
         thread->timer_cpu = cpu->id;
-        Schedule::Internal::ProcessAddThread(proc, thread);
+        Schedule::Internal::ProcessAddThread(proc, thread);   // 此时 state 已是 RUNNING
         __memcpy(&thread->ctx, frame, sizeof(context_t));
         thread->ctx.rsp = ((context_t*)frame)->rsp;
         thread->ctx.cs = 0x23; thread->ctx.ss = 0x1b; thread->ctx.rflags = ((syscall_frame_t*)frame)->r11;
         thread->ctx.rax = 0; thread->ctx.rip = ((syscall_frame_t*)frame)->rcx;
-        thread->thread_stack = thread->ctx.rsp; thread->fs = rdmsr(FS_BASE); thread->state = THREAD_RUNNING;
+        thread->thread_stack = thread->ctx.rsp; thread->fs = rdmsr(FS_BASE);
         thread->priority = parent->priority; thread->weight = parent->weight;
-        
+
         uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = cpu->base_quantum / 2;
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
@@ -800,12 +827,16 @@ namespace Schedule {
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
         proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED); proc->parent = parent;
+        proc->IsTrusted = parent->IsTrusted;   // 修复: 原实现漏设, memset 后恒为 false
         proc->pagemap = VMM::Fork(parent->pagemap);
         if (!proc->pagemap) { kfree(proc); return nullptr; }
         proc->FDMan = (fd_manager_t*)kmalloc(sizeof(fd_manager_t));
         if (!proc->FDMan) { VMM::DestroyPM(proc->pagemap); kfree(proc); return nullptr; }
 
         uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
+        /* ⚠️ 已知问题: FDMan 整结构 memcpy 是浅拷贝 —— 内部指针
+           (缓冲区/文件表项)被父子共享, 双方退出时 fd_manager_destroy
+           双重释放。需要 fd_manager_dup() 深拷贝接口才能修, 本轮仅标注。 */
         __memcpy(proc->FDMan, parent->FDMan, sizeof(fd_manager_t));
         proc->fd_count = parent->fd_count;
         if (!parent->children) parent->children = proc;
