@@ -473,8 +473,7 @@ uint64_t sys_launch(uint64_t pid, GENERATE_IGN5()){
         return -ESRCH;
     }
 
-    // on_rq:已在某队列; ZOMBIE:已退出; exiting:进程正在退出
-    if (thread->on_rq || thread->state == THREAD_ZOMBIE || proc->exiting) {
+    if (thread->on_rq || thread->state != THREAD_RUNNING || proc->exiting) {
         spinlock_unlock(&NOT_RUNQ_LOCK);
         kwarnln("sys_launch: pid %d not launchable", (int)pid);
         return -EINVAL;

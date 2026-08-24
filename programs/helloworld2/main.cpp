@@ -1,6 +1,6 @@
 #include <stdint.h>
 #include <syscall.h>
-
+#include <stdlib.h>
 /* 指向链接脚本中 .prepad 段的起始地址 (0x400000) */
 #define RW_PAGE_BASE 0x400000UL
 
@@ -27,8 +27,8 @@ int main() {
     // 再次输出，验证内存确实被修改了
     syscall(24, (long)rw_page, len, 0, 0, 0, 0);
 
-    while(true);
+    //while(true);
     
-    /* syscall(9, 0, 0, 0, 0, 0, 0); // Exit */
+    //exit(0);
     return 0;
 }

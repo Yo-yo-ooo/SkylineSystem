@@ -235,7 +235,7 @@ static inline thread_t *first_runnable(rb_node_t *root) {
         rb_node_t *nx = rb_next(node);
         if (likely(nx)) PREFETCH_R(nx);
         thread_t *t = rb_to_thread(node);
-        if (likely(t->state != THREAD_ZOMBIE)) return t;
+        if (likely(t->state == THREAD_RUNNING)) return t;
         node = nx;
     }
     return nullptr;
@@ -325,7 +325,7 @@ namespace Schedule {
                         /* 防御: idle 线程绝不允许离开所属 CPU
                            (被偷走后受害 CPU 将失去 idle 兜底) */
                         if (unlikely(stolen == victim_idle))  { node = prev_node; continue; }
-                        if (unlikely(stolen->state == THREAD_ZOMBIE)) { node = prev_node; continue; }
+                        if (unlikely(stolen->state != THREAD_RUNNING)) { node = prev_node; continue; }
                         if (unlikely(stolen->timer_bucket != nullptr)) { node = prev_node; continue; }
                         if (unlikely(stolen->vruntime > hunger_limit)) { node = prev_node; continue; }
 
@@ -470,7 +470,7 @@ namespace Schedule {
                 }
                 thread_t *cur = rb_to_thread(node);
                 if (cur->vruntime <= avg_vr) {
-                    if (likely(cur->state != THREAD_ZOMBIE)) { best = cur; break; }
+                    if (likely(cur->state == THREAD_RUNNING)) { best = cur; break; }
                     node = node->right;
                     if (likely(node)) PREFETCH_R(node);
                     continue;

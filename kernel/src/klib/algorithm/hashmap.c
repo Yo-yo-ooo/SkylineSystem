@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: GPL-2.0-only
+// motified form https://github.com/tidwall/hashmap.c
 #include <klib/klibc.h>
 #include <klib/algorithm/hmap.h>
 #include <klib/algorithm/rbtree.h>

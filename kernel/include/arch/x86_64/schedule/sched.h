@@ -10,16 +10,14 @@
 extern "C++" {
 
 #define SCHED_VEC 48
-#define THREAD_ZOMBIE 0
-#define THREAD_RUNNING 1
-#define THREAD_BLOCKED 2
-#define THREAD_SLEEPING 3
-#define TFLAGS_WAITING 1
 #define SCHED_PREEMPTION_MAX 16
-
-#ifndef THREAD_TRANSFER
+#define THREAD_INIT     0   // memset 默认值: 构造中, 任何路径不得调度/投递
+#define THREAD_RUNNING  1
+#define THREAD_BLOCKED  2
+#define THREAD_SLEEPING 3
 #define THREAD_TRANSFER 4
-#endif
+#define THREAD_ZOMBIE   5   
+
 
 typedef struct proc_t proc_t;
 #include <fs/fd.h>
