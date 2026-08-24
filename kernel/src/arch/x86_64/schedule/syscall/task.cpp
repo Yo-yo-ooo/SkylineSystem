@@ -78,10 +78,16 @@ uint64_t sys_fork(syscall_frame_t *frame){
 #define PMM_2M_PAGES 512
 #endif
 
+/* vmm.h 需可见:
+ *   void  RefSharedPhys(uint64_t phys);
+ *   void *EAlloc(pagemap_t *pm, uint64_t page_count, uint64_t flags);
+ *   以及 InternalAlloc / AddRegion / NewMapping / GetPageInfo / Map1G/2M/4K / Free */
+
 uint64_t sys_pmmapSHARE(
     uint64_t dst_pid, uint64_t dst_addr, uint64_t length,
-    uint64_t flags,   uint64_t src_pid, uint64_t src_addr
+    uint64_t flags,   uint64_t src_pid,  uint64_t src_addr
 ) {
+    /* ========== 1. 参数校验 ========== */
     if (length == 0) return -EINVAL;
     proc_t *me = Schedule::this_proc();
     if (!me || !me->IsTrusted) return -EPERM;
@@ -99,8 +105,9 @@ uint64_t sys_pmmapSHARE(
         (src_addr != 0 && (src_addr >= USER_ADDR_LIMIT || src_addr + size < src_addr)))
         return -EINVAL;
 
-    uint64_t map_flags = flags | MM_USER;
+    uint64_t map_flags = flags | MM_USER;   // 调用方需自备 MM_READ/MM_WRITE
 
+    /* ========== 2. 解析进程 ========== */
     spinlock_lock(&PID2PROC_TREE_LOCK);
     proc_t *SrcProc  = (proc_t*)art_search(pid2proc_tree, (const uint8_t*)&src_pid, 8);
     proc_t *DestProc = (proc_t*)art_search(pid2proc_tree, (const uint8_t*)&dst_pid, 8);
@@ -112,7 +119,27 @@ uint64_t sys_pmmapSHARE(
     pagemap_t *dst_pm = DestProc->pagemap;
     if (!src_pm || !dst_pm) return -EINVAL;
 
-    /* 双 pagemap 加锁: 指针序防 ABBA; 同一 pagemap 只锁一次 */
+    const bool src_new = (src_addr == 0);
+    const bool dst_new = (dst_addr == 0);
+    uint64_t resolved_src = src_addr;
+    uint64_t resolved_dst = dst_addr;
+
+    /* ========== 3. Phase 1: src_addr==0 → VMM::EAlloc ==========
+     * 一站式: VA 区间 + 物理页(大页优先) + VMA 登记 + vm_mapping 登记,
+     * 取代原手写的 InternalAlloc + Request2GB/2MB/4K + Map 循环。
+     * flags 带 VMM_SHARED_BIT → 区域登记为共享, src 退出时 CleanPM
+     * 走 FreeSharedRegion (逐 4K 引用递减) 而非 FreeOwnedRegion。
+     * (bit56 落在 PTE_KEEP 内, 进 PTE 无害, 同 COW_BIT 的用法)
+     *
+     * ★ EAlloc 内部自取 vma_lock/pt_lock —— 必须在双锁阶段之前调用,
+     *   否则在自己已持有的锁上自旋死锁 */
+    if (src_new) {
+        void *p = VMM::EAlloc(src_pm, pages, map_flags | VMM_SHARED_BIT);
+        if (!p) return -ENOMEM;
+        resolved_src = (uint64_t)p;
+    }
+
+    /* ========== 4. Phase 2: 双 pagemap 加锁 ========== */
     pagemap_t *pm_a = (src_pm < dst_pm) ? src_pm : dst_pm;
     pagemap_t *pm_b = (src_pm < dst_pm) ? dst_pm : src_pm;
     spinlock_lock(&pm_a->vma_lock);
@@ -123,88 +150,80 @@ uint64_t sys_pmmapSHARE(
     }
 
     bool ok = true;
-    uint64_t resolved_src = src_addr;
-    uint64_t resolved_dst = dst_addr;
-    uint64_t mapped = 0;
 
-    /* ---- src_addr==0: 在 src 用户半区分配新段 + 新物理页 ---- */
-    if (src_addr == 0) {
-        resolved_src = VMM::VMA::InternalAlloc(src_pm, pages, map_flags, 0);
-        if (!resolved_src) { ok = false; goto done; }
-
-        uint64_t v = resolved_src, remain = size;
-        while (remain > 0) {
-            if (remain >= 524288 * PAGE_SIZE && (v & (PAGE_2GB - 1)) == 0) {
-                void *p = PMM::Request2GB();
-                if (p) {
-                    uint64_t ph = (uint64_t)p;
-                    VMM::Map1G(src_pm, v, ph, map_flags);
-                    VMM::Map1G(src_pm, v + PAGE_1GB, ph + PAGE_1GB, map_flags);
-                    remain -= PAGE_2GB; v += PAGE_2GB; continue;
-                }
-            }
-            if (remain >= 512 * PAGE_SIZE && (v & (PAGE_2MB - 1)) == 0) {
-                void *p = PMM::Request2MB();
-                if (p) {
-                    VMM::Map2M(src_pm, v, (uint64_t)p, map_flags);
-                    remain -= PAGE_2MB; v += PAGE_2MB; continue;
-                }
-            }
-            void *p = PMM::Request();
-            if (!p) { ok = false; break; }
-            VMM::Map4K(src_pm, v, (uint64_t)p, map_flags);
-            remain -= PAGE_SIZE; v += PAGE_SIZE;
-        }
-        if (!ok) {
-            VMM::Free(src_pm, (void*)resolved_src);
-            goto done;
-        }
-        VMM::VMA::AddRegion(src_pm, resolved_src, pages, map_flags | VMM_SHARED_BIT);
-        VMM::NewMapping(src_pm, resolved_src, pages, map_flags | VMM_SHARED_BIT);
-    } else {
-        /* 标记 src 的既有区域为共享 (CleanPM 走 FreeSharedRegion 路径) */
-        vma_region_t *sr = VMM::VMA::FindRegion(src_pm, resolved_src);
-        if (!sr) { ok = false; goto done; }
-        sr->flags |= VMM_SHARED_BIT;
-        vm_mapping_t *sm = src_pm->vm_mappings;
-        if (sm) {
-            vm_mapping_t *start_m = sm;
+    /* ---- 4a. src 既有区间: 标记所有相交的 VMA 区域 ----
+     * (区间可能跨多个区域, 逐个标记; 同时校验区间被 VMA 完全覆盖 ——
+     *  未登记区域的页在进程退出时本就无人释放, 共享它会造成永久泄漏) */
+    if (!src_new) {
+        uint64_t covered = 0;
+        if (src_pm->vma_head) {
+            vma_region_t *vr = src_pm->vma_head;
             do {
-                if (sm->start == resolved_src) { sm->flags |= VMM_SHARED_BIT; break; }
-                sm = sm->next;
-            } while (sm != start_m);
+                uint64_t vs = vr->start;
+                uint64_t ve = vs + (uint64_t)vr->page_count * PAGE_SIZE;
+                uint64_t is = (vs > resolved_src) ? vs : resolved_src;
+                uint64_t ie = (ve < resolved_src + size) ? ve : resolved_src + size;
+                if (is < ie) {
+                    vr->flags |= VMM_SHARED_BIT;
+                    covered += ie - is;
+                }
+                vr = vr->next;
+            } while (vr != src_pm->vma_head);
         }
+        if (covered != size) { ok = false; goto unlock; }
+        /* 注: vm_mapping->flags 无任何读取方, 不再维护 */
     }
 
-    /* ---- dst_addr==0: 在 dst 分配虚拟段 ---- */
-    if (dst_addr == 0) {
-        resolved_dst = VMM::VMA::InternalAlloc(dst_pm, pages, map_flags, 0);
-        if (!resolved_dst) {
-            if (src_addr == 0) VMM::Free(src_pm, (void*)resolved_src);
-            ok = false; goto done;
-        }
+    /* ---- 4b. dst 区间就位 ---- */
+    if (dst_new) {
+        /* dst 只需要 VA 区间 —— 物理页来自 src!
+         * 不能用 VMM::Alloc/EAlloc: 它们会分配全新物理页,
+         * 随后被 src 的物理页覆盖 → 凭空泄漏 N 个页。
+         * InternalAlloc 不自取锁 (vma_lock 由调用方持有,
+         * VMM::Alloc 内部正是如此使用), 双锁下调用安全。 */
+        resolved_dst = VMM::VMA::InternalAlloc(dst_pm, pages,
+                                               map_flags | VMM_SHARED_BIT, 0);
+        if (!resolved_dst) { ok = false; goto unlock; }
+        /* ★ 不再 AddRegion —— InternalAlloc 已登记区域。
+         *   旧版此处二次登记会打坏 VMA 结构, 本版修复 */
     } else {
-        /* 校验 dst 区间完全未映射 (避免覆盖既有映射导致物理页泄漏) */
+        /* 调用方指定区间: 不得与已登记 VMA 区域重叠 (重叠 = VMA 结构损坏) */
+        if (dst_pm->vma_head) {
+            vma_region_t *vr = dst_pm->vma_head;
+            do {
+                uint64_t vs = vr->start;
+                uint64_t ve = vs + (uint64_t)vr->page_count * PAGE_SIZE;
+                if (resolved_dst < ve && vs < resolved_dst + size) {
+                    ok = false; goto unlock;
+                }
+                vr = vr->next;
+            } while (vr != dst_pm->vma_head);
+        }
+        /* 且必须完全未映射 (覆盖既有 PTE → 物理页泄漏) */
         for (uint64_t off = 0; off < size; off += PAGE_SIZE)
             if (VMM::GetPhysics(dst_pm, resolved_dst + off) != 0) {
-                if (src_addr == 0) VMM::Free(src_pm, (void*)resolved_src);
-                ok = false; goto done;
+                ok = false; goto unlock;
             }
     }
 
-    /* ---- 校验 src 已映射 + 非 CoW (拒绝 CoW 页, 避免写共享污染 fork 父子) ---- */
-    for (uint64_t off = 0; off < size; off += PAGE_SIZE) {
-        VMM::Useless::PageInfo si = VMM::Useless::GetPageInfo(src_pm, resolved_src + off);
-        if (si.size == 0 || (si.flags & VMM_COW_BIT)) {
-            if (src_addr == 0) VMM::Free(src_pm, (void*)resolved_src);
-            ok = false; goto done;
+    kinfoln("HIT!");
+
+    /* ---- 4c. 校验 src 已映射 + 非 CoW ----
+     * (src_new 路径 EAlloc 刚建好映射且无 CoW, 天然满足, 跳过整趟遍历) */
+    if (!src_new) {
+        for (uint64_t off = 0; off < size; off += PAGE_SIZE) {
+            VMM::Useless::PageInfo si =
+                VMM::Useless::GetPageInfo(src_pm, resolved_src + off);
+            if (si.size == 0 || (si.flags & VMM_COW_BIT)) {   // 拒绝 CoW 页
+                ok = false; goto unlock;
+            }
         }
     }
 
-    /* ---- 映射 src 的物理页到 dst + 引用计数++ ---- */
-    
+    /* ---- 4d. 穿透映射 src 物理页 → dst + 引用计数 ---- */
     for (uint64_t off = 0; off < size; ) {
-        VMM::Useless::PageInfo si = VMM::Useless::GetPageInfo(src_pm, resolved_src + off);
+        VMM::Useless::PageInfo si =
+            VMM::Useless::GetPageInfo(src_pm, resolved_src + off);
         uint64_t sv = resolved_src + off;
         uint64_t dv = resolved_dst  + off;
         uint64_t phys, chunk;
@@ -228,19 +247,44 @@ uint64_t sys_pmmapSHARE(
             VMM::Map4K(dst_pm, dv, phys, map_flags);
             RefSharedPhys(phys);
         }
-        off += chunk; mapped += chunk;
+        off += chunk;
     }
 
-    /* 登记 dst VMA (VMM_SHARED_BIT → CleanPM 走 FreeSharedRegion 逐 4K 递减) */
-    VMM::VMA::AddRegion(dst_pm, resolved_dst, pages, map_flags | VMM_SHARED_BIT);
+    /* ---- 4e. dst 侧登记 ---- */
+    if (!dst_new)
+        VMM::VMA::AddRegion(dst_pm, resolved_dst, pages, map_flags | VMM_SHARED_BIT);
     VMM::NewMapping(dst_pm, resolved_dst, pages, map_flags | VMM_SHARED_BIT);
+    /* dst_new: 区域已由 InternalAlloc 登记, 只补 vm_mapping 即可 */
 
-done:
+unlock:
     if (pm_b != pm_a) {
         spinlock_unlock(&pm_b->pt_lock);
         spinlock_unlock(&pm_b->vma_lock);
     }
     spinlock_unlock(&pm_a->pt_lock);
     spinlock_unlock(&pm_a->vma_lock);
-    return ok ? (src_addr == 0 ? resolved_src : resolved_dst) : (uint64_t)(-EINVAL);
+
+    /* ========== 5. Phase 3: 失败回滚 (双锁之外 —— VMM::Free 自取锁) ========== */
+    if (!ok) {
+        if (src_new) {
+            /* 本调用创建的区域, 且所有失败点都位于 RefSharedPhys 之前
+             * (零引用建立) → 摘 SHARED 标记走 FreeOwnedRegion 大页快路径 */
+            spinlock_lock(&src_pm->vma_lock);
+            vma_region_t *sr = VMM::VMA::FindRegion(src_pm, resolved_src);
+            if (sr) sr->flags &= ~VMM_SHARED_BIT;
+            spinlock_unlock(&src_pm->vma_lock);
+            VMM::Free(src_pm, (void*)resolved_src);
+        }
+        /* !src_new: 保留已打的 SHARED 标记 —— RefDecPhys 对未入树的页
+         * 返回 true (正常释放), 功能正确, 只是该区域将来退出时大页
+         * 退化为逐 4K 释放。反过来清除才有风险: 无法区分这标记是本次
+         * 打的还是先前共享调用打的, 误清会让先前的共享方 UAF */
+        if (dst_new && resolved_dst != 0) {
+            VMM::Free(dst_pm, (void*)resolved_dst);   /* 空区域, 仅摘登记 */
+        }
+        return -EINVAL;
+    }
+
+    /* 返回约定: src_addr==0 返回 src 侧新分配地址, 否则返回 dst 地址 */
+    return src_new ? resolved_src : resolved_dst;
 }

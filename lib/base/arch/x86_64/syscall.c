@@ -33,12 +33,14 @@ uint64_t sys_fsize(int32_t fd)
 {return syscall(SYSCALL_FSIZE,fd,0,0,0,0,0);}
 void sys_exit(uint64_t status)
 {(void)status;syscall(SYSCALL_EXIT,0,0,0,0,0,0);}
-uint64_t sys_pmmap(
-    uint64_t pid, uint64_t mode,
-    uint64_t proc_addr, uint64_t tproc_addr, uint64_t flag, uint64_t length
-) {return syscall(SYSCALL_PMMAP,pid,mode,proc_addr,tproc_addr,flag,length);}
+uint64_t sys_pmmapSHARE(
+    uint64_t dst_pid, uint64_t dst_addr, uint64_t length,
+    uint64_t flags,   uint64_t src_pid, uint64_t src_addr
+) {return syscall(SYSCALL_PMMAP,dst_pid,dst_addr,length,flags,src_pid,src_addr);}
 uint64_t sched_yield(){return syscall(SYSCALL_YIELD,0,0,0,0,0,0);}
 uint64_t sys_load(uint64_t pathname, uint64_t argv, uint64_t envp)
 {return syscall(SYSCALL_LOAD,pathname,argv,envp,0,0,0);}
 uint64_t sys_launch(uint64_t pid)
 {return syscall(SYSCALL_LAUNCH,pid,0,0,0,0,0);}
+uint64_t sys_getpid(){return syscall(SYSCALL_GETTID,0,0,0,0,0,0);}
+uint64_t sys_gettid(){return syscall(SYSCALL_GETTID,0,0,0,0,0,0);}

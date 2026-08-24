@@ -12,6 +12,13 @@ extern "C" {
 
 #include <stdint.h>
 
+#define VMM_FLAG_PRESENT        (1 << 0)        /* P   */
+#define VMM_FLAG_READWRITE      (1 << 1)        /* R/W */
+#define VMM_FLAG_USER           (1 << 2)        /* U/S */
+#define VMM_FLAG_WRITETHROUGH   (1 << 3)        /* PWT */
+#define VMM_FLAG_CACHE_DISABLE  (1 << 4)        /* PCD */
+#define VMM_FLAG_PAT            (1 << 7)        /* PAT */
+
 
 #define syscall(num, a1, a2, a3, a4, a5, a6) ({ \
     long _ret; \
@@ -41,13 +48,15 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags);
 uint64_t sys_fclose(int32_t fd);
 uint64_t sys_fsize(int32_t fd);
 void sys_exit(uint64_t status);
-uint64_t sys_pmmap(
-    uint64_t pid, uint64_t mode,
-    uint64_t proc_addr, uint64_t tproc_addr, uint64_t flag, uint64_t length
+uint64_t sys_pmmapSHARE(
+    uint64_t dst_pid, uint64_t dst_addr, uint64_t length,
+    uint64_t flags,   uint64_t src_pid, uint64_t src_addr
 );
 uint64_t sched_yield();
 uint64_t sys_load(uint64_t pathname, uint64_t argv, uint64_t envp);
 uint64_t sys_launch(uint64_t pid);
+uint64_t sys_getpid();
+uint64_t sys_gettid();
 
 #ifdef __cplusplus
 }
