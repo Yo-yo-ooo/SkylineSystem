@@ -1,0 +1,345 @@
+// -*- C++ -*-
+//=============================================================
+// list.hpp -- complete <list>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_LIST_HPP
+#define STDCPP_LIST_HPP
+
+#include <cstddef>
+#include <cstdlib>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <initializer_list>
+#include <functional>
+
+#define STDCPP_LST_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_LST_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_LST_CXX20 (__cplusplus >= 202002L)
+
+#if __cplusplus < 201103L
+#define noexcept throw()
+#define nullptr 0
+#define override
+#define STDCPP_MOVE(x) (x)
+#else
+#define STDCPP_MOVE(x) std::move(x)
+#endif
+
+#ifndef _GLIBCXX_LIST
+#  define _GLIBCXX_LIST 1
+#endif
+
+namespace std {
+
+template<class T, class Allocator = void>
+class list {
+    struct _node {
+        T _M_data;
+        _node* _M_prev;
+        _node* _M_next;
+        _node(const T& d) : _M_data(d), _M_prev(nullptr), _M_next(nullptr) {}
+#if STDCPP_LST_CXX11
+        _node(T&& d) : _M_data(STDCPP_MOVE(d)), _M_prev(nullptr), _M_next(nullptr) {}
+        template<class... A>
+        _node(A&&... a) : _M_data(std::forward<A>(a)...), _M_prev(nullptr), _M_next(nullptr) {}
+#endif
+    };
+
+    _node* _M_head;
+    size_t _M_size;
+
+    void _M_init() {
+        _M_head = (_node*)malloc(sizeof(_node));
+        _M_head->_M_next = _M_head;
+        _M_head->_M_prev = _M_head;
+        _M_size = 0;
+    }
+
+public:
+    typedef T      value_type;
+    typedef size_t size_type;
+    typedef T&     reference;
+    typedef const T& const_reference;
+    typedef T*     pointer;
+
+    class iterator {
+    public:
+        typedef bidirectional_iterator_tag iterator_category;
+        typedef T value_type;
+        typedef ptrdiff_t difference_type;
+        typedef T* pointer;
+        typedef T& reference;
+        _node* _M_node;
+        iterator(_node* n) : _M_node(n) {}
+        T& operator*() const { return _M_node->_M_data; }
+        T* operator->() const { return &_M_node->_M_data; }
+        iterator& operator++() { _M_node = _M_node->_M_next; return *this; }
+        iterator operator++(int) { iterator t = *this; _M_node = _M_node->_M_next; return t; }
+        iterator& operator--() { _M_node = _M_node->_M_prev; return *this; }
+        iterator operator--(int) { iterator t = *this; _M_node = _M_node->_M_prev; return t; }
+        bool operator==(const iterator& o) const { return _M_node == o._M_node; }
+        bool operator!=(const iterator& o) const { return _M_node != o._M_node; }
+    };
+    class const_iterator {
+    public:
+        typedef bidirectional_iterator_tag iterator_category;
+        typedef T value_type;
+        typedef ptrdiff_t difference_type;
+        typedef const T* pointer;
+        typedef const T& reference;
+        const _node* _M_node;
+        const_iterator(const _node* n) : _M_node(n) {}
+        const_iterator(const iterator& it) : _M_node(it._M_node) {}
+        const T& operator*() const { return _M_node->_M_data; }
+        const T* operator->() const { return &_M_node->_M_data; }
+        const_iterator& operator++() { _M_node = _M_node->_M_next; return *this; }
+        const_iterator operator++(int) { const_iterator t = *this; _M_node = _M_node->_M_next; return t; }
+        const_iterator& operator--() { _M_node = _M_node->_M_prev; return *this; }
+        const_iterator operator--(int) { const_iterator t = *this; _M_node = _M_node->_M_prev; return t; }
+        bool operator==(const const_iterator& o) const { return _M_node == o._M_node; }
+        bool operator!=(const const_iterator& o) const { return _M_node != o._M_node; }
+    };
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+    typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+
+    list() { _M_init(); }
+    explicit list(size_type n, const T& v = T()) { _M_init(); for (size_type i = 0; i < n; ++i) push_back(v); }
+    template<class InputIt>
+    list(InputIt first, InputIt last) { _M_init(); for (; first != last; ++first) push_back(*first); }
+    list(const list& other) { _M_init(); for (const_iterator it = other.begin(); it != other.end(); ++it) push_back(*it); }
+#if STDCPP_LST_CXX11
+    list(list&& other) noexcept : _M_head(other._M_head), _M_size(other._M_size) { other._M_init(); }
+    list(initializer_list<T> il) { _M_init(); for (const T& v : il) push_back(v); }
+#endif
+    ~list() { clear(); free(_M_head); }
+
+    list& operator=(const list& other) {
+        if (this != &other) { clear(); for (const T& v : other) push_back(v); }
+        return *this;
+    }
+#if STDCPP_LST_CXX11
+    list& operator=(list&& other) noexcept {
+        if (this != &other) { clear(); free(_M_head); _M_head = other._M_head; _M_size = other._M_size; other._M_init(); }
+        return *this;
+    }
+    list& operator=(initializer_list<T> il) { clear(); for (const T& v : il) push_back(v); return *this; }
+#endif
+
+    iterator begin() { return iterator(_M_head->_M_next); }
+    const_iterator begin() const { return const_iterator(_M_head->_M_next); }
+    iterator end() { return iterator(_M_head); }
+    const_iterator end() const { return const_iterator(_M_head); }
+    reverse_iterator rbegin() { return reverse_iterator(end()); }
+    const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
+    reverse_iterator rend() { return reverse_iterator(begin()); }
+    const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
+
+    bool empty() const { return _M_size == 0; }
+    size_type size() const { return _M_size; }
+    size_type max_size() const { return size_type(-1) / sizeof(_node); }
+    reference front() { return _M_head->_M_next->_M_data; }
+    const_reference front() const { return _M_head->_M_next->_M_data; }
+    reference back() { return _M_head->_M_prev->_M_data; }
+    const_reference back() const { return _M_head->_M_prev->_M_data; }
+
+    void push_front(const T& v) { insert(begin(), v); }
+    void push_back(const T& v) { insert(end(), v); }
+#if STDCPP_LST_CXX11
+    void push_front(T&& v) { insert(begin(), STDCPP_MOVE(v)); }
+    void push_back(T&& v) { insert(end(), STDCPP_MOVE(v)); }
+    template<class... A>
+    reference emplace_front(A&&... a) { _node* n = new _node(std::forward<A>(a)...); n->_M_next = _M_head->_M_next; n->_M_prev = _M_head; _M_head->_M_next->_M_prev = n; _M_head->_M_next = n; ++_M_size; return n->_M_data; }
+    template<class... A>
+    reference emplace_back(A&&... a) { _node* n = new _node(std::forward<A>(a)...); n->_M_prev = _M_head->_M_prev; n->_M_next = _M_head; _M_head->_M_prev->_M_next = n; _M_head->_M_prev = n; ++_M_size; return n->_M_data; }
+    template<class... A>
+    iterator emplace(const_iterator pos, A&&... a) { _node* p = const_cast<_node*>(pos._M_node); _node* n = new _node(std::forward<A>(a)...); n->_M_next = p; n->_M_prev = p->_M_prev; p->_M_prev->_M_next = n; p->_M_prev = n; ++_M_size; return iterator(n); }
+#endif
+    void pop_front() { erase(begin()); }
+    void pop_back() { iterator it = end(); erase(--it); }
+
+    iterator insert(const_iterator pos, const T& v) {
+        _node* p = const_cast<_node*>(pos._M_node);
+        _node* n = new _node(v);
+        n->_M_prev = p->_M_prev; n->_M_next = p;
+        p->_M_prev->_M_next = n; p->_M_prev = n;
+        ++_M_size;
+        return iterator(n);
+    }
+    iterator insert(const_iterator pos, size_type n, const T& v) {
+        iterator r = insert(pos, v);
+        for (size_type i = 1; i < n; ++i) insert(pos, v);
+        return r;
+    }
+    template<class InputIt>
+    iterator insert(const_iterator pos, InputIt first, InputIt last) {
+        iterator r = end();
+        for (; first != last; ++first) { iterator t = insert(pos, *first); if (r == end()) r = t; }
+        return r;
+    }
+
+    iterator erase(const_iterator pos) {
+        _node* n = const_cast<_node*>(pos._M_node);
+        n->_M_prev->_M_next = n->_M_next;
+        n->_M_next->_M_prev = n->_M_prev;
+        _node* next = n->_M_next;
+        delete n;
+        --_M_size;
+        return iterator(next);
+    }
+    iterator erase(const_iterator first, const_iterator last) {
+        while (first != last) first = erase(first);
+        return iterator(const_cast<_node*>(last._M_node));
+    }
+
+    void clear() { while (_M_size) pop_back(); }
+    void resize(size_type n, const T& v = T()) {
+        while (_M_size > n) pop_back();
+        while (_M_size < n) push_back(v);
+    }
+    void swap(list& other) { std::swap(_M_head, other._M_head); std::swap(_M_size, other._M_size); }
+
+    void merge(list& other) { merge(other, less<T>()); }
+    template<class Compare>
+    void merge(list& other, Compare comp) {
+        iterator it1 = begin(), it2 = other.begin();
+        while (it1 != end() && it2 != other.end()) {
+            if (comp(*it2, *it1)) {
+                iterator next = it2; ++next;
+                _node* n = it2._M_node;
+                n->_M_prev->_M_next = n->_M_next; n->_M_next->_M_prev = n->_M_prev;
+                n->_M_prev = it1._M_node->_M_prev; n->_M_next = it1._M_node;
+                it1._M_node->_M_prev->_M_next = n; it1._M_node->_M_prev = n;
+                ++_M_size; --other._M_size;
+                it2 = next;
+            } else ++it1;
+        }
+        if (it2 != other.end()) {
+            _M_head->_M_prev->_M_next = other._M_head->_M_next;
+            other._M_head->_M_next->_M_prev = _M_head->_M_prev;
+            _M_head->_M_prev = other._M_head->_M_prev;
+            other._M_head->_M_prev->_M_next = _M_head;
+            _M_size += other._M_size;
+            other._M_head->_M_next = other._M_head;
+            other._M_head->_M_prev = other._M_head;
+            other._M_size = 0;
+        }
+    }
+
+    void splice(const_iterator pos, list& other) {
+        if (other._M_size == 0) return;
+        _node* p = const_cast<_node*>(pos._M_node);
+        _node* f = other._M_head->_M_next;
+        _node* l = other._M_head->_M_prev;
+        other._M_head->_M_next = other._M_head;
+        other._M_head->_M_prev = other._M_head;
+        f->_M_prev = p->_M_prev; l->_M_next = p;
+        p->_M_prev->_M_next = f; p->_M_prev = l;
+        _M_size += other._M_size; other._M_size = 0;
+    }
+    void splice(const_iterator pos, list& other, const_iterator it) {
+        if (it == pos) return;
+        _node* p = const_cast<_node*>(pos._M_node);
+        _node* n = const_cast<_node*>(it._M_node);
+        n->_M_prev->_M_next = n->_M_next; n->_M_next->_M_prev = n->_M_prev;
+        n->_M_prev = p->_M_prev; n->_M_next = p;
+        p->_M_prev->_M_next = n; p->_M_prev = n;
+        ++_M_size;
+        --other._M_size;
+    }
+
+    void remove(const T& v) {
+        for (iterator it = begin(); it != end(); ) {
+            if (*it == v) it = erase(it); else ++it;
+        }
+    }
+    template<class Pred>
+    void remove_if(Pred p) {
+        for (iterator it = begin(); it != end(); ) {
+            if (p(*it)) it = erase(it); else ++it;
+        }
+    }
+    void reverse() {
+        if (_M_size <= 1) return;
+        for (iterator it = begin(); it != end(); ) {
+            iterator n = it; ++n;
+            std::swap(it._M_node->_M_prev, it._M_node->_M_next);
+            it = n;
+        }
+        std::swap(_M_head->_M_prev, _M_head->_M_next);
+    }
+    void unique() {
+        if (_M_size < 2) return;
+        for (iterator it = begin(); it != end(); ) {
+            iterator n = it; ++n;
+            if (n != end() && *it == *n) erase(n); else it = n;
+        }
+    }
+    template<class Pred>
+    void unique(Pred p) {
+        if (_M_size < 2) return;
+        for (iterator it = begin(); it != end(); ) {
+            iterator n = it; ++n;
+            if (n != end() && p(*it, *n)) erase(n); else it = n;
+        }
+    }
+    void sort() { sort(less<T>()); }
+    template<class Compare>
+    void sort(Compare comp) {
+        if (_M_size < 2) return;
+        // mergesort
+        list carry, tmp[64];
+        int fill = 0;
+        while (!empty()) {
+            carry.splice(carry.begin(), *this, begin());
+            int i = 0;
+            for (; i < fill && !tmp[i].empty(); ++i) {
+                tmp[i].merge(carry, comp);
+                carry.swap(tmp[i]);
+            }
+            carry.swap(tmp[i]);
+            if (i == fill) ++fill;
+        }
+        for (int i = 1; i < fill; ++i) tmp[i].merge(tmp[i - 1], comp);
+        swap(tmp[fill - 1]);
+    }
+
+    void assign(size_type n, const T& v) { clear(); for (size_type i = 0; i < n; ++i) push_back(v); }
+    template<class InputIt>
+    void assign(InputIt first, InputIt last) { clear(); for (; first != last; ++first) push_back(*first); }
+#if STDCPP_LST_CXX11
+    void assign(initializer_list<T> il) { assign(il.begin(), il.end()); }
+#endif
+};
+
+template<class T, class A>
+bool operator==(const list<T, A>& a, const list<T, A>& b) {
+    if (a.size() != b.size()) return false;
+    for (typename list<T, A>::const_iterator i = a.begin(), j = b.begin(); i != a.end(); ++i, ++j) if (!(*i == *j)) return false;
+    return true;
+}
+template<class T, class A>
+bool operator!=(const list<T, A>& a, const list<T, A>& b) { return !(a == b); }
+template<class T, class A>
+void swap(list<T, A>& a, list<T, A>& b) { a.swap(b); }
+
+#if STDCPP_LST_CXX20
+template<class T, class A, class U>
+typename list<T, A>::size_type erase(list<T, A>& c, const U& value) {
+    auto n = c.size(); c.remove(value); return n - c.size();
+}
+template<class T, class A, class Pred>
+typename list<T, A>::size_type erase_if(list<T, A>& c, Pred pred) {
+    auto n = c.size(); c.remove_if(pred); return n - c.size();
+}
+#endif
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#undef STDCPP_MOVE
+#endif
+#endif // STDCPP_LIST_HPP

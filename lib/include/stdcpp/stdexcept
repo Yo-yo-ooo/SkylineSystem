@@ -1,0 +1,85 @@
+// -*- C++ -*-
+//=============================================================
+// stdexcept.hpp -- complete <stdexcept>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_STDEXCEPT_HPP
+#define STDCPP_STDEXCEPT_HPP
+
+#include <cstddef>
+
+#ifndef _GLIBCXX_STDEXCEPT
+#  define _GLIBCXX_STDEXCEPT 1
+#endif
+
+#if __cplusplus < 201103L
+#define noexcept throw()
+#define override
+#endif
+
+namespace std {
+
+class exception {
+public:
+    exception() noexcept {}
+    virtual ~exception();
+    virtual const char* what() const noexcept { return "std::exception"; }
+};
+inline exception::~exception() {}
+
+class logic_error : public exception {
+    const char* _M_msg;
+public:
+    explicit logic_error(const char* msg) : _M_msg(msg) {}
+    const char* what() const noexcept override { return _M_msg; }
+};
+
+class domain_error : public logic_error {
+public:
+    explicit domain_error(const char* msg) : logic_error(msg) {}
+};
+
+class invalid_argument : public logic_error {
+public:
+    explicit invalid_argument(const char* msg) : logic_error(msg) {}
+};
+
+class length_error : public logic_error {
+public:
+    explicit length_error(const char* msg) : logic_error(msg) {}
+};
+
+class out_of_range : public logic_error {
+public:
+    explicit out_of_range(const char* msg) : logic_error(msg) {}
+};
+
+class runtime_error : public exception {
+    const char* _M_msg;
+public:
+    explicit runtime_error(const char* msg) : _M_msg(msg) {}
+    const char* what() const noexcept override { return _M_msg; }
+};
+
+class range_error : public runtime_error {
+public:
+    explicit range_error(const char* msg) : runtime_error(msg) {}
+};
+
+class overflow_error : public runtime_error {
+public:
+    explicit overflow_error(const char* msg) : runtime_error(msg) {}
+};
+
+class underflow_error : public runtime_error {
+public:
+    explicit underflow_error(const char* msg) : runtime_error(msg) {}
+};
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef override
+#endif
+
+#endif // STDCPP_STDEXCEPT_HPP

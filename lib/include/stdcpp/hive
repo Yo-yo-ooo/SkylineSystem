@@ -1,0 +1,194 @@
+// -*- C++ -*-
+//=============================================================
+// hive.hpp -- complete <hive>, C++26 (proposed).
+//=============================================================
+#ifndef STDCPP_HIVE_HPP
+#define STDCPP_HIVE_HPP
+
+#include <cstddef>
+#include <cstdlib>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <initializer_list>
+#include <algorithm>
+
+#define STDCPP_HIVE_CXX26 (__cplusplus >= 202400L)
+
+#ifndef _GLIBCXX_HIVE
+#  define _GLIBCXX_HIVE 1
+#endif
+
+#if STDCPP_HIVE_CXX26
+
+namespace std {
+
+//=============================================================
+// hive -- a linked-list of blocks with free-list reuse.
+// Simplified implementation using linked blocks.
+//=============================================================
+template<class T, size_t BlockSize = 64>
+class hive {
+    struct _block {
+        T* data;
+        size_t count;
+        bool* used;
+        _block* next;
+        _block* prev;
+        _block() : count(0), next(nullptr), prev(nullptr) {
+            data = (T*)malloc(BlockSize * sizeof(T));
+            used = (bool*)calloc(BlockSize, sizeof(bool));
+        }
+        ~_block() {
+            for (size_t i = 0; i < BlockSize; ++i)
+                if (used[i]) data[i].~T();
+            free(data);
+            free(used);
+        }
+    };
+
+    _block* _M_head;
+    size_t _M_size;
+
+public:
+    typedef T value_type;
+    typedef size_t size_type;
+    typedef T& reference;
+    typedef const T& const_reference;
+    typedef T* pointer;
+
+    class iterator {
+    public:
+        typedef bidirectional_iterator_tag iterator_category;
+        typedef T value_type;
+        typedef ptrdiff_t difference_type;
+        typedef T* pointer;
+        typedef T& reference;
+        _block* _M_block;
+        size_t _M_idx;
+        hive* _M_hive;
+
+        iterator(_block* b, size_t i, hive* h) : _M_block(b), _M_idx(i), _M_hive(h) {}
+        T& operator*() const { return _M_block->data[_M_idx]; }
+        T* operator->() const { return &_M_block->data[_M_idx]; }
+        iterator& operator++() {
+            do {
+                ++_M_idx;
+                while (_M_idx >= BlockSize && _M_block->next) {
+                    _M_block = _M_block->next;
+                    _M_idx = 0;
+                }
+            } while (_M_block && _M_idx < BlockSize && !_M_block->used[_M_idx]);
+            if (_M_block && _M_idx >= BlockSize) { _M_block = nullptr; _M_idx = 0; }
+            return *this;
+        }
+        iterator operator++(int) { iterator t = *this; ++*this; return t; }
+        iterator& operator--() {
+            if (!_M_block) {
+                _M_block = _M_hive->_M_head;
+                while (_M_block->next) _M_block = _M_block->next;
+                _M_idx = BlockSize;
+            }
+            do {
+                if (_M_idx == 0) {
+                    _M_block = _M_block->prev;
+                    _M_idx = BlockSize;
+                }
+                --_M_idx;
+            } while (_M_block && !_M_block->used[_M_idx]);
+            return *this;
+        }
+        iterator operator--(int) { iterator t = *this; --*this; return t; }
+        bool operator==(const iterator& o) const { return _M_block == o._M_block && _M_idx == o._M_idx; }
+        bool operator!=(const iterator& o) const { return !(*this == o); }
+    };
+
+    hive() : _M_head(nullptr), _M_size(0) {}
+    hive(const hive& other) : _M_head(nullptr), _M_size(0) {
+        for (auto it = other.begin(); it != other.end(); ++it) insert(*it);
+    }
+    hive(initializer_list<T> il) : _M_head(nullptr), _M_size(0) {
+        for (const T& v : il) insert(v);
+    }
+    ~hive() {
+        while (_M_head) {
+            _block* n = _M_head->next;
+            delete _M_head;
+            _M_head = n;
+        }
+    }
+
+    iterator begin() {
+        _block* b = _M_head;
+        while (b) {
+            for (size_t i = 0; i < BlockSize; ++i)
+                if (b->used[i]) return iterator(b, i, this);
+            b = b->next;
+        }
+        return end();
+    }
+    iterator end() { return iterator(nullptr, 0, this); }
+
+    bool empty() const { return _M_size == 0; }
+    size_type size() const { return _M_size; }
+    size_type capacity() const {
+        size_type n = 0;
+        for (_block* b = _M_head; b; b = b->next) n += BlockSize;
+        return n;
+    }
+
+    pair<iterator, bool> insert(const T& v) {
+        _block* b = _M_head;
+        while (b) {
+            for (size_t i = 0; i < BlockSize; ++i) {
+                if (!b->used[i]) {
+                    new (b->data + i) T(v);
+                    b->used[i] = true;
+                    ++b->count;
+                    ++_M_size;
+                    return pair<iterator, bool>(iterator(b, i, this), true);
+                }
+            }
+            b = b->next;
+        }
+        _block* nb = new _block();
+        nb->next = _M_head;
+        if (_M_head) _M_head->prev = nb;
+        _M_head = nb;
+        new (nb->data) T(v);
+        nb->used[0] = true;
+        nb->count = 1;
+        ++_M_size;
+        return pair<iterator, bool>(iterator(nb, 0, this), true);
+    }
+
+    iterator erase(iterator pos) {
+        pos._M_block->data[pos._M_idx].~T();
+        pos._M_block->used[pos._M_idx] = false;
+        --pos._M_block->count;
+        --_M_size;
+        iterator next = pos;
+        ++next;
+        if (pos._M_block->count == 0) {
+            if (pos._M_block->prev) pos._M_block->prev->next = pos._M_block->next;
+            else _M_head = pos._M_block->next;
+            if (pos._M_block->next) pos._M_block->next->prev = pos._M_block->prev;
+            delete pos._M_block;
+        }
+        return next;
+    }
+
+    void clear() {
+        while (_M_head) {
+            _block* n = _M_head->next;
+            delete _M_head;
+            _M_head = n;
+        }
+        _M_size = 0;
+    }
+};
+
+} // namespace std
+
+#endif // STDCPP_HIVE_CXX26
+#endif // STDCPP_HIVE_HPP

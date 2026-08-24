@@ -37,7 +37,7 @@
 | Header | Status | Complexity | Dependencies | Remarks |
 | :--- | :--- | :--- | :--- | :--- |
 | `<iterator>` | **Done** | Very High | `<cstddef>`, `<type_traits>` | Iterator traits, `reverse_iterator`, inserters, C++20/23 components. |
-| `<algorithm>` | To Be Implemented | High | `<iterator>`, `<utility>` | `std::sort`, `std::find`, `std::copy`, `std::minmax` etc. **Large volume**. |
+| `<algorithm>` | **Done** | High | `<iterator>`, `<utility>` | `std::sort`, `std::find`, `std::copy`, `std::minmax` etc. **Large volume**. |
 | `<numeric>` | Deferred | Medium | `<iterator>` | `std::accumulate`, `std::inner_product`, etc. |
 | `<ranges>` | Deferred | Very High | `<algorithm>` | C++20 ranges views & adaptors – extremely complex. |
 | `<execution>` | Deferred | Very High | `<algorithm>` | Parallel execution policies – depends on threading. |
@@ -48,18 +48,18 @@
 
 | Header | Status | Complexity | Dependencies | Remarks |
 | :--- | :--- | :--- | :--- | :--- |
-| `<array>` | Deferred | Low | `<cstddef>` | Static array wrapper – simple. |
-| `<vector>` | To Be Implemented | Medium | `<memory>`, `<iterator>` | **Core container** – highest priority. |
-| `<deque>` | Deferred | High | `<memory>`, `<iterator>` | Double‑ended queue – non‑trivial implementation. |
-| `<list>` | Deferred | Medium | `<memory>`, `<iterator>` | Doubly‑linked list. |
-| `<forward_list>` | Deferred | Medium | `<memory>`, `<iterator>` | Singly‑linked list. |
-| `<map>` | Deferred | High | `<memory>`, `<iterator>`, `<utility>` | Red‑black tree – requires tree implementation. |
-| `<set>` | Deferred | High | `<memory>`, `<iterator>`, `<utility>` | Red‑black tree. |
-| `<unordered_map>` | Deferred | High | `<memory>`, `<iterator>`, `<functional>` | Hash table – requires hash functions. |
-| `<unordered_set>` | Deferred | High | `<memory>`, `<iterator>`, `<functional>` | Hash table. |
-| `<queue>` | Deferred | Low | `<deque>` or `<vector>` | Adaptor – depends on underlying container. |
-| `<stack>` | Deferred | Low | `<deque>` or `<vector>` | Adaptor. |
-| `<span>` | Deferred | Medium | `<cstddef>` | C++20 contiguous view – simple but requires compiler support. |
+| `<array>` | **Done** | Low | `<cstddef>` | Static array wrapper – simple. |
+| `<vector>` | **Done** | Medium | `<memory>`, `<iterator>` | **Core container** – highest priority. |
+| `<deque>` | **Done** | High | `<memory>`, `<iterator>` | Double‑ended queue – non‑trivial implementation. |
+| `<list>` | **Done** | Medium | `<memory>`, `<iterator>` | Doubly‑linked list. |
+| `<forward_list>` | **Done** | Medium | `<memory>`, `<iterator>` | Singly‑linked list. |
+| `<map>` | **Done** | High | `<memory>`, `<iterator>`, `<utility>` | Red‑black tree – requires tree implementation. |
+| `<set>` | **Done** | High | `<memory>`, `<iterator>`, `<utility>` | Red‑black tree. |
+| `<unordered_map>` | **Done** | High | `<memory>`, `<iterator>`, `<functional>` | Hash table – requires hash functions. |
+| `<unordered_set>` | **Done** | High | `<memory>`, `<iterator>`, `<functional>` | Hash table. |
+| `<queue>` | **Done** | Low | `<deque>` or `<vector>` | Adaptor – depends on underlying container. |
+| `<stack>` | **Done** | Low | `<deque>` or `<vector>` | Adaptor. |
+| `<span>` | **Done** | Medium | `<cstddef>` | C++20 contiguous view – simple but requires compiler support. |
 
 ---
 
@@ -67,7 +67,7 @@
 
 | Header | Status | Complexity | Dependencies | Remarks |
 | :--- | :--- | :--- | :--- | :--- |
-| `<string>` | To Be Implemented | High | `<memory>`, `<iterator>`, `<algorithm>` | `std::string` with SSO. **Core container** – high priority. |
+| `<string>` | **Done** | High | `<memory>`, `<iterator>`, `<algorithm>` | `std::string` with SSO. **Core container** – high priority. |
 | `<string_view>` | Deferred | Low | `<cstddef>` | C++17 read‑only string view – relatively simple. |
 
 ---
@@ -127,7 +127,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | `<exception>` | To Be Implemented | Medium | `<cstddef>` | `std::exception`, `std::terminate` – base for `bad_alloc`. |
 | `<stdexcept>` | Deferred | Low | `<exception>` | Standard exception classes (`runtime_error`, `logic_error`). |
-| `<typeinfo>` | Deferred | Low | None | RTTI types (`type_info`). |
+| `<typeinfo>` | **Done** | Low | None | RTTI types (`type_info`). |
 | `<csetjmp>` | Deferred | Low | None | `setjmp`/`longjmp` – C compatibility. |
 | `<csignal>` | Deferred | Low | None | Signal handling – not commonly used in kernel. |
 | `<cstring>` | To Be Implemented | Low | None | `memcpy`, `strlen` etc. – you already have `__memcpy` to wrap. |

@@ -1,0 +1,310 @@
+// -*- C++ -*-
+//=============================================================
+// deque.hpp -- complete <deque>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_DEQUE_HPP
+#define STDCPP_DEQUE_HPP
+
+#include <cstddef>
+#include <cstdlib>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <initializer_list>
+#include <stdexcept>
+
+#define STDCPP_DEQ_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_DEQ_CXX20 (__cplusplus >= 202002L)
+
+#if __cplusplus < 201103L
+#define noexcept throw()
+#define nullptr 0
+#define override
+#define STDCPP_MOVE(x) (x)
+#else
+#define STDCPP_MOVE(x) std::move(x)
+#endif
+
+#ifndef _GLIBCXX_DEQUE
+#  define _GLIBCXX_DEQUE 1
+#endif
+
+namespace std {
+
+template<class T, class Allocator = void>
+class deque {
+    static const size_t kBlockSize = 512;
+    T** _M_map;
+    size_t _M_map_size;
+    size_t _M_start_block, _M_start_off;
+    size_t _M_finish_block, _M_finish_off;
+    size_t _M_size;
+
+    void _M_init(size_t n = 0) {
+        _M_map_size = 8;
+        _M_map = (T**)malloc(_M_map_size * sizeof(T*));
+        for (size_t i = 0; i < _M_map_size; ++i) _M_map[i] = nullptr;
+        _M_start_block = _M_finish_block = _M_map_size / 2;
+        _M_map[_M_start_block] = (T*)malloc(kBlockSize * sizeof(T));
+        _M_start_off = kBlockSize / 2;
+        _M_finish_off = _M_start_off;
+        _M_size = 0;
+        for (size_t i = 0; i < n; ++i) push_back(T());
+    }
+
+    void _M_push_map_front() {
+        if (_M_start_block == 0) {
+            size_t ns = _M_map_size * 2;
+            T** nm = (T**)malloc(ns * sizeof(T*));
+            for (size_t i = 0; i < ns; ++i) nm[i] = nullptr;
+            size_t off = ns / 4;
+            for (size_t i = 0; i < _M_map_size; ++i) nm[i + off] = _M_map[i];
+            free(_M_map);
+            _M_map = nm;
+            _M_start_block += off;
+            _M_finish_block += off;
+            _M_map_size = ns;
+        }
+        --_M_start_block;
+        _M_map[_M_start_block] = (T*)malloc(kBlockSize * sizeof(T));
+        _M_start_off = kBlockSize - 1;
+    }
+    void _M_push_map_back() {
+        if (_M_finish_block + 1 >= _M_map_size) {
+            size_t ns = _M_map_size * 2;
+            T** nm = (T**)malloc(ns * sizeof(T*));
+            for (size_t i = 0; i < ns; ++i) nm[i] = nullptr;
+            size_t off = ns / 4;
+            for (size_t i = 0; i < _M_map_size; ++i) nm[i + off] = _M_map[i];
+            free(_M_map);
+            _M_map = nm;
+            _M_start_block += off;
+            _M_finish_block += off;
+            _M_map_size = ns;
+        }
+        ++_M_finish_block;
+        _M_map[_M_finish_block] = (T*)malloc(kBlockSize * sizeof(T));
+        _M_finish_off = 0;
+    }
+
+public:
+    typedef T value_type;
+    typedef size_t size_type;
+    typedef T& reference;
+    typedef const T& const_reference;
+    typedef T* pointer;
+
+    class iterator {
+    public:
+        typedef random_access_iterator_tag iterator_category;
+        typedef T value_type;
+        typedef ptrdiff_t difference_type;
+        typedef T* pointer;
+        typedef T& reference;
+        T** _M_map; size_t _M_block; size_t _M_off;
+        iterator() : _M_map(nullptr), _M_block(0), _M_off(0) {}
+        iterator(T** m, size_t b, size_t o) : _M_map(m), _M_block(b), _M_off(o) {}
+        T& operator*() const { return _M_map[_M_block][_M_off]; }
+        T* operator->() const { return &_M_map[_M_block][_M_off]; }
+        iterator& operator++() { ++_M_off; if (_M_off == kBlockSize) { ++_M_block; _M_off = 0; } return *this; }
+        iterator operator++(int) { iterator t = *this; ++*this; return t; }
+        iterator& operator--() { if (_M_off == 0) { --_M_block; _M_off = kBlockSize - 1; } else --_M_off; return *this; }
+        iterator operator--(int) { iterator t = *this; --*this; return t; }
+        iterator& operator+=(ptrdiff_t n) {
+            if (n > 0) {
+                ptrdiff_t x = n + (ptrdiff_t)_M_off;
+                _M_block += x / (ptrdiff_t)kBlockSize;
+                _M_off = x % (ptrdiff_t)kBlockSize;
+            } else {
+                ptrdiff_t x = n + (ptrdiff_t)_M_off;
+                while (x < 0) { x += kBlockSize; --_M_block; }
+                _M_off = x;
+            }
+            return *this;
+        }
+        iterator operator+(ptrdiff_t n) const { iterator t = *this; t += n; return t; }
+        iterator& operator-=(ptrdiff_t n) { return *this += -n; }
+        iterator operator-(ptrdiff_t n) const { iterator t = *this; t -= n; return t; }
+        ptrdiff_t operator-(const iterator& o) const {
+            return (ptrdiff_t)(_M_block - o._M_block) * (ptrdiff_t)kBlockSize + (ptrdiff_t)_M_off - (ptrdiff_t)o._M_off;
+        }
+        bool operator==(const iterator& o) const { return _M_block == o._M_block && _M_off == o._M_off; }
+        bool operator!=(const iterator& o) const { return !(*this == o); }
+        bool operator<(const iterator& o) const { return _M_block < o._M_block || (_M_block == o._M_block && _M_off < o._M_off); }
+    };
+    typedef const iterator const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+
+    deque() { _M_init(); }
+    explicit deque(size_type n, const T& v = T()) { _M_init(); for (size_type i = 0; i < n; ++i) push_back(v); }
+    template<class InputIt>
+    deque(InputIt first, InputIt last) { _M_init(); for (; first != last; ++first) push_back(*first); }
+    deque(const deque& other) { _M_init(); for (const T& v : other) push_back(v); }
+#if STDCPP_DEQ_CXX11
+    deque(deque&& other) noexcept { _M_map = other._M_map; _M_map_size = other._M_map_size; _M_start_block = other._M_start_block; _M_start_off = other._M_start_off; _M_finish_block = other._M_finish_block; _M_finish_off = other._M_finish_off; _M_size = other._M_size; other._M_init(); }
+    deque(initializer_list<T> il) { _M_init(); for (const T& v : il) push_back(v); }
+#endif
+    ~deque() { clear(); for (size_t i = 0; i < _M_map_size; ++i) if (_M_map[i]) free(_M_map[i]); free(_M_map); }
+
+    deque& operator=(const deque& other) {
+        if (this != &other) { clear(); for (const T& v : other) push_back(v); }
+        return *this;
+    }
+#if STDCPP_DEQ_CXX11
+    deque& operator=(deque&& other) noexcept {
+        if (this != &other) { clear(); for (size_t i = 0; i < _M_map_size; ++i) if (_M_map[i]) free(_M_map[i]); free(_M_map);
+            _M_map = other._M_map; _M_map_size = other._M_map_size; _M_start_block = other._M_start_block; _M_start_off = other._M_start_off; _M_finish_block = other._M_finish_block; _M_finish_off = other._M_finish_off; _M_size = other._M_size; other._M_init(); }
+        return *this;
+    }
+    deque& operator=(initializer_list<T> il) { clear(); for (const T& v : il) push_back(v); return *this; }
+#endif
+
+    iterator begin() { return iterator(_M_map, _M_start_block, _M_start_off); }
+    iterator end() { return iterator(_M_map, _M_finish_block, _M_finish_off); }
+    reverse_iterator rbegin() { return reverse_iterator(end()); }
+    reverse_iterator rend() { return reverse_iterator(begin()); }
+
+    bool empty() const { return _M_size == 0; }
+    size_type size() const { return _M_size; }
+    size_type max_size() const { return size_type(-1) / sizeof(T); }
+    reference operator[](size_type i) { return *(begin() + i); }
+    const_reference operator[](size_type i) const { return *(begin() + i); }
+    reference at(size_type i) { if (i >= _M_size) throw out_of_range("deque::at"); return (*this)[i]; }
+    const_reference at(size_type i) const { if (i >= _M_size) throw out_of_range("deque::at"); return (*this)[i]; }
+    reference front() { return _M_map[_M_start_block][_M_start_off]; }
+    const_reference front() const { return _M_map[_M_start_block][_M_start_off]; }
+    reference back() { iterator it = end(); --it; return *it; }
+    const_reference back() const { iterator it = end(); --it; return *it; }
+
+    void push_back(const T& v) {
+        new (&_M_map[_M_finish_block][_M_finish_off]) T(v);
+        ++_M_size; ++_M_finish_off;
+        if (_M_finish_off == kBlockSize) _M_push_map_back();
+    }
+    void push_front(const T& v) {
+        if (_M_start_off == 0) _M_push_map_front();
+        else --_M_start_off;
+        new (&_M_map[_M_start_block][_M_start_off]) T(v);
+        ++_M_size;
+    }
+#if STDCPP_DEQ_CXX11
+    void push_back(T&& v) {
+        new (&_M_map[_M_finish_block][_M_finish_off]) T(STDCPP_MOVE(v));
+        ++_M_size; ++_M_finish_off;
+        if (_M_finish_off == kBlockSize) _M_push_map_back();
+    }
+    void push_front(T&& v) {
+        if (_M_start_off == 0) _M_push_map_front();
+        else --_M_start_off;
+        new (&_M_map[_M_start_block][_M_start_off]) T(STDCPP_MOVE(v));
+        ++_M_size;
+    }
+    template<class... A>
+    reference emplace_back(A&&... a) {
+        new (&_M_map[_M_finish_block][_M_finish_off]) T(std::forward<A>(a)...);
+        T& r = _M_map[_M_finish_block][_M_finish_off];
+        ++_M_size; ++_M_finish_off;
+        if (_M_finish_off == kBlockSize) _M_push_map_back();
+        return r;
+    }
+    template<class... A>
+    reference emplace_front(A&&... a) {
+        if (_M_start_off == 0) _M_push_map_front();
+        else --_M_start_off;
+        new (&_M_map[_M_start_block][_M_start_off]) T(std::forward<A>(a)...);
+        ++_M_size;
+        return _M_map[_M_start_block][_M_start_off];
+    }
+#endif
+    void pop_back() {
+        if (_M_finish_off == 0) { --_M_finish_block; _M_finish_off = kBlockSize - 1; }
+        else --_M_finish_off;
+        _M_map[_M_finish_block][_M_finish_off].~T();
+        --_M_size;
+    }
+    void pop_front() {
+        _M_map[_M_start_block][_M_start_off].~T();
+        --_M_size; ++_M_start_off;
+        if (_M_start_off == kBlockSize) { ++_M_start_block; _M_start_off = 0; }
+    }
+
+    iterator insert(const_iterator pos, const T& v) {
+        size_t idx = pos - begin();
+        if (idx <= _M_size / 2) {
+            push_front(v);
+            iterator it = begin();
+            for (size_t i = 0; i < idx; ++i, ++it) std::swap(*it, *(it + 1));
+            return begin() + idx;
+        } else {
+            push_back(v);
+            iterator it = end() - 1;
+            for (size_t i = _M_size - 1; i > idx; --i, --it) std::swap(*it, *(it - 1));
+            return begin() + idx;
+        }
+    }
+    iterator erase(const_iterator pos) {
+        size_t idx = pos - begin();
+        if (idx < _M_size / 2) {
+            for (size_t i = idx; i > 0; --i) (*this)[i] = STDCPP_MOVE((*this)[i - 1]);
+            pop_front();
+        } else {
+            for (size_t i = idx; i + 1 < _M_size; ++i) (*this)[i] = STDCPP_MOVE((*this)[i + 1]);
+            pop_back();
+        }
+        return begin() + idx;
+    }
+    iterator erase(const_iterator first, const_iterator last) {
+        size_t n = last - first;
+        for (size_t i = 0; i < n; ++i) erase(first);
+        return begin() + (first - begin());
+    }
+
+    void clear() { while (_M_size) pop_back(); }
+    void resize(size_type n, const T& v = T()) { while (_M_size > n) pop_back(); while (_M_size < n) push_back(v); }
+    void assign(size_type n, const T& v) { clear(); for (size_type i = 0; i < n; ++i) push_back(v); }
+    template<class InputIt>
+    void assign(InputIt first, InputIt last) { clear(); for (; first != last; ++first) push_back(*first); }
+#if STDCPP_DEQ_CXX11
+    void assign(initializer_list<T> il) { assign(il.begin(), il.end()); }
+#endif
+    void swap(deque& other) {
+        std::swap(_M_map, other._M_map); std::swap(_M_map_size, other._M_map_size);
+        std::swap(_M_start_block, other._M_start_block); std::swap(_M_start_off, other._M_start_off);
+        std::swap(_M_finish_block, other._M_finish_block); std::swap(_M_finish_off, other._M_finish_off);
+        std::swap(_M_size, other._M_size);
+    }
+};
+
+template<class T, class A>
+bool operator==(const deque<T, A>& a, const deque<T, A>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) if (!(a[i] == b[i])) return false;
+    return true;
+}
+template<class T, class A>
+void swap(deque<T, A>& a, deque<T, A>& b) { a.swap(b); }
+
+#if STDCPP_DEQ_CXX20
+template<class T, class A, class U>
+typename deque<T, A>::size_type erase(deque<T, A>& c, const U& value) {
+    auto n = c.size();
+    for (auto it = c.begin(); it != c.end();) { if (*it == value) it = c.erase(it); else ++it; }
+    return n - c.size();
+}
+template<class T, class A, class Pred>
+typename deque<T, A>::size_type erase_if(deque<T, A>& c, Pred pred) {
+    auto n = c.size();
+    for (auto it = c.begin(); it != c.end();) { if (pred(*it)) it = c.erase(it); else ++it; }
+    return n - c.size();
+}
+#endif
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#undef STDCPP_MOVE
+#endif
+#endif // STDCPP_DEQUE_HPP

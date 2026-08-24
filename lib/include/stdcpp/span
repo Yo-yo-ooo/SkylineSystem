@@ -1,0 +1,80 @@
+// -*- C++ -*-
+//=============================================================
+// span.hpp -- complete <span>, C++20~C++26.
+//=============================================================
+#ifndef STDCPP_SPAN_HPP
+#define STDCPP_SPAN_HPP
+
+#include <cstddef>
+#include <type_traits>
+#include <iterator>
+
+#define STDCPP_SPAN_CXX20 (__cplusplus >= 202002L)
+
+#ifndef _GLIBCXX_SPAN
+#  define _GLIBCXX_SPAN 1
+#endif
+
+#if STDCPP_SPAN_CXX20
+
+namespace std {
+
+inline constexpr size_t dynamic_extent = size_t(-1);
+
+template<class T, size_t Extent = dynamic_extent>
+class span {
+public:
+    typedef T element_type;
+    typedef T value_type;
+    typedef size_t size_type;
+    typedef ptrdiff_t difference_type;
+    typedef T* pointer;
+    typedef const T* const_pointer;
+    typedef T& reference;
+    typedef const T& const_reference;
+    typedef T* iterator;
+    typedef const T* const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+
+    static constexpr size_type extent = Extent;
+
+    constexpr span() noexcept : _M_data(nullptr), _M_size(0) {}
+    constexpr span(pointer ptr, size_type count) : _M_data(ptr), _M_size(count) {}
+    constexpr span(pointer first, pointer last) : _M_data(first), _M_size(last - first) {}
+
+    template<size_t N>
+    constexpr span(T (&arr)[N]) noexcept : _M_data(arr), _M_size(N) {}
+
+    template<class Container,
+             class = decltype(std::declval<Container&>().data()),
+             class = decltype(std::declval<Container&>().size())>
+    constexpr span(Container& c) : _M_data(c.data()), _M_size(c.size()) {}
+
+    constexpr iterator begin() const noexcept { return _M_data; }
+    constexpr iterator end() const noexcept { return _M_data + _M_size; }
+    constexpr pointer data() const noexcept { return _M_data; }
+    constexpr size_type size() const noexcept { return _M_size; }
+    constexpr size_type size_bytes() const noexcept { return _M_size * sizeof(T); }
+    constexpr bool empty() const noexcept { return _M_size == 0; }
+    constexpr reference operator[](size_type i) const { return _M_data[i]; }
+    constexpr reference front() const { return _M_data[0]; }
+    constexpr reference back() const { return _M_data[_M_size - 1]; }
+
+    constexpr span first(size_type n) const { return span(_M_data, n); }
+    constexpr span last(size_type n) const { return span(_M_data + _M_size - n, n); }
+    constexpr span subspan(size_type offset, size_type count = dynamic_extent) const {
+        return span(_M_data + offset, count == dynamic_extent ? _M_size - offset : count);
+    }
+
+private:
+    pointer _M_data;
+    size_type _M_size;
+};
+
+template<class T, size_t N>
+span(T (&)[N]) -> span<T, N>;
+
+} // namespace std
+
+#endif // STDCPP_SPAN_CXX20
+#endif // STDCPP_SPAN_HPP

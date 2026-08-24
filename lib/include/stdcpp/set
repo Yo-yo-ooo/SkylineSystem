@@ -1,0 +1,227 @@
+// -*- C++ -*-
+//=============================================================
+// set.hpp -- complete <set>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_SET_HPP
+#define STDCPP_SET_HPP
+
+#include <cstddef>
+#include <tree>
+#include <functional>
+#include <initializer_list>
+
+#define STDCPP_SET_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_SET_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_SET_CXX20 (__cplusplus >= 202002L)
+
+#ifndef _GLIBCXX_SET
+#  define _GLIBCXX_SET 1
+#endif
+
+namespace std {
+
+template<class Key, class Compare, class Allocator> class multiset;
+
+namespace __set_detail {
+    template<class V>
+    struct _identity { const V& operator()(const V& v) const { return v; } };
+}
+
+template<class Key, class Compare = less<Key>, class Allocator = void>
+class set {
+public:
+    typedef Key key_type;
+    typedef Key value_type;
+    typedef Compare key_compare;
+    typedef Compare value_compare;
+    typedef size_t size_type;
+
+    typedef _rb_tree<Key, Key, __set_detail::_identity<Key>, Compare> _tree_type;
+    typedef typename _tree_type::iterator iterator;
+    typedef typename _tree_type::const_iterator const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+    typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+
+private:
+    _tree_type _M_tree;
+
+public:
+    set() {}
+    template<class InputIt>
+    set(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+    set(const set& other) { for (const_iterator it = other.begin(); it != other.end(); ++it) insert(*it); }
+#if STDCPP_SET_CXX11
+    set(set&& other) noexcept { _M_tree.swap(other._M_tree); }
+    set(initializer_list<Key> il) { for (const Key& v : il) insert(v); }
+#endif
+
+    set& operator=(const set& other) {
+        if (this != &other) { _M_tree.clear(); for (const Key& v : other) insert(v); }
+        return *this;
+    }
+#if STDCPP_SET_CXX11
+    set& operator=(set&& other) noexcept { _M_tree.swap(other._M_tree); return *this; }
+    set& operator=(initializer_list<Key> il) { _M_tree.clear(); for (const Key& v : il) insert(v); return *this; }
+#endif
+
+    iterator begin() { return _M_tree.begin(); }
+    const_iterator begin() const { return _M_tree.begin(); }
+    iterator end() { return _M_tree.end(); }
+    const_iterator end() const { return _M_tree.end(); }
+    reverse_iterator rbegin() { return reverse_iterator(end()); }
+    const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
+    reverse_iterator rend() { return reverse_iterator(begin()); }
+    const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
+
+    bool empty() const { return _M_tree.empty(); }
+    size_type size() const { return _M_tree.size(); }
+    size_type max_size() const { return size_type(-1); }
+
+    pair<iterator, bool> insert(const Key& v) { return _M_tree.insert_unique(v); }
+    template<class InputIt>
+    void insert(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+#if STDCPP_SET_CXX11
+    void insert(initializer_list<Key> il) { for (const Key& v : il) insert(v); }
+    template<class... Args>
+    pair<iterator, bool> emplace(Args&&... args) { return insert(Key(std::forward<Args>(args)...)); }
+#endif
+
+    iterator erase(const_iterator pos) { return _M_tree.erase(pos); }
+    size_type erase(const Key& k) { return _M_tree.erase(k); }
+    iterator erase(const_iterator first, const_iterator last) {
+        while (first != last) first = _M_tree.erase(first);
+        return iterator(const_cast<typename _tree_type::node*>(last._M_node));
+    }
+
+    void clear() { _M_tree.clear(); }
+    void swap(set& other) { _M_tree.swap(other._M_tree); }
+
+    iterator find(const Key& k) { return _M_tree.find(k); }
+    const_iterator find(const Key& k) const { return _M_tree.find(k); }
+    size_type count(const Key& k) const { return _M_tree.count(k); }
+    iterator lower_bound(const Key& k) { return _M_tree.lower_bound(k); }
+    const_iterator lower_bound(const Key& k) const { return _M_tree.lower_bound(k); }
+    iterator upper_bound(const Key& k) { return _M_tree.upper_bound(k); }
+    const_iterator upper_bound(const Key& k) const { return _M_tree.upper_bound(k); }
+    pair<iterator, iterator> equal_range(const Key& k) { return _M_tree.equal_range(k); }
+    pair<const_iterator, const_iterator> equal_range(const Key& k) const { return _M_tree.equal_range(k); }
+
+    key_compare key_comp() const { return key_compare(); }
+    value_compare value_comp() const { return value_compare(); }
+
+#if STDCPP_SET_CXX17
+    template<class C2>
+    void merge(set<Key, C2, Allocator>& source) {
+        for (auto it = source.begin(); it != source.end(); ) {
+            auto next = it; ++next;
+            auto r = insert(*it);
+            if (r.second) source.erase(it);
+            it = next;
+        }
+    }
+    template<class C2>
+    void merge(multiset<Key, C2, Allocator>& source) {
+        for (auto it = source.begin(); it != source.end(); ) {
+            auto next = it; ++next;
+            auto r = insert(*it);
+            if (r.second) source.erase(it);
+            it = next;
+        }
+    }
+#endif
+
+#if STDCPP_SET_CXX20
+    bool contains(const Key& k) const { return find(k) != end(); }
+#endif
+};
+
+template<class K, class C, class A>
+bool operator==(const set<K, C, A>& a, const set<K, C, A>& b) {
+    if (a.size() != b.size()) return false;
+    for (typename set<K, C, A>::const_iterator i = a.begin(), j = b.begin(); i != a.end(); ++i, ++j)
+        if (!(*i == *j)) return false;
+    return true;
+}
+template<class K, class C, class A>
+bool operator!=(const set<K, C, A>& a, const set<K, C, A>& b) { return !(a == b); }
+template<class K, class C, class A>
+bool operator<(const set<K, C, A>& a, const set<K, C, A>& b) {
+    return lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+}
+template<class K, class C, class A>
+void swap(set<K, C, A>& a, set<K, C, A>& b) { a.swap(b); }
+
+//=============================================================
+// multiset
+//=============================================================
+template<class Key, class Compare = less<Key>, class Allocator = void>
+class multiset {
+public:
+    typedef Key key_type;
+    typedef Key value_type;
+    typedef Compare key_compare;
+    typedef Compare value_compare;
+    typedef size_t size_type;
+
+    typedef _rb_tree<Key, Key, __set_detail::_identity<Key>, Compare> _tree_type;
+    typedef typename _tree_type::iterator iterator;
+    typedef typename _tree_type::const_iterator const_iterator;
+
+private:
+    _tree_type _M_tree;
+
+public:
+    multiset() {}
+    template<class InputIt>
+    multiset(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+    multiset(const multiset& other) { for (const_iterator it = other.begin(); it != other.end(); ++it) insert(*it); }
+#if STDCPP_SET_CXX11
+    multiset(initializer_list<Key> il) { for (const Key& v : il) insert(v); }
+#endif
+
+    iterator begin() { return _M_tree.begin(); }
+    const_iterator begin() const { return _M_tree.begin(); }
+    iterator end() { return _M_tree.end(); }
+    const_iterator end() const { return _M_tree.end(); }
+    bool empty() const { return _M_tree.empty(); }
+    size_type size() const { return _M_tree.size(); }
+
+    iterator insert(const Key& v) { return _M_tree.insert_equal(v); }
+    template<class InputIt>
+    void insert(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+#if STDCPP_SET_CXX11
+    void insert(initializer_list<Key> il) { for (const Key& v : il) insert(v); }
+#endif
+
+    iterator erase(const_iterator pos) { return _M_tree.erase(pos); }
+    void clear() { _M_tree.clear(); }
+    void swap(multiset& other) { _M_tree.swap(other._M_tree); }
+
+    iterator find(const Key& k) { return _M_tree.find(k); }
+    const_iterator find(const Key& k) const { return _M_tree.find(k); }
+    size_type count(const Key& k) const {
+        pair<const_iterator, const_iterator> p = equal_range(k);
+        size_type n = 0;
+        for (const_iterator it = p.first; it != p.second; ++it) ++n;
+        return n;
+    }
+    iterator lower_bound(const Key& k) { return _M_tree.lower_bound(k); }
+    iterator upper_bound(const Key& k) { return _M_tree.upper_bound(k); }
+    pair<iterator, iterator> equal_range(const Key& k) { return _M_tree.equal_range(k); }
+
+#if STDCPP_SET_CXX20
+    bool contains(const Key& k) const { return find(k) != end(); }
+#endif
+};
+
+template<class K, class C, class A>
+void swap(multiset<K, C, A>& a, multiset<K, C, A>& b) { a.swap(b); }
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#endif
+#endif // STDCPP_SET_HPP

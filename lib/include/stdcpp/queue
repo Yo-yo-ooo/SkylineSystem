@@ -1,0 +1,141 @@
+// -*- C++ -*-
+//=============================================================
+// queue.hpp -- complete <queue>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_QUEUE_HPP
+#define STDCPP_QUEUE_HPP
+
+#include <cstddef>
+#include <deque>
+#include <vector>
+#include <functional>
+#include <algorithm>
+
+#ifndef _GLIBCXX_QUEUE
+#  define _GLIBCXX_QUEUE 1
+#endif
+
+namespace std {
+
+//=============================================================
+// queue
+//=============================================================
+template<class T, class Container = deque<T> >
+class queue {
+public:
+    typedef Container                           container_type;
+    typedef typename Container::value_type      value_type;
+    typedef typename Container::size_type       size_type;
+    typedef typename Container::reference       reference;
+    typedef typename Container::const_reference const_reference;
+
+protected:
+    Container c;
+
+public:
+    queue() : c() {}
+    explicit queue(const Container& cont) : c(cont) {}
+#if __cplusplus >= 201103L
+    explicit queue(Container&& cont) : c(std::move(cont)) {}
+    queue(const queue& other) : c(other.c) {}
+    queue(queue&& other) noexcept : c(std::move(other.c)) {}
+#endif
+
+    bool empty() const { return c.empty(); }
+    size_type size() const { return c.size(); }
+    reference front() { return c.front(); }
+    const_reference front() const { return c.front(); }
+    reference back() { return c.back(); }
+    const_reference back() const { return c.back(); }
+    void push(const value_type& v) { c.push_back(v); }
+#if __cplusplus >= 201103L
+    void push(value_type&& v) { c.push_back(std::move(v)); }
+    template<class... Args>
+#if __cplusplus >= 201402L
+    decltype(auto) emplace(Args&&... args) { return c.emplace_back(std::forward<Args>(args)...); }
+#else
+    void emplace(Args&&... args) { c.emplace_back(std::forward<Args>(args)...); }
+#endif
+#endif
+    void pop() { c.pop_front(); }
+    void swap(queue& other) { c.swap(other.c); }
+
+    bool operator==(const queue& o) const { return c == o.c; }
+    bool operator!=(const queue& o) const { return c != o.c; }
+    bool operator<(const queue& o) const { return c < o.c; }
+};
+
+template<class T, class Container>
+void swap(queue<T, Container>& a, queue<T, Container>& b) { a.swap(b); }
+
+//=============================================================
+// priority_queue
+//=============================================================
+template<class T, class Container = vector<T>, class Compare = less<typename Container::value_type> >
+class priority_queue {
+public:
+    typedef Container                           container_type;
+    typedef typename Container::value_type      value_type;
+    typedef typename Container::size_type       size_type;
+    typedef typename Container::reference       reference;
+    typedef typename Container::const_reference const_reference;
+
+protected:
+    Container c;
+    Compare comp;
+
+public:
+    priority_queue() : c(), comp() {}
+    explicit priority_queue(const Compare& compare) : c(), comp(compare) {}
+    priority_queue(const Compare& compare, const Container& cont)
+        : c(cont), comp(compare) { make_heap(c.begin(), c.end(), comp); }
+#if __cplusplus >= 201103L
+    priority_queue(const Compare& compare, Container&& cont)
+        : c(std::move(cont)), comp(compare) { make_heap(c.begin(), c.end(), comp); }
+#endif
+    template<class InputIt>
+    priority_queue(InputIt first, InputIt last, const Compare& compare = Compare())
+        : c(first, last), comp(compare) { make_heap(c.begin(), c.end(), comp); }
+
+    bool empty() const { return c.empty(); }
+    size_type size() const { return c.size(); }
+    const_reference top() const { return c.front(); }
+
+    void push(const value_type& v) {
+        c.push_back(v);
+        push_heap(c.begin(), c.end(), comp);
+    }
+#if __cplusplus >= 201103L
+    void push(value_type&& v) {
+        c.push_back(std::move(v));
+        push_heap(c.begin(), c.end(), comp);
+    }
+    template<class... Args>
+    void emplace(Args&&... args) {
+        c.emplace_back(std::forward<Args>(args)...);
+        push_heap(c.begin(), c.end(), comp);
+    }
+#endif
+    void pop() {
+        pop_heap(c.begin(), c.end(), comp);
+        c.pop_back();
+    }
+    void swap(priority_queue& other) {
+        c.swap(other.c);
+        std::swap(comp, other.comp);
+    }
+};
+
+template<class T, class Container, class Compare>
+void swap(priority_queue<T, Container, Compare>& a, priority_queue<T, Container, Compare>& b) {
+    a.swap(b);
+}
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#endif
+#endif // STDCPP_QUEUE_HPP

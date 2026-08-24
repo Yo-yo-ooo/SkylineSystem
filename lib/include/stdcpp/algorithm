@@ -1,0 +1,698 @@
+// -*- C++ -*-
+//=============================================================
+// algorithm.hpp -- complete <algorithm>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_ALGORITHM_HPP
+#define STDCPP_ALGORITHM_HPP
+
+#include <cstddef>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <functional>
+#include <initializer_list>
+
+#define STDCPP_ALG_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_ALG_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_ALG_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_ALG_CXX20 (__cplusplus >= 202002L)
+#define STDCPP_ALG_CXX23 (__cplusplus >= 202100L)
+
+#if STDCPP_ALG_CXX11
+#include <utility>
+#define STDCPP_MOVE(x) std::move(x)
+#else
+#define STDCPP_MOVE(x) (x)
+#endif
+
+#ifndef _GLIBCXX_ALGORITHM
+#  define _GLIBCXX_ALGORITHM 1
+#endif
+
+namespace std {
+
+//=============================================================
+// min / max / minmax
+//=============================================================
+template<class T>
+const T& min(const T& a, const T& b) { return b < a ? b : a; }
+template<class T, class Compare>
+const T& min(const T& a, const T& b, Compare comp) { return comp(b, a) ? b : a; }
+
+template<class T>
+const T& max(const T& a, const T& b) { return a < b ? b : a; }
+template<class T, class Compare>
+const T& max(const T& a, const T& b, Compare comp) { return comp(a, b) ? b : a; }
+
+#if STDCPP_ALG_CXX11
+template<class T>
+T min(initializer_list<T> il) {
+    const T* r = il.begin();
+    for (const T* p = il.begin() + 1; p != il.end(); ++p)
+        if (*p < *r) r = p;
+    return *r;
+}
+template<class T>
+T max(initializer_list<T> il) {
+    const T* r = il.begin();
+    for (const T* p = il.begin() + 1; p != il.end(); ++p)
+        if (*r < *p) r = p;
+    return *r;
+}
+#endif
+
+#if STDCPP_ALG_CXX11
+template<class T>
+pair<const T&, const T&> minmax(const T& a, const T& b) {
+    return b < a ? pair<const T&, const T&>(b, a) : pair<const T&, const T&>(a, b);
+}
+#endif
+
+//=============================================================
+// for_each
+//=============================================================
+template<class InputIt, class UnaryFunc>
+UnaryFunc for_each(InputIt first, InputIt last, UnaryFunc f) {
+    for (; first != last; ++first) f(*first);
+    return f;
+}
+
+#if STDCPP_ALG_CXX17
+template<class InputIt, class Size, class UnaryFunc>
+InputIt for_each_n(InputIt first, Size n, UnaryFunc f) {
+    for (Size i = 0; i < n; ++first, ++i) f(*first);
+    return first;
+}
+#endif
+
+//=============================================================
+// find / count / search
+//=============================================================
+template<class InputIt, class T>
+InputIt find(InputIt first, InputIt last, const T& v) {
+    for (; first != last; ++first) if (*first == v) return first;
+    return last;
+}
+template<class InputIt, class Pred>
+InputIt find_if(InputIt first, InputIt last, Pred p) {
+    for (; first != last; ++first) if (p(*first)) return first;
+    return last;
+}
+template<class InputIt, class Pred>
+InputIt find_if_not(InputIt first, InputIt last, Pred p) {
+    for (; first != last; ++first) if (!p(*first)) return first;
+    return last;
+}
+
+template<class InputIt, class T>
+typename iterator_traits<InputIt>::difference_type
+count(InputIt first, InputIt last, const T& v) {
+    typename iterator_traits<InputIt>::difference_type n = 0;
+    for (; first != last; ++first) if (*first == v) ++n;
+    return n;
+}
+template<class InputIt, class Pred>
+typename iterator_traits<InputIt>::difference_type
+count_if(InputIt first, InputIt last, Pred p) {
+    typename iterator_traits<InputIt>::difference_type n = 0;
+    for (; first != last; ++first) if (p(*first)) ++n;
+    return n;
+}
+
+template<class ForwardIt1, class ForwardIt2>
+ForwardIt1 search(ForwardIt1 first, ForwardIt1 last,
+                  ForwardIt2 s_first, ForwardIt2 s_last) {
+    for (;;) {
+        ForwardIt1 it = first;
+        ForwardIt2 s = s_first;
+        for (;;) {
+            if (s == s_last) return first;
+            if (it == last) return last;
+            if (!(*it == *s)) break;
+            ++it; ++s;
+        }
+        ++first;
+    }
+}
+
+template<class ForwardIt, class T>
+ForwardIt find_end(ForwardIt first, ForwardIt last,
+                   const T& s_first, const T& s_last) {
+    ForwardIt r = last;
+    while (true) {
+        ForwardIt i = search(first, last, s_first, s_last);
+        if (i == last) return r;
+        r = i;
+        first = i;
+        ++first;
+    }
+}
+
+//=============================================================
+// all_of / any_of / none_of (C++11)
+//=============================================================
+#if STDCPP_ALG_CXX11
+template<class InputIt, class Pred>
+bool all_of(InputIt first, InputIt last, Pred p) {
+    for (; first != last; ++first) if (!p(*first)) return false;
+    return true;
+}
+template<class InputIt, class Pred>
+bool any_of(InputIt first, InputIt last, Pred p) {
+    for (; first != last; ++first) if (p(*first)) return true;
+    return false;
+}
+template<class InputIt, class Pred>
+bool none_of(InputIt first, InputIt last, Pred p) {
+    for (; first != last; ++first) if (p(*first)) return false;
+    return true;
+}
+#endif
+
+//=============================================================
+// equal / mismatch / lexicographical_compare
+//=============================================================
+template<class InputIt1, class InputIt2>
+bool equal(InputIt1 first1, InputIt1 last1, InputIt2 first2) {
+    for (; first1 != last1; ++first1, ++first2)
+        if (!(*first1 == *first2)) return false;
+    return true;
+}
+template<class InputIt1, class InputIt2, class Pred>
+bool equal(InputIt1 first1, InputIt1 last1, InputIt2 first2, Pred p) {
+    for (; first1 != last1; ++first1, ++first2)
+        if (!p(*first1, *first2)) return false;
+    return true;
+}
+
+template<class InputIt1, class InputIt2>
+pair<InputIt1, InputIt2> mismatch(InputIt1 first1, InputIt1 last1, InputIt2 first2) {
+    while (first1 != last1 && *first1 == *first2) { ++first1; ++first2; }
+    return pair<InputIt1, InputIt2>(first1, first2);
+}
+
+template<class InputIt1, class InputIt2>
+bool lexicographical_compare(InputIt1 first1, InputIt1 last1,
+                             InputIt2 first2, InputIt2 last2) {
+    for (; first1 != last1 && first2 != last2; ++first1, ++first2) {
+        if (*first1 < *first2) return true;
+        if (*first2 < *first1) return false;
+    }
+    return first1 == last1 && first2 != last2;
+}
+
+//=============================================================
+// copy / move / transform / swap_ranges / fill / generate / replace / remove
+//=============================================================
+template<class InputIt, class OutputIt>
+OutputIt copy(InputIt first, InputIt last, OutputIt d_first) {
+    for (; first != last; ++first, ++d_first) *d_first = *first;
+    return d_first;
+}
+template<class InputIt, class OutputIt, class Pred>
+OutputIt copy_if(InputIt first, InputIt last, OutputIt d_first, Pred p) {
+    for (; first != last; ++first) if (p(*first)) { *d_first = *first; ++d_first; }
+    return d_first;
+}
+template<class InputIt, class Size, class OutputIt>
+OutputIt copy_n(InputIt first, Size n, OutputIt d_first) {
+    for (Size i = 0; i < n; ++i, ++first, ++d_first) *d_first = *first;
+    return d_first;
+}
+template<class BidirIt1, class BidirIt2>
+BidirIt2 copy_backward(BidirIt1 first, BidirIt1 last, BidirIt2 d_last) {
+    while (first != last) *--d_last = *--last;
+    return d_last;
+}
+
+#if STDCPP_ALG_CXX11
+template<class InputIt, class OutputIt>
+OutputIt move(InputIt first, InputIt last, OutputIt d_first) {
+    for (; first != last; ++first, ++d_first)
+        *d_first = STDCPP_MOVE(*first);
+    return d_first;
+}
+template<class BidirIt1, class BidirIt2>
+BidirIt2 move_backward(BidirIt1 first, BidirIt1 last, BidirIt2 d_last) {
+    while (first != last) *--d_last = STDCPP_MOVE(*--last);
+    return d_last;
+}
+#endif
+
+template<class InputIt, class OutputIt, class UnaryOp>
+OutputIt transform(InputIt first, InputIt last, OutputIt d_first, UnaryOp op) {
+    for (; first != last; ++first, ++d_first) *d_first = op(*first);
+    return d_first;
+}
+template<class InputIt1, class InputIt2, class OutputIt, class BinaryOp>
+OutputIt transform(InputIt1 first1, InputIt1 last1, InputIt2 first2,
+                   OutputIt d_first, BinaryOp op) {
+    for (; first1 != last1; ++first1, ++first2, ++d_first)
+        *d_first = op(*first1, *first2);
+    return d_first;
+}
+
+template<class ForwardIt1, class ForwardIt2>
+ForwardIt2 swap_ranges(ForwardIt1 first1, ForwardIt1 last1, ForwardIt2 first2) {
+    for (; first1 != last1; ++first1, ++first2) swap(*first1, *first2);
+    return first2;
+}
+template<class ForwardIt1, class ForwardIt2>
+void iter_swap(ForwardIt1 a, ForwardIt2 b) { swap(*a, *b); }
+
+template<class ForwardIt, class T>
+void fill(ForwardIt first, ForwardIt last, const T& v) {
+    for (; first != last; ++first) *first = v;
+}
+template<class OutputIt, class Size, class T>
+OutputIt fill_n(OutputIt first, Size n, const T& v) {
+    for (Size i = 0; i < n; ++i, ++first) *first = v;
+    return first;
+}
+
+template<class ForwardIt, class Generator>
+void generate(ForwardIt first, ForwardIt last, Generator g) {
+    for (; first != last; ++first) *first = g();
+}
+template<class OutputIt, class Size, class Generator>
+OutputIt generate_n(OutputIt first, Size n, Generator g) {
+    for (Size i = 0; i < n; ++i, ++first) *first = g();
+    return first;
+}
+
+template<class ForwardIt, class T>
+void replace(ForwardIt first, ForwardIt last, const T& old_v, const T& new_v) {
+    for (; first != last; ++first) if (*first == old_v) *first = new_v;
+}
+template<class ForwardIt, class Pred, class T>
+void replace_if(ForwardIt first, ForwardIt last, Pred p, const T& new_v) {
+    for (; first != last; ++first) if (p(*first)) *first = new_v;
+}
+
+template<class InputIt, class OutputIt, class T>
+OutputIt remove_copy(InputIt first, InputIt last, OutputIt d_first, const T& v) {
+    for (; first != last; ++first) if (!(*first == v)) { *d_first = *first; ++d_first; }
+    return d_first;
+}
+template<class ForwardIt, class T>
+ForwardIt remove(ForwardIt first, ForwardIt last, const T& v) {
+    first = find(first, last, v);
+    ForwardIt next = first;
+    return first == last ? first : remove_copy(++next, last, first, v);
+}
+template<class ForwardIt, class Pred>
+ForwardIt remove_if(ForwardIt first, ForwardIt last, Pred p) {
+    first = find_if(first, last, p);
+    if (first == last) return first;
+    ForwardIt next = first; ++next;
+    for (; next != last; ++next)
+        if (!p(*next)) { *first = STDCPP_MOVE(*next); ++first; }
+    return first;
+}
+
+template<class InputIt, class OutputIt, class T>
+OutputIt replace_copy(InputIt first, InputIt last, OutputIt d_first,
+                      const T& old_v, const T& new_v) {
+    for (; first != last; ++first, ++d_first)
+        *d_first = (*first == old_v) ? new_v : *first;
+    return d_first;
+}
+
+//=============================================================
+// unique / reverse / rotate
+//=============================================================
+template<class ForwardIt>
+ForwardIt unique(ForwardIt first, ForwardIt last) {
+    if (first == last) return last;
+    ForwardIt r = first;
+    while (++first != last)
+        if (!(*r == *first) && ++r != first) *r = STDCPP_MOVE(*first);
+    return ++r;
+}
+template<class ForwardIt, class Pred>
+ForwardIt unique(ForwardIt first, ForwardIt last, Pred p) {
+    if (first == last) return last;
+    ForwardIt r = first;
+    while (++first != last)
+        if (!p(*r, *first) && ++r != first) *r = STDCPP_MOVE(*first);
+    return ++r;
+}
+
+template<class BidirIt>
+void reverse(BidirIt first, BidirIt last) {
+    while (first != last && first != --last) {
+        iter_swap(first, last);
+        ++first;
+    }
+}
+template<class BidirIt, class OutputIt>
+OutputIt reverse_copy(BidirIt first, BidirIt last, OutputIt d_first) {
+    while (first != last) *d_first++ = *--last;
+    return d_first;
+}
+
+template<class ForwardIt>
+ForwardIt rotate(ForwardIt first, ForwardIt middle, ForwardIt last) {
+    ForwardIt next = middle;
+    while (first != next) {
+        swap(*first, *next);
+        ++first; ++next;
+        if (next == last) next = middle;
+        else if (first == middle) middle = next;
+    }
+    return next;
+}
+
+//=============================================================
+// sort / stable_sort / partial_sort / nth_element
+//=============================================================
+template<class RandomIt, class Compare>
+void sort(RandomIt first, RandomIt last, Compare comp) {
+    if (first == last) return;
+    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
+    typedef typename iterator_traits<RandomIt>::value_type val_t;
+    diff_t n = last - first;
+    if (n < 2) return;
+    if (n < 16) {
+        for (RandomIt i = first + 1; i != last; ++i) {
+            RandomIt j = i;
+            while (j > first && comp(*j, *(j - 1))) {
+                swap(*j, *(j - 1));
+                --j;
+            }
+        }
+        return;
+    }
+    RandomIt mid = first + n / 2;
+    if (comp(*mid, *first)) swap(*first, *mid);
+    if (comp(*(last - 1), *first)) swap(*first, *(last - 1));
+    if (comp(*(last - 1), *mid)) swap(*mid, *(last - 1));
+    val_t pivot = *mid;
+    swap(*mid, *(last - 1));
+    RandomIt i = first;
+    for (RandomIt j = first; j != last - 1; ++j) {
+        if (comp(*j, pivot)) { swap(*i, *j); ++i; }
+    }
+    swap(*i, *(last - 1));
+    sort(first, i, comp);
+    sort(i + 1, last, comp);
+}
+
+template<class RandomIt>
+void sort(RandomIt first, RandomIt last) {
+    sort(first, last, less<typename iterator_traits<RandomIt>::value_type>());
+}
+
+template<class RandomIt, class Compare>
+void stable_sort(RandomIt first, RandomIt last, Compare comp) {
+    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
+    typedef typename iterator_traits<RandomIt>::value_type T;
+    diff_t n = last - first;
+    if (n < 2) return;
+    T* tmp = (T*)malloc(n * sizeof(T));
+    if (!tmp) { sort(first, last, comp); return; }
+    for (diff_t width = 1; width < n; width *= 2) {
+        for (diff_t i = 0; i < n; i += 2 * width) {
+            diff_t left = i;
+            diff_t mid = i + width < n ? i + width : n;
+            diff_t right = i + 2 * width < n ? i + 2 * width : n;
+            diff_t l = left, r = mid, k = left;
+            while (l < mid && r < right) {
+                if (comp(*(first + r), *(first + l))) {
+                    new (tmp + k) T(STDCPP_MOVE(*(first + r)));
+                    ++r;
+                } else {
+                    new (tmp + k) T(STDCPP_MOVE(*(first + l)));
+                    ++l;
+                }
+                ++k;
+            }
+            while (l < mid) { new (tmp + k) T(STDCPP_MOVE(*(first + l))); ++l; ++k; }
+            while (r < right) { new (tmp + k) T(STDCPP_MOVE(*(first + r))); ++r; ++k; }
+            for (diff_t j = left; j < right; ++j) {
+                *(first + j) = STDCPP_MOVE(tmp[j]);
+                tmp[j].~T();
+            }
+        }
+    }
+    free(tmp);
+}
+
+template<class RandomIt>
+void stable_sort(RandomIt first, RandomIt last) {
+    stable_sort(first, last, less<typename iterator_traits<RandomIt>::value_type>());
+}
+
+template<class RandomIt, class Compare>
+void partial_sort(RandomIt first, RandomIt middle, RandomIt last, Compare comp) {
+    // heap-based
+    make_heap(first, middle, comp);
+    for (RandomIt i = middle; i != last; ++i) {
+        if (comp(*i, *first)) {
+            pop_heap(first, middle, comp);
+            *(middle - 1) = *i;
+            push_heap(first, middle, comp);
+        }
+    }
+    sort_heap(first, middle, comp);
+}
+
+template<class RandomIt, class Compare>
+void nth_element(RandomIt first, RandomIt nth, RandomIt last, Compare comp) {
+    if (first == last || nth == last) return;
+    typedef typename iterator_traits<RandomIt>::value_type val_t;
+    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
+    while (last - first > 1) {
+        val_t pivot = *(first + (last - first) / 2);
+        RandomIt i = first, j = last - 1;
+        while (i <= j) {
+            while (comp(*i, pivot)) ++i;
+            while (comp(pivot, *j)) --j;
+            if (i <= j) { swap(*i, *j); ++i; --j; }
+        }
+        if (nth <= j) last = j + 1;
+        else if (nth >= i) first = i;
+        else break;
+    }
+}
+
+//=============================================================
+// heap operations
+//=============================================================
+template<class RandomIt, class Compare>
+void push_heap(RandomIt first, RandomIt last, Compare comp) {
+    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
+    diff_t n = last - first - 1;
+    while (n > 0) {
+        diff_t parent = (n - 1) / 2;
+        if (comp(*(first + parent), *(first + n))) {
+            swap(*(first + parent), *(first + n));
+            n = parent;
+        } else break;
+    }
+}
+template<class RandomIt, class Compare>
+void pop_heap(RandomIt first, RandomIt last, Compare comp) {
+    if (last - first <= 1) return;
+    swap(*first, *(last - 1));
+    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
+    diff_t n = last - first - 1;
+    diff_t i = 0;
+    while (true) {
+        diff_t l = 2 * i + 1, r = 2 * i + 2, largest = i;
+        if (l < n && comp(*(first + largest), *(first + l))) largest = l;
+        if (r < n && comp(*(first + largest), *(first + r))) largest = r;
+        if (largest == i) break;
+        swap(*(first + i), *(first + largest));
+        i = largest;
+    }
+}
+template<class RandomIt, class Compare>
+void make_heap(RandomIt first, RandomIt last, Compare comp) {
+    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
+    typedef typename iterator_traits<RandomIt>::value_type val_t;
+    diff_t n = last - first;
+    for (diff_t i = n / 2; i > 0; --i) {
+        diff_t idx = i - 1;
+        val_t tmp = *(first + idx);
+        diff_t j = idx;
+        while (true) {
+            diff_t l = 2 * j + 1;
+            if (l >= n) break;
+            diff_t child = l;
+            if (l + 1 < n && comp(*(first + l), *(first + l + 1))) child = l + 1;
+            if (comp(tmp, *(first + child))) {
+                *(first + j) = *(first + child);
+                j = child;
+            } else break;
+        }
+        *(first + j) = tmp;
+    }
+}
+template<class RandomIt, class Compare>
+void sort_heap(RandomIt first, RandomIt last, Compare comp) {
+    while (last - first > 1) {
+        pop_heap(first, last, comp);
+        --last;
+    }
+}
+
+//=============================================================
+// binary search
+//=============================================================
+template<class ForwardIt, class T, class Compare>
+bool binary_search(ForwardIt first, ForwardIt last, const T& v, Compare comp) {
+    first = lower_bound(first, last, v, comp);
+    return first != last && !comp(v, *first);
+}
+template<class ForwardIt, class T>
+bool binary_search(ForwardIt first, ForwardIt last, const T& v) {
+    return binary_search(first, last, v, less<T>());
+}
+
+template<class ForwardIt, class T, class Compare>
+ForwardIt lower_bound(ForwardIt first, ForwardIt last, const T& v, Compare comp) {
+    typedef typename iterator_traits<ForwardIt>::difference_type diff_t;
+    diff_t n = distance(first, last);
+    while (n > 0) {
+        diff_t half = n / 2;
+        ForwardIt mid = first;
+        advance(mid, half);
+        if (comp(*mid, v)) { first = ++mid; n -= half + 1; }
+        else n = half;
+    }
+    return first;
+}
+template<class ForwardIt, class T>
+ForwardIt lower_bound(ForwardIt first, ForwardIt last, const T& v) {
+    return lower_bound(first, last, v, less<T>());
+}
+
+template<class ForwardIt, class T, class Compare>
+ForwardIt upper_bound(ForwardIt first, ForwardIt last, const T& v, Compare comp) {
+    typedef typename iterator_traits<ForwardIt>::difference_type diff_t;
+    diff_t n = distance(first, last);
+    while (n > 0) {
+        diff_t half = n / 2;
+        ForwardIt mid = first;
+        advance(mid, half);
+        if (!comp(v, *mid)) { first = ++mid; n -= half + 1; }
+        else n = half;
+    }
+    return first;
+}
+template<class ForwardIt, class T>
+ForwardIt upper_bound(ForwardIt first, ForwardIt last, const T& v) {
+    return upper_bound(first, last, v, less<T>());
+}
+
+template<class ForwardIt, class T, class Compare>
+pair<ForwardIt, ForwardIt>
+equal_range(ForwardIt first, ForwardIt last, const T& v, Compare comp) {
+    return pair<ForwardIt, ForwardIt>(lower_bound(first, last, v, comp),
+                                      upper_bound(first, last, v, comp));
+}
+
+//=============================================================
+// merge / inplace_merge / partition
+//=============================================================
+template<class InputIt1, class InputIt2, class OutputIt, class Compare>
+OutputIt merge(InputIt1 first1, InputIt1 last1,
+               InputIt2 first2, InputIt2 last2, OutputIt d_first, Compare comp) {
+    while (first1 != last1 && first2 != last2) {
+        if (comp(*first2, *first1)) { *d_first++ = *first2++; }
+        else { *d_first++ = *first1++; }
+    }
+    return copy(first2, last2, copy(first1, last1, d_first));
+}
+template<class InputIt1, class InputIt2, class OutputIt>
+OutputIt merge(InputIt1 first1, InputIt1 last1,
+               InputIt2 first2, InputIt2 last2, OutputIt d_first) {
+    return merge(first1, last1, first2, last2, d_first,
+                 less<typename iterator_traits<InputIt1>::value_type>());
+}
+
+template<class BidirIt, class Pred>
+BidirIt partition(BidirIt first, BidirIt last, Pred p) {
+    while (true) {
+        while (first != last && p(*first)) ++first;
+        if (first == last) break;
+        --last;
+        while (first != last && !p(*last)) --last;
+        if (first == last) break;
+        swap(*first, *last);
+        ++first;
+    }
+    return first;
+}
+
+template<class BidirIt, class Pred>
+BidirIt stable_partition(BidirIt first, BidirIt last, Pred p) {
+    typedef typename iterator_traits<BidirIt>::value_type T;
+    typedef typename iterator_traits<BidirIt>::difference_type diff_t;
+    diff_t n = distance(first, last);
+    if (n == 0) return first;
+    T* tmp = (T*)malloc(n * sizeof(T));
+    if (!tmp) return partition(first, last, p);
+    BidirIt out = first;
+    size_t k = 0;
+    for (BidirIt it = first; it != last; ++it) {
+        if (p(*it)) { *out++ = *it; }
+        else { new (tmp + k) T(*it); ++k; }
+    }
+    BidirIt result = out;
+    for (size_t i = 0; i < k; ++i, ++out) *out = tmp[i];
+    for (size_t i = 0; i < k; ++i) tmp[i].~T();
+    free(tmp);
+    return result;
+}
+
+//=============================================================
+// clamp (C++17) / sample (C++17)
+//=============================================================
+#if STDCPP_ALG_CXX17
+template<class T>
+const T& clamp(const T& v, const T& lo, const T& hi) {
+    return v < lo ? lo : (hi < v ? hi : v);
+}
+template<class T, class Compare>
+const T& clamp(const T& v, const T& lo, const T& hi, Compare comp) {
+    return comp(v, lo) ? lo : (comp(hi, v) ? hi : v);
+}
+
+template<class PopulationIt, class SampleIt, class Distance, class URBG>
+SampleIt sample(PopulationIt first, PopulationIt last, SampleIt out,
+                Distance n, URBG&& g) {
+    Distance sz = distance(first, last);
+    if (n > sz) n = sz;
+    for (Distance i = 0; i < n; ++i) {
+        Distance r = (Distance)(g() % (sz - i));
+        PopulationIt selected = first;
+        advance(selected, r);
+        *out++ = *selected;
+        swap(*selected, *(first + sz - 1 - i));
+    }
+    return out;
+}
+#endif
+
+//=============================================================
+// shift_left / shift_right (C++20)
+//=============================================================
+#if STDCPP_ALG_CXX20
+template<class ForwardIt>
+ForwardIt shift_left(ForwardIt first, ForwardIt last,
+                     typename iterator_traits<ForwardIt>::difference_type n) {
+    if (n <= 0) return last;
+    ForwardIt mid = first;
+    if (distance(first, last) <= n) return first;
+    advance(mid, n);
+    return move(mid, last, first);
+}
+#endif
+
+} // namespace std
+
+#undef STDCPP_MOVE
+
+#endif // STDCPP_ALGORITHM_HPP

@@ -1,0 +1,102 @@
+// -*- C++ -*-
+//=============================================================
+// typeinfo.hpp -- complete <typeinfo>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_TYPEINFO_HPP
+#define STDCPP_TYPEINFO_HPP
+
+#include <cstddef>
+
+#ifndef _GLIBCXX_TYPEINFO
+#  define _GLIBCXX_TYPEINFO 1
+#endif
+
+#define STDCPP_TI_CXX11 (__cplusplus >= 201103L)
+
+namespace std {
+
+class type_info {
+public:
+    virtual ~type_info();
+
+#if STDCPP_TI_CXX11
+    bool operator==(const type_info& rhs) const noexcept {
+        return __name == rhs.__name;
+    }
+    bool operator!=(const type_info& rhs) const noexcept {
+        return __name != rhs.__name;
+    }
+    bool before(const type_info& rhs) const noexcept {
+        return __name < rhs.__name;
+    }
+    size_t hash_code() const noexcept {
+        return reinterpret_cast<size_t>(__name);
+    }
+    const char* name() const noexcept { return __name; }
+#else
+    bool operator==(const type_info& rhs) const {
+        return __name == rhs.__name;
+    }
+    bool operator!=(const type_info& rhs) const {
+        return __name != rhs.__name;
+    }
+    bool before(const type_info& rhs) const {
+        return __name < rhs.__name;
+    }
+    const char* name() const { return __name; }
+#endif
+
+#if STDCPP_TI_CXX11
+    type_info(const type_info&) = delete;
+    type_info& operator=(const type_info&) = delete;
+#else
+private:
+    type_info(const type_info&);
+    type_info& operator=(const type_info&);
+public:
+#endif
+
+protected:
+    const char* __name;
+    explicit type_info(const char* n) : __name(n) {}
+};
+
+inline type_info::~type_info() {}
+
+//=============================================================
+// bad_cast
+//=============================================================
+class bad_cast {
+public:
+#if STDCPP_TI_CXX11
+    bad_cast() noexcept {}
+    virtual ~bad_cast();
+    virtual const char* what() const noexcept { return "std::bad_cast"; }
+#else
+    bad_cast() {}
+    virtual ~bad_cast();
+    virtual const char* what() const { return "std::bad_cast"; }
+#endif
+};
+inline bad_cast::~bad_cast() {}
+
+//=============================================================
+// bad_typeid
+//=============================================================
+class bad_typeid {
+public:
+#if STDCPP_TI_CXX11
+    bad_typeid() noexcept {}
+    virtual ~bad_typeid();
+    virtual const char* what() const noexcept { return "std::bad_typeid"; }
+#else
+    bad_typeid() {}
+    virtual ~bad_typeid();
+    virtual const char* what() const { return "std::bad_typeid"; }
+#endif
+};
+inline bad_typeid::~bad_typeid() {}
+
+} // namespace std
+
+#endif // STDCPP_TYPEINFO_HPP

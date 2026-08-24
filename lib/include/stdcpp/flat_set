@@ -1,0 +1,122 @@
+// -*- C++ -*-
+//=============================================================
+// flat_set.hpp -- complete <flat_set>, C++23~C++26.
+//=============================================================
+#ifndef STDCPP_FLAT_SET_HPP
+#define STDCPP_FLAT_SET_HPP
+
+#include <cstddef>
+#include <vector>
+#include <functional>
+#include <algorithm>
+#include <initializer_list>
+
+#define STDCPP_FS_CXX23 (__cplusplus >= 202100L)
+
+#ifndef _GLIBCXX_FLAT_SET
+#  define _GLIBCXX_FLAT_SET 1
+#endif
+
+#if STDCPP_FS_CXX23
+
+namespace std {
+
+template<class Key, class Compare = less<Key>, class Container = vector<Key> >
+class flat_set {
+public:
+    typedef Key key_type;
+    typedef Key value_type;
+    typedef Compare key_compare;
+    typedef Compare value_compare;
+    typedef Container container_type;
+    typedef typename Container::iterator iterator;
+    typedef typename Container::const_iterator const_iterator;
+    typedef typename Container::size_type size_type;
+    typedef typename Container::reverse_iterator reverse_iterator;
+
+private:
+    Container _M_c;
+    Compare _M_comp;
+
+public:
+    flat_set() {}
+    explicit flat_set(const Compare& comp) : _M_comp(comp) {}
+    template<class InputIt>
+    flat_set(InputIt first, InputIt last, const Compare& comp = Compare()) : _M_comp(comp) {
+        for (; first != last; ++first) insert(*first);
+    }
+    flat_set(const flat_set&) = default;
+    flat_set(flat_set&&) = default;
+    flat_set(initializer_list<Key> il) { for (const Key& v : il) insert(v); }
+
+    flat_set& operator=(const flat_set&) = default;
+    flat_set& operator=(flat_set&&) = default;
+    flat_set& operator=(initializer_list<Key> il) { clear(); for (const Key& v : il) insert(v); return *this; }
+
+    iterator begin() { return _M_c.begin(); }
+    const_iterator begin() const { return _M_c.begin(); }
+    iterator end() { return _M_c.end(); }
+    const_iterator end() const { return _M_c.end(); }
+    reverse_iterator rbegin() { return _M_c.rbegin(); }
+    reverse_iterator rend() { return _M_c.rend(); }
+
+    bool empty() const { return _M_c.empty(); }
+    size_type size() const { return _M_c.size(); }
+    size_type max_size() const { return _M_c.max_size(); }
+    void clear() { _M_c.clear(); }
+
+    pair<iterator, bool> insert(const Key& v) {
+        iterator it = lower_bound(v);
+        if (it != end() && !_M_comp(v, *it)) return pair<iterator, bool>(it, false);
+        it = _M_c.insert(it, v);
+        return pair<iterator, bool>(it, true);
+    }
+    template<class InputIt>
+    void insert(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+    void insert(initializer_list<Key> il) { for (const Key& v : il) insert(v); }
+
+    iterator erase(const_iterator pos) { return _M_c.erase(pos); }
+    size_type erase(const Key& k) {
+        iterator it = find(k);
+        if (it == end()) return 0;
+        _M_c.erase(it);
+        return 1;
+    }
+    iterator erase(const_iterator first, const_iterator last) { return _M_c.erase(first, last); }
+
+    iterator find(const Key& k) {
+        iterator it = lower_bound(k);
+        if (it != end() && !_M_comp(k, *it)) return it;
+        return end();
+    }
+    const_iterator find(const Key& k) const {
+        const_iterator it = lower_bound(k);
+        if (it != end() && !_M_comp(k, *it)) return it;
+        return end();
+    }
+    size_type count(const Key& k) const { return find(k) != end() ? 1 : 0; }
+    bool contains(const Key& k) const { return find(k) != end(); }
+
+    iterator lower_bound(const Key& k) { return std::lower_bound(_M_c.begin(), _M_c.end(), k, _M_comp); }
+    const_iterator lower_bound(const Key& k) const { return std::lower_bound(_M_c.begin(), _M_c.end(), k, _M_comp); }
+    iterator upper_bound(const Key& k) { return std::upper_bound(_M_c.begin(), _M_c.end(), k, _M_comp); }
+    const_iterator upper_bound(const Key& k) const { return std::upper_bound(_M_c.begin(), _M_c.end(), k, _M_comp); }
+    pair<iterator, iterator> equal_range(const Key& k) { return std::equal_range(_M_c.begin(), _M_c.end(), k, _M_comp); }
+    pair<const_iterator, const_iterator> equal_range(const Key& k) const { return std::equal_range(_M_c.begin(), _M_c.end(), k, _M_comp); }
+
+    void swap(flat_set& other) { _M_c.swap(other._M_c); std::swap(_M_comp, other._M_comp); }
+    const Container& extract() const { return _M_c; }
+};
+
+template<class K, class C, class A>
+bool operator==(const flat_set<K, C, A>& a, const flat_set<K, C, A>& b) {
+    if (a.size() != b.size()) return false;
+    return equal(a.begin(), a.end(), b.begin());
+}
+template<class K, class C, class A>
+void swap(flat_set<K, C, A>& a, flat_set<K, C, A>& b) { a.swap(b); }
+
+} // namespace std
+
+#endif // STDCPP_FS_CXX23
+#endif // STDCPP_FLAT_SET_HPP

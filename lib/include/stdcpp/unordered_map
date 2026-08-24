@@ -1,0 +1,528 @@
+// -*- C++ -*-
+//=============================================================
+// unordered_map.hpp -- complete <unordered_map>, C++11~C++26.
+//=============================================================
+#ifndef STDCPP_UNORDERED_MAP_HPP
+#define STDCPP_UNORDERED_MAP_HPP
+
+#include <cstddef>
+#include <cstdlib>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <functional>
+#include <initializer_list>
+#include <stdexcept>
+
+#define STDCPP_UM_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_UM_CXX20 (__cplusplus >= 202002L)
+
+#ifndef _GLIBCXX_UNORDERED_MAP
+#  define _GLIBCXX_UNORDERED_MAP 1
+#endif
+
+namespace std {
+
+namespace __hash_detail {
+    template<class V> struct _select1st {
+        const typename V::first_type& operator()(const V& v) const { return v.first; }
+    };
+    template<class K> struct _identity { const K& operator()(const K& k) const { return k; } };
+}
+
+template<class Key, class Value, class Hash, class KeyEqual, class Alloc,
+         bool AllowDuplicates, class KeyOfValue>
+class _hash_table {
+public:
+    typedef Key key_type;
+    typedef Value value_type;
+    typedef Hash hasher;
+    typedef KeyEqual key_equal;
+    typedef size_t size_type;
+
+    struct node_type {
+        value_type _M_value;
+        node_type* _M_next;
+        node_type(const value_type& v) : _M_value(v), _M_next(nullptr) {}
+        template<class... A>
+        node_type(A&&... a) : _M_value(std::forward<A>(a)...), _M_next(nullptr) {}
+    };
+
+    class iterator {
+    public:
+        typedef forward_iterator_tag iterator_category;
+        typedef value_type value_type;
+        typedef ptrdiff_t difference_type;
+        typedef value_type* pointer;
+        typedef value_type& reference;
+        node_type** _M_buckets;
+        size_type _M_bucket_count;
+        size_type _M_bucket;
+        node_type* _M_node;
+        iterator() : _M_buckets(nullptr), _M_bucket_count(0), _M_bucket(0), _M_node(nullptr) {}
+        iterator(node_type** b, size_type bc, size_type bucket, node_type* n)
+            : _M_buckets(b), _M_bucket_count(bc), _M_bucket(bucket), _M_node(n) {}
+        value_type& operator*() const { return _M_node->_M_value; }
+        value_type* operator->() const { return &_M_node->_M_value; }
+        iterator& operator++() {
+            _M_node = _M_node->_M_next;
+            while (!_M_node && _M_bucket + 1 < _M_bucket_count) { ++_M_bucket; _M_node = _M_buckets[_M_bucket]; }
+            return *this;
+        }
+        iterator operator++(int) { iterator t = *this; ++*this; return t; }
+        bool operator==(const iterator& o) const { return _M_node == o._M_node; }
+        bool operator!=(const iterator& o) const { return _M_node != o._M_node; }
+    };
+
+    class const_iterator {
+    public:
+        typedef forward_iterator_tag iterator_category;
+        typedef value_type value_type;
+        typedef ptrdiff_t difference_type;
+        typedef const value_type* pointer;
+        typedef const value_type& reference;
+        node_type* const* _M_buckets;
+        size_type _M_bucket_count;
+        size_type _M_bucket;
+        const node_type* _M_node;
+        const_iterator() : _M_buckets(nullptr), _M_bucket_count(0), _M_bucket(0), _M_node(nullptr) {}
+        const_iterator(node_type* const* b, size_type bc, size_type bucket, const node_type* n)
+            : _M_buckets(b), _M_bucket_count(bc), _M_bucket(bucket), _M_node(n) {}
+        const_iterator(const iterator& it)
+            : _M_buckets(it._M_buckets), _M_bucket_count(it._M_bucket_count),
+              _M_bucket(it._M_bucket), _M_node(it._M_node) {}
+        const value_type& operator*() const { return _M_node->_M_value; }
+        const value_type* operator->() const { return &_M_node->_M_value; }
+        const_iterator& operator++() {
+            _M_node = _M_node->_M_next;
+            while (!_M_node && _M_bucket + 1 < _M_bucket_count) { ++_M_bucket; _M_node = _M_buckets[_M_bucket]; }
+            return *this;
+        }
+        const_iterator operator++(int) { const_iterator t = *this; ++*this; return t; }
+        bool operator==(const const_iterator& o) const { return _M_node == o._M_node; }
+        bool operator!=(const const_iterator& o) const { return _M_node != o._M_node; }
+    };
+
+private:
+    node_type** _M_buckets;
+    size_type _M_bucket_count;
+    size_type _M_size;
+    Hash _M_hash;
+    KeyEqual _M_eq;
+    float _M_max_load_factor;
+
+    static const size_type kInitialBuckets = 8;
+
+    size_type _M_bucket_idx(const key_type& k) const {
+        return _M_hash(k) % _M_bucket_count;
+    }
+
+    void _M_rehash(size_type n) {
+        size_type old_count = _M_bucket_count;
+        node_type** old_buckets = _M_buckets;
+        _M_bucket_count = n;
+        _M_buckets = (node_type**)calloc(n, sizeof(node_type*));
+        for (size_type i = 0; i < old_count; ++i) {
+            node_type* cur = old_buckets[i];
+            while (cur) {
+                node_type* next = cur->_M_next;
+                size_type idx = _M_bucket_idx(KeyOfValue()(cur->_M_value));
+                cur->_M_next = _M_buckets[idx];
+                _M_buckets[idx] = cur;
+                cur = next;
+            }
+        }
+        free(old_buckets);
+    }
+
+    void _M_check_rehash() {
+        if (_M_size + 1 > (size_type)(_M_bucket_count * _M_max_load_factor))
+            _M_rehash(_M_bucket_count * 2);
+    }
+
+public:
+    _hash_table() : _M_buckets(nullptr), _M_bucket_count(0), _M_size(0),
+                    _M_hash(Hash()), _M_eq(KeyEqual()), _M_max_load_factor(1.0f) {
+        _M_buckets = (node_type**)calloc(kInitialBuckets, sizeof(node_type*));
+        _M_bucket_count = kInitialBuckets;
+    }
+    explicit _hash_table(size_type n, const Hash& hf = Hash(), const KeyEqual& eql = KeyEqual())
+        : _M_size(0), _M_hash(hf), _M_eq(eql), _M_max_load_factor(1.0f) {
+        size_type bc = kInitialBuckets;
+        while (bc < n) bc *= 2;
+        _M_buckets = (node_type**)calloc(bc, sizeof(node_type*));
+        _M_bucket_count = bc;
+    }
+    ~_hash_table() { clear(); free(_M_buckets); }
+
+    iterator begin() {
+        for (size_type i = 0; i < _M_bucket_count; ++i)
+            if (_M_buckets[i]) return iterator(_M_buckets, _M_bucket_count, i, _M_buckets[i]);
+        return end();
+    }
+    const_iterator begin() const {
+        for (size_type i = 0; i < _M_bucket_count; ++i)
+            if (_M_buckets[i]) return const_iterator(_M_buckets, _M_bucket_count, i, _M_buckets[i]);
+        return end();
+    }
+    iterator end() { return iterator(_M_buckets, _M_bucket_count, _M_bucket_count, nullptr); }
+    const_iterator end() const { return const_iterator(_M_buckets, _M_bucket_count, _M_bucket_count, nullptr); }
+
+    bool empty() const { return _M_size == 0; }
+    size_type size() const { return _M_size; }
+    size_type max_size() const { return size_type(-1) / sizeof(node_type); }
+    size_type bucket_count() const { return _M_bucket_count; }
+
+    void clear() {
+        for (size_type i = 0; i < _M_bucket_count; ++i) {
+            node_type* cur = _M_buckets[i];
+            while (cur) { node_type* n = cur->_M_next; delete cur; cur = n; }
+            _M_buckets[i] = nullptr;
+        }
+        _M_size = 0;
+    }
+
+    pair<iterator, bool> insert_unique(const value_type& v) {
+        _M_check_rehash();
+        size_type idx = _M_bucket_idx(KeyOfValue()(v));
+        for (node_type* cur = _M_buckets[idx]; cur; cur = cur->_M_next)
+            if (_M_eq(KeyOfValue()(cur->_M_value), KeyOfValue()(v)))
+                return pair<iterator, bool>(iterator(_M_buckets, _M_bucket_count, idx, cur), false);
+        node_type* n = new node_type(v);
+        n->_M_next = _M_buckets[idx];
+        _M_buckets[idx] = n;
+        ++_M_size;
+        return pair<iterator, bool>(iterator(_M_buckets, _M_bucket_count, idx, n), true);
+    }
+
+    iterator insert_equal(const value_type& v) {
+        _M_check_rehash();
+        size_type idx = _M_bucket_idx(KeyOfValue()(v));
+        node_type* n = new node_type(v);
+        n->_M_next = _M_buckets[idx];
+        _M_buckets[idx] = n;
+        ++_M_size;
+        return iterator(_M_buckets, _M_bucket_count, idx, n);
+    }
+
+    template<class... Args>
+    pair<iterator, bool> emplace_unique(Args&&... args) {
+        return insert_unique(value_type(std::forward<Args>(args)...));
+    }
+    template<class... Args>
+    iterator emplace_equal(Args&&... args) {
+        return insert_equal(value_type(std::forward<Args>(args)...));
+    }
+
+    iterator find(const key_type& k) {
+        size_type idx = _M_bucket_idx(k);
+        for (node_type* cur = _M_buckets[idx]; cur; cur = cur->_M_next)
+            if (_M_eq(KeyOfValue()(cur->_M_value), k))
+                return iterator(_M_buckets, _M_bucket_count, idx, cur);
+        return end();
+    }
+    const_iterator find(const key_type& k) const {
+        size_type idx = _M_bucket_idx(k);
+        for (node_type* cur = _M_buckets[idx]; cur; cur = cur->_M_next)
+            if (_M_eq(KeyOfValue()(cur->_M_value), k))
+                return const_iterator(_M_buckets, _M_bucket_count, idx, cur);
+        return end();
+    }
+
+    size_type count(const key_type& k) const {
+        size_type c = 0;
+        size_type idx = _M_bucket_idx(k);
+        for (node_type* cur = _M_buckets[idx]; cur; cur = cur->_M_next)
+            if (_M_eq(KeyOfValue()(cur->_M_value), k)) ++c;
+        return c;
+    }
+
+    pair<iterator, iterator> equal_range(const key_type& k) {
+        iterator it = find(k);
+        if (it == end()) return pair<iterator, iterator>(it, it);
+        iterator next = it; ++next;
+        return pair<iterator, iterator>(it, next);
+    }
+
+    iterator erase(const_iterator pos) {
+        size_type idx = pos._M_bucket;
+        node_type* target = const_cast<node_type*>(pos._M_node);
+        node_type** pp = &_M_buckets[idx];
+        while (*pp != target) pp = &(*pp)->_M_next;
+        *pp = target->_M_next;
+        delete target;
+        --_M_size;
+        node_type* next = _M_buckets[idx];
+        size_type b = idx;
+        while (!next && b + 1 < _M_bucket_count) { ++b; next = _M_buckets[b]; }
+        return iterator(_M_buckets, _M_bucket_count, next ? b : _M_bucket_count, next);
+    }
+
+    size_type erase(const key_type& k) {
+        size_type idx = _M_bucket_idx(k);
+        size_type c = 0;
+        node_type** pp = &_M_buckets[idx];
+        while (*pp) {
+            if (_M_eq(KeyOfValue()((*pp)->_M_value), k)) {
+                node_type* n = *pp;
+                *pp = n->_M_next;
+                delete n; ++c; --_M_size;
+            } else pp = &(*pp)->_M_next;
+        }
+        return c;
+    }
+
+    void rehash(size_type n) { if (n > _M_bucket_count) _M_rehash(n); }
+    void reserve(size_type n) { rehash(size_type(float(n) / _M_max_load_factor) + 1); }
+
+    hasher hash_function() const { return _M_hash; }
+    key_equal key_eq() const { return _M_eq; }
+    float load_factor() const { return _M_bucket_count ? float(_M_size) / float(_M_bucket_count) : 0.0f; }
+    float max_load_factor() const { return _M_max_load_factor; }
+    void max_load_factor(float z) { _M_max_load_factor = z; }
+    size_type bucket(const key_type& k) const { return _M_bucket_idx(k); }
+    size_type bucket_size(size_type n) const {
+        size_type c = 0;
+        for (node_type* p = _M_buckets[n]; p; p = p->_M_next) ++c;
+        return c;
+    }
+    size_type max_bucket_count() const { return size_type(-1); }
+
+    void swap(_hash_table& other) {
+        std::swap(_M_buckets, other._M_buckets);
+        std::swap(_M_bucket_count, other._M_bucket_count);
+        std::swap(_M_size, other._M_size);
+        std::swap(_M_hash, other._M_hash);
+        std::swap(_M_eq, other._M_eq);
+        std::swap(_M_max_load_factor, other._M_max_load_factor);
+    }
+};
+
+//=============================================================
+// unordered_map
+//=============================================================
+// Forward declarations
+template<class Key, class T, class Hash, class KeyEqual, class Allocator>
+class unordered_multimap;
+
+template<class Key, class T, class Hash = hash<Key>,
+         class KeyEqual = equal_to<Key>, class Allocator = void>
+class unordered_map {
+public:
+    typedef Key key_type;
+    typedef T mapped_type;
+    typedef pair<const Key, T> value_type;
+    typedef Hash hasher;
+    typedef KeyEqual key_equal;
+    typedef size_t size_type;
+
+    typedef _hash_table<Key, value_type, Hash, KeyEqual, Allocator, false,
+                        __hash_detail::_select1st<value_type> > _table_type;
+    typedef typename _table_type::iterator iterator;
+    typedef typename _table_type::const_iterator const_iterator;
+
+private:
+    _table_type _M_table;
+
+public:
+    unordered_map() : _M_table() {}
+    explicit unordered_map(size_type n, const hasher& hf = hasher(),
+                           const key_equal& eql = key_equal())
+        : _M_table(n, hf, eql) {}
+    template<class InputIt>
+    unordered_map(InputIt first, InputIt last, size_type n = 0,
+                  const hasher& hf = hasher(), const key_equal& eql = key_equal())
+        : _M_table(n, hf, eql) {
+        for (; first != last; ++first) _M_table.insert_unique(*first);
+    }
+    unordered_map(const unordered_map& other) : _M_table(other._M_table) {}
+    unordered_map(initializer_list<value_type> il) : _M_table() {
+        for (const value_type& v : il) _M_table.insert_unique(v);
+    }
+
+    unordered_map& operator=(const unordered_map& other) { _M_table = other._M_table; return *this; }
+    unordered_map& operator=(initializer_list<value_type> il) {
+        _M_table.clear();
+        for (const value_type& v : il) _M_table.insert_unique(v);
+        return *this;
+    }
+
+    iterator begin() { return _M_table.begin(); }
+    const_iterator begin() const { return _M_table.begin(); }
+    const_iterator cbegin() const { return _M_table.cbegin(); }
+    iterator end() { return _M_table.end(); }
+    const_iterator end() const { return _M_table.end(); }
+    const_iterator cend() const { return _M_table.cend(); }
+
+    bool empty() const { return _M_table.empty(); }
+    size_type size() const { return _M_table.size(); }
+    size_type max_size() const { return _M_table.max_size(); }
+    size_type bucket_count() const { return _M_table.bucket_count(); }
+
+    void clear() { _M_table.clear(); }
+
+    pair<iterator, bool> insert(const value_type& v) { return _M_table.insert_unique(v); }
+    template<class... Args>
+    pair<iterator, bool> emplace(Args&&... args) {
+        return _M_table.emplace_unique(std::forward<Args>(args)...);
+    }
+    void insert(initializer_list<value_type> il) {
+        for (const value_type& v : il) _M_table.insert_unique(v);
+    }
+
+    iterator erase(const_iterator pos) { return _M_table.erase(pos); }
+    size_type erase(const key_type& k) { return _M_table.erase(k); }
+
+    T& operator[](const key_type& k) {
+        auto p = _M_table.insert_unique(value_type(k, T()));
+        return p.first->second;
+    }
+    T& at(const key_type& k) {
+        iterator it = find(k);
+        if (it == end()) throw out_of_range("unordered_map::at");
+        return it->second;
+    }
+    const T& at(const key_type& k) const {
+        const_iterator it = find(k);
+        if (it == end()) throw out_of_range("unordered_map::at");
+        return it->second;
+    }
+
+    iterator find(const key_type& k) { return _M_table.find(k); }
+    const_iterator find(const key_type& k) const { return _M_table.find(k); }
+    size_type count(const key_type& k) const { return _M_table.count(k); }
+    pair<iterator, iterator> equal_range(const key_type& k) { return _M_table.equal_range(k); }
+
+    void rehash(size_type n) { _M_table.rehash(n); }
+    void reserve(size_type n) { _M_table.reserve(n); }
+    hasher hash_function() const { return _M_table.hash_function(); }
+    key_equal key_eq() const { return _M_table.key_eq(); }
+    float load_factor() const { return _M_table.load_factor(); }
+    float max_load_factor() const { return _M_table.max_load_factor(); }
+    void max_load_factor(float z) { _M_table.max_load_factor(z); }
+    size_type bucket(const key_type& k) const { return _M_table.bucket(k); }
+    size_type bucket_size(size_type n) const { return _M_table.bucket_size(n); }
+    size_type max_bucket_count() const { return _M_table.max_bucket_count(); }
+    void swap(unordered_map& other) { _M_table.swap(other._M_table); }
+
+#if STDCPP_UM_CXX17
+    template<class H2, class E2>
+    void merge(unordered_map<Key, T, H2, E2, Allocator>& source) {
+        for (auto it = source.begin(); it != source.end(); ) {
+            auto next = it; ++next;
+            auto r = insert(*it);
+            if (r.second) source.erase(it);
+            it = next;
+        }
+    }
+    template<class H2, class E2>
+    void merge(unordered_multimap<Key, T, H2, E2, Allocator>& source) {
+        for (auto it = source.begin(); it != source.end(); ) {
+            auto next = it; ++next;
+            auto r = insert(*it);
+            if (r.second) source.erase(it);
+            it = next;
+        }
+    }
+#endif
+
+#if STDCPP_UM_CXX20
+    bool contains(const key_type& k) const { return find(k) != end(); }
+#endif
+};
+
+template<class K, class T, class H, class E, class A>
+bool operator==(const unordered_map<K, T, H, E, A>& a, const unordered_map<K, T, H, E, A>& b) {
+    if (a.size() != b.size()) return false;
+    for (auto it = a.begin(); it != a.end(); ++it) {
+        auto f = b.find(it->first);
+        if (f == b.end() || f->second != it->second) return false;
+    }
+    return true;
+}
+template<class K, class T, class H, class E, class A>
+bool operator!=(const unordered_map<K, T, H, E, A>& a, const unordered_map<K, T, H, E, A>& b) { return !(a == b); }
+template<class K, class T, class H, class E, class A>
+void swap(unordered_map<K, T, H, E, A>& a, unordered_map<K, T, H, E, A>& b) { a.swap(b); }
+
+//=============================================================
+// unordered_multimap
+//=============================================================
+template<class Key, class T, class Hash = hash<Key>,
+         class KeyEqual = equal_to<Key>, class Allocator = void>
+class unordered_multimap {
+public:
+    typedef Key key_type;
+    typedef T mapped_type;
+    typedef pair<const Key, T> value_type;
+    typedef Hash hasher;
+    typedef KeyEqual key_equal;
+    typedef size_t size_type;
+
+    typedef _hash_table<Key, value_type, Hash, KeyEqual, Allocator, true,
+                        __hash_detail::_select1st<value_type> > _table_type;
+    typedef typename _table_type::iterator iterator;
+    typedef typename _table_type::const_iterator const_iterator;
+
+private:
+    _table_type _M_table;
+
+public:
+    unordered_multimap() : _M_table() {}
+    explicit unordered_multimap(size_type n, const hasher& hf = hasher(),
+                                const key_equal& eql = key_equal())
+        : _M_table(n, hf, eql) {}
+    unordered_multimap(const unordered_multimap& other) : _M_table(other._M_table) {}
+    unordered_multimap(initializer_list<value_type> il) : _M_table() {
+        for (const value_type& v : il) _M_table.insert_equal(v);
+    }
+
+    iterator begin() { return _M_table.begin(); }
+    const_iterator begin() const { return _M_table.begin(); }
+    iterator end() { return _M_table.end(); }
+    const_iterator end() const { return _M_table.end(); }
+    bool empty() const { return _M_table.empty(); }
+    size_type size() const { return _M_table.size(); }
+    size_type max_size() const { return _M_table.max_size(); }
+    size_type bucket_count() const { return _M_table.bucket_count(); }
+    void clear() { _M_table.clear(); }
+
+    iterator insert(const value_type& v) { return _M_table.insert_equal(v); }
+    template<class... Args>
+    iterator emplace(Args&&... args) { return _M_table.emplace_equal(std::forward<Args>(args)...); }
+
+    iterator erase(const_iterator pos) { return _M_table.erase(pos); }
+    size_type erase(const key_type& k) { return _M_table.erase(k); }
+
+    iterator find(const key_type& k) { return _M_table.find(k); }
+    const_iterator find(const key_type& k) const { return _M_table.find(k); }
+    size_type count(const key_type& k) const { return _M_table.count(k); }
+
+    float load_factor() const { return _M_table.load_factor(); }
+    float max_load_factor() const { return _M_table.max_load_factor(); }
+    void max_load_factor(float z) { _M_table.max_load_factor(z); }
+    size_type bucket(const key_type& k) const { return _M_table.bucket(k); }
+    size_type bucket_size(size_type n) const { return _M_table.bucket_size(n); }
+    size_type max_bucket_count() const { return _M_table.max_bucket_count(); }
+    void rehash(size_type n) { _M_table.rehash(n); }
+    void reserve(size_type n) { _M_table.reserve(n); }
+    hasher hash_function() const { return _M_table.hash_function(); }
+    key_equal key_eq() const { return _M_table.key_eq(); }
+    void swap(unordered_multimap& other) { _M_table.swap(other._M_table); }
+
+#if STDCPP_UM_CXX20
+    bool contains(const key_type& k) const { return find(k) != end(); }
+#endif
+};
+
+template<class K, class T, class H, class E, class A>
+void swap(unordered_multimap<K, T, H, E, A>& a, unordered_multimap<K, T, H, E, A>& b) { a.swap(b); }
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#endif
+#endif // STDCPP_UNORDERED_MAP_HPP

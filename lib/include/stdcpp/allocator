@@ -1,0 +1,183 @@
+// -*- C++ -*-
+//=============================================================
+// allocator.hpp -- complete <memory> allocator pieces, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_ALLOCATOR_HPP
+#define STDCPP_ALLOCATOR_HPP
+
+#include <cstddef>
+#include <cstdlib>
+#include <type_traits>
+#include <new>
+
+#define STDCPP_ALC_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_ALC_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_ALC_CXX20 (__cplusplus >= 202002L)
+#define STDCPP_ALC_CXX23 (__cplusplus >= 202100L)
+
+#if !STDCPP_ALC_CXX11
+#define noexcept throw()
+#endif
+
+#ifndef _GLIBCXX_ALLOCATOR
+#  define _GLIBCXX_ALLOCATOR 1
+#endif
+
+namespace std {
+
+//=============================================================
+// allocator_traits (C++11)
+//=============================================================
+#if STDCPP_ALC_CXX11
+template<class Alloc>
+struct allocator_traits {
+    typedef Alloc allocator_type;
+    typedef typename Alloc::value_type value_type;
+    typedef typename Alloc::pointer pointer;
+    typedef typename Alloc::const_pointer const_pointer;
+    typedef typename Alloc::size_type size_type;
+    typedef typename Alloc::difference_type difference_type;
+
+    template<class T>
+    using rebind_alloc = typename Alloc::template rebind<T>::other;
+
+    static pointer allocate(Alloc& a, size_type n) { return a.allocate(n); }
+    static void deallocate(Alloc& a, pointer p, size_type n) { a.deallocate(p, n); }
+
+    template<class T, class... Args>
+    static void construct(Alloc&, T* p, Args&&... args) {
+        ::new ((void*)p) T(std::forward<Args>(args)...);
+    }
+
+    template<class T>
+    static void destroy(Alloc&, T* p) { p->~T(); }
+
+    static size_type max_size(const Alloc&) noexcept { return size_type(-1) / sizeof(value_type); }
+};
+#endif
+
+//=============================================================
+// allocator primary template
+//=============================================================
+template<class T>
+class allocator {
+public:
+    typedef size_t    size_type;
+    typedef ptrdiff_t difference_type;
+    typedef T*        pointer;
+    typedef const T*  const_pointer;
+    typedef T&        reference;
+    typedef const T&  const_reference;
+    typedef T         value_type;
+
+    template<class U>
+    struct rebind { typedef allocator<U> other; };
+
+    allocator() noexcept {}
+    allocator(const allocator&) noexcept {}
+    template<class U>
+    allocator(const allocator<U>&) noexcept {}
+    ~allocator() {}
+
+    pointer address(reference x) const noexcept { return &x; }
+    const_pointer address(const_reference x) const noexcept { return &x; }
+
+#if STDCPP_ALC_CXX11
+    pointer allocate(size_type n, const void* = nullptr) {
+#else
+    pointer allocate(size_type n, const void* = 0) {
+#endif
+        void* p = malloc(n * sizeof(T));
+        if (!p) throw bad_alloc();
+        return static_cast<pointer>(p);
+    }
+
+    void deallocate(pointer p, size_type) { free(p); }
+
+    size_type max_size() const noexcept { return size_type(-1) / sizeof(T); }
+
+#if STDCPP_ALC_CXX11
+    template<class U, class... Args>
+    void construct(U* p, Args&&... args) {
+        ::new ((void*)p) U(std::forward<Args>(args)...);
+    }
+#else
+    void construct(pointer p, const T& v) { ::new ((void*)p) T(v); }
+#endif
+
+#if STDCPP_ALC_CXX11
+    template<class U>
+    void destroy(U* p) { p->~U(); }
+#else
+    void destroy(pointer p) { p->~T(); }
+#endif
+};
+
+//=============================================================
+// allocator<void> specialization (deprecated C++17, removed C++20)
+//=============================================================
+#if !STDCPP_ALC_CXX20
+template<>
+class allocator<void> {
+public:
+    typedef void value_type;
+    typedef void* pointer;
+    typedef const void* const_pointer;
+    template<class U> struct rebind { typedef allocator<U> other; };
+};
+#endif
+
+template<class T1, class T2>
+bool operator==(const allocator<T1>&, const allocator<T2>&) noexcept { return true; }
+template<class T1, class T2>
+bool operator!=(const allocator<T1>&, const allocator<T2>&) noexcept { return false; }
+
+//=============================================================
+// allocator_arg_t (C++11)
+//=============================================================
+#if STDCPP_ALC_CXX11
+struct allocator_arg_t { explicit allocator_arg_t() = default; };
+constexpr allocator_arg_t allocator_arg{};
+
+// uses_allocator
+template<class T, class Alloc>
+struct uses_allocator : false_type {};
+#endif
+
+//=============================================================
+// pointer_traits (C++11)
+//=============================================================
+#if STDCPP_ALC_CXX11
+template<class Ptr>
+struct pointer_traits {
+    typedef typename Ptr::difference_type difference_type;
+    typedef typename Ptr::value_type value_type;
+    typedef typename Ptr::pointer pointer;
+    typedef typename Ptr::reference reference;
+
+    template<class U>
+    using rebind = typename Ptr::template rebind<U>;
+
+    static pointer pointer_to(typename Ptr::reference r) { return Ptr::pointer_to(r); }
+};
+
+template<class T>
+struct pointer_traits<T*> {
+    typedef ptrdiff_t difference_type;
+    typedef T value_type;
+    typedef T* pointer;
+    typedef T& reference;
+
+    template<class U> using rebind = U*;
+
+    static pointer pointer_to(T& r) noexcept { return &r; }
+};
+#endif
+
+} // namespace std
+
+#if !STDCPP_ALC_CXX11
+#undef noexcept
+#endif
+
+#endif // STDCPP_ALLOCATOR_HPP

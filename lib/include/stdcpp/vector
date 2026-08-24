@@ -1,0 +1,408 @@
+// -*- C++ -*-
+//=============================================================
+// vector.hpp -- complete <vector>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_VECTOR_HPP
+#define STDCPP_VECTOR_HPP
+
+#include <cstddef>
+#include <cstdlib>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <initializer_list>
+#include <stdexcept>
+#include <allocator>
+
+#define STDCPP_VEC_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_VEC_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_VEC_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_VEC_CXX20 (__cplusplus >= 202002L)
+#define STDCPP_VEC_CXX23 (__cplusplus >= 202100L)
+
+#if __cplusplus < 201103L
+#define noexcept throw()
+#define nullptr 0
+#define override
+#define STDCPP_MOVE(x) (x)
+#else
+#define STDCPP_MOVE(x) std::move(x)
+#endif
+
+#ifndef _GLIBCXX_VECTOR
+#  define _GLIBCXX_VECTOR 1
+#endif
+
+namespace std {
+
+template<class T, class Allocator = allocator<T> >
+class vector {
+public:
+    typedef T                                        value_type;
+    typedef Allocator                                allocator_type;
+#if __cplusplus >= 201103L
+    typedef typename allocator_traits<Allocator>::pointer       pointer;
+    typedef typename allocator_traits<Allocator>::const_pointer const_pointer;
+#else
+    typedef typename Allocator::pointer       pointer;
+    typedef typename Allocator::const_pointer const_pointer;
+#endif
+    typedef T&                                       reference;
+    typedef const T&                                 const_reference;
+    typedef T*                                       iterator;
+    typedef const T*                                 const_iterator;
+    typedef std::reverse_iterator<iterator>               reverse_iterator;
+    typedef std::reverse_iterator<const_iterator>         const_reverse_iterator;
+    typedef size_t                                   size_type;
+    typedef ptrdiff_t                                difference_type;
+
+private:
+    T*        _M_data;
+    size_type _M_size;
+    size_type _M_cap;
+
+    void _M_destroy() {
+        for (size_type i = 0; i < _M_size; ++i) _M_data[i].~T();
+        free(_M_data);
+    }
+
+public:
+    vector() : _M_data(nullptr), _M_size(0), _M_cap(0) {}
+    explicit vector(const Allocator&) : _M_data(nullptr), _M_size(0), _M_cap(0) {}
+
+    explicit vector(size_type n) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        if (n > 0) {
+            _M_data = (T*)malloc(n * sizeof(T));
+            _M_cap = n;
+            for (_M_size = 0; _M_size < n; ++_M_size)
+                new (_M_data + _M_size) T();
+        }
+    }
+
+    vector(size_type n, const T& v) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        if (n > 0) {
+            _M_data = (T*)malloc(n * sizeof(T));
+            _M_cap = n;
+            for (_M_size = 0; _M_size < n; ++_M_size)
+                new (_M_data + _M_size) T(v);
+        }
+    }
+
+    template<class InputIt>
+    vector(InputIt first, InputIt last) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        for (; first != last; ++first) push_back(*first);
+    }
+
+    vector(const vector& other) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        if (other._M_size > 0) {
+            _M_data = (T*)malloc(other._M_size * sizeof(T));
+            _M_cap = other._M_size;
+            for (_M_size = 0; _M_size < other._M_size; ++_M_size)
+                new (_M_data + _M_size) T(other._M_data[_M_size]);
+        }
+    }
+
+#if STDCPP_VEC_CXX11
+    vector(vector&& other) noexcept
+        : _M_data(other._M_data), _M_size(other._M_size), _M_cap(other._M_cap) {
+        other._M_data = nullptr;
+        other._M_size = 0;
+        other._M_cap = 0;
+    }
+
+    vector(initializer_list<T> il) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        reserve(il.size());
+        for (const T& v : il) push_back(v);
+    }
+#endif
+
+    ~vector() { _M_destroy(); }
+
+    vector& operator=(const vector& other) {
+        if (this != &other) {
+            _M_destroy();
+            _M_size = 0; _M_cap = 0; _M_data = nullptr;
+            reserve(other._M_size);
+            for (size_type i = 0; i < other._M_size; ++i)
+                new (_M_data + i) T(other._M_data[i]);
+            _M_size = other._M_size;
+        }
+        return *this;
+    }
+#if STDCPP_VEC_CXX11
+    vector& operator=(vector&& other) noexcept {
+        if (this != &other) {
+            _M_destroy();
+            _M_data = other._M_data;
+            _M_size = other._M_size;
+            _M_cap = other._M_cap;
+            other._M_data = nullptr;
+            other._M_size = 0;
+            other._M_cap = 0;
+        }
+        return *this;
+    }
+    vector& operator=(initializer_list<T> il) {
+        clear();
+        reserve(il.size());
+        for (const T& v : il) push_back(v);
+        return *this;
+    }
+#endif
+
+    iterator begin() noexcept { return _M_data; }
+    const_iterator begin() const noexcept { return _M_data; }
+    iterator end() noexcept { return _M_data + _M_size; }
+    const_iterator end() const noexcept { return _M_data + _M_size; }
+    reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
+    const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
+    reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
+    const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
+
+    size_type size() const noexcept { return _M_size; }
+    size_type max_size() const noexcept { return size_type(-1) / sizeof(T); }
+    size_type capacity() const noexcept { return _M_cap; }
+    bool empty() const noexcept { return _M_size == 0; }
+
+    void reserve(size_type n) {
+        if (n > _M_cap) {
+            T* newdata = (T*)malloc(n * sizeof(T));
+            for (size_type i = 0; i < _M_size; ++i) {
+                new (newdata + i) T(STDCPP_MOVE(_M_data[i]));
+                _M_data[i].~T();
+            }
+            free(_M_data);
+            _M_data = newdata;
+            _M_cap = n;
+        }
+    }
+    void shrink_to_fit() {
+        if (_M_cap > _M_size) {
+            T* newdata = nullptr;
+            if (_M_size > 0) {
+                newdata = (T*)malloc(_M_size * sizeof(T));
+                for (size_type i = 0; i < _M_size; ++i)
+                    new (newdata + i) T(STDCPP_MOVE(_M_data[i]));
+            }
+            for (size_type i = 0; i < _M_size; ++i) _M_data[i].~T();
+            free(_M_data);
+            _M_data = newdata;
+            _M_cap = _M_size;
+        }
+    }
+
+    reference operator[](size_type i) { return _M_data[i]; }
+    const_reference operator[](size_type i) const { return _M_data[i]; }
+    reference at(size_type i) {
+        if (i >= _M_size) throw out_of_range("vector::at");
+        return _M_data[i];
+    }
+    const_reference at(size_type i) const {
+        if (i >= _M_size) throw out_of_range("vector::at");
+        return _M_data[i];
+    }
+    reference front() { return _M_data[0]; }
+    const_reference front() const { return _M_data[0]; }
+    reference back() { return _M_data[_M_size - 1]; }
+    const_reference back() const { return _M_data[_M_size - 1]; }
+    T* data() noexcept { return _M_data; }
+    const T* data() const noexcept { return _M_data; }
+
+    void push_back(const T& v) {
+        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
+        new (_M_data + _M_size) T(v);
+        ++_M_size;
+    }
+#if STDCPP_VEC_CXX11
+    void push_back(T&& v) {
+        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
+        new (_M_data + _M_size) T(STDCPP_MOVE(v));
+        ++_M_size;
+    }
+    template<class... Args>
+    reference emplace_back(Args&&... args) {
+        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
+        new (_M_data + _M_size) T(std::forward<Args>(args)...);
+        return _M_data[_M_size++];
+    }
+    template<class... Args>
+    iterator emplace(const_iterator pos, Args&&... args) {
+        size_type idx = pos - _M_data;
+        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
+        for (size_type i = _M_size; i > idx; --i) {
+            new (_M_data + i) T(STDCPP_MOVE(_M_data[i - 1]));
+            _M_data[i - 1].~T();
+        }
+        new (_M_data + idx) T(std::forward<Args>(args)...);
+        ++_M_size;
+        return _M_data + idx;
+    }
+#endif
+
+    void pop_back() { --_M_size; _M_data[_M_size].~T(); }
+
+    iterator insert(const_iterator pos, const T& v) {
+        size_type idx = pos - _M_data;
+        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
+        if (idx < _M_size) {
+            new (_M_data + _M_size) T(STDCPP_MOVE(_M_data[_M_size - 1]));
+            for (size_type i = _M_size - 1; i > idx; --i)
+                _M_data[i] = STDCPP_MOVE(_M_data[i - 1]);
+            _M_data[idx] = v;
+        } else {
+            new (_M_data + idx) T(v);
+        }
+        ++_M_size;
+        return _M_data + idx;
+    }
+    iterator insert(const_iterator pos, size_type n, const T& v) {
+        size_type idx = pos - _M_data;
+        if (_M_size + n > _M_cap) reserve(_M_size + n);
+        for (size_type i = 0; i < n; ++i) {
+            if (idx + i < _M_size) {
+                new (_M_data + _M_size + i) T(STDCPP_MOVE(_M_data[_M_size - 1]));
+                for (size_type j = _M_size - 1; j > idx + i; --j)
+                    _M_data[j] = STDCPP_MOVE(_M_data[j - 1]);
+                _M_data[idx + i] = v;
+            } else {
+                new (_M_data + idx + i) T(v);
+            }
+        }
+        _M_size += n;
+        return _M_data + idx;
+    }
+    template<class InputIt>
+    iterator insert(const_iterator pos, InputIt first, InputIt last) {
+        size_type idx = pos - _M_data;
+        size_type n = 0;
+        for (InputIt it = first; it != last; ++it) ++n;
+        if (_M_size + n > _M_cap) reserve(_M_size + n);
+        for (size_type i = 0; i < n; ++i) {
+            if (idx + i < _M_size) {
+                new (_M_data + _M_size + i) T(STDCPP_MOVE(_M_data[_M_size - 1]));
+                for (size_type j = _M_size - 1; j > idx + i; --j)
+                    _M_data[j] = STDCPP_MOVE(_M_data[j - 1]);
+                _M_data[idx + i] = *first++;
+            } else {
+                new (_M_data + idx + i) T(*first++);
+            }
+        }
+        _M_size += n;
+        return _M_data + idx;
+    }
+
+    iterator erase(const_iterator pos) {
+        size_type idx = pos - _M_data;
+        _M_data[idx].~T();
+        for (size_type i = idx; i + 1 < _M_size; ++i) {
+            new (_M_data + i) T(STDCPP_MOVE(_M_data[i + 1]));
+            _M_data[i + 1].~T();
+        }
+        --_M_size;
+        return _M_data + idx;
+    }
+    iterator erase(const_iterator first, const_iterator last) {
+        size_type idx = first - _M_data;
+        size_type n = last - first;
+        for (size_type i = idx; i < idx + n; ++i) _M_data[i].~T();
+        for (size_type i = idx; i + n < _M_size; ++i) {
+            new (_M_data + i) T(STDCPP_MOVE(_M_data[i + n]));
+            _M_data[i + n].~T();
+        }
+        _M_size -= n;
+        return _M_data + idx;
+    }
+
+    void clear() noexcept {
+        for (size_type i = 0; i < _M_size; ++i) _M_data[i].~T();
+        _M_size = 0;
+    }
+
+    void resize(size_type n) {
+        if (n < _M_size) {
+            for (size_type i = n; i < _M_size; ++i) _M_data[i].~T();
+            _M_size = n;
+        } else if (n > _M_size) {
+            reserve(n);
+            for (size_type i = _M_size; i < n; ++i)
+                new (_M_data + i) T();
+            _M_size = n;
+        }
+    }
+    void resize(size_type n, const T& v) {
+        if (n < _M_size) {
+            for (size_type i = n; i < _M_size; ++i) _M_data[i].~T();
+            _M_size = n;
+        } else if (n > _M_size) {
+            reserve(n);
+            for (size_type i = _M_size; i < n; ++i)
+                new (_M_data + i) T(v);
+            _M_size = n;
+        }
+    }
+
+    void assign(size_type n, const T& v) {
+        clear();
+        reserve(n);
+        for (size_type i = 0; i < n; ++i) new (_M_data + i) T(v);
+        _M_size = n;
+    }
+    template<class InputIt>
+    void assign(InputIt first, InputIt last) {
+        clear();
+        for (; first != last; ++first) push_back(*first);
+    }
+#if STDCPP_VEC_CXX11
+    void assign(initializer_list<T> il) { assign(il.begin(), il.end()); }
+#endif
+
+    void swap(vector& other) noexcept {
+        std::swap(_M_data, other._M_data);
+        std::swap(_M_size, other._M_size);
+        std::swap(_M_cap, other._M_cap);
+    }
+
+    allocator_type get_allocator() const { return allocator_type(); }
+};
+
+template<class T, class A>
+bool operator==(const vector<T, A>& a, const vector<T, A>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) if (!(a[i] == b[i])) return false;
+    return true;
+}
+template<class T, class A>
+bool operator!=(const vector<T, A>& a, const vector<T, A>& b) { return !(a == b); }
+template<class T, class A>
+bool operator<(const vector<T, A>& a, const vector<T, A>& b) {
+    return lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+}
+
+template<class T, class A>
+void swap(vector<T, A>& a, vector<T, A>& b) { a.swap(b); }
+
+#if STDCPP_VEC_CXX20
+template<class T, class A, class U>
+typename vector<T, A>::size_type erase(vector<T, A>& c, const U& value) {
+    auto it = remove(c.begin(), c.end(), value);
+    auto n = c.end() - it;
+    c.erase(it, c.end());
+    return n;
+}
+template<class T, class A, class Pred>
+typename vector<T, A>::size_type erase_if(vector<T, A>& c, Pred pred) {
+    auto it = remove_if(c.begin(), c.end(), pred);
+    auto n = c.end() - it;
+    c.erase(it, c.end());
+    return n;
+}
+#endif
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#endif
+#endif // STDCPP_VECTOR_HPP

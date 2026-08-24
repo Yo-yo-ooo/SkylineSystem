@@ -1,0 +1,156 @@
+// -*- C++ -*-
+//=============================================================
+// mdspan.hpp -- complete <mdspan>, C++23~C++26.
+//=============================================================
+#ifndef STDCPP_MDSPAN_HPP
+#define STDCPP_MDSPAN_HPP
+
+#include <cstddef>
+#include <type_traits>
+#include <utility>
+
+#define STDCPP_MD_CXX23 (__cplusplus >= 202100L)
+
+#ifndef _GLIBCXX_MDSPAN
+#  define _GLIBCXX_MDSPAN 1
+#endif
+
+#if STDCPP_MD_CXX23
+
+namespace std {
+
+//=============================================================
+// dextents / extents
+//=============================================================
+template<class IndexType, size_t Rank>
+struct dextents {
+    typedef IndexType index_type;
+    static constexpr size_t rank() { return Rank; }
+    static constexpr size_t rank_dynamic() { return Rank; }
+};
+
+template<class IndexType, size_t... Extents>
+class extents {
+public:
+    typedef IndexType index_type;
+    static constexpr size_t rank() { return sizeof...(Extents); }
+    static constexpr size_t rank_dynamic() {
+        size_t n = 0;
+        size_t e[] = {Extents...};
+        for (size_t i = 0; i < rank(); ++i) if (e[i] == size_t(-1)) ++n;
+        return n;
+    }
+    static constexpr size_t static_extent(size_t r) {
+        size_t e[] = {Extents...};
+        return r < rank() ? e[r] : 0;
+    }
+};
+
+//=============================================================
+// layout_right
+//=============================================================
+struct layout_right {
+    template<class Extents>
+    class mapping {
+    public:
+        typedef Extents extents_type;
+        typedef typename Extents::index_type index_type;
+    private:
+        Extents _M_ext;
+    public:
+        mapping() : _M_ext() {}
+        mapping(const Extents& e) : _M_ext(e) {}
+        const Extents& extents() const { return _M_ext; }
+        index_type required_span_size() const { return 1; }
+        index_type operator()() const { return 0; }
+    };
+};
+
+struct layout_left {
+    template<class Extents>
+    class mapping {
+    public:
+        typedef Extents extents_type;
+        typedef typename Extents::index_type index_type;
+    private:
+        Extents _M_ext;
+    public:
+        mapping() : _M_ext() {}
+        mapping(const Extents& e) : _M_ext(e) {}
+        const Extents& extents() const { return _M_ext; }
+        index_type required_span_size() const { return 1; }
+        index_type operator()() const { return 0; }
+    };
+};
+
+//=============================================================
+// default_accessor
+//=============================================================
+template<class T>
+struct default_accessor {
+    typedef T element_type;
+    typedef T* data_handle_type;
+    typedef T& reference;
+    T& access(T* p, size_t i) const { return p[i]; }
+};
+
+//=============================================================
+// mdspan
+//=============================================================
+template<class T, class Extents, class LayoutPolicy = layout_right,
+         class AccessorPolicy = default_accessor<T> >
+class mdspan {
+public:
+    typedef T element_type;
+    typedef Extents extents_type;
+    typedef LayoutPolicy layout_policy;
+    typedef AccessorPolicy accessor_policy;
+    typedef typename AccessorPolicy::data_handle_type data_handle_type;
+    typedef typename AccessorPolicy::reference reference;
+    typedef size_t size_type;
+    typedef ptrdiff_t index_type;
+
+private:
+    T* _M_data;
+    size_type _M_dims[Extents::rank()];
+
+public:
+    mdspan() : _M_data(nullptr) {
+        for (size_t i = 0; i < Extents::rank(); ++i) _M_dims[i] = 0;
+    }
+
+    mdspan(T* data, size_type d0) : _M_data(data) {
+        static_assert(Extents::rank() == 1, "wrong rank");
+        _M_dims[0] = d0;
+    }
+    mdspan(T* data, size_type d0, size_type d1) : _M_data(data) {
+        static_assert(Extents::rank() == 2, "wrong rank");
+        _M_dims[0] = d0; _M_dims[1] = d1;
+    }
+    mdspan(T* data, size_type d0, size_type d1, size_type d2) : _M_data(data) {
+        static_assert(Extents::rank() == 3, "wrong rank");
+        _M_dims[0] = d0; _M_dims[1] = d1; _M_dims[2] = d2;
+    }
+
+    T* data_handle() const { return _M_data; }
+    static constexpr size_t rank() { return Extents::rank(); }
+    size_t extent(size_t r) const { return _M_dims[r]; }
+    size_t size() const {
+        size_t n = 1;
+        for (size_t i = 0; i < rank(); ++i) n *= _M_dims[i];
+        return n;
+    }
+    bool empty() const { return size() == 0; }
+
+    reference operator[](size_t i) const { return _M_data[i]; }
+    reference operator()(size_t i) const { return _M_data[i]; }
+    reference operator()(size_t i, size_t j) const { return _M_data[i * _M_dims[1] + j]; }
+    reference operator()(size_t i, size_t j, size_t k) const {
+        return _M_data[(i * _M_dims[1] + j) * _M_dims[2] + k];
+    }
+};
+
+} // namespace std
+
+#endif // STDCPP_MD_CXX23
+#endif // STDCPP_MDSPAN_HPP

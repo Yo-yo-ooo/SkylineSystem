@@ -1,0 +1,298 @@
+// -*- C++ -*-
+//=============================================================
+// map.hpp -- complete <map>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_MAP_HPP
+#define STDCPP_MAP_HPP
+
+#include <cstddef>
+#include <utility>
+#include <tree>
+#include <functional>
+#include <stdexcept>
+#include <initializer_list>
+#include <tuple>
+
+#define STDCPP_MAP_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_MAP_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_MAP_CXX20 (__cplusplus >= 202002L)
+
+#ifndef _GLIBCXX_MAP
+#  define _GLIBCXX_MAP 1
+#endif
+
+namespace std {
+
+template<class Key, class T, class Compare, class Allocator> class multimap;
+
+namespace __map_detail {
+    template<class V>
+    struct _select1st {
+        const typename V::first_type& operator()(const V& v) const { return v.first; }
+    };
+}
+
+template<class Key, class T, class Compare = less<Key>, class Allocator = void>
+class map {
+public:
+    typedef Key key_type;
+    typedef T mapped_type;
+    typedef pair<const Key, T> value_type;
+    typedef Compare key_compare;
+    typedef size_t size_type;
+
+    class value_compare {
+        friend class map;
+    protected:
+        Compare comp;
+        value_compare(Compare c) : comp(c) {}
+    public:
+        bool operator()(const value_type& a, const value_type& b) const {
+            return comp(a.first, b.first);
+        }
+    };
+
+    typedef _rb_tree<Key, value_type, __map_detail::_select1st<value_type>, Compare> _tree_type;
+    typedef typename _tree_type::iterator iterator;
+    typedef typename _tree_type::const_iterator const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+    typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+
+private:
+    _tree_type _M_tree;
+
+public:
+    map() {}
+    explicit map(const Compare& comp) {}
+    template<class InputIt>
+    map(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+    map(const map& other) { for (const_iterator it = other.begin(); it != other.end(); ++it) insert(*it); }
+#if STDCPP_MAP_CXX11
+    map(map&& other) noexcept { _M_tree.swap(other._M_tree); }
+    map(initializer_list<value_type> il) { for (const value_type& v : il) insert(v); }
+#endif
+
+    map& operator=(const map& other) {
+        if (this != &other) { _M_tree.clear(); for (const_iterator it = other.begin(); it != other.end(); ++it) insert(*it); }
+        return *this;
+    }
+#if STDCPP_MAP_CXX11
+    map& operator=(map&& other) noexcept { _M_tree.swap(other._M_tree); return *this; }
+    map& operator=(initializer_list<value_type> il) { _M_tree.clear(); for (const value_type& v : il) insert(v); return *this; }
+#endif
+
+    iterator begin() { return _M_tree.begin(); }
+    const_iterator begin() const { return _M_tree.begin(); }
+    iterator end() { return _M_tree.end(); }
+    const_iterator end() const { return _M_tree.end(); }
+    reverse_iterator rbegin() { return reverse_iterator(end()); }
+    const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
+    reverse_iterator rend() { return reverse_iterator(begin()); }
+    const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
+
+    bool empty() const { return _M_tree.empty(); }
+    size_type size() const { return _M_tree.size(); }
+    size_type max_size() const { return size_type(-1); }
+
+    T& operator[](const key_type& k) {
+        iterator it = find(k);
+        if (it == end()) it = insert(value_type(k, T())).first;
+        return it->second;
+    }
+#if STDCPP_MAP_CXX11
+    T& operator[](key_type&& k) {
+        iterator it = find(k);
+        if (it == end()) it = insert(value_type(STDCPP_MOVE(k), T())).first;
+        return it->second;
+    }
+#endif
+    T& at(const key_type& k) {
+        iterator it = find(k);
+        if (it == end()) throw out_of_range("map::at");
+        return it->second;
+    }
+    const T& at(const key_type& k) const {
+        const_iterator it = find(k);
+        if (it == end()) throw out_of_range("map::at");
+        return it->second;
+    }
+
+    pair<iterator, bool> insert(const value_type& v) { return _M_tree.insert_unique(v); }
+    template<class InputIt>
+    void insert(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+#if STDCPP_MAP_CXX11
+    void insert(initializer_list<value_type> il) { for (const value_type& v : il) insert(v); }
+    template<class... Args>
+    pair<iterator, bool> emplace(Args&&... args) {
+        return insert(value_type(std::forward<Args>(args)...));
+    }
+    template<class... Args>
+    iterator emplace_hint(const_iterator, Args&&... args) {
+        return insert(value_type(std::forward<Args>(args)...)).first;
+    }
+#endif
+
+    iterator erase(const_iterator pos) { return _M_tree.erase(pos); }
+    size_type erase(const key_type& k) { return _M_tree.erase(k); }
+    iterator erase(const_iterator first, const_iterator last) {
+        while (first != last) first = _M_tree.erase(first);
+        return iterator(const_cast<typename _tree_type::node*>(last._M_node));
+    }
+
+    void clear() { _M_tree.clear(); }
+    void swap(map& other) { _M_tree.swap(other._M_tree); }
+
+    iterator find(const key_type& k) { return _M_tree.find(k); }
+    const_iterator find(const key_type& k) const { return _M_tree.find(k); }
+    size_type count(const key_type& k) const { return _M_tree.count(k); }
+    iterator lower_bound(const key_type& k) { return _M_tree.lower_bound(k); }
+    const_iterator lower_bound(const key_type& k) const { return _M_tree.lower_bound(k); }
+    iterator upper_bound(const key_type& k) { return _M_tree.upper_bound(k); }
+    const_iterator upper_bound(const key_type& k) const { return _M_tree.upper_bound(k); }
+    pair<iterator, iterator> equal_range(const key_type& k) { return _M_tree.equal_range(k); }
+    pair<const_iterator, const_iterator> equal_range(const key_type& k) const { return _M_tree.equal_range(k); }
+
+    key_compare key_comp() const { return key_compare(); }
+    value_compare value_comp() const { return value_compare(key_compare()); }
+
+#if STDCPP_MAP_CXX17
+    template<class... Args>
+    pair<iterator, bool> try_emplace(const key_type& k, Args&&... args) {
+        iterator it = find(k);
+        if (it != end()) return pair<iterator, bool>(it, false);
+        return insert(value_type(k, T(std::forward<Args>(args)...)));
+    }
+    template<class... Args>
+    pair<iterator, bool> try_emplace(key_type&& k, Args&&... args) {
+        iterator it = find(k);
+        if (it != end()) return pair<iterator, bool>(it, false);
+        return insert(value_type(STDCPP_MOVE(k), T(std::forward<Args>(args)...)));
+    }
+    template<class M>
+    pair<iterator, bool> insert_or_assign(const key_type& k, M&& obj) {
+        iterator it = find(k);
+        if (it != end()) { it->second = std::forward<M>(obj); return pair<iterator, bool>(it, false); }
+        return insert(value_type(k, T(std::forward<M>(obj))));
+    }
+    template<class M>
+    pair<iterator, bool> insert_or_assign(key_type&& k, M&& obj) {
+        iterator it = find(k);
+        if (it != end()) { it->second = std::forward<M>(obj); return pair<iterator, bool>(it, false); }
+        return insert(value_type(STDCPP_MOVE(k), T(std::forward<M>(obj))));
+    }
+    template<class C2>
+    void merge(map<Key, T, C2, Allocator>& source) {
+        for (auto it = source.begin(); it != source.end(); ) {
+            auto next = it; ++next;
+            auto r = insert(*it);
+            if (r.second) source.erase(it);
+            it = next;
+        }
+    }
+    template<class C2>
+    void merge(multimap<Key, T, C2, Allocator>& source) {
+        for (auto it = source.begin(); it != source.end(); ) {
+            auto next = it; ++next;
+            auto r = insert(*it);
+            if (r.second) source.erase(it);
+            it = next;
+        }
+    }
+#endif
+
+#if STDCPP_MAP_CXX20
+    bool contains(const key_type& k) const { return find(k) != end(); }
+#endif
+};
+
+template<class K, class T, class C, class A>
+bool operator==(const map<K, T, C, A>& a, const map<K, T, C, A>& b) {
+    if (a.size() != b.size()) return false;
+    for (typename map<K, T, C, A>::const_iterator i = a.begin(), j = b.begin(); i != a.end(); ++i, ++j)
+        if (!(i->first == j->first && i->second == j->second)) return false;
+    return true;
+}
+template<class K, class T, class C, class A>
+bool operator!=(const map<K, T, C, A>& a, const map<K, T, C, A>& b) { return !(a == b); }
+template<class K, class T, class C, class A>
+bool operator<(const map<K, T, C, A>& a, const map<K, T, C, A>& b) {
+    return lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+}
+template<class K, class T, class C, class A>
+void swap(map<K, T, C, A>& a, map<K, T, C, A>& b) { a.swap(b); }
+
+//=============================================================
+// multimap
+//=============================================================
+template<class Key, class T, class Compare = less<Key>, class Allocator = void>
+class multimap {
+public:
+    typedef Key key_type;
+    typedef T mapped_type;
+    typedef pair<const Key, T> value_type;
+    typedef Compare key_compare;
+    typedef size_t size_type;
+
+    typedef _rb_tree<Key, value_type, __map_detail::_select1st<value_type>, Compare> _tree_type;
+    typedef typename _tree_type::iterator iterator;
+    typedef typename _tree_type::const_iterator const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+
+private:
+    _tree_type _M_tree;
+
+public:
+    multimap() {}
+    template<class InputIt>
+    multimap(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+    multimap(const multimap& other) { for (const_iterator it = other.begin(); it != other.end(); ++it) insert(*it); }
+#if STDCPP_MAP_CXX11
+    multimap(initializer_list<value_type> il) { for (const value_type& v : il) insert(v); }
+#endif
+
+    iterator begin() { return _M_tree.begin(); }
+    const_iterator begin() const { return _M_tree.begin(); }
+    iterator end() { return _M_tree.end(); }
+    const_iterator end() const { return _M_tree.end(); }
+    bool empty() const { return _M_tree.empty(); }
+    size_type size() const { return _M_tree.size(); }
+
+    iterator insert(const value_type& v) { return _M_tree.insert_equal(v); }
+    template<class InputIt>
+    void insert(InputIt first, InputIt last) { for (; first != last; ++first) insert(*first); }
+#if STDCPP_MAP_CXX11
+    void insert(initializer_list<value_type> il) { for (const value_type& v : il) insert(v); }
+#endif
+
+    iterator erase(const_iterator pos) { return _M_tree.erase(pos); }
+    void clear() { _M_tree.clear(); }
+    void swap(multimap& other) { _M_tree.swap(other._M_tree); }
+
+    iterator find(const key_type& k) { return _M_tree.find(k); }
+    const_iterator find(const key_type& k) const { return _M_tree.find(k); }
+    size_type count(const key_type& k) const {
+        pair<const_iterator, const_iterator> p = equal_range(k);
+        size_type n = 0;
+        for (const_iterator it = p.first; it != p.second; ++it) ++n;
+        return n;
+    }
+    iterator lower_bound(const key_type& k) { return _M_tree.lower_bound(k); }
+    iterator upper_bound(const key_type& k) { return _M_tree.upper_bound(k); }
+    pair<iterator, iterator> equal_range(const key_type& k) { return _M_tree.equal_range(k); }
+
+#if STDCPP_MAP_CXX20
+    bool contains(const key_type& k) const { return find(k) != end(); }
+#endif
+};
+
+template<class K, class T, class C, class A>
+void swap(multimap<K, T, C, A>& a, multimap<K, T, C, A>& b) { a.swap(b); }
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#endif
+#endif // STDCPP_MAP_HPP

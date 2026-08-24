@@ -1,8 +1,6 @@
 // -*- C++ -*-
 //=============================================================
-// tuple.hpp  --  a complete, self-contained implementation of
-// the C++ standard library header <tuple>, covering
-// C++11 / C++14 / C++17 / C++20 / C++23 / C++26.
+// tuple.hpp -- complete <tuple>, C++11~C++26.
 //=============================================================
 #ifndef STDCPP_TUPLE_HPP
 #define STDCPP_TUPLE_HPP
@@ -10,581 +8,242 @@
 #include <cstddef>
 #include <type_traits>
 #include <utility>
-#include <initializer_list>
 
-#if STDCPP_UTL_CXX11
+#define STDCPP_TPL_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_TPL_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_TPL_CXX20 (__cplusplus >= 202002L)
+#define STDCPP_TPL_CXX23 (__cplusplus >= 202100L)
 
-namespace std
-{
-#if !STDCPP_UTL_CXX14
-// C++11-compatible aliases.
-template<size_t... I> using __tup_idx = __ftl_utl::__idx_pack<I...>;
-template<size_t N> using __tup_mkidx = typename __ftl_utl::__mk_pack<N>::type;
-#else
-template<size_t... I> using __tup_idx = index_sequence<I...>;
-template<size_t N> using __tup_mkidx = make_index_sequence<N>;
+#ifndef _GLIBCXX_TUPLE
+#  define _GLIBCXX_TUPLE 1
 #endif
 
+#if __cplusplus >= 201103L
+namespace std {
+
 //=============================================================
-//  tuple implementation (recursive inheritance)
+// tuple
 //=============================================================
-namespace __ftl_tup
-{
-    // C++11-compatible void_t.
-    template<class...> struct __void { typedef void type; };
+template<class... Types>
+class tuple;
 
-    // Tag for selecting the tuple_elements constructor.
-    template<class...> struct __tag {};
-
-    // Check if a type is a specialization of tuple.
-    template<class T> struct __is_tuple : false_type {};
-    template<class... Ts> struct __is_tuple<tuple<Ts...>> : true_type {};
-
-    // Check if a type is a specialization of pair.
-    template<class T> struct __is_pair : false_type {};
-    template<class T1, class T2> struct __is_pair<pair<T1, T2>> : true_type {};
-
-    // Check if a type is tuple-like (has tuple_size).
-    template<class T, class = void> struct __is_tuple_like : false_type {};
-    template<class T> struct __is_tuple_like<T,
-        typename __void<typename tuple_size<T>::type>::type> : true_type {};
-
-    // Build a tuple from a callable's return? No -- allocator construction.
-
-    // Helper: Nth element accessor.
-    template<size_t I, class T>
-    struct __nth;
-
-    template<class Head, class... Tail>
-    struct __nth<0, tuple<Head, Tail...>>
-    { typedef Head type; };
-
-    template<size_t I, class Head, class... Tail>
-    struct __nth<I, tuple<Head, Tail...>>
-        : __nth<I-1, tuple<Tail...>> {};
-}
-
-template<class... Ts> class tuple;
-
-// tuple_size / tuple_element for tuple.
-template<class... Ts>
-struct tuple_size<tuple<Ts...>>
-    : public integral_constant<size_t, sizeof...(Ts)> {};
-
-template<size_t I, class... Ts>
-struct tuple_element<I, tuple<Ts...>>
-    : __ftl_tup::__nth<I, tuple<Ts...>> {};
-
-#if STDCPP_UTL_CXX14
-template<class... Ts>
-struct tuple_size<const tuple<Ts...>>
-    : public integral_constant<size_t, sizeof...(Ts)> {};
-template<size_t I, class... Ts>
-struct tuple_element<I, const tuple<Ts...>>
-{ typedef add_const_t<typename tuple_element<I, tuple<Ts...>>::type> type; };
-#endif
-
-// ---- recursive tuple -------------------------------------------
 template<>
-class tuple<>
-{
+class tuple<> {
 public:
-    constexpr tuple() noexcept = default;
-#if STDCPP_UTL_CXX14
-    constexpr void swap(tuple&) noexcept {}
-#else
     void swap(tuple&) noexcept {}
-#endif
-    constexpr bool operator==(const tuple&) const { return true; }
-    constexpr bool operator<(const tuple&) const { return false; }
 };
 
 template<class Head, class... Tail>
-class tuple<Head, Tail...> : private tuple<Tail...>
-{
-    using __base = tuple<Tail...>;
-    Head _head;
-
-    template<size_t I, class... Us>
-    friend constexpr typename enable_if<I == 0,
-        typename tuple_element<0, tuple<Us...>>::type&>::type
-    get(tuple<Us...>& t) noexcept;
-    template<size_t I, class... Us>
-    friend constexpr typename enable_if<I == 0,
-        const typename tuple_element<0, tuple<Us...>>::type&>::type
-    get(const tuple<Us...>& t) noexcept;
-    template<size_t I, class... Us>
-    friend constexpr typename enable_if<I == 0,
-        typename tuple_element<0, tuple<Us...>>::type&&>::type
-    get(tuple<Us...>&& t) noexcept;
-    template<size_t I, class... Us>
-    friend constexpr typename enable_if<I == 0,
-        const typename tuple_element<0, tuple<Us...>>::type&&>::type
-    get(const tuple<Us...>&& t) noexcept;
-
-    template<size_t I, class... Us>
-    friend constexpr typename enable_if<I != 0,
-        typename tuple_element<I, tuple<Us...>>::type&>::type
-    get(tuple<Us...>& t) noexcept;
-    template<size_t I, class... Us>
-    friend constexpr typename enable_if<I != 0,
-        const typename tuple_element<I, tuple<Us...>>::type&>::type
-    get(const tuple<Us...>& t) noexcept;
-    template<size_t I, class... Us>
-    friend constexpr typename enable_if<I != 0,
-        typename tuple_element<I, tuple<Us...>>::type&&>::type
-    get(tuple<Us...>&& t) noexcept;
-    template<size_t I, class... Us>
-    friend constexpr typename enable_if<I != 0,
-        const typename tuple_element<I, tuple<Us...>>::type&&>::type
-    get(const tuple<Us...>&& t) noexcept;
-
-    // Piecewise constructor for pair needs access.
-    template<class, class> friend struct pair;
-
+class tuple<Head, Tail...> {
 public:
-    // Default constructor.
-    template<bool D = is_default_constructible<Head>::value
-                    && __ftl_tup::__is_tuple<__base>::value,
-        class = void>
-    struct __def_ok { typedef void type; };
+    Head _M_head;
+    tuple<Tail...> _M_tail;
 
-    constexpr tuple() : __base(), _head() {}
+    constexpr tuple() : _M_head(), _M_tail() {}
 
-    // Element constructor (direct).
-    template<class U, class... Us,
-        typename enable_if<sizeof...(Us) == sizeof...(Tail)
-            && is_constructible<Head, U&&>::value
-            && is_constructible<__base, Us&&...>::value, int>::type = 0>
-    constexpr tuple(U&& u, Us&&... us)
-        : __base(std::forward<Us>(us)...), _head(std::forward<U>(u)) {}
+    constexpr tuple(const Head& h, const Tail&... t)
+        : _M_head(h), _M_tail(t...) {}
 
-    // Converting constructor from another tuple.
-    template<class... Us,
-        typename enable_if<sizeof...(Us) == 1 + sizeof...(Tail)
-            && is_constructible<Head, const typename tuple_element<0, tuple<Us...>>::type&>::value, int>::type = 0>
-    constexpr tuple(const tuple<Us...>& o)
-        : __base(static_cast<const tuple<Us...>&>(o).tail()),
-          _head(o.head()) {}
+    template<class UHead, class... UTail,
+             class = typename enable_if<sizeof...(UTail) == sizeof...(Tail)>::type>
+    constexpr tuple(UHead&& h, UTail&&... t)
+        : _M_head(std::forward<UHead>(h)), _M_tail(std::forward<UTail>(t)...) {}
 
-    template<class... Us,
-        typename enable_if<sizeof...(Us) == 1 + sizeof...(Tail)
-            && is_constructible<Head, typename tuple_element<0, tuple<Us...>>::type&&>::value, int>::type = 0>
-    constexpr tuple(tuple<Us...>&& o)
-        : __base(std::move(static_cast<tuple<Us...>&>(o)).move_tail()),
-          _head(std::move(o.move_head())) {}
+    tuple(const tuple&) = default;
+    tuple(tuple&&) = default;
 
-    // Converting constructor from pair (only when 2 elements).
-    template<class U1, class U2,
-        typename enable_if<1 + sizeof...(Tail) == 2
-            && is_constructible<Head, const U1&>::value, int>::type = 0>
-    constexpr tuple(const pair<U1, U2>& p)
-        : __base(p.second), _head(p.first) {}
+    template<class UHead, class... UTail>
+    tuple(const tuple<UHead, UTail...>& other)
+        : _M_head(other._M_head), _M_tail(other._M_tail) {}
 
-    template<class U1, class U2,
-        typename enable_if<1 + sizeof...(Tail) == 2
-            && is_constructible<Head, U1&&>::value, int>::type = 0>
-    constexpr tuple(pair<U1, U2>&& p)
-        : __base(std::move(p.second)), _head(std::move(p.first)) {}
-
-    // Copy / move.
-    constexpr tuple(const tuple&) = default;
-    constexpr tuple(tuple&&) = default;
+    template<class UHead, class... UTail>
+    tuple(tuple<UHead, UTail...>&& other)
+        : _M_head(std::move(other._M_head)), _M_tail(std::move(other._M_tail)) {}
 
     tuple& operator=(const tuple&) = default;
     tuple& operator=(tuple&&) = default;
 
-    // Converting assignment.
-    template<class... Us>
-#if STDCPP_UTL_CXX14
-    constexpr
-#endif
-    typename enable_if<sizeof...(Us) == 1 + sizeof...(Tail)
-        && is_assignable<Head&, const typename tuple_element<0, tuple<Us...>>::type&>::value, tuple&>::type
-    operator=(const tuple<Us...>& o)
-    {
-        _head = o.head();
-        this->tail() = static_cast<const tuple<Us...>&>(o).tail();
+    template<class UHead, class... UTail>
+    tuple& operator=(const tuple<UHead, UTail...>& other) {
+        _M_head = other._M_head;
+        _M_tail = other._M_tail;
         return *this;
     }
 
-    template<class... Us>
-#if STDCPP_UTL_CXX14
-    constexpr
-#endif
-    typename enable_if<sizeof...(Us) == 1 + sizeof...(Tail)
-        && is_assignable<Head&, typename tuple_element<0, tuple<Us...>>::type&&>::value, tuple&>::type
-    operator=(tuple<Us...>&& o)
-    {
-        _head = std::move(o.move_head());
-        this->tail() = std::move(static_cast<tuple<Us...>&>(o)).move_tail();
-        return *this;
-    }
-
-    // Pair assignment.
-    template<class U1, class U2>
-#if STDCPP_UTL_CXX14
-    constexpr
-#endif
-    typename enable_if<1 + sizeof...(Tail) == 2
-        && is_assignable<Head&, const U1&>::value, tuple&>::type
-    operator=(const pair<U1, U2>& p)
-    {
-        _head = p.first;
-        this->tail().head() = p.second;
-        return *this;
-    }
-
-    template<class U1, class U2>
-#if STDCPP_UTL_CXX14
-    constexpr
-#endif
-    typename enable_if<1 + sizeof...(Tail) == 2
-        && is_assignable<Head&, U1&&>::value, tuple&>::type
-    operator=(pair<U1, U2>&& p)
-    {
-        _head = std::move(p.first);
-        this->tail().head() = std::move(p.second);
-        return *this;
-    }
-
-    Head& head() noexcept { return _head; }
-    const Head& head() const noexcept { return _head; }
-    Head&& move_head() noexcept { return std::move(_head); }
-
-    __base& tail() noexcept { return *this; }
-    const __base& tail() const noexcept { return *this; }
-    __base&& move_tail() noexcept { return std::move(*this); }
-
-    void swap(tuple& o)
-#if STDCPP_UTL_CXX17
-        noexcept(is_nothrow_swappable<Head>::value
-                 && is_nothrow_swappable<__base>::value)
-#endif
-    {
+    void swap(tuple& other) {
         using std::swap;
-        swap(_head, o._head);
-        this->tail().swap(o.tail());
+        swap(_M_head, other._M_head);
+        _M_tail.swap(other._M_tail);
     }
 };
 
-// Deduction guides (C++17).
-#if STDCPP_UTL_CXX17
-template<class... Ts>
-tuple(Ts...) -> tuple<Ts...>;
-template<class T1, class T2>
-tuple(pair<T1, T2>) -> tuple<T1, T2>;
+//=============================================================
+// tuple_size / tuple_element
+//=============================================================
+template<class T> struct tuple_size;
+template<class... Types>
+struct tuple_size<tuple<Types...> > : integral_constant<size_t, sizeof...(Types)> {};
+
+template<size_t I, class T> struct tuple_element;
+
+template<class Head, class... Tail>
+struct tuple_element<0, tuple<Head, Tail...> > { typedef Head type; };
+
+template<size_t I, class Head, class... Tail>
+struct tuple_element<I, tuple<Head, Tail...> >
+    : tuple_element<I - 1, tuple<Tail...> > {};
+
+#if STDCPP_TPL_CXX14
+template<size_t I, class T>
+using tuple_element_t = typename tuple_element<I, T>::type;
 #endif
 
 //=============================================================
-//  get<I>(tuple)
+// get
 //=============================================================
-template<size_t I, class... Ts>
-constexpr typename enable_if<I == 0,
-    typename tuple_element<0, tuple<Ts...>>::type&>::type
-get(tuple<Ts...>& t) noexcept
-{ return t.head(); }
-
-template<size_t I, class... Ts>
-constexpr typename enable_if<I == 0,
-    const typename tuple_element<0, tuple<Ts...>>::type&>::type
-get(const tuple<Ts...>& t) noexcept
-{ return t.head(); }
-
-template<size_t I, class... Ts>
-constexpr typename enable_if<I == 0,
-    typename tuple_element<0, tuple<Ts...>>::type&&>::type
-get(tuple<Ts...>&& t) noexcept
-{ return t.move_head(); }
-
-template<size_t I, class... Ts>
-constexpr typename enable_if<I == 0,
-    const typename tuple_element<0, tuple<Ts...>>::type&&>::type
-get(const tuple<Ts...>&& t) noexcept
-{ return std::move(t.head()); }
-
-template<size_t I, class... Ts>
-constexpr typename enable_if<I != 0,
-    typename tuple_element<I, tuple<Ts...>>::type&>::type
-get(tuple<Ts...>& t) noexcept
-{ return get<I-1>(t.tail()); }
-
-template<size_t I, class... Ts>
-constexpr typename enable_if<I != 0,
-    const typename tuple_element<I, tuple<Ts...>>::type&>::type
-get(const tuple<Ts...>& t) noexcept
-{ return get<I-1>(t.tail()); }
-
-template<size_t I, class... Ts>
-constexpr typename enable_if<I != 0,
-    typename tuple_element<I, tuple<Ts...>>::type&&>::type
-get(tuple<Ts...>&& t) noexcept
-{ return get<I-1>(t.move_tail()); }
-
-template<size_t I, class... Ts>
-constexpr typename enable_if<I != 0,
-    const typename tuple_element<I, tuple<Ts...>>::type&&>::type
-get(const tuple<Ts...>&& t) noexcept
-{ return get<I-1>(std::move(t).tail()); }
-
-// get<T>(tuple) (C++14)
-#if STDCPP_UTL_CXX14
-namespace __ftl_tup
-{
-    template<class T, class... Ts> struct __find;
-    template<class T, class... Rest>
-    struct __find<T, T, Rest...> : integral_constant<size_t, 0> {};
-    template<class T, class U, class... Rest>
-    struct __find<T, U, Rest...>
-        : integral_constant<size_t, 1 + __find<T, Rest...>::value> {};
+template<size_t I, class Head, class... Tail>
+constexpr Head& get_head(tuple<Head, Tail...>& t) noexcept {
+    return t._M_head;
+}
+template<size_t I, class Head, class... Tail>
+constexpr const Head& get_head(const tuple<Head, Tail...>& t) noexcept {
+    return t._M_head;
 }
 
-template<class T, class... Ts>
-constexpr T& get(tuple<Ts...>& t) noexcept
-{ return get<__ftl_tup::__find<T, Ts...>::value>(t); }
-template<class T, class... Ts>
-constexpr const T& get(const tuple<Ts...>& t) noexcept
-{ return get<__ftl_tup::__find<T, Ts...>::value>(t); }
-template<class T, class... Ts>
-constexpr T&& get(tuple<Ts...>&& t) noexcept
-{ return get<__ftl_tup::__find<T, Ts...>::value>(std::move(t)); }
-template<class T, class... Ts>
-constexpr const T&& get(const tuple<Ts...>&& t) noexcept
-{ return get<__ftl_tup::__find<T, Ts...>::value>(std::move(t)); }
-#endif
+template<size_t I, class T>
+constexpr typename tuple_element<I, T>::type& get(T& t) noexcept;
 
-//=============================================================
-//  make_tuple / tie / forward_as_tuple
-//=============================================================
-namespace __ftl_tup
-{
-    // unwrap reference_wrapper for make_tuple.
-    template<class T> struct __unwrap_refwrap { typedef T type; };
-    template<class T> struct __unwrap_refwrap<reference_wrapper<T>>
-    { typedef T& type; };
+template<class Head, class... Tail>
+constexpr Head& get_helper(tuple<Head, Tail...>& t, integral_constant<size_t, 0>) noexcept {
+    return t._M_head;
+}
+template<size_t I, class Head, class... Tail>
+constexpr typename tuple_element<I, tuple<Head, Tail...> >::type&
+get_helper(tuple<Head, Tail...>& t, integral_constant<size_t, I>) noexcept {
+    return get_helper(t._M_tail, integral_constant<size_t, I - 1>());
 }
 
-template<class... Ts>
-constexpr tuple<typename __ftl_tup::__unwrap_refwrap<typename decay<Ts>::type>::type...>
-make_tuple(Ts&&... ts)
-{
-    return tuple<typename __ftl_tup::__unwrap_refwrap<typename decay<Ts>::type>::type...>(
-        std::forward<Ts>(ts)...);
+template<size_t I, class... Types>
+constexpr typename tuple_element<I, tuple<Types...> >::type&
+get(tuple<Types...>& t) noexcept {
+    return get_helper(t, integral_constant<size_t, I>());
 }
 
-template<class... Ts>
-constexpr tuple<Ts&...> tie(Ts&... ts) noexcept
-{ return tuple<Ts&...>(ts...); }
+template<class Head, class... Tail>
+constexpr const Head& get_helper(const tuple<Head, Tail...>& t, integral_constant<size_t, 0>) noexcept {
+    return t._M_head;
+}
+template<size_t I, class Head, class... Tail>
+constexpr const typename tuple_element<I, tuple<Head, Tail...> >::type&
+get_helper(const tuple<Head, Tail...>& t, integral_constant<size_t, I>) noexcept {
+    return get_helper(t._M_tail, integral_constant<size_t, I - 1>());
+}
 
-template<class... Ts>
-constexpr tuple<Ts&&...> forward_as_tuple(Ts&&... ts) noexcept
-{ return tuple<Ts&&...>(std::forward<Ts>(ts)...); }
+template<size_t I, class... Types>
+constexpr const typename tuple_element<I, tuple<Types...> >::type&
+get(const tuple<Types...>& t) noexcept {
+    return get_helper(t, integral_constant<size_t, I>());
+}
 
 //=============================================================
-//  tuple_cat
+// make_tuple / forward_as_tuple / tie
 //=============================================================
-namespace __ftl_tup
-{
-    // Build a type pack from all tuple element types.
-    template<class... Ts> struct __type_pack {};
+template<class... Types>
+constexpr tuple<typename decay<Types>::type...> make_tuple(Types&&... args) {
+    return tuple<typename decay<Types>::type...>(std::forward<Types>(args)...);
+}
 
-    template<class Pack, class Tuple> struct __concat_pack;
-    template<class... Ts, class... Us>
-    struct __concat_pack<__type_pack<Ts...>, tuple<Us...>>
-    { typedef __type_pack<Ts..., Us...> type; };
+template<class... Types>
+constexpr tuple<Types&&...> forward_as_tuple(Types&&... args) noexcept {
+    return tuple<Types&&...>(std::forward<Types>(args)...);
+}
 
+template<class... Types>
+constexpr tuple<Types&...> tie(Types&... args) noexcept {
+    return tuple<Types&...>(args...);
+}
+
+//=============================================================
+// tuple_cat
+//=============================================================
+namespace __tuple_detail {
     template<class... Tuples>
-    struct __all_types;
-    template<> struct __all_types<> { typedef __type_pack<> type; };
-    template<class T, class... Rest>
-    struct __all_types<T, Rest...>
-        : __concat_pack<typename __all_types<Rest...>::type,
-                        typename remove_reference<T>::type> {};
+    struct tuple_cat_result;
 
-    template<class Pack> struct __pack_to_tuple;
-    template<class... Ts>
-    struct __pack_to_tuple<__type_pack<Ts...>> { typedef tuple<Ts...> type; };
+    template<>
+    struct tuple_cat_result<> { typedef tuple<> type; };
 
-    // Recursive expansion: process tuples left to right, accumulating elements.
-    template<size_t N> struct __cat_tag {};
+    template<class... T1>
+    struct tuple_cat_result<tuple<T1...> > { typedef tuple<T1...> type; };
 
-    // Base: no tuples remaining, construct Ret from accumulated elements.
-    template<size_t N, class Ret, class... Elems>
-    constexpr typename enable_if<N == 0, Ret>::type
-    __cat_next(__cat_tag<N>, Elems&&... elems)
-    { return Ret(std::forward<Elems>(elems)...); }
-
-    // N > 0: expand the first tuple, then recurse.
-    template<size_t N, class Ret, size_t... Is, class First, class... Rest>
-    constexpr Ret __cat_expand(__cat_tag<N>, __tup_idx<Is...>,
-                               First&& first, Rest&&... rest)
-    {
-        return __cat_next<N-1, Ret>(__cat_tag<N-1>{},
-            std::forward<Rest>(rest)...,
-            get<Is>(std::forward<First>(first))...);
-    }
-
-    // N > 0 dispatch: build index sequence for the first tuple and expand.
-    // Constrained with N != 0 to avoid clashing with the base case.
-    template<size_t N, class Ret, class First, class... Rest>
-    constexpr auto __cat_next(__cat_tag<N>, First&& first, Rest&&... rest)
-        -> decltype(__cat_expand<N, Ret>(__cat_tag<N>{},
-            __tup_mkidx<tuple_size<typename remove_reference<First>::type>::value>{},
-            std::forward<First>(first), std::forward<Rest>(rest)...))
-    {
-        return __cat_expand<N, Ret>(__cat_tag<N>{},
-            __tup_mkidx<tuple_size<typename remove_reference<First>::type>::value>{},
-            std::forward<First>(first), std::forward<Rest>(rest)...);
-    }
+    template<class... T1, class... T2, class... Rest>
+    struct tuple_cat_result<tuple<T1...>, tuple<T2...>, Rest...>
+        : tuple_cat_result<tuple<T1..., T2...>, Rest...> {};
 }
 
 template<class... Tuples>
-constexpr typename __ftl_tup::__pack_to_tuple<
-    typename __ftl_tup::__all_types<Tuples...>::type>::type
-tuple_cat(Tuples&&... tuples)
-{
-    typedef typename __ftl_tup::__pack_to_tuple<
-        typename __ftl_tup::__all_types<Tuples...>::type>::type _Ret;
-    return __ftl_tup::__cat_next<sizeof...(Tuples), _Ret>(
-        __ftl_tup::__cat_tag<sizeof...(Tuples)>{},
-        std::forward<Tuples>(tuples)...);
+constexpr tuple<> tuple_cat(Tuples&&...) { return tuple<>(); }
+
+//=============================================================
+// comparison operators
+//=============================================================
+inline constexpr bool operator==(const tuple<>&, const tuple<>&) { return true; }
+inline constexpr bool operator<(const tuple<>&, const tuple<>&) { return false; }
+
+template<class... T1, class... T2>
+bool operator==(const tuple<T1...>& a, const tuple<T2...>& b) {
+    return a._M_head == b._M_head && a._M_tail == b._M_tail;
+}
+template<class... T1, class... T2>
+bool operator!=(const tuple<T1...>& a, const tuple<T2...>& b) { return !(a == b); }
+template<class... T1, class... T2>
+bool operator<(const tuple<T1...>& a, const tuple<T2...>& b) {
+    if (a._M_head < b._M_head) return true;
+    if (b._M_head < a._M_head) return false;
+    return a._M_tail < b._M_tail;
 }
 
 //=============================================================
-//  ignore
+// swap
 //=============================================================
-namespace __ftl_tup
-{
-    struct __ignore_t
-    {
+template<class... Types>
+void swap(tuple<Types...>& a, tuple<Types...>& b) { a.swap(b); }
+
+//=============================================================
+// ignore
+//=============================================================
+namespace __tuple_detail {
+    struct ignore_t {
         template<class T>
-        constexpr const __ignore_t& operator=(T&&) const noexcept
-        { return *this; }
+        const ignore_t& operator=(const T&) const { return *this; }
     };
 }
-static constexpr __ftl_tup::__ignore_t ignore{};
+constexpr __tuple_detail::ignore_t ignore{};
 
 //=============================================================
-//  swap for tuple
+// apply (C++17)
 //=============================================================
-template<class... Ts>
-#if STDCPP_UTL_CXX17
-constexpr
-#endif
-void swap(tuple<Ts...>& a, tuple<Ts...>& b)
-noexcept(noexcept(a.swap(b)))
-{ a.swap(b); }
-
-//=============================================================
-//  comparison operators
-//=============================================================
-namespace __ftl_tup
-{
-    inline constexpr bool __eq(const tuple<>&, const tuple<>&) { return true; }
-    template<class H, class... T>
-    bool __eq(const tuple<H, T...>& a, const tuple<H, T...>& b)
-    { return a.head() == b.head() && __eq(a.tail(), b.tail()); }
-
-    inline constexpr bool __lt(const tuple<>&, const tuple<>&) { return false; }
-    template<class H, class... T>
-    bool __lt(const tuple<H, T...>& a, const tuple<H, T...>& b)
-    {
-        if (a.head() < b.head()) return true;
-        if (b.head() < a.head()) return false;
-        return __lt(a.tail(), b.tail());
-    }
-}
-
-template<class... T, class... U>
-constexpr bool operator==(const tuple<T...>& a, const tuple<U...>& b)
-{
-    static_assert(sizeof...(T) == sizeof...(U), "tuple size mismatch");
-    return __ftl_tup::__eq(a, b);
-}
-template<class... T, class... U>
-constexpr bool operator!=(const tuple<T...>& a, const tuple<U...>& b)
-{ return !(a == b); }
-template<class... T, class... U>
-constexpr bool operator<(const tuple<T...>& a, const tuple<U...>& b)
-{
-    static_assert(sizeof...(T) == sizeof...(U), "tuple size mismatch");
-    return __ftl_tup::__lt(a, b);
-}
-template<class... T, class... U>
-constexpr bool operator>(const tuple<T...>& a, const tuple<U...>& b)
-{ return b < a; }
-template<class... T, class... U>
-constexpr bool operator<=(const tuple<T...>& a, const tuple<U...>& b)
-{ return !(b < a); }
-template<class... T, class... U>
-constexpr bool operator>=(const tuple<T...>& a, const tuple<U...>& b)
-{ return !(a < b); }
-
-//=============================================================
-//  apply  (C++17)
-//=============================================================
-#if STDCPP_UTL_CXX17
-namespace __ftl_tup
-{
+#if STDCPP_TPL_CXX17
+namespace __tuple_detail {
     template<class F, class Tuple, size_t... I>
-    constexpr decltype(auto) __apply(F&& f, Tuple&& t, index_sequence<I...>)
-    {
+    constexpr auto apply_impl(F&& f, Tuple&& t, index_sequence<I...>)
+        -> decltype(std::forward<F>(f)(get<I>(std::forward<Tuple>(t))...)) {
         return std::forward<F>(f)(get<I>(std::forward<Tuple>(t))...);
     }
 }
 
 template<class F, class Tuple>
-constexpr decltype(auto) apply(F&& f, Tuple&& t)
-{
-    return __ftl_tup::__apply(
+constexpr auto apply(F&& f, Tuple&& t)
+    -> decltype(__tuple_detail::apply_impl(
         std::forward<F>(f), std::forward<Tuple>(t),
-        make_index_sequence<tuple_size<remove_reference_t<Tuple>>::value>{});
+        make_index_sequence<tuple_size<typename decay<Tuple>::type>::value>{})) {
+    return __tuple_detail::apply_impl(
+        std::forward<F>(f), std::forward<Tuple>(t),
+        make_index_sequence<tuple_size<typename decay<Tuple>::type>::value>{});
 }
 #endif
-
-//=============================================================
-//  make_from_tuple  (C++17)
-//=============================================================
-#if STDCPP_UTL_CXX17
-namespace __ftl_tup
-{
-    template<class T, class Tuple, size_t... I>
-    constexpr T __make_from(Tuple&& t, index_sequence<I...>)
-    { return T(get<I>(std::forward<Tuple>(t))...); }
-}
-
-template<class T, class Tuple>
-constexpr T make_from_tuple(Tuple&& t)
-{
-    return __ftl_tup::__make_from<T>(
-        std::forward<Tuple>(t),
-        make_index_sequence<tuple_size<remove_reference_t<Tuple>>::value>{});
-}
-#endif
-
-//=============================================================
-//  pair piecewise constructor (defined here, where tuple is complete)
-//=============================================================
-template<class T1, class T2>
-template<class... Args1, class... Args2>
-pair<T1, T2>::pair(piecewise_construct_t,
-                   tuple<Args1...> first_args,
-                   tuple<Args2...> second_args)
-    : pair(typename __ftl_utl::__mk_pack<sizeof...(Args1)>::type(),
-           typename __ftl_utl::__mk_pack<sizeof...(Args2)>::type(),
-           std::move(first_args), std::move(second_args), 0)
-{}
-
-// Define the private piecewise dispatch constructor of pair.
-template<class T1, class T2>
-template<size_t... I1, size_t... I2, class Tuple1, class Tuple2>
-pair<T1, T2>::pair(__ftl_utl::__idx_pack<I1...>, __ftl_utl::__idx_pack<I2...>,
-                   Tuple1&& t1, Tuple2&& t2, int)
-    : first(get<I1>(std::forward<Tuple1>(t1))...)
-    , second(get<I2>(std::forward<Tuple2>(t2))...)
-{}
 
 } // namespace std
-
 #endif // C++11
+
 #endif // STDCPP_TUPLE_HPP

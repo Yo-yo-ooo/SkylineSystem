@@ -1,0 +1,183 @@
+// -*- C++ -*-
+//=============================================================
+// inplace_vector.hpp -- complete <inplace_vector>, C++26.
+//=============================================================
+#ifndef STDCPP_INPLACE_VECTOR_HPP
+#define STDCPP_INPLACE_VECTOR_HPP
+
+#include <cstddef>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <stdexcept>
+#include <new>
+#include <algorithm>
+
+#define STDCPP_IV_CXX26 (__cplusplus >= 202400L || defined(__cpp_inplace_vector))
+
+#ifndef _GLIBCXX_INPLACE_VECTOR
+#  define _GLIBCXX_INPLACE_VECTOR 1
+#endif
+
+#if STDCPP_IV_CXX26
+
+namespace std {
+
+template<class T, size_t N>
+class inplace_vector {
+    alignas(T) unsigned char _M_buf[N * sizeof(T)];
+    size_t _M_size;
+
+    T* _M_data() { return reinterpret_cast<T*>(_M_buf); }
+    const T* _M_data() const { return reinterpret_cast<const T*>(_M_buf); }
+
+public:
+    typedef T value_type;
+    typedef size_t size_type;
+    typedef ptrdiff_t difference_type;
+    typedef T& reference;
+    typedef const T& const_reference;
+    typedef T* iterator;
+    typedef const T* const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+    typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+
+    constexpr inplace_vector() noexcept : _M_size(0) {}
+    constexpr inplace_vector(size_type n, const T& v = T()) : _M_size(0) {
+        for (size_type i = 0; i < n; ++i) push_back(v);
+    }
+    template<class InputIt>
+    constexpr inplace_vector(InputIt first, InputIt last) : _M_size(0) {
+        for (; first != last; ++first) push_back(*first);
+    }
+    constexpr inplace_vector(const inplace_vector& other) : _M_size(0) {
+        for (size_type i = 0; i < other._M_size; ++i) push_back(other[i]);
+    }
+    constexpr inplace_vector(inplace_vector&& other) noexcept : _M_size(0) {
+        for (size_type i = 0; i < other._M_size; ++i)
+            new (_M_data() + i) T(std::move(other[i]));
+        _M_size = other._M_size;
+        other.clear();
+    }
+    constexpr inplace_vector(initializer_list<T> il) : _M_size(0) {
+        for (const T& v : il) push_back(v);
+    }
+
+    constexpr ~inplace_vector() { clear(); }
+
+    constexpr inplace_vector& operator=(const inplace_vector& other) {
+        if (this != &other) {
+            clear();
+            for (size_type i = 0; i < other._M_size; ++i) push_back(other[i]);
+        }
+        return *this;
+    }
+    constexpr inplace_vector& operator=(inplace_vector&& other) noexcept {
+        if (this != &other) {
+            clear();
+            for (size_type i = 0; i < other._M_size; ++i)
+                new (_M_data() + i) T(std::move(other[i]));
+            _M_size = other._M_size;
+            other.clear();
+        }
+        return *this;
+    }
+
+    constexpr iterator begin() noexcept { return _M_data(); }
+    constexpr const_iterator begin() const noexcept { return _M_data(); }
+    constexpr iterator end() noexcept { return _M_data() + _M_size; }
+    constexpr const_iterator end() const noexcept { return _M_data() + _M_size; }
+    constexpr reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
+    constexpr const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
+    constexpr reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
+    constexpr const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
+
+    constexpr bool empty() const noexcept { return _M_size == 0; }
+    constexpr bool full() const noexcept { return _M_size == N; }
+    constexpr size_type size() const noexcept { return _M_size; }
+    constexpr size_type max_size() const noexcept { return N; }
+    constexpr size_type capacity() const noexcept { return N; }
+
+    constexpr reference operator[](size_type i) { return _M_data()[i]; }
+    constexpr const_reference operator[](size_type i) const { return _M_data()[i]; }
+    constexpr reference at(size_type i) { if (i >= _M_size) throw out_of_range("inplace_vector::at"); return _M_data()[i]; }
+    constexpr const_reference at(size_type i) const { if (i >= _M_size) throw out_of_range("inplace_vector::at"); return _M_data()[i]; }
+    constexpr reference front() { return _M_data()[0]; }
+    constexpr const_reference front() const { return _M_data()[0]; }
+    constexpr reference back() { return _M_data()[_M_size - 1]; }
+    constexpr const_reference back() const { return _M_data()[_M_size - 1]; }
+    constexpr T* data() noexcept { return _M_data(); }
+    constexpr const T* data() const noexcept { return _M_data(); }
+
+    constexpr void push_back(const T& v) { new (_M_data() + _M_size) T(v); ++_M_size; }
+    constexpr void push_back(T&& v) { new (_M_data() + _M_size) T(std::move(v)); ++_M_size; }
+    template<class... Args>
+    constexpr reference emplace_back(Args&&... args) {
+        new (_M_data() + _M_size) T(std::forward<Args>(args)...);
+        return _M_data()[_M_size++];
+    }
+    constexpr void pop_back() { --_M_size; _M_data()[_M_size].~T(); }
+
+    constexpr iterator insert(const_iterator pos, const T& v) {
+        size_type idx = pos - _M_data();
+        new (_M_data() + _M_size) T(std::move(_M_data()[_M_size - 1]));
+        for (size_type i = _M_size; i > idx; --i)
+            _M_data()[i] = std::move(_M_data()[i - 1]);
+        _M_data()[idx] = v;
+        ++_M_size;
+        return _M_data() + idx;
+    }
+    constexpr iterator erase(const_iterator pos) {
+        size_type idx = pos - _M_data();
+        _M_data()[idx].~T();
+        for (size_type i = idx; i + 1 < _M_size; ++i) {
+            new (_M_data() + i) T(std::move(_M_data()[i + 1]));
+            _M_data()[i + 1].~T();
+        }
+        --_M_size;
+        return _M_data() + idx;
+    }
+    constexpr iterator erase(const_iterator first, const_iterator last) {
+        size_type idx = first - _M_data();
+        size_type n = last - first;
+        for (size_type i = idx; i < idx + n; ++i) _M_data()[i].~T();
+        for (size_type i = idx; i + n < _M_size; ++i) {
+            new (_M_data() + i) T(std::move(_M_data()[i + n]));
+            _M_data()[i + n].~T();
+        }
+        _M_size -= n;
+        return _M_data() + idx;
+    }
+
+    constexpr void clear() {
+        for (size_type i = 0; i < _M_size; ++i) _M_data()[i].~T();
+        _M_size = 0;
+    }
+    constexpr void resize(size_type n) {
+        while (_M_size > n) pop_back();
+        while (_M_size < n) push_back(T());
+    }
+    constexpr void resize(size_type n, const T& v) {
+        while (_M_size > n) pop_back();
+        while (_M_size < n) push_back(v);
+    }
+    constexpr void swap(inplace_vector& other) {
+        inplace_vector tmp = std::move(other);
+        other = std::move(*this);
+        *this = std::move(tmp);
+    }
+};
+
+template<class T, size_t N>
+bool operator==(const inplace_vector<T, N>& a, const inplace_vector<T, N>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) if (!(a[i] == b[i])) return false;
+    return true;
+}
+template<class T, size_t N>
+void swap(inplace_vector<T, N>& a, inplace_vector<T, N>& b) { a.swap(b); }
+
+} // namespace std
+
+#endif // STDCPP_IV_CXX26
+#endif // STDCPP_INPLACE_VECTOR_HPP

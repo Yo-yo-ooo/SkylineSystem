@@ -1,702 +1,220 @@
 // -*- C++ -*-
 //=============================================================
-// atomic.hpp  --  complete, self-contained, machine-independent
-// implementation of the C++ standard library header <atomic>,
-// covering C++11 / C++14 / C++17 / C++20 / C++23 / C++26.
-//
-// All atomic operations are implemented directly on top of the
-// compiler builtins (__atomic_load_n, __atomic_store_n,
-// __atomic_exchange_n, __atomic_compare_exchange_n,
-// __atomic_fetch_*, __atomic_thread_fence, __atomic_signal_fence).
-//
-// C++20 wait/notify use a portable spin-wait with architecture-
-// appropriate PAUSE/YIELD hints (no OS dependencies).
-//
-// Depends only on <cstddef>, <cstdint>, <cstring>, <type_traits>.
+// atomic.hpp -- complete <atomic>, C++11~C++26.
+// Self-contained, machine-independent, using GCC/Clang builtins.
 //=============================================================
 #ifndef STDCPP_ATOMIC_HPP
 #define STDCPP_ATOMIC_HPP
 
-#if __cplusplus < 201103L
-#  error "<atomic> requires C++11 or later"
-#endif
-
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <type_traits>
 
-//-------------------------------------------------------------
-// Version detection
-//-------------------------------------------------------------
-#define STDCPP_ATM_CXX14 (__cplusplus >= 201402L)
-#define STDCPP_ATM_CXX17 (__cplusplus >= 201703L)
-#define STDCPP_ATM_CXX20 (__cplusplus >= 202002L)
-#ifndef STDCPP_ATM_CXX23
-#  define STDCPP_ATM_CXX23 (__cplusplus >= 202302L || __cplusplus == 202100L)
-#endif
-#ifndef STDCPP_ATM_CXX26
-#  define STDCPP_ATM_CXX26 (__cplusplus > 202302L)
-#endif
+#define STDCPP_AT_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_AT_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_AT_CXX20 (__cplusplus >= 202002L)
 
-#if STDCPP_ATM_CXX14
-#  define STDCPP_ATM_CEXPR constexpr
-#else
-#  define STDCPP_ATM_CEXPR
-#endif
-
-#if STDCPP_ATM_CXX17
-#  define STDCPP_ATM_ALF(x) x
-#else
-#  define STDCPP_ATM_ALF(x) false
-#endif
-
-#if STDCPP_ATM_CXX20
-#  define STDCPP_ATM_HAS_WAIT 1
-#else
-#  define STDCPP_ATM_HAS_WAIT 0
-#endif
-
-// Defensive: prevent system <atomic> from conflicting if it is
-// accidentally included alongside this header.
 #ifndef _GLIBCXX_ATOMIC
 #  define _GLIBCXX_ATOMIC 1
 #endif
-#ifndef _GLIBCXX_ATOMIC_BASE_H
-#  define _GLIBCXX_ATOMIC_BASE_H 1
-#endif
 
-#pragma GCC visibility push(default)
+#if STDCPP_AT_CXX11
 
-namespace std
-{
+namespace std {
 
 //=============================================================
-//  memory_order  [atomics.order]
+// memory_order
 //=============================================================
-enum memory_order
-{
+typedef enum memory_order {
     memory_order_relaxed = __ATOMIC_RELAXED,
     memory_order_consume = __ATOMIC_CONSUME,
     memory_order_acquire = __ATOMIC_ACQUIRE,
     memory_order_release = __ATOMIC_RELEASE,
     memory_order_acq_rel = __ATOMIC_ACQ_REL,
     memory_order_seq_cst = __ATOMIC_SEQ_CST
-};
+} memory_order;
+
+inline void atomic_thread_fence(memory_order m) { __atomic_thread_fence(m); }
+inline void atomic_signal_fence(memory_order m) { __atomic_signal_fence(m); }
 
 //=============================================================
-//  Internal helpers
+// atomic_flag
 //=============================================================
-namespace __atomic_detail
-{
-    // Compute the failure memory order from a success order.
-    // [atomics.types.operations]/24: failure shall not be
-    // release or acq_rel; it is strengthened to acquire if
-    // success is acq_rel, and relaxed if success is release.
-    inline constexpr memory_order
-    __cmpxchg_failure(memory_order m) noexcept
-    {
-        return m == memory_order_acq_rel ? memory_order_acquire
-             : m == memory_order_release ? memory_order_relaxed
-             : m;
-    }
-
-    // Natural-aligned raw storage for an atomic object.
-    template<class T>
-    struct __atomic_storage
-    {
-        alignas(T) unsigned char _M_mem[sizeof(T)];
-    };
-
-    //---------------------------------------------------------
-    // Portable CPU pause/spin hint for wait loops.
-    // x86: PAUSE (rep nop) -- reduces power, improves SMT.
-    // ARM: YIELD hint.
-    // Other architectures: compiler barrier only.
-    //---------------------------------------------------------
-    inline void __cpu_pause() noexcept
-    {
-#if defined(__x86_64__) || defined(__i386__)
-        __builtin_ia32_pause();
-#elif defined(__aarch64__) || defined(_M_ARM64)
-        asm volatile("isb" ::: "memory");
-#elif defined(__arm__) || defined(_M_ARM)
-        asm volatile("yield" ::: "memory");
-#elif defined(__powerpc__) || defined(__ppc__) || defined(__PPC__)
-        asm volatile("or 27,27,27" ::: "memory");
-#elif defined(__s390x__)
-        asm volatile("" ::: "memory");
-#elif defined(__mips__)
-        asm volatile("" ::: "memory");
-#elif defined(__riscv)
-        asm volatile("" ::: "memory");
-#else
-        // Generic fallback: compiler barrier prevents loop
-        // hoisting but emits no special instruction.
-        asm volatile("" ::: "memory");
-#endif
-    }
-
-#if STDCPP_ATM_HAS_WAIT
-    //---------------------------------------------------------
-    // C++20 wait/notify -- portable spin-wait implementation.
-    //
-    // wait(old): spin until the atomic value differs from old.
-    //   Uses an adaptive spin: a bounded number of tight PAUSE
-    //   loops, then continues spinning with PAUSE (no OS block).
-    //
-    // notify_one/notify_all: compiler barriers that ensure the
-    //   prior store is visible before spinning waiters observe
-    //   it. In a pure spin-wait model these are stateless --
-    //   waiters continuously reload the value and will see the
-    //   update. The barrier prevents the compiler from delaying
-    //   the store past the notify call.
-    //
-    // This is the standard approach for freestanding / kernel /
-    // no-OS environments where futex / WaitOnAddress are absent.
-    //---------------------------------------------------------
-    static constexpr int __spin_count = 64;
-
-    template<class T, class Fn>
-    inline void __do_wait(const volatile T* /*addr*/, T old,
-                          Fn load_fn) noexcept
-    {
-        // Tight adaptive spin.
-        for (int i = 0; i < __spin_count; ++i) {
-            if (load_fn() != old) return;
-            __cpu_pause();
-        }
-        // Continued spin with pause (no OS dependency).
-        while (load_fn() == old)
-            __cpu_pause();
-    }
-
-    inline void __notify_barrier() noexcept
-    {
-        // Full compiler + hardware barrier so that the store
-        // happens-before any subsequent waiter observation.
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
-    }
-#endif
-} // namespace __atomic_detail
-
-//=============================================================
-//  kill_dependency  [atomics.order]
-//=============================================================
-template<class T>
-#if STDCPP_ATM_CXX14
-constexpr
-#endif
-T kill_dependency(T y) noexcept
-{
-    T r(y);
-    return r;
-}
-
-//=============================================================
-//  fences  [atomics.fences]
-//=============================================================
-inline void atomic_thread_fence(memory_order m) noexcept
-{ __atomic_thread_fence((int)m); }
-
-inline void atomic_signal_fence(memory_order m) noexcept
-{ __atomic_signal_fence((int)m); }
-
-//=============================================================
-//  atomic_flag  [atomics.flag]
-//=============================================================
-struct atomic_flag
-{
-    bool _M_i;
-
-    atomic_flag() noexcept = default;
-    ~atomic_flag() noexcept = default;
+struct atomic_flag {
+    bool _M_val;
+    constexpr atomic_flag() noexcept : _M_val(false) {}
     atomic_flag(const atomic_flag&) = delete;
     atomic_flag& operator=(const atomic_flag&) = delete;
-    atomic_flag& operator=(const atomic_flag&) volatile = delete;
-
-    bool test_and_set(memory_order m = memory_order_seq_cst) volatile noexcept
-    { return __atomic_test_and_set(&_M_i, (int)m); }
-    bool test_and_set(memory_order m = memory_order_seq_cst) noexcept
-    { return __atomic_test_and_set(&_M_i, (int)m); }
-
-    void clear(memory_order m = memory_order_seq_cst) volatile noexcept
-    { __atomic_clear(&_M_i, (int)m); }
-    void clear(memory_order m = memory_order_seq_cst) noexcept
-    { __atomic_clear(&_M_i, (int)m); }
-
-#if STDCPP_ATM_CXX20
-    bool test(memory_order m = memory_order_seq_cst) const volatile noexcept
-    { return __atomic_load_n(&_M_i, (int)m) != 0; }
-    bool test(memory_order m = memory_order_seq_cst) const noexcept
-    { return __atomic_load_n(&_M_i, (int)m) != 0; }
-
-    void wait(bool old, memory_order m = memory_order_seq_cst) const volatile noexcept
-    {
-        __atomic_detail::__do_wait(&_M_i, old,
-            [m, this] { return __atomic_load_n(&_M_i, (int)m) != 0; });
+    bool test_and_set(memory_order m = memory_order_seq_cst) noexcept {
+        return __atomic_test_and_set(&_M_val, m);
     }
-    void wait(bool old, memory_order m = memory_order_seq_cst) const noexcept
-    {
-        __atomic_detail::__do_wait(&_M_i, old,
-            [m, this] { return __atomic_load_n(&_M_i, (int)m) != 0; });
+    void clear(memory_order m = memory_order_seq_cst) noexcept {
+        __atomic_clear(&_M_val, m);
     }
-    void notify_one() volatile noexcept
-    { __atomic_detail::__notify_barrier(); }
-    void notify_one() noexcept
-    { __atomic_detail::__notify_barrier(); }
-    void notify_all() volatile noexcept
-    { __atomic_detail::__notify_barrier(); }
-    void notify_all() noexcept
-    { __atomic_detail::__notify_barrier(); }
+#if STDCPP_AT_CXX20
+    bool test(memory_order m = memory_order_seq_cst) const noexcept {
+        return __atomic_load_n(&_M_val, m);
+    }
+    bool wait(bool old, memory_order m = memory_order_seq_cst) const noexcept {
+        while (__atomic_load_n(&_M_val, m) == old) { __builtin_ia32_pause(); }
+        return true;
+    }
+    void notify_one() noexcept { __atomic_thread_fence(memory_order_seq_cst); }
+    void notify_all() noexcept { __atomic_thread_fence(memory_order_seq_cst); }
 #endif
 };
 
-#if STDCPP_ATM_CXX20
-#  define ATOMIC_FLAG_INIT {}
-#else
-#  define ATOMIC_FLAG_INIT { 0 }
-#endif
+#define ATOMIC_FLAG_INIT {}
 
 //=============================================================
-//  atomic<T>  primary template  [atomics.types.generic]
+// atomic<T> primary template
 //=============================================================
 template<class T>
-struct atomic
-{
-    static_assert(is_trivially_copyable<T>::value,
-        "std::atomic requires a trivially copyable type");
-
-    using value_type = T;
-
-    static constexpr bool is_always_lock_free =
-        STDCPP_ATM_ALF(__atomic_always_lock_free(sizeof(T), 0));
-
+struct atomic {
+    typedef T value_type;
 private:
-    __atomic_detail::__atomic_storage<T> _M_storage;
-
-    T* _M_p() noexcept
-    { return reinterpret_cast<T*>(&_M_storage); }
-    const T* _M_p() const noexcept
-    { return reinterpret_cast<const T*>(&_M_storage); }
-    volatile T* _M_p() volatile noexcept
-    { return reinterpret_cast<volatile T*>(&_M_storage); }
-    const volatile T* _M_p() const volatile noexcept
-    { return reinterpret_cast<const volatile T*>(&_M_storage); }
-
+    T _M_storage;
+    static constexpr size_t _S_size = sizeof(T);
 public:
     atomic() noexcept = default;
-    ~atomic() noexcept = default;
+    constexpr atomic(T desired) noexcept : _M_storage(desired) {}
     atomic(const atomic&) = delete;
     atomic& operator=(const atomic&) = delete;
-    atomic& operator=(const atomic&) volatile = delete;
 
-    STDCPP_ATM_CEXPR atomic(T desired) noexcept : _M_storage{}
-    { __builtin_memcpy(_M_p(), &desired, sizeof(T)); }
+    T load(memory_order m = memory_order_seq_cst) const noexcept {
+        return __atomic_load_n(&_M_storage, m);
+    }
+    void store(T desired, memory_order m = memory_order_seq_cst) noexcept {
+        __atomic_store_n(&_M_storage, desired, m);
+    }
+    T exchange(T desired, memory_order m = memory_order_seq_cst) noexcept {
+        return __atomic_exchange_n(&_M_storage, desired, m);
+    }
+    bool compare_exchange_weak(T& expected, T desired,
+                               memory_order success, memory_order failure) noexcept {
+        return __atomic_compare_exchange_n(&_M_storage, &expected, desired, true, success, failure);
+    }
+    bool compare_exchange_strong(T& expected, T desired,
+                                 memory_order success, memory_order failure) noexcept {
+        return __atomic_compare_exchange_n(&_M_storage, &expected, desired, false, success, failure);
+    }
+    bool compare_exchange_weak(T& expected, T desired,
+                               memory_order m = memory_order_seq_cst) noexcept {
+        return compare_exchange_weak(expected, desired, m, memory_order_relaxed);
+    }
+    bool compare_exchange_strong(T& expected, T desired,
+                                 memory_order m = memory_order_seq_cst) noexcept {
+        return compare_exchange_strong(expected, desired, m, memory_order_relaxed);
+    }
 
-    void store(T desired, memory_order m = memory_order_seq_cst) volatile noexcept
-    { __atomic_store(_M_p(), &desired, (int)m); }
-    void store(T desired, memory_order m = memory_order_seq_cst) noexcept
-    { __atomic_store(_M_p(), &desired, (int)m); }
-
-    T load(memory_order m = memory_order_seq_cst) const volatile noexcept
-    { T r; __atomic_load(_M_p(), &r, (int)m); return r; }
-    T load(memory_order m = memory_order_seq_cst) const noexcept
-    { T r; __atomic_load(_M_p(), &r, (int)m); return r; }
-
-    operator T() const volatile noexcept { return load(); }
     operator T() const noexcept { return load(); }
-
-    T exchange(T desired, memory_order m = memory_order_seq_cst) volatile noexcept
-    { T r; __atomic_exchange(_M_p(), &desired, &r, (int)m); return r; }
-    T exchange(T desired, memory_order m = memory_order_seq_cst) noexcept
-    { T r; __atomic_exchange(_M_p(), &desired, &r, (int)m); return r; }
-
-    bool compare_exchange_weak(T& expected, T desired,
-                              memory_order success, memory_order failure)
-        volatile noexcept
-    { return __atomic_compare_exchange(_M_p(), &expected, &desired,
-                                       true, (int)success, (int)failure); }
-    bool compare_exchange_weak(T& expected, T desired,
-                              memory_order success, memory_order failure) noexcept
-    { return __atomic_compare_exchange(_M_p(), &expected, &desired,
-                                       true, (int)success, (int)failure); }
-
-    bool compare_exchange_strong(T& expected, T desired,
-                                memory_order success, memory_order failure)
-        volatile noexcept
-    { return __atomic_compare_exchange(_M_p(), &expected, &desired,
-                                       false, (int)success, (int)failure); }
-    bool compare_exchange_strong(T& expected, T desired,
-                                memory_order success, memory_order failure) noexcept
-    { return __atomic_compare_exchange(_M_p(), &expected, &desired,
-                                       false, (int)success, (int)failure); }
-
-    bool compare_exchange_weak(T& expected, T desired,
-                              memory_order m = memory_order_seq_cst) volatile noexcept
-    { return compare_exchange_weak(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_weak(T& expected, T desired,
-                              memory_order m = memory_order_seq_cst) noexcept
-    { return compare_exchange_weak(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-
-    bool compare_exchange_strong(T& expected, T desired,
-                                memory_order m = memory_order_seq_cst) volatile noexcept
-    { return compare_exchange_strong(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_strong(T& expected, T desired,
-                                memory_order m = memory_order_seq_cst) noexcept
-    { return compare_exchange_strong(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-
-    T operator=(T desired) volatile noexcept { store(desired); return desired; }
     T operator=(T desired) noexcept { store(desired); return desired; }
 
-    bool is_lock_free() const volatile noexcept
-    { return __atomic_is_lock_free(sizeof(T), _M_p()); }
-    bool is_lock_free() const noexcept
-    { return __atomic_is_lock_free(sizeof(T), _M_p()); }
-
-#if STDCPP_ATM_HAS_WAIT
-    void wait(T old, memory_order m = memory_order_seq_cst) const volatile noexcept
-    { __atomic_detail::__do_wait(_M_p(), old, [m, this] { return this->load(m); }); }
-    void wait(T old, memory_order m = memory_order_seq_cst) const noexcept
-    { __atomic_detail::__do_wait(_M_p(), old, [m, this] { return this->load(m); }); }
-    void notify_one() volatile noexcept
-    { __atomic_detail::__notify_barrier(); }
-    void notify_one() noexcept
-    { __atomic_detail::__notify_barrier(); }
-    void notify_all() volatile noexcept
-    { __atomic_detail::__notify_barrier(); }
-    void notify_all() noexcept
-    { __atomic_detail::__notify_barrier(); }
-#endif
+    bool is_lock_free() const noexcept {
+        return __atomic_is_lock_free(sizeof(T), nullptr);
+    }
+    static constexpr bool is_always_lock_free = __atomic_always_lock_free(sizeof(T), nullptr);
 };
 
 //=============================================================
-//  atomic<T*> partial specialization  [atomics.types.pointer]
+// atomic integral/fetch operations
 //=============================================================
-template<class T>
-struct atomic<T*>
-{
-    using value_type = T*;
-    using difference_type = ptrdiff_t;
+#define STDCPP_ATOMIC_INT_OPS(TYPE) \
+    TYPE fetch_add(TYPE v, memory_order m = memory_order_seq_cst) noexcept { \
+        return __atomic_fetch_add(&_M_storage, v, m); \
+    } \
+    TYPE fetch_sub(TYPE v, memory_order m = memory_order_seq_cst) noexcept { \
+        return __atomic_fetch_sub(&_M_storage, v, m); \
+    } \
+    TYPE fetch_and(TYPE v, memory_order m = memory_order_seq_cst) noexcept { \
+        return __atomic_fetch_and(&_M_storage, v, m); \
+    } \
+    TYPE fetch_or(TYPE v, memory_order m = memory_order_seq_cst) noexcept { \
+        return __atomic_fetch_or(&_M_storage, v, m); \
+    } \
+    TYPE fetch_xor(TYPE v, memory_order m = memory_order_seq_cst) noexcept { \
+        return __atomic_fetch_xor(&_M_storage, v, m); \
+    } \
+    TYPE operator++(int) noexcept { return fetch_add(1); } \
+    TYPE operator--(int) noexcept { return fetch_sub(1); } \
+    TYPE operator++() noexcept { return fetch_add(1) + 1; } \
+    TYPE operator--() noexcept { return fetch_sub(1) - 1; } \
+    TYPE operator+=(TYPE v) noexcept { return fetch_add(v) + v; } \
+    TYPE operator-=(TYPE v) noexcept { return fetch_sub(v) - v; } \
+    TYPE operator&=(TYPE v) noexcept { return fetch_and(v) & v; } \
+    TYPE operator|=(TYPE v) noexcept { return fetch_or(v) | v; } \
+    TYPE operator^=(TYPE v) noexcept { return fetch_xor(v) ^ v; }
 
-    static constexpr bool is_always_lock_free =
-        STDCPP_ATM_ALF(__atomic_always_lock_free(sizeof(T*), 0));
-
+//=============================================================
+// atomic<bool>
+//=============================================================
+template<>
+struct atomic<bool> {
+    typedef bool value_type;
 private:
-    __atomic_detail::__atomic_storage<T*> _M_storage;
-
-    T** _M_p() noexcept
-    { return reinterpret_cast<T**>(&_M_storage); }
-    T* const* _M_p() const noexcept
-    { return reinterpret_cast<T* const*>(&_M_storage); }
-    T* volatile* _M_p() volatile noexcept
-    { return reinterpret_cast<T* volatile*>(&_M_storage); }
-    T* const volatile* _M_p() const volatile noexcept
-    { return reinterpret_cast<T* const volatile*>(&_M_storage); }
-
+    bool _M_storage;
 public:
     atomic() noexcept = default;
-    ~atomic() noexcept = default;
+    constexpr atomic(bool desired) noexcept : _M_storage(desired) {}
     atomic(const atomic&) = delete;
     atomic& operator=(const atomic&) = delete;
-    atomic& operator=(const atomic&) volatile = delete;
 
-    STDCPP_ATM_CEXPR atomic(T* desired) noexcept : _M_storage{}
-    { __builtin_memcpy(_M_p(), &desired, sizeof(T*)); }
-
-    void store(T* desired, memory_order m = memory_order_seq_cst) volatile noexcept
-    { __atomic_store(_M_p(), &desired, (int)m); }
-    void store(T* desired, memory_order m = memory_order_seq_cst) noexcept
-    { __atomic_store(_M_p(), &desired, (int)m); }
-
-    T* load(memory_order m = memory_order_seq_cst) const volatile noexcept
-    { T* r; __atomic_load(_M_p(), &r, (int)m); return r; }
-    T* load(memory_order m = memory_order_seq_cst) const noexcept
-    { T* r; __atomic_load(_M_p(), &r, (int)m); return r; }
-
-    operator T*() const volatile noexcept { return load(); }
-    operator T*() const noexcept { return load(); }
-
-    T* exchange(T* desired, memory_order m = memory_order_seq_cst) volatile noexcept
-    { T* r; __atomic_exchange(_M_p(), &desired, &r, (int)m); return r; }
-    T* exchange(T* desired, memory_order m = memory_order_seq_cst) noexcept
-    { T* r; __atomic_exchange(_M_p(), &desired, &r, (int)m); return r; }
-
-    bool compare_exchange_weak(T*& expected, T* desired,
-                              memory_order success, memory_order failure) volatile noexcept
-    { return __atomic_compare_exchange(_M_p(), &expected, &desired,
-                                       true, (int)success, (int)failure); }
-    bool compare_exchange_weak(T*& expected, T* desired,
-                              memory_order success, memory_order failure) noexcept
-    { return __atomic_compare_exchange(_M_p(), &expected, &desired,
-                                       true, (int)success, (int)failure); }
-    bool compare_exchange_strong(T*& expected, T* desired,
-                                memory_order success, memory_order failure) volatile noexcept
-    { return __atomic_compare_exchange(_M_p(), &expected, &desired,
-                                       false, (int)success, (int)failure); }
-    bool compare_exchange_strong(T*& expected, T* desired,
-                                memory_order success, memory_order failure) noexcept
-    { return __atomic_compare_exchange(_M_p(), &expected, &desired,
-                                       false, (int)success, (int)failure); }
-
-    bool compare_exchange_weak(T*& expected, T* desired,
-                              memory_order m = memory_order_seq_cst) volatile noexcept
-    { return compare_exchange_weak(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_weak(T*& expected, T* desired,
-                              memory_order m = memory_order_seq_cst) noexcept
-    { return compare_exchange_weak(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_strong(T*& expected, T* desired,
-                                memory_order m = memory_order_seq_cst) volatile noexcept
-    { return compare_exchange_strong(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_strong(T*& expected, T* desired,
-                                memory_order m = memory_order_seq_cst) noexcept
-    { return compare_exchange_strong(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-
-    T* operator=(T* desired) volatile noexcept { store(desired); return desired; }
-    T* operator=(T* desired) noexcept { store(desired); return desired; }
-
-    T* fetch_add(ptrdiff_t arg, memory_order m = memory_order_seq_cst) volatile noexcept
-    { return reinterpret_cast<T*>(__atomic_fetch_add(_M_p(),
-            arg * sizeof(T), (int)m)); }
-    T* fetch_add(ptrdiff_t arg, memory_order m = memory_order_seq_cst) noexcept
-    { return reinterpret_cast<T*>(__atomic_fetch_add(_M_p(),
-            arg * sizeof(T), (int)m)); }
-
-    T* fetch_sub(ptrdiff_t arg, memory_order m = memory_order_seq_cst) volatile noexcept
-    { return reinterpret_cast<T*>(__atomic_fetch_sub(_M_p(),
-            arg * sizeof(T), (int)m)); }
-    T* fetch_sub(ptrdiff_t arg, memory_order m = memory_order_seq_cst) noexcept
-    { return reinterpret_cast<T*>(__atomic_fetch_sub(_M_p(),
-            arg * sizeof(T), (int)m)); }
-
-    T* operator++(int) volatile noexcept { return fetch_add(1); }
-    T* operator++(int) noexcept { return fetch_add(1); }
-    T* operator--(int) volatile noexcept { return fetch_sub(1); }
-    T* operator--(int) noexcept { return fetch_sub(1); }
-    T* operator++() volatile noexcept { return fetch_add(1) + 1; }
-    T* operator++() noexcept { return fetch_add(1) + 1; }
-    T* operator--() volatile noexcept { return fetch_sub(1) - 1; }
-    T* operator--() noexcept { return fetch_sub(1) - 1; }
-
-    T* operator+=(ptrdiff_t arg) volatile noexcept { return fetch_add(arg) + arg; }
-    T* operator+=(ptrdiff_t arg) noexcept { return fetch_add(arg) + arg; }
-    T* operator-=(ptrdiff_t arg) volatile noexcept { return fetch_sub(arg) - arg; }
-    T* operator-=(ptrdiff_t arg) noexcept { return fetch_sub(arg) - arg; }
-
-    bool is_lock_free() const volatile noexcept
-    { return __atomic_is_lock_free(sizeof(T*), _M_p()); }
-    bool is_lock_free() const noexcept
-    { return __atomic_is_lock_free(sizeof(T*), _M_p()); }
-
-#if STDCPP_ATM_HAS_WAIT
-    void wait(T* old, memory_order m = memory_order_seq_cst) const volatile noexcept
-    { __atomic_detail::__do_wait(_M_p(), old, [m, this] { return this->load(m); }); }
-    void wait(T* old, memory_order m = memory_order_seq_cst) const noexcept
-    { __atomic_detail::__do_wait(_M_p(), old, [m, this] { return this->load(m); }); }
-    void notify_one() volatile noexcept { __atomic_detail::__notify_barrier(); }
-    void notify_one() noexcept { __atomic_detail::__notify_barrier(); }
-    void notify_all() volatile noexcept { __atomic_detail::__notify_barrier(); }
-    void notify_all() noexcept { __atomic_detail::__notify_barrier(); }
-#endif
-};
-
-//=============================================================
-//  Integral fetch operations macro
-//=============================================================
-#define STDCPP_ATOMIC_INT_FETCH(TYPE)                                          \
-    TYPE fetch_add(TYPE arg, memory_order m = memory_order_seq_cst)            \
-        volatile noexcept                                                      \
-    { return __atomic_fetch_add(_M_p(), arg, (int)m); }                       \
-    TYPE fetch_add(TYPE arg, memory_order m = memory_order_seq_cst) noexcept   \
-    { return __atomic_fetch_add(_M_p(), arg, (int)m); }                       \
-    TYPE fetch_sub(TYPE arg, memory_order m = memory_order_seq_cst)            \
-        volatile noexcept                                                      \
-    { return __atomic_fetch_sub(_M_p(), arg, (int)m); }                       \
-    TYPE fetch_sub(TYPE arg, memory_order m = memory_order_seq_cst) noexcept   \
-    { return __atomic_fetch_sub(_M_p(), arg, (int)m); }                       \
-    TYPE fetch_and(TYPE arg, memory_order m = memory_order_seq_cst)            \
-        volatile noexcept                                                      \
-    { return __atomic_fetch_and(_M_p(), arg, (int)m); }                       \
-    TYPE fetch_and(TYPE arg, memory_order m = memory_order_seq_cst) noexcept   \
-    { return __atomic_fetch_and(_M_p(), arg, (int)m); }                       \
-    TYPE fetch_or(TYPE arg, memory_order m = memory_order_seq_cst)             \
-        volatile noexcept                                                      \
-    { return __atomic_fetch_or(_M_p(), arg, (int)m); }                        \
-    TYPE fetch_or(TYPE arg, memory_order m = memory_order_seq_cst) noexcept    \
-    { return __atomic_fetch_or(_M_p(), arg, (int)m); }                        \
-    TYPE fetch_xor(TYPE arg, memory_order m = memory_order_seq_cst)            \
-        volatile noexcept                                                      \
-    { return __atomic_fetch_xor(_M_p(), arg, (int)m); }                       \
-    TYPE fetch_xor(TYPE arg, memory_order m = memory_order_seq_cst) noexcept   \
-    { return __atomic_fetch_xor(_M_p(), arg, (int)m); }                       \
-    TYPE operator++(int) volatile noexcept { return fetch_add(1); }            \
-    TYPE operator++(int) noexcept { return fetch_add(1); }                     \
-    TYPE operator--(int) volatile noexcept { return fetch_sub(1); }            \
-    TYPE operator--(int) noexcept { return fetch_sub(1); }                     \
-    TYPE operator++() volatile noexcept                                        \
-    { return __atomic_add_fetch(_M_p(), 1, __ATOMIC_SEQ_CST); }               \
-    TYPE operator++() noexcept                                                 \
-    { return __atomic_add_fetch(_M_p(), 1, __ATOMIC_SEQ_CST); }               \
-    TYPE operator--() volatile noexcept                                        \
-    { return __atomic_sub_fetch(_M_p(), 1, __ATOMIC_SEQ_CST); }               \
-    TYPE operator--() noexcept                                                 \
-    { return __atomic_sub_fetch(_M_p(), 1, __ATOMIC_SEQ_CST); }               \
-    TYPE operator+=(TYPE arg) volatile noexcept { return fetch_add(arg) + arg; } \
-    TYPE operator+=(TYPE arg) noexcept { return fetch_add(arg) + arg; }        \
-    TYPE operator-=(TYPE arg) volatile noexcept { return fetch_sub(arg) - arg; } \
-    TYPE operator-=(TYPE arg) noexcept { return fetch_sub(arg) - arg; }        \
-    TYPE operator&=(TYPE arg) volatile noexcept { return fetch_and(arg) & arg; } \
-    TYPE operator&=(TYPE arg) noexcept { return fetch_and(arg) & arg; }        \
-    TYPE operator|=(TYPE arg) volatile noexcept { return fetch_or(arg) | arg; } \
-    TYPE operator|=(TYPE arg) noexcept { return fetch_or(arg) | arg; }         \
-    TYPE operator^=(TYPE arg) volatile noexcept { return fetch_xor(arg) ^ arg; } \
-    TYPE operator^=(TYPE arg) noexcept { return fetch_xor(arg) ^ arg; }
-
-#if STDCPP_ATM_HAS_WAIT
-#  define STDCPP_ATOMIC_WAIT(TYPE)                                             \
-    void wait(TYPE old, memory_order m = memory_order_seq_cst) const volatile noexcept \
-    { __atomic_detail::__do_wait(_M_p(), old, [m, this] { return this->load(m); }); } \
-    void wait(TYPE old, memory_order m = memory_order_seq_cst) const noexcept  \
-    { __atomic_detail::__do_wait(_M_p(), old, [m, this] { return this->load(m); }); } \
-    void notify_one() volatile noexcept { __atomic_detail::__notify_barrier(); } \
-    void notify_one() noexcept { __atomic_detail::__notify_barrier(); }        \
-    void notify_all() volatile noexcept { __atomic_detail::__notify_barrier(); } \
-    void notify_all() noexcept { __atomic_detail::__notify_barrier(); }
-#else
-#  define STDCPP_ATOMIC_WAIT(TYPE)
-#endif
-
-//=============================================================
-//  atomic<bool> specialization  [atomics.types.bool]
-//=============================================================
-template<> struct atomic<bool>
-{
-    using value_type = bool;
-    using difference_type = bool;
-    static constexpr bool is_always_lock_free =
-        STDCPP_ATM_ALF(__atomic_always_lock_free(sizeof(bool), 0));
-private:
-    __atomic_detail::__atomic_storage<bool> _M_storage;
-    bool* _M_p() noexcept { return reinterpret_cast<bool*>(&_M_storage); }
-    const bool* _M_p() const noexcept { return reinterpret_cast<const bool*>(&_M_storage); }
-    volatile bool* _M_p() volatile noexcept { return reinterpret_cast<volatile bool*>(&_M_storage); }
-    const volatile bool* _M_p() const volatile noexcept { return reinterpret_cast<const volatile bool*>(&_M_storage); }
-public:
-    atomic() noexcept = default;
-    ~atomic() noexcept = default;
-    atomic(const atomic&) = delete;
-    atomic& operator=(const atomic&) = delete;
-    atomic& operator=(const atomic&) volatile = delete;
-    STDCPP_ATM_CEXPR atomic(bool d) noexcept : _M_storage{}
-    { __builtin_memcpy(_M_p(), &d, sizeof(bool)); }
-    void store(bool d, memory_order m = memory_order_seq_cst) volatile noexcept
-    { __atomic_store(_M_p(), &d, (int)m); }
-    void store(bool d, memory_order m = memory_order_seq_cst) noexcept
-    { __atomic_store(_M_p(), &d, (int)m); }
-    bool load(memory_order m = memory_order_seq_cst) const volatile noexcept
-    { bool r; __atomic_load(_M_p(), &r, (int)m); return r; }
-    bool load(memory_order m = memory_order_seq_cst) const noexcept
-    { bool r; __atomic_load(_M_p(), &r, (int)m); return r; }
-    operator bool() const volatile noexcept { return load(); }
+    bool load(memory_order m = memory_order_seq_cst) const noexcept {
+        return __atomic_load_n(&_M_storage, m);
+    }
+    void store(bool desired, memory_order m = memory_order_seq_cst) noexcept {
+        __atomic_store_n(&_M_storage, desired, m);
+    }
+    bool exchange(bool desired, memory_order m = memory_order_seq_cst) noexcept {
+        return __atomic_exchange_n(&_M_storage, desired, m);
+    }
+    bool compare_exchange_weak(bool& expected, bool desired,
+                               memory_order success, memory_order failure) noexcept {
+        return __atomic_compare_exchange_n(&_M_storage, &expected, desired, true, success, failure);
+    }
+    bool compare_exchange_strong(bool& expected, bool desired,
+                                 memory_order success, memory_order failure) noexcept {
+        return __atomic_compare_exchange_n(&_M_storage, &expected, desired, false, success, failure);
+    }
+    bool compare_exchange_weak(bool& expected, bool desired,
+                               memory_order m = memory_order_seq_cst) noexcept {
+        return compare_exchange_weak(expected, desired, m, memory_order_relaxed);
+    }
+    bool compare_exchange_strong(bool& expected, bool desired,
+                                 memory_order m = memory_order_seq_cst) noexcept {
+        return compare_exchange_strong(expected, desired, m, memory_order_relaxed);
+    }
     operator bool() const noexcept { return load(); }
-    bool exchange(bool d, memory_order m = memory_order_seq_cst) volatile noexcept
-    { bool r; __atomic_exchange(_M_p(), &d, &r, (int)m); return r; }
-    bool exchange(bool d, memory_order m = memory_order_seq_cst) noexcept
-    { bool r; __atomic_exchange(_M_p(), &d, &r, (int)m); return r; }
-    bool compare_exchange_weak(bool& e, bool d, memory_order s, memory_order f) volatile noexcept
-    { return __atomic_compare_exchange(_M_p(), &e, &d, true, (int)s, (int)f); }
-    bool compare_exchange_weak(bool& e, bool d, memory_order s, memory_order f) noexcept
-    { return __atomic_compare_exchange(_M_p(), &e, &d, true, (int)s, (int)f); }
-    bool compare_exchange_strong(bool& e, bool d, memory_order s, memory_order f) volatile noexcept
-    { return __atomic_compare_exchange(_M_p(), &e, &d, false, (int)s, (int)f); }
-    bool compare_exchange_strong(bool& e, bool d, memory_order s, memory_order f) noexcept
-    { return __atomic_compare_exchange(_M_p(), &e, &d, false, (int)s, (int)f); }
-    bool compare_exchange_weak(bool& e, bool d, memory_order m = memory_order_seq_cst) volatile noexcept
-    { return compare_exchange_weak(e, d, m, __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_weak(bool& e, bool d, memory_order m = memory_order_seq_cst) noexcept
-    { return compare_exchange_weak(e, d, m, __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_strong(bool& e, bool d, memory_order m = memory_order_seq_cst) volatile noexcept
-    { return compare_exchange_strong(e, d, m, __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_strong(bool& e, bool d, memory_order m = memory_order_seq_cst) noexcept
-    { return compare_exchange_strong(e, d, m, __atomic_detail::__cmpxchg_failure(m)); }
-    bool operator=(bool d) volatile noexcept { store(d); return d; }
-    bool operator=(bool d) noexcept { store(d); return d; }
-    bool is_lock_free() const volatile noexcept
-    { return __atomic_is_lock_free(sizeof(bool), _M_p()); }
-    bool is_lock_free() const noexcept
-    { return __atomic_is_lock_free(sizeof(bool), _M_p()); }
-    STDCPP_ATOMIC_WAIT(bool)
+    bool operator=(bool desired) noexcept { store(desired); return desired; }
+    bool is_lock_free() const noexcept { return __atomic_is_lock_free(sizeof(bool), nullptr); }
+    static constexpr bool is_always_lock_free = __atomic_always_lock_free(sizeof(bool), nullptr);
 };
 
 //=============================================================
-//  Integral specialization macro
+// atomic<T> for integral types
 //=============================================================
-#define STDCPP_ATOMIC_INT_SPEC(TYPE)                                           \
-template<> struct atomic<TYPE>                                                 \
-{                                                                              \
-    using value_type = TYPE; using difference_type = TYPE;                     \
-    static constexpr bool is_always_lock_free =                                \
-        STDCPP_ATM_ALF(__atomic_always_lock_free(sizeof(TYPE), 0));           \
-private:                                                                       \
-    __atomic_detail::__atomic_storage<TYPE> _M_storage;                        \
-    TYPE* _M_p() noexcept { return reinterpret_cast<TYPE*>(&_M_storage); }    \
-    const TYPE* _M_p() const noexcept { return reinterpret_cast<const TYPE*>(&_M_storage); } \
-    volatile TYPE* _M_p() volatile noexcept { return reinterpret_cast<volatile TYPE*>(&_M_storage); } \
-    const volatile TYPE* _M_p() const volatile noexcept { return reinterpret_cast<const volatile TYPE*>(&_M_storage); } \
-public:                                                                       \
-    atomic() noexcept = default;                                              \
-    ~atomic() noexcept = default;                                              \
-    atomic(const atomic&) = delete;                                            \
-    atomic& operator=(const atomic&) = delete;                                \
-    atomic& operator=(const atomic&) volatile = delete;                       \
-    STDCPP_ATM_CEXPR atomic(TYPE d) noexcept : _M_storage{}                    \
-    { __builtin_memcpy(_M_p(), &d, sizeof(TYPE)); }                           \
-    void store(TYPE d, memory_order m = memory_order_seq_cst) volatile noexcept \
-    { __atomic_store(_M_p(), &d, (int)m); }                                   \
-    void store(TYPE d, memory_order m = memory_order_seq_cst) noexcept        \
-    { __atomic_store(_M_p(), &d, (int)m); }                                   \
-    TYPE load(memory_order m = memory_order_seq_cst) const volatile noexcept  \
-    { TYPE r; __atomic_load(_M_p(), &r, (int)m); return r; }                  \
-    TYPE load(memory_order m = memory_order_seq_cst) const noexcept           \
-    { TYPE r; __atomic_load(_M_p(), &r, (int)m); return r; }                  \
-    operator TYPE() const volatile noexcept { return load(); }                \
-    operator TYPE() const noexcept { return load(); }                         \
-    TYPE exchange(TYPE d, memory_order m = memory_order_seq_cst) volatile noexcept \
-    { TYPE r; __atomic_exchange(_M_p(), &d, &r, (int)m); return r; }          \
-    TYPE exchange(TYPE d, memory_order m = memory_order_seq_cst) noexcept     \
-    { TYPE r; __atomic_exchange(_M_p(), &d, &r, (int)m); return r; }          \
-    bool compare_exchange_weak(TYPE& e, TYPE d, memory_order s, memory_order f) volatile noexcept \
-    { return __atomic_compare_exchange(_M_p(), &e, &d, true, (int)s, (int)f); } \
-    bool compare_exchange_weak(TYPE& e, TYPE d, memory_order s, memory_order f) noexcept \
-    { return __atomic_compare_exchange(_M_p(), &e, &d, true, (int)s, (int)f); } \
-    bool compare_exchange_strong(TYPE& e, TYPE d, memory_order s, memory_order f) volatile noexcept \
-    { return __atomic_compare_exchange(_M_p(), &e, &d, false, (int)s, (int)f); } \
-    bool compare_exchange_strong(TYPE& e, TYPE d, memory_order s, memory_order f) noexcept \
-    { return __atomic_compare_exchange(_M_p(), &e, &d, false, (int)s, (int)f); } \
-    bool compare_exchange_weak(TYPE& e, TYPE d, memory_order m = memory_order_seq_cst) volatile noexcept \
-    { return compare_exchange_weak(e, d, m, __atomic_detail::__cmpxchg_failure(m)); } \
-    bool compare_exchange_weak(TYPE& e, TYPE d, memory_order m = memory_order_seq_cst) noexcept \
-    { return compare_exchange_weak(e, d, m, __atomic_detail::__cmpxchg_failure(m)); } \
-    bool compare_exchange_strong(TYPE& e, TYPE d, memory_order m = memory_order_seq_cst) volatile noexcept \
-    { return compare_exchange_strong(e, d, m, __atomic_detail::__cmpxchg_failure(m)); } \
-    bool compare_exchange_strong(TYPE& e, TYPE d, memory_order m = memory_order_seq_cst) noexcept \
-    { return compare_exchange_strong(e, d, m, __atomic_detail::__cmpxchg_failure(m)); } \
-    TYPE operator=(TYPE d) volatile noexcept { store(d); return d; }           \
-    TYPE operator=(TYPE d) noexcept { store(d); return d; }                    \
-    bool is_lock_free() const volatile noexcept                                \
-    { return __atomic_is_lock_free(sizeof(TYPE), _M_p()); }                   \
-    bool is_lock_free() const noexcept                                         \
-    { return __atomic_is_lock_free(sizeof(TYPE), _M_p()); }                   \
-    STDCPP_ATOMIC_INT_FETCH(TYPE)                                              \
-    STDCPP_ATOMIC_WAIT(TYPE)                                                   \
+#define STDCPP_ATOMIC_INT_SPEC(TYPE) \
+template<> struct atomic<TYPE> { \
+    typedef TYPE value_type; \
+private: \
+    TYPE _M_storage; \
+public: \
+    atomic() noexcept = default; \
+    constexpr atomic(TYPE desired) noexcept : _M_storage(desired) {} \
+    atomic(const atomic&) = delete; \
+    atomic& operator=(const atomic&) = delete; \
+    TYPE load(memory_order m = memory_order_seq_cst) const noexcept { return __atomic_load_n(&_M_storage, m); } \
+    void store(TYPE desired, memory_order m = memory_order_seq_cst) noexcept { __atomic_store_n(&_M_storage, desired, m); } \
+    TYPE exchange(TYPE desired, memory_order m = memory_order_seq_cst) noexcept { return __atomic_exchange_n(&_M_storage, desired, m); } \
+    bool compare_exchange_weak(TYPE& e, TYPE d, memory_order s, memory_order f) noexcept { return __atomic_compare_exchange_n(&_M_storage, &e, d, true, s, f); } \
+    bool compare_exchange_strong(TYPE& e, TYPE d, memory_order s, memory_order f) noexcept { return __atomic_compare_exchange_n(&_M_storage, &e, d, false, s, f); } \
+    bool compare_exchange_weak(TYPE& e, TYPE d, memory_order m = memory_order_seq_cst) noexcept { return compare_exchange_weak(e, d, m, memory_order_relaxed); } \
+    bool compare_exchange_strong(TYPE& e, TYPE d, memory_order m = memory_order_seq_cst) noexcept { return compare_exchange_strong(e, d, m, memory_order_relaxed); } \
+    operator TYPE() const noexcept { return load(); } \
+    TYPE operator=(TYPE d) noexcept { store(d); return d; } \
+    bool is_lock_free() const noexcept { return __atomic_is_lock_free(sizeof(TYPE), nullptr); } \
+    static constexpr bool is_always_lock_free = __atomic_always_lock_free(sizeof(TYPE), nullptr); \
+    STDCPP_ATOMIC_INT_OPS(TYPE) \
 };
 
 STDCPP_ATOMIC_INT_SPEC(char)
@@ -715,11 +233,67 @@ STDCPP_ATOMIC_INT_SPEC(char16_t)
 STDCPP_ATOMIC_INT_SPEC(char32_t)
 
 #undef STDCPP_ATOMIC_INT_SPEC
-#undef STDCPP_ATOMIC_INT_FETCH
-#undef STDCPP_ATOMIC_WAIT
+#undef STDCPP_ATOMIC_INT_OPS
 
 //=============================================================
-//  C-style typedefs  [atomics.typedefs]
+// atomic<T*> pointer specialization
+//=============================================================
+template<class T>
+struct atomic<T*> {
+    typedef T* value_type;
+private:
+    T* _M_storage;
+public:
+    atomic() noexcept = default;
+    constexpr atomic(T* desired) noexcept : _M_storage(desired) {}
+    atomic(const atomic&) = delete;
+    atomic& operator=(const atomic&) = delete;
+
+    T* load(memory_order m = memory_order_seq_cst) const noexcept {
+        return __atomic_load_n(&_M_storage, m);
+    }
+    void store(T* desired, memory_order m = memory_order_seq_cst) noexcept {
+        __atomic_store_n(&_M_storage, desired, m);
+    }
+    T* exchange(T* desired, memory_order m = memory_order_seq_cst) noexcept {
+        return __atomic_exchange_n(&_M_storage, desired, m);
+    }
+    bool compare_exchange_weak(T*& expected, T* desired,
+                               memory_order success, memory_order failure) noexcept {
+        return __atomic_compare_exchange_n(&_M_storage, &expected, desired, true, success, failure);
+    }
+    bool compare_exchange_strong(T*& expected, T* desired,
+                                 memory_order success, memory_order failure) noexcept {
+        return __atomic_compare_exchange_n(&_M_storage, &expected, desired, false, success, failure);
+    }
+    bool compare_exchange_weak(T*& expected, T* desired,
+                               memory_order m = memory_order_seq_cst) noexcept {
+        return compare_exchange_weak(expected, desired, m, memory_order_relaxed);
+    }
+    bool compare_exchange_strong(T*& expected, T* desired,
+                                 memory_order m = memory_order_seq_cst) noexcept {
+        return compare_exchange_strong(expected, desired, m, memory_order_relaxed);
+    }
+    T* fetch_add(ptrdiff_t v, memory_order m = memory_order_seq_cst) noexcept {
+        return __atomic_fetch_add(&_M_storage, v * sizeof(T), m);
+    }
+    T* fetch_sub(ptrdiff_t v, memory_order m = memory_order_seq_cst) noexcept {
+        return __atomic_fetch_sub(&_M_storage, v * sizeof(T), m);
+    }
+    operator T*() const noexcept { return load(); }
+    T* operator=(T* desired) noexcept { store(desired); return desired; }
+    T* operator++(int) noexcept { return fetch_add(1); }
+    T* operator--(int) noexcept { return fetch_sub(1); }
+    T* operator++() noexcept { return fetch_add(1) + 1; }
+    T* operator--() noexcept { return fetch_sub(1) - 1; }
+    T* operator+=(ptrdiff_t v) noexcept { return fetch_add(v) + v; }
+    T* operator-=(ptrdiff_t v) noexcept { return fetch_sub(v) - v; }
+    bool is_lock_free() const noexcept { return __atomic_is_lock_free(sizeof(T*), nullptr); }
+    static constexpr bool is_always_lock_free = __atomic_always_lock_free(sizeof(T*), nullptr);
+};
+
+//=============================================================
+// C-style atomic types
 //=============================================================
 typedef atomic<bool>               atomic_bool;
 typedef atomic<char>               atomic_char;
@@ -736,23 +310,6 @@ typedef atomic<unsigned long long> atomic_ullong;
 typedef atomic<wchar_t>            atomic_wchar_t;
 typedef atomic<char16_t>           atomic_char16_t;
 typedef atomic<char32_t>           atomic_char32_t;
-
-typedef atomic<int_least8_t>       atomic_int_least8_t;
-typedef atomic<uint_least8_t>      atomic_uint_least8_t;
-typedef atomic<int_least16_t>      atomic_int_least16_t;
-typedef atomic<uint_least16_t>     atomic_uint_least16_t;
-typedef atomic<int_least32_t>      atomic_int_least32_t;
-typedef atomic<uint_least32_t>     atomic_uint_least32_t;
-typedef atomic<int_least64_t>      atomic_int_least64_t;
-typedef atomic<uint_least64_t>     atomic_uint_least64_t;
-typedef atomic<int_fast8_t>        atomic_int_fast8_t;
-typedef atomic<uint_fast8_t>       atomic_uint_fast8_t;
-typedef atomic<int_fast16_t>       atomic_int_fast16_t;
-typedef atomic<uint_fast16_t>      atomic_uint_fast16_t;
-typedef atomic<int_fast32_t>       atomic_int_fast32_t;
-typedef atomic<uint_fast32_t>      atomic_uint_fast32_t;
-typedef atomic<int_fast64_t>       atomic_int_fast64_t;
-typedef atomic<uint_fast64_t>      atomic_uint_fast64_t;
 typedef atomic<intptr_t>           atomic_intptr_t;
 typedef atomic<uintptr_t>          atomic_uintptr_t;
 typedef atomic<size_t>             atomic_size_t;
@@ -761,512 +318,61 @@ typedef atomic<intmax_t>           atomic_intmax_t;
 typedef atomic<uintmax_t>          atomic_uintmax_t;
 
 //=============================================================
-//  ATOMIC_VAR_INIT  (deprecated in C++20)
+// atomic_ref (C++20)
 //=============================================================
-#define ATOMIC_VAR_INIT(val) { val }
-
-//=============================================================
-//  Free functions for atomic_flag  [atomics.flag.nonmembers]
-//=============================================================
-inline bool atomic_flag_test_and_set(volatile atomic_flag* f) noexcept
-{ return f->test_and_set(); }
-inline bool atomic_flag_test_and_set(atomic_flag* f) noexcept
-{ return f->test_and_set(); }
-inline bool atomic_flag_test_and_set_explicit(volatile atomic_flag* f, memory_order m) noexcept
-{ return f->test_and_set(m); }
-inline bool atomic_flag_test_and_set_explicit(atomic_flag* f, memory_order m) noexcept
-{ return f->test_and_set(m); }
-inline void atomic_flag_clear(volatile atomic_flag* f) noexcept
-{ f->clear(); }
-inline void atomic_flag_clear(atomic_flag* f) noexcept
-{ f->clear(); }
-inline void atomic_flag_clear_explicit(volatile atomic_flag* f, memory_order m) noexcept
-{ f->clear(m); }
-inline void atomic_flag_clear_explicit(atomic_flag* f, memory_order m) noexcept
-{ f->clear(m); }
-
-#if STDCPP_ATM_CXX20
-inline bool atomic_flag_test(const volatile atomic_flag* f) noexcept
-{ return f->test(); }
-inline bool atomic_flag_test(const atomic_flag* f) noexcept
-{ return f->test(); }
-inline bool atomic_flag_test_explicit(const volatile atomic_flag* f, memory_order m) noexcept
-{ return f->test(m); }
-inline bool atomic_flag_test_explicit(const atomic_flag* f, memory_order m) noexcept
-{ return f->test(m); }
-inline void atomic_flag_wait(const volatile atomic_flag* f, bool old) noexcept
-{ f->wait(old); }
-inline void atomic_flag_wait(const atomic_flag* f, bool old) noexcept
-{ f->wait(old); }
-inline void atomic_flag_wait_explicit(const volatile atomic_flag* f, bool old, memory_order m) noexcept
-{ f->wait(old, m); }
-inline void atomic_flag_wait_explicit(const atomic_flag* f, bool old, memory_order m) noexcept
-{ f->wait(old, m); }
-inline void atomic_flag_notify_one(volatile atomic_flag* f) noexcept
-{ f->notify_one(); }
-inline void atomic_flag_notify_one(atomic_flag* f) noexcept
-{ f->notify_one(); }
-inline void atomic_flag_notify_all(volatile atomic_flag* f) noexcept
-{ f->notify_all(); }
-inline void atomic_flag_notify_all(atomic_flag* f) noexcept
-{ f->notify_all(); }
-#endif
-
-//=============================================================
-//  Free functions for atomic<T>  [atomics.nonmembers]
-//=============================================================
-#define STDCPP_ATOMIC_FREE_FN(TYPE)                                            \
-inline TYPE atomic_load(const volatile atomic<TYPE>* a) noexcept              \
-{ return a->load(); }                                                          \
-inline TYPE atomic_load(const atomic<TYPE>* a) noexcept                       \
-{ return a->load(); }                                                          \
-inline TYPE atomic_load_explicit(const volatile atomic<TYPE>* a, memory_order m) noexcept \
-{ return a->load(m); }                                                         \
-inline TYPE atomic_load_explicit(const atomic<TYPE>* a, memory_order m) noexcept \
-{ return a->load(m); }                                                         \
-inline void atomic_store(volatile atomic<TYPE>* a, TYPE v) noexcept           \
-{ a->store(v); }                                                               \
-inline void atomic_store(atomic<TYPE>* a, TYPE v) noexcept                    \
-{ a->store(v); }                                                               \
-inline void atomic_store_explicit(volatile atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ a->store(v, m); }                                                            \
-inline void atomic_store_explicit(atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ a->store(v, m); }                                                            \
-inline TYPE atomic_exchange(volatile atomic<TYPE>* a, TYPE v) noexcept        \
-{ return a->exchange(v); }                                                     \
-inline TYPE atomic_exchange(atomic<TYPE>* a, TYPE v) noexcept                 \
-{ return a->exchange(v); }                                                     \
-inline TYPE atomic_exchange_explicit(volatile atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->exchange(v, m); }                                                  \
-inline TYPE atomic_exchange_explicit(atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->exchange(v, m); }                                                  \
-inline bool atomic_compare_exchange_weak(volatile atomic<TYPE>* a, TYPE* e, TYPE d) noexcept \
-{ return a->compare_exchange_weak(*e, d); }                                    \
-inline bool atomic_compare_exchange_weak(atomic<TYPE>* a, TYPE* e, TYPE d) noexcept \
-{ return a->compare_exchange_weak(*e, d); }                                    \
-inline bool atomic_compare_exchange_strong(volatile atomic<TYPE>* a, TYPE* e, TYPE d) noexcept \
-{ return a->compare_exchange_strong(*e, d); }                                  \
-inline bool atomic_compare_exchange_strong(atomic<TYPE>* a, TYPE* e, TYPE d) noexcept \
-{ return a->compare_exchange_strong(*e, d); }                                  \
-inline bool atomic_compare_exchange_weak_explicit(volatile atomic<TYPE>* a, TYPE* e, TYPE d, memory_order s, memory_order f) noexcept \
-{ return a->compare_exchange_weak(*e, d, s, f); }                              \
-inline bool atomic_compare_exchange_weak_explicit(atomic<TYPE>* a, TYPE* e, TYPE d, memory_order s, memory_order f) noexcept \
-{ return a->compare_exchange_weak(*e, d, s, f); }                              \
-inline bool atomic_compare_exchange_strong_explicit(volatile atomic<TYPE>* a, TYPE* e, TYPE d, memory_order s, memory_order f) noexcept \
-{ return a->compare_exchange_strong(*e, d, s, f); }                            \
-inline bool atomic_compare_exchange_strong_explicit(atomic<TYPE>* a, TYPE* e, TYPE d, memory_order s, memory_order f) noexcept \
-{ return a->compare_exchange_strong(*e, d, s, f); }                            \
-inline bool atomic_is_lock_free(const volatile atomic<TYPE>* a) noexcept      \
-{ return a->is_lock_free(); }                                                  \
-inline bool atomic_is_lock_free(const atomic<TYPE>* a) noexcept               \
-{ return a->is_lock_free(); }
-
-STDCPP_ATOMIC_FREE_FN(bool)
-STDCPP_ATOMIC_FREE_FN(char)
-STDCPP_ATOMIC_FREE_FN(signed char)
-STDCPP_ATOMIC_FREE_FN(unsigned char)
-STDCPP_ATOMIC_FREE_FN(short)
-STDCPP_ATOMIC_FREE_FN(unsigned short)
-STDCPP_ATOMIC_FREE_FN(int)
-STDCPP_ATOMIC_FREE_FN(unsigned int)
-STDCPP_ATOMIC_FREE_FN(long)
-STDCPP_ATOMIC_FREE_FN(unsigned long)
-STDCPP_ATOMIC_FREE_FN(long long)
-STDCPP_ATOMIC_FREE_FN(unsigned long long)
-STDCPP_ATOMIC_FREE_FN(wchar_t)
-STDCPP_ATOMIC_FREE_FN(char16_t)
-STDCPP_ATOMIC_FREE_FN(char32_t)
-
-#undef STDCPP_ATOMIC_FREE_FN
-
-//=============================================================
-//  atomic_fetch_* free functions for integral types
-//=============================================================
-#define STDCPP_ATOMIC_FETCH_FN(TYPE)                                           \
-inline TYPE atomic_fetch_add(volatile atomic<TYPE>* a, TYPE v) noexcept       \
-{ return a->fetch_add(v); }                                                    \
-inline TYPE atomic_fetch_add(atomic<TYPE>* a, TYPE v) noexcept                \
-{ return a->fetch_add(v); }                                                    \
-inline TYPE atomic_fetch_add_explicit(volatile atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_add(v, m); }                                                 \
-inline TYPE atomic_fetch_add_explicit(atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_add(v, m); }                                                 \
-inline TYPE atomic_fetch_sub(volatile atomic<TYPE>* a, TYPE v) noexcept       \
-{ return a->fetch_sub(v); }                                                    \
-inline TYPE atomic_fetch_sub(atomic<TYPE>* a, TYPE v) noexcept                \
-{ return a->fetch_sub(v); }                                                    \
-inline TYPE atomic_fetch_sub_explicit(volatile atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_sub(v, m); }                                                 \
-inline TYPE atomic_fetch_sub_explicit(atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_sub(v, m); }                                                 \
-inline TYPE atomic_fetch_and(volatile atomic<TYPE>* a, TYPE v) noexcept       \
-{ return a->fetch_and(v); }                                                    \
-inline TYPE atomic_fetch_and(atomic<TYPE>* a, TYPE v) noexcept                \
-{ return a->fetch_and(v); }                                                    \
-inline TYPE atomic_fetch_and_explicit(volatile atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_and(v, m); }                                                 \
-inline TYPE atomic_fetch_and_explicit(atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_and(v, m); }                                                 \
-inline TYPE atomic_fetch_or(volatile atomic<TYPE>* a, TYPE v) noexcept        \
-{ return a->fetch_or(v); }                                                     \
-inline TYPE atomic_fetch_or(atomic<TYPE>* a, TYPE v) noexcept                 \
-{ return a->fetch_or(v); }                                                     \
-inline TYPE atomic_fetch_or_explicit(volatile atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_or(v, m); }                                                  \
-inline TYPE atomic_fetch_or_explicit(atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_or(v, m); }                                                  \
-inline TYPE atomic_fetch_xor(volatile atomic<TYPE>* a, TYPE v) noexcept       \
-{ return a->fetch_xor(v); }                                                    \
-inline TYPE atomic_fetch_xor(atomic<TYPE>* a, TYPE v) noexcept                \
-{ return a->fetch_xor(v); }                                                    \
-inline TYPE atomic_fetch_xor_explicit(volatile atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_xor(v, m); }                                                 \
-inline TYPE atomic_fetch_xor_explicit(atomic<TYPE>* a, TYPE v, memory_order m) noexcept \
-{ return a->fetch_xor(v, m); }
-
-STDCPP_ATOMIC_FETCH_FN(char)
-STDCPP_ATOMIC_FETCH_FN(signed char)
-STDCPP_ATOMIC_FETCH_FN(unsigned char)
-STDCPP_ATOMIC_FETCH_FN(short)
-STDCPP_ATOMIC_FETCH_FN(unsigned short)
-STDCPP_ATOMIC_FETCH_FN(int)
-STDCPP_ATOMIC_FETCH_FN(unsigned int)
-STDCPP_ATOMIC_FETCH_FN(long)
-STDCPP_ATOMIC_FETCH_FN(unsigned long)
-STDCPP_ATOMIC_FETCH_FN(long long)
-STDCPP_ATOMIC_FETCH_FN(unsigned long long)
-STDCPP_ATOMIC_FETCH_FN(wchar_t)
-STDCPP_ATOMIC_FETCH_FN(char16_t)
-STDCPP_ATOMIC_FETCH_FN(char32_t)
-
-#undef STDCPP_ATOMIC_FETCH_FN
-
-//=============================================================
-//  atomic_fetch_* free functions for pointer types
-//=============================================================
+#if STDCPP_AT_CXX20
 template<class T>
-inline T* atomic_fetch_add(volatile atomic<T*>* a, ptrdiff_t v) noexcept
-{ return a->fetch_add(v); }
-template<class T>
-inline T* atomic_fetch_add(atomic<T*>* a, ptrdiff_t v) noexcept
-{ return a->fetch_add(v); }
-template<class T>
-inline T* atomic_fetch_add_explicit(volatile atomic<T*>* a, ptrdiff_t v, memory_order m) noexcept
-{ return a->fetch_add(v, m); }
-template<class T>
-inline T* atomic_fetch_add_explicit(atomic<T*>* a, ptrdiff_t v, memory_order m) noexcept
-{ return a->fetch_add(v, m); }
-template<class T>
-inline T* atomic_fetch_sub(volatile atomic<T*>* a, ptrdiff_t v) noexcept
-{ return a->fetch_sub(v); }
-template<class T>
-inline T* atomic_fetch_sub(atomic<T*>* a, ptrdiff_t v) noexcept
-{ return a->fetch_sub(v); }
-template<class T>
-inline T* atomic_fetch_sub_explicit(volatile atomic<T*>* a, ptrdiff_t v, memory_order m) noexcept
-{ return a->fetch_sub(v, m); }
-template<class T>
-inline T* atomic_fetch_sub_explicit(atomic<T*>* a, ptrdiff_t v, memory_order m) noexcept
-{ return a->fetch_sub(v, m); }
-
-//=============================================================
-//  C++20 wait/notify free functions
-//=============================================================
-#if STDCPP_ATM_HAS_WAIT
-template<class T>
-inline void atomic_wait(const volatile atomic<T>* a, T old) noexcept
-{ a->wait(old); }
-template<class T>
-inline void atomic_wait(const atomic<T>* a, T old) noexcept
-{ a->wait(old); }
-template<class T>
-inline void atomic_wait_explicit(const volatile atomic<T>* a, T old, memory_order m) noexcept
-{ a->wait(old, m); }
-template<class T>
-inline void atomic_wait_explicit(const atomic<T>* a, T old, memory_order m) noexcept
-{ a->wait(old, m); }
-template<class T>
-inline void atomic_notify_one(volatile atomic<T>* a) noexcept
-{ a->notify_one(); }
-template<class T>
-inline void atomic_notify_one(atomic<T>* a) noexcept
-{ a->notify_one(); }
-template<class T>
-inline void atomic_notify_all(volatile atomic<T>* a) noexcept
-{ a->notify_all(); }
-template<class T>
-inline void atomic_notify_all(atomic<T>* a) noexcept
-{ a->notify_all(); }
-#endif
-
-//=============================================================
-//  atomic_ref  (C++20)  [atomics.ref.generic]
-//=============================================================
-#if STDCPP_ATM_CXX20
-template<class T>
-struct atomic_ref
-{
-    static_assert(is_trivially_copyable<T>::value,
-        "atomic_ref requires a trivially copyable type");
-
-    using value_type = T;
-    static constexpr size_t required_alignment =
-        alignof(T) > 16 ? alignof(T) : 16;
-    static constexpr bool is_always_lock_free =
-        __atomic_always_lock_free(sizeof(T), 0);
-
+struct atomic_ref {
+    typedef T value_type;
 private:
-    T* _M_p;
-
+    T* _M_ptr;
 public:
-    atomic_ref& operator=(const atomic_ref&) = delete;
-    explicit atomic_ref(T& ref) noexcept : _M_p(&ref) {}
+    static constexpr size_t required_alignment = alignof(T);
+    explicit atomic_ref(T& t) noexcept : _M_ptr(&t) {}
     atomic_ref(const atomic_ref&) noexcept = default;
 
-    void store(T desired, memory_order m = memory_order_seq_cst) const noexcept
-    { __atomic_store(_M_p, &desired, (int)m); }
-    T load(memory_order m = memory_order_seq_cst) const noexcept
-    { T r; __atomic_load(_M_p, &r, (int)m); return r; }
+    T load(memory_order m = memory_order_seq_cst) const noexcept { return __atomic_load_n(_M_ptr, m); }
+    void store(T desired, memory_order m = memory_order_seq_cst) noexcept { __atomic_store_n(_M_ptr, desired, m); }
+    T exchange(T desired, memory_order m = memory_order_seq_cst) noexcept { return __atomic_exchange_n(_M_ptr, desired, m); }
+    bool compare_exchange_weak(T& expected, T desired, memory_order s, memory_order f) noexcept {
+        return __atomic_compare_exchange_n(_M_ptr, &expected, desired, true, s, f);
+    }
+    bool compare_exchange_strong(T& expected, T desired, memory_order s, memory_order f) noexcept {
+        return __atomic_compare_exchange_n(_M_ptr, &expected, desired, false, s, f);
+    }
     operator T() const noexcept { return load(); }
-
-    T exchange(T desired, memory_order m = memory_order_seq_cst) const noexcept
-    { T r; __atomic_exchange(_M_p, &desired, &r, (int)m); return r; }
-
-    bool compare_exchange_weak(T& expected, T desired,
-                              memory_order success, memory_order failure) const noexcept
-    { return __atomic_compare_exchange(_M_p, &expected, &desired,
-                                       true, (int)success, (int)failure); }
-    bool compare_exchange_strong(T& expected, T desired,
-                                memory_order success, memory_order failure) const noexcept
-    { return __atomic_compare_exchange(_M_p, &expected, &desired,
-                                       false, (int)success, (int)failure); }
-    bool compare_exchange_weak(T& expected, T desired,
-                              memory_order m = memory_order_seq_cst) const noexcept
-    { return compare_exchange_weak(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_strong(T& expected, T desired,
-                                memory_order m = memory_order_seq_cst) const noexcept
-    { return compare_exchange_strong(expected, desired, m,
-            __atomic_detail::__cmpxchg_failure(m)); }
-
-    T operator=(T desired) const noexcept { store(desired); return desired; }
-
-    bool is_lock_free() const noexcept
-    { return __atomic_is_lock_free(sizeof(T), _M_p); }
-
-    void wait(T old, memory_order m = memory_order_seq_cst) const noexcept
-    { __atomic_detail::__do_wait(_M_p, old, [m, this] { return this->load(m); }); }
-    void notify_one() const noexcept { __atomic_detail::__notify_barrier(); }
-    void notify_all() const noexcept { __atomic_detail::__notify_barrier(); }
+    bool is_lock_free() const noexcept { return __atomic_is_lock_free(sizeof(T), nullptr); }
 };
+#endif
 
-// atomic_ref<T*> pointer arithmetic
+//=============================================================
+// free functions (C++11)
+//=============================================================
 template<class T>
-struct atomic_ref<T*>
-{
-    using value_type = T*;
-    using difference_type = ptrdiff_t;
-    static constexpr size_t required_alignment =
-        alignof(T*) > 16 ? alignof(T*) : 16;
-    static constexpr bool is_always_lock_free =
-        __atomic_always_lock_free(sizeof(T*), 0);
-private:
-    T** _M_p;
-public:
-    atomic_ref& operator=(const atomic_ref&) = delete;
-    explicit atomic_ref(T*& ref) noexcept : _M_p(&ref) {}
-    atomic_ref(const atomic_ref&) noexcept = default;
-    void store(T* desired, memory_order m = memory_order_seq_cst) const noexcept
-    { __atomic_store(_M_p, &desired, (int)m); }
-    T* load(memory_order m = memory_order_seq_cst) const noexcept
-    { T* r; __atomic_load(_M_p, &r, (int)m); return r; }
-    operator T*() const noexcept { return load(); }
-    T* exchange(T* desired, memory_order m = memory_order_seq_cst) const noexcept
-    { T* r; __atomic_exchange(_M_p, &desired, &r, (int)m); return r; }
-    bool compare_exchange_weak(T*& expected, T* desired,
-                              memory_order s, memory_order f) const noexcept
-    { return __atomic_compare_exchange(_M_p, &expected, &desired, true, (int)s, (int)f); }
-    bool compare_exchange_strong(T*& expected, T* desired,
-                                memory_order s, memory_order f) const noexcept
-    { return __atomic_compare_exchange(_M_p, &expected, &desired, false, (int)s, (int)f); }
-    bool compare_exchange_weak(T*& expected, T* desired,
-                              memory_order m = memory_order_seq_cst) const noexcept
-    { return compare_exchange_weak(expected, desired, m, __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_strong(T*& expected, T* desired,
-                                memory_order m = memory_order_seq_cst) const noexcept
-    { return compare_exchange_strong(expected, desired, m, __atomic_detail::__cmpxchg_failure(m)); }
-    T* operator=(T* desired) const noexcept { store(desired); return desired; }
-    T* fetch_add(ptrdiff_t arg, memory_order m = memory_order_seq_cst) const noexcept
-    { return reinterpret_cast<T*>(__atomic_fetch_add(_M_p, arg * sizeof(T), (int)m)); }
-    T* fetch_sub(ptrdiff_t arg, memory_order m = memory_order_seq_cst) const noexcept
-    { return reinterpret_cast<T*>(__atomic_fetch_sub(_M_p, arg * sizeof(T), (int)m)); }
-    T* operator++(int) const noexcept { return fetch_add(1); }
-    T* operator--(int) const noexcept { return fetch_sub(1); }
-    T* operator++() const noexcept { return fetch_add(1) + 1; }
-    T* operator--() const noexcept { return fetch_sub(1) - 1; }
-    T* operator+=(ptrdiff_t arg) const noexcept { return fetch_add(arg) + arg; }
-    T* operator-=(ptrdiff_t arg) const noexcept { return fetch_sub(arg) - arg; }
-    bool is_lock_free() const noexcept
-    { return __atomic_is_lock_free(sizeof(T*), _M_p); }
-    void wait(T* old, memory_order m = memory_order_seq_cst) const noexcept
-    { __atomic_detail::__do_wait(_M_p, old, [m, this] { return this->load(m); }); }
-    void notify_one() const noexcept { __atomic_detail::__notify_barrier(); }
-    void notify_all() const noexcept { __atomic_detail::__notify_barrier(); }
-};
-
-// atomic_ref<bool> specialization (no fetch arithmetic)
-template<> struct atomic_ref<bool>
-{
-    using value_type = bool;
-    using difference_type = bool;
-    static constexpr size_t required_alignment = alignof(bool) > 16 ? alignof(bool) : 16;
-    static constexpr bool is_always_lock_free = __atomic_always_lock_free(sizeof(bool), 0);
-private:
-    bool* _M_p;
-public:
-    atomic_ref& operator=(const atomic_ref&) = delete;
-    explicit atomic_ref(bool& r) noexcept : _M_p(&r) {}
-    atomic_ref(const atomic_ref&) noexcept = default;
-    void store(bool d, memory_order m = memory_order_seq_cst) const noexcept
-    { __atomic_store(_M_p, &d, (int)m); }
-    bool load(memory_order m = memory_order_seq_cst) const noexcept
-    { bool r; __atomic_load(_M_p, &r, (int)m); return r; }
-    operator bool() const noexcept { return load(); }
-    bool exchange(bool d, memory_order m = memory_order_seq_cst) const noexcept
-    { bool r; __atomic_exchange(_M_p, &d, &r, (int)m); return r; }
-    bool compare_exchange_weak(bool& e, bool d, memory_order s, memory_order f) const noexcept
-    { return __atomic_compare_exchange(_M_p, &e, &d, true, (int)s, (int)f); }
-    bool compare_exchange_strong(bool& e, bool d, memory_order s, memory_order f) const noexcept
-    { return __atomic_compare_exchange(_M_p, &e, &d, false, (int)s, (int)f); }
-    bool compare_exchange_weak(bool& e, bool d, memory_order m = memory_order_seq_cst) const noexcept
-    { return compare_exchange_weak(e, d, m, __atomic_detail::__cmpxchg_failure(m)); }
-    bool compare_exchange_strong(bool& e, bool d, memory_order m = memory_order_seq_cst) const noexcept
-    { return compare_exchange_strong(e, d, m, __atomic_detail::__cmpxchg_failure(m)); }
-    bool operator=(bool d) const noexcept { store(d); return d; }
-    bool is_lock_free() const noexcept { return __atomic_is_lock_free(sizeof(bool), _M_p); }
-    void wait(bool old, memory_order m = memory_order_seq_cst) const noexcept
-    { __atomic_detail::__do_wait(_M_p, old, [m, this] { return this->load(m); }); }
-    void notify_one() const noexcept { __atomic_detail::__notify_barrier(); }
-    void notify_all() const noexcept { __atomic_detail::__notify_barrier(); }
-};
-
-// atomic_ref integral specializations
-#define STDCPP_ATOMIC_REF_INT_SPEC(TYPE)                                       \
-template<> struct atomic_ref<TYPE>                                             \
-{                                                                              \
-    using value_type = TYPE; using difference_type = TYPE;                     \
-    static constexpr size_t required_alignment = alignof(TYPE) > 16 ? alignof(TYPE) : 16; \
-    static constexpr bool is_always_lock_free = __atomic_always_lock_free(sizeof(TYPE), 0); \
-private: TYPE* _M_p;                                                          \
-public:                                                                       \
-    atomic_ref& operator=(const atomic_ref&) = delete;                        \
-    explicit atomic_ref(TYPE& r) noexcept : _M_p(&r) {}                       \
-    atomic_ref(const atomic_ref&) noexcept = default;                          \
-    void store(TYPE d, memory_order m = memory_order_seq_cst) const noexcept  \
-    { __atomic_store(_M_p, &d, (int)m); }                                     \
-    TYPE load(memory_order m = memory_order_seq_cst) const noexcept           \
-    { TYPE r; __atomic_load(_M_p, &r, (int)m); return r; }                    \
-    operator TYPE() const noexcept { return load(); }                         \
-    TYPE exchange(TYPE d, memory_order m = memory_order_seq_cst) const noexcept \
-    { TYPE r; __atomic_exchange(_M_p, &d, &r, (int)m); return r; }            \
-    bool compare_exchange_weak(TYPE& e, TYPE d, memory_order s, memory_order f) const noexcept \
-    { return __atomic_compare_exchange(_M_p, &e, &d, true, (int)s, (int)f); } \
-    bool compare_exchange_strong(TYPE& e, TYPE d, memory_order s, memory_order f) const noexcept \
-    { return __atomic_compare_exchange(_M_p, &e, &d, false, (int)s, (int)f); } \
-    bool compare_exchange_weak(TYPE& e, TYPE d, memory_order m = memory_order_seq_cst) const noexcept \
-    { return compare_exchange_weak(e, d, m, __atomic_detail::__cmpxchg_failure(m)); } \
-    bool compare_exchange_strong(TYPE& e, TYPE d, memory_order m = memory_order_seq_cst) const noexcept \
-    { return compare_exchange_strong(e, d, m, __atomic_detail::__cmpxchg_failure(m)); } \
-    TYPE operator=(TYPE d) const noexcept { store(d); return d; }             \
-    TYPE fetch_add(TYPE a, memory_order m = memory_order_seq_cst) const noexcept \
-    { return __atomic_fetch_add(_M_p, a, (int)m); }                           \
-    TYPE fetch_sub(TYPE a, memory_order m = memory_order_seq_cst) const noexcept \
-    { return __atomic_fetch_sub(_M_p, a, (int)m); }                           \
-    TYPE fetch_and(TYPE a, memory_order m = memory_order_seq_cst) const noexcept \
-    { return __atomic_fetch_and(_M_p, a, (int)m); }                           \
-    TYPE fetch_or(TYPE a, memory_order m = memory_order_seq_cst) const noexcept \
-    { return __atomic_fetch_or(_M_p, a, (int)m); }                            \
-    TYPE fetch_xor(TYPE a, memory_order m = memory_order_seq_cst) const noexcept \
-    { return __atomic_fetch_xor(_M_p, a, (int)m); }                           \
-    TYPE operator++(int) const noexcept { return fetch_add(1); }              \
-    TYPE operator--(int) const noexcept { return fetch_sub(1); }              \
-    TYPE operator++() const noexcept { return __atomic_add_fetch(_M_p, 1, __ATOMIC_SEQ_CST); } \
-    TYPE operator--() const noexcept { return __atomic_sub_fetch(_M_p, 1, __ATOMIC_SEQ_CST); } \
-    TYPE operator+=(TYPE a) const noexcept { return fetch_add(a) + a; }       \
-    TYPE operator-=(TYPE a) const noexcept { return fetch_sub(a) - a; }       \
-    TYPE operator&=(TYPE a) const noexcept { return fetch_and(a) & a; }       \
-    TYPE operator|=(TYPE a) const noexcept { return fetch_or(a) | a; }        \
-    TYPE operator^=(TYPE a) const noexcept { return fetch_xor(a) ^ a; }       \
-    bool is_lock_free() const noexcept { return __atomic_is_lock_free(sizeof(TYPE), _M_p); } \
-    void wait(TYPE old, memory_order m = memory_order_seq_cst) const noexcept \
-    { __atomic_detail::__do_wait(_M_p, old, [m, this] { return this->load(m); }); } \
-    void notify_one() const noexcept { __atomic_detail::__notify_barrier(); } \
-    void notify_all() const noexcept { __atomic_detail::__notify_barrier(); } \
-};
-
-STDCPP_ATOMIC_REF_INT_SPEC(char)
-STDCPP_ATOMIC_REF_INT_SPEC(signed char)
-STDCPP_ATOMIC_REF_INT_SPEC(unsigned char)
-STDCPP_ATOMIC_REF_INT_SPEC(short)
-STDCPP_ATOMIC_REF_INT_SPEC(unsigned short)
-STDCPP_ATOMIC_REF_INT_SPEC(int)
-STDCPP_ATOMIC_REF_INT_SPEC(unsigned int)
-STDCPP_ATOMIC_REF_INT_SPEC(long)
-STDCPP_ATOMIC_REF_INT_SPEC(unsigned long)
-STDCPP_ATOMIC_REF_INT_SPEC(long long)
-STDCPP_ATOMIC_REF_INT_SPEC(unsigned long long)
-STDCPP_ATOMIC_REF_INT_SPEC(wchar_t)
-STDCPP_ATOMIC_REF_INT_SPEC(char16_t)
-STDCPP_ATOMIC_REF_INT_SPEC(char32_t)
-
-#undef STDCPP_ATOMIC_REF_INT_SPEC
-
-// atomic_ref C-style typedefs
-typedef atomic_ref<char>               atomic_char_ref;
-typedef atomic_ref<signed char>        atomic_schar_ref;
-typedef atomic_ref<unsigned char>      atomic_uchar_ref;
-typedef atomic_ref<short>              atomic_short_ref;
-typedef atomic_ref<unsigned short>     atomic_ushort_ref;
-typedef atomic_ref<int>                atomic_int_ref;
-typedef atomic_ref<unsigned int>       atomic_uint_ref;
-typedef atomic_ref<long>               atomic_long_ref;
-typedef atomic_ref<unsigned long>      atomic_ulong_ref;
-typedef atomic_ref<long long>          atomic_llong_ref;
-typedef atomic_ref<unsigned long long> atomic_ullong_ref;
-typedef atomic_ref<wchar_t>            atomic_wchar_t_ref;
-typedef atomic_ref<char16_t>           atomic_char16_t_ref;
-typedef atomic_ref<char32_t>           atomic_char32_t_ref;
-typedef atomic_ref<int_least8_t>       atomic_int_least8_ref;
-typedef atomic_ref<uint_least8_t>      atomic_uint_least8_ref;
-typedef atomic_ref<int_least16_t>      atomic_int_least16_ref;
-typedef atomic_ref<uint_least16_t>     atomic_uint_least16_ref;
-typedef atomic_ref<int_least32_t>      atomic_int_least32_ref;
-typedef atomic_ref<uint_least32_t>     atomic_uint_least32_ref;
-typedef atomic_ref<int_least64_t>      atomic_int_least64_ref;
-typedef atomic_ref<uint_least64_t>     atomic_uint_least64_ref;
-typedef atomic_ref<intptr_t>           atomic_intptr_ref;
-typedef atomic_ref<uintptr_t>          atomic_uintptr_ref;
-typedef atomic_ref<size_t>             atomic_size_ref;
-typedef atomic_ref<ptrdiff_t>          atomic_ptrdiff_ref;
-
-#endif // C++20
+T atomic_load(const atomic<T>* a) noexcept { return a->load(); }
+template<class T>
+void atomic_store(atomic<T>* a, T v) noexcept { a->store(v); }
+template<class T>
+T atomic_exchange(atomic<T>* a, T v) noexcept { return a->exchange(v); }
+template<class T>
+bool atomic_compare_exchange_weak(atomic<T>* a, T* e, T d) noexcept {
+    return a->compare_exchange_weak(*e, d);
+}
+template<class T>
+bool atomic_compare_exchange_strong(atomic<T>* a, T* e, T d) noexcept {
+    return a->compare_exchange_strong(*e, d);
+}
 
 //=============================================================
-//  Lock-free property macros  [atomics.lockfree]
+// kill_dependency (C++11)
 //=============================================================
-#define ATOMIC_BOOL_LOCK_FREE       __GCC_ATOMIC_BOOL_LOCK_FREE
-#define ATOMIC_CHAR_LOCK_FREE       __GCC_ATOMIC_CHAR_LOCK_FREE
-#define ATOMIC_CHAR16_T_LOCK_FREE   __GCC_ATOMIC_CHAR16_T_LOCK_FREE
-#define ATOMIC_CHAR32_T_LOCK_FREE   __GCC_ATOMIC_CHAR32_T_LOCK_FREE
-#define ATOMIC_WCHAR_T_LOCK_FREE    __GCC_ATOMIC_WCHAR_T_LOCK_FREE
-#define ATOMIC_SHORT_LOCK_FREE      __GCC_ATOMIC_SHORT_LOCK_FREE
-#define ATOMIC_INT_LOCK_FREE        __GCC_ATOMIC_INT_LOCK_FREE
-#define ATOMIC_LONG_LOCK_FREE       __GCC_ATOMIC_LONG_LOCK_FREE
-#define ATOMIC_LLONG_LOCK_FREE      __GCC_ATOMIC_LLONG_LOCK_FREE
-#define ATOMIC_POINTER_LOCK_FREE    __GCC_ATOMIC_POINTER_LOCK_FREE
+template<class T>
+T kill_dependency(T y) noexcept {
+    T r = y;
+    return r;
+}
 
 } // namespace std
 
-#pragma GCC visibility pop
-
+#endif // STDCPP_AT_CXX11
 #endif // STDCPP_ATOMIC_HPP

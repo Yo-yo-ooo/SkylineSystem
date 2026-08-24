@@ -1,0 +1,161 @@
+// -*- C++ -*-
+//=============================================================
+// flat_map.hpp -- complete <flat_map>, C++23~C++26.
+//=============================================================
+#ifndef STDCPP_FLAT_MAP_HPP
+#define STDCPP_FLAT_MAP_HPP
+
+#include <cstddef>
+#include <vector>
+#include <functional>
+#include <algorithm>
+#include <initializer_list>
+#include <flat_set>
+
+#define STDCPP_FM_CXX23 (__cplusplus >= 202100L)
+
+#ifndef _GLIBCXX_FLAT_MAP
+#  define _GLIBCXX_FLAT_MAP 1
+#endif
+
+#if STDCPP_FM_CXX23
+
+namespace std {
+
+template<class Key, class T, class Compare = less<Key>,
+         class KeyContainer = vector<Key>, class MappedContainer = vector<T> >
+class flat_map {
+public:
+    typedef Key key_type;
+    typedef T mapped_type;
+    typedef pair<const Key, T> value_type;
+    typedef Compare key_compare;
+    typedef size_t size_type;
+
+    typedef typename KeyContainer::iterator key_iterator;
+    typedef typename MappedContainer::iterator iterator;
+    typedef typename MappedContainer::const_iterator const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+
+private:
+    KeyContainer _M_keys;
+    MappedContainer _M_vals;
+    Compare _M_comp;
+
+public:
+    flat_map() {}
+    explicit flat_map(const Compare& comp) : _M_comp(comp) {}
+    template<class InputIt>
+    flat_map(InputIt first, InputIt last, const Compare& comp = Compare()) : _M_comp(comp) {
+        for (; first != last; ++first) insert(*first);
+    }
+    flat_map(const flat_map&) = default;
+    flat_map(flat_map&&) = default;
+    flat_map(initializer_list<pair<Key, T> > il) {
+        for (const auto& v : il) insert(v);
+    }
+
+    flat_map& operator=(const flat_map&) = default;
+    flat_map& operator=(flat_map&&) = default;
+    flat_map& operator=(initializer_list<pair<Key, T> > il) {
+        clear();
+        for (const auto& v : il) insert(v);
+        return *this;
+    }
+
+    iterator begin() { return _M_vals.begin(); }
+    const_iterator begin() const { return _M_vals.begin(); }
+    iterator end() { return _M_vals.end(); }
+    const_iterator end() const { return _M_vals.end(); }
+    reverse_iterator rbegin() { return reverse_iterator(end()); }
+    reverse_iterator rend() { return reverse_iterator(begin()); }
+
+    bool empty() const { return _M_keys.empty(); }
+    size_type size() const { return _M_keys.size(); }
+    size_type max_size() const { return _M_keys.max_size(); }
+    void clear() { _M_keys.clear(); _M_vals.clear(); }
+
+    pair<iterator, bool> insert(const pair<Key, T>& v) {
+        auto it = lower_bound_key(v.first);
+        if (it != _M_keys.end() && !_M_comp(v.first, *it))
+            return pair<iterator, bool>(_M_vals.begin() + (it - _M_keys.begin()), false);
+        size_type idx = it - _M_keys.begin();
+        _M_keys.insert(it, v.first);
+        _M_vals.insert(_M_vals.begin() + idx, v.second);
+        return pair<iterator, bool>(_M_vals.begin() + idx, true);
+    }
+    void insert(initializer_list<pair<Key, T> > il) { for (const auto& v : il) insert(v); }
+
+    iterator erase(const_iterator pos) {
+        size_type idx = pos - _M_vals.begin();
+        _M_keys.erase(_M_keys.begin() + idx);
+        return _M_vals.erase(_M_vals.begin() + idx);
+    }
+    size_type erase(const Key& k) {
+        auto it = find(k);
+        if (it == end()) return 0;
+        erase(it);
+        return 1;
+    }
+
+    T& operator[](const Key& k) {
+        auto it = lower_bound_key(k);
+        size_type idx = it - _M_keys.begin();
+        if (it != _M_keys.end() && !_M_comp(k, *it)) return _M_vals[idx];
+        _M_keys.insert(it, k);
+        _M_vals.insert(_M_vals.begin() + idx, T());
+        return _M_vals[idx];
+    }
+    T& at(const Key& k) {
+        auto it = find(k);
+        if (it == end()) throw out_of_range("flat_map::at");
+        return *it;
+    }
+    const T& at(const Key& k) const {
+        auto it = find(k);
+        if (it == end()) throw out_of_range("flat_map::at");
+        return *it;
+    }
+
+    iterator find(const Key& k) {
+        auto it = lower_bound_key(k);
+        if (it != _M_keys.end() && !_M_comp(k, *it))
+            return _M_vals.begin() + (it - _M_keys.begin());
+        return end();
+    }
+    const_iterator find(const Key& k) const {
+        auto it = lower_bound_key(k);
+        if (it != _M_keys.end() && !_M_comp(k, *it))
+            return _M_vals.begin() + (it - _M_keys.begin());
+        return end();
+    }
+    size_type count(const Key& k) const { return find(k) != end() ? 1 : 0; }
+    bool contains(const Key& k) const { return find(k) != end(); }
+
+    void swap(flat_map& other) {
+        _M_keys.swap(other._M_keys);
+        _M_vals.swap(other._M_vals);
+        std::swap(_M_comp, other._M_comp);
+    }
+
+private:
+    key_iterator lower_bound_key(const Key& k) {
+        return std::lower_bound(_M_keys.begin(), _M_keys.end(), k, _M_comp);
+    }
+    typename KeyContainer::const_iterator lower_bound_key(const Key& k) const {
+        return std::lower_bound(_M_keys.begin(), _M_keys.end(), k, _M_comp);
+    }
+};
+
+template<class K, class T, class C, class KC, class MC>
+bool operator==(const flat_map<K, T, C, KC, MC>& a, const flat_map<K, T, C, KC, MC>& b) {
+    if (a.size() != b.size()) return false;
+    return equal(a.begin(), a.end(), b.begin());
+}
+template<class K, class T, class C, class KC, class MC>
+void swap(flat_map<K, T, C, KC, MC>& a, flat_map<K, T, C, KC, MC>& b) { a.swap(b); }
+
+} // namespace std
+
+#endif // STDCPP_FM_CXX23
+#endif // STDCPP_FLAT_MAP_HPP

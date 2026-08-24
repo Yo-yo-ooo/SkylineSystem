@@ -1,0 +1,764 @@
+// -*- C++ -*-
+//=============================================================
+// string.hpp -- complete <string>, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_STRING_HPP
+#define STDCPP_STRING_HPP
+
+#include <cstddef>
+#include <cstring>
+#include <cstdlib>
+#include <cstdio>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <initializer_list>
+#include <stdexcept>
+#include <functional>
+
+#define STDCPP_STR_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_STR_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_STR_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_STR_CXX20 (__cplusplus >= 202002L)
+#define STDCPP_STR_CXX23 (__cplusplus >= 202100L)
+
+#if !STDCPP_STR_CXX11
+#define noexcept throw()
+#define nullptr 0
+#define override
+#endif
+
+#ifndef _GLIBCXX_STRING
+#  define _GLIBCXX_STRING 1
+#endif
+
+namespace std {
+
+template<class T> struct char_traits;
+
+template<> struct char_traits<char> {
+    typedef char       char_type;
+    typedef int        int_type;
+    typedef size_t     pos_type;
+    typedef ptrdiff_t  off_type;
+
+    static void assign(char& dst, const char& src) { dst = src; }
+    static bool eq(char a, char b) { return a == b; }
+    static bool lt(char a, char b) { return a < b; }
+    static int compare(const char* s1, const char* s2, size_t n) { return memcmp(s1, s2, n); }
+    static size_t length(const char* s) { return strlen(s); }
+    static const char* find(const char* s, size_t n, const char& a) {
+        return (const char*)memchr(s, a, n);
+    }
+    static char* move(char* dst, const char* src, size_t n) { return (char*)memmove(dst, src, n); }
+    static char* copy(char* dst, const char* src, size_t n) { return (char*)memcpy(dst, src, n); }
+    static char* assign(char* s, size_t n, char a) { return (char*)memset(s, a, n); }
+    static int_type not_eof(int_type c) { return eq_int_type(c, eof()) ? 0 : c; }
+    static char_type to_char_type(int_type c) { return (char_type)c; }
+    static int_type to_int_type(char_type c) { return (int_type)(unsigned char)c; }
+    static bool eq_int_type(int_type a, int_type b) { return a == b; }
+    static int_type eof() { return -1; }
+};
+
+//=============================================================
+// basic_string_view (C++17)
+//=============================================================
+#if STDCPP_STR_CXX17
+template<class CharT, class Traits = char_traits<CharT> >
+class basic_string_view {
+public:
+    typedef Traits     traits_type;
+    typedef CharT      value_type;
+    typedef CharT*     pointer;
+    typedef const CharT* const_pointer;
+    typedef const CharT& reference;
+    typedef const CharT& const_reference;
+    typedef const CharT* iterator;
+    typedef const CharT* const_iterator;
+    typedef size_t     size_type;
+    typedef ptrdiff_t  difference_type;
+
+    static constexpr size_type npos = size_type(-1);
+
+    constexpr basic_string_view() noexcept : _M_data(nullptr), _M_size(0) {}
+    constexpr basic_string_view(const CharT* s) : _M_data(s), _M_size(Traits::length(s)) {}
+    constexpr basic_string_view(const CharT* s, size_type n) : _M_data(s), _M_size(n) {}
+
+    constexpr const_iterator begin() const noexcept { return _M_data; }
+    constexpr const_iterator end() const noexcept { return _M_data + _M_size; }
+    constexpr const_pointer data() const noexcept { return _M_data; }
+    constexpr size_type size() const noexcept { return _M_size; }
+    constexpr size_type length() const noexcept { return _M_size; }
+    constexpr bool empty() const noexcept { return _M_size == 0; }
+
+    constexpr const_reference operator[](size_type i) const { return _M_data[i]; }
+    constexpr const_reference front() const { return _M_data[0]; }
+    constexpr const_reference back() const { return _M_data[_M_size - 1]; }
+
+    constexpr void remove_prefix(size_type n) { _M_data += n; _M_size -= n; }
+    constexpr void remove_suffix(size_type n) { _M_size -= n; }
+
+    constexpr basic_string_view substr(size_type pos = 0, size_type n = npos) const {
+        return basic_string_view(_M_data + pos, n < _M_size - pos ? n : _M_size - pos);
+    }
+
+    int compare(basic_string_view sv) const noexcept {
+        size_type rlen = _M_size < sv._M_size ? _M_size : sv._M_size;
+        int r = Traits::compare(_M_data, sv._M_data, rlen);
+        if (r != 0) return r;
+        if (_M_size < sv._M_size) return -1;
+        if (_M_size > sv._M_size) return 1;
+        return 0;
+    }
+
+    bool starts_with(basic_string_view sv) const noexcept {
+        return _M_size >= sv._M_size && Traits::compare(_M_data, sv._M_data, sv._M_size) == 0;
+    }
+    bool starts_with(CharT c) const noexcept { return _M_size > 0 && Traits::eq(_M_data[0], c); }
+    bool ends_with(basic_string_view sv) const noexcept {
+        return _M_size >= sv._M_size && Traits::compare(_M_data + _M_size - sv._M_size, sv._M_data, sv._M_size) == 0;
+    }
+    bool ends_with(CharT c) const noexcept { return _M_size > 0 && Traits::eq(_M_data[_M_size - 1], c); }
+
+    bool contains(basic_string_view sv) const noexcept { return find(sv) != npos; }
+    bool contains(CharT c) const noexcept { return find(c) != npos; }
+
+    size_type find(basic_string_view sv, size_type pos = 0) const noexcept {
+        if (sv._M_size == 0) return pos <= _M_size ? pos : npos;
+        if (sv._M_size > _M_size) return npos;
+        for (size_type i = pos; i + sv._M_size <= _M_size; ++i)
+            if (Traits::compare(_M_data + i, sv._M_data, sv._M_size) == 0) return i;
+        return npos;
+    }
+    size_type find(CharT c, size_type pos = 0) const noexcept {
+        if (pos >= _M_size) return npos;
+        const CharT* p = Traits::find(_M_data + pos, _M_size - pos, c);
+        return p ? size_type(p - _M_data) : npos;
+    }
+
+private:
+    const_pointer _M_data;
+    size_type     _M_size;
+};
+
+template<class C, class T>
+bool operator==(basic_string_view<C, T> a, basic_string_view<C, T> b) { return a.compare(b) == 0; }
+template<class C, class T>
+bool operator!=(basic_string_view<C, T> a, basic_string_view<C, T> b) { return a.compare(b) != 0; }
+template<class C, class T>
+bool operator<(basic_string_view<C, T> a, basic_string_view<C, T> b) { return a.compare(b) < 0; }
+
+typedef basic_string_view<char>     string_view;
+typedef basic_string_view<wchar_t>  wstring_view;
+#if STDCPP_STR_CXX11
+typedef basic_string_view<char16_t> u16string_view;
+typedef basic_string_view<char32_t> u32string_view;
+#endif
+#endif
+
+//=============================================================
+// basic_string
+//=============================================================
+template<class CharT, class Traits = char_traits<CharT>, class Allocator = void>
+class basic_string {
+public:
+    typedef Traits     traits_type;
+    typedef CharT      value_type;
+    typedef Allocator  allocator_type;
+    typedef size_t     size_type;
+    typedef ptrdiff_t  difference_type;
+    typedef CharT&     reference;
+    typedef const CharT& const_reference;
+    typedef CharT*     pointer;
+    typedef const CharT* const_pointer;
+    typedef CharT*     iterator;
+    typedef const CharT* const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+    typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+
+    static const size_type npos = size_type(-1);
+
+private:
+    CharT*    _M_data;
+    size_type _M_size;
+    size_type _M_cap;
+
+    void _M_reserve(size_type n) {
+        if (n <= _M_cap) return;
+        size_type newcap = _M_cap ? _M_cap * 2 : 16;
+        while (newcap < n) newcap *= 2;
+        CharT* newdata = (CharT*)malloc((newcap + 1) * sizeof(CharT));
+        if (_M_data) {
+            Traits::copy(newdata, _M_data, _M_size + 1);
+            free(_M_data);
+        }
+        _M_data = newdata;
+        _M_cap = newcap;
+    }
+
+public:
+    basic_string() : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        _M_reserve(1);
+        _M_data[0] = CharT();
+    }
+
+    basic_string(const CharT* s) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        _M_size = Traits::length(s);
+        _M_reserve(_M_size + 1);
+        Traits::copy(_M_data, s, _M_size);
+        _M_data[_M_size] = CharT();
+    }
+
+    basic_string(const CharT* s, size_type n) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        _M_size = n;
+        _M_reserve(n + 1);
+        Traits::copy(_M_data, s, n);
+        _M_data[n] = CharT();
+    }
+
+    basic_string(size_type n, CharT c) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        _M_reserve(n + 1);
+        Traits::assign(_M_data, n, c);
+        _M_size = n;
+        _M_data[n] = CharT();
+    }
+
+    basic_string(const basic_string& other) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        _M_size = other._M_size;
+        _M_reserve(_M_size + 1);
+        Traits::copy(_M_data, other._M_data, _M_size + 1);
+    }
+
+    basic_string(const basic_string& other, size_type pos, size_type n = npos)
+        : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        size_type len = n < other._M_size - pos ? n : other._M_size - pos;
+        _M_reserve(len + 1);
+        Traits::copy(_M_data, other._M_data + pos, len);
+        _M_size = len;
+        _M_data[len] = CharT();
+    }
+
+#if STDCPP_STR_CXX11
+    basic_string(basic_string&& other) noexcept
+        : _M_data(other._M_data), _M_size(other._M_size), _M_cap(other._M_cap) {
+        other._M_data = nullptr;
+        other._M_size = 0;
+        other._M_cap = 0;
+    }
+
+    basic_string(initializer_list<CharT> il) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+        _M_size = il.size();
+        _M_reserve(_M_size + 1);
+        size_type i = 0;
+        for (const CharT& c : il) _M_data[i++] = c;
+        _M_data[_M_size] = CharT();
+    }
+#endif
+
+    ~basic_string() { if (_M_data) free(_M_data); }
+
+    basic_string& operator=(const basic_string& other) {
+        if (this != &other) {
+            if (other._M_size + 1 > _M_cap) _M_reserve(other._M_size + 1);
+            Traits::copy(_M_data, other._M_data, other._M_size + 1);
+            _M_size = other._M_size;
+        }
+        return *this;
+    }
+    basic_string& operator=(const CharT* s) {
+        size_type n = Traits::length(s);
+        if (n + 1 > _M_cap) _M_reserve(n + 1);
+        Traits::copy(_M_data, s, n);
+        _M_size = n;
+        _M_data[n] = CharT();
+        return *this;
+    }
+    basic_string& operator=(CharT c) {
+        if (_M_cap < 2) _M_reserve(2);
+        _M_data[0] = c;
+        _M_data[1] = CharT();
+        _M_size = 1;
+        return *this;
+    }
+#if STDCPP_STR_CXX11
+    basic_string& operator=(basic_string&& other) noexcept {
+        if (this != &other) {
+            if (_M_data) free(_M_data);
+            _M_data = other._M_data;
+            _M_size = other._M_size;
+            _M_cap = other._M_cap;
+            other._M_data = nullptr;
+            other._M_size = 0;
+            other._M_cap = 0;
+        }
+        return *this;
+    }
+    basic_string& operator=(initializer_list<CharT> il) {
+        if (il.size() + 1 > _M_cap) _M_reserve(il.size() + 1);
+        size_type i = 0;
+        for (const CharT& c : il) _M_data[i++] = c;
+        _M_size = il.size();
+        _M_data[_M_size] = CharT();
+        return *this;
+    }
+#endif
+
+    iterator begin() noexcept { return _M_data; }
+    const_iterator begin() const noexcept { return _M_data; }
+    iterator end() noexcept { return _M_data + _M_size; }
+    const_iterator end() const noexcept { return _M_data + _M_size; }
+    reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
+    const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
+    reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
+    const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
+
+    size_type size() const noexcept { return _M_size; }
+    size_type length() const noexcept { return _M_size; }
+    size_type capacity() const noexcept { return _M_cap; }
+    size_type max_size() const noexcept { return size_type(-1) / sizeof(CharT); }
+    bool empty() const noexcept { return _M_size == 0; }
+
+    void reserve(size_type n = 0) { if (n > _M_cap) _M_reserve(n); }
+    void shrink_to_fit() {
+        if (_M_cap > _M_size) {
+            CharT* newdata = (CharT*)malloc((_M_size + 1) * sizeof(CharT));
+            Traits::copy(newdata, _M_data, _M_size + 1);
+            free(_M_data);
+            _M_data = newdata;
+            _M_cap = _M_size;
+        }
+    }
+    void clear() noexcept { _M_size = 0; _M_data[0] = CharT(); }
+
+    const CharT* c_str() const noexcept { return _M_data; }
+    const CharT* data() const noexcept { return _M_data; }
+#if STDCPP_STR_CXX17
+    CharT* data() noexcept { return _M_data; }
+#endif
+    operator const CharT*() const { return _M_data; }
+
+    reference operator[](size_type i) { return _M_data[i]; }
+    const_reference operator[](size_type i) const { return _M_data[i]; }
+    reference at(size_type i) {
+        if (i >= _M_size) throw out_of_range("basic_string::at");
+        return _M_data[i];
+    }
+    const_reference at(size_type i) const {
+        if (i >= _M_size) throw out_of_range("basic_string::at");
+        return _M_data[i];
+    }
+    reference front() { return _M_data[0]; }
+    const_reference front() const { return _M_data[0]; }
+    reference back() { return _M_data[_M_size - 1]; }
+    const_reference back() const { return _M_data[_M_size - 1]; }
+
+    void push_back(CharT c) {
+        if (_M_size + 2 > _M_cap) _M_reserve(_M_size + 2);
+        _M_data[_M_size++] = c;
+        _M_data[_M_size] = CharT();
+    }
+    void pop_back() { if (_M_size > 0) { --_M_size; _M_data[_M_size] = CharT(); } }
+
+    basic_string& append(const CharT* s) {
+        size_type n = Traits::length(s);
+        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        Traits::copy(_M_data + _M_size, s, n);
+        _M_size += n;
+        _M_data[_M_size] = CharT();
+        return *this;
+    }
+    basic_string& append(const CharT* s, size_type n) {
+        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        Traits::copy(_M_data + _M_size, s, n);
+        _M_size += n;
+        _M_data[_M_size] = CharT();
+        return *this;
+    }
+    basic_string& append(const basic_string& s) { return append(s._M_data, s._M_size); }
+    basic_string& append(size_type n, CharT c) {
+        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        Traits::assign(_M_data + _M_size, n, c);
+        _M_size += n;
+        _M_data[_M_size] = CharT();
+        return *this;
+    }
+    template<class InputIt>
+    basic_string& append(InputIt first, InputIt last) {
+        for (; first != last; ++first) push_back(*first);
+        return *this;
+    }
+#if STDCPP_STR_CXX11
+    basic_string& append(basic_string&& s) { return append(s._M_data, s._M_size); }
+    basic_string& append(initializer_list<CharT> il) { return append(il.begin(), il.end()); }
+#endif
+
+    basic_string& operator+=(const basic_string& s) { return append(s); }
+    basic_string& operator+=(const CharT* s) { return append(s); }
+    basic_string& operator+=(CharT c) { push_back(c); return *this; }
+#if STDCPP_STR_CXX11
+    basic_string& operator+=(initializer_list<CharT> il) { return append(il); }
+#endif
+
+    basic_string& insert(size_type pos, const basic_string& s) {
+        return insert(pos, s._M_data, s._M_size);
+    }
+    basic_string& insert(size_type pos, const CharT* s) {
+        return insert(pos, s, Traits::length(s));
+    }
+    basic_string& insert(size_type pos, const CharT* s, size_type n) {
+        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        Traits::move(_M_data + pos + n, _M_data + pos, _M_size - pos + 1);
+        Traits::copy(_M_data + pos, s, n);
+        _M_size += n;
+        return *this;
+    }
+    basic_string& insert(size_type pos, size_type n, CharT c) {
+        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        Traits::move(_M_data + pos + n, _M_data + pos, _M_size - pos + 1);
+        Traits::assign(_M_data + pos, n, c);
+        _M_size += n;
+        return *this;
+    }
+    iterator insert(const_iterator p, CharT c) {
+        size_type pos = p - _M_data;
+        insert(pos, 1, c);
+        return _M_data + pos;
+    }
+    template<class InputIt>
+    void insert(const_iterator p, InputIt first, InputIt last) {
+        size_type pos = p - _M_data;
+        for (size_type i = 0; first != last; ++first, ++i)
+            insert(pos + i, 1, *first);
+    }
+
+    basic_string& erase(size_type pos = 0, size_type n = npos) {
+        size_type len = n < _M_size - pos ? n : _M_size - pos;
+        Traits::move(_M_data + pos, _M_data + pos + len, _M_size - pos - len + 1);
+        _M_size -= len;
+        return *this;
+    }
+    iterator erase(const_iterator p) {
+        size_type pos = p - _M_data;
+        erase(pos, 1);
+        return _M_data + pos;
+    }
+    iterator erase(const_iterator first, const_iterator last) {
+        size_type pos = first - _M_data;
+        size_type n = last - first;
+        erase(pos, n);
+        return _M_data + pos;
+    }
+
+    basic_string& replace(size_type pos, size_type n, const basic_string& s) {
+        return replace(pos, n, s._M_data, s._M_size);
+    }
+    basic_string& replace(size_type pos, size_type n, const CharT* s) {
+        return replace(pos, n, s, Traits::length(s));
+    }
+    basic_string& replace(size_type pos, size_type n, const CharT* s, size_type n2) {
+        erase(pos, n);
+        insert(pos, s, n2);
+        return *this;
+    }
+    basic_string& replace(size_type pos, size_type n, size_type n2, CharT c) {
+        erase(pos, n);
+        insert(pos, n2, c);
+        return *this;
+    }
+    basic_string& replace(const_iterator first, const_iterator last, const basic_string& s) {
+        return replace(first - _M_data, last - first, s);
+    }
+    basic_string& replace(const_iterator first, const_iterator last, const CharT* s) {
+        return replace(first - _M_data, last - first, s);
+    }
+    basic_string& replace(const_iterator first, const_iterator last, size_type n, CharT c) {
+        return replace(first - _M_data, last - first, n, c);
+    }
+    template<class InputIt>
+    basic_string& replace(const_iterator first, const_iterator last, InputIt f2, InputIt l2) {
+        size_type pos = first - _M_data;
+        size_type n = last - first;
+        erase(pos, n);
+        for (; f2 != l2; ++f2) insert(pos++, 1, *f2);
+        return *this;
+    }
+
+    int compare(const basic_string& s) const noexcept {
+        size_type rlen = _M_size < s._M_size ? _M_size : s._M_size;
+        int r = Traits::compare(_M_data, s._M_data, rlen);
+        if (r != 0) return r;
+        if (_M_size < s._M_size) return -1;
+        if (_M_size > s._M_size) return 1;
+        return 0;
+    }
+    int compare(const CharT* s) const {
+        size_type n = Traits::length(s);
+        size_type rlen = _M_size < n ? _M_size : n;
+        int r = Traits::compare(_M_data, s, rlen);
+        if (r != 0) return r;
+        if (_M_size < n) return -1;
+        if (_M_size > n) return 1;
+        return 0;
+    }
+
+    size_type find(const basic_string& s, size_type pos = 0) const noexcept {
+        return find(s._M_data, pos, s._M_size);
+    }
+    size_type find(const CharT* s, size_type pos = 0) const noexcept {
+        return find(s, pos, Traits::length(s));
+    }
+    size_type find(const CharT* s, size_type pos, size_type n) const noexcept {
+        if (n == 0) return pos <= _M_size ? pos : npos;
+        if (n > _M_size) return npos;
+        for (size_type i = pos; i + n <= _M_size; ++i)
+            if (Traits::compare(_M_data + i, s, n) == 0) return i;
+        return npos;
+    }
+    size_type find(CharT c, size_type pos = 0) const noexcept {
+        if (pos >= _M_size) return npos;
+        const CharT* p = Traits::find(_M_data + pos, _M_size - pos, c);
+        return p ? size_type(p - _M_data) : npos;
+    }
+
+    size_type rfind(const basic_string& s, size_type pos = npos) const noexcept {
+        return rfind(s._M_data, pos, s._M_size);
+    }
+    size_type rfind(const CharT* s, size_type pos = npos) const noexcept {
+        return rfind(s, pos, Traits::length(s));
+    }
+    size_type rfind(const CharT* s, size_type pos, size_type n) const noexcept {
+        if (n > _M_size) return npos;
+        if (pos > _M_size - n) pos = _M_size - n;
+        for (size_type i = pos + 1; i > 0; --i) {
+            if (Traits::compare(_M_data + i - 1, s, n) == 0) return i - 1;
+        }
+        return npos;
+    }
+    size_type rfind(CharT c, size_type pos = npos) const noexcept {
+        if (_M_size == 0) return npos;
+        if (pos >= _M_size) pos = _M_size - 1;
+        for (size_type i = pos + 1; i > 0; --i)
+            if (Traits::eq(_M_data[i - 1], c)) return i - 1;
+        return npos;
+    }
+
+    size_type find_first_of(const basic_string& s, size_type pos = 0) const noexcept {
+        return find_first_of(s._M_data, pos, s._M_size);
+    }
+    size_type find_first_of(const CharT* s, size_type pos = 0) const noexcept {
+        return find_first_of(s, pos, Traits::length(s));
+    }
+    size_type find_first_of(const CharT* s, size_type pos, size_type n) const noexcept {
+        for (size_type i = pos; i < _M_size; ++i)
+            if (Traits::find(s, n, _M_data[i])) return i;
+        return npos;
+    }
+    size_type find_first_of(CharT c, size_type pos = 0) const noexcept { return find(c, pos); }
+
+    size_type find_first_not_of(const CharT* s, size_type pos, size_type n) const noexcept {
+        for (size_type i = pos; i < _M_size; ++i)
+            if (!Traits::find(s, n, _M_data[i])) return i;
+        return npos;
+    }
+    size_type find_first_not_of(CharT c, size_type pos = 0) const noexcept {
+        for (size_type i = pos; i < _M_size; ++i)
+            if (!Traits::eq(_M_data[i], c)) return i;
+        return npos;
+    }
+
+    size_type find_last_of(const CharT* s, size_type pos, size_type n) const noexcept {
+        if (_M_size == 0) return npos;
+        if (pos >= _M_size) pos = _M_size - 1;
+        for (size_type i = pos + 1; i > 0; --i)
+            if (Traits::find(s, n, _M_data[i - 1])) return i - 1;
+        return npos;
+    }
+    size_type find_last_not_of(const CharT* s, size_type pos, size_type n) const noexcept {
+        if (_M_size == 0) return npos;
+        if (pos >= _M_size) pos = _M_size - 1;
+        for (size_type i = pos + 1; i > 0; --i)
+            if (!Traits::find(s, n, _M_data[i - 1])) return i - 1;
+        return npos;
+    }
+
+    basic_string substr(size_type pos = 0, size_type n = npos) const {
+        size_type len = n < _M_size - pos ? n : _M_size - pos;
+        return basic_string(_M_data + pos, len);
+    }
+
+    void resize(size_type n) { resize(n, CharT()); }
+    void resize(size_type n, CharT c) {
+        if (n < _M_size) {
+            _M_size = n;
+            _M_data[n] = CharT();
+        } else if (n > _M_size) {
+            if (n + 1 > _M_cap) _M_reserve(n + 1);
+            Traits::assign(_M_data + _M_size, n - _M_size, c);
+            _M_size = n;
+            _M_data[n] = CharT();
+        }
+    }
+
+    void swap(basic_string& s) noexcept {
+        std::swap(_M_data, s._M_data);
+        std::swap(_M_size, s._M_size);
+        std::swap(_M_cap, s._M_cap);
+    }
+
+    allocator_type get_allocator() const { return allocator_type(); }
+
+#if STDCPP_STR_CXX20
+    bool starts_with(basic_string_view<CharT, Traits> sv) const noexcept {
+        return _M_size >= sv.size() && Traits::compare(_M_data, sv.data(), sv.size()) == 0;
+    }
+    bool starts_with(CharT c) const noexcept { return _M_size > 0 && Traits::eq(_M_data[0], c); }
+    bool starts_with(const CharT* s) const {
+        size_type n = Traits::length(s);
+        return _M_size >= n && Traits::compare(_M_data, s, n) == 0;
+    }
+    bool ends_with(basic_string_view<CharT, Traits> sv) const noexcept {
+        return _M_size >= sv.size() && Traits::compare(_M_data + _M_size - sv.size(), sv.data(), sv.size()) == 0;
+    }
+    bool ends_with(CharT c) const noexcept { return _M_size > 0 && Traits::eq(_M_data[_M_size - 1], c); }
+    bool ends_with(const CharT* s) const {
+        size_type n = Traits::length(s);
+        return _M_size >= n && Traits::compare(_M_data + _M_size - n, s, n) == 0;
+    }
+#endif
+
+#if STDCPP_STR_CXX23
+    bool contains(basic_string_view<CharT, Traits> sv) const noexcept { return find(sv) != npos; }
+    bool contains(CharT c) const noexcept { return find(c) != npos; }
+    bool contains(const CharT* s) const { return find(s) != npos; }
+
+    template<class Operation>
+    void resize_and_overwrite(size_type n, Operation op) {
+        if (n + 1 > _M_cap) _M_reserve(n + 1);
+        size_type r = static_cast<size_type>(op(_M_data, n));
+        _M_data[r] = CharT();
+        _M_size = r;
+    }
+#endif
+};
+
+template<class C, class T, class A>
+basic_string<C, T, A> operator+(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) {
+    basic_string<C, T, A> r = a; r.append(b); return r;
+}
+template<class C, class T, class A>
+basic_string<C, T, A> operator+(const basic_string<C, T, A>& a, const C* b) {
+    basic_string<C, T, A> r = a; r.append(b); return r;
+}
+template<class C, class T, class A>
+basic_string<C, T, A> operator+(const C* a, const basic_string<C, T, A>& b) {
+    basic_string<C, T, A> r(a); r.append(b); return r;
+}
+template<class C, class T, class A>
+basic_string<C, T, A> operator+(const basic_string<C, T, A>& a, C b) {
+    basic_string<C, T, A> r = a; r.push_back(b); return r;
+}
+
+template<class C, class T, class A>
+bool operator==(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) == 0; }
+template<class C, class T, class A>
+bool operator==(const basic_string<C, T, A>& a, const C* b) { return a.compare(b) == 0; }
+template<class C, class T, class A>
+bool operator!=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) != 0; }
+template<class C, class T, class A>
+bool operator<(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) < 0; }
+template<class C, class T, class A>
+bool operator<=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) <= 0; }
+template<class C, class T, class A>
+bool operator>(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) > 0; }
+template<class C, class T, class A>
+bool operator>=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) >= 0; }
+
+template<class C, class T, class A>
+void swap(basic_string<C, T, A>& a, basic_string<C, T, A>& b) { a.swap(b); }
+
+typedef basic_string<char>     string;
+typedef basic_string<wchar_t>  wstring;
+#if STDCPP_STR_CXX11
+typedef basic_string<char16_t> u16string;
+typedef basic_string<char32_t> u32string;
+#endif
+
+//=============================================================
+// numeric conversions (C++11)
+//=============================================================
+#if STDCPP_STR_CXX11
+inline int stoi(const string& s, size_t* pos = nullptr, int base = 10) {
+    char* end;
+    long r = strtol(s.c_str(), &end, base);
+    if (pos) *pos = end - s.c_str();
+    return (int)r;
+}
+inline long stol(const string& s, size_t* pos = nullptr, int base = 10) {
+    char* end;
+    long r = strtol(s.c_str(), &end, base);
+    if (pos) *pos = end - s.c_str();
+    return r;
+}
+inline long long stoll(const string& s, size_t* pos = nullptr, int base = 10) {
+    char* end;
+    long long r = strtoll(s.c_str(), &end, base);
+    if (pos) *pos = end - s.c_str();
+    return r;
+}
+inline unsigned long stoul(const string& s, size_t* pos = nullptr, int base = 10) {
+    char* end;
+    unsigned long r = strtoul(s.c_str(), &end, base);
+    if (pos) *pos = end - s.c_str();
+    return r;
+}
+inline unsigned long long stoull(const string& s, size_t* pos = nullptr, int base = 10) {
+    char* end;
+    unsigned long long r = strtoull(s.c_str(), &end, base);
+    if (pos) *pos = end - s.c_str();
+    return r;
+}
+inline float stof(const string& s, size_t* pos = nullptr) {
+    char* end; float r = strtof(s.c_str(), &end); if (pos) *pos = end - s.c_str(); return r;
+}
+inline double stod(const string& s, size_t* pos = nullptr) {
+    char* end; double r = strtod(s.c_str(), &end); if (pos) *pos = end - s.c_str(); return r;
+}
+inline long double stold(const string& s, size_t* pos = nullptr) {
+    char* end; long double r = strtold(s.c_str(), &end); if (pos) *pos = end - s.c_str(); return r;
+}
+
+inline string to_string(int v) { char b[32]; snprintf(b, sizeof(b), "%d", v); return string(b); }
+inline string to_string(long v) { char b[32]; snprintf(b, sizeof(b), "%ld", v); return string(b); }
+inline string to_string(long long v) { char b[32]; snprintf(b, sizeof(b), "%lld", v); return string(b); }
+inline string to_string(unsigned v) { char b[32]; snprintf(b, sizeof(b), "%u", v); return string(b); }
+inline string to_string(unsigned long v) { char b[32]; snprintf(b, sizeof(b), "%lu", v); return string(b); }
+inline string to_string(unsigned long long v) { char b[32]; snprintf(b, sizeof(b), "%llu", v); return string(b); }
+inline string to_string(float v) { char b[64]; snprintf(b, sizeof(b), "%f", v); return string(b); }
+inline string to_string(double v) { char b[64]; snprintf(b, sizeof(b), "%f", v); return string(b); }
+inline string to_string(long double v) { char b[64]; snprintf(b, sizeof(b), "%Lf", v); return string(b); }
+#endif
+
+//=============================================================
+// hash specialization for string
+//=============================================================
+template<class C, class T, class A>
+struct hash<basic_string<C, T, A> > {
+    size_t operator()(const basic_string<C, T, A>& s) const noexcept {
+        size_t h = 14695981039346656037ULL;
+        for (size_t i = 0; i < s.size(); ++i) {
+            h ^= (size_t)(unsigned char)s[i];
+            h *= 1099511628211ULL;
+        }
+        return h;
+    }
+};
+
+} // namespace std
+
+#if !STDCPP_STR_CXX11
+#undef noexcept
+#undef nullptr
+#undef override
+#endif
+
+#endif // STDCPP_STRING_HPP

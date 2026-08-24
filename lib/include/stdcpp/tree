@@ -1,0 +1,492 @@
+// -*- C++ -*-
+//=============================================================
+// tree.hpp -- red-black tree for map/set, C++98~C++26.
+//=============================================================
+#ifndef STDCPP_TREE_HPP
+#define STDCPP_TREE_HPP
+
+#include <cstddef>
+#include <cstdlib>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <functional>
+
+#ifndef _GLIBCXX_TREE
+#  define _GLIBCXX_TREE 1
+#endif
+
+#if __cplusplus < 201103L
+#define noexcept throw()
+#define nullptr 0
+#define override
+#define STDCPP_MOVE(x) (x)
+#else
+#define STDCPP_MOVE(x) std::move(x)
+#endif
+
+namespace std {
+
+enum _rb_tree_color { _red, _black };
+
+template<class T>
+struct _rb_tree_node {
+    T _M_data;
+    _rb_tree_node* _M_parent;
+    _rb_tree_node* _M_left;
+    _rb_tree_node* _M_right;
+    _rb_tree_color _M_color;
+
+    _rb_tree_node(const T& d) : _M_data(d), _M_parent(nullptr),
+        _M_left(nullptr), _M_right(nullptr), _M_color(_red) {}
+};
+
+template<class T>
+class _rb_tree_iterator {
+public:
+    typedef bidirectional_iterator_tag iterator_category;
+    typedef T value_type;
+    typedef ptrdiff_t difference_type;
+    typedef T* pointer;
+    typedef T& reference;
+
+    typedef _rb_tree_node<T> node;
+    node* _M_node;
+
+    _rb_tree_iterator() : _M_node(nullptr) {}
+    _rb_tree_iterator(node* n) : _M_node(n) {}
+
+    T& operator*() const { return _M_node->_M_data; }
+    T* operator->() const { return &_M_node->_M_data; }
+
+    _rb_tree_iterator& operator++() {
+        if (_M_node->_M_right) {
+            _M_node = _M_node->_M_right;
+            while (_M_node->_M_left) _M_node = _M_node->_M_left;
+        } else {
+            node* p = _M_node->_M_parent;
+            while (p->_M_right == _M_node) { _M_node = p; p = p->_M_parent; }
+            _M_node = p;
+        }
+        return *this;
+    }
+    _rb_tree_iterator operator++(int) { _rb_tree_iterator t = *this; ++*this; return t; }
+    _rb_tree_iterator& operator--() {
+        if (_M_node->_M_color == _red && _M_node->_M_parent->_M_parent == _M_node) {
+            _M_node = _M_node->_M_right;
+        } else if (_M_node->_M_left) {
+            _M_node = _M_node->_M_left;
+            while (_M_node->_M_right) _M_node = _M_node->_M_right;
+        } else {
+            node* p = _M_node->_M_parent;
+            while (p->_M_left == _M_node) { _M_node = p; p = p->_M_parent; }
+            _M_node = p;
+        }
+        return *this;
+    }
+    _rb_tree_iterator operator--(int) { _rb_tree_iterator t = *this; --*this; return t; }
+
+    bool operator==(const _rb_tree_iterator& o) const { return _M_node == o._M_node; }
+    bool operator!=(const _rb_tree_iterator& o) const { return _M_node != o._M_node; }
+};
+
+template<class T>
+class _rb_tree_const_iterator {
+public:
+    typedef bidirectional_iterator_tag iterator_category;
+    typedef T value_type;
+    typedef ptrdiff_t difference_type;
+    typedef const T* pointer;
+    typedef const T& reference;
+
+    typedef _rb_tree_node<T> node;
+    const node* _M_node;
+
+    _rb_tree_const_iterator() : _M_node(nullptr) {}
+    _rb_tree_const_iterator(const node* n) : _M_node(n) {}
+    _rb_tree_const_iterator(const _rb_tree_iterator<T>& it) : _M_node(it._M_node) {}
+
+    const T& operator*() const { return _M_node->_M_data; }
+    const T* operator->() const { return &_M_node->_M_data; }
+
+    _rb_tree_const_iterator& operator++() {
+        if (_M_node->_M_right) {
+            _M_node = _M_node->_M_right;
+            while (_M_node->_M_left) _M_node = _M_node->_M_left;
+        } else {
+            const node* p = _M_node->_M_parent;
+            while (p->_M_right == _M_node) { _M_node = p; p = p->_M_parent; }
+            _M_node = p;
+        }
+        return *this;
+    }
+    _rb_tree_const_iterator operator++(int) { _rb_tree_const_iterator t = *this; ++*this; return t; }
+    _rb_tree_const_iterator& operator--() {
+        if (_M_node->_M_color == _red && _M_node->_M_parent->_M_parent == _M_node) {
+            _M_node = _M_node->_M_right;
+        } else if (_M_node->_M_left) {
+            _M_node = _M_node->_M_left;
+            while (_M_node->_M_right) _M_node = _M_node->_M_right;
+        } else {
+            const node* p = _M_node->_M_parent;
+            while (p->_M_left == _M_node) { _M_node = p; p = p->_M_parent; }
+            _M_node = p;
+        }
+        return *this;
+    }
+    _rb_tree_const_iterator operator--(int) { _rb_tree_const_iterator t = *this; --*this; return t; }
+
+    bool operator==(const _rb_tree_const_iterator& o) const { return _M_node == o._M_node; }
+    bool operator!=(const _rb_tree_const_iterator& o) const { return _M_node != o._M_node; }
+};
+
+template<class Key, class Value, class KeyOfValue, class Compare, class Alloc = void>
+class _rb_tree {
+public:
+    typedef Key key_type;
+    typedef Value value_type;
+    typedef size_t size_type;
+    typedef _rb_tree_node<Value> node;
+    typedef _rb_tree_iterator<Value> iterator;
+    typedef _rb_tree_const_iterator<Value> const_iterator;
+    typedef std::reverse_iterator<iterator> reverse_iterator;
+    typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+
+private:
+    node* _M_header;
+    size_type _M_size;
+    Compare _M_comp;
+
+    node* _M_root() const { return _M_header->_M_parent; }
+    node* _M_leftmost() const { return _M_header->_M_left; }
+    node* _M_rightmost() const { return _M_header->_M_right; }
+
+    static node* _M_minimum(node* n) { while (n->_M_left) n = n->_M_left; return n; }
+    static node* _M_maximum(node* n) { while (n->_M_right) n = n->_M_right; return n; }
+
+    void _M_rotate_left(node* x) {
+        node* y = x->_M_right;
+        x->_M_right = y->_M_left;
+        if (y->_M_left) y->_M_left->_M_parent = x;
+        y->_M_parent = x->_M_parent;
+        if (x == _M_root()) _M_header->_M_parent = y;
+        else if (x == x->_M_parent->_M_left) x->_M_parent->_M_left = y;
+        else x->_M_parent->_M_right = y;
+        y->_M_left = x;
+        x->_M_parent = y;
+    }
+    void _M_rotate_right(node* x) {
+        node* y = x->_M_left;
+        x->_M_left = y->_M_right;
+        if (y->_M_right) y->_M_right->_M_parent = x;
+        y->_M_parent = x->_M_parent;
+        if (x == _M_root()) _M_header->_M_parent = y;
+        else if (x == x->_M_parent->_M_right) x->_M_parent->_M_right = y;
+        else x->_M_parent->_M_left = y;
+        y->_M_right = x;
+        x->_M_parent = y;
+    }
+
+    void _M_insert_fixup(node* z) {
+        while (z != _M_root() && z->_M_parent->_M_color == _red) {
+            if (z->_M_parent == z->_M_parent->_M_parent->_M_left) {
+                node* y = z->_M_parent->_M_parent->_M_right;
+                if (y && y->_M_color == _red) {
+                    z->_M_parent->_M_color = _black;
+                    y->_M_color = _black;
+                    z->_M_parent->_M_parent->_M_color = _red;
+                    z = z->_M_parent->_M_parent;
+                } else {
+                    if (z == z->_M_parent->_M_right) { z = z->_M_parent; _M_rotate_left(z); }
+                    z->_M_parent->_M_color = _black;
+                    z->_M_parent->_M_parent->_M_color = _red;
+                    _M_rotate_right(z->_M_parent->_M_parent);
+                }
+            } else {
+                node* y = z->_M_parent->_M_parent->_M_left;
+                if (y && y->_M_color == _red) {
+                    z->_M_parent->_M_color = _black;
+                    y->_M_color = _black;
+                    z->_M_parent->_M_parent->_M_color = _red;
+                    z = z->_M_parent->_M_parent;
+                } else {
+                    if (z == z->_M_parent->_M_left) { z = z->_M_parent; _M_rotate_right(z); }
+                    z->_M_parent->_M_color = _black;
+                    z->_M_parent->_M_parent->_M_color = _red;
+                    _M_rotate_left(z->_M_parent->_M_parent);
+                }
+            }
+        }
+        _M_root()->_M_color = _black;
+    }
+
+    void _M_erase(node* z) {
+        node* y = z;
+        node* x;
+        node* x_parent;
+        _rb_tree_color yc = y->_M_color;
+        if (!z->_M_left) {
+            x = z->_M_right;
+            x_parent = z->_M_parent;
+            if (x) x->_M_parent = z->_M_parent;
+            if (z == _M_root()) _M_header->_M_parent = x;
+            else if (z == z->_M_parent->_M_left) z->_M_parent->_M_left = x;
+            else z->_M_parent->_M_right = x;
+        } else if (!z->_M_right) {
+            x = z->_M_left;
+            x_parent = z->_M_parent;
+            x->_M_parent = z->_M_parent;
+            if (z == _M_root()) _M_header->_M_parent = x;
+            else if (z == z->_M_parent->_M_left) z->_M_parent->_M_left = x;
+            else z->_M_parent->_M_right = x;
+        } else {
+            y = _M_minimum(z->_M_right);
+            yc = y->_M_color;
+            x = y->_M_right;
+            if (y->_M_parent == z) {
+                x_parent = y;
+            } else {
+                x_parent = y->_M_parent;
+                if (x) x->_M_parent = y->_M_parent;
+                y->_M_parent->_M_left = x;
+                y->_M_right = z->_M_right;
+                y->_M_right->_M_parent = y;
+            }
+            if (z == _M_root()) _M_header->_M_parent = y;
+            else if (z == z->_M_parent->_M_left) z->_M_parent->_M_left = y;
+            else z->_M_parent->_M_right = y;
+            y->_M_parent = z->_M_parent;
+            y->_M_left = z->_M_left;
+            y->_M_left->_M_parent = y;
+            y->_M_color = z->_M_color;
+        }
+        if (yc == _black && _M_root()) {
+            while (x != _M_root() && (!x || x->_M_color == _black)) {
+                if (x == x_parent->_M_left || (!x && x_parent->_M_left)) {
+                    node* w = x_parent->_M_right;
+                    if (w && w->_M_color == _red) {
+                        w->_M_color = _black;
+                        x_parent->_M_color = _red;
+                        _M_rotate_left(x_parent);
+                        w = x_parent->_M_right;
+                    }
+                    if ((!w || !w->_M_left || w->_M_left->_M_color == _black) &&
+                        (!w || !w->_M_right || w->_M_right->_M_color == _black)) {
+                        if (w) w->_M_color = _red;
+                        x = x_parent;
+                        x_parent = x_parent->_M_parent;
+                    } else {
+                        if (!w || !w->_M_right || w->_M_right->_M_color == _black) {
+                            if (w && w->_M_left) w->_M_left->_M_color = _black;
+                            if (w) w->_M_color = _red;
+                            if (w) _M_rotate_right(w);
+                            w = x_parent->_M_right;
+                        }
+                        if (w) w->_M_color = x_parent->_M_color;
+                        x_parent->_M_color = _black;
+                        if (w && w->_M_right) w->_M_right->_M_color = _black;
+                        _M_rotate_left(x_parent);
+                        break;
+                    }
+                } else {
+                    node* w = x_parent->_M_left;
+                    if (w && w->_M_color == _red) {
+                        w->_M_color = _black;
+                        x_parent->_M_color = _red;
+                        _M_rotate_right(x_parent);
+                        w = x_parent->_M_left;
+                    }
+                    if ((!w || !w->_M_right || w->_M_right->_M_color == _black) &&
+                        (!w || !w->_M_left || w->_M_left->_M_color == _black)) {
+                        if (w) w->_M_color = _red;
+                        x = x_parent;
+                        x_parent = x_parent->_M_parent;
+                    } else {
+                        if (!w || !w->_M_left || w->_M_left->_M_color == _black) {
+                            if (w && w->_M_right) w->_M_right->_M_color = _black;
+                            if (w) w->_M_color = _red;
+                            if (w) _M_rotate_left(w);
+                            w = x_parent->_M_left;
+                        }
+                        if (w) w->_M_color = x_parent->_M_color;
+                        x_parent->_M_color = _black;
+                        if (w && w->_M_left) w->_M_left->_M_color = _black;
+                        _M_rotate_right(x_parent);
+                        break;
+                    }
+                }
+            }
+            if (x) x->_M_color = _black;
+        }
+        _M_header->_M_left = _M_root() ? _M_minimum(_M_root()) : _M_header;
+        _M_header->_M_right = _M_root() ? _M_maximum(_M_root()) : _M_header;
+        delete z;
+        --_M_size;
+    }
+
+    void _M_destroy(node* n) {
+        if (!n) return;
+        _M_destroy(n->_M_left);
+        _M_destroy(n->_M_right);
+        delete n;
+    }
+
+public:
+    _rb_tree() : _M_size(0), _M_comp(Compare()) {
+        _M_header = new node(value_type());
+        _M_header->_M_color = _black;
+        _M_header->_M_parent = nullptr;
+        _M_header->_M_left = _M_header;
+        _M_header->_M_right = _M_header;
+    }
+    ~_rb_tree() { _M_destroy(_M_root()); delete _M_header; }
+
+    iterator begin() { return iterator(_M_leftmost()); }
+    const_iterator begin() const { return const_iterator(_M_leftmost()); }
+    iterator end() { return iterator(_M_header); }
+    const_iterator end() const { return const_iterator(_M_header); }
+
+    size_type size() const { return _M_size; }
+    bool empty() const { return _M_size == 0; }
+    void clear() { _M_destroy(_M_root()); _M_header->_M_parent = nullptr; _M_header->_M_left = _M_header; _M_header->_M_right = _M_header; _M_size = 0; }
+
+    pair<iterator, bool> insert_unique(const value_type& v) {
+        node* parent = _M_header;
+        node* cur = _M_root();
+        bool left = true;
+        while (cur) {
+            parent = cur;
+            if (_M_comp(KeyOfValue()(v), KeyOfValue()(cur->_M_data))) {
+                cur = cur->_M_left; left = true;
+            } else if (_M_comp(KeyOfValue()(cur->_M_data), KeyOfValue()(v))) {
+                cur = cur->_M_right; left = false;
+            } else {
+                return pair<iterator, bool>(iterator(cur), false);
+            }
+        }
+        node* z = new node(v);
+        z->_M_parent = parent;
+        if (parent == _M_header) _M_header->_M_parent = z;
+        else if (left) parent->_M_left = z;
+        else parent->_M_right = z;
+        z->_M_color = _red;
+        _M_insert_fixup(z);
+        _M_header->_M_left = _M_minimum(_M_root());
+        _M_header->_M_right = _M_maximum(_M_root());
+        ++_M_size;
+        return pair<iterator, bool>(iterator(z), true);
+    }
+
+    iterator insert_equal(const value_type& v) {
+        node* parent = _M_header;
+        node* cur = _M_root();
+        bool left = true;
+        while (cur) {
+            parent = cur;
+            if (_M_comp(KeyOfValue()(v), KeyOfValue()(cur->_M_data))) {
+                cur = cur->_M_left; left = true;
+            } else {
+                cur = cur->_M_right; left = false;
+            }
+        }
+        node* z = new node(v);
+        z->_M_parent = parent;
+        if (parent == _M_header) _M_header->_M_parent = z;
+        else if (left) parent->_M_left = z;
+        else parent->_M_right = z;
+        z->_M_color = _red;
+        _M_insert_fixup(z);
+        _M_header->_M_left = _M_minimum(_M_root());
+        _M_header->_M_right = _M_maximum(_M_root());
+        ++_M_size;
+        return iterator(z);
+    }
+
+    iterator erase(const_iterator pos) {
+        node* n = const_cast<node*>(pos._M_node);
+        ++pos;
+        _M_erase(n);
+        return iterator(const_cast<node*>(pos._M_node));
+    }
+    size_type erase(const key_type& k) {
+        iterator it = find(k);
+        if (it == end()) return 0;
+        _M_erase(it._M_node);
+        return 1;
+    }
+
+    iterator find(const key_type& k) {
+        node* cur = _M_root();
+        while (cur) {
+            if (_M_comp(k, KeyOfValue()(cur->_M_data))) cur = cur->_M_left;
+            else if (_M_comp(KeyOfValue()(cur->_M_data), k)) cur = cur->_M_right;
+            else return iterator(cur);
+        }
+        return end();
+    }
+    const_iterator find(const key_type& k) const {
+        node* cur = _M_root();
+        while (cur) {
+            if (_M_comp(k, KeyOfValue()(cur->_M_data))) cur = cur->_M_left;
+            else if (_M_comp(KeyOfValue()(cur->_M_data), k)) cur = cur->_M_right;
+            else return const_iterator(cur);
+        }
+        return end();
+    }
+
+    size_type count(const key_type& k) const { return find(k) != end() ? 1 : 0; }
+
+    iterator lower_bound(const key_type& k) {
+        node* cur = _M_root(); node* res = _M_header;
+        while (cur) {
+            if (!_M_comp(KeyOfValue()(cur->_M_data), k)) { res = cur; cur = cur->_M_left; }
+            else cur = cur->_M_right;
+        }
+        return iterator(res);
+    }
+    const_iterator lower_bound(const key_type& k) const {
+        node* cur = _M_root(); const node* res = _M_header;
+        while (cur) {
+            if (!_M_comp(KeyOfValue()(cur->_M_data), k)) { res = cur; cur = cur->_M_left; }
+            else cur = cur->_M_right;
+        }
+        return const_iterator(res);
+    }
+    iterator upper_bound(const key_type& k) {
+        node* cur = _M_root(); node* res = _M_header;
+        while (cur) {
+            if (_M_comp(k, KeyOfValue()(cur->_M_data))) { res = cur; cur = cur->_M_left; }
+            else cur = cur->_M_right;
+        }
+        return iterator(res);
+    }
+    const_iterator upper_bound(const key_type& k) const {
+        node* cur = _M_root(); const node* res = _M_header;
+        while (cur) {
+            if (_M_comp(k, KeyOfValue()(cur->_M_data))) { res = cur; cur = cur->_M_left; }
+            else cur = cur->_M_right;
+        }
+        return const_iterator(res);
+    }
+    pair<iterator, iterator> equal_range(const key_type& k) {
+        return pair<iterator, iterator>(lower_bound(k), upper_bound(k));
+    }
+    pair<const_iterator, const_iterator> equal_range(const key_type& k) const {
+        return pair<const_iterator, const_iterator>(lower_bound(k), upper_bound(k));
+    }
+
+    void swap(_rb_tree& other) {
+        std::swap(_M_header, other._M_header);
+        std::swap(_M_size, other._M_size);
+    }
+};
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#undef STDCPP_MOVE
+#endif
+#endif // STDCPP_TREE_HPP

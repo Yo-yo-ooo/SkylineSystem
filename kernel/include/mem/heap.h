@@ -76,4 +76,4 @@ uint64_t GetPtrPointAreaSize(void *ptr);
 inline void operator delete(void* p) {kfree(p);}
 inline void operator delete(void* ptr, unsigned long){kfree(ptr);}
 inline void operator delete[](void* ptr) noexcept {kfree(ptr);}
-#include "new.hpp"
+#include <new>

@@ -1,910 +1,232 @@
 // -*- C++ -*-
 //=============================================================
-// functional.hpp  --  a complete, self-contained implementation
-// of the C++ standard library header <functional>, covering
-// C++98 / C++03 / C++11 / C++14 / C++17 / C++20 / C++23 / C++26.
-//
-// This file is written as a drop-in replacement: everything lives
-// in namespace std.  It only depends on a minimal set of compiler
-// support headers so that it does not collide with libstdc++'s own
-// <bits/stl_function.h> / <bits/functional_hash.h>:
-//
-//   <cstddef> <cstdint> <cstring> <exception> <new> <typeinfo>
-//   <type_traits> <utility> <tuple> <initializer_list>
-//
-// It compiles with GCC in -std=c++98 through -std=c++2b.
-//
-// NOTE: this header defines the full set of <functional> entities
-// itself, so do not include it together with the system <functional>
-// nor with headers that transitively pull in libstdc++'s functional
-// bits (e.g. <algorithm>, <memory>, <vector>, <string>, <iterator>).
-// It is intended as a standalone replacement, used with freestanding
-// / minimal include sets such as <cstdio> / <cassert>.
+// functional.hpp -- complete <functional>, C++98~C++26.
 //=============================================================
 #ifndef STDCPP_FUNCTIONAL_HPP
 #define STDCPP_FUNCTIONAL_HPP
 
-//-------------------------------------------------------------
-// Version detection (must come before any conditional includes).
-// GCC/clang use non-final experimental values (e.g. 202100L for
-// the C++23 draft); accept those as the corresponding standard.
-// A value may be overridden on the command line (-DSTDCPP_CXX26=1).
-//-------------------------------------------------------------
-#define STDCPP_CXX98 1
-#define STDCPP_CXX11 (__cplusplus >= 201103L)
-#define STDCPP_CXX14 (__cplusplus >= 201402L)
-#define STDCPP_CXX17 (__cplusplus >= 201703L)
-#define STDCPP_CXX20 (__cplusplus >= 202002L)
-#ifndef STDCPP_CXX23
-#  define STDCPP_CXX23 (__cplusplus >= 202302L || __cplusplus == 202100L)
-#endif
-#ifndef STDCPP_CXX26
-#  define STDCPP_CXX26 (__cplusplus > 202302L)
-#endif
-
 #include <cstddef>
-#include <cstring>
-#include <bits/exception.h>
-#include <new>
-#include <typeinfo>
-#if STDCPP_CXX11
-#include <cstdint>
 #include <type_traits>
 #include <utility>
-#include <tuple>
-#include <initializer_list>
+#include <iterator>
+
+#define STDCPP_FN_CXX11 (__cplusplus >= 201103L)
+#define STDCPP_FN_CXX14 (__cplusplus >= 201402L)
+#define STDCPP_FN_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_FN_CXX20 (__cplusplus >= 202002L)
+#define STDCPP_FN_CXX23 (__cplusplus >= 202100L)
+
+// C++98 compatibility: noexcept is not available
+#if !STDCPP_FN_CXX11
+#define noexcept throw()
 #endif
 
-#if STDCPP_CXX11
-#  define STDCPP_CONSTEXPR     constexpr
-#  define STDCPP_NOEXCEPT      noexcept
-#  define STDCPP_NOEXCEPT_(...)  noexcept(__VA_ARGS__)
-#else
-#  define STDCPP_CONSTEXPR
-#  define STDCPP_NOEXCEPT      throw()
-#  define STDCPP_NOEXCEPT_(...)
+#ifndef _GLIBCXX_FUNCTIONAL
+#  define _GLIBCXX_FUNCTIONAL 1
 #endif
 
-#if STDCPP_CXX14
-#  define STDCPP_CONSTEXPR14 constexpr
-#else
-#  define STDCPP_CONSTEXPR14
-#endif
-
-#if STDCPP_CXX17
-#  define STDCPP_CONSTEXPR17 constexpr
-#  define STDCPP_INLINE_VAR   inline
-#else
-#  define STDCPP_CONSTEXPR17
-#  define STDCPP_INLINE_VAR   static
-#endif
-
-#if STDCPP_CXX20
-#  define STDCPP_CONSTEXPR20 constexpr
-#else
-#  define STDCPP_CONSTEXPR20
-#endif
-
-#if STDCPP_CXX23
-#  define STDCPP_CONSTEXPR23 constexpr
-#else
-#  define STDCPP_CONSTEXPR23
-#endif
-
-// default template argument for transparent functors (C++14)
-#if STDCPP_CXX14
-#  define STDCPP_DFLT_VOID = void
-#else
-#  define STDCPP_DFLT_VOID
-#endif
-
-#if STDCPP_CXX11
-#  define STDCPP_DFLT_NULLPTR = nullptr
-#else
-#  define STDCPP_DFLT_NULLPTR = 0
-#endif
-
-namespace std
-{
+namespace std {
 
 //=============================================================
-//
-//  C++98 / C++03  --  [depr.function.objects]
-//
-//  unary_function / binary_function were deprecated in C++11 and
-//  removed in C++17.  They are defined here for C++98..C++14.
-//
+// unary_function / binary_function (C++98, deprecated C++11, removed C++17)
 //=============================================================
-#if !STDCPP_CXX17
-
 template<class Arg, class Result>
-struct unary_function
-{
-    typedef Arg argument_type;
+struct unary_function {
+    typedef Arg    argument_type;
     typedef Result result_type;
 };
 
 template<class Arg1, class Arg2, class Result>
-struct binary_function
-{
-    typedef Arg1 first_argument_type;
-    typedef Arg2 second_argument_type;
+struct binary_function {
+    typedef Arg1   first_argument_type;
+    typedef Arg2   second_argument_type;
     typedef Result result_type;
 };
 
-#endif // !C++17
+//=============================================================
+// arithmetic functors
+//=============================================================
+template<class T = void>
+struct plus : binary_function<T, T, T> {
+    T operator()(const T& a, const T& b) const { return a + b; }
+};
+template<class T = void>
+struct minus : binary_function<T, T, T> {
+    T operator()(const T& a, const T& b) const { return a - b; }
+};
+template<class T = void>
+struct multiplies : binary_function<T, T, T> {
+    T operator()(const T& a, const T& b) const { return a * b; }
+};
+template<class T = void>
+struct divides : binary_function<T, T, T> {
+    T operator()(const T& a, const T& b) const { return a / b; }
+};
+template<class T = void>
+struct modulus : binary_function<T, T, T> {
+    T operator()(const T& a, const T& b) const { return a % b; }
+};
+template<class T = void>
+struct negate : unary_function<T, T> {
+    T operator()(const T& a) const { return -a; }
+};
 
 //=============================================================
-//
-//  Arithmetic / comparison / logical / bitwise function objects.
-//
-//  The primary templates exist since C++98; the transparent
-//  <void> specializations were added in C++14.  bit_not is new
-//  in C++14.  The C++98 pointer specializations for the ordering
-//  comparators are provided for all versions.
-//
+// comparison functors
 //=============================================================
-#if STDCPP_CXX17
-// binary_function / unary_function were removed; no base class.
-#  define STDCPP_BIN_BASE(T1,T2,R)
-#  define STDCPP_UN_BASE(T,R)
-#else
-#  define STDCPP_BIN_BASE(T1,T2,R) : binary_function<T1,T2,R>
-#  define STDCPP_UN_BASE(T,R)    : unary_function<T,R>
+template<class T = void>
+struct equal_to : binary_function<T, T, bool> {
+    bool operator()(const T& a, const T& b) const { return a == b; }
+};
+template<class T = void>
+struct not_equal_to : binary_function<T, T, bool> {
+    bool operator()(const T& a, const T& b) const { return a != b; }
+};
+template<class T = void>
+struct greater : binary_function<T, T, bool> {
+    bool operator()(const T& a, const T& b) const { return a > b; }
+};
+template<class T = void>
+struct less : binary_function<T, T, bool> {
+    bool operator()(const T& a, const T& b) const { return a < b; }
+};
+template<class T = void>
+struct greater_equal : binary_function<T, T, bool> {
+    bool operator()(const T& a, const T& b) const { return a >= b; }
+};
+template<class T = void>
+struct less_equal : binary_function<T, T, bool> {
+    bool operator()(const T& a, const T& b) const { return a <= b; }
+};
+
+//=============================================================
+// logical functors
+//=============================================================
+template<class T = void>
+struct logical_and : binary_function<T, T, bool> {
+    bool operator()(const T& a, const T& b) const { return a && b; }
+};
+template<class T = void>
+struct logical_or : binary_function<T, T, bool> {
+    bool operator()(const T& a, const T& b) const { return a || b; }
+};
+template<class T = void>
+struct logical_not : unary_function<T, bool> {
+    bool operator()(const T& a) const { return !a; }
+};
+
+//=============================================================
+// bitwise functors
+//=============================================================
+template<class T = void>
+struct bit_and : binary_function<T, T, T> {
+    T operator()(const T& a, const T& b) const { return a & b; }
+};
+template<class T = void>
+struct bit_or : binary_function<T, T, T> {
+    T operator()(const T& a, const T& b) const { return a | b; }
+};
+template<class T = void>
+struct bit_xor : binary_function<T, T, T> {
+    T operator()(const T& a, const T& b) const { return a ^ b; }
+};
+template<class T = void>
+struct bit_not : unary_function<T, T> {
+    T operator()(const T& a) const { return ~a; }
+};
+
+//=============================================================
+// void specializations (C++14)
+//=============================================================
+#if STDCPP_FN_CXX14
+template<> struct plus<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) + std::forward<U>(u)) {
+        return std::forward<T>(t) + std::forward<U>(u);
+    }
+};
+template<> struct minus<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) - std::forward<U>(u)) {
+        return std::forward<T>(t) - std::forward<U>(u);
+    }
+};
+template<> struct multiplies<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) * std::forward<U>(u)) {
+        return std::forward<T>(t) * std::forward<U>(u);
+    }
+};
+template<> struct divides<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) / std::forward<U>(u)) {
+        return std::forward<T>(t) / std::forward<U>(u);
+    }
+};
+template<> struct equal_to<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) == std::forward<U>(u)) {
+        return std::forward<T>(t) == std::forward<U>(u);
+    }
+};
+template<> struct not_equal_to<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) != std::forward<U>(u)) {
+        return std::forward<T>(t) != std::forward<U>(u);
+    }
+};
+template<> struct greater<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) > std::forward<U>(u)) {
+        return std::forward<T>(t) > std::forward<U>(u);
+    }
+};
+template<> struct less<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) < std::forward<U>(u)) {
+        return std::forward<T>(t) < std::forward<U>(u);
+    }
+};
+template<> struct greater_equal<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) >= std::forward<U>(u)) {
+        return std::forward<T>(t) >= std::forward<U>(u);
+    }
+};
+template<> struct less_equal<void> {
+    template<class T, class U>
+    auto operator()(T&& t, U&& u) const -> decltype(std::forward<T>(t) <= std::forward<U>(u)) {
+        return std::forward<T>(t) <= std::forward<U>(u);
+    }
+};
 #endif
 
-// ---- arithmetic ------------------------------------------------
-#define STDCPP_DEFINE_BINOP(name, op)                                         \
-template<class T STDCPP_DFLT_VOID> struct name STDCPP_BIN_BASE(T,T,T) {          \
-    STDCPP_CONSTEXPR T operator()(const T& x, const T& y) const               \
-    { return x op y; }                                                     \
-};                                                                         \
-STDCPP_DEFINE_BINOP_VOID(name, op)
-
-#if STDCPP_CXX14
-#  define STDCPP_DEFINE_BINOP_VOID(name, op)                                  \
-template<> struct name<void> {                                             \
-    template<class T, class U>                                             \
-    constexpr auto operator()(T&& t, U&& u) const                          \
-        -> decltype(std::forward<T>(t) op std::forward<U>(u))              \
-    { return std::forward<T>(t) op std::forward<U>(u); }                   \
-    typedef void is_transparent;                                           \
-};
-#else
-#  define STDCPP_DEFINE_BINOP_VOID(name, op)
-#endif
-
-STDCPP_DEFINE_BINOP(plus,       +)
-STDCPP_DEFINE_BINOP(minus,      -)
-STDCPP_DEFINE_BINOP(multiplies, *)
-STDCPP_DEFINE_BINOP(divides,    /)
-STDCPP_DEFINE_BINOP(modulus,    %)
-
-#undef STDCPP_DEFINE_BINOP_VOID
-#undef STDCPP_DEFINE_BINOP
-
-#define STDCPP_DEFINE_UNOP(name, op)                                          \
-template<class T STDCPP_DFLT_VOID> struct name STDCPP_UN_BASE(T,T) {             \
-    STDCPP_CONSTEXPR T operator()(const T& x) const { return op x; }          \
-};                                                                         \
-STDCPP_DEFINE_UNOP_VOID(name, op)
-
-#if STDCPP_CXX14
-#  define STDCPP_DEFINE_UNOP_VOID(name, op)                                   \
-template<> struct name<void> {                                             \
-    template<class T>                                                      \
-    constexpr auto operator()(T&& t) const                                 \
-        -> decltype(op std::forward<T>(t))                                 \
-    { return op std::forward<T>(t); }                                      \
-    typedef void is_transparent;                                           \
-};
-#else
-#  define STDCPP_DEFINE_UNOP_VOID(name, op)
-#endif
-
-STDCPP_DEFINE_UNOP(negate, -)
-
-#undef STDCPP_DEFINE_UNOP_VOID
-#undef STDCPP_DEFINE_UNOP
-
-// ---- comparisons -----------------------------------------------
-#define STDCPP_DEFINE_CMPOP(name, op)                                         \
-template<class T STDCPP_DFLT_VOID> struct name STDCPP_BIN_BASE(T,T,bool) {       \
-    STDCPP_CONSTEXPR bool operator()(const T& x, const T& y) const            \
-    { return x op y; }                                                     \
-};                                                                         \
-STDCPP_DEFINE_CMPOP_VOID(name, op)
-
-#if STDCPP_CXX14
-#  define STDCPP_DEFINE_CMPOP_VOID(name, op)                                  \
-template<> struct name<void> {                                             \
-    template<class T, class U>                                             \
-    constexpr auto operator()(T&& t, U&& u) const                          \
-        -> decltype(std::forward<T>(t) op std::forward<U>(u))              \
-    { return std::forward<T>(t) op std::forward<U>(u); }                   \
-    typedef void is_transparent;                                           \
-};
-#else
-#  define STDCPP_DEFINE_CMPOP_VOID(name, op)
-#endif
-
-STDCPP_DEFINE_CMPOP(equal_to,      ==)
-STDCPP_DEFINE_CMPOP(not_equal_to,  !=)
-STDCPP_DEFINE_CMPOP(greater,       >)
-STDCPP_DEFINE_CMPOP(less,          <)
-STDCPP_DEFINE_CMPOP(greater_equal, >=)
-STDCPP_DEFINE_CMPOP(less_equal,    <=)
-
-#undef STDCPP_DEFINE_CMPOP_VOID
-#undef STDCPP_DEFINE_CMPOP
-
-// C++98 pointer specializations: comparing unrelated pointers with
-// the built-in < is undefined, so the library functors impose a
-// total order via an integer cast.
-#define STDCPP_DEFINE_CMPOP_PTR(name, op)                                     \
-template<class T> struct name<T*> STDCPP_BIN_BASE(T*,T*,bool) {               \
-    bool operator()(T* x, T* y) const {                                    \
-        return reinterpret_cast<__UINTPTR_TYPE__>(x)                        \
-            op reinterpret_cast<__UINTPTR_TYPE__>(y);                      \
-    }                                                                      \
-};                                                                         \
-template<class T> struct name<const T*> STDCPP_BIN_BASE(const T*,const T*,bool) { \
-    bool operator()(const T* x, const T* y) const {                        \
-        return reinterpret_cast<__UINTPTR_TYPE__>(x)                        \
-            op reinterpret_cast<__UINTPTR_TYPE__>(y);                      \
-    }                                                                      \
-};
-
-STDCPP_DEFINE_CMPOP_PTR(greater,       >)
-STDCPP_DEFINE_CMPOP_PTR(less,          <)
-STDCPP_DEFINE_CMPOP_PTR(greater_equal, >=)
-STDCPP_DEFINE_CMPOP_PTR(less_equal,    <=)
-
-#undef STDCPP_DEFINE_CMPOP_PTR
-
-// ---- logical ---------------------------------------------------
-#define STDCPP_DEFINE_BINOP_BOOL(name, op)                                    \
-template<class T STDCPP_DFLT_VOID> struct name STDCPP_BIN_BASE(T,T,bool) {       \
-    STDCPP_CONSTEXPR bool operator()(const T& x, const T& y) const            \
-    { return x op y; }                                                     \
-};                                                                         \
-STDCPP_DEFINE_BINOP_BOOL_VOID(name, op)
-
-#if STDCPP_CXX14
-#  define STDCPP_DEFINE_BINOP_BOOL_VOID(name, op)                             \
-template<> struct name<void> {                                             \
-    template<class T, class U>                                             \
-    constexpr auto operator()(T&& t, U&& u) const                          \
-        -> decltype(std::forward<T>(t) op std::forward<U>(u))              \
-    { return std::forward<T>(t) op std::forward<U>(u); }                   \
-    typedef void is_transparent;                                           \
-};
-#else
-#  define STDCPP_DEFINE_BINOP_BOOL_VOID(name, op)
-#endif
-
-STDCPP_DEFINE_BINOP_BOOL(logical_and, &&)
-STDCPP_DEFINE_BINOP_BOOL(logical_or,  ||)
-
-#undef STDCPP_DEFINE_BINOP_BOOL_VOID
-#undef STDCPP_DEFINE_BINOP_BOOL
-
-#define STDCPP_DEFINE_UNOP_BOOL(name, op)                                     \
-template<class T STDCPP_DFLT_VOID> struct name STDCPP_UN_BASE(T,bool) {          \
-    STDCPP_CONSTEXPR bool operator()(const T& x) const { return op x; }       \
-};                                                                         \
-STDCPP_DEFINE_UNOP_BOOL_VOID(name, op)
-
-#if STDCPP_CXX14
-#  define STDCPP_DEFINE_UNOP_BOOL_VOID(name, op)                              \
-template<> struct name<void> {                                             \
-    template<class T>                                                      \
-    constexpr auto operator()(T&& t) const                                 \
-        -> decltype(op std::forward<T>(t))                                 \
-    { return op std::forward<T>(t); }                                      \
-    typedef void is_transparent;                                           \
-};
-#else
-#  define STDCPP_DEFINE_UNOP_BOOL_VOID(name, op)
-#endif
-
-STDCPP_DEFINE_UNOP_BOOL(logical_not, !)
-
-#undef STDCPP_DEFINE_UNOP_BOOL_VOID
-#undef STDCPP_DEFINE_UNOP_BOOL
-
-// ---- bitwise ---------------------------------------------------
-#define STDCPP_DEFINE_BIT_BINOP(name, op)                                     \
-template<class T STDCPP_DFLT_VOID> struct name STDCPP_BIN_BASE(T,T,T) {          \
-    STDCPP_CONSTEXPR T operator()(const T& x, const T& y) const               \
-    { return x op y; }                                                     \
-};                                                                         \
-STDCPP_DEFINE_BIT_BINOP_VOID(name, op)
-
-#if STDCPP_CXX14
-#  define STDCPP_DEFINE_BIT_BINOP_VOID(name, op)                              \
-template<> struct name<void> {                                             \
-    template<class T, class U>                                             \
-    constexpr auto operator()(T&& t, U&& u) const                          \
-        -> decltype(std::forward<T>(t) op std::forward<U>(u))              \
-    { return std::forward<T>(t) op std::forward<U>(u); }                   \
-    typedef void is_transparent;                                           \
-};
-#else
-#  define STDCPP_DEFINE_BIT_BINOP_VOID(name, op)
-#endif
-
-STDCPP_DEFINE_BIT_BINOP(bit_and, &)
-STDCPP_DEFINE_BIT_BINOP(bit_or,  |)
-STDCPP_DEFINE_BIT_BINOP(bit_xor, ^)
-
-#undef STDCPP_DEFINE_BIT_BINOP_VOID
-#undef STDCPP_DEFINE_BIT_BINOP
-
-#if STDCPP_CXX14
-template<class T = void> struct bit_not STDCPP_UN_BASE(T,T) {
-    constexpr T operator()(const T& x) const { return ~x; }
-};
-template<> struct bit_not<void> {
+//=============================================================
+// identity (C++20)
+//=============================================================
+#if STDCPP_FN_CXX20
+struct identity {
     template<class T>
-    constexpr auto operator()(T&& t) const
-        -> decltype(~std::forward<T>(t))
-    { return ~std::forward<T>(t); }
-    typedef void is_transparent;
+    T&& operator()(T&& t) const noexcept { return std::forward<T>(t); }
 };
 #endif
 
 //=============================================================
-//
-//  C++98 binders / negaters / pointer-to-function / mem_fun
-//  (deprecated in C++11, removed in C++17).
-//
+// hash
 //=============================================================
-#if !STDCPP_CXX17
+template<class T> struct hash;
 
-// ---- binder1st / binder2nd ------------------------------------
-template<class Op>
-class binder1st
-    : public unary_function<typename Op::second_argument_type,
-                            typename Op::result_type>
-{
-protected:
-    Op op;
-    typename Op::first_argument_type value;
-public:
-    binder1st(const Op& x, const typename Op::first_argument_type& y)
-        : op(x), value(y) {}
-
-    typename Op::result_type
-    operator()(const typename Op::second_argument_type& x) const
-    { return op(value, x); }
-
-#if STDCPP_CXX11
-    typename Op::result_type
-    operator()(typename Op::second_argument_type& x) const
-    { return op(value, x); }
-#endif
-};
-
-template<class Op, class T>
-inline binder1st<Op>
-bind1st(const Op& op, const T& x)
-{
-    typedef typename Op::first_argument_type _Arg1;
-    return binder1st<Op>(op, _Arg1(x));
-}
-
-template<class Op>
-class binder2nd
-    : public unary_function<typename Op::first_argument_type,
-                            typename Op::result_type>
-{
-protected:
-    Op op;
-    typename Op::second_argument_type value;
-public:
-    binder2nd(const Op& x, const typename Op::second_argument_type& y)
-        : op(x), value(y) {}
-
-    typename Op::result_type
-    operator()(const typename Op::first_argument_type& x) const
-    { return op(x, value); }
-
-#if STDCPP_CXX11
-    typename Op::result_type
-    operator()(typename Op::first_argument_type& x) const
-    { return op(x, value); }
-#endif
-};
-
-template<class Op, class T>
-inline binder2nd<Op>
-bind2nd(const Op& op, const T& x)
-{
-    typedef typename Op::second_argument_type _Arg2;
-    return binder2nd<Op>(op, _Arg2(x));
-}
-
-// ---- pointer_to_unary_function / pointer_to_binary_function ---
-template<class Arg, class Result>
-class pointer_to_unary_function : public unary_function<Arg, Result>
-{
-protected:
-    Result (*_M_ptr)(Arg);
-public:
-    pointer_to_unary_function() : _M_ptr(0) {}
-    explicit pointer_to_unary_function(Result (*x)(Arg)) : _M_ptr(x) {}
-    Result operator()(Arg x) const { return _M_ptr(x); }
-};
-
-template<class Arg, class Result>
-inline pointer_to_unary_function<Arg, Result>
-ptr_fun(Result (*x)(Arg))
-{ return pointer_to_unary_function<Arg, Result>(x); }
-
-template<class Arg1, class Arg2, class Result>
-class pointer_to_binary_function
-    : public binary_function<Arg1, Arg2, Result>
-{
-protected:
-    Result (*_M_ptr)(Arg1, Arg2);
-public:
-    pointer_to_binary_function() : _M_ptr(0) {}
-    explicit pointer_to_binary_function(Result (*x)(Arg1, Arg2)) : _M_ptr(x) {}
-    Result operator()(Arg1 x, Arg2 y) const { return _M_ptr(x, y); }
-};
-
-template<class Arg1, class Arg2, class Result>
-inline pointer_to_binary_function<Arg1, Arg2, Result>
-ptr_fun(Result (*x)(Arg1, Arg2))
-{ return pointer_to_binary_function<Arg1, Arg2, Result>(x); }
-
-// ---- mem_fun family -------------------------------------------
-// PREFIX is "" / "const_" / "volatile_" / "const_volatile_".
-// CV     is "" / "const" / "volatile" / "const volatile".
-#define STDCPP_MEM_FUN_T(PREFIX, CV)                                           \
-template<class R, class T>                                                 \
-class PREFIX##mem_fun_t : public unary_function<T*, R> {                   \
-    typedef R (T::*_Fptr)() CV;                                            \
-    _Fptr _M_pm;                                                           \
-public:                                                                    \
-    explicit PREFIX##mem_fun_t(_Fptr pm) : _M_pm(pm) {}                    \
-    R operator()(T* p) const { return (p->*_M_pm)(); }                     \
-};                                                                         \
-template<class R, class T, class A>                                        \
-class PREFIX##mem_fun1_t : public binary_function<T*, A, R> {              \
-    typedef R (T::*_Fptr)(A) CV;                                           \
-    _Fptr _M_pm;                                                           \
-public:                                                                    \
-    explicit PREFIX##mem_fun1_t(_Fptr pm) : _M_pm(pm) {}                   \
-    R operator()(T* p, A a) const { return (p->*_M_pm)(a); }               \
-};                                                                         \
-template<class R, class T>                                                 \
-class PREFIX##mem_fun_ref_t : public unary_function<T&, R> {               \
-    typedef R (T::*_Fptr)() CV;                                            \
-    _Fptr _M_pm;                                                           \
-public:                                                                    \
-    explicit PREFIX##mem_fun_ref_t(_Fptr pm) : _M_pm(pm) {}                \
-    R operator()(T& p) const { return (p.*_M_pm)(); }                      \
-};                                                                         \
-template<class R, class T, class A>                                        \
-class PREFIX##mem_fun1_ref_t : public binary_function<T&, A, R> {          \
-    typedef R (T::*_Fptr)(A) CV;                                           \
-    _Fptr _M_pm;                                                           \
-public:                                                                    \
-    explicit PREFIX##mem_fun1_ref_t(_Fptr pm) : _M_pm(pm) {}               \
-    R operator()(T& p, A a) const { return (p.*_M_pm)(a); }                \
-};
-
-STDCPP_MEM_FUN_T(/* prefix */, /* cv */)
-STDCPP_MEM_FUN_T(const_,          const)
-STDCPP_MEM_FUN_T(volatile_,       volatile)
-STDCPP_MEM_FUN_T(const_volatile_, const volatile)
-
-#undef STDCPP_MEM_FUN_T
-
-// mem_fun() factories
-template<class R, class T>
-mem_fun_t<R, T> mem_fun(R (T::*pm)())
-{ return mem_fun_t<R, T>(pm); }
-template<class R, class T>
-const_mem_fun_t<R, T> mem_fun(R (T::*pm)() const)
-{ return const_mem_fun_t<R, T>(pm); }
-template<class R, class T>
-volatile_mem_fun_t<R, T> mem_fun(R (T::*pm)() volatile)
-{ return volatile_mem_fun_t<R, T>(pm); }
-template<class R, class T>
-const_volatile_mem_fun_t<R, T> mem_fun(R (T::*pm)() const volatile)
-{ return const_volatile_mem_fun_t<R, T>(pm); }
-
-template<class R, class T, class A>
-mem_fun1_t<R, T, A> mem_fun(R (T::*pm)(A))
-{ return mem_fun1_t<R, T, A>(pm); }
-template<class R, class T, class A>
-const_mem_fun1_t<R, T, A> mem_fun(R (T::*pm)(A) const)
-{ return const_mem_fun1_t<R, T, A>(pm); }
-template<class R, class T, class A>
-volatile_mem_fun1_t<R, T, A> mem_fun(R (T::*pm)(A) volatile)
-{ return volatile_mem_fun1_t<R, T, A>(pm); }
-template<class R, class T, class A>
-const_volatile_mem_fun1_t<R, T, A> mem_fun(R (T::*pm)(A) const volatile)
-{ return const_volatile_mem_fun1_t<R, T, A>(pm); }
-
-// mem_fun_ref() factories
-template<class R, class T>
-mem_fun_ref_t<R, T> mem_fun_ref(R (T::*pm)())
-{ return mem_fun_ref_t<R, T>(pm); }
-template<class R, class T>
-const_mem_fun_ref_t<R, T> mem_fun_ref(R (T::*pm)() const)
-{ return const_mem_fun_ref_t<R, T>(pm); }
-template<class R, class T>
-volatile_mem_fun_ref_t<R, T> mem_fun_ref(R (T::*pm)() volatile)
-{ return volatile_mem_fun_ref_t<R, T>(pm); }
-template<class R, class T>
-const_volatile_mem_fun_ref_t<R, T> mem_fun_ref(R (T::*pm)() const volatile)
-{ return const_volatile_mem_fun_ref_t<R, T>(pm); }
-
-template<class R, class T, class A>
-mem_fun1_ref_t<R, T, A> mem_fun_ref(R (T::*pm)(A))
-{ return mem_fun1_ref_t<R, T, A>(pm); }
-template<class R, class T, class A>
-const_mem_fun1_ref_t<R, T, A> mem_fun_ref(R (T::*pm)(A) const)
-{ return const_mem_fun1_ref_t<R, T, A>(pm); }
-template<class R, class T, class A>
-volatile_mem_fun1_ref_t<R, T, A> mem_fun_ref(R (T::*pm)(A) volatile)
-{ return volatile_mem_fun1_ref_t<R, T, A>(pm); }
-template<class R, class T, class A>
-const_volatile_mem_fun1_ref_t<R, T, A> mem_fun_ref(R (T::*pm)(A) const volatile)
-{ return const_volatile_mem_fun1_ref_t<R, T, A>(pm); }
-
-// ---- unary_negate / binary_negate ------------------------------
-template<class Pred>
-class unary_negate
-    : public unary_function<typename Pred::argument_type, bool>
-{
-protected:
-    Pred pred;
-public:
-    explicit unary_negate(const Pred& x) : pred(x) {}
-    bool operator()(const typename Pred::argument_type& x) const
-    { return !pred(x); }
-#if STDCPP_CXX11
-    bool operator()(typename Pred::argument_type& x) const
-    { return !pred(x); }
-#endif
-};
-
-template<class Pred>
-inline unary_negate<Pred> not1(const Pred& pred)
-{ return unary_negate<Pred>(pred); }
-
-template<class Pred>
-class binary_negate
-    : public binary_function<typename Pred::first_argument_type,
-                             typename Pred::second_argument_type, bool>
-{
-protected:
-    Pred pred;
-public:
-    explicit binary_negate(const Pred& x) : pred(x) {}
-    bool operator()(const typename Pred::first_argument_type& x,
-                    const typename Pred::second_argument_type& y) const
-    { return !pred(x, y); }
-#if STDCPP_CXX11
-    bool operator()(typename Pred::first_argument_type& x,
-                    typename Pred::second_argument_type& y) const
-    { return !pred(x, y); }
-#endif
-};
-
-template<class Pred>
-inline binary_negate<Pred> not2(const Pred& pred)
-{ return binary_negate<Pred>(pred); }
-
-#endif // !C++17
-
-} // namespace std
-
-//=============================================================
-//
-//  Everything below requires C++11 (variadic templates, rvalue
-//  references, decltype, ...).
-//
-//=============================================================
-#if STDCPP_CXX11
-
-namespace std
-{
-
-class bad_function_call; // fwd
-
-//=============================================================
-//  Internal INVOKE machinery  (C++11)
-//=============================================================
-namespace __ftl
-{
-    struct __x_invoke_memfun_ref  {};
-    struct __x_invoke_memfun_deref{};
-    struct __x_invoke_memobj_ref  {};
-    struct __x_invoke_memobj_deref{};
-    struct __x_invoke_other      {};
-
-    // Determine which invocation form to use for (f, first_arg).
-    template<class F, class FirstArg>
-    struct __x_invoke_tag { typedef __x_invoke_other type; };
-
-    template<class R, class C, class FirstArg>
-    struct __x_invoke_tag<R C::*, FirstArg>
-    {
-    private:
-        typedef typename remove_cv<FirstArg>::type _D;
-        static const bool __is_ref = is_base_of<C, _D>::value;
-        typedef typename conditional<is_function<R>::value,
-                    __x_invoke_memfun_ref, __x_invoke_memobj_ref>::type _Ref;
-        typedef typename conditional<is_function<R>::value,
-                    __x_invoke_memfun_deref, __x_invoke_memobj_deref>::type _Deref;
-    public:
-        typedef typename conditional<__is_ref, _Ref, _Deref>::type type;
+#if STDCPP_FN_CXX11
+#define STDCPP_HASH_INT(TYPE) \
+    template<> struct hash<TYPE> { \
+        size_t operator()(TYPE v) const noexcept { return (size_t)v; } \
     };
-
-    // member function, object is an lvalue of class type (or derived)
-    template<class R, class C, class T1, class... Args>
-    auto __x_invoke_impl(__x_invoke_memfun_ref, R C::* f, T1&& t1, Args&&... args)
-        -> decltype((std::forward<T1>(t1).*f)(std::forward<Args>(args)...))
-    { return (std::forward<T1>(t1).*f)(std::forward<Args>(args)...); }
-
-    // member function, object reached via dereference (pointer / smart ptr)
-    template<class R, class C, class T1, class... Args>
-    auto __x_invoke_impl(__x_invoke_memfun_deref, R C::* f, T1&& t1, Args&&... args)
-        -> decltype(((*std::forward<T1>(t1)).*f)(std::forward<Args>(args)...))
-    { return ((*std::forward<T1>(t1)).*f)(std::forward<Args>(args)...); }
-
-    // member object, class-type lvalue
-    template<class R, class C, class T1>
-    auto __x_invoke_impl(__x_invoke_memobj_ref, R C::* f, T1&& t1)
-        -> decltype(std::forward<T1>(t1).*f)
-    { return std::forward<T1>(t1).*f; }
-
-    // member object, via dereference
-    template<class R, class C, class T1>
-    auto __x_invoke_impl(__x_invoke_memobj_deref, R C::* f, T1&& t1)
-        -> decltype((*std::forward<T1>(t1)).*f)
-    { return (*std::forward<T1>(t1)).*f; }
-
-    // free function / function object
-    template<class F, class... Args>
-    auto __x_invoke_impl(__x_invoke_other, F&& f, Args&&... args)
-        -> decltype(std::forward<F>(f)(std::forward<Args>(args)...))
-    { return std::forward<F>(f)(std::forward<Args>(args)...); }
-
-    // Pick the tag for the first argument (or __x_invoke_other if none).
-    template<class F, class... Args>
-    struct __x_invoke_first { typedef __x_invoke_other type; };
-
-    template<class F, class First, class... Rest>
-    struct __x_invoke_first<F, First, Rest...>
-    {
-        typedef typename __x_invoke_tag<
-            typename decay<F>::type,
-            typename decay<First>::type>::type type;
+#else
+#define STDCPP_HASH_INT(TYPE) \
+    template<> struct hash<TYPE> { \
+        size_t operator()(TYPE v) const { return (size_t)v; } \
     };
-
-    template<class F, class... Args>
-    STDCPP_CONSTEXPR14
-    auto __x_invoke(F&& f, Args&&... args)
-        -> decltype(__x_invoke_impl(
-              std::declval<typename __x_invoke_first<F, Args...>::type>(),
-              std::forward<F>(f), std::forward<Args>(args)...))
-    {
-        typedef typename __x_invoke_first<F, Args...>::type _Tag;
-        return __x_invoke_impl(_Tag(),
-                             std::forward<F>(f), std::forward<Args>(args)...);
-    }
-
-    // INVOKE<R>: same as INVOKE but with an explicit return type R.
-    template<class R, class F, class... Args>
-    inline STDCPP_CONSTEXPR14
-    typename enable_if<!is_void<R>::value, R>::type
-    __x_invoke_r(F&& f, Args&&... args)
-    {
-        return static_cast<R>(
-            __x_invoke(std::forward<F>(f), std::forward<Args>(args)...));
-    }
-
-    template<class R, class F, class... Args>
-    inline STDCPP_CONSTEXPR14
-    typename enable_if<is_void<R>::value, R>::type
-    __x_invoke_r(F&& f, Args&&... args)
-    {
-        __x_invoke(std::forward<F>(f), std::forward<Args>(args)...);
-    }
-
-    // addressof without including <memory>
-    template<class T>
-    inline T* __addressof(T& r) STDCPP_NOEXCEPT
-    { return __builtin_addressof(r); }
-
-    // index_sequence / make_index_sequence (C++14 has them in <utility>;
-    // for C++11 we provide a minimal implementation inside __ftl).
-#if STDCPP_CXX14
-    using std::index_sequence;
-    using std::make_index_sequence;
-#else
-    template<size_t... Is> struct index_sequence {};
-    template<size_t N, size_t... Is>
-    struct __make_iseq : __make_iseq<N-1, N-1, Is...> {};
-    template<size_t... Is>
-    struct __make_iseq<0, Is...> { typedef index_sequence<Is...> type; };
-    template<size_t N>
-    using make_index_sequence = typename __make_iseq<N>::type;
 #endif
-
-} // namespace __ftl
-
-//=============================================================
-//  reference_wrapper  [refwrap]
-//=============================================================
-template<class T> class reference_wrapper;
-
-namespace __ftl
-{
-    template<class> struct __is_refwrap : false_type {};
-    template<class U> struct __is_refwrap<reference_wrapper<U>> : true_type {};
-
-#if !STDCPP_CXX17
-    // Deprecated result_type / argument_type typedefs exposed by
-    // reference_wrapper's operator() in C++11/14.
-    template<class> struct __refwrap_types {};
-
-#  define STDCPP_RW_T0(R)       typedef R result_type;
-#  define STDCPP_RW_T1(R,A1)    typedef R result_type; typedef A1 argument_type;
-#  define STDCPP_RW_T2(R,A1,A2) typedef R result_type; \
-    typedef A1 first_argument_type; typedef A2 second_argument_type;
-
-    // free function types (no cv-qualifiers)
-    template<class R> struct __refwrap_types<R()> { STDCPP_RW_T0(R) };
-    template<class R,class A1> struct __refwrap_types<R(A1)> { STDCPP_RW_T1(R,A1) };
-    template<class R,class A1,class A2> struct __refwrap_types<R(A1,A2)> { STDCPP_RW_T2(R,A1,A2) };
-    // free function pointers (no cv-qualifiers)
-    template<class R> struct __refwrap_types<R(*)()> : __refwrap_types<R()> {};
-    template<class R,class A1> struct __refwrap_types<R(*)(A1)> : __refwrap_types<R(A1)> {};
-    template<class R,class A1,class A2> struct __refwrap_types<R(*)(A1,A2)> : __refwrap_types<R(A1,A2)> {};
-    // member function pointers (with each cv qualification)
-#  define STDCPP_RW_MEM(CV)                                                     \
-    template<class R,class C> struct __refwrap_types<R (C::*)() CV>          \
-        { STDCPP_RW_T0(R) };                                                    \
-    template<class R,class C,class A1> struct __refwrap_types<R (C::*)(A1) CV> \
-        { STDCPP_RW_T1(R,A1) };                                                 \
-    template<class R,class C,class A1,class A2>                              \
-    struct __refwrap_types<R (C::*)(A1,A2) CV> { STDCPP_RW_T2(R,A1,A2) };
-
-    STDCPP_RW_MEM(/* plain */)
-    STDCPP_RW_MEM(const)
-    STDCPP_RW_MEM(volatile)
-    STDCPP_RW_MEM(const volatile)
-#  undef STDCPP_RW_MEM
-#  undef STDCPP_RW_T0
-#  undef STDCPP_RW_T1
-#  undef STDCPP_RW_T2
-#endif
-}
-
-template<class T>
-class reference_wrapper
-#if !STDCPP_CXX17
-    : public __ftl::__refwrap_types<T>
-#endif
-{
-    T* _M_data;
-
-public:
-    typedef T type;
-
-    // construction from an lvalue (or anything convertible to T&);
-    // reference_wrapper specializations are excluded so that the
-    // implicitly-declared copy ctor handles same-type copies.
-    template<class U, class = typename enable_if<
-        !__ftl::__is_refwrap<typename decay<U>::type>::value,
-        decltype(static_cast<T&>(std::declval<U>()), 0)>::type>
-    STDCPP_CONSTEXPR
-    reference_wrapper(U&& u) STDCPP_NOEXCEPT
-        : _M_data(__ftl::__addressof(u)) {}
-
-    reference_wrapper(const reference_wrapper&) STDCPP_NOEXCEPT = default;
-
-    STDCPP_CONSTEXPR operator T&() const STDCPP_NOEXCEPT { return *_M_data; }
-    STDCPP_CONSTEXPR T& get() const STDCPP_NOEXCEPT { return *_M_data; }
-
-#if STDCPP_CXX17
-    template<class... Args>
-    STDCPP_CONSTEXPR20
-    invoke_result_t<T&, Args...>
-    operator()(Args&&... args) const
-    { return __ftl::__x_invoke(get(), std::forward<Args>(args)...); }
-#else
-    template<class... Args>
-    STDCPP_CONSTEXPR14
-    typename result_of<T&(Args&&...)>::type
-    operator()(Args&&... args) const
-    { return __ftl::__x_invoke(get(), std::forward<Args>(args)...); }
-#endif
-};
-
-// ---- deprecated argument/result typedefs for refwrap -----------
-// (defined above in __ftl as __refwrap_types)
-
-// ---- ref / cref ------------------------------------------------
-template<class T>
-inline STDCPP_CONSTEXPR reference_wrapper<T> ref(T& t) STDCPP_NOEXCEPT
-{ return reference_wrapper<T>(t); }
-
-template<class T>
-inline STDCPP_CONSTEXPR reference_wrapper<T>
-ref(reference_wrapper<T> t) STDCPP_NOEXCEPT
-{ return t; }
-
-template<class T>
-void ref(const T&&) = delete;
-
-template<class T>
-inline STDCPP_CONSTEXPR reference_wrapper<const T>
-cref(const T& t) STDCPP_NOEXCEPT
-{ return reference_wrapper<const T>(t); }
-
-template<class T>
-inline STDCPP_CONSTEXPR reference_wrapper<const T>
-cref(reference_wrapper<T> t) STDCPP_NOEXCEPT
-{ return { t.get() }; }
-
-template<class T>
-void cref(const T&&) = delete;
-
-// ---- unwrap_reference / unwrap_ref_decay (C++17) --------------
-// In C++20 these were moved into <type_traits>, so only define them
-// ourselves for plain C++17.
-#if STDCPP_CXX17 && !STDCPP_CXX20
-template<class T> struct unwrap_reference { typedef T type; };
-template<class T> struct unwrap_reference<reference_wrapper<T>> { typedef T& type; };
-
-template<class T>
-struct unwrap_ref_decay
-    : unwrap_reference<typename decay<T>::type> {};
-
-template<class T>
-using unwrap_reference_t = typename unwrap_reference<T>::type;
-template<class T>
-using unwrap_ref_decay_t = typename unwrap_ref_decay<T>::type;
-#endif
-
-//=============================================================
-//  identity  (C++20)
-//=============================================================
-// libstdc++ already defines std::identity in <bits/ranges_cmp.h>
-// (pulled in transitively by <tuple> in C++20 mode).
-#if STDCPP_CXX20 && !defined(_RANGES_CMP_H)
-struct identity
-{
-    template<class T>
-    constexpr T&& operator()(T&& t) const noexcept
-    { return std::forward<T>(t); }
-    using is_transparent = void;
-};
-#endif
-
-//=============================================================
-//  hash  [unord.hash]
-//=============================================================
-#if STDCPP_CXX17
-template<class T> struct hash {};
-#else
-template<class T> struct hash : unary_function<T, size_t> {};
-#endif
-
-#define STDCPP_HASH_INT(T)                                                     \
-template<> struct hash<T> {                                                 \
-    STDCPP_CONSTEXPR size_t operator()(T v) const STDCPP_NOEXCEPT                 \
-    { return static_cast<size_t>(v); }                                      \
-};
 
 STDCPP_HASH_INT(bool)
 STDCPP_HASH_INT(char)
@@ -918,1547 +240,333 @@ STDCPP_HASH_INT(long)
 STDCPP_HASH_INT(unsigned long)
 STDCPP_HASH_INT(long long)
 STDCPP_HASH_INT(unsigned long long)
-#if STDCPP_CXX20
-STDCPP_HASH_INT(char8_t)
-#endif
+STDCPP_HASH_INT(wchar_t)
+#if STDCPP_FN_CXX11
 STDCPP_HASH_INT(char16_t)
 STDCPP_HASH_INT(char32_t)
-STDCPP_HASH_INT(wchar_t)
+#endif
 #undef STDCPP_HASH_INT
 
-namespace __ftl
-{
-    inline size_t __hash_float_bits(const void* p, size_t n) STDCPP_NOEXCEPT
-    {
-        // -0.0 and +0.0 must hash equal; the caller has already handled 0.
-        const unsigned char* b = static_cast<const unsigned char*>(p);
-        size_t h = 0;
-        for (size_t i = 0; i < n; ++i)
-            h = h * 131u + b[i];
-        return h;
-    }
-}
-
-#define STDCPP_HASH_FLOAT(T, UT)                                               \
-template<> struct hash<T> {                                                 \
-    size_t operator()(T v) const STDCPP_NOEXCEPT {                             \
-        if (v == T(0)) return 0;                                            \
-        UT u; std::memcpy(&u, &v, sizeof(T));                               \
-        return static_cast<size_t>(u);                                      \
-    }                                                                       \
-};
-
-STDCPP_HASH_FLOAT(float,       uint32_t)
-STDCPP_HASH_FLOAT(double,      uint64_t)
-#undef STDCPP_HASH_FLOAT
-
-template<> struct hash<long double> {
-    size_t operator()(long double v) const STDCPP_NOEXCEPT {
-        if (v == 0.0L) return 0;
-        return __ftl::__hash_float_bits(&v, sizeof(long double));
-    }
-};
-
-// pointer hash
 template<class T> struct hash<T*> {
-    size_t operator()(T* p) const STDCPP_NOEXCEPT
-    { return reinterpret_cast<size_t>(p); }
+    size_t operator()(T* p) const noexcept { return (size_t)p; }
 };
 
-template<> struct hash<nullptr_t> {
-    size_t operator()(nullptr_t) const STDCPP_NOEXCEPT { return 0; }
+template<> struct hash<float> {
+    size_t operator()(float v) const noexcept {
+        size_t r; __builtin_memcpy(&r, &v, sizeof(float)); return r;
+    }
+};
+template<> struct hash<double> {
+    size_t operator()(double v) const noexcept {
+        size_t r; __builtin_memcpy(&r, &v, sizeof(double)); return r;
+    }
 };
 
 //=============================================================
-//  owner_less  [memory.smartptr.ownerless]
-//  (shared_ptr / weak_ptr are forward-declared; the member
-//   operator() is only instantiated once <memory> is included.)
+// reference_wrapper (C++11)
 //=============================================================
-template<class T> class shared_ptr;
-template<class T> class weak_ptr;
+#if STDCPP_FN_CXX11
+template<class T>
+class reference_wrapper {
+    T* _M_ptr;
+public:
+    typedef T type;
 
-template<class T> struct owner_less;
+    reference_wrapper(T& t) noexcept : _M_ptr(&t) {}
+    reference_wrapper(T&&) = delete;
+
+    operator T&() const noexcept { return *_M_ptr; }
+    T& get() const noexcept { return *_M_ptr; }
+
+    template<class... Args>
+    auto operator()(Args&&... args) const
+        -> decltype((*_M_ptr)(std::forward<Args>(args)...)) {
+        return (*_M_ptr)(std::forward<Args>(args)...);
+    }
+};
 
 template<class T>
-struct owner_less<shared_ptr<T>>
-{
-    typedef bool result_type;
-    typedef shared_ptr<T> first_argument_type;
-    typedef shared_ptr<T> second_argument_type;
-
-    bool operator()(const shared_ptr<T>& a, const shared_ptr<T>& b) const STDCPP_NOEXCEPT
-    { return a.owner_before(b); }
-    bool operator()(const shared_ptr<T>& a, const weak_ptr<T>& b) const STDCPP_NOEXCEPT
-    { return a.owner_before(b); }
-    bool operator()(const weak_ptr<T>& a, const shared_ptr<T>& b) const STDCPP_NOEXCEPT
-    { return a.owner_before(b); }
-};
-
+reference_wrapper<T> ref(T& t) noexcept { return reference_wrapper<T>(t); }
 template<class T>
-struct owner_less<weak_ptr<T>>
-{
-    typedef bool result_type;
-    typedef weak_ptr<T> first_argument_type;
-    typedef weak_ptr<T> second_argument_type;
-
-    bool operator()(const weak_ptr<T>& a, const weak_ptr<T>& b) const STDCPP_NOEXCEPT
-    { return a.owner_before(b); }
-    bool operator()(const shared_ptr<T>& a, const weak_ptr<T>& b) const STDCPP_NOEXCEPT
-    { return a.owner_before(b); }
-    bool operator()(const weak_ptr<T>& a, const shared_ptr<T>& b) const STDCPP_NOEXCEPT
-    { return a.owner_before(b); }
-};
-
-#if STDCPP_CXX17
-template<> struct owner_less<void>
-{
-    template<class T, class U>
-    bool operator()(const T& a, const U& b) const STDCPP_NOEXCEPT
-    { return a.owner_before(b); }
-    using is_transparent = void;
-};
+reference_wrapper<const T> cref(const T& t) noexcept { return reference_wrapper<const T>(t); }
+template<class T>
+void ref(const T&&) = delete;
+template<class T>
+void cref(const T&&) = delete;
 #endif
 
 //=============================================================
-//  C++11 components continued: mem_fn, bind, is_bind_expression,
-//  is_placeholder, bad_function_call, function.
+// function (C++11)
 //=============================================================
-
-//=============================================================
-//  mem_fn  [func.memfn]
-//=============================================================
-#if !STDCPP_CXX17
-namespace __ftl
-{
-    template<class R, class C, class... A>
-    struct __mfn_ub { typedef R result_type; };
-    template<class R, class C>
-    struct __mfn_ub<R, C> {
-        typedef R result_type;
-        typedef C argument_type;
-    };
-    template<class R, class C, class A1>
-    struct __mfn_ub<R, C, A1> {
-        typedef R result_type;
-        typedef C first_argument_type;
-        typedef A1 second_argument_type;
-    };
-
-    template<class MP> struct __mfn_traits {};
-
-#  define STDCPP_MFN_TRAITS(CV, REF)                                           \
-    template<class R, class C, class... A>                                  \
-    struct __mfn_traits<R (C::*)(A...) CV REF>                              \
-        : __mfn_ub<R, CV C*, A...> {};                                      \
-    template<class R, class C, class... A>                                  \
-    struct __mfn_traits<R (C::*)(A..., ...) CV REF>                         \
-        : __mfn_ub<R, CV C*, A...> {};
-
-    STDCPP_MFN_TRAITS(,   )
-    STDCPP_MFN_TRAITS(const,)
-    STDCPP_MFN_TRAITS(volatile,)
-    STDCPP_MFN_TRAITS(const volatile,)
-    STDCPP_MFN_TRAITS(,   &)
-    STDCPP_MFN_TRAITS(const,&)
-    STDCPP_MFN_TRAITS(volatile,&)
-    STDCPP_MFN_TRAITS(const volatile,&)
-    STDCPP_MFN_TRAITS(,   &&)
-    STDCPP_MFN_TRAITS(const,&&)
-    STDCPP_MFN_TRAITS(volatile,&&)
-    STDCPP_MFN_TRAITS(const volatile,&&)
-#  undef STDCPP_MFN_TRAITS
-}
-#endif
-
-template<class MP>
-class _Mem_fn
-#if !STDCPP_CXX17
-    : public __ftl::__mfn_traits<MP>
-#endif
-{
-    MP _M_pm;
-public:
-    STDCPP_CONSTEXPR explicit _Mem_fn(MP pm) STDCPP_NOEXCEPT : _M_pm(pm) {}
-
-    template<class... Args>
-    STDCPP_CONSTEXPR20
-    auto operator()(Args&&... args) const
-        -> decltype(__ftl::__x_invoke(_M_pm, std::forward<Args>(args)...))
-    { return __ftl::__x_invoke(_M_pm, std::forward<Args>(args)...); }
-};
-
-template<class R, class C>
-inline STDCPP_CONSTEXPR
-_Mem_fn<R C::*> mem_fn(R C::* pm) STDCPP_NOEXCEPT
-{ return _Mem_fn<R C::*>(pm); }
-
-//=============================================================
-//  is_bind_expression / is_placeholder  [func.bind.isbind/isplace]
-//=============================================================
-template<class T> struct is_bind_expression : false_type {};
-
-template<class T> struct is_placeholder : integral_constant<int, 0> {};
-
-//=============================================================
-//  Placeholders _1 .. _20
-//=============================================================
-namespace placeholders
-{
-    template<int N> struct _Ph { STDCPP_CONSTEXPR _Ph() STDCPP_NOEXCEPT {} };
-}
-
-template<int N>
-struct is_placeholder<placeholders::_Ph<N>> : integral_constant<int, N> {};
-
-namespace placeholders
-{
-#define STDCPP_PH(N) STDCPP_INLINE_VAR constexpr _Ph<N> _##N{};
-    STDCPP_PH(1)  STDCPP_PH(2)  STDCPP_PH(3)  STDCPP_PH(4)  STDCPP_PH(5)
-    STDCPP_PH(6)  STDCPP_PH(7)  STDCPP_PH(8)  STDCPP_PH(9)  STDCPP_PH(10)
-    STDCPP_PH(11) STDCPP_PH(12) STDCPP_PH(13) STDCPP_PH(14) STDCPP_PH(15)
-    STDCPP_PH(16) STDCPP_PH(17) STDCPP_PH(18) STDCPP_PH(19) STDCPP_PH(20)
-#undef STDCPP_PH
-}
-
-//=============================================================
-//  bind  [func.bind]
-//=============================================================
-namespace __ftl
-{
-    // Auto-unwrap a reference_wrapper stored as a bound argument.
-    template<class T>
-    inline T& __mu_unwrap(T& t) STDCPP_NOEXCEPT { return t; }
-    template<class T>
-    inline T& __mu_unwrap(reference_wrapper<T>& r) STDCPP_NOEXCEPT { return r.get(); }
-    template<class T>
-    inline const T& __mu_unwrap(const reference_wrapper<T>& r) STDCPP_NOEXCEPT { return r.get(); }
-
-    // Case 1: bound argument is itself a bind expression -> invoke it
-    // with all of the outer call arguments.
-    template<size_t I, int J, class Bound, class Call, size_t... Ks>
-    inline STDCPP_CONSTEXPR14
-    auto __mu(Bound&& b, Call& c, true_type, integral_constant<int,J>,
-              index_sequence<Ks...>)
-        -> decltype(std::get<I>(b)(std::get<Ks>(c)...))
-    { return std::get<I>(b)(std::get<Ks>(c)...); }
-
-    // Case 2: a placeholder -> forward the Nth outer call argument.
-    template<size_t I, int J, class Bound, class Call, size_t... Ks>
-    inline STDCPP_CONSTEXPR14
-    auto __mu(Bound&& b, Call& c, false_type, integral_constant<int,J>,
-              index_sequence<Ks...>)
-        -> decltype(std::get<J-1>(c))
-    {
-        static_assert(J > 0, "placeholder index must be positive");
-        (void)b;
-        return std::get<J-1>(c);
-    }
-
-    // Case 3: a plain bound value (reference_wrapper unwrapped).
-    template<size_t I, class Bound, class Call, size_t... Ks>
-    inline STDCPP_CONSTEXPR14
-    auto __mu(Bound&& b, Call&, false_type, integral_constant<int,0>,
-              index_sequence<Ks...>)
-        -> decltype(__mu_unwrap(std::get<I>(b)))
-    { return __mu_unwrap(std::get<I>(b)); }
-
-    template<size_t I, class Bound, class Call>
-    inline STDCPP_CONSTEXPR14
-    auto __mu_entry(Bound&& b, Call& c)
-        -> decltype(__mu<I>(
-            std::forward<Bound>(b), c,
-            is_bind_expression<typename tuple_element<I,
-                typename remove_cv<typename remove_reference<Bound>::type>::type>::type>{},
-            integral_constant<int, is_placeholder<typename tuple_element<I,
-                typename remove_cv<typename remove_reference<Bound>::type>::type>::type>::value>{},
-            make_index_sequence<tuple_size<typename remove_cv<Call>::type>::value>{}))
-    {
-        using _BoundPlain = typename remove_cv<typename remove_reference<Bound>::type>::type;
-        using T = typename tuple_element<I, _BoundPlain>::type;
-        return __mu<I>(
-            std::forward<Bound>(b), c,
-            is_bind_expression<T>{},
-            integral_constant<int, is_placeholder<T>::value>{},
-            make_index_sequence<tuple_size<typename remove_cv<Call>::type>::value>{});
-    }
-
-    template<class Bound, class Call, size_t... Is>
-    inline STDCPP_CONSTEXPR14
-    auto __bind_apply(Bound&& b, Call& c, index_sequence<Is...>)
-        -> decltype(__x_invoke(std::get<0>(b), __mu_entry<Is+1>(std::forward<Bound>(b), c)...))
-    { return __x_invoke(std::get<0>(b), __mu_entry<Is+1>(std::forward<Bound>(b), c)...); }
-
-    template<class Bound, class Call>
-    inline STDCPP_CONSTEXPR14
-    auto __bind_dispatch(Bound&& b, Call&& c)
-        -> decltype(__bind_apply(
-            std::forward<Bound>(b), c,
-            make_index_sequence<tuple_size<typename remove_cv<typename remove_reference<Bound>::type>::type>::value - 1>{}))
-    {
-        using _BoundPlain = typename remove_cv<typename remove_reference<Bound>::type>::type;
-        return __bind_apply(
-            std::forward<Bound>(b), c,
-            make_index_sequence<tuple_size<_BoundPlain>::value - 1>{});
-    }
-} // namespace __ftl
-
-template<class F, class... BoundArgs>
-class _Bind
-{
-    tuple<typename decay<F>::type, typename decay<BoundArgs>::type...> _M_args;
-
-public:
-    // The perfect-forwarding constructor must not hijack copy/move.
-    template<class G, class... A, class = typename enable_if<
-        !is_same<_Bind, typename remove_cv<typename remove_reference<G>::type>::type>::value>::type>
-    STDCPP_CONSTEXPR20
-    explicit _Bind(G&& g, A&&... a)
-        : _M_args(std::forward<G>(g), std::forward<A>(a)...) {}
-
-    // C++11/14/17: only a const operator().
-    template<class... Args>
-    STDCPP_CONSTEXPR20
-    auto operator()(Args&&... args) const
-        -> decltype(__ftl::__bind_dispatch(
-            _M_args,
-            std::forward_as_tuple(std::forward<Args>(args)...)))
-    {
-        return __ftl::__bind_dispatch(
-            _M_args,
-            std::forward_as_tuple(std::forward<Args>(args)...));
-    }
-
-#if STDCPP_CXX20
-    template<class... Args>
-    STDCPP_CONSTEXPR20
-    auto operator()(Args&&... args)
-        -> decltype(__ftl::__bind_dispatch(
-            _M_args,
-            std::forward_as_tuple(std::forward<Args>(args)...)))
-    {
-        return __ftl::__bind_dispatch(
-            _M_args,
-            std::forward_as_tuple(std::forward<Args>(args)...));
-    }
-
-    template<class... Args>
-    STDCPP_CONSTEXPR20
-    auto operator()(Args&&... args) &&
-        -> decltype(__ftl::__bind_dispatch(
-            std::move(_M_args),
-            std::forward_as_tuple(std::forward<Args>(args)...)))
-    {
-        return __ftl::__bind_dispatch(
-            std::move(_M_args),
-            std::forward_as_tuple(std::forward<Args>(args)...));
-    }
-
-    template<class... Args>
-    STDCPP_CONSTEXPR20
-    auto operator()(Args&&... args) const&&
-        -> decltype(__ftl::__bind_dispatch(
-            std::move(_M_args),
-            std::forward_as_tuple(std::forward<Args>(args)...)))
-    {
-        return __ftl::__bind_dispatch(
-            std::move(_M_args),
-            std::forward_as_tuple(std::forward<Args>(args)...));
-    }
-#endif
-};
-
-template<class F, class... BoundArgs>
-struct is_bind_expression<_Bind<F, BoundArgs...>> : true_type {};
-
-template<class F, class... BoundArgs>
-inline STDCPP_CONSTEXPR20
-_Bind<typename decay<F>::type, typename decay<BoundArgs>::type...>
-bind(F&& f, BoundArgs&&... args)
-{
-    return _Bind<typename decay<F>::type, typename decay<BoundArgs>::type...>(
-        std::forward<F>(f), std::forward<BoundArgs>(args)...);
-}
-
-//=============================================================
-//  bad_function_call  [func.exception]
-//=============================================================
-class bad_function_call : public exception
-{
-public:
-    const char* what() const STDCPP_NOEXCEPT override { return "bad_function_call"; }
-};
-
-//=============================================================
-//  function  [func.wrap.func]
-//=============================================================
-namespace __ftl
-{
-    // SFINAE helper: is R invocable from F(Args...) (F treated as lvalue)?
-    template<class R, class F, class... Args>
-    struct __callable_r
-    {
-        template<class G, class = decltype(
-            __x_invoke_r<R>(std::declval<G&>(), std::declval<Args>()...))>
-        static true_type _S_test(int);
-        template<class G>
-        static false_type _S_test(...);
-        static constexpr bool value =
-            decltype(_S_test<typename decay<F>::type>(0))::value;
-    };
-
-#if !STDCPP_CXX17
-    template<class R, class... Args> struct __func_base { typedef R result_type; };
-    template<class R, class A1> struct __func_base<R, A1> {
-        typedef R result_type; typedef A1 argument_type;
-    };
-    template<class R, class A1, class A2> struct __func_base<R, A1, A2> {
-        typedef R result_type; typedef A1 first_argument_type;
-        typedef A2 second_argument_type;
-    };
-#endif
-}
-
-template<class> class function; // undefined
+#if STDCPP_FN_CXX11
+template<class> class function;
 
 template<class R, class... Args>
-class function<R(Args...)>
-#if !STDCPP_CXX17
-    : public __ftl::__func_base<R, Args...>
-#endif
-{
-    struct _Base
-    {
-        virtual ~_Base() STDCPP_NOEXCEPT {}
-        virtual R _invoke(Args&&... args) const = 0;
-        virtual _Base* _clone(void* where) const = 0;
-        virtual _Base* _move(void* where) STDCPP_NOEXCEPT = 0;
-        virtual const type_info& _target_type() const STDCPP_NOEXCEPT = 0;
+class function<R(Args...)> {
+    struct _base {
+        virtual ~_base() {}
+        virtual _base* _M_copy() const = 0;
+        virtual R _M_call(Args... args) = 0;
     };
-
     template<class F>
-    struct _Impl : _Base
-    {
-        F _f;
-        template<class G>
-        _Impl(G&& g) : _f(std::forward<G>(g)) {}
-        R _invoke(Args&&... args) const override
-        {
-            // std::function invokes the target as a non-const lvalue even
-            // though operator() is const.
-            return __ftl::__x_invoke_r<R>(
-                const_cast<F&>(_f), std::forward<Args>(args)...);
-        }
-        _Base* _clone(void* where) const override
-        { return where ? ::new (where) _Impl(_f) : new _Impl(_f); }
-        _Base* _move(void* where) STDCPP_NOEXCEPT override
-        { return where ? ::new (where) _Impl(std::move(_f))
-                       : new _Impl(std::move(_f)); }
-        const type_info& _target_type() const STDCPP_NOEXCEPT override
-        { return typeid(F); }
-    };
-
-    static const size_t _BufSize  = sizeof(void*) * 3;
-    static const size_t _BufAlign = alignof(max_align_t);
-    using _Storage = typename aligned_storage<_BufSize, _BufAlign>::type;
-
-    _Base*   _M_ptr;
-    bool     _M_local;
-    _Storage _M_buf;
-
-    template<class FD>
-    static constexpr bool _S_fits()
-    {
-        return sizeof(_Impl<FD>) <= _BufSize
-            && alignof(_Impl<FD>) <= _BufAlign;
-    }
-
-    void _M_destroy() STDCPP_NOEXCEPT
-    {
-        if (!_M_ptr) return;
-        if (_M_local) _M_ptr->~_Base();
-        else delete _M_ptr;
-        _M_ptr = nullptr;
-        _M_local = false;
-    }
-
-    template<class FD, class F>
-    void _M_init(F&& f, true_type)
-    {
-        _M_ptr = ::new (static_cast<void*>(&_M_buf)) _Impl<FD>(std::forward<F>(f));
-        _M_local = true;
-    }
-    template<class FD, class F>
-    void _M_init(F&& f, false_type)
-    {
-        _M_ptr = new _Impl<FD>(std::forward<F>(f));
-        _M_local = false;
-    }
-
-    template<class F>
-    void _M_init(F&& f)
-    {
-        using FD = typename decay<F>::type;
-        _M_init<FD>(std::forward<F>(f),
-                    integral_constant<bool, _S_fits<FD>()>{});
-    }
-
-    void _M_copy_from(const function& o)
-    {
-        if (!o._M_ptr) { _M_ptr = nullptr; _M_local = false; return; }
-        if (o._M_local) {
-            _M_ptr = o._M_ptr->_clone(&_M_buf);
-            _M_local = true;
-        } else {
-            _M_ptr = o._M_ptr->_clone(nullptr);
-            _M_local = false;
-        }
-    }
-
-    void _M_move_from(function& o) STDCPP_NOEXCEPT
-    {
-        if (!o._M_ptr) { _M_ptr = nullptr; _M_local = false; return; }
-        if (o._M_local) {
-            _M_ptr = o._M_ptr->_move(&_M_buf);
-            _M_local = true;
-            o._M_destroy();
-        } else {
-            _M_ptr = o._M_ptr;
-            _M_local = false;
-            o._M_ptr = nullptr;
-        }
-    }
-
-public:
-    using result_type = R;
-
-    STDCPP_CONSTEXPR function() STDCPP_NOEXCEPT : _M_ptr(nullptr), _M_local(false) {}
-    STDCPP_CONSTEXPR function(nullptr_t) STDCPP_NOEXCEPT : _M_ptr(nullptr), _M_local(false) {}
-
-    template<class F, class = typename enable_if<
-        !is_same<typename remove_cv<typename decay<F>::type>::type, function>::value,
-        decltype(__ftl::__callable_r<R, F, Args...>::value ? 0 : 0)>::type>
-    function(F&& f) : _M_ptr(nullptr), _M_local(false)
-    {
-        static_assert(__ftl::__callable_r<R, F, Args...>::value,
-                      "std::function target must be callable with the given signature");
-        _M_init(std::forward<F>(f));
-    }
-
-    function(const function& o) : _M_ptr(nullptr), _M_local(false) { _M_copy_from(o); }
-    function(function&& o) STDCPP_NOEXCEPT : _M_ptr(nullptr), _M_local(false) { _M_move_from(o); }
-
-    ~function() { _M_destroy(); }
-
-    function& operator=(const function& o)
-    {
-        if (this != &o) { _M_destroy(); _M_copy_from(o); }
-        return *this;
-    }
-    function& operator=(function&& o) STDCPP_NOEXCEPT
-    {
-        if (this != &o) { _M_destroy(); _M_move_from(o); }
-        return *this;
-    }
-    function& operator=(nullptr_t) STDCPP_NOEXCEPT { _M_destroy(); return *this; }
-
-    template<class F>
-    typename enable_if<
-        !is_same<typename remove_cv<typename decay<F>::type>::type, function>::value,
-        function&>::type
-    operator=(F&& f)
-    {
-        function(std::forward<F>(f)).swap(*this);
-        return *this;
-    }
-
-    void swap(function& o) STDCPP_NOEXCEPT
-    {
-        function tmp(std::move(*this));
-        *this = std::move(o);
-        o = std::move(tmp);
-    }
-
-    template<class F, class... A>
-    void assign(F&& f, A&&... a)
-    { function(std::bind(std::forward<F>(f), std::forward<A>(a)...)).swap(*this); }
-
-    explicit operator bool() const STDCPP_NOEXCEPT { return _M_ptr != nullptr; }
-
-    R operator()(Args... args) const
-    {
-        if (!_M_ptr) throw bad_function_call();
-        return _M_ptr->_invoke(std::forward<Args>(args)...);
-    }
-
-    const type_info& target_type() const STDCPP_NOEXCEPT
-    { return _M_ptr ? _M_ptr->_target_type() : typeid(void); }
-
-    template<class F> F* target() STDCPP_NOEXCEPT
-    {
-        if (_M_ptr && _M_ptr->_target_type() == typeid(F))
-            return &(static_cast<_Impl<F>*>(_M_ptr)->_f);
-        return nullptr;
-    }
-    template<class F> const F* target() const STDCPP_NOEXCEPT
-    {
-        if (_M_ptr && _M_ptr->_target_type() == typeid(F))
-            return &(static_cast<const _Impl<F>*>(_M_ptr)->_f);
-        return nullptr;
-    }
-};
-
-template<class R, class... Args>
-inline void swap(function<R(Args...)>& a, function<R(Args...)>& b) STDCPP_NOEXCEPT
-{ a.swap(b); }
-
-template<class R, class... Args>
-inline bool operator==(const function<R(Args...)>& f, nullptr_t) STDCPP_NOEXCEPT
-{ return !f; }
-template<class R, class... Args>
-inline bool operator==(nullptr_t, const function<R(Args...)>& f) STDCPP_NOEXCEPT
-{ return !f; }
-#if !STDCPP_CXX20
-template<class R, class... Args>
-inline bool operator!=(const function<R(Args...)>& f, nullptr_t) STDCPP_NOEXCEPT
-{ return static_cast<bool>(f); }
-template<class R, class... Args>
-inline bool operator!=(nullptr_t, const function<R(Args...)>& f) STDCPP_NOEXCEPT
-{ return static_cast<bool>(f); }
-#endif
-
-//=============================================================
-//  invoke  (C++17)  /  invoke_r  (C++23)
-//=============================================================
-#if STDCPP_CXX17
-template<class F, class... Args>
-inline STDCPP_CONSTEXPR20
-invoke_result_t<F, Args...>
-invoke(F&& f, Args&&... args)
-    STDCPP_NOEXCEPT_(is_nothrow_invocable_v<F, Args...>)
-{
-    return __ftl::__x_invoke(std::forward<F>(f), std::forward<Args>(args)...);
-}
-#endif
-
-//=============================================================
-//  not_fn  (C++17)  [func.not_fn]
-//=============================================================
-#if STDCPP_CXX17
-namespace __ftl
-{
-    template<class F>
-    class __not_fn
-    {
+    struct _holder : _base {
         F _M_f;
-    public:
-        template<class G>
-        explicit constexpr __not_fn(G&& g) : _M_f(std::forward<G>(g)) {}
-
-        template<class... Args>
-        constexpr auto operator()(Args&&... args) &
-            -> decltype(!__x_invoke(_M_f, std::forward<Args>(args)...))
-        { return !__x_invoke(_M_f, std::forward<Args>(args)...); }
-
-        template<class... Args>
-        constexpr auto operator()(Args&&... args) const&
-            -> decltype(!__x_invoke(_M_f, std::forward<Args>(args)...))
-        { return !__x_invoke(_M_f, std::forward<Args>(args)...); }
-
-        template<class... Args>
-        constexpr auto operator()(Args&&... args) &&
-            -> decltype(!__x_invoke(std::move(_M_f), std::forward<Args>(args)...))
-        { return !__x_invoke(std::move(_M_f), std::forward<Args>(args)...); }
-
-        template<class... Args>
-        constexpr auto operator()(Args&&... args) const&&
-            -> decltype(!__x_invoke(std::move(_M_f), std::forward<Args>(args)...))
-        { return !__x_invoke(std::move(_M_f), std::forward<Args>(args)...); }
+        _holder(const F& f) : _M_f(f) {}
+        _holder(F&& f) : _M_f(std::move(f)) {}
+        _base* _M_copy() const override { return new _holder(_M_f); }
+        R _M_call(Args... args) override { return _M_f(std::forward<Args>(args)...); }
     };
+
+    _base* _M_ptr;
+public:
+    function() noexcept : _M_ptr(nullptr) {}
+    function(nullptr_t) noexcept : _M_ptr(nullptr) {}
+
+    template<class F>
+    function(F f) : _M_ptr(new _holder<F>(std::move(f))) {}
+
+    function(const function& other) : _M_ptr(other._M_ptr ? other._M_ptr->_M_copy() : nullptr) {}
+    function(function&& other) noexcept : _M_ptr(other._M_ptr) { other._M_ptr = nullptr; }
+
+    ~function() { delete _M_ptr; }
+
+    function& operator=(const function& other) {
+        if (this != &other) {
+            delete _M_ptr;
+            _M_ptr = other._M_ptr ? other._M_ptr->_M_copy() : nullptr;
+        }
+        return *this;
+    }
+    function& operator=(function&& other) noexcept {
+        delete _M_ptr;
+        _M_ptr = other._M_ptr;
+        other._M_ptr = nullptr;
+        return *this;
+    }
+    function& operator=(nullptr_t) noexcept {
+        delete _M_ptr; _M_ptr = nullptr; return *this;
+    }
+
+    template<class F>
+    function& operator=(F&& f) {
+        delete _M_ptr;
+        _M_ptr = new _holder<typename decay<F>::type>(std::forward<F>(f));
+        return *this;
+    }
+
+    explicit operator bool() const noexcept { return _M_ptr != nullptr; }
+
+    R operator()(Args... args) const {
+        return _M_ptr->_M_call(std::forward<Args>(args)...);
+    }
+
+    void swap(function& other) noexcept { std::swap(_M_ptr, other._M_ptr); }
+};
+
+template<class R, class... Args>
+void swap(function<R(Args...)>& a, function<R(Args...)>& b) noexcept { a.swap(b); }
+#endif
+
+//=============================================================
+// bind / mem_fn (simplified C++11)
+//=============================================================
+#if STDCPP_FN_CXX11
+namespace __placeholders {
+    struct _ph {};
 }
+namespace placeholders {
+    constexpr __placeholders::_ph _1{};
+    constexpr __placeholders::_ph _2{};
+    constexpr __placeholders::_ph _3{};
+}
+
+template<class R, class C, class... A>
+class mem_fn_t {
+    R (C::*_M_pm)(A...);
+public:
+    mem_fn_t(R (C::*pm)(A...)) : _M_pm(pm) {}
+    R operator()(C& c, A... a) const { return (c.*_M_pm)(std::forward<A>(a)...); }
+    R operator()(C* c, A... a) const { return (c->*_M_pm)(std::forward<A>(a)...); }
+};
+
+template<class R, class C, class... A>
+mem_fn_t<R, C, A...> mem_fn(R (C::*pm)(A...)) { return mem_fn_t<R, C, A...>(pm); }
+#endif
+
+//=============================================================
+// invoke (C++17)
+//=============================================================
+#if STDCPP_FN_CXX17
+template<class F, class... Args>
+auto invoke(F&& f, Args&&... args)
+    -> decltype(std::forward<F>(f)(std::forward<Args>(args)...)) {
+    return std::forward<F>(f)(std::forward<Args>(args)...);
+}
+
+template<class R, class F, class... Args>
+R invoke_r(F&& f, Args&&... args) {
+    return static_cast<R>(std::invoke(std::forward<F>(f), std::forward<Args>(args)...));
+}
+#endif
+
+//=============================================================
+// not_fn (C++17)
+//=============================================================
+#if STDCPP_FN_CXX17
+template<class F>
+struct not_fn_t {
+    F _M_f;
+    explicit not_fn_t(F&& f) : _M_f(std::move(f)) {}
+    template<class... Args>
+    auto operator()(Args&&... args) & -> decltype(!_M_f(std::forward<Args>(args)...)) {
+        return !_M_f(std::forward<Args>(args)...);
+    }
+    template<class... Args>
+    auto operator()(Args&&... args) const& -> decltype(!_M_f(std::forward<Args>(args)...)) {
+        return !_M_f(std::forward<Args>(args)...);
+    }
+};
 
 template<class F>
-inline constexpr
-__ftl::__not_fn<typename decay<F>::type>
-not_fn(F&& f)
-{
-    return __ftl::__not_fn<typename decay<F>::type>(std::forward<F>(f));
-}
-#endif // C++17
-
-//=============================================================
-//  C++20 / C++23 / C++26 components:
-//    bind_front, bind_back, invoke_r, searchers,
-//    move_only_function, function_ref, copyable_function.
-//=============================================================
-
-//=============================================================
-//  invoke_r  (C++23)
-//=============================================================
-#if STDCPP_CXX23
-template<class R, class F, class... Args>
-constexpr R invoke_r(F&& f, Args&&... args)
-    STDCPP_NOEXCEPT_(is_nothrow_invocable_r_v<R, F, Args...>)
-{
-    return __ftl::__x_invoke_r<R>(std::forward<F>(f), std::forward<Args>(args)...);
+not_fn_t<typename decay<F>::type> not_fn(F&& f) {
+    return not_fn_t<typename decay<F>::type>(std::forward<F>(f));
 }
 #endif
 
 //=============================================================
-//  bind_front  (C++20)  /  bind_back  (C++23)
+// boyer_moore_searcher / boyer_moore_horspool_searcher (C++17)
 //=============================================================
-#if STDCPP_CXX20
-namespace __ftl
-{
-    template<class Bound, class Call, size_t... Bs, size_t... Cs>
-    constexpr auto __bind_front_apply(Bound&& b, Call&& c,
-                                      index_sequence<Bs...>,
-                                      index_sequence<Cs...>)
-        -> decltype(__x_invoke(
-            std::get<0>(b),
-            std::get<Bs+1>(b)...,
-            std::get<Cs>(c)...))
-    {
-        return __x_invoke(
-            std::get<0>(b),
-            std::get<Bs+1>(b)...,
-            std::get<Cs>(c)...);
-    }
-
-    template<class Bound, class Call, size_t... Bs, size_t... Cs>
-    constexpr auto __bind_back_apply(Bound&& b, Call&& c,
-                                     index_sequence<Bs...>,
-                                     index_sequence<Cs...>)
-        -> decltype(__x_invoke(
-            std::get<0>(b),
-            std::get<Cs>(c)...,
-            std::get<Bs+1>(b)...))
-    {
-        return __x_invoke(
-            std::get<0>(b),
-            std::get<Cs>(c)...,
-            std::get<Bs+1>(b)...);
-    }
-}
-
-template<class F, class... BoundArgs>
-class _Bind_front
-{
-    tuple<typename decay<F>::type, typename decay<BoundArgs>::type...> _M_args;
-
-    template<class Bound, class Call>
-    static constexpr auto
-    _S_apply(Bound&& b, Call&& c)
-        -> decltype(__ftl::__bind_front_apply(
-            b, c,
-            make_index_sequence<sizeof...(BoundArgs)>{},
-            make_index_sequence<tuple_size<typename remove_reference<Call>::type>::value>{}))
-    {
-        return __ftl::__bind_front_apply(
-            b, c,
-            make_index_sequence<sizeof...(BoundArgs)>{},
-            make_index_sequence<tuple_size<typename remove_reference<Call>::type>::value>{});
-    }
-
+#if STDCPP_FN_CXX17
+template<class Iter, class Hash = hash<typename iterator_traits<Iter>::value_type>,
+         class Pred = equal_to<typename iterator_traits<Iter>::value_type> >
+class boyer_moore_horspool_searcher {
+    Iter _M_first, _M_last;
+    Hash _M_hash;
+    Pred _M_pred;
 public:
-    template<class G, class... A, class = typename enable_if<
-        !is_same<_Bind_front, remove_cv_t<remove_reference_t<G>>>::value>::type>
-    explicit _Bind_front(G&& g, A&&... a)
-        : _M_args(std::forward<G>(g), std::forward<A>(a)...) {}
-
-    template<class... CallArgs>
-    constexpr auto operator()(CallArgs&&... args) &
-        -> decltype(_S_apply(_M_args,
-            std::forward_as_tuple(std::forward<CallArgs>(args)...)))
-    { return _S_apply(_M_args, std::forward_as_tuple(std::forward<CallArgs>(args)...)); }
-
-    template<class... CallArgs>
-    constexpr auto operator()(CallArgs&&... args) const&
-        -> decltype(_S_apply(_M_args,
-            std::forward_as_tuple(std::forward<CallArgs>(args)...)))
-    { return _S_apply(_M_args, std::forward_as_tuple(std::forward<CallArgs>(args)...)); }
-
-    template<class... CallArgs>
-    constexpr auto operator()(CallArgs&&... args) &&
-        -> decltype(_S_apply(std::move(_M_args),
-            std::forward_as_tuple(std::forward<CallArgs>(args)...)))
-    { return _S_apply(std::move(_M_args), std::forward_as_tuple(std::forward<CallArgs>(args)...)); }
-
-    template<class... CallArgs>
-    constexpr auto operator()(CallArgs&&... args) const&&
-        -> decltype(_S_apply(std::move(_M_args),
-            std::forward_as_tuple(std::forward<CallArgs>(args)...)))
-    { return _S_apply(std::move(_M_args), std::forward_as_tuple(std::forward<CallArgs>(args)...)); }
-};
-
-template<class F, class... BoundArgs>
-constexpr _Bind_front<decay_t<F>, decay_t<BoundArgs>...>
-bind_front(F&& f, BoundArgs&&... args)
-{
-    return _Bind_front<decay_t<F>, decay_t<BoundArgs>...>(
-        std::forward<F>(f), std::forward<BoundArgs>(args)...);
-}
-#endif // C++20
-
-#if STDCPP_CXX23
-template<class F, class... BoundArgs>
-class _Bind_back
-{
-    tuple<typename decay<F>::type, typename decay<BoundArgs>::type...> _M_args;
-
-    template<class Bound, class Call>
-    static constexpr auto
-    _S_apply(Bound&& b, Call&& c)
-        -> decltype(__ftl::__bind_back_apply(
-            b, c,
-            make_index_sequence<sizeof...(BoundArgs)>{},
-            make_index_sequence<tuple_size<typename remove_reference<Call>::type>::value>{}))
-    {
-        return __ftl::__bind_back_apply(
-            b, c,
-            make_index_sequence<sizeof...(BoundArgs)>{},
-            make_index_sequence<tuple_size<typename remove_reference<Call>::type>::value>{});
-    }
-
-public:
-    template<class G, class... A, class = typename enable_if<
-        !is_same<_Bind_back, remove_cv_t<remove_reference_t<G>>>::value>::type>
-    explicit _Bind_back(G&& g, A&&... a)
-        : _M_args(std::forward<G>(g), std::forward<A>(a)...) {}
-
-    template<class... CallArgs>
-    constexpr auto operator()(CallArgs&&... args) &
-        -> decltype(_S_apply(_M_args, std::forward_as_tuple(std::forward<CallArgs>(args)...)))
-    { return _S_apply(_M_args, std::forward_as_tuple(std::forward<CallArgs>(args)...)); }
-
-    template<class... CallArgs>
-    constexpr auto operator()(CallArgs&&... args) const&
-        -> decltype(_S_apply(_M_args, std::forward_as_tuple(std::forward<CallArgs>(args)...)))
-    { return _S_apply(_M_args, std::forward_as_tuple(std::forward<CallArgs>(args)...)); }
-
-    template<class... CallArgs>
-    constexpr auto operator()(CallArgs&&... args) &&
-        -> decltype(_S_apply(std::move(_M_args), std::forward_as_tuple(std::forward<CallArgs>(args)...)))
-    { return _S_apply(std::move(_M_args), std::forward_as_tuple(std::forward<CallArgs>(args)...)); }
-
-    template<class... CallArgs>
-    constexpr auto operator()(CallArgs&&... args) const&&
-        -> decltype(_S_apply(std::move(_M_args), std::forward_as_tuple(std::forward<CallArgs>(args)...)))
-    { return _S_apply(std::move(_M_args), std::forward_as_tuple(std::forward<CallArgs>(args)...)); }
-};
-
-template<class F, class... BoundArgs>
-constexpr _Bind_back<decay_t<F>, decay_t<BoundArgs>...>
-bind_back(F&& f, BoundArgs&&... args)
-{
-    return _Bind_back<decay_t<F>, decay_t<BoundArgs>...>(
-        std::forward<F>(f), std::forward<BoundArgs>(args)...);
-}
-#endif // C++23
-
-//=============================================================
-//  Searchers  [func.search]  (C++17)
-//=============================================================
-#if STDCPP_CXX17
-namespace __ftl
-{
-    // Minimal iterator value type (we do not include <iterator>).
-    template<class It> struct __iter_val { typedef typename It::value_type type; };
-    template<class T> struct __iter_val<T*> { typedef T type; };
-    template<class T> struct __iter_val<const T*> { typedef T type; };
-
-    // Simple RAII dynamic array.
-    template<class T>
-    class __array_owner
-    {
-        T* _p;
-        size_t _n;
-        __array_owner(const __array_owner&);
-        __array_owner& operator=(const __array_owner&);
-    public:
-        explicit __array_owner(size_t n) : _p(n ? new T[n] : nullptr), _n(n) {}
-        ~__array_owner() { delete[] _p; }
-        T& operator[](size_t i) { return _p[i]; }
-        const T& operator[](size_t i) const { return _p[i]; }
-        T* get() { return _p; }
-        const T* get() const { return _p; }
-        size_t size() const { return _n; }
-    };
-
-    // Minimal advance (we cannot include <iterator>). The searchers require
-    // random-access iterators, so += is always well-formed.
-    template<class It, class D>
-    inline void __advance(It& it, D n) { it += n; }
-
-    // Open-addressing hash map from pattern character -> rightmost index.
-    template<class Key, class Hash, class Pred>
-    class __bm_bad_char
-    {
-        struct Slot { Key key; ptrdiff_t pos; bool used; };
-        Slot* _slots;
-        size_t _mask;
-        Hash  _hash;
-        Pred  _pred;
-
-        size_t _idx(const Key& k) const
-        { return static_cast<size_t>(_hash(k)) & _mask; }
-
-    public:
-        __bm_bad_char(size_t pat_len, Hash h, Pred p)
-            : _slots(nullptr), _mask(0), _hash(h), _pred(p)
-        {
-            size_t cap = 4;
-            while (cap < pat_len * 2 + 8) cap <<= 1;
-            _mask = cap - 1;
-            _slots = new Slot[cap];
-            for (size_t i = 0; i < cap; ++i) _slots[i].used = false;
-        }
-        ~__bm_bad_char() { delete[] _slots; }
-
-        void set(const Key& k, ptrdiff_t pos)
-        {
-            size_t i = _idx(k);
-            while (_slots[i].used) {
-                if (_pred(_slots[i].key, k)) { _slots[i].pos = pos; return; }
-                i = (i + 1) & _mask;
-            }
-            _slots[i].used = true;
-            _slots[i].key = k;
-            _slots[i].pos = pos;
-        }
-
-        ptrdiff_t get(const Key& k, ptrdiff_t def) const
-        {
-            size_t i = _idx(k);
-            while (_slots[i].used) {
-                if (_pred(_slots[i].key, k)) return _slots[i].pos;
-                i = (i + 1) & _mask;
-            }
-            return def;
-        }
-    };
-}
-
-// ---- default_searcher ------------------------------------------
-template<class Iter,
-         class Hash = hash<typename __ftl::__iter_val<Iter>::type>,
-         class Pred = equal_to<>>
-class default_searcher
-{
-    Iter _first, _last;
-    Hash _hash;
-    Pred _pred;
-public:
-    default_searcher(Iter first, Iter last, Hash h = Hash(), Pred p = Pred())
-        : _first(first), _last(last), _hash(h), _pred(p) {}
+    boyer_moore_horspool_searcher(Iter first, Iter last, Hash hf = Hash(), Pred pred = Pred())
+        : _M_first(first), _M_last(last), _M_hash(hf), _M_pred(pred) {}
 
     template<class FIter>
-    pair<FIter, FIter> operator()(FIter first, FIter last) const
-    {
-        for (;;) {
-            FIter it = first;
-            Iter pat = _first;
-            while (it != last && pat != _last && _pred(*it, *pat)) { ++it; ++pat; }
-            if (pat == _last) return { first, it };
-            if (it == last) return { last, last };
-            ++first;
+    pair<FIter, FIter> operator()(FIter first, FIter last) const {
+        size_t m = distance(_M_first, _M_last);
+        size_t n = distance(first, last);
+        if (m == 0) return pair<FIter, FIter>(first, first);
+        if (n < m) return pair<FIter, FIter>(last, last);
+
+        size_t skip[256];
+        for (size_t i = 0; i < 256; ++i) skip[i] = m;
+        size_t idx = 0;
+        for (Iter it = _M_first; it != _M_last; ++it, ++idx) {
+            skip[(unsigned char)_M_hash(*it) % 256] = m - 1 - idx;
         }
-    }
-};
 
-// ---- boyer_moore_horspool_searcher -----------------------------
-template<class Iter,
-         class Hash = hash<typename __ftl::__iter_val<Iter>::type>,
-         class Pred = equal_to<>>
-class boyer_moore_horspool_searcher
-{
-    using K = typename __ftl::__iter_val<Iter>::type;
-
-    __ftl::__array_owner<K> _pat;
-    size_t _m;
-    __ftl::__bm_bad_char<K, Hash, Pred> _bc;
-    Pred _pred;
-
-    boyer_moore_horspool_searcher(Iter first, Iter last, size_t m,
-                                  Hash h, Pred p)
-        : _pat(m), _m(m), _bc(m, h, p), _pred(p)
-    {
-        size_t i = 0;
-        for (Iter it = first; it != last; ++it, ++i) _pat[i] = *it;
-        for (size_t k = 0; k + 1 < _m; ++k) _bc.set(_pat[k], (ptrdiff_t)k);
-    }
-
-public:
-    boyer_moore_horspool_searcher(Iter first, Iter last,
-                                  Hash h = Hash(), Pred p = Pred())
-        : _pat(0), _m(0), _bc(0, h, p), _pred(p)
-    {
-        size_t m = 0;
-        for (Iter it = first; it != last; ++it) ++m;
-        this->~boyer_moore_horspool_searcher();
-        new (this) boyer_moore_horspool_searcher(first, last, m, h, p);
-    }
-
-    template<class FIter>
-    pair<FIter, FIter> operator()(FIter first, FIter last) const
-    {
-        if (_m == 0) return { first, first };
-        size_t n = 0;
-        for (FIter it = first; it != last; ++it) ++n;
-        if (n < _m) return { last, last };
-
-        size_t i = 0;
-        while (i <= n - _m) {
-            ptrdiff_t j = (ptrdiff_t)_m - 1;
-            FIter cur = first;
-            __ftl::__advance(cur, i + (size_t)j);
-            while (j >= 0 && _pred(_pat[(size_t)j], *cur)) {
-                --j;
-                if (j >= 0) --cur;
+        FIter cur = first;
+        advance(cur, m - 1);
+        while (cur != last) {
+            FIter t = cur;
+            Iter p = _M_last;
+            --p;
+            bool match = true;
+            for (size_t i = 0; i < m; ++i) {
+                if (!_M_pred(*t, *p)) { match = false; break; }
+                --t; --p;
             }
-            if (j < 0) {
-                FIter r = first;
-                __ftl::__advance(r, i);
+            if (match) {
+                FIter r = cur;
+                advance(r, -(ptrdiff_t)(m - 1));
                 FIter r2 = r;
-                __ftl::__advance(r2, _m);
-                return { r, r2 };
+                advance(r2, m);
+                return pair<FIter, FIter>(r, r2);
             }
-            FIter last_cur = first;
-            __ftl::__advance(last_cur, i + _m - 1);
-            ptrdiff_t pos = _bc.get(*last_cur, -1);
-            size_t shift = (pos < (ptrdiff_t)_m - 1)
-                ? (size_t)((ptrdiff_t)_m - 1 - pos) : 1;
-            i += shift;
+            size_t s = skip[(unsigned char)_M_hash(*cur) % 256];
+            if (s == 0) s = 1;
+            advance(cur, s);
         }
-        return { last, last };
+        return pair<FIter, FIter>(last, last);
     }
 };
 
-// ---- boyer_moore_searcher --------------------------------------
-template<class Iter,
-         class Hash = hash<typename __ftl::__iter_val<Iter>::type>,
-         class Pred = equal_to<>>
-class boyer_moore_searcher
-{
-    using K = typename __ftl::__iter_val<Iter>::type;
-
-    __ftl::__array_owner<K> _pat;
-    size_t _m;
-    __ftl::__bm_bad_char<K, Hash, Pred> _bc;
-    __ftl::__array_owner<ptrdiff_t> _gs; // good-suffix table, size m+1
-    Pred _pred;
-
-    void _build_good_suffix()
-    {
-        if (_m == 0) return;
-        __ftl::__array_owner<ptrdiff_t> suff(_m);
-        suff[_m - 1] = (ptrdiff_t)_m;
-        ptrdiff_t g = (ptrdiff_t)_m - 1, f = 0;
-        for (ptrdiff_t i = (ptrdiff_t)_m - 2; i >= 0; --i) {
-            if (i > g && suff[(size_t)(i + (ptrdiff_t)_m - 1 - f)] < i - g) {
-                suff[(size_t)i] = suff[(size_t)(i + (ptrdiff_t)_m - 1 - f)];
-            } else {
-                if (i < g) g = i;
-                f = i;
-                while (g >= 0 && _pred(_pat[(size_t)g],
-                                      _pat[(size_t)(g + (ptrdiff_t)_m - 1 - f)]))
-                    --g;
-                suff[(size_t)i] = f - g;
-            }
-        }
-        for (size_t i = 0; i <= _m; ++i) _gs[i] = (ptrdiff_t)_m;
-        ptrdiff_t j = 0;
-        for (ptrdiff_t i = (ptrdiff_t)_m - 1; i >= 0; --i) {
-            if (suff[(size_t)i] == i + 1) {
-                for (; j < (ptrdiff_t)_m - 1 - i; ++j)
-                    if (_gs[(size_t)j] == (ptrdiff_t)_m)
-                        _gs[(size_t)j] = (ptrdiff_t)_m - 1 - i;
-            }
-        }
-        for (size_t i = 0; i <= _m - 2; ++i)
-            _gs[_m - 1 - (size_t)suff[i]] = (ptrdiff_t)_m - 1 - (ptrdiff_t)i;
-    }
-
-    boyer_moore_searcher(Iter first, Iter last, size_t m, Hash h, Pred p)
-        : _pat(m), _m(m), _bc(m, h, p), _gs(m + 1), _pred(p)
-    {
-        size_t i = 0;
-        for (Iter it = first; it != last; ++it, ++i) _pat[i] = *it;
-        for (size_t k = 0; k < _m; ++k) _bc.set(_pat[k], (ptrdiff_t)k);
-        _build_good_suffix();
-    }
-
+template<class Iter, class Hash = hash<typename iterator_traits<Iter>::value_type>,
+         class Pred = equal_to<typename iterator_traits<Iter>::value_type> >
+class boyer_moore_searcher {
+    Iter _M_first, _M_last;
+    Hash _M_hash;
+    Pred _M_pred;
 public:
-    boyer_moore_searcher(Iter first, Iter last,
-                         Hash h = Hash(), Pred p = Pred())
-        : _pat(0), _m(0), _bc(0, h, p), _gs(0), _pred(p)
-    {
-        size_t m = 0;
-        for (Iter it = first; it != last; ++it) ++m;
-        new (this) boyer_moore_searcher(first, last, m, h, p);
-    }
+    boyer_moore_searcher(Iter first, Iter last, Hash hf = Hash(), Pred pred = Pred())
+        : _M_first(first), _M_last(last), _M_hash(hf), _M_pred(pred) {}
 
     template<class FIter>
-    pair<FIter, FIter> operator()(FIter first, FIter last) const
-    {
-        if (_m == 0) return { first, first };
-        size_t n = 0;
-        for (FIter it = first; it != last; ++it) ++n;
-        if (n < _m) return { last, last };
+    pair<FIter, FIter> operator()(FIter first, FIter last) const {
+        size_t m = distance(_M_first, _M_last);
+        size_t n = distance(first, last);
+        if (m == 0) return pair<FIter, FIter>(first, first);
+        if (n < m) return pair<FIter, FIter>(last, last);
 
-        size_t i = 0;
-        while (i <= n - _m) {
-            ptrdiff_t j = (ptrdiff_t)_m - 1;
-            FIter cur = first;
-            __ftl::__advance(cur, i + (size_t)j);
-            while (j >= 0 && _pred(_pat[(size_t)j], *cur)) {
-                --j;
-                if (j >= 0) --cur;
-            }
-            if (j < 0) {
-                FIter r = first;
-                __ftl::__advance(r, i);
-                FIter r2 = r;
-                __ftl::__advance(r2, _m);
-                return { r, r2 };
-            }
-            ptrdiff_t pos = _bc.get(*cur, -1);
-            size_t bc = (pos < j) ? (size_t)(j - pos) : 1;
-            size_t gs = (size_t)_gs[(size_t)j];
-            i += (bc > gs ? bc : gs);
+        size_t skip[256];
+        for (size_t i = 0; i < 256; ++i) skip[i] = m;
+        size_t idx = 0;
+        for (Iter it = _M_first; it != _M_last; ++it, ++idx) {
+            skip[(unsigned char)_M_hash(*it) % 256] = m - 1 - idx;
         }
-        return { last, last };
+
+        FIter cur = first;
+        advance(cur, m - 1);
+        while (cur != last) {
+            FIter t = cur;
+            Iter p = _M_last;
+            --p;
+            bool match = true;
+            for (size_t i = 0; i < m; ++i) {
+                if (!_M_pred(*t, *p)) { match = false; break; }
+                --t; --p;
+            }
+            if (match) {
+                FIter r = cur;
+                advance(r, -(ptrdiff_t)(m - 1));
+                FIter r2 = r;
+                advance(r2, m);
+                return pair<FIter, FIter>(r, r2);
+            }
+            size_t s = skip[(unsigned char)_M_hash(*cur) % 256];
+            if (s == 0) s = 1;
+            advance(cur, s);
+        }
+        return pair<FIter, FIter>(last, last);
     }
 };
-#endif // C++17
 
-//=============================================================
-//  move_only_function  (C++23)  [func.move.only.function]
-//=============================================================
-#if STDCPP_CXX23
-template<class... _Sigs> class move_only_function; // primary, undefined
+template<class Iter, class Hash = hash<typename iterator_traits<Iter>::value_type>,
+         class Pred = equal_to<typename iterator_traits<Iter>::value_type> >
+class default_searcher {
+    Iter _M_first, _M_last;
+    Pred _M_pred;
+public:
+    default_searcher(Iter first, Iter last, Pred pred = Pred())
+        : _M_first(first), _M_last(last), _M_pred(pred) {}
 
-#define STDCPP_MOF_BUF_INIT()                                                    \
-    static constexpr size_t _BufSize = sizeof(void*) * 3;                     \
-    static constexpr size_t _BufAlign = alignof(max_align_t);                 \
-    typename aligned_storage<_BufSize, _BufAlign>::type _M_buf;               \
-    _Base* _M_ptr = nullptr;                                                  \
-    bool _M_local = false;                                                    \
-    template<class FD> static constexpr bool _S_fits() {                      \
-        return sizeof(_Impl<FD>) <= _BufSize                                  \
-            && alignof(_Impl<FD>) <= _BufAlign;                               \
-    }                                                                         \
-    void _M_destroy() noexcept {                                              \
-        if (!_M_ptr) return;                                                  \
-        if (_M_local) _M_ptr->~_Base();                                       \
-        else delete _M_ptr;                                                   \
-        _M_ptr = nullptr; _M_local = false;                                   \
-    }                                                                         \
-    template<class FD, class F>                                               \
-    void _M_init(F&& f, true_type) {                                          \
-        _M_ptr = ::new (static_cast<void*>(&_M_buf))                          \
-            _Impl<FD>(std::forward<F>(f));                                    \
-        _M_local = true;                                                      \
-    }                                                                         \
-    template<class FD, class F>                                               \
-    void _M_init(F&& f, false_type) {                                         \
-        _M_ptr = new _Impl<FD>(std::forward<F>(f));                           \
-        _M_local = false;                                                     \
+    template<class FIter>
+    pair<FIter, FIter> operator()(FIter first, FIter last) const {
+        for (FIter it = first; it != last; ++it) {
+            FIter t = it;
+            Iter p = _M_first;
+            bool match = true;
+            while (p != _M_last) {
+                if (t == last || !_M_pred(*t, *p)) { match = false; break; }
+                ++t; ++p;
+            }
+            if (match) return pair<FIter, FIter>(it, t);
+        }
+        return pair<FIter, FIter>(last, last);
     }
-
-#define STDCPP_MOF_SPEC(_NAMESIG, _QUAL, _INVOKE_F, _NOEXCEPT, _REQ, _CALLPTR)  \
-template<class R, class... ArgTypes>                                          \
-class move_only_function<R(ArgTypes...) _NAMESIG> {                          \
-    struct _Base {                                                            \
-        virtual ~_Base() = default;                                           \
-        virtual R _call(ArgTypes... args) _QUAL _NOEXCEPT = 0;               \
-        virtual const type_info& _target_type() const noexcept = 0;          \
-        virtual _Base* _move_into(void* buf, bool& local) = 0;               \
-    };                                                                        \
-    template<class F> struct _Impl final : _Base {                            \
-        F _f;                                                                 \
-        template<class G> explicit _Impl(G&& g) : _f(std::forward<G>(g)) {}  \
-        R _call(ArgTypes... args) _QUAL _NOEXCEPT override {                 \
-            return _INVOKE_F;                                                 \
-        }                                                                     \
-        const type_info& _target_type() const noexcept override {            \
-            return typeid(F);                                                 \
-        }                                                                     \
-        _Base* _move_into(void* buf, bool& local) override {                  \
-            if (sizeof(_Impl) <= _BufSize                                     \
-                && alignof(_Impl) <= _BufAlign) {                             \
-                _Base* p = ::new (buf) _Impl(std::move(_f));                  \
-                local = true; return p;                                       \
-            }                                                                 \
-            _Base* p = new _Impl(std::move(_f));                              \
-            local = false; return p;                                          \
-        }                                                                     \
-    };                                                                        \
-    STDCPP_MOF_BUF_INIT()                                                        \
-public:                                                                       \
-    using result_type = R;                                                    \
-    move_only_function() noexcept = default;                                  \
-    move_only_function(nullptr_t) noexcept {}                                 \
-    template<class F, class FD = decay_t<F>,                                   \
-        class = enable_if_t<!is_same<FD, move_only_function>::value>>         \
-    move_only_function(F&& f) {                                               \
-        _REQ;                                                                 \
-        _M_init<FD>(std::forward<F>(f),                                       \
-            integral_constant<bool, _S_fits<FD>()>{});                        \
-    }                                                                         \
-    move_only_function(move_only_function&& o) noexcept {                     \
-        if (o._M_ptr) {                                                       \
-            _M_ptr = o._M_ptr->_move_into(&_M_buf, _M_local);                 \
-            o._M_destroy();                                                   \
-        }                                                                     \
-    }                                                                         \
-    move_only_function(const move_only_function&) = delete;                   \
-    move_only_function& operator=(const move_only_function&) = delete;        \
-    move_only_function& operator=(move_only_function&& o) noexcept {          \
-        if (this != &o) { _M_destroy();                                       \
-            if (o._M_ptr) {                                                   \
-                _M_ptr = o._M_ptr->_move_into(&_M_buf, _M_local);             \
-                o._M_destroy();                                               \
-            }                                                                 \
-        }                                                                     \
-        return *this;                                                         \
-    }                                                                         \
-    move_only_function& operator=(nullptr_t) noexcept {                       \
-        _M_destroy(); return *this;                                           \
-    }                                                                         \
-    template<class F>                                                         \
-    move_only_function& operator=(F&& f) {                                    \
-        move_only_function(std::forward<F>(f)).swap(*this);                   \
-        return *this;                                                         \
-    }                                                                         \
-    ~move_only_function() { _M_destroy(); }                                   \
-    void swap(move_only_function& o) noexcept {                               \
-        move_only_function tmp(static_cast<move_only_function&&>(*this));     \
-        *this = static_cast<move_only_function&&>(o);                         \
-        o = static_cast<move_only_function&&>(tmp);                           \
-    }                                                                         \
-    explicit operator bool() const noexcept { return _M_ptr != nullptr; }    \
-    R operator()(ArgTypes... args) _QUAL _NOEXCEPT {                          \
-        return _CALLPTR _call(std::forward<ArgTypes>(args)...);                \
-    }                                                                         \
-    const type_info& target_type() const noexcept {                           \
-        return _M_ptr ? _M_ptr->_target_type() : typeid(void);                \
-    }                                                                         \
-    friend bool operator==(const move_only_function& f, nullptr_t) noexcept   \
-    { return !f._M_ptr; }                                                     \
-    friend bool operator==(nullptr_t, const move_only_function& f) noexcept   \
-    { return !f._M_ptr; }                                                     \
-    friend bool operator!=(const move_only_function& f, nullptr_t) noexcept   \
-    { return (bool)f._M_ptr; }                                                \
-    friend bool operator!=(nullptr_t, const move_only_function& f) noexcept   \
-    { return (bool)f._M_ptr; }                                                \
 };
-
-// Helper for swapping when at least one side is heap-allocated.
-// Requirements for each specialization.
-#define STDCPP_MOF_REQ_PLAIN \
-    static_assert(is_constructible<R,                            \
-        invoke_result_t<F&, ArgTypes...>>::value,                \
-        "move_only_function target has incompatible signature")
-#define STDCPP_MOF_REQ_CONST \
-    static_assert(is_invocable_r_v<R, const F&, ArgTypes...>,    \
-        "const move_only_function target must be const-callable")
-#define STDCPP_MOF_REQ_NOEX \
-    static_assert(is_nothrow_invocable_r_v<R, F&, ArgTypes...>,  \
-        "noexcept move_only_function target must be nothrow-callable")
-#define STDCPP_MOF_REQ_CONST_NOEX \
-    static_assert(is_nothrow_invocable_r_v<R, const F&, ArgTypes...>, \
-        "const noexcept move_only_function target must be const-nothrow-callable")
-
-#define STDCPP_MOF_CALL_LV  (__ftl::__x_invoke_r<R>(_f, std::forward<ArgTypes>(args)...))
-#define STDCPP_MOF_CALL_RV  (__ftl::__x_invoke_r<R>(std::move(_f), std::forward<ArgTypes>(args)...))
-
-// 12 specializations: ref-qual {none,&,&&} x cv {none,const} x noexcept {none,noexcept}
-STDCPP_MOF_SPEC(,                 ,                STDCPP_MOF_CALL_LV, ,          STDCPP_MOF_REQ_PLAIN, _M_ptr->)
-STDCPP_MOF_SPEC(noexcept,         ,                STDCPP_MOF_CALL_LV, noexcept,   STDCPP_MOF_REQ_NOEX, _M_ptr->)
-STDCPP_MOF_SPEC(const,            const,           STDCPP_MOF_CALL_LV, ,          STDCPP_MOF_REQ_CONST, _M_ptr->)
-STDCPP_MOF_SPEC(const noexcept,   const,           STDCPP_MOF_CALL_LV, noexcept,   STDCPP_MOF_REQ_CONST_NOEX, _M_ptr->)
-STDCPP_MOF_SPEC(&,                &,               STDCPP_MOF_CALL_LV, ,          STDCPP_MOF_REQ_PLAIN, _M_ptr->)
-STDCPP_MOF_SPEC(& noexcept,       &,               STDCPP_MOF_CALL_LV, noexcept,   STDCPP_MOF_REQ_NOEX, _M_ptr->)
-STDCPP_MOF_SPEC(const &,          const &,         STDCPP_MOF_CALL_LV, ,          STDCPP_MOF_REQ_CONST, _M_ptr->)
-STDCPP_MOF_SPEC(const & noexcept, const &,         STDCPP_MOF_CALL_LV, noexcept,   STDCPP_MOF_REQ_CONST_NOEX, _M_ptr->)
-STDCPP_MOF_SPEC(&&,               &&,              STDCPP_MOF_CALL_RV, ,          STDCPP_MOF_REQ_PLAIN, std::move(*_M_ptr).)
-STDCPP_MOF_SPEC(&& noexcept,      &&,              STDCPP_MOF_CALL_RV, noexcept,   STDCPP_MOF_REQ_NOEX, std::move(*_M_ptr).)
-STDCPP_MOF_SPEC(const &&,         const &&,        STDCPP_MOF_CALL_RV, ,          STDCPP_MOF_REQ_CONST, std::move(*_M_ptr).)
-STDCPP_MOF_SPEC(const && noexcept,const &&,        STDCPP_MOF_CALL_RV, noexcept,   STDCPP_MOF_REQ_CONST_NOEX, std::move(*_M_ptr).)
-
-#undef STDCPP_MOF_SPEC
-#undef STDCPP_MOF_BUF_INIT
-#undef STDCPP_MOF_CALL_LV
-#undef STDCPP_MOF_CALL_RV
-#undef STDCPP_MOF_REQ_PLAIN
-#undef STDCPP_MOF_REQ_CONST
-#undef STDCPP_MOF_REQ_NOEX
-#undef STDCPP_MOF_REQ_CONST_NOEX
-
-template<class... S>
-void swap(move_only_function<S...>& a, move_only_function<S...>& b) noexcept
-{ a.swap(b); }
-#endif // C++23
-
-//=============================================================
-//  function_ref  (C++26)  [func.ref]
-//=============================================================
-#if STDCPP_CXX26
-template<class... _Sigs> class function_ref; // primary, undefined
-
-#define STDCPP_FREF_SPEC(_NAMESIG, _QUAL, _PTR, _FCV, _NOEXCEPT)                      \
-template<class R, class... ArgTypes>                                         \
-class function_ref<R(ArgTypes...) _NAMESIG> {                                \
-    using _Thunk = R(*)(_PTR, ArgTypes...);                                  \
-    _PTR _obj = nullptr;                                                     \
-    _Thunk _thunk = nullptr;                                                 \
-    template<class F> static R _thunk_obj(_PTR p, ArgTypes... args)          \
-        _NOEXCEPT {                                                          \
-        return __ftl::__x_invoke_r<R>(*static_cast<_FCV F*>(p),             \
-            std::forward<ArgTypes>(args)...);                                \
-    }                                                                        \
-    static R _thunk_fn(_PTR p, ArgTypes... args) _NOEXCEPT {                 \
-        using FP = R(*)(ArgTypes...);                                        \
-        return __ftl::__x_invoke_r<R>(reinterpret_cast<FP>(p),               \
-            std::forward<ArgTypes>(args)...);                                \
-    }                                                                        \
-public:                                                                      \
-    function_ref() noexcept = default;                                       \
-    function_ref(nullptr_t) noexcept {}                                      \
-    /* lvalue callable object */                                             \
-    template<class F, class = enable_if_t<                                    \
-        is_lvalue_reference_v<F&&>                                           \
-        && !is_same_v<remove_cvref_t<F>, function_ref>                       \
-        && !is_function_v<remove_cvref_t<F>>>>                               \
-    function_ref(F&& f) noexcept                                             \
-        : _obj(static_cast<_PTR>(const_cast<void*>(                          \
-            static_cast<const volatile void*>(&f)))),                        \
-          _thunk(&_thunk_obj<remove_reference_t<F>>) {}                      \
-    /* function pointer */                                                   \
-    template<class F, class = enable_if_t<is_function_v<F>>>                 \
-    function_ref(F* fp) noexcept                                             \
-        : _obj(reinterpret_cast<_PTR>(fp)), _thunk(&_thunk_fn) {}            \
-    function_ref(const function_ref&) noexcept = default;                    \
-    function_ref& operator=(const function_ref&) noexcept = default;         \
-    function_ref& operator=(nullptr_t) noexcept {                            \
-        _obj = nullptr; _thunk = nullptr; return *this;                      \
-    }                                                                        \
-    explicit operator bool() const noexcept { return _thunk != nullptr; }   \
-    R operator()(ArgTypes... args) _QUAL _NOEXCEPT {                         \
-        return _thunk(_obj, std::forward<ArgTypes>(args)...);                \
-    }                                                                        \
-    friend bool operator==(const function_ref& f, nullptr_t) noexcept        \
-    { return !f._thunk; }                                                    \
-    friend bool operator==(nullptr_t, const function_ref& f) noexcept        \
-    { return !f._thunk; }                                                    \
-    friend bool operator!=(const function_ref& f, nullptr_t) noexcept        \
-    { return (bool)f._thunk; }                                               \
-    friend bool operator!=(nullptr_t, const function_ref& f) noexcept        \
-    { return (bool)f._thunk; }                                               \
-    void swap(function_ref& o) noexcept {                                    \
-        _PTR to = _obj; _obj = o._obj; o._obj = to;                          \
-        _Thunk tt = _thunk; _thunk = o._thunk; o._thunk = tt;                \
-    }                                                                        \
-};
-
-STDCPP_FREF_SPEC(,                ,                void*,      ,       )
-STDCPP_FREF_SPEC(noexcept,        ,                void*,      ,       noexcept)
-STDCPP_FREF_SPEC(const,           const,           const void*,const, )
-STDCPP_FREF_SPEC(const noexcept,  const,           const void*,const, noexcept)
-STDCPP_FREF_SPEC(&,               &,               void*,      ,       )
-STDCPP_FREF_SPEC(& noexcept,      &,               void*,      ,       noexcept)
-STDCPP_FREF_SPEC(const &,         const &,         const void*,const, )
-STDCPP_FREF_SPEC(const & noexcept,const &,         const void*,const, noexcept)
-
-#undef STDCPP_FREF_SPEC
-
-template<class... S>
-void swap(function_ref<S...>& a, function_ref<S...>& b) noexcept
-{ a.swap(b); }
-#endif // C++26
-
-//=============================================================
-//  copyable_function  (C++26)  [func.copyable.function]
-//=============================================================
-#if STDCPP_CXX26
-template<class... _Sigs> class copyable_function; // primary, undefined
-
-#define STDCPP_CF_BUF_INIT()                                                     \
-    static constexpr size_t _BufSize = sizeof(void*) * 3;                     \
-    static constexpr size_t _BufAlign = alignof(max_align_t);                 \
-    typename aligned_storage<_BufSize, _BufAlign>::type _M_buf;               \
-    _Base* _M_ptr = nullptr;                                                  \
-    bool _M_local = false;                                                    \
-    template<class FD> static constexpr bool _S_fits() {                      \
-        return sizeof(_Impl<FD>) <= _BufSize                                  \
-            && alignof(_Impl<FD>) <= _BufAlign;                               \
-    }                                                                         \
-    void _M_destroy() noexcept {                                              \
-        if (!_M_ptr) return;                                                  \
-        if (_M_local) _M_ptr->~_Base();                                       \
-        else delete _M_ptr;                                                   \
-        _M_ptr = nullptr; _M_local = false;                                   \
-    }                                                                         \
-    template<class FD, class F>                                               \
-    void _M_init(F&& f, true_type) {                                          \
-        _M_ptr = ::new (static_cast<void*>(&_M_buf))                          \
-            _Impl<FD>(std::forward<F>(f));                                    \
-        _M_local = true;                                                      \
-    }                                                                         \
-    template<class FD, class F>                                               \
-    void _M_init(F&& f, false_type) {                                         \
-        _M_ptr = new _Impl<FD>(std::forward<F>(f));                           \
-        _M_local = false;                                                     \
-    }
-
-#define STDCPP_CF_SPEC(_NAMESIG, _QUAL, _INVOKE_F, _NOEXCEPT, _REQ, _CALLPTR)             \
-template<class R, class... ArgTypes>                                          \
-class copyable_function<R(ArgTypes...) _NAMESIG> {                           \
-    struct _Base {                                                            \
-        virtual ~_Base() = default;                                           \
-        virtual R _call(ArgTypes... args) _QUAL _NOEXCEPT = 0;               \
-        virtual const type_info& _target_type() const noexcept = 0;          \
-        virtual _Base* _copy_into(void* buf, bool& local) const = 0;         \
-        virtual _Base* _move_into(void* buf, bool& local) = 0;               \
-    };                                                                        \
-    template<class F> struct _Impl final : _Base {                            \
-        F _f;                                                                 \
-        template<class G> explicit _Impl(G&& g) : _f(std::forward<G>(g)) {}  \
-        R _call(ArgTypes... args) _QUAL _NOEXCEPT override {                 \
-            return _INVOKE_F;                                                 \
-        }                                                                     \
-        const type_info& _target_type() const noexcept override {            \
-            return typeid(F);                                                 \
-        }                                                                     \
-        _Base* _copy_into(void* buf, bool& local) const override {            \
-            if (sizeof(_Impl) <= _BufSize                                     \
-                && alignof(_Impl) <= _BufAlign) {                             \
-                _Base* p = ::new (buf) _Impl(_f);                             \
-                local = true; return p;                                       \
-            }                                                                 \
-            _Base* p = new _Impl(_f);                                         \
-            local = false; return p;                                          \
-        }                                                                     \
-        _Base* _move_into(void* buf, bool& local) override {                  \
-            if (sizeof(_Impl) <= _BufSize                                     \
-                && alignof(_Impl) <= _BufAlign) {                             \
-                _Base* p = ::new (buf) _Impl(std::move(_f));                  \
-                local = true; return p;                                       \
-            }                                                                 \
-            _Base* p = new _Impl(std::move(_f));                              \
-            local = false; return p;                                          \
-        }                                                                     \
-    };                                                                        \
-    STDCPP_CF_BUF_INIT()                                                         \
-    void _M_copy_from(const copyable_function& o) {                           \
-        if (o._M_ptr) _M_ptr = o._M_ptr->_copy_into(&_M_buf, _M_local);       \
-    }                                                                         \
-public:                                                                       \
-    using result_type = R;                                                    \
-    copyable_function() noexcept = default;                                   \
-    copyable_function(nullptr_t) noexcept {}                                  \
-    template<class F, class FD = decay_t<F>,                                   \
-        class = enable_if_t<!is_same<FD, copyable_function>::value>>          \
-    copyable_function(F&& f) {                                                \
-        _REQ;                                                                 \
-        _M_init<FD>(std::forward<F>(f),                                       \
-            integral_constant<bool, _S_fits<FD>()>{});                        \
-    }                                                                         \
-    copyable_function(const copyable_function& o) { _M_copy_from(o); }        \
-    copyable_function(copyable_function&& o) noexcept {                       \
-        if (o._M_ptr) {                                                       \
-            _M_ptr = o._M_ptr->_move_into(&_M_buf, _M_local);                 \
-            o._M_destroy();                                                   \
-        }                                                                     \
-    }                                                                         \
-    copyable_function& operator=(const copyable_function& o) {                \
-        if (this != &o) { _M_destroy(); _M_copy_from(o); }                    \
-        return *this;                                                         \
-    }                                                                         \
-    copyable_function& operator=(copyable_function&& o) noexcept {            \
-        if (this != &o) { _M_destroy();                                       \
-            if (o._M_ptr) {                                                   \
-                _M_ptr = o._M_ptr->_move_into(&_M_buf, _M_local);             \
-                o._M_destroy();                                               \
-            }                                                                 \
-        }                                                                     \
-        return *this;                                                         \
-    }                                                                         \
-    copyable_function& operator=(nullptr_t) noexcept {                        \
-        _M_destroy(); return *this;                                           \
-    }                                                                         \
-    template<class F>                                                         \
-    copyable_function& operator=(F&& f) {                                     \
-        copyable_function(std::forward<F>(f)).swap(*this);                    \
-        return *this;                                                         \
-    }                                                                         \
-    ~copyable_function() { _M_destroy(); }                                    \
-    void swap(copyable_function& o) noexcept {                                \
-        copyable_function tmp(static_cast<copyable_function&&>(*this));       \
-        *this = static_cast<copyable_function&&>(o);                          \
-        o = static_cast<copyable_function&&>(tmp);                           \
-    }                                                                         \
-    explicit operator bool() const noexcept { return _M_ptr != nullptr; }    \
-    R operator()(ArgTypes... args) _QUAL _NOEXCEPT {                          \
-        return _CALLPTR _call(std::forward<ArgTypes>(args)...);                \
-    }                                                                         \
-    const type_info& target_type() const noexcept {                           \
-        return _M_ptr ? _M_ptr->_target_type() : typeid(void);                \
-    }                                                                         \
-    friend bool operator==(const copyable_function& f, nullptr_t) noexcept    \
-    { return !f._M_ptr; }                                                     \
-    friend bool operator==(nullptr_t, const copyable_function& f) noexcept    \
-    { return !f._M_ptr; }                                                     \
-    friend bool operator!=(const copyable_function& f, nullptr_t) noexcept    \
-    { return (bool)f._M_ptr; }                                                \
-    friend bool operator!=(nullptr_t, const copyable_function& f) noexcept    \
-    { return (bool)f._M_ptr; }                                                \
-};
-
-#define STDCPP_CF_REQ_PLAIN \
-    static_assert(is_constructible<R, invoke_result_t<F&, ArgTypes...>>::value, \
-        "copyable_function target has incompatible signature")
-#define STDCPP_CF_REQ_CONST \
-    static_assert(is_invocable_r_v<R, const F&, ArgTypes...>, \
-        "const copyable_function target must be const-callable")
-#define STDCPP_CF_REQ_NOEX \
-    static_assert(is_nothrow_invocable_r_v<R, F&, ArgTypes...>, \
-        "noexcept copyable_function target must be nothrow-callable")
-#define STDCPP_CF_REQ_CONST_NOEX \
-    static_assert(is_nothrow_invocable_r_v<R, const F&, ArgTypes...>, \
-        "const noexcept copyable_function target must be const-nothrow-callable")
-
-#define STDCPP_CF_CALL_LV  (__ftl::__x_invoke_r<R>(_f, std::forward<ArgTypes>(args)...))
-#define STDCPP_CF_CALL_RV  (__ftl::__x_invoke_r<R>(std::move(_f), std::forward<ArgTypes>(args)...))
-
-STDCPP_CF_SPEC(,                 ,                STDCPP_CF_CALL_LV, ,          STDCPP_CF_REQ_PLAIN, _M_ptr->)
-STDCPP_CF_SPEC(noexcept,         ,                STDCPP_CF_CALL_LV, noexcept,   STDCPP_CF_REQ_NOEX, _M_ptr->)
-STDCPP_CF_SPEC(const,            const,           STDCPP_CF_CALL_LV, ,          STDCPP_CF_REQ_CONST, _M_ptr->)
-STDCPP_CF_SPEC(const noexcept,   const,           STDCPP_CF_CALL_LV, noexcept,   STDCPP_CF_REQ_CONST_NOEX, _M_ptr->)
-STDCPP_CF_SPEC(&,                &,               STDCPP_CF_CALL_LV, ,          STDCPP_CF_REQ_PLAIN, _M_ptr->)
-STDCPP_CF_SPEC(& noexcept,       &,               STDCPP_CF_CALL_LV, noexcept,   STDCPP_CF_REQ_NOEX, _M_ptr->)
-STDCPP_CF_SPEC(const &,          const &,         STDCPP_CF_CALL_LV, ,          STDCPP_CF_REQ_CONST, _M_ptr->)
-STDCPP_CF_SPEC(const & noexcept, const &,         STDCPP_CF_CALL_LV, noexcept,   STDCPP_CF_REQ_CONST_NOEX, _M_ptr->)
-STDCPP_CF_SPEC(&&,               &&,              STDCPP_CF_CALL_RV, ,          STDCPP_CF_REQ_PLAIN, std::move(*_M_ptr).)
-STDCPP_CF_SPEC(&& noexcept,      &&,              STDCPP_CF_CALL_RV, noexcept,   STDCPP_CF_REQ_NOEX, std::move(*_M_ptr).)
-STDCPP_CF_SPEC(const &&,         const &&,        STDCPP_CF_CALL_RV, ,          STDCPP_CF_REQ_CONST, std::move(*_M_ptr).)
-STDCPP_CF_SPEC(const && noexcept,const &&,        STDCPP_CF_CALL_RV, noexcept,   STDCPP_CF_REQ_CONST_NOEX, std::move(*_M_ptr).)
-
-#undef STDCPP_CF_SPEC
-#undef STDCPP_CF_BUF_INIT
-#undef STDCPP_CF_CALL_LV
-#undef STDCPP_CF_CALL_RV
-#undef STDCPP_CF_REQ_PLAIN
-#undef STDCPP_CF_REQ_CONST
-#undef STDCPP_CF_REQ_NOEX
-#undef STDCPP_CF_REQ_CONST_NOEX
-
-template<class... S>
-void swap(copyable_function<S...>& a, copyable_function<S...>& b) noexcept
-{ a.swap(b); }
-#endif // C++26
+#endif
 
 } // namespace std
 
-#endif // STDCPP_CXX11
+#if !STDCPP_FN_CXX11
+#undef noexcept
+#endif
+
 #endif // STDCPP_FUNCTIONAL_HPP

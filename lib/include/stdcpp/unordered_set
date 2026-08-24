@@ -1,0 +1,231 @@
+// -*- C++ -*-
+//=============================================================
+// unordered_set.hpp -- complete <unordered_set>, C++11~C++26.
+//=============================================================
+#ifndef STDCPP_UNORDERED_SET_HPP
+#define STDCPP_UNORDERED_SET_HPP
+
+#include <cstddef>
+#include <cstdlib>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <functional>
+#include <initializer_list>
+#include "unordered_map.hpp"
+
+#define STDCPP_US_CXX17 (__cplusplus >= 201703L)
+#define STDCPP_US_CXX20 (__cplusplus >= 202002L)
+
+#ifndef _GLIBCXX_UNORDERED_SET
+#  define _GLIBCXX_UNORDERED_SET 1
+#endif
+
+namespace std {
+
+template<class Key, class Hash, class KeyEqual, class Allocator> class unordered_multiset;
+
+// Forward declaration
+template<class Key, class Hash, class KeyEqual, class Allocator>
+class unordered_multiset;
+
+template<class Key, class Hash = hash<Key>,
+         class KeyEqual = equal_to<Key>, class Allocator = void>
+class unordered_set {
+public:
+    typedef Key key_type;
+    typedef Key value_type;
+    typedef Hash hasher;
+    typedef KeyEqual key_equal;
+    typedef size_t size_type;
+
+    typedef _hash_table<Key, Key, Hash, KeyEqual, Allocator, false,
+                        __hash_detail::_identity<Key> > _table_type;
+    typedef typename _table_type::iterator iterator;
+    typedef typename _table_type::const_iterator const_iterator;
+
+private:
+    _table_type _M_table;
+
+public:
+    unordered_set() : _M_table() {}
+    explicit unordered_set(size_type n, const hasher& hf = hasher(),
+                           const key_equal& eql = key_equal())
+        : _M_table(n, hf, eql) {}
+    template<class InputIt>
+    unordered_set(InputIt first, InputIt last, size_type n = 0,
+                  const hasher& hf = hasher(), const key_equal& eql = key_equal())
+        : _M_table(n, hf, eql) {
+        for (; first != last; ++first) _M_table.insert_unique(*first);
+    }
+    unordered_set(const unordered_set& other) : _M_table(other._M_table) {}
+    unordered_set(initializer_list<Key> il) : _M_table() {
+        for (const Key& v : il) _M_table.insert_unique(v);
+    }
+
+    unordered_set& operator=(const unordered_set& other) { _M_table = other._M_table; return *this; }
+    unordered_set& operator=(initializer_list<Key> il) {
+        _M_table.clear();
+        for (const Key& v : il) _M_table.insert_unique(v);
+        return *this;
+    }
+
+    iterator begin() { return _M_table.begin(); }
+    const_iterator begin() const { return _M_table.begin(); }
+    const_iterator cbegin() const { return _M_table.cbegin(); }
+    iterator end() { return _M_table.end(); }
+    const_iterator end() const { return _M_table.end(); }
+    const_iterator cend() const { return _M_table.cend(); }
+
+    bool empty() const { return _M_table.empty(); }
+    size_type size() const { return _M_table.size(); }
+    size_type max_size() const { return _M_table.max_size(); }
+    size_type bucket_count() const { return _M_table.bucket_count(); }
+    void clear() { _M_table.clear(); }
+
+    pair<iterator, bool> insert(const Key& v) { return _M_table.insert_unique(v); }
+    template<class... Args>
+    pair<iterator, bool> emplace(Args&&... args) {
+        return _M_table.emplace_unique(std::forward<Args>(args)...);
+    }
+    void insert(initializer_list<Key> il) {
+        for (const Key& v : il) _M_table.insert_unique(v);
+    }
+
+    iterator erase(const_iterator pos) { return _M_table.erase(pos); }
+    size_type erase(const Key& k) { return _M_table.erase(k); }
+
+    iterator find(const Key& k) { return _M_table.find(k); }
+    const_iterator find(const Key& k) const { return _M_table.find(k); }
+    size_type count(const Key& k) const { return _M_table.count(k); }
+    pair<iterator, iterator> equal_range(const Key& k) { return _M_table.equal_range(k); }
+
+    void rehash(size_type n) { _M_table.rehash(n); }
+    void reserve(size_type n) { _M_table.reserve(n); }
+    hasher hash_function() const { return _M_table.hash_function(); }
+    key_equal key_eq() const { return _M_table.key_eq(); }
+    float load_factor() const { return _M_table.load_factor(); }
+    float max_load_factor() const { return _M_table.max_load_factor(); }
+    void max_load_factor(float z) { _M_table.max_load_factor(z); }
+    size_type bucket(const Key& k) const { return _M_table.bucket(k); }
+    size_type bucket_size(size_type n) const { return _M_table.bucket_size(n); }
+    size_type max_bucket_count() const { return _M_table.max_bucket_count(); }
+    void swap(unordered_set& other) { _M_table.swap(other._M_table); }
+
+#if STDCPP_US_CXX17
+    template<class H2, class E2>
+    void merge(unordered_set<Key, H2, E2, Allocator>& source) {
+        for (auto it = source.begin(); it != source.end(); ) {
+            auto next = it; ++next;
+            auto r = insert(*it);
+            if (r.second) source.erase(it);
+            it = next;
+        }
+    }
+    template<class H2, class E2>
+    void merge(unordered_multiset<Key, H2, E2, Allocator>& source) {
+        for (auto it = source.begin(); it != source.end(); ) {
+            auto next = it; ++next;
+            auto r = insert(*it);
+            if (r.second) source.erase(it);
+            it = next;
+        }
+    }
+#endif
+
+#if STDCPP_US_CXX20
+    bool contains(const Key& k) const { return find(k) != end(); }
+#endif
+};
+
+template<class K, class H, class E, class A>
+bool operator==(const unordered_set<K, H, E, A>& a, const unordered_set<K, H, E, A>& b) {
+    if (a.size() != b.size()) return false;
+    for (auto it = a.begin(); it != a.end(); ++it)
+        if (b.find(*it) == b.end()) return false;
+    return true;
+}
+template<class K, class H, class E, class A>
+bool operator!=(const unordered_set<K, H, E, A>& a, const unordered_set<K, H, E, A>& b) { return !(a == b); }
+template<class K, class H, class E, class A>
+void swap(unordered_set<K, H, E, A>& a, unordered_set<K, H, E, A>& b) { a.swap(b); }
+
+//=============================================================
+// unordered_multiset
+//=============================================================
+template<class Key, class Hash = hash<Key>,
+         class KeyEqual = equal_to<Key>, class Allocator = void>
+class unordered_multiset {
+public:
+    typedef Key key_type;
+    typedef Key value_type;
+    typedef Hash hasher;
+    typedef KeyEqual key_equal;
+    typedef size_t size_type;
+
+    typedef _hash_table<Key, Key, Hash, KeyEqual, Allocator, true,
+                        __hash_detail::_identity<Key> > _table_type;
+    typedef typename _table_type::iterator iterator;
+    typedef typename _table_type::const_iterator const_iterator;
+
+private:
+    _table_type _M_table;
+
+public:
+    unordered_multiset() : _M_table() {}
+    explicit unordered_multiset(size_type n, const hasher& hf = hasher(),
+                                const key_equal& eql = key_equal())
+        : _M_table(n, hf, eql) {}
+    unordered_multiset(const unordered_multiset& other) : _M_table(other._M_table) {}
+    unordered_multiset(initializer_list<Key> il) : _M_table() {
+        for (const Key& v : il) _M_table.insert_equal(v);
+    }
+
+    iterator begin() { return _M_table.begin(); }
+    const_iterator begin() const { return _M_table.begin(); }
+    iterator end() { return _M_table.end(); }
+    const_iterator end() const { return _M_table.end(); }
+    bool empty() const { return _M_table.empty(); }
+    size_type size() const { return _M_table.size(); }
+    size_type bucket_count() const { return _M_table.bucket_count(); }
+    void clear() { _M_table.clear(); }
+
+    iterator insert(const Key& v) { return _M_table.insert_equal(v); }
+    template<class... Args>
+    iterator emplace(Args&&... args) { return _M_table.emplace_equal(std::forward<Args>(args)...); }
+
+    iterator erase(const_iterator pos) { return _M_table.erase(pos); }
+    size_type erase(const Key& k) { return _M_table.erase(k); }
+
+    iterator find(const Key& k) { return _M_table.find(k); }
+    const_iterator find(const Key& k) const { return _M_table.find(k); }
+    size_type count(const Key& k) const { return _M_table.count(k); }
+
+    float load_factor() const { return _M_table.load_factor(); }
+    float max_load_factor() const { return _M_table.max_load_factor(); }
+    void max_load_factor(float z) { _M_table.max_load_factor(z); }
+    size_type bucket(const Key& k) const { return _M_table.bucket(k); }
+    size_type bucket_size(size_type n) const { return _M_table.bucket_size(n); }
+    size_type max_bucket_count() const { return _M_table.max_bucket_count(); }
+    void rehash(size_type n) { _M_table.rehash(n); }
+    void reserve(size_type n) { _M_table.reserve(n); }
+    hasher hash_function() const { return _M_table.hash_function(); }
+    key_equal key_eq() const { return _M_table.key_eq(); }
+    void swap(unordered_multiset& other) { _M_table.swap(other._M_table); }
+
+#if STDCPP_US_CXX20
+    bool contains(const Key& k) const { return find(k) != end(); }
+#endif
+};
+
+template<class K, class H, class E, class A>
+void swap(unordered_multiset<K, H, E, A>& a, unordered_multiset<K, H, E, A>& b) { a.swap(b); }
+
+} // namespace std
+
+#if __cplusplus < 201103L
+#undef noexcept
+#undef nullptr
+#undef override
+#endif
+#endif // STDCPP_UNORDERED_SET_HPP
