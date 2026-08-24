@@ -119,9 +119,13 @@ uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5());
 uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4());
 uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, uint64_t ign_0, 
     uint64_t ign_1,uint64_t ign_2,uint64_t ign_3);
-uint64_t sys_pmmap(
-    uint64_t pid, uint64_t mode,
-    uint64_t proc_addr, uint64_t tproc_addr, uint64_t flag, uint64_t length
+uint64_t sys_pmmapSHARE(
+    uint64_t dst_pid,      // 目标进程（要改谁的页表）
+    uint64_t dst_addr,     // 目标进程的虚拟地址
+    uint64_t length,       // 映射长度（字节）
+    uint64_t flags,        // 合并 PROT_* 和 MAP_*（见下文）
+    uint64_t src_pid,      // 源进程（从谁那里拿物理页）
+    uint64_t src_addr      // 源进程的虚拟地址（从哪拿）
 );
 
 uint64_t sys_dev_mmap(uint64_t DevType,uint64_t DevIDX,

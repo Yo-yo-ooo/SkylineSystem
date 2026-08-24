@@ -50,6 +50,10 @@
 #define PDE(x)  ((x >> 21) & 0x1ff)
 #define PTE(x)  ((x >> 12) & 0x1ff)
 
+#define VMM_PS_BIT      (1ULL << 7)
+#define VMM_COW_BIT     (1ULL << 55)
+#define VMM_SHARED_BIT  (1ULL << 56)
+
 #define PTE_ADDR_MASK  0x000FFFFFFFFFF000ULL
 #define PTE_FLAGS_MASK 0x8000000000000FFFULL 
 
@@ -102,7 +106,7 @@ extern volatile pagemap_t *kernel_pagemap;
 #define USER_SPACE_END_4LVL 0x00007FFFFFFFFFFF
 #define USER_SPACE_END_5LVL 0x00FEFFFFFFFFFFFF
 #define PAGE_MASK      0xFFFULL
-
+void RefSharedPhys(uint64_t phys); 
 namespace VMM{
     
     namespace UserAccess {

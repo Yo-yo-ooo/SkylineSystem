@@ -64,7 +64,7 @@ void syscall_init() {
     syscall_lists[SYSCALL_GETTID] = sys_gettid;
     syscall_lists[SYSCALL_GETPID] = sys_getpid;
     syscall_lists[SYSCALL_EXIT] = sys_exit;
-    syscall_lists[SYSCALL_PMMAP] = sys_pmmap;
+    syscall_lists[SYSCALL_PMMAP] = sys_pmmapSHARE;
     syscall_lists[SYSCALL_YIELD] = sched_yield;
     syscall_lists[SYSCALL_LOAD] = sys_load;
     syscall_lists[SYSCALL_LAUNCH] = sys_launch;
