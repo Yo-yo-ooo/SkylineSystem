@@ -52,6 +52,27 @@ uint64_t pmm_bitmap_pages = 0;
 uint64_t pmm_bitmap_start = 0;
 uint64_t pmm_bitmap_size  = 0;
 
+// ---- 可观测性: 大块池健康度 (debugfs/dmesg 查询接口自行接线) ----
+static uint64_t stat_req2m_ok    = 0;   // Request2MB 成功次数
+static uint64_t stat_req2m_fail  = 0;   // Request2MB 失败 (调用方需 4K 兜底)
+static uint64_t stat_req2gb_ok   = 0;
+static uint64_t stat_req2gb_fail = 0;
+
+void Stats(uint64_t* out /* [4] */) {
+    IrqSpinGuard g(&pmm_lock);
+    out[0] = stat_req2m_ok;    out[1] = stat_req2m_fail;
+    out[2] = stat_req2gb_ok;   out[3] = stat_req2gb_fail;
+}
+
+// 2M 完整块余量: L2 位图 ~l2_map 的 popcount (word 级)
+uint64_t Free2MBlocks() {
+    IrqSpinGuard g(&pmm_lock);
+    uint64_t cnt = 0;
+    for (uint64_t w = 0, words = l2_map_size / 8; w < words; w++)
+        cnt += __builtin_popcountll(~l2_map[w]);
+    return cnt;
+}
+
 // ---------------------------------------------------------------------------
 // Locking: also block interrupts on x86_64 so an interrupt handler that
 // allocates cannot deadlock against a lock holder on this CPU.
@@ -486,8 +507,8 @@ void* Request2MB() {
 
 // --- 2GiB allocation ---
 void* Request2GB() {
-    //pmm_lock_acquire();
-    IrqSpinGuard guard(&pmm_lock);
+    IrqSpinGuard guard(&pmm_lock);   // 唯一持锁者: 析构时统一解锁,
+                                     // 路径上禁止再出现任何手动 release
 
     for (uint64_t w = 0, words = l3_map_size / 8; w < words; w++) {
         uint64_t pending = ~l3_map[w];
@@ -496,9 +517,7 @@ void* Request2GB() {
             pending &= pending - 1;
 
             uint64_t start = l3_bit * L3_PAGES;
-            // FIX: skip incomplete tail blocks — old code returned a region
-            // smaller than 2GiB while the caller assumed a full 2GiB.
-            if (start + L3_PAGES > pmm_bitmap_pages) continue;
+            if (start + L3_PAGES > pmm_bitmap_pages) continue;  // 尾部不完整块
 
             uint64_t wb = l3_bit * L3_L2_WORDS;
             bool l2_clear = true;
@@ -523,13 +542,11 @@ void* Request2GB() {
             bit_set(l3_map, l3_bit);
 
             if (start < bitmap_last_free) bitmap_last_free = start;
-            pmm_lock_release();
-            return (void*)(start * PAGE_SIZE);
+            return (void*)(start * PAGE_SIZE);   // ★ 修复: 删掉手动 release
         }
     }
 
-    //pmm_lock_release();
-    return nullptr;
+    return nullptr;   // guard 析构统一解锁
 }
 
 void Free2MB(void* ptr) {
