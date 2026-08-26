@@ -11,8 +11,8 @@
 extern volatile bool IsPM5LVL;
 
 uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
-uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
+GENERATE_IGN3()) {
+    IGNV_3();
     
     proc_t *proc = Schedule::this_proc();
     fd_t *FD = fd_get(proc->FDMan, fd_idx);
@@ -95,8 +95,8 @@ uint64_t sys_fsize(uint64_t fd_idx,GENERATE_IGN5()){
 }
 
 uint64_t sys_fwrite(uint64_t fd_idx, uint64_t buf, uint64_t count, \
-uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
+GENERATE_IGN3()) {
+    IGNV_3();
     proc_t *proc = Schedule::this_proc();
     fd_t *FD = fd_get(proc->FDMan,fd_idx);
     if(!FD){return -EBADF;}
@@ -171,8 +171,8 @@ uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
 }
 
 uint64_t sys_flseek(uint64_t fd_idx, uint64_t offset, uint64_t whence, \
-uint64_t ign_0,uint64_t ign_1,uint64_t ign_2){
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
+GENERATE_IGN3()){
+    IGNV_3();
     proc_t *proc = Schedule::this_proc();
     fd_t *FD = fd_get(proc->FDMan,fd_idx);
     if(!FD){return -EBADF;}

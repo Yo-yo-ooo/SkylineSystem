@@ -105,10 +105,8 @@ typedef struct cpu_t {
 
     alignas(16) uint8_t exit_stack[4096];
     
-    uint64_t tick_count = 0;             
-    uint64_t total_thread_count = 0;     
+    uint64_t tick_count = 0;                 
     
-    volatile uint32_t thread_count_lower = 0; 
     volatile bool has_surplus = false; 
 
     thread_t* promote_buf[MAX_PROMOTE_SNAPSHOT];
@@ -130,6 +128,8 @@ typedef struct cpu_t {
         uint8_t    type; // 1=单页, 2=单PM全刷, 3=全局全刷
     } shootdown_queue[32];
     volatile uint32_t shootdown_count;
+    bool ISSMEP_ENABLEED = false;
+    bool ISSMAP_ENABLEED = false;
     file_cache_cpu_t *file_cache;
 } cpu_t;
 

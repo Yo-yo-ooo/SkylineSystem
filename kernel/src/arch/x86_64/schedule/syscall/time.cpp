@@ -37,8 +37,7 @@ uint64_t mktime (uint32_t year, uint32_t mon,
     )*60 + sec; /**//* finally seconds */
 }
 
-uint64_t sys_time(uint64_t tloc,uint64_t ign_0, uint64_t ign_1, \
-    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4) {
+uint64_t sys_time(uint64_t tloc,GENERATE_IGN5()) {
     IGNV_5();
 
     RTC::read_rtc();
@@ -68,8 +67,7 @@ struct timespec
 /* int gettimeofday(struct timeval *restrict tv,
                  struct timezone *_Nullable restrict tz); */
 static int64_t tv_s_off,tv_ms_off;
-uint64_t sys_gettimeofday(uint64_t tv,uint64_t tz, uint64_t ign_0, 
-uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
+uint64_t sys_gettimeofday(uint64_t tv,uint64_t tz, GENERATE_IGN4()) {
     IGNV_4();
     uint64_t pv = VMM::Useless::GetPageInfo(Schedule::this_thread()->pagemap,tv).flags;
     uint64_t pz = VMM::Useless::GetPageInfo(Schedule::this_thread()->pagemap,tz).flags;
@@ -90,16 +88,14 @@ uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
     return 0;
 }
 
-uint64_t sys_settimeofday(uint64_t tv,uint64_t tz, uint64_t ign_0, 
-uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
+uint64_t sys_settimeofday(uint64_t tv,uint64_t tz, GENERATE_IGN4()) {
     IGNV_4();
     tv_s_off = ((struct timeval*)tv)->tv_sec;
     tv_ms_off = ((struct timeval*)tv)->tv_usec;
     return 0;
 }
 
-uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, uint64_t ign_0, 
-    uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
+uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, GENERATE_IGN4()) {
     IGNV_4();
     struct timespec *tp_ = (struct timespec *)tp;
     switch (clkid)

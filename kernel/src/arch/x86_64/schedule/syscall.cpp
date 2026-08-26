@@ -9,10 +9,10 @@
 #include <arch/x86_64/schedule/syscalln.h>
 
 static uint64_t 
-SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t){return NULL;}
+SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,syscall_frame_t*){return NULL;}
 
 __attribute__((aligned(64)))
-uint64_t (*syscall_lists[512])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t) = \
+uint64_t (*syscall_lists[512])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,syscall_frame_t*) = \
     {SYSCALL_NULL};
 
 void dump_REG(syscall_frame_t *frame){
@@ -32,7 +32,7 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
     auto func = syscall_lists[frame->rax];
 
     //kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);
-    frame->rax = func(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9);
+    frame->rax = func(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9,frame);
 
     //kinfoln("Syscall returned %ld", frame->rax);
 }

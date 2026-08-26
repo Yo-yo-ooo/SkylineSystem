@@ -10,38 +10,26 @@
 
 extern art_tree *pid2proc_tree;
 
-uint64_t sys_getpid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
-    uint64_t ign_3,uint64_t ign_4,uint64_t ign_5) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);IGNORE_VALUE(ign_5);
-
+uint64_t sys_getpid(GENERATE_IGN6()) {
+    IGNV_6();
     return Schedule::this_proc()->id;
 }
 
-uint64_t sys_gettid(uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, \
-    uint64_t ign_3,uint64_t ign_4,uint64_t ign_5) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);IGNORE_VALUE(ign_5);
-
+uint64_t sys_gettid(GENERATE_IGN6()) {
+    IGNV_6();
     return Schedule::this_thread()->id;
 }
 
 
 
-uint64_t sys_exit(uint64_t code,uint64_t ign_0, uint64_t ign_1, \
-    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);
-
+uint64_t sys_exit(uint64_t code,GENERATE_IGN5()) {
+    IGNV_5();
     Schedule::Exit((int32_t)code);
-
     return 0;
 }
 
-uint64_t sched_yield(uint64_t ign_0, uint64_t ign_1, \
-    uint64_t ign_2,uint64_t ign_3,uint64_t ign_4,uint64_t ign_5){
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    IGNORE_VALUE(ign_3);IGNORE_VALUE(ign_4);IGNORE_VALUE(ign_5);
+uint64_t sched_yield(GENERATE_IGN6()){
+    IGNV_6();
 
     Schedule::Yield();
     return 0;
@@ -49,10 +37,8 @@ uint64_t sched_yield(uint64_t ign_0, uint64_t ign_1, \
 
 
 extern spinlock_t PID2PROC_TREE_LOCK;
-uint64_t sys_kill(uint64_t pid,uint64_t sig, uint64_t ign_0, \
-    uint64_t ign_1,uint64_t ign_2,uint64_t ign_3) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
-    IGNORE_VALUE(ign_3);
+uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
+    IGNV_4();
 
     asm volatile("cli");    // 必须关中断，保证切换过程绝对原子
     LAPIC::StopTimer();
@@ -80,11 +66,12 @@ uint64_t sys_fork(syscall_frame_t *frame){
 
 uint64_t sys_pmmapSHARE(
     uint64_t dst_pid, uint64_t dst_addr, uint64_t length,
-    uint64_t flags,   uint64_t src_pid,  uint64_t src_addr
+    uint64_t flags,   uint64_t src_pid,  uint64_t src_addr,syscall_frame_t* frame
 ) {
     /* ---------- 1. 校验 ---------- */
     if (length == 0) return -EINVAL;
     proc_t *me = Schedule::this_proc();
+    //thread_t *ct = nullptr;
     if (!me || !me->IsTrusted) return -EPERM;
 
     if ((src_addr != 0 && (src_addr & (PAGE_SIZE - 1))) ||
@@ -241,6 +228,10 @@ uint64_t sys_pmmapSHARE(
 
     /* 4e. dst 侧 vm_mapping 登记 (CleanPM 需要走 FreeSharedRegion 递减引用) */
     VMM::NewMapping(dst_pm, resolved_dst, pages, map_flags | VMM_SHARED_BIT);
+
+    //ct = Schedule::this_thread();
+    frame->rdi = resolved_src;
+    frame->rsi = resolved_dst;
 
 unlock:
     if (pm_b != pm_a) {

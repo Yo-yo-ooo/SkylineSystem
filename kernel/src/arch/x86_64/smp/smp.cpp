@@ -26,6 +26,7 @@ volatile uint64_t started_count = 0;
 bool smp_started = false;
 int32_t smp_last_cpu = 0; 
 extern volatile struct limine_mp_response *mp_response;
+extern void enable_smep_smap();
 
 uint8_t apic_id_to_logical[256] = {0};
 
@@ -116,7 +117,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     simd_cpu_init(cpu);
     cpu->simd_mask = cpu_simd_mask(cpu);
     
-    
+    enable_smep_smap();
 
     _memset(cpu->tv1, 0, sizeof(cpu->tv1)); 
     _memset(cpu->tv3, 0, sizeof(cpu->tv3));

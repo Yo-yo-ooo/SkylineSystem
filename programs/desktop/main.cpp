@@ -10,6 +10,8 @@
 #include <mouse/ps2.h>
 static char intTo_stringOutput[128];
 
+extern void TLoad(FrameBuffer *Fb);
+
 // 处理无符号 64 位整数
 const char *to_string(uint64_t value)
 {
@@ -119,11 +121,8 @@ int main(){
         void *p = malloc(0x666d);
         free(p);
     }*/
-    uint64_t pid = sys_load((uint64_t)"/mp/hw2.elf",0,0);
-    uint64_t dstPID = sys_getpid();
-
-    sys_pmmapSHARE(dstPID,0,fb.BufferSize,VMM_FLAG_READWRITE,pid,0);
-    sys_launch(pid); 
+    
+    TLoad(&fb);
     
     MouseInit();
 

@@ -60,6 +60,13 @@ override KCC_IS_CLANG := $(shell ! $(KCC) --version 2>/dev/null | grep 'clang' >
 # Check if CXX is Clang.
 override KCXX_IS_CLANG := $(shell ! $(CXX) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
 
+ifndef NOStackCanary
+	KCFLAGS +=  -fstack-protector-strong \
+	-mstack-protector-guard=global 
+else
+	KCFLAGS +=  -fno-stack-protector 
+endif
+
 # Internal C flags that should not be changed by the user.
 override KCFLAGS += \
 	-w \
@@ -67,7 +74,6 @@ override KCFLAGS += \
 	-I$(SS_BUILD_DIR)/ablib \
     -nostdinc \
     -ffreestanding \
-    -fno-stack-protector \
     -fno-stack-check \
     -fno-lto \
     -fno-PIC \

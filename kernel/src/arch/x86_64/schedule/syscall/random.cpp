@@ -16,9 +16,9 @@
 #define GRND_INSECURE	0x0004
 
 uint64_t sys_getrandom(uint64_t buf, uint64_t size, uint64_t flags,
-    uint64_t IGN_0,uint64_t IGN_1,uint64_t IGN_3)
+    GENERATE_IGN3())
 {
-    IGNORE_VALUE(IGN_0);IGNORE_VALUE(IGN_1);IGNORE_VALUE(IGN_3);
+    IGNV_3();
 	//struct iov_iter iter;
 	int ret;
 

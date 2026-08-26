@@ -7,6 +7,13 @@
 #include <arch/x86_64/smp/smp.h>
 #include <klib/algorithm/rbtree.h> 
 
+#define user_access_begin()  asm volatile("stac" ::: "memory")
+#define user_access_end()    asm volatile("clac" ::: "memory")
+struct user_access_guard {
+    user_access_guard()  { asm volatile("stac" ::: "memory"); }
+    ~user_access_guard() { asm volatile("clac" ::: "memory"); }
+};
+
 extern "C++" {
 
 #define SCHED_VEC 48

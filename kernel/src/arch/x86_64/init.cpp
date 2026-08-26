@@ -38,7 +38,7 @@ extern "C" int32_t file_cache_writeback_callback(
     uint32_t key_len, void *data, size_t data_len
 );
 
-
+extern void enable_smep_smap();
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
     WELCOME_X86_64
@@ -79,7 +79,7 @@ void __init x86_64_init(void){
     InitFunc("SMP",smp_init());
     InitFunc("RTC",RTC::InitRTC());
     InitFunc("SIMD Core 0",simd_cpu_init(this_cpu()));
-    
+    InitFunc("Intel SMEP & SMAP",enable_smep_smap());
     
     InitFunc("Schedule",Schedule::Init());
     InitCPUThread();

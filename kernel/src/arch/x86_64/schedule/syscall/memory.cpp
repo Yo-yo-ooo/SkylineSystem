@@ -47,18 +47,15 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags, u
 }
 
 uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t mode, \
-    uint64_t flags,uint64_t offset){
+    uint64_t flags,uint64_t offset,syscall_frame_t *nullframe){
+    IGNORE_VALUE(nullframe);
     return sys_mmap_((void*)addr_,length,mode,flags,offset);
 }
 
 uint64_t sys_munmap(uint64_t addr, uint64_t length,
-    uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, uint64_t ign_3)
+    GENERATE_IGN4())
 {
-    IGNORE_VALUE(ign_0);
-    IGNORE_VALUE(ign_1);
-    IGNORE_VALUE(ign_2);
-    IGNORE_VALUE(ign_3);
-
+    IGNV_4();
     proc_t *me = Schedule::this_proc();
     pagemap_t *pm = me ? me->pagemap : (pagemap_t*)kernel_pagemap;
     if(!pm) return -EFAULT;
@@ -68,8 +65,8 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length,
 }
 
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot, \
-    uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
-    IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);
+    GENERATE_IGN3()) {
+    IGNV_3();
 
     thread_t * tthread = Schedule::this_thread();
     size_t pages = DIV_ROUND_UP(len, PAGE_SIZE);
