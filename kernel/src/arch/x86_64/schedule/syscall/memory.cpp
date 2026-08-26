@@ -6,7 +6,7 @@
 #include <elf/elf.h>
 #include <mem/pmm.h>
 #include <klib/algorithm/queue.h>
-
+#include <arch/x86_64/vmm/vmm.h>
 
 #define SYS_MAP_FAILED ((uint64_t)-1ULL)
 
@@ -26,17 +26,24 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags, u
     pagemap_t *pagemap = current_thread->pagemap;
     uint64_t page_count = 0;
 
-    // --- 1. 处理长度单位 ---
-    // 根据上下文推测，第二个 mode 应该是 3
     if (mode == 2) {
-        page_count = length; // length 代表请求的页数
+        page_count = length;
     } else if (mode == 3) {
-        page_count = DIV_ROUND_UP(length, PAGE_SIZE); // length 代表字节数，需按页对齐
+        page_count = DIV_ROUND_UP(length, PAGE_SIZE);
     } else {
-        return SYS_MAP_FAILED; // 不支持的 mode 
+        return SYS_MAP_FAILED;
     }
 
-    return VMM::Alloc(pagemap,page_count,true);
+    uint64_t ret = VMM::Alloc(pagemap, page_count, true);
+    if (ret == (uint64_t)SYS_MAP_FAILED || ret == 0) {
+        return SYS_MAP_FAILED;
+    }
+
+    if (!VMM::VMA::FindRegion(pagemap, ret)) {
+        VMM::VMA::AddRegion(pagemap, ret, page_count, MM_READ | MM_WRITE | MM_USER);
+    }
+
+    return ret;
 }
 
 uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t mode, \
@@ -44,7 +51,6 @@ uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t mode, \
     return sys_mmap_((void*)addr_,length,mode,flags,offset);
 }
 
-//extern bool IsPM5LVL;
 uint64_t sys_munmap(uint64_t addr, uint64_t length,
     uint64_t ign_0, uint64_t ign_1, uint64_t ign_2, uint64_t ign_3)
 {
@@ -53,12 +59,14 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length,
     IGNORE_VALUE(ign_2);
     IGNORE_VALUE(ign_3);
 
-    VMM::Free(Schedule::this_thread()->pagemap,(void*)addr);
+    proc_t *me = Schedule::this_proc();
+    pagemap_t *pm = me ? me->pagemap : (pagemap_t*)kernel_pagemap;
+    if(!pm) return -EFAULT;
+    VMM::Free(pm, (void*)addr);
 
     return 0;
 }
 
-extern "C" void mmu_invlpg(uint64_t vaddr);
 uint64_t sys_mprotect(uint64_t addr, uint64_t len, uint64_t prot, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2) {
     IGNORE_VALUE(ign_0);IGNORE_VALUE(ign_1);IGNORE_VALUE(ign_2);

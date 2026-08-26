@@ -18,7 +18,10 @@ extern volatile uint64_t SizeClassTable[75][3];
 // 常量宏定义
 // ============================================================================
 #define QSBR_SLOTS              32
-#define TLS_BATCH_FLUSH_THRESHOLD 16
+/* 【OOM 修复】降到 1: 每次 push_deferred 立即 flush + try_gc
+   原来是 8, SCB 积压在 TLS 队列里不够 8 个就不 flush →
+   try_gc 看到的 deferred 队列为空 → goto unlock → 不回收 → OOM */
+#define TLS_BATCH_FLUSH_THRESHOLD 4
 #define SCT_MAX_CLASSES         75
 #define SCT_MAX_ALLOC_SIZE      9223372036854775808ULL
 
@@ -32,23 +35,13 @@ extern volatile uint64_t SizeClassTable[75][3];
 
 #define LARGE_OBJ_CACHE_MAX     4
 
-/*
- * epoch 差 × 队列深度 组合豁免
- *
- *   豁免条件:  (gc_generation - slot.last_epoch) * pending_depth >= BUDGET
- *
- *   - pending_depth 小 (内存压力低): 需要极大的 epoch_gap 才豁免 → 保守,
- *     几乎不会误豁免捏着旧指针的线程;
- *   - pending_depth 大 (积压严重): 较小的 epoch_gap 即豁免 → 激进,
- *     用微小 UAF 风险换回内存 (工程折衷);
- *   - BUDGET 量纲: epoch × SCB 个数。
- *     参考: 队列深 16 (一个 flush 批次) 时, 128 代不活跃即豁免
- *     → 16*128 = 2048。
- */
 #define QSBR_DEFER_BUDGET       2048ULL
-/* 硬性下限: 无论压力多大, epoch_gap 低于此值绝不豁免 —— 保证活跃线程
-   (哪怕低频) 永远不会被豁免掉 */
 #define QSBR_MIN_EPOCH_GAP      8ULL
+
+/* 【OOM 修复】积压超阈值跳过 QSBR 直接回收。
+   SCB 进 deferred 队列时 rem_count 已满 (全空),
+   data 不可能被持有 → QSBR 延迟是过度的, 直接回收安全 */
+#define QSBR_FORCE_RECLAIM_THRESHOLD 16
 
 #define DIV_ROUND_UP(x, y) (((x) + ((y) - 1)) / (y))
 #define PAGE_SIZE 4096
@@ -191,21 +184,6 @@ static inline void qsbr_leave(int32_t slot) {
     atomic_sub_fetch_n(&qsbr_counters[slot].count, 1, ATOMIC_RELEASE);
 }
 
-/* ============================================================================
- *
- * pending_depth: 本轮待回收的 SCB 总数 (调用方统计后传入)。
- *   GC 成功的收益正比于它, 豁免的风险随它上升 —— 乘进判据正好对冲。
- *
- * 判定流程 (每个 slot):
- *   1. 从未分配的 slot → 静默 (break)
- *   2. epoch_gap < QSBR_MIN_EPOCH_GAP → 必须走经典 count 前进判定
- *      (硬下限: 短期不活跃绝不豁免)
- *   3. epoch_gap >= MIN 且 gap × depth >= BUDGET → 豁免候选:
- *      双读校验 —— 重读 count, 与首读比较。两次读之间 count 变了,
- *      说明线程刚刚活动过, 撤回豁免改走经典判定 (它会通过, 因为
- *      count 已前进)。
- *   4. 其余 → 经典判定: SEQ_CST fence 后重读 count, 未前进 = 不静默
- * ==========================================================================*/
 static inline int32_t is_quiescent(uint64_t pending_depth) {
     uint64_t generation = atomic_load_n(&gc_generation, ATOMIC_ACQUIRE);
     uint64_t slots_in_use = atomic_load_n(&global_qsbr_slot_alloc, ATOMIC_RELAXED);
@@ -217,18 +195,15 @@ static inline int32_t is_quiescent(uint64_t pending_depth) {
         uint64_t last   = atomic_load_n(&qsbr_counters[i].last_epoch, ATOMIC_ACQUIRE);
         uint64_t gap    = generation - last;
 
-        /* 组合豁免: 时间 × 压力超预算, 且过硬性时间下限 */
         if (gap >= QSBR_MIN_EPOCH_GAP && gap * pending_depth >= QSBR_DEFER_BUDGET) {
-            /* 双读校验: 豁免前重读 count —— 两次读之间线程动了就撤回 */
             uint64_t recheck = atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE);
             if (recheck != before) {
-                /* 线程刚刚活跃: count 已前进, 经典判定会放行, 走下面 */
+                /* 线程刚活跃, 走经典判定 */
             } else {
-                continue;   /* 维持豁免: 视为静默 */
+                continue;
             }
         }
 
-        /* 经典判定: 要求 count 前进 (线程跨越了静默点) */
         atomic_thread_fence(ATOMIC_SEQ_CST);
         uint64_t after = atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE);
         if (after <= before)
@@ -268,8 +243,15 @@ static inline void try_gc() {
     for (void* p = small_list; p; p = *(void**)p) n_small++;
     for (void* p = large_list; p; p = *(void**)p) n_large++;
 
-    /* 队列深度传入 is_quiescent 参与豁免判据 */
-    int32_t gc_success = is_quiescent(n_small + n_large);
+    uint64_t total_pending = n_small + n_large;
+
+    /* 【OOM 修复】压力强制回收 */
+    int32_t gc_success;
+    if (total_pending >= QSBR_FORCE_RECLAIM_THRESHOLD) {
+        gc_success = 1;
+    } else {
+        gc_success = is_quiescent(total_pending);
+    }
 
     if (gc_success) {
         while (small_list) {
