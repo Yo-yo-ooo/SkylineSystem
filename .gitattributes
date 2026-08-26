@@ -1,0 +1,7 @@
+kernel/include/arch/x86_64/*.h linguist-language=C++
+kernel/include/acpi/*.h linguist-language=C++
+kernel/include/fs/lwext4/*.h linguist-language=C++
+kernel/include/fs/saf/*.h linguist-language=C++
+kernel/include/fs/fc.h linguist-language=C++
+kernel/include/fs/fd.h linguist-language=C++
+lib/include/stdcpp/** linguist-language=C++
