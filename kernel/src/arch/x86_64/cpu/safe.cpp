@@ -49,6 +49,41 @@ uint64_t rdrand64_retry(int retries) {
 /* GCC -mstack-protector-guard=global 直接引用此符号 */
 unsigned long __stack_chk_guard = 0x000A0D0BEEFCAFE0UL;
 
+/* 生成随机 canary — 高字节清零 (null 终止, 防 strcpy 穿透) */
+__attribute__((no_stack_protector))
+void init_stack_canary(void) {
+    uint64_t val = 0;
+
+    /* 优先 RDRAND */
+    if (has_rdrand()) {
+        val = rdrand64_retry(10);
+        if(val == 0){
+            uint64_t tsc;
+            __asm__ volatile("rdtsc" : "=A"(tsc));
+            val = tsc ^ (uint64_t)&val ^ 0xDEADBEEFCAFEBABE;
+        }
+    } else {
+        /* 回退: TSC + CPUID 混合熵 */
+        uint32_t lo, hi;
+        asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        val = ((uint64_t)hi << 32) | lo;
+
+        /* CPUID.0H 给点额外熵 */
+        uint32_t a, b, c, d;
+        asm volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(0));
+        val ^= ((uint64_t)b << 16) ^ ((uint64_t)d << 8) ^ (uint64_t)c;
+    }
+
+    /* 防止全零 (全零 = 无保护) */
+    if ((val & 0x00FFFFFFFFFFFFFFUL) == 0)
+        val = 0x0043414E41525900UL;  /* "\0RANAC\0" */
+
+    /* LSB 清零: little-endian 下 canary 最低地址字节为 0x00,
+    栈溢出方向最先命中 → strcpy 立即停, canary 不被破坏 */
+    ((unsigned char *)&val)[0] = 0;
+    __stack_chk_guard = val;
+}
+
 /* GCC 在 canary 不匹配时调用此函数 — 必须不返回 */
 __attribute__((noreturn, noinline))
 extern "C" void __stack_chk_fail(void) {
