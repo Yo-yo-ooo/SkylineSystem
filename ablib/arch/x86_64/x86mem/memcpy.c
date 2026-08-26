@@ -1,2198 +1,409 @@
-// Compile with GCC -O3 for best performance
-// It pretty much entirely negates the need to write these by hand in asm.
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: GPL-2.0-only
 #include "./x86mem.h"
+#include <stdint.h>
+#include <stddef.h>
+#include <emmintrin.h>
+//#include <immintrin.h>
+
+#ifndef x86memlib_DeclFunction
+#define x86memlib_DeclFunction(name) name
+#endif
+#ifndef x86memlib_UseFunction
+#define x86memlib_UseFunction(name) name
+#endif
+#ifndef CACHESIZELIMIT
+#define CACHESIZELIMIT (8u * 1024u * 1024u)
+#endif
 
 #ifdef __x86_64__
-
-#undef BYTE_ALIGNMENT
-// Default (8-bit, 1 byte at a time)
-static void * memcpy_fpx86 (void *dest, const void *src, size_t len)
-{
-    const char *s = (char*)src;
-    char *d = (char*)dest;
-
-    while (len--)
-    {
-        *d++ = *s++;
-    }
-
-    return dest;
-}
-
-// Minimum requirement:
-//  x86_64 CPU with SSE4.2, but AVX2 or later is recommended
-//
-// This file provides a highly optimized version of memcpy_fpx86.
-// Overlapping memory regions are not supported by default: use memmove instead.
-//
-// NOTE: The discussion about microarchitecture in the memmove file applies to
-// this memcpy_fpx86, as well.
-//
-// ...If for some reason you absolutely, desperately need to use AVX_memcpy
-// instead of AVX_memmove, and you need to use it on overlapping areas, enable
-// the below definition. It will check for overlap and automatically redirect to
-// AVX_memmove if overlap is found.
-//#define OVERLAP_CHECK
-//
 
 #ifdef __clang__
 #define __m128i_u __m128i
 #define __m256i_u __m256i
 #define __m512i_u __m512i
+#elif defined(__GNUC__) && __GNUC__ < 9
+typedef __m128i __m128i_u;
+typedef __m256i __m256i_u;
+#ifdef __AVX512F__
+typedef __m512i __m512i_u;
+#endif
 #endif
 
+#undef BYTE_ALIGNMENT
 #if defined(__AVX512F__)
-#define BYTE_ALIGNMENT 0x3F // For 64-byte alignment
+#define BYTE_ALIGNMENT 0x3F
 #elif defined(__AVX__)
-#define BYTE_ALIGNMENT 0x1F // For 32-byte alignment
+#define BYTE_ALIGNMENT 0x1F
 #else
-#define BYTE_ALIGNMENT 0x0F // For 16-byte alignment
+#define BYTE_ALIGNMENT 0x0F
 #endif
 
-//
-// USAGE INFORMATION:
-//
-// The "len" argument is "# of x bytes to copy," e.g. memcpy_512bit_u/a needs
-// to know "how many multiples of 512 bit (64 bytes) to copy." The functions
-// with byte sizes larger than their bit/8 sizes follow the same pattern:
-// memcpy_512bit_512B_u/a needs to know how many multiples of 512 bytes to copy.
-//
-// The "numbytes" argument in AVX_memcpy and memcpy_large is just the total
-// number of bytes to copy.
-//
+/* ==================== 装载/存储策略宏 ====================
+ *  命名: S=标量 U=非对齐 A=对齐 T=流式(NT)
+ *  所有 intrinsic 与原版逐一对应, 不替换 lddqu→loadu 等 */
 
-//-----------------------------------------------------------------------------
-// Individual Functions:
-//-----------------------------------------------------------------------------
+#define LD_S8(p)      (*(const uint8_t  *)(p))
+#define ST_S8(p,v)    (*(uint8_t  *)(p)=(v))
+#define FIN_S8
 
-// 16-bit (2 bytes at a time)
-// Len is (# of total bytes/2), so it's "# of 16-bits"
+#define LD_S16(p)     (*(const uint16_t *)(p))
+#define ST_S16(p,v)   (*(uint16_t *)(p)=(v))
+#define FIN_S16
 
-static void * memcpy_16bit(void *dest, const void *src, size_t len)
-{
-    const uint16_t* s = (uint16_t*)src;
-    uint16_t* d = (uint16_t*)dest;
+#define LD_S32(p)     (*(const uint32_t *)(p))
+#define ST_S32(p,v)   (*(uint32_t *)(p)=(v))
+#define FIN_S32
 
-    while (len--)
-    {
-        *d++ = *s++;
-    }
+#define LD_S64(p)     (*(const uint64_t *)(p))
+#define ST_S64(p,v)   (*(uint64_t *)(p)=(v))
+#define FIN_S64
 
-    return dest;
-}
+#define LD_U128(p)    _mm_lddqu_si128((const __m128i *)(p))
+#define ST_U128(p,v)  _mm_storeu_si128((__m128i *)(p),(v))
+#define FIN_U128
 
-// 32-bit (4 bytes at a time - 1 pixel in a 32-bit linear frame buffer)
-// Len is (# of total bytes/4), so it's "# of 32-bits"
+#define LD_A128(p)    _mm_load_si128((const __m128i *)(p))
+#define ST_A128(p,v)  _mm_store_si128((__m128i *)(p),(v))
+#define FIN_A128
 
-static void * memcpy_32bit(void *dest, const void *src, size_t len)
-{
-    const uint32_t* s = (uint32_t*)src;
-    uint32_t* d = (uint32_t*)dest;
-
-    while (len--)
-    {
-        *d++ = *s++;
-    }
-
-    return dest;
-}
-
-// 64-bit (8 bytes at a time - 2 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/8), so it's "# of 64-bits"
-
-static void * memcpy_64bit(void *dest, const void *src, size_t len)
-{
-    const uint64_t* s = (uint64_t*)src;
-    uint64_t* d = (uint64_t*)dest;
-
-    while (len--)
-    {
-        *d++ = *s++;
-    }
-
-    return dest;
-}
-
-//-----------------------------------------------------------------------------
-// SSE2 Unaligned:
-//-----------------------------------------------------------------------------
-
-// SSE2 (128-bit, 16 bytes at a time - 4 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/16), so it's "# of 128-bits"
-
-static void * memcpy_128bit_u(void *dest, const void *src, size_t len)
-{
-    const __m128i_u* s = (__m128i_u*)src;
-    __m128i_u* d = (__m128i_u*)dest;
-
-    while (len--)
-    {
-        _mm_storeu_si128(d++, _mm_lddqu_si128(s++));
-    }
-
-    return dest;
-}
-
-// 32 bytes at a time
-static void * memcpy_128bit_32B_u(void *dest, const void *src, size_t len)
-{
-    const __m128i_u* s = (__m128i_u*)src;
-    __m128i_u* d = (__m128i_u*)dest;
-
-    while (len--)
-    {
-        _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 1
-        _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 2
-    }
-
-    return dest;
-}
-
-// 64 bytes at a time
-static void * memcpy_128bit_64B_u(void *dest, const void *src, size_t len)
-{
-    const __m128i_u* s = (__m128i_u*)src;
-    __m128i_u* d = (__m128i_u*)dest;
-
-    while (len--)
-    {
-        _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 1
-        _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 2
-        _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 3
-        _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 4
-    }
-
-    return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_128bit_128B_u(void *dest, const void *src, size_t len)
-{
-  const __m128i_u* s = (__m128i_u*)src;
-  __m128i_u* d = (__m128i_u*)dest;
-
-  while (len--)
-  {
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 1
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 2
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 3
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 4
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 5
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 6
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 7
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 8
-  }
-
-  return dest;
-}
-
-// 256 bytes
-static void * memcpy_128bit_256B_u(void *dest, const void *src, size_t len)
-{
-  const __m128i_u* s = (__m128i_u*)src;
-  __m128i_u* d = (__m128i_u*)dest;
-
-  while (len--)
-  {
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 1
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 2
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 3
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 4
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 5
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 6
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 7
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 8
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 9
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 10
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 11
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 12
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 13
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 14
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 15
-    _mm_storeu_si128(d++, _mm_lddqu_si128(s++)); // 16
-  }
-
-  return dest;
-}
-
-//-----------------------------------------------------------------------------
-// AVX+ Unaligned:
-//-----------------------------------------------------------------------------
-
-// AVX (256-bit, 32 bytes at a time - 8 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/32), so it's "# of 256-bits"
-// Sandybridge and Ryzen and up, Haswell and up for better performance
+#define LD_T128(p)    _mm_stream_load_si128((__m128i *)(p))
+#define ST_T128(p,v)  _mm_stream_si128((__m128i *)(p),(v))
+#define FIN_T128      _mm_sfence();
 
 #ifdef __AVX__
-static void * memcpy_256bit_u(void *dest, const void *src, size_t len)
-{
-  const __m256i_u* s = (__m256i_u*)src;
-  __m256i_u* d = (__m256i_u*)dest;
+#define LD_U256(p)    _mm256_lddqu_si256((const __m256i *)(p))
+#define ST_U256(p,v)  _mm256_storeu_si256((__m256i *)(p),(v))
+#define FIN_U256
 
-  while (len--)
-  {
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++));
-  }
-
-  return dest;
-}
-
-// 64 bytes at a time
-static void * memcpy_256bit_64B_u(void *dest, const void *src, size_t len)
-{
-  const __m256i_u* s = (__m256i_u*)src;
-  __m256i_u* d = (__m256i_u*)dest;
-
-  while (len--)
-  {
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 1
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 2
-  }
-
-  return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_256bit_128B_u(void *dest, const void *src, size_t len)
-{
-  const __m256i_u* s = (__m256i_u*)src;
-  __m256i_u* d = (__m256i_u*)dest;
-
-  while (len--)
-  {
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 1
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 2
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 3
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 4
-  }
-
-  return dest;
-}
-
-// 256 bytes at a time
-static void * memcpy_256bit_256B_u(void *dest, const void *src, size_t len)
-{
-  const __m256i_u* s = (__m256i_u*)src;
-  __m256i_u* d = (__m256i_u*)dest;
-
-  while (len--)
-  {
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 1
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 2
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 3
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 4
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 5
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 6
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 7
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 8
-  }
-
-  return dest;
-}
-
-// 512 bytes at a time, one load->store for every ymm register (there are 16)
-static void * memcpy_256bit_512B_u(void *dest, const void *src, size_t len)
-{
-  const __m256i_u* s = (__m256i_u*)src;
-  __m256i_u* d = (__m256i_u*)dest;
-
-  while (len--)
-  {
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 1
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 2
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 3
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 4
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 5
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 6
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 7
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 8
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 9
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 10
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 11
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 12
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 13
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 14
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 15
-    _mm256_storeu_si256(d++, _mm256_lddqu_si256(s++)); // 16
-  }
-
-  return dest;
-}
+#define LD_A256(p)    _mm256_load_si256((const __m256i *)(p))
+#define ST_A256(p,v)  _mm256_store_si256((__m256i *)(p),(v))
+#define FIN_A256
 #endif
-
-// AVX-512 (512-bit, 64 bytes at a time - 16 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/64), so it's "# of 512-bits"
-// Requires AVX512F
-
-#ifdef __AVX512F__
-static void * memcpy_512bit_u(void *dest, const void *src, size_t len)
-{
-  const __m512i_u* s = (__m512i_u*)src;
-  __m512i_u* d = (__m512i_u*)dest;
-
-  while (len--)
-  {
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++));
-  }
-
-  return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_512bit_128B_u(void *dest, const void *src, size_t len)
-{
-  const __m512i_u* s = (__m512i_u*)src;
-  __m512i_u* d = (__m512i_u*)dest;
-
-  while (len--)
-  {
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 1
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 2
-  }
-
-  return dest;
-}
-
-// 256 bytes at a time
-static void * memcpy_512bit_256B_u(void *dest, const void *src, size_t len)
-{
-  const __m512i_u* s = (__m512i_u*)src;
-  __m512i_u* d = (__m512i_u*)dest;
-
-  while (len--)
-  {
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 1
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 2
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 3
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 4
-  }
-
-  return dest;
-}
-
-// 512 bytes (half a KB!!) at a time
-static void * memcpy_512bit_512B_u(void *dest, const void *src, size_t len)
-{
-  const __m512i_u* s = (__m512i_u*)src;
-  __m512i_u* d = (__m512i_u*)dest;
-
-  while (len--)
-  {
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 1
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 2
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 3
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 4
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 5
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 6
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 7
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 8
-  }
-
-  return dest;
-}
-
-// 1024 bytes, or 1 kB
-static void * memcpy_512bit_1kB_u(void *dest, const void *src, size_t len)
-{
-  const __m512i_u* s = (__m512i_u*)src;
-  __m512i_u* d = (__m512i_u*)dest;
-
-  while (len--)
-  {
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 1
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 2
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 3
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 4
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 5
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 6
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 7
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 8
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 9
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 10
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 11
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 12
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 13
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 14
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 15
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 16
-  }
-
-  return dest;
-}
-
-// 2048 bytes, or 2 kB
-static void * memcpy_512bit_2kB_u(void *dest, const void *src, size_t len)
-{
-  const __m512i_u* s = (__m512i_u*)src;
-  __m512i_u* d = (__m512i_u*)dest;
-
-  while (len--)
-  {
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 1
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 2
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 3
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 4
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 5
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 6
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 7
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 8
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 9
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 10
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 11
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 12
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 13
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 14
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 15
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 16
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 17
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 18
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 19
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 20
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 21
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 22
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 23
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 24
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 25
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 26
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 27
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 28
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 29
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 30
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 31
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 32
-  }
-
-  return dest;
-}
-
-// 4096 bytes, or 4 kB
-static void * memcpy_512bit_4kB_u(void *dest, const void *src, size_t len)
-{
-  const __m512i_u* s = (__m512i_u*)src;
-  __m512i_u* d = (__m512i_u*)dest;
-
-  while (len--)
-  {
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 1
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 2
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 3
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 4
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 5
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 6
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 7
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 8
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 9
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 10
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 11
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 12
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 13
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 14
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 15
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 16
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 17
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 18
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 19
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 20
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 21
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 22
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 23
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 24
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 25
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 26
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 27
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 28
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 29
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 30
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 31
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 32
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 1
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 2
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 3
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 4
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 5
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 6
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 7
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 8
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 9
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 10
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 11
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 12
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 13
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 14
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 15
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 16
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 17
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 18
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 19
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 20
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 21
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 22
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 23
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 24
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 25
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 26
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 27
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 28
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 29
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 30
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 31
-    _mm512_storeu_si512(d++, _mm512_loadu_si512(s++)); // 32
-  }
-
-  return dest;
-}
-
-#endif
-
-// AVX-1024 support pending existence of the standard. It would be able to fit
-// an entire 4 kB page in its registers at one time. Imagine that!
-
-//-----------------------------------------------------------------------------
-// SSE2 Aligned:
-//-----------------------------------------------------------------------------
-
-// SSE2 (128-bit, 16 bytes at a time - 4 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/16), so it's "# of 128-bits"
-
-static void * memcpy_128bit_a(void *dest, const void *src, size_t len)
-{
-  const __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_store_si128(d++, _mm_load_si128(s++));
-  }
-
-  return dest;
-}
-
-// 32 bytes at a time
-static void * memcpy_128bit_32B_a(void *dest, const void *src, size_t len)
-{
-  const __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 1
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 2
-  }
-
-  return dest;
-}
-
-// 64 bytes at a time
-static void * memcpy_128bit_64B_a(void *dest, const void *src, size_t len)
-{
-  const __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 1
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 2
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 3
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 4
-  }
-
-  return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_128bit_128B_a(void *dest, const void *src, size_t len)
-{
-  const __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 1
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 2
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 3
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 4
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 5
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 6
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 7
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 8
-  }
-
-  return dest;
-}
-
-// 256 bytes
-static void * memcpy_128bit_256B_a(void *dest, const void *src, size_t len)
-{
-  const __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 1
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 2
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 3
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 4
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 5
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 6
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 7
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 8
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 9
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 10
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 11
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 12
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 13
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 14
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 15
-    _mm_store_si128(d++, _mm_load_si128(s++)); // 16
-  }
-
-  return dest;
-}
-
-//-----------------------------------------------------------------------------
-// AVX+ Aligned:
-//-----------------------------------------------------------------------------
-
-// AVX (256-bit, 32 bytes at a time - 8 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/32), so it's "# of 256-bits"
-// Sandybridge and Ryzen and up
-
-#ifdef __AVX__
-static void * memcpy_256bit_a(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_store_si256(d++, _mm256_load_si256(s++));
-  }
-
-  return dest;
-}
-
-// 64 bytes at a time
-static void * memcpy_256bit_64B_a(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 1
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 2
-  }
-
-  return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_256bit_128B_a(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 1
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 2
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 3
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 4
-  }
-
-  return dest;
-}
-
-// 256 bytes at a time
-static void * memcpy_256bit_256B_a(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 1
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 2
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 3
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 4
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 5
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 6
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 7
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 8
-  }
-
-  return dest;
-}
-
-// 512 bytes
-static void * memcpy_256bit_512B_a(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 1
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 2
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 3
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 4
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 5
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 6
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 7
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 8
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 9
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 10
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 11
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 12
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 13
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 14
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 15
-    _mm256_store_si256(d++, _mm256_load_si256(s++)); // 16
-  }
-
-  return dest;
-}
-
-#endif
-
-// AVX-512 (512-bit, 64 bytes at a time - 16 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/64), so it's "# of 512-bits"
-// Requires AVX512F
-
-#ifdef __AVX512F__
-static void * memcpy_512bit_a(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_store_si512(d++, _mm512_load_si512(s++));
-  }
-
-  return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_512bit_128B_a(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 1
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 2
-  }
-
-  return dest;
-}
-
-// 256 bytes at a time
-static void * memcpy_512bit_256B_a(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 1
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 2
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 3
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 4
-  }
-
-  return dest;
-}
-
-// 512 bytes (half a KB!!) at a time
-static void * memcpy_512bit_512B_a(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 1
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 2
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 3
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 4
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 5
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 6
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 7
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 8
-  }
-
-  return dest;
-}
-
-// 1024 bytes, or 1 kB
-static void * memcpy_512bit_1kB_a(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 1
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 2
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 3
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 4
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 5
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 6
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 7
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 8
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 9
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 10
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 11
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 12
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 13
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 14
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 15
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 16
-  }
-
-  return dest;
-}
-
-// 2048 bytes, or 2 kB
-static void * memcpy_512bit_2kB_a(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 1
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 2
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 3
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 4
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 5
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 6
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 7
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 8
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 9
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 10
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 11
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 12
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 13
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 14
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 15
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 16
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 17
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 18
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 19
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 20
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 21
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 22
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 23
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 24
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 25
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 26
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 27
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 28
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 29
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 30
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 31
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 32
-  }
-
-  return dest;
-}
-
-// 4096 bytes, or 4 kB
-static void * memcpy_512bit_4kB_a(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 1
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 2
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 3
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 4
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 5
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 6
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 7
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 8
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 9
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 10
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 11
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 12
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 13
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 14
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 15
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 16
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 17
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 18
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 19
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 20
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 21
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 22
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 23
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 24
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 25
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 26
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 27
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 28
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 29
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 30
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 31
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 32
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 1
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 2
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 3
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 4
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 5
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 6
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 7
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 8
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 9
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 10
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 11
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 12
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 13
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 14
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 15
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 16
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 17
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 18
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 19
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 20
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 21
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 22
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 23
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 24
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 25
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 26
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 27
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 28
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 29
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 30
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 31
-    _mm512_store_si512(d++, _mm512_load_si512(s++)); // 32
-  }
-
-  return dest;
-}
-
-#endif
-
-//-----------------------------------------------------------------------------
-// SSE4.1 Streaming:
-//-----------------------------------------------------------------------------
-
-// SSE4.1 (128-bit, 16 bytes at a time - 4 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/16), so it's "# of 128-bits"
-
-static void * memcpy_128bit_as(void *dest, const void *src, size_t len)
-{
-  __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++));
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 32 bytes at a time
-static void * memcpy_128bit_32B_as(void *dest, const void *src, size_t len)
-{
-  __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 1
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 2
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 64 bytes at a time
-static void * memcpy_128bit_64B_as(void *dest, const void *src, size_t len)
-{
-  __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 1
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 2
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 3
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 4
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_128bit_128B_as(void *dest, const void *src, size_t len)
-{
-  __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 1
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 2
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 3
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 4
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 5
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 6
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 7
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 8
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 256 bytes
-static void * memcpy_128bit_256B_as(void *dest, const void *src, size_t len)
-{
-  __m128i* s = (__m128i*)src;
-  __m128i* d = (__m128i*)dest;
-
-  while (len--)
-  {
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 1
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 2
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 3
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 4
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 5
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 6
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 7
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 8
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 9
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 10
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 11
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 12
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 13
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 14
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 15
-    _mm_stream_si128(d++, _mm_stream_load_si128(s++)); // 16
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-//-----------------------------------------------------------------------------
-// AVX2+ Streaming:
-//-----------------------------------------------------------------------------
-
-// AVX2 (256-bit, 32 bytes at a time - 8 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/32), so it's "# of 256-bits"
-// Haswell and Ryzen and up
 
 #ifdef __AVX2__
-static void * memcpy_256bit_as(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++));
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 64 bytes at a time
-static void * memcpy_256bit_64B_as(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 1
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 2
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_256bit_128B_as(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 1
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 2
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 3
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 4
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 256 bytes at a time
-static void * memcpy_256bit_256B_as(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 1
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 2
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 3
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 4
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 5
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 6
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 7
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 8
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 512 bytes
-static void * memcpy_256bit_512B_as(void *dest, const void *src, size_t len)
-{
-  const __m256i* s = (__m256i*)src;
-  __m256i* d = (__m256i*)dest;
-
-  while (len--)
-  {
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 1
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 2
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 3
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 4
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 5
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 6
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 7
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 8
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 9
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 10
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 11
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 12
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 13
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 14
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 15
-    _mm256_stream_si256(d++, _mm256_stream_load_si256(s++)); // 16
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
+#define LD_T256(p)    _mm256_stream_load_si256((const __m256i *)(p))
+#define ST_T256(p,v)  _mm256_stream_si256((__m256i *)(p),(v))
+#define FIN_T256      _mm_sfence();
 #endif
-
-// AVX-512 (512-bit, 64 bytes at a time - 16 pixels in a 32-bit linear frame buffer)
-// Len is (# of total bytes/64), so it's "# of 512-bits"
-// Requires AVX512F
 
 #ifdef __AVX512F__
-static void * memcpy_512bit_as(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
+#define LD_U512(p)    _mm512_loadu_si512((const __m512i *)(p))
+#define ST_U512(p,v)  _mm512_storeu_si512((__m512i *)(p),(v))
+#define FIN_U512
 
-  while (len--)
-  {
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++));
-  }
-  _mm_sfence();
+#define LD_A512(p)    _mm512_load_si512((const __m512i *)(p))
+#define ST_A512(p,v)  _mm512_store_si512((__m512i *)(p),(v))
+#define FIN_A512
 
-  return dest;
-}
-
-// 128 bytes at a time
-static void * memcpy_512bit_128B_as(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 1
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 2
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 256 bytes at a time
-static void * memcpy_512bit_256B_as(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 1
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 2
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 3
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 4
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 512 bytes (half a KB!!) at a time
-static void * memcpy_512bit_512B_as(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 1
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 2
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 3
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 4
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 5
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 6
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 7
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 8
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 1024 bytes, or 1 kB
-static void * memcpy_512bit_1kB_as(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 1
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 2
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 3
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 4
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 5
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 6
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 7
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 8
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 9
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 10
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 11
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 12
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 13
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 14
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 15
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 16
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 2048 bytes, or 2 kB
-static void * memcpy_512bit_2kB_as(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 1
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 2
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 3
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 4
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 5
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 6
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 7
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 8
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 9
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 10
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 11
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 12
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 13
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 14
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 15
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 16
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 17
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 18
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 19
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 20
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 21
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 22
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 23
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 24
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 25
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 26
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 27
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 28
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 29
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 30
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 31
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 32
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
-// 4096 bytes, or 4 kB
-static void * memcpy_512bit_4kB_as(void *dest, const void *src, size_t len)
-{
-  const __m512i* s = (__m512i*)src;
-  __m512i* d = (__m512i*)dest;
-
-  while (len--)
-  {
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 1
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 2
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 3
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 4
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 5
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 6
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 7
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 8
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 9
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 10
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 11
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 12
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 13
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 14
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 15
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 16
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 17
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 18
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 19
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 20
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 21
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 22
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 23
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 24
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 25
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 26
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 27
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 28
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 29
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 30
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 31
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 32
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 1
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 2
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 3
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 4
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 5
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 6
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 7
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 8
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 9
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 10
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 11
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 12
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 13
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 14
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 15
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 16
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 17
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 18
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 19
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 20
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 21
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 22
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 23
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 24
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 25
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 26
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 27
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 28
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 29
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 30
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 31
-    _mm512_stream_si512(d++, _mm512_stream_load_si512(s++)); // 32
-  }
-  _mm_sfence();
-
-  return dest;
-}
-
+#define LD_T512(p)    _mm512_stream_load_si512((const __m512i *)(p))
+#define ST_T512(p,v)  _mm512_stream_si512((__m512i *)(p),(v))
+#define FIN_T512      _mm_sfence();
 #endif
 
-//-----------------------------------------------------------------------------
-// Dispatch Functions:
-//-----------------------------------------------------------------------------
+#define XM_STEP(P)     ST_##P(d, LD_##P(s)); d++; s++;
 
-// Copy arbitrarily large amounts of data between 2 non-overlapping regions
-static void * memcpy_large(void *dest, void *src, size_t numbytes)
-{
-  void * returnval = dest; // memcpy_fpx86 is supposed to return the destination
-  size_t offset = 0; // Offset size needs to match the size of a pointer
+#define XM_STEPS_1(P)    XM_STEP(P)
+#define XM_STEPS_2(P)    XM_STEP(P)  XM_STEP(P)
+#define XM_STEPS_4(P)    XM_STEPS_2(P)  XM_STEPS_2(P)
+#define XM_STEPS_8(P)    XM_STEPS_4(P)  XM_STEPS_4(P)
+#define XM_STEPS_16(P)   XM_STEPS_8(P)  XM_STEPS_8(P)
+#define XM_STEPS_32(P)   XM_STEPS_16(P) XM_STEPS_16(P)
+#define XM_STEPS_64(P)   XM_STEPS_32(P) XM_STEPS_32(P)
 
-  while(numbytes)
-  // The biggest sizes will go first for alignment. There's no benefit to using
-  // aligned loads over unaligned loads here, so all are unaligned.
-  // NOTE: Each memcpy_fpx86 has its own loop so that any one can be used individually.
-  {
-    if(numbytes < 2) // 1 byte
-    {
-      memcpy_fpx86(dest, src, numbytes);
-      offset = numbytes & -1;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes = 0;
-    }
-    else if(numbytes < 4) // 2 bytes
-    {
-      memcpy_16bit(dest, src, numbytes >> 1);
-      offset = numbytes & -2;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 1;
-    }
-    else if(numbytes < 8) // 4 bytes
-    {
-      memcpy_32bit(dest, src, numbytes >> 2);
-      offset = numbytes & -4;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 3;
-    }
-    else if(numbytes < 16) // 8 bytes
-    {
-      memcpy_64bit(dest, src, numbytes >> 3);
-      offset = numbytes & -8;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 7;
-    }
+#define XM_DEF(NAME, VTYPE, POL, N)                                          \
+static void *NAME(void *dest, const void *src, size_t len)                    \
+{                                                                             \
+    VTYPE       *d = (VTYPE *)dest;                                           \
+    const VTYPE *s = (const VTYPE *)src;                                      \
+    while (len--) {                                                           \
+        XM_STEPS_##N(POL);                                                    \
+    }                                                                         \
+    FIN_##POL                                                                 \
+    return dest;                                                              \
+}
+
+/* ==================== 全部 55 个块函数 ==================== */
+
+/* ---- 标量 ---- */
+XM_DEF(memcpy_fpx86,          uint8_t,   S8,   1)
+XM_DEF(memcpy_16bit,          uint16_t,  S16,  1)
+XM_DEF(memcpy_32bit,          uint32_t,  S32,  1)
+XM_DEF(memcpy_64bit,          uint64_t,  S64,  1)
+
+/* ---- SSE2 非对齐 / 对齐 / 流式 ---- */
+XM_DEF(memcpy_128bit_u,       __m128i_u, U128, 1)
+XM_DEF(memcpy_128bit_32B_u,   __m128i_u, U128, 2)
+XM_DEF(memcpy_128bit_64B_u,   __m128i_u, U128, 4)
+XM_DEF(memcpy_128bit_128B_u,  __m128i_u, U128, 8)
+XM_DEF(memcpy_128bit_256B_u,  __m128i_u, U128, 16)
+
+XM_DEF(memcpy_128bit_a,       __m128i,   A128, 1)
+XM_DEF(memcpy_128bit_32B_a,   __m128i,   A128, 2)
+XM_DEF(memcpy_128bit_64B_a,   __m128i,   A128, 4)
+XM_DEF(memcpy_128bit_128B_a,  __m128i,   A128, 8)
+XM_DEF(memcpy_128bit_256B_a,  __m128i,   A128, 16)
+
+XM_DEF(memcpy_128bit_as,      __m128i,   T128, 1)
+XM_DEF(memcpy_128bit_32B_as,  __m128i,   T128, 2)
+XM_DEF(memcpy_128bit_64B_as,  __m128i,   T128, 4)
+XM_DEF(memcpy_128bit_128B_as, __m128i,   T128, 8)
+XM_DEF(memcpy_128bit_256B_as, __m128i,   T128, 16)
+
+#ifdef __AVX__
+XM_DEF(memcpy_256bit_u,       __m256i_u, U256, 1)
+XM_DEF(memcpy_256bit_64B_u,   __m256i_u, U256, 2)
+XM_DEF(memcpy_256bit_128B_u,  __m256i_u, U256, 4)
+XM_DEF(memcpy_256bit_256B_u,  __m256i_u, U256, 8)
+XM_DEF(memcpy_256bit_512B_u,  __m256i_u, U256, 16)
+
+XM_DEF(memcpy_256bit_a,       __m256i,   A256, 1)
+XM_DEF(memcpy_256bit_64B_a,   __m256i,   A256, 2)
+XM_DEF(memcpy_256bit_128B_a,  __m256i,   A256, 4)
+XM_DEF(memcpy_256bit_256B_a,  __m256i,   A256, 8)
+XM_DEF(memcpy_256bit_512B_a,  __m256i,   A256, 16)
+#endif
+
+#ifdef __AVX2__
+XM_DEF(memcpy_256bit_as,      __m256i,   T256, 1)
+XM_DEF(memcpy_256bit_64B_as,  __m256i,   T256, 2)
+XM_DEF(memcpy_256bit_128B_as, __m256i,   T256, 4)
+XM_DEF(memcpy_256bit_256B_as, __m256i,   T256, 8)
+XM_DEF(memcpy_256bit_512B_as, __m256i,   T256, 16)
+#endif
+
 #ifdef __AVX512F__
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_u(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_256bit_u(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_512bit_u(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_512bit_128B_u(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else if(numbytes < 512) // 256 bytes
-    {
-      memcpy_512bit_256B_u(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
-    else if(numbytes < 1024) // 512 bytes
-    {
-      memcpy_512bit_512B_u(dest, src, numbytes >> 9);
-      offset = numbytes & -512;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 511;
-    }
-    else if(numbytes < 2048) // 1024 bytes (1 kB)
-    {
-      memcpy_512bit_1kB_u(dest, src, numbytes >> 10);
-      offset = numbytes & -1024;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 1023;
-    }
-    else if(numbytes < 4096) // 2048 bytes (2 kB)
-    {
-      memcpy_512bit_2kB_u(dest, src, numbytes >> 11);
-      offset = numbytes & -2048;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 2047;
-    }
-    else // 4096 bytes (4 kB)
-    {
-      memcpy_512bit_4kB_u(dest, src, numbytes >> 12);
-      offset = numbytes & -4096;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 4095;
-    }
-#elif __AVX__
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_u(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_256bit_u(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_256bit_64B_u(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_256bit_128B_u(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else if(numbytes < 512) // 256 bytes
-    {
-      memcpy_256bit_256B_u(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
-    else // 512 bytes
-    {
-      memcpy_256bit_512B_u(dest, src, numbytes >> 9);
-      offset = numbytes & -512;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 511;
-    }
-#else // SSE2 only
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_u(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_128bit_32B_u(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_128bit_64B_u(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_128bit_128B_u(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else // 256 bytes
-    {
-      memcpy_128bit_256B_u(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
+XM_DEF(memcpy_512bit_u,        __m512i_u, U512, 1)
+XM_DEF(memcpy_512bit_128B_u,  __m512i_u, U512, 2)
+XM_DEF(memcpy_512bit_256B_u,  __m512i_u, U512, 4)
+XM_DEF(memcpy_512bit_512B_u,  __m512i_u, U512, 8)
+XM_DEF(memcpy_512bit_1kB_u,   __m512i_u, U512, 16)
+XM_DEF(memcpy_512bit_2kB_u,   __m512i_u, U512, 32)
+XM_DEF(memcpy_512bit_4kB_u,   __m512i_u, U512, 64)
+
+XM_DEF(memcpy_512bit_a,        __m512i,   A512, 1)
+XM_DEF(memcpy_512bit_128B_a,  __m512i,   A512, 2)
+XM_DEF(memcpy_512bit_256B_a,  __m512i,   A512, 4)
+XM_DEF(memcpy_512bit_512B_a,  __m512i,   A512, 8)
+XM_DEF(memcpy_512bit_1kB_a,   __m512i,   A512, 16)
+XM_DEF(memcpy_512bit_2kB_a,   __m512i,   A512, 32)
+XM_DEF(memcpy_512bit_4kB_a,   __m512i,   A512, 64)
+
+XM_DEF(memcpy_512bit_as,       __m512i,   T512, 1)
+XM_DEF(memcpy_512bit_128B_as, __m512i,   T512, 2)
+XM_DEF(memcpy_512bit_256B_as, __m512i,   T512, 4)
+XM_DEF(memcpy_512bit_512B_as, __m512i,   T512, 8)
+XM_DEF(memcpy_512bit_1kB_as,  __m512i,   T512, 16)
+XM_DEF(memcpy_512bit_2kB_as,  __m512i,   T512, 32)
+XM_DEF(memcpy_512bit_4kB_as,  __m512i,   T512, 64)
 #endif
-  }
 
-  return returnval;
-} // END MEMCPY LARGE, UNALIGNED
 
-// Copy arbitrarily large amounts of data between 2 non-overlapping regions
-// Aligned version
-static void * memcpy_large_a(void *dest, void *src, size_t numbytes)
-{
-  void * returnval = dest; // memcpy_fpx86 is supposed to return the destination
-  size_t offset = 0; // Offset size needs to match the size of a pointer
 
-  while(numbytes)
-  // The biggest sizes will go first for alignment. There's no benefit to using
-  // aligned loads over unaligned loads here, so all are unaligned.
-  // NOTE: Each memcpy_fpx86 has its own loop so that any one can be used individually.
-  {
-    if(numbytes < 2) // 1 byte
-    {
-      memcpy_fpx86(dest, src, numbytes);
-      offset = numbytes & -1;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes = 0;
+#define XM_RUNG(FN, SZ)                            \
+    {                                              \
+        FN(dest, src, numbytes / (SZ));            \
+        offset = numbytes & ~((size_t)(SZ) - 1);   \
+        dest = (char *)dest + offset;               \
+        src  = (char *)src  + offset;               \
+        numbytes &= (SZ) - 1;                      \
     }
-    else if(numbytes < 4) // 2 bytes
-    {
-      memcpy_16bit(dest, src, numbytes >> 1);
-      offset = numbytes & -2;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 1;
-    }
-    else if(numbytes < 8) // 4 bytes
-    {
-      memcpy_32bit(dest, src, numbytes >> 2);
-      offset = numbytes & -4;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 3;
-    }
-    else if(numbytes < 16) // 8 bytes
-    {
-      memcpy_64bit(dest, src, numbytes >> 3);
-      offset = numbytes & -8;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 7;
-    }
+
+#define XM_HEAD_RUNGS                                                    \
+    if      (numbytes < 2)  XM_RUNG(memcpy_fpx86,  1)                   \
+    else if (numbytes < 4)  XM_RUNG(memcpy_16bit,  2)                   \
+    else if (numbytes < 8)  XM_RUNG(memcpy_32bit,  4)                   \
+    else if (numbytes < 16) XM_RUNG(memcpy_64bit,  8)
+
+#define XM_LADDER_U128                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)   XM_RUNG(memcpy_128bit_u,      16)         \
+    else if (numbytes < 64)   XM_RUNG(memcpy_128bit_32B_u,  32)        \
+    else if (numbytes < 128)  XM_RUNG(memcpy_128bit_64B_u,  64)        \
+    else if (numbytes < 256)  XM_RUNG(memcpy_128bit_128B_u, 128)       \
+    else                      XM_RUNG(memcpy_128bit_256B_u, 256)
+
+#define XM_LADDER_A128                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)   XM_RUNG(memcpy_128bit_a,      16)         \
+    else if (numbytes < 64)   XM_RUNG(memcpy_128bit_32B_a,  32)         \
+    else if (numbytes < 128)  XM_RUNG(memcpy_128bit_64B_a,  64)         \
+    else if (numbytes < 256)  XM_RUNG(memcpy_128bit_128B_a, 128)        \
+    else                      XM_RUNG(memcpy_128bit_256B_a, 256)
+
+#define XM_LADDER_T128                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)   XM_RUNG(memcpy_128bit_as,      16)        \
+    else if (numbytes < 64)   XM_RUNG(memcpy_128bit_32B_as,  32)        \
+    else if (numbytes < 128)  XM_RUNG(memcpy_128bit_64B_as,  64)        \
+    else if (numbytes < 256)  XM_RUNG(memcpy_128bit_128B_as, 128)       \
+    else                      XM_RUNG(memcpy_128bit_256B_as, 256)
+
+#ifdef __AVX__
+#define XM_LADDER_U256                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)   XM_RUNG(memcpy_128bit_u,      16)        \
+    else if (numbytes < 64)   XM_RUNG(memcpy_256bit_u,      32)        \
+    else if (numbytes < 128)  XM_RUNG(memcpy_256bit_64B_u,  64)        \
+    else if (numbytes < 256)  XM_RUNG(memcpy_256bit_128B_u, 128)       \
+    else if (numbytes < 512)  XM_RUNG(memcpy_256bit_256B_u, 256)       \
+    else                      XM_RUNG(memcpy_256bit_512B_u, 512)
+
+#define XM_LADDER_A256                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)   XM_RUNG(memcpy_128bit_a,      16)        \
+    else if (numbytes < 64)   XM_RUNG(memcpy_256bit_a,      32)        \
+    else if (numbytes < 128)  XM_RUNG(memcpy_256bit_64B_a,  64)        \
+    else if (numbytes < 256)  XM_RUNG(memcpy_256bit_128B_a, 128)       \
+    else if (numbytes < 512)  XM_RUNG(memcpy_256bit_256B_a, 256)       \
+    else                      XM_RUNG(memcpy_256bit_512B_a, 512)
+#endif
+
+#ifdef __AVX2__
+#define XM_LADDER_T256                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)   XM_RUNG(memcpy_128bit_as,      16)       \
+    else if (numbytes < 64)   XM_RUNG(memcpy_256bit_as,      32)       \
+    else if (numbytes < 128)  XM_RUNG(memcpy_256bit_64B_as,  64)       \
+    else if (numbytes < 256)  XM_RUNG(memcpy_256bit_128B_as, 128)       \
+    else if (numbytes < 512)  XM_RUNG(memcpy_256bit_256B_as, 256)       \
+    else                      XM_RUNG(memcpy_256bit_512B_as, 512)
+#endif
+
 #ifdef __AVX512F__
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_a(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_256bit_a(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_512bit_a(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_512bit_128B_a(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else if(numbytes < 512) // 256 bytes
-    {
-      memcpy_512bit_256B_a(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
-    else if(numbytes < 1024) // 512 bytes
-    {
-      memcpy_512bit_512B_a(dest, src, numbytes >> 9);
-      offset = numbytes & -512;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 511;
-    }
-    else if(numbytes < 2048) // 1024 bytes (1 kB)
-    {
-      memcpy_512bit_1kB_a(dest, src, numbytes >> 10);
-      offset = numbytes & -1024;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 1023;
-    }
-    else if(numbytes < 4096) // 2048 bytes (2 kB)
-    {
-      memcpy_512bit_2kB_a(dest, src, numbytes >> 11);
-      offset = numbytes & -2048;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 2047;
-    }
-    else // 4096 bytes (4 kB)
-    {
-      memcpy_512bit_4kB_a(dest, src, numbytes >> 12);
-      offset = numbytes & -4096;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 4095;
-    }
-#elif __AVX__
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_a(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_256bit_a(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_256bit_64B_a(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_256bit_128B_a(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else if(numbytes < 512) // 256 bytes
-    {
-      memcpy_256bit_256B_a(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
-    else // 512 bytes
-    {
-      memcpy_256bit_512B_a(dest, src, numbytes >> 9);
-      offset = numbytes & -512;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 511;
-    }
-#else // SSE2 only
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_a(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_128bit_32B_a(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_128bit_64B_a(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_128bit_128B_a(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else // 256 bytes
-    {
-      memcpy_128bit_256B_a(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
+#define XM_LADDER_U512                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)    XM_RUNG(memcpy_128bit_u,       16)       \
+    else if (numbytes < 64)    XM_RUNG(memcpy_256bit_u,       32)       \
+    else if (numbytes < 128)   XM_RUNG(memcpy_512bit_u,       64)       \
+    else if (numbytes < 256)   XM_RUNG(memcpy_512bit_128B_u,  128)      \
+    else if (numbytes < 512)   XM_RUNG(memcpy_512bit_256B_u,  256)      \
+    else if (numbytes < 1024)  XM_RUNG(memcpy_512bit_512B_u,  512)      \
+    else if (numbytes < 2048)  XM_RUNG(memcpy_512bit_1kB_u,   1024)     \
+    else if (numbytes < 4096)  XM_RUNG(memcpy_512bit_2kB_u,   2048)     \
+    else                       XM_RUNG(memcpy_512bit_4kB_u,   4096)
+
+#define XM_LADDER_A512                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)    XM_RUNG(memcpy_128bit_a,       16)       \
+    else if (numbytes < 64)    XM_RUNG(memcpy_256bit_a,       32)       \
+    else if (numbytes < 128)   XM_RUNG(memcpy_512bit_a,       64)       \
+    else if (numbytes < 256)   XM_RUNG(memcpy_512bit_128B_a,  128)      \
+    else if (numbytes < 512)   XM_RUNG(memcpy_512bit_256B_a,  256)      \
+    else if (numbytes < 1024)  XM_RUNG(memcpy_512bit_512B_a,  512)      \
+    else if (numbytes < 2048)  XM_RUNG(memcpy_512bit_1kB_a,   1024)     \
+    else if (numbytes < 4096)  XM_RUNG(memcpy_512bit_2kB_a,   2048)     \
+    else                       XM_RUNG(memcpy_512bit_4kB_a,   4096)
+
+#define XM_LADDER_T512                                                  \
+    XM_HEAD_RUNGS                                                       \
+    else if (numbytes < 32)    XM_RUNG(memcpy_128bit_as,       16)     \
+    else if (numbytes < 64)    XM_RUNG(memcpy_256bit_as,       32)      \
+    else if (numbytes < 128)   XM_RUNG(memcpy_512bit_as,       64)      \
+    else if (numbytes < 256)   XM_RUNG(memcpy_512bit_128B_as,  128)     \
+    else if (numbytes < 512)   XM_RUNG(memcpy_512bit_256B_as,  256)     \
+    else if (numbytes < 1024)  XM_RUNG(memcpy_512bit_512B_as,  512)     \
+    else if (numbytes < 2048)  XM_RUNG(memcpy_512bit_1kB_as,   1024)    \
+    else if (numbytes < 4096)  XM_RUNG(memcpy_512bit_2kB_as,   2048)    \
+    else                       XM_RUNG(memcpy_512bit_4kB_as,   4096)
 #endif
-  }
 
-  return returnval;
-} // END MEMCPY LARGE, ALIGNED
+#define XM_LADDER_FN(NAME, LADDER)                                         \
+static void *NAME(void *dest, void *src, size_t numbytes)                  \
+{                                                                          \
+    void *returnval = dest;                                                \
+    size_t offset;                                                         \
+    while (numbytes) { LADDER }                                            \
+    return returnval;                                                      \
+}
 
-// Copy arbitrarily large amounts of data between 2 non-overlapping regions
-// Aligned, streaming version
-static void * memcpy_large_as(void *dest, void *src, size_t numbytes)
-{
-  void * returnval = dest; // memcpy_fpx86 is supposed to return the destination
-  size_t offset = 0; // Offset size needs to match the size of a pointer
-
-  while(numbytes)
-  // The biggest sizes will go first for alignment. There's no benefit to using
-  // aligned loads over unaligned loads here, so all are unaligned.
-  // NOTE: Each memcpy_fpx86 has its own loop so that any one can be used individually.
-  {
-    if(numbytes < 2) // 1 byte
-    {
-      memcpy_fpx86(dest, src, numbytes);
-      offset = numbytes & -1;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes = 0;
-    }
-    else if(numbytes < 4) // 2 bytes
-    {
-      memcpy_16bit(dest, src, numbytes >> 1);
-      offset = numbytes & -2;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 1;
-    }
-    else if(numbytes < 8) // 4 bytes
-    {
-      memcpy_32bit(dest, src, numbytes >> 2);
-      offset = numbytes & -4;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 3;
-    }
-    else if(numbytes < 16) // 8 bytes
-    {
-      memcpy_64bit(dest, src, numbytes >> 3);
-      offset = numbytes & -8;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 7;
-    }
-#ifdef __AVX512F__
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_as(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_256bit_as(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_512bit_as(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_512bit_128B_as(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else if(numbytes < 512) // 256 bytes
-    {
-      memcpy_512bit_256B_as(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
-    else if(numbytes < 1024) // 512 bytes
-    {
-      memcpy_512bit_512B_as(dest, src, numbytes >> 9);
-      offset = numbytes & -512;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 511;
-    }
-    else if(numbytes < 2048) // 1024 bytes (1 kB)
-    {
-      memcpy_512bit_1kB_as(dest, src, numbytes >> 10);
-      offset = numbytes & -1024;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 1023;
-    }
-    else if(numbytes < 4096) // 2048 bytes (2 kB)
-    {
-      memcpy_512bit_2kB_as(dest, src, numbytes >> 11);
-      offset = numbytes & -2048;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 2047;
-    }
-    else // 4096 bytes (4 kB)
-    {
-      memcpy_512bit_4kB_as(dest, src, numbytes >> 12);
-      offset = numbytes & -4096;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 4095;
-    }
-#elif __AVX2__
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_as(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_256bit_as(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_256bit_64B_as(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_256bit_128B_as(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else if(numbytes < 512) // 256 bytes
-    {
-      memcpy_256bit_256B_as(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
-    else // 512 bytes
-    {
-      memcpy_256bit_512B_as(dest, src, numbytes >> 9);
-      offset = numbytes & -512;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 511;
-    }
-#else // SSE4.1 only
-    else if(numbytes < 32) // 16 bytes
-    {
-      memcpy_128bit_as(dest, src, numbytes >> 4);
-      offset = numbytes & -16;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 15;
-    }
-    else if(numbytes < 64) // 32 bytes
-    {
-      memcpy_128bit_32B_as(dest, src, numbytes >> 5);
-      offset = numbytes & -32;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 31;
-    }
-    else if(numbytes < 128) // 64 bytes
-    {
-      memcpy_128bit_64B_as(dest, src, numbytes >> 6);
-      offset = numbytes & -64;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 63;
-    }
-    else if(numbytes < 256) // 128 bytes
-    {
-      memcpy_128bit_128B_as(dest, src, numbytes >> 7);
-      offset = numbytes & -128;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 127;
-    }
-    else // 256 bytes
-    {
-      memcpy_128bit_256B_as(dest, src, numbytes >> 8);
-      offset = numbytes & -256;
-      dest = (char *)dest + offset;
-      src = (char *)src + offset;
-      numbytes &= 255;
-    }
+#if defined(__AVX512F__)
+XM_LADDER_FN(memcpy_large,    XM_LADDER_U512)
+XM_LADDER_FN(memcpy_large_a,  XM_LADDER_A512)
+XM_LADDER_FN(memcpy_large_as, XM_LADDER_T512)
+#elif defined(__AVX__)
+XM_LADDER_FN(memcpy_large,    XM_LADDER_U256)
+XM_LADDER_FN(memcpy_large_a,  XM_LADDER_A256)
+#ifdef __AVX2__
+XM_LADDER_FN(memcpy_large_as, XM_LADDER_T256)
+#else
+XM_LADDER_FN(memcpy_large_as, XM_LADDER_T128)
 #endif
-  }
+#else
+XM_LADDER_FN(memcpy_large,    XM_LADDER_U128)
+XM_LADDER_FN(memcpy_large_a,  XM_LADDER_A128)
+XM_LADDER_FN(memcpy_large_as, XM_LADDER_T128)
+#endif
 
-  return returnval;
-} // END MEMCPY LARGE, ALIGNED, STREAMING
-
-//-----------------------------------------------------------------------------
-// Main Function:
-//-----------------------------------------------------------------------------
-
-// General-purpose function to call
-void * x86memlib_DeclFunction(AVX_memcpy)(void *dest, void *src, size_t numbytes)
-{
-  void * returnval = dest;
-
-  if((char*)src == (char*)dest)
-  {
-    // Lol.
-    return returnval;
-  }
+/* ==================== 主入口 ==================== */
 
 #ifdef OVERLAP_CHECK
-  // Overlap check
-  if(
-      (
-        (
-          (char*)dest > (char*)src
-        )
-        &&
-        (
-          (char*)dest < ((char*)src + numbytes)
-        )
-      )
-    ||
-      (
-        (
-          (char*)src > (char*)dest
-        )
-        &&
-        (
-          (char*)src < ((char*)dest + numbytes)
-        )
-      )
-    ) // Why didn't you just use memmove directly???
-  {
-    returnval = x86memlib_UseFunction(AVX_memmove)(dest, src, numbytes);
-    return returnval;
-  }
+void *x86memlib_UseFunction(AVX_memmove)(void *dest, void *src, size_t numbytes);
 #endif
 
-  if(
-      ( ((uintptr_t)src & BYTE_ALIGNMENT) == 0 )
-      &&
-      ( ((uintptr_t)dest & BYTE_ALIGNMENT) == 0 )
-    ) // Check alignment
-  {
-    // This is the fastest case: src and dest are both cache line aligned.
-    if(numbytes > CACHESIZELIMIT)
-    {
-      memcpy_large_as(dest, src, numbytes);
-    }
-    else
-    {
-      memcpy_large_a(dest, src, numbytes); // Even if numbytes is small this'll work
-    }
-  }
-  else // Unaligned
-  {
-    size_t numbytes_to_align = (BYTE_ALIGNMENT + 1) - ((uintptr_t)dest & BYTE_ALIGNMENT);
+void * x86memlib_DeclFunction(AVX_memcpy)(void *dest, void *src, size_t numbytes)
+{
+    void *returnval = dest;
 
-    if(numbytes > numbytes_to_align)
-    {
-      void * destoffset = (char*)dest + numbytes_to_align;
-      void * srcoffset = (char*)src + numbytes_to_align;
+    if ((char *)src == (char *)dest) return returnval;
 
-      // Get to an aligned position.
-      // This may be a little slower, but since it'll be mostly scalar operations
-      // alignment doesn't matter. Worst case it uses two vector functions, and
-      // this process only needs to be done once per call if dest is unaligned.
-      memcpy_large(dest, src, numbytes_to_align);
-      // Now this should be faster since stores are aligned.
-      memcpy_large(destoffset, srcoffset, numbytes - numbytes_to_align); // Can't use streaming due to potential src misalignment
-      // On Haswell and up, cross cache line loads have a negligible penalty.
-      // Thus this will be slower on Sandy & Ivy Bridge, though Ivy Bridge will
-      // fare a little better (~2x, maybe?). Ryzen should generally fall somewhere
-      // inbetween Sandy Bridge and Haswell/Skylake on that front.
-      // NOTE: These are just rough theoretical estimates.
+#ifdef OVERLAP_CHECK
+    if (((char *)dest > (char *)src && (char *)dest < (char *)src + numbytes) ||
+        ((char *)src  > (char *)dest && (char *)src  < (char *)dest + numbytes)) {
+        return x86memlib_UseFunction(AVX_memmove)(dest, src, numbytes);
     }
-    else // Small size
-    {
-      memcpy_large(dest, src, numbytes);
-    }
-  }
+#endif
 
-  return returnval;
+    if ((((uintptr_t)src | (uintptr_t)dest) & BYTE_ALIGNMENT) == 0) {
+        if (numbytes > CACHESIZELIMIT) memcpy_large_as(dest, src, numbytes);
+        else                           memcpy_large_a (dest, src, numbytes);
+    } else {
+        size_t head = (BYTE_ALIGNMENT + 1) - ((uintptr_t)dest & BYTE_ALIGNMENT);
+        if ((uintptr_t)dest & BYTE_ALIGNMENT) {
+            if (numbytes > head) {
+                memcpy_large(dest, src, head);
+                dest = (char *)dest + head;
+                src  = (char *)src  + head;
+                numbytes -= head;
+            } else {
+                memcpy_large(dest, src, numbytes);
+                return returnval;
+            }
+        }
+        if (numbytes > CACHESIZELIMIT)
+            memcpy_large_as(dest, src, numbytes);
+        else if (((uintptr_t)src & BYTE_ALIGNMENT) == 0)
+            memcpy_large_a(dest, src, numbytes);
+        else
+            memcpy_large(dest, src, numbytes);
+    }
+
+    return returnval;
 }
 
-#endif
-// AVX-1024+ support pending existence of the standard.
+#endif /* __x86_64__ */
+
 #undef BYTE_ALIGNMENT
 
+/* ==================== 多版本弱符号 ==================== */
 
 #ifdef X86MEM_NOT_COMPILE_AVX512
-__attribute__((weak))
-uint8_t MEMOPS_SupportV3 = 0;
-__attribute__((weak, used))
-void *AVX_memcpyV3(void *dest, void *src, size_t numbytes) {return dest;}
+__attribute__((weak)) uint8_t MEMOPS_SupportV3 = 0;
+__attribute__((weak, used)) void *AVX_memcpyV3(void *dest, void *src, size_t n) {return dest;}
 #else
-__attribute__((weak))
-uint8_t MEMOPS_SupportV3 = 1;
+__attribute__((weak)) uint8_t MEMOPS_SupportV3 = 1;
 #endif
 
 #ifdef X86MEM_NOT_COMPILE_AVX2
-__attribute__((weak))
-uint8_t MEMOPS_SupportV2 = 0;
-__attribute__((weak, used))
-void *AVX_memcpyV2(void *dest, void *src, size_t numbytes) {return dest;}
+__attribute__((weak)) uint8_t MEMOPS_SupportV2 = 0;
+__attribute__((weak, used)) void *AVX_memcpyV2(void *dest, void *src, size_t n) {return dest;}
 #else
-__attribute__((weak))
-uint8_t MEMOPS_SupportV2 = 1;
+__attribute__((weak)) uint8_t MEMOPS_SupportV2 = 1;
 #endif
 
-
 #ifdef X86MEM_NOT_COMPILE_AVX
-__attribute__((weak))
-uint8_t MEMOPS_SupportV1 = 0;
-__attribute__((weak, used))
-void *AVX_memcpyV1(void *dest, void *src, size_t numbytes) {return dest;}
+__attribute__((weak)) uint8_t MEMOPS_SupportV1 = 0;
+__attribute__((weak, used)) void *AVX_memcpyV1(void *dest, void *src, size_t n) {return dest;}
 #else
-__attribute__((weak))
-uint8_t MEMOPS_SupportV1 = 1;
+__attribute__((weak)) uint8_t MEMOPS_SupportV1 = 1;
 #endif
