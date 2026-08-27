@@ -102,6 +102,10 @@ For example, to build aarch64 arch, run:
 make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-gnu-ld BUILD_ARCH=aarch64
 ```
 
+> [!IMPORTANT]
+> You must run 'cd kernel && make kaslr-check' first
+> This Command can check SkylineSystem kernel IS/NOT SUPPORT KASLR Feature
+
 ## Run
 ### In Linux:
 ```bash
