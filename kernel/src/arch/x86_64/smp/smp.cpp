@@ -28,7 +28,7 @@ int32_t smp_last_cpu = 0;
 extern volatile struct limine_mp_response *mp_response;
 extern void enable_smep_smap();
 
-uint8_t apic_id_to_logical[256] = {0};
+uint32_t apic_id_to_logical[256] = {0};
 
 void smp_setup_kstack(cpu_t *cpu) {
     void *rsps = (void*)VMM::Alloc(kernel_pagemap, 8, false);
@@ -69,7 +69,7 @@ void EnableFSGSBASE(cpu_t *cpu) {
 void smp_cpu_init(struct limine_mp_info *mp_info) {
     VMM::SwitchPageMap(kernel_pagemap);
     
-    uint8_t logical_id = apic_id_to_logical[mp_info->lapic_id];
+    uint64_t logical_id = apic_id_to_logical[mp_info->lapic_id];
     
     GDT::Init(logical_id);
     idt_reinit(logical_id);
@@ -139,7 +139,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
 }
 
 void smp_init() {
-    for (int i = 0; i < 256; i++) apic_id_to_logical[i] = 0xFF;
+    for (int i = 0; i < MAX_CPU * 2; i++) apic_id_to_logical[i] = 0xFF;
 
     //bsp_cpu = (cpu_t*)kmalloc(sizeof(cpu_t)); 
     bsp_cpu->lapic_id = mp_response->bsp_lapic_id; 

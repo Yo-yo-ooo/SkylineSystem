@@ -11,6 +11,7 @@
 #define SYSCALL_FLSEEK          4
 #define SYSCALL_FSIZE           5
 
+#define SYSCALL_THREAD_LAUNCH   6
 #define SYSCALL_GETTID          7
 #define SYSCALL_GETPID          8
 #define SYSCALL_EXIT            9
@@ -21,6 +22,9 @@
 
 #define SYSCALL_MMAP            14
 #define SYSCALL_MUNMAP          15
+
+#define SYSCALL_GET_SYSINFO     16
+
 
 #define SYSCALL_DEV_MMAP        21
 #define SYSCALL_DEV_IOCTL       26

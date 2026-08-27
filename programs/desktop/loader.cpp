@@ -55,6 +55,9 @@ void TLoad(FrameBuffer *Fb){
     volatile uint64_t *proto = (volatile uint64_t*)_4KELFSection;
     proto[0] = hw2_fb_va;          /* ★ hw2 reads this and paints */
     proto[1] = Fb->BufferSize;
+    proto[2] = Fb->Width;
+    proto[3] = Fb->Height;
+    proto[4] = Fb->PixelsPerScanLine;
 
     /* ============ Kick off the loaded program ============ */
     uint64_t lr = sys_launch(pid);

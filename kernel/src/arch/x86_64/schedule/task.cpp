@@ -25,7 +25,6 @@
 #define KILL_RETRY_TIMEOUT_MS  1000ULL   // 修复: kill_thread_batch 重试上限
 
 extern uint32_t sched_prio_to_weight[16];
-extern cpu_t *get_lw_cpu(cpu_t *ref_cpu);
 
 art_tree *pid2proc_tree = nullptr;
 spinlock_t PID2PROC_TREE_LOCK = 0;

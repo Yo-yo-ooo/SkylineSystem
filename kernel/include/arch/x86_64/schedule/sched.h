@@ -116,6 +116,7 @@ typedef struct KernelResource {
 #define THREAD_QUEUE_CNT 16
 
 extern rb_sharded_root_t res_tree;
+cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr);
 
 static inline uint64_t irq_save() {
     uint64_t flags;

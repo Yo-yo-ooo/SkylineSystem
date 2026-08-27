@@ -35,7 +35,7 @@ void execve_cleanup(int argc, int envc, char **argv, char **envp) {
 extern uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
     uint64_t ign_0,uint64_t ign_1,uint64_t ign_2);
 
-extern cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr);
+
 
 /* ============ 用户字符串带上界拷贝 ============
  * 消除对用户内存 strlen/无界遍历的失控读。

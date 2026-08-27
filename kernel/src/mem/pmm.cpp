@@ -1,5 +1,5 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
-//SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: GPL-2.0-only
 #include <mem/pmm.h>
 #include <limine.h>
 #include <klib/klib.h>
@@ -52,44 +52,11 @@ uint64_t pmm_bitmap_pages = 0;
 uint64_t pmm_bitmap_start = 0;
 uint64_t pmm_bitmap_size  = 0;
 
-// ---- 可观测性: 大块池健康度 (debugfs/dmesg 查询接口自行接线) ----
-static uint64_t stat_req2m_ok    = 0;   // Request2MB 成功次数
-static uint64_t stat_req2m_fail  = 0;   // Request2MB 失败 (调用方需 4K 兜底)
+// ---- 可观测性: 大块池健康度 ----
+static uint64_t stat_req2m_ok    = 0;   // Request2MB 成功
+static uint64_t stat_req2m_fail  = 0;   // Request2MB 失败
 static uint64_t stat_req2gb_ok   = 0;
 static uint64_t stat_req2gb_fail = 0;
-
-void Stats(uint64_t* out /* [4] */) {
-    IrqSpinGuard g(&pmm_lock);
-    out[0] = stat_req2m_ok;    out[1] = stat_req2m_fail;
-    out[2] = stat_req2gb_ok;   out[3] = stat_req2gb_fail;
-}
-
-// 2M 完整块余量: L2 位图 ~l2_map 的 popcount (word 级)
-uint64_t Free2MBlocks() {
-    IrqSpinGuard g(&pmm_lock);
-    uint64_t cnt = 0;
-    for (uint64_t w = 0, words = l2_map_size / 8; w < words; w++)
-        cnt += __builtin_popcountll(~l2_map[w]);
-    return cnt;
-}
-
-// ---------------------------------------------------------------------------
-// Locking: also block interrupts on x86_64 so an interrupt handler that
-// allocates cannot deadlock against a lock holder on this CPU.
-// Assumes Interrupt::Mask/Unmask are nestable; otherwise use irqsave-style.
-// ---------------------------------------------------------------------------
-static inline void pmm_lock_acquire() {
-#ifdef PMM_HAS_PCP
-    Interrupt::Mask();
-#endif
-    spinlock_lock(&pmm_lock);
-}
-static inline void pmm_lock_release() {
-    spinlock_unlock(&pmm_lock);
-#ifdef PMM_HAS_PCP
-    Interrupt::Unmask();
-#endif
-}
 
 // ---------------------------------------------------------------------------
 // Word-level bitmap primitives
@@ -102,6 +69,20 @@ static inline void bit_set(uint64_t* map, uint64_t i) {
 }
 static inline void bit_clear(uint64_t* map, uint64_t i) {
     map[i >> 6] &= ~(1ULL << (i & 63));
+}
+
+
+void Stats(uint64_t* out /* [4] */) {
+    IrqSpinGuard g(&pmm_lock);
+    out[0] = stat_req2m_ok;    out[1] = stat_req2m_fail;
+    out[2] = stat_req2gb_ok;   out[3] = stat_req2gb_fail;
+}
+
+
+static uint64_t free_pages = 0;
+
+uint64_t FreePages() {
+    return __atomic_load_n(&free_pages, __ATOMIC_RELAXED);   // 单 u64 松散读
 }
 
 // Clear / set bit range [first, last) in one pass over the covered words.
@@ -161,6 +142,49 @@ static void ensure_l2_init(uint64_t l2_bit) {
     bit_set(init_map, l2_bit);
 }
 
+
+uint64_t VerifyFreeCount() {
+    IrqSpinGuard g(&pmm_lock);
+    uint64_t recount = 0;
+    for (uint64_t l2 = 0; l2 < total_l2_bits; l2++) {
+        if (bit_test(l2_map, l2)) continue;        /* 满 2MiB 块跳过 */
+        ensure_l2_init(l2);
+        uint64_t wb = l2 * L2_L1_WORDS;
+        for (uint64_t w = 0; w < L2_L1_WORDS; w++)
+            recount += __builtin_popcountll(~l1_map[wb + w]);
+    }
+    return recount > free_pages ? recount - free_pages : free_pages - recount;
+}
+
+// 2M 完整块余量: L2 位图 popcount (word 级)
+uint64_t Free2MBlocks() {
+    IrqSpinGuard g(&pmm_lock);
+    uint64_t cnt = 0;
+    for (uint64_t w = 0, words = l2_map_size / 8; w < words; w++)
+        cnt += __builtin_popcountll(~l2_map[w]);
+    return cnt;
+}
+
+// ---------------------------------------------------------------------------
+// Locking: also block interrupts on x86_64 so an interrupt handler that
+// allocates cannot deadlock against a lock holder on this CPU.
+// ---------------------------------------------------------------------------
+static inline void pmm_lock_acquire() {
+#ifdef PMM_HAS_PCP
+    Interrupt::Mask();
+#endif
+    spinlock_lock(&pmm_lock);
+}
+static inline void pmm_lock_release() {
+    spinlock_unlock(&pmm_lock);
+#ifdef PMM_HAS_PCP
+    Interrupt::Unmask();
+#endif
+}
+
+
+
+
 static inline bool l2_block_full(uint64_t l2_bit) {
     uint64_t wb = l2_bit * L2_L1_WORDS;
     for (uint64_t i = 0; i < L2_L1_WORDS; i++)
@@ -191,7 +215,7 @@ static void mark_allocated(uint64_t start, uint64_t n) {
         uint64_t b0 = (l2 == first_l2) ? start : l2 * L2_PAGES;
         uint64_t b1 = (l2 == last_l2)  ? end   : (l2 + 1) * L2_PAGES;
         bits_set(l1_map, b0, b1);
-        if (l2_block_full(l2)) {          // check runs once per block, not per page
+        if (l2_block_full(l2)) {
             bit_set(l2_map, l2);
             l2_full_propagate(l2);
         }
@@ -208,15 +232,13 @@ static void mark_free(uint64_t start, uint64_t n) {
         uint64_t b0 = (l2 == first_l2) ? start : l2 * L2_PAGES;
         uint64_t b1 = (l2 == last_l2)  ? end   : (l2 + 1) * L2_PAGES;
         bits_clear(l1_map, b0, b1);
-        bit_clear(l2_map, l2);                 // clearing an already-clear bit is fine
+        bit_clear(l2_map, l2);
         bit_clear(l3_map, l2 / L2_PER_L3);
     }
 }
 
 // ---------------------------------------------------------------------------
 // Scanner: find n contiguous free pages in [from, to). Read-only.
-// Skips full 2GiB / 2MiB blocks via L3/L2, full words, and uses ctz to land
-// directly on the first free bit of a partially-free word.
 // ---------------------------------------------------------------------------
 static uint64_t scan_for_run(uint64_t from, uint64_t to, uint64_t n) {
     if (n == 0 || from >= to) return NO_BIT;
@@ -244,7 +266,7 @@ static uint64_t scan_for_run(uint64_t from, uint64_t to, uint64_t n) {
         }
 
         uint64_t cur_l2 = bit / L2_PAGES;
-        if (cur_l2 != inited_l2) {                        // init each block once
+        if (cur_l2 != inited_l2) {
             ensure_l2_init(cur_l2);
             inited_l2 = cur_l2;
         }
@@ -252,19 +274,18 @@ static uint64_t scan_for_run(uint64_t from, uint64_t to, uint64_t n) {
         if ((bit & 63) == 0) {
             uint64_t w = l1_map[bit >> 6];
             if (run == 0) {
-                if (w == ~0ULL) { bit += 64; continue; }  // fully occupied word
-                uint64_t skip = __builtin_ctzll(~w);      // first free bit in word
+                if (w == ~0ULL) { bit += 64; continue; }
+                uint64_t skip = __builtin_ctzll(~w);
                 if (skip != 0) { bit += skip; continue; }
-                // skip == 0: first bit is free, fall through to generic path
             } else if (w == 0) {
-                uint64_t take = 64;                       // fully free word
+                uint64_t take = 64;
                 if (run + take > n) take = n - run;
                 if (bit + take > to) take = to - bit;
                 run += take; bit += take;
                 if (run == n) return run_start;
                 continue;
             } else {
-                uint64_t take = __builtin_ctzll(w);       // leading free bits
+                uint64_t take = __builtin_ctzll(w);
                 if (run + take > n) take = n - run;
                 if (bit + take > to) take = to - bit;
                 if (take != 0) {
@@ -272,7 +293,6 @@ static uint64_t scan_for_run(uint64_t from, uint64_t to, uint64_t n) {
                     if (run == n) return run_start;
                     continue;
                 }
-                // take == 0: current bit occupied, fall through (resets run)
             }
         }
 
@@ -296,7 +316,7 @@ static void* alloc_pages_locked(uint64_t n) {
     if (hint < pmm_bitmap_pages)
         bit = scan_for_run(hint, pmm_bitmap_pages, n);
     if (bit == NO_BIT && hint > 0)
-        bit = scan_for_run(0, hint, n);                   // wrap around, no rescan
+        bit = scan_for_run(0, hint, n);
     if (bit == NO_BIT) return nullptr;
 
     mark_allocated(bit, n);
@@ -311,7 +331,6 @@ void Init() {
     pmm_memmap = memmap_request.response;
     if (!pmm_memmap) Panic("PMM: Limine memmap response is NULL!");
 
-    // Normalize entry lengths to page granularity (was fallback-only before).
     for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
         struct limine_memmap_entry* e = pmm_memmap->entries[i];
         if (e->length & (PAGE_SIZE - 1)) {
@@ -335,8 +354,6 @@ void Init() {
     total_l2_bits = (l1_bits + L2_PAGES - 1) / L2_PAGES;
     total_l3_bits = (total_l2_bits + L2_PER_L3 - 1) / L2_PER_L3;
 
-    // Size maps by block count so that every block-level word access is
-    // in-bounds by construction (tail blocks' out-of-range bits read as 1).
     l1_map_size   = ALIGN_UP(total_l2_bits * L2_L1_WORDS * 8, PAGE_SIZE);
     l2_map_size   = ALIGN_UP(total_l3_bits * L3_L2_WORDS * 8, PAGE_SIZE);
     l3_map_size   = ALIGN_UP((total_l3_bits + 63) / 64 * 8, PAGE_SIZE);
@@ -344,8 +361,6 @@ void Init() {
 
     uint64_t total_meta = l1_map_size + l2_map_size + l3_map_size + init_map_size;
 
-    // Place metadata at the *tail* of the first large-enough USABLE region:
-    // low pages stay free (DMA / 1:1 mappings) and the region start is intact.
     bool placed = false;
     for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
         struct limine_memmap_entry* e = pmm_memmap->entries[i];
@@ -368,16 +383,14 @@ void Init() {
     }
     if (!placed) Panic("PMM: failed to place bitmap metadata!");
 
-    // Build the L2 summary directly from the memmap (word-level range clears).
     for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
         struct limine_memmap_entry* e = pmm_memmap->entries[i];
         if (e->type != LIMINE_MEMMAP_USABLE || e->length == 0) continue;
         uint64_t end = e->base + e->length;
-        if (end == 0) continue;  // base+length wrapped around
+        if (end == 0) continue;
         bits_clear(l2_map, e->base / L2_SIZE, (end - 1) / L2_SIZE + 1);
     }
 
-    // Derive L3 from L2.
     for (uint64_t l3 = 0; l3 < total_l3_bits; l3++) {
         uint64_t wb = l3 * L3_L2_WORDS;
         for (uint64_t i = 0; i < L3_L2_WORDS; i++) {
@@ -389,6 +402,18 @@ void Init() {
     }
 
     mark_allocated(0, 1);  // physical page 0 must never be handed out (NULL)
+
+    
+    free_pages = 0;
+    for (uint64_t l2 = 0; l2 < total_l2_bits; l2++) {
+        if (bit_test(l2_map, l2)) continue;        /* 满 2MiB 块: 0 空闲 */
+        ensure_l2_init(l2);
+        uint64_t wb = l2 * L2_L1_WORDS;
+        for (uint64_t w = 0; w < L2_L1_WORDS; w++)
+            free_pages += __builtin_popcountll(~l1_map[wb + w]);
+    }
+    /* 注: mark_allocated(0,1) 已在位图体现 → 计数自动少 1 ✓
+       位图元数据页不在 USABLE 区 → 上扫不把它们计入 ✓ */
 
     pmm_bitmap_start = (uint64_t)l1_map;
     pmm_bitmap_size  = l1_map_size;
@@ -408,17 +433,20 @@ void* Request(uint64_t n) {
             IrqSave irq;                                // 只保护 per-CPU cache
             if (cpu->pmm_cache_count > 0)
                 return cpu->pmm_cache[--cpu->pmm_cache_count];
-
-            IrqSpinGuard g(&pmm_lock);                  // 嵌套安全：内层 Restore 不开中断
+        
+            IrqSpinGuard g(&pmm_lock);
             void* page = alloc_pages_locked(1);
             if (page) {
+                free_pages -= 1;                        
+                uint32_t cached_before = cpu->pmm_cache_count;
                 for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count < PMM_PCP_MAX; i++) {
                     void* extra = alloc_pages_locked(1);
                     if (!extra) break;
                     cpu->pmm_cache[cpu->pmm_cache_count++] = extra;
                 }
+                free_pages -= (uint64_t)(cpu->pmm_cache_count - cached_before);
             }
-            return page;                                // 两个 guard 按逆序自动释放
+            return page;
         }
     }
 #endif
@@ -427,8 +455,9 @@ void* Request(uint64_t n) {
     {
         IrqSpinGuard g(&pmm_lock);
         page = alloc_pages_locked(n);
-    }   // 先解锁
-    if (!page)   // 日志放锁外：kerror 若内部有锁，锁内调用会死锁
+        if (page) free_pages -= n;                      
+    }
+    if (!page)
         kerror("PMM: out of contiguous physical memory (%lu pages)\n", (unsigned long)n);
     return page;
 }
@@ -440,21 +469,24 @@ void Free(void* ptr, uint64_t n) {
     if (n == 1) {
         cpu_t* cpu = this_cpu();
         if (cpu) {
-            IrqSave irq;                                // FIX: 原代码此路径没关中断
+            IrqSave irq;
             if (cpu->pmm_cache_count < PMM_PCP_MAX) {
                 cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
-                return;
+                return;                                
             }
             {   // cache 满：回吐一批到全局位图
                 IrqSpinGuard g(&pmm_lock);
+                uint64_t flushed = 0;
                 for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count > 0; i++) {
                     uint64_t bit = (uint64_t)cpu->pmm_cache[--cpu->pmm_cache_count] / PAGE_SIZE;
                     mark_free(bit, 1);
                     if (bit < bitmap_last_free) bitmap_last_free = bit;
+                    flushed++;
                 }
+                free_pages += flushed;                
             }
             cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
-            return;
+            return;                                     
         }
     }
 #endif
@@ -465,12 +497,11 @@ void Free(void* ptr, uint64_t n) {
 
     IrqSpinGuard g(&pmm_lock);
     mark_free(start, n);
-    if (start < bitmap_last_free) bitmap_last_free = start;
+    free_pages += n;                                   
 }
 
 // --- 2MiB allocation ---
 void* Request2MB() {
-    //pmm_lock_acquire();
     IrqSpinGuard guard(&pmm_lock);
 
     for (uint64_t w = 0, words = l2_map_size / 8; w < words; w++) {
@@ -480,7 +511,7 @@ void* Request2MB() {
             pending &= pending - 1;
 
             uint64_t start = l2_bit * L2_PAGES;
-            if (start + L2_PAGES > pmm_bitmap_pages) continue;  // incomplete tail block
+            if (start + L2_PAGES > pmm_bitmap_pages) continue;
 
             ensure_l2_init(l2_bit);
 
@@ -491,24 +522,24 @@ void* Request2MB() {
             }
             if (!is_free) continue;
 
-            bits_set(l1_map, start, start + L2_PAGES);  // 8 words, not 512 bit-ops
+            bits_set(l1_map, start, start + L2_PAGES);
             bit_set(l2_map, l2_bit);
             l2_full_propagate(l2_bit);
 
             if (start < bitmap_last_free) bitmap_last_free = start;
-            //pmm_lock_release();
+            free_pages -= L2_PAGES;                     
+            stat_req2m_ok++;                            
             return (void*)(start * PAGE_SIZE);
         }
     }
 
-    //pmm_lock_release();
+    stat_req2m_fail++;
     return nullptr;
 }
 
 // --- 2GiB allocation ---
 void* Request2GB() {
-    IrqSpinGuard guard(&pmm_lock);   // 唯一持锁者: 析构时统一解锁,
-                                     // 路径上禁止再出现任何手动 release
+    IrqSpinGuard guard(&pmm_lock);
 
     for (uint64_t w = 0, words = l3_map_size / 8; w < words; w++) {
         uint64_t pending = ~l3_map[w];
@@ -517,7 +548,7 @@ void* Request2GB() {
             pending &= pending - 1;
 
             uint64_t start = l3_bit * L3_PAGES;
-            if (start + L3_PAGES > pmm_bitmap_pages) continue;  // 尾部不完整块
+            if (start + L3_PAGES > pmm_bitmap_pages) continue;
 
             uint64_t wb = l3_bit * L3_L2_WORDS;
             bool l2_clear = true;
@@ -542,39 +573,40 @@ void* Request2GB() {
             bit_set(l3_map, l3_bit);
 
             if (start < bitmap_last_free) bitmap_last_free = start;
-            return (void*)(start * PAGE_SIZE);   // ★ 修复: 删掉手动 release
+            free_pages -= L3_PAGES;                  
+            stat_req2gb_ok++;
+            return (void*)(start * PAGE_SIZE);
         }
     }
 
-    return nullptr;   // guard 析构统一解锁
+    stat_req2gb_fail++;
+    return nullptr;
 }
 
 void Free2MB(void* ptr) {
     if (!ptr) return;
     uint64_t start = (uint64_t)ptr / PAGE_SIZE;
 
-    if (start & (L2_PAGES - 1)) return;                 // must be 2MiB-aligned
-    if (start + L2_PAGES > pmm_bitmap_pages) return;    // FIX: bounds check
+    if (start & (L2_PAGES - 1)) return;
+    if (start + L2_PAGES > pmm_bitmap_pages) return;
 
-    //pmm_lock_acquire();
     IrqSpinGuard guard(&pmm_lock);
     ensure_l2_init(start / L2_PAGES);
     bits_clear(l1_map, start, start + L2_PAGES);
     bit_clear(l2_map, start / L2_PAGES);
     bit_clear(l3_map, start / L3_PAGES);
     if (start < bitmap_last_free) bitmap_last_free = start;
-    //pmm_lock_release();
+    free_pages += L2_PAGES;                           
 }
 
 void Free2GB(void* ptr) {
     if (!ptr) return;
     uint64_t start = (uint64_t)ptr / PAGE_SIZE;
 
-    if (start & (L3_PAGES - 1)) return;                 // must be 2GiB-aligned
-    if (start + L3_PAGES > pmm_bitmap_pages) return;    // FIX: bounds check
+    if (start & (L3_PAGES - 1)) return;
+    if (start + L3_PAGES > pmm_bitmap_pages) return;
 
     uint64_t l2_first = start / L2_PAGES;
-    //pmm_lock_acquire();
     IrqSpinGuard guard(&pmm_lock);
     for (uint64_t l2 = l2_first; l2 < l2_first + L2_PER_L3; l2++)
         ensure_l2_init(l2);
@@ -582,7 +614,7 @@ void Free2GB(void* ptr) {
     bits_clear(l2_map, l2_first, l2_first + L2_PER_L3);
     bit_clear(l3_map, start / L3_PAGES);
     if (start < bitmap_last_free) bitmap_last_free = start;
-    //pmm_lock_release();
+    free_pages += L3_PAGES;                             
 }
 
 } // namespace PMM

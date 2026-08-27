@@ -1,3 +1,5 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 #pragma once
 #ifndef PS2_MOUSE_H_
 #define PS2_MOUSE_H_

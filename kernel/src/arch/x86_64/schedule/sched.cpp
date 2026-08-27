@@ -161,7 +161,7 @@ static inline thread_t* safe_get_current_thread(cpu_t *cpu, bool &invalid) {
     return t;
 }
 
-cpu_t *get_lw_cpu(cpu_t *ref_cpu = nullptr) {
+cpu_t *get_lw_cpu(cpu_t *ref_cpu) {
     cpu_t *lw_cpu = nullptr;
     uint32_t ref_mask = ref_cpu ? cpu_simd_mask(ref_cpu) : 0;
     const int32_t last = smp_last_cpu;

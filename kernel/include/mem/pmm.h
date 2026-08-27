@@ -5,15 +5,12 @@
 #include <klib/types.h>
 
 namespace PMM{
+    extern uint64_t pmm_bitmap_pages;
+    extern uint64_t pmm_bitmap_start;
+    extern uint64_t pmm_bitmap_size;
 
-
-    void bitmap_clear_(uint64_t bit);
-    void bitmap_set_(uint64_t bit);
-    bool bitmap_test_(uint64_t bit);
-#ifdef __x86_64__
-    void* GlobalRequestSingle();
-#endif
-
+    uint64_t FreePages();
+    
     void Init();
     void* Request(uint64_t n = 1);
     void Free(void *ptr, uint64_t n = 1);

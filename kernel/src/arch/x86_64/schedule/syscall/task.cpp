@@ -6,6 +6,7 @@
 #include <elf/elf.h>
 #include <mem/pmm.h>
 #include <klib/algorithm/art.h>
+#include <atomic/atomic.h>
 #include <arch/x86_64/lapic/lapic.h>
 
 extern art_tree *pid2proc_tree;
@@ -289,4 +290,87 @@ unlock:
     /* rax: 成功 (>=0)。双侧地址经 rdi/rsi 侧带通道返回 */
     if (me == DestProc) return resolved_dst;
     return resolved_src;
+}
+
+extern uint64_t sched_tid;
+extern uint32_t sched_prio_to_weight[16];
+
+uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
+
+    IGNV_4();
+    proc_t *me = Schedule::this_proc();
+    thread_t *curr = Schedule::this_thread();
+    if (!me || !curr) return -EPERM;
+    if (!is_user_address(entry)) return -EINVAL;    /* 入口必须是用户地址 */
+
+    /* hint: UINT64_MAX 内核选核, 否则指定核 */
+    cpu_t *cpu;
+    if (hint != UINT64_MAX && hint < MAX_CPU && smp_cpu_list[hint])
+        cpu = smp_cpu_list[hint];
+    else
+        cpu = get_lw_cpu();
+    if (!cpu) return -EFAULT;
+
+    thread_t *t = (thread_t*)kmalloc(sizeof(thread_t));
+    if (!t) return -ENOMEM;
+    _memset(t, 0, sizeof(thread_t));
+    t->state = THREAD_RUNNING;              
+
+    t->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
+    t->timer_cpu = cpu->id;
+    t->cpu_num = cpu->id;
+    t->parent = me;
+    t->pagemap = me->pagemap;                /* 共享地址空间 = 线程的本质 */
+    t->priority = curr->priority;
+    t->weight = sched_prio_to_weight[t->priority];
+    uint64_t base_vruntime = cpu->avg_vruntime;
+    uint64_t half_slice = cpu->base_quantum / 2;
+    t->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
+
+
+    t->fx_area = (char*)VMM::Alloc(kernel_pagemap,
+                            DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
+    if (!t->fx_area) { kfree(t); return -ENOMEM; }
+    _memset(t->fx_area, 0, cpu->XsaveSize);
+    cpu->OverLoadableFuncs.StoreSIMDState(t->fx_area,
+                                          cpu->XsaveMaskLo, cpu->XsaveMaskHi);
+
+    /* 内核栈 */
+    uint64_t kstack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+    if (!kstack) { VMM::Free(kernel_pagemap, t->fx_area); kfree(t); return -ENOMEM; }
+    _memset((void*)kstack, 0, 4 * PAGE_SIZE);
+    t->kernel_stack = kstack;
+    t->kernel_rsp = kstack + PAGE_SIZE * 4;
+
+    /* ★ 用户栈 — 内核分配 (无 stack 参数的代价, 内核必须管):
+       在调用者的 pagemap 里分配, 8 页 (NewThread 同款) */
+    uint64_t ustack = (uint64_t)VMM::Alloc(me->pagemap, 8, true);
+    if (!ustack) {
+        VMM::Free(kernel_pagemap, (void*)kstack);
+        VMM::Free(kernel_pagemap, t->fx_area);
+        kfree(t);
+        return -ENOMEM;
+    }
+    t->stack = ustack;
+
+    /* 用户上下文 — 无 arg, rsp 指栈顶对齐 */
+    t->ctx.rip = entry;
+    t->ctx.rsp = (ustack + 8 * PAGE_SIZE) & ~0xFULL;
+    t->ctx.rdi = 0;                          /* 定义死: arg == 0 */
+    t->ctx.cs = 0x23; t->ctx.ss = 0x1b; t->ctx.rflags = 0x202;
+    t->thread_stack = t->ctx.rsp;
+
+    /* ---- 一切就绪, 最后一刻发射 (此后 t 不可再碰) ---- */
+    Schedule::Internal::ProcessAddThread(me, t);
+
+    uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
+    cpu->has_runnable_thread = true;
+    Schedule::Internal::InsertToQueue(cpu, t);
+    spin_unlock_irqrestore(&cpu->sched_lock, rflags);
+
+    /* 唤醒目标核 (launch 语义: 注册即启动, 核可能睡着不知道队列有货) */
+    cpu_t *self = this_cpu();
+    if (cpu != self) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+
+    return t->id;
 }
