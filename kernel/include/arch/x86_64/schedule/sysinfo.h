@@ -24,21 +24,21 @@ PACK(typedef struct SysInfo {
     uint32_t cpu_features_ecx;   /* CPUID.1.ECX — sse4_2/avx/rdrand...  */
     char     cpu_brand[48];      /* CPUID.0x80000002~4 品牌串, 零结尾 */
 
-    /* ---- 每核 SIMD 域 (offset 88) — 你 SIMD 域调度的用户态镜像 ---- */
+    
     uint32_t simd_mask[MAX_CPU];   /* 每核 xsave 掩码, 未用核=0 */
 
-    /* ---- 内存 (offset 88 + 4*MAX) ---- */
+    
     uint64_t mem_total;          /* 物理总量 = pmm_bitmap_pages << 12 */
     uint64_t mem_free;           /* O(1) = PMM::FreePages() << 12 */
     uint64_t mem_used;           /* total - free (PCP 缓存页含在 used) */
 
-    /* ---- 运行时 (含 PCP 口径注记) ---- */
+    
     uint64_t uptime_ms;          /* PIT::TimeSinceBootMS() */
     uint64_t nprocs;             /* 存活进程数 (pid2proc_tree->size) */
     uint64_t nthreads_approx;    /* ≈ sched_tid 累计分配 — 近似, 注记 */
     uint64_t ctx_switches;       /* Σ per-CPU sched_stats */
 
-    /* ---- 预留 ---- */
+    
     uint64_t reserved[8];        /* 恒 0; ABI 扩张空间 */
 
 }) SysInfo;
