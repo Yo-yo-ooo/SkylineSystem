@@ -3,9 +3,9 @@
 #include <acpi/madt.h>
 #include <acpi/acpi.h>
 
-volatile madt_ioapic_t *madt_ioapic = nullptr;
-volatile madt_iso_t *madt_iso_list[16] = {0};
-volatile uint64_t madt_apic_address = 0;
+madt_ioapic_t *madt_ioapic = nullptr;
+madt_iso_t *madt_iso_list[16] = {0};
+uint64_t madt_apic_address = 0;
 
 void MADT_Init() {
     //acpi_madt* madt = (acpi_madt*)ACPI::FindTable(ACPI::rootThing,"APIC",ACPI::ACPI_DIV);

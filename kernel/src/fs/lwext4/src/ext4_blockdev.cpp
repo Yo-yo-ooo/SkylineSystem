@@ -333,7 +333,7 @@ int32_t ext4_block_writebytes(struct ext4_blockdev *bdev, uint64_t off,
 	uint32_t unalg;
 	int32_t r = EOK;
 
-	const uint8_t *p = (void *)buf;
+	const uint8_t *p = (const uint8_t*)buf;
 
 	ext4_assert(bdev && buf);
 
@@ -403,7 +403,7 @@ int32_t ext4_block_readbytes(struct ext4_blockdev *bdev, uint64_t off, void *buf
 	uint32_t unalg;
 	int32_t r = EOK;
 
-	uint8_t *p = (void *)buf;
+	uint8_t *p = (uint8_t *)buf;
 
 	ext4_assert(bdev && buf);
 

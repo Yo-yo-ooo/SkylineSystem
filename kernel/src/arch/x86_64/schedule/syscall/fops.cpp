@@ -31,7 +31,7 @@ GENERATE_IGN3()) {
     // 获取当前文件偏移量，解决缓存未包含偏移导致的数据错位 Bug
     uint64_t cur_offset = FD->FSOPS->lseek(FD->filedesc, 0, SEEK_CUR);
     
-    void *cached_data = file_cache_get(cpu->file_cache, FD->path, FD->path_len, count, &out_len, &cache_entry);
+    void *cached_data = file_cache_get(cpu->file_cache,(const uint8_t*)FD->path, FD->path_len, count, &out_len, &cache_entry);
     
     if (cached_data) {
         // 严格判断：读取的范围必须在缓存覆盖的数据范围之内
@@ -45,7 +45,7 @@ GENERATE_IGN3()) {
             
             // 读取成功后，推进文件描述符的偏移量
             FD->FSOPS->lseek(FD->filedesc, cur_offset + count, SEEK_SET);
-            file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, count, NULL, FD->file_size, (uint64_t)FD->filedesc);
+            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, count, NULL, FD->file_size, (uint64_t)FD->filedesc);
             return count;
         }
         // 读取范围超出缓存范围，放弃缓存，回退到硬件读取
@@ -74,11 +74,11 @@ GENERATE_IGN3()) {
             void *cache_buf = kmalloc(total_read);
             if (cache_buf) {
                 __memcpy(cache_buf, kbuf, total_read);
-                file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, total_read, cache_buf, FD->file_size, (uint64_t)FD->filedesc);
+                file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, cache_buf, FD->file_size, (uint64_t)FD->filedesc);
             }
         } else {
             // 非零偏移读取，不进行 promote，但仍记录 IO 统计以供启发式策略使用
-            file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, total_read, NULL, FD->file_size, (uint64_t)FD->filedesc);
+            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, NULL, FD->file_size, (uint64_t)FD->filedesc);
         }
     }
 
@@ -127,7 +127,7 @@ GENERATE_IGN3()) {
         file_cache_entry_t *cache_entry = NULL;
         
         // 尝试获取缓存
-        void *cached_data = file_cache_get(cpu->file_cache, FD->path, FD->path_len, wcnt, &out_len, &cache_entry);
+        void *cached_data = file_cache_get(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, wcnt, &out_len, &cache_entry);
         
         if (cached_data) {
             // 缓存命中修改逻辑：如果写入的范围完全在缓存覆盖范围内
@@ -138,13 +138,13 @@ GENERATE_IGN3()) {
             } else {
                 // 写入超出了缓存范围，现有缓存不再能代表文件前缀，使其失效
                 file_cache_put(cpu->file_cache, cache_entry);
-                file_cache_invalidate(cpu->file_cache, FD->path, FD->path_len);
+                file_cache_invalidate(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len);
                 cache_entry = NULL;
             }
             if (cache_entry) {
                 file_cache_put(cpu->file_cache, cache_entry);
             }
-            file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
+            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
         } else {
             // 缓存未命中。如果是从 offset 0 开始写，则可以将这批数据作为新的缓存块 promote
             if (cur_offset == 0) {
@@ -152,11 +152,11 @@ GENERATE_IGN3()) {
                 if (cache_buf) {
                     __memcpy(cache_buf, kbuf, wcnt);
                     // is_dirty = false，因为 FSOPS->write 已经同步落盘
-                    int32_t r = file_cache_promote(cpu->file_cache, FD->path, FD->path_len, cache_buf, wcnt, false, FD->file_size, (uint64_t)FD->filedesc);
+                    int32_t r = file_cache_promote(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, cache_buf, wcnt, false, FD->file_size, (uint64_t)FD->filedesc);
                     if (r != 0) kfree(cache_buf); 
                 }
             } else {
-                file_cache_record_io(cpu->file_cache, FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
+                file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
             }
         }
         
@@ -256,7 +256,7 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
     }
 
     // 修复 Bug 6: 额外分配1字节用于 NUL 终止符，防止越界读
-    fd_struct->path = (uint8_t*)kmalloc(path_len + 1);
+    fd_struct->path = (char*)kmalloc(path_len + 1);
     if (fd_struct->path) {
         __memcpy(fd_struct->path, kpath, path_len);
         fd_struct->path[path_len] = '\0'; // 显式添加 NUL

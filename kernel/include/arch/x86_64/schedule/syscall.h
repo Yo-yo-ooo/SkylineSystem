@@ -97,7 +97,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
 uint64_t sys_launch(uint64_t pid,GENERATE_IGN5());
 uint64_t sys_getpid(GENERATE_IGN6());
 uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t mode, \
-    uint64_t flags,uint64_t offset,syscall_frame_t* frame);
+    uint64_t flags,uint64_t offset,uint64_t ign_0,syscall_frame_t* frame);
 uint64_t sys_munmap(uint64_t addr, uint64_t length, \
     GENERATE_IGN4());
 uint64_t sys_brk(uint64_t addr, \

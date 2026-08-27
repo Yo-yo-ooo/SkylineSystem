@@ -90,7 +90,7 @@ typedef struct vm_mapping_t {
 
 #define TLB_MASK_WORDS ((MAX_CPU + 63) / 64)
 typedef struct {
-    volatile uint64_t *toplvl;
+    uint64_t *toplvl;
     vm_mapping_t *vm_mappings;
     int32_t vma_lock;
     int32_t pt_lock;
@@ -101,7 +101,7 @@ typedef struct {
     uint64_t          cpus_with_tlb[TLB_MASK_WORDS];
 } pagemap_t;
 
-extern volatile pagemap_t *kernel_pagemap;
+extern pagemap_t *kernel_pagemap;
 
 #define USER_SPACE_END_4LVL 0x00007FFFFFFFFFFF
 #define USER_SPACE_END_5LVL 0x00FEFFFFFFFFFFFF

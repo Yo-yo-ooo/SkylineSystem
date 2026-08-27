@@ -21,7 +21,7 @@ namespace FrameBufferDevice{
         VADDR = VMM::Useless::InternalAlloc(pm, pages, 
             MM_USER | VMM_FLAGS_MMIO);
         spinlock_unlock(&pm->vma_lock);
-        VMM::MapRange(pm,VADDR,PHYSICAL(Fb->BaseAddress),MM_USER | VMM_FLAGS_MMIO,pages);
+        VMM::MapRange(pm,VADDR,PHYSICAL((uint64_t)Fb->BaseAddress),MM_USER | VMM_FLAGS_MMIO,pages);
         VMM::NewMapping(pm, VADDR, pages, 
             MM_USER | VMM_FLAGS_MMIO);
         uint64_t check_pte = VMM::Useless::GetPageInfo(pm, VADDR).flags;
@@ -33,11 +33,11 @@ namespace FrameBufferDevice{
     uint64_t ioctl(uint64_t cmd,uint64_t arg){
         switch (cmd)
         {
-        case 0:return Fb->BaseAddress;
-        case 1:return Fb->BufferSize;
-        case 2:return Fb->Height;
-        case 3:return Fb->PixelsPerScanLine;
-        case 4:return Fb->Width;
+        case 0:return (uint64_t)Fb->BaseAddress;
+        case 1:return (uint64_t)Fb->BufferSize;
+        case 2:return (uint64_t)Fb->Height;
+        case 3:return (uint64_t)Fb->PixelsPerScanLine;
+        case 4:return (uint64_t)Fb->Width;
         default:
             break;
         }

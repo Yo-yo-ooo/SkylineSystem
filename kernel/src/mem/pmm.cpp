@@ -398,7 +398,7 @@ void Init() {
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-void* Request(uint64_t n = 1) {
+void* Request(uint64_t n) {
     if (n == 0 || n > pmm_bitmap_pages) return nullptr;
 
 #ifdef PMM_HAS_PCP
@@ -433,7 +433,7 @@ void* Request(uint64_t n = 1) {
     return page;
 }
 
-void Free(void* ptr, uint64_t n = 1) {
+void Free(void* ptr, uint64_t n) {
     if (!ptr || n == 0) return;
 
 #ifdef PMM_HAS_PCP

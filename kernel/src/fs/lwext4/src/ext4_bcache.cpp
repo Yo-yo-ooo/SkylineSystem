@@ -146,14 +146,14 @@ ext4_buf_alloc(struct ext4_bcache *bc, uint64_t lba)
 	if (!data)
 		return NULL;
 
-	buf = ext4_calloc(1, sizeof(struct ext4_buf));
+	buf = (ext4_buf*)ext4_calloc(1, sizeof(struct ext4_buf));
 	if (!buf) {
 		ext4_free(data);
 		return NULL;
 	}
 
 	buf->lba = lba;
-	buf->data = data;
+	buf->data = (uint8_t*)data;
 	buf->bc = bc;
 	return buf;
 }

@@ -376,10 +376,10 @@ static void jbd_block_tag_csum_set(struct jbd_fs *jbd_fs, void *__tag,
 		return;
 
 	if (ver == 2) {
-		struct jbd_block_tag *tag = __tag;
+		struct jbd_block_tag *tag = (struct jbd_block_tag *)__tag;
 		tag->checksum = (uint16_t)to_be32(checksum);
 	} else {
-		struct jbd_block_tag3 *tag = __tag;
+		struct jbd_block_tag3 *tag = (struct jbd_block_tag3 *)__tag;
 		tag->checksum = to_be32(checksum);
 	}
 }
@@ -678,7 +678,7 @@ jbd_extract_block_tag(struct jbd_fs *jbd_fs,
 
 	if (JBD_HAS_INCOMPAT_FEATURE(&jbd_fs->sb,
 				     JBD_FEATURE_INCOMPAT_CSUM_V3)) {
-		struct jbd_block_tag3 *tag = __tag;
+		struct jbd_block_tag3 *tag = (struct jbd_block_tag3 *)__tag;
 		tag_info->block = jbd_get32(tag, blocknr);
 		if (JBD_HAS_INCOMPAT_FEATURE(&jbd_fs->sb,
 					     JBD_FEATURE_INCOMPAT_64BIT))
@@ -703,7 +703,7 @@ jbd_extract_block_tag(struct jbd_fs *jbd_fs,
 			tag_info->last_tag = true;
 
 	} else {
-		struct jbd_block_tag *tag = __tag;
+		struct jbd_block_tag *tag = (struct jbd_block_tag *)__tag;
 		tag_info->block = jbd_get32(tag, blocknr);
 		if (JBD_HAS_INCOMPAT_FEATURE(&jbd_fs->sb,
 					     JBD_FEATURE_INCOMPAT_64BIT))
@@ -753,7 +753,7 @@ jbd_write_block_tag(struct jbd_fs *jbd_fs,
 
 	if (JBD_HAS_INCOMPAT_FEATURE(&jbd_fs->sb,
 				     JBD_FEATURE_INCOMPAT_CSUM_V3)) {
-		struct jbd_block_tag3 *tag = __tag;
+		struct jbd_block_tag3 *tag = (struct jbd_block_tag3 *)__tag;
 		_memset(tag, 0, sizeof(struct jbd_block_tag3));
 		jbd_set32(tag, blocknr, (uint32_t)tag_info->block);
 		if (JBD_HAS_INCOMPAT_FEATURE(&jbd_fs->sb,
@@ -783,7 +783,7 @@ jbd_write_block_tag(struct jbd_fs *jbd_fs,
 				  jbd_get32(tag, flags) | JBD_FLAG_ESCAPE);
 
 	} else {
-		struct jbd_block_tag *tag = __tag;
+		struct jbd_block_tag *tag = (struct jbd_block_tag *)__tag;
 		_memset(tag, 0, sizeof(struct jbd_block_tag));
 		jbd_set32(tag, blocknr, (uint32_t)tag_info->block);
 		if (JBD_HAS_INCOMPAT_FEATURE(&jbd_fs->sb,
@@ -835,7 +835,7 @@ jbd_iterate_block_table(struct jbd_fs *jbd_fs,
 {
 	char *tag_start, *tag_ptr;
 	int32_t tag_bytes = jbd_tag_bytes(jbd_fs);
-	tag_start = __tag_start;
+	tag_start = (char*)__tag_start;
 	tag_ptr = tag_start;
 
 	/* Cut off the size of block tail storing checksum. */
@@ -871,7 +871,7 @@ static void jbd_display_block_tags(struct jbd_fs *jbd_fs,
 				   struct tag_info *tag_info,
 				   void *arg)
 {
-	uint32_t *iblock = arg;
+	uint32_t *iblock = (uint32_t*)arg;
 	ext4_dbg(DEBUG_JBD, "Block in block_tag: %" PRIu64 "\n", tag_info->block);
 	(*iblock)++;
 	wrap(&jbd_fs->sb, *iblock);
@@ -897,7 +897,7 @@ static void jbd_replay_block_tags(struct jbd_fs *jbd_fs,
 				  void *__arg)
 {
 	int32_t r;
-	struct replay_arg *arg = __arg;
+	struct replay_arg *arg = (struct replay_arg *)__arg;
 	struct recover_info *info = arg->info;
 	uint32_t *this_block = arg->this_block;
 	struct revoke_entry *revoke_entry;
@@ -982,7 +982,7 @@ static void jbd_add_revoke_block_tags(struct recover_info *info,
 		return;
 	}
 
-	revoke_entry = jbd_alloc_revoke_entry();
+	revoke_entry = (struct revoke_entry *)jbd_alloc_revoke_entry();
 	ext4_assert(revoke_entry);
 	revoke_entry->block = block;
 	revoke_entry->trans_id = info->this_trans_id;
@@ -1522,7 +1522,7 @@ jbd_trans_insert_block_rec(struct jbd_trans *trans,
 		jbd_trans_change_ownership(block_rec, trans);
 		return block_rec;
 	}
-	block_rec = ext4_calloc(1, sizeof(struct jbd_block_rec));
+	block_rec = (struct jbd_block_rec *)ext4_calloc(1, sizeof(struct jbd_block_rec));
 	if (!block_rec)
 		return NULL;
 
@@ -1634,11 +1634,11 @@ int32_t jbd_trans_set_block_dirty(struct jbd_trans *trans,
 	struct jbd_block_rec *block_rec;
 
 	if (block->buf->end_write == jbd_trans_end_write) {
-		jbd_buf = block->buf->end_write_arg;
+		jbd_buf = (struct jbd_buf *)block->buf->end_write_arg;
 		if (jbd_buf && jbd_buf->trans == trans)
 			return EOK;
 	}
-	jbd_buf = ext4_calloc(1, sizeof(struct jbd_buf));
+	jbd_buf = (struct jbd_buf *)ext4_calloc(1, sizeof(struct jbd_buf));
 	if (!jbd_buf)
 		return ENOMEM;
 
@@ -1694,7 +1694,7 @@ int32_t jbd_trans_revoke_block(struct jbd_trans *trans,
 	if (rec)
 		return EOK;
 
-	rec = ext4_calloc(1, sizeof(struct jbd_revoke_rec));
+	rec = (jbd_revoke_rec*)ext4_calloc(1, sizeof(struct jbd_revoke_rec));
 	if (!rec)
 		return ENOMEM;
 
@@ -2118,7 +2118,7 @@ static void jbd_trans_end_write(struct ext4_bcache *bc __unused,
 			  int32_t res,
 			  void *arg)
 {
-	struct jbd_buf *jbd_buf = arg;
+	struct jbd_buf *jbd_buf = (struct jbd_buf *)arg;
 	struct jbd_trans *trans = jbd_buf->trans;
 	struct jbd_block_rec *block_rec = jbd_buf->block_rec;
 	struct jbd_journal *journal = trans->journal;
@@ -2277,7 +2277,7 @@ struct jbd_trans *
 jbd_journal_new_trans(struct jbd_journal *journal)
 {
 	struct jbd_trans *trans = NULL;
-	trans = ext4_calloc(1, sizeof(struct jbd_trans));
+	trans = (struct jbd_trans *)ext4_calloc(1, sizeof(struct jbd_trans));
 	if (!trans)
 		return NULL;
 

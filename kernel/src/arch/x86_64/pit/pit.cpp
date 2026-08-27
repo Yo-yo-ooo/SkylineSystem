@@ -60,7 +60,7 @@ namespace PIT
         SetDivisor(NonMusicDiv /*65535*/);
         freq = GetFrequency();
         //irq_register(0, PIT::Handler);
-        idt_install_irq(32,PIT::Handler);
+        idt_install_irq(32,(void*)PIT::Handler);
         Inited = true;
         RTC::InitRTC();
         RTC::read_rtc();

@@ -27,7 +27,7 @@ typedef struct cpu_overloadable_functions_t{
     void *(*MemcpyCore)(void *dest, void *src, size_t numbytes);
     void *(*MemmoveCore)(void *dest, void *src, size_t numbytes);
     void *(*MemsetCore)(void *dest, const uint8_t val, size_t numbytes);
-    void *(*MemcmpCore)(const void *str1, const void *str2, size_t numbytes, int equality);
+    int32_t (*MemcmpCore)(const void *str1, const void *str2, size_t numbytes, int equality);
 } cpu_overloadable_functions_t;
 
 #define TV_BITS 6

@@ -191,11 +191,11 @@ static int32_t create_fs_aux_info(struct fs_aux_info *aux_info,
 		aux_info->len_blocks -= last_group_size;
 	}
 
-	aux_info->sb = ext4_calloc(1, EXT4_SUPERBLOCK_SIZE);
+	aux_info->sb = (ext4_sblock*)ext4_calloc(1, EXT4_SUPERBLOCK_SIZE);
 	if (!aux_info->sb)
 		return ENOMEM;
 
-	aux_info->bg_desc_blk = ext4_calloc(1, info->block_size);
+	aux_info->bg_desc_blk = (uint8_t*)ext4_calloc(1, info->block_size);
 	if (!aux_info->bg_desc_blk)
 		return ENOMEM;
 
@@ -372,7 +372,7 @@ static int32_t write_bgroups(struct ext4_blockdev *bd, struct fs_aux_info *aux_i
 			aux_info->first_data_block + i * info->blocks_per_group;
 		uint32_t blk_off = 0;
 
-		bg_desc = (void *)(aux_info->bg_desc_blk + k * dsc_size);
+		bg_desc = (struct ext4_bgroup *)(aux_info->bg_desc_blk + k * dsc_size);
 		bg_free_blk = info->blocks_per_group -
 				aux_info->inode_table_blocks;
 
@@ -484,7 +484,7 @@ int32_t ext4_mkfs_read_info(struct ext4_blockdev *bd, struct ext4_mkfs_info *inf
 	if (r != EOK)
 		return r;
 
-	sb = ext4_malloc(EXT4_SUPERBLOCK_SIZE);
+	sb = (struct ext4_sblock *)ext4_malloc(EXT4_SUPERBLOCK_SIZE);
 	if (!sb)
 		goto Finish;
 

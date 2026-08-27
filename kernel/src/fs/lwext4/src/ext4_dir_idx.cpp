@@ -312,7 +312,7 @@ static bool ext4_dir_dx_csum_verify(struct ext4_inode_ref *inode_ref,
 			/* There is no space to hold the checksum */
 			return true;
 		}
-		t = (void *)(((struct ext4_dir_idx_entry *)climit) + limit);
+		t = (struct ext4_dir_idx_tail *)(((struct ext4_dir_idx_entry *)climit) + limit);
 
 		uint32_t c;
 		c = to_le32(ext4_dir_dx_checksum(inode_ref, de, coff, cnt, t));
@@ -346,7 +346,7 @@ static void ext4_dir_set_dx_csum(struct ext4_inode_ref *inode_ref,
 			return;
 		}
 
-		t = (void *)(((struct ext4_dir_idx_entry *)climit) + limit);
+		t = (struct ext4_dir_idx_tail *)(((struct ext4_dir_idx_entry *)climit) + limit);
 		t->checksum = to_le32(ext4_dir_dx_checksum(inode_ref, dirent,
 					coff, count, t));
 	}
@@ -386,7 +386,7 @@ int32_t ext4_dir_dx_init(struct ext4_inode_ref *dir, struct ext4_inode_ref *pare
 		return rc;
 
 	/* Initialize pointers to data structures */
-	struct ext4_dir_idx_root *root = (void *)block.data;
+	struct ext4_dir_idx_root *root = (struct ext4_dir_idx_root *)block.data;
 	struct ext4_dir_idx_rinfo *info = &(root->info);
 
 	_memset(root, 0, sizeof(struct ext4_dir_idx_root));
@@ -443,7 +443,7 @@ int32_t ext4_dir_dx_init(struct ext4_inode_ref *dir, struct ext4_inode_ref *pare
 	}
 
 	/* Fill the whole block with empty entry */
-	struct ext4_dir_en *be = (void *)new_block.data;
+	struct ext4_dir_en *be = (struct ext4_dir_en *)new_block.data;
 
 	if (ext4_sb_feature_ro_com(sb, EXT4_FRO_COM_METADATA_CSUM)) {
 		uint16_t len = block_size - sizeof(struct ext4_dir_entry_tail);
@@ -513,7 +513,7 @@ static int32_t ext4_dir_hinfo_init(struct ext4_hash_info *hinfo,
 		entry_space -= sizeof(struct ext4_dir_idx_tail);
 	entry_space = entry_space / sizeof(struct ext4_dir_idx_entry);
 
-	struct ext4_dir_idx_climit *climit = (void *)&root->en;
+	struct ext4_dir_idx_climit *climit = (struct ext4_dir_idx_climit *)&root->en;
 	uint16_t limit = ext4_dir_dx_climit_get_limit(climit);
 	if (limit != entry_space)
 		return EXT4_ERR_BAD_DX_DIR;
@@ -570,12 +570,12 @@ static int32_t ext4_dir_dx_get_leaf(struct ext4_hash_info *hinfo,
 	block_size = ext4_sb_get_block_size(sb);
 	root = (struct ext4_dir_idx_root *)root_block->data;
 	entries = (struct ext4_dir_idx_entry *)&root->en;
-	limit = ext4_dir_dx_climit_get_limit((void *)entries);
+	limit = ext4_dir_dx_climit_get_limit((struct ext4_dir_idx_climit *)entries);
 	ind_level = ext4_dir_dx_rinfo_get_indirect_levels(&root->info);
 
 	/* Walk through the index tree */
 	while (true) {
-		uint16_t cnt = ext4_dir_dx_climit_get_count((void *)entries);
+		uint16_t cnt = ext4_dir_dx_climit_get_count((struct ext4_dir_idx_climit *)entries);
 		if ((cnt == 0) || (cnt > limit))
 			return EXT4_ERR_BAD_DX_DIR;
 
@@ -618,7 +618,7 @@ static int32_t ext4_dir_dx_get_leaf(struct ext4_hash_info *hinfo,
 			return r;
 
 		entries = ((struct ext4_dir_idx_node *)tmp_blk->data)->entries;
-		limit = ext4_dir_dx_climit_get_limit((void *)entries);
+		limit = ext4_dir_dx_climit_get_limit((struct ext4_dir_idx_climit *)entries);
 
 		entry_space = block_size - sizeof(struct ext4_fake_dir_entry);
 		if (ext4_sb_feature_ro_com(sb, EXT4_FRO_COM_METADATA_CSUM))
@@ -631,7 +631,7 @@ static int32_t ext4_dir_dx_get_leaf(struct ext4_hash_info *hinfo,
 			return EXT4_ERR_BAD_DX_DIR;
 		}
 
-		if (!ext4_dir_dx_csum_verify(inode_ref, (void *)tmp_blk->data)) {
+		if (!ext4_dir_dx_csum_verify(inode_ref, (struct ext4_dir_en *)tmp_blk->data)) {
 			ext4_dbg(DEBUG_DIR_IDX,
 					DBG_WARN "HTree checksum failed."
 					"Inode: %" PRIu32", "
@@ -666,7 +666,7 @@ static int32_t ext4_dir_dx_next_block(struct ext4_inode_ref *inode_ref,
 
 	/* Try to find data block with next bunch of entries */
 	while (true) {
-		uint16_t cnt = ext4_dir_dx_climit_get_count((void *)p->entries);
+		uint16_t cnt = ext4_dir_dx_climit_get_count((struct ext4_dir_idx_climit *)p->entries);
 
 		p->position++;
 		if (p->position < p->entries + cnt)
@@ -699,7 +699,7 @@ static int32_t ext4_dir_dx_next_block(struct ext4_inode_ref *inode_ref,
 		if (r != EOK)
 			return r;
 
-		if (!ext4_dir_dx_csum_verify(inode_ref, (void *)b.data)) {
+		if (!ext4_dir_dx_csum_verify(inode_ref, (struct ext4_dir_en *)b.data)) {
 			ext4_dbg(DEBUG_DIR_IDX,
 					DBG_WARN "HTree checksum failed."
 					"Inode: %" PRIu32", "
@@ -742,7 +742,7 @@ int32_t ext4_dir_dx_find_entry(struct ext4_dir_search_result *result,
 	if (rc != EOK)
 		return rc;
 
-	if (!ext4_dir_dx_csum_verify(inode_ref, (void *)root_block.data)) {
+	if (!ext4_dir_dx_csum_verify(inode_ref, (struct ext4_dir_en *)root_block.data)) {
 		ext4_dbg(DEBUG_DIR_IDX,
 			 DBG_WARN "HTree root checksum failed."
 			 "Inode: %" PRIu32", "
@@ -790,7 +790,7 @@ int32_t ext4_dir_dx_find_entry(struct ext4_dir_search_result *result,
 		if (rc != EOK)
 			goto cleanup;
 
-		if (!ext4_dir_csum_verify(inode_ref, (void *)b.data)) {
+		if (!ext4_dir_csum_verify(inode_ref, (ext4_dir_en*)b.data)) {
 			ext4_dbg(DEBUG_DIR_IDX,
 				 DBG_WARN "HTree leaf block checksum failed."
 				 "Inode: %" PRIu32", "
@@ -852,8 +852,8 @@ cleanup:
  */
 static int32_t ext4_dir_dx_entry_comparator(const void *arg1, const void *arg2)
 {
-	struct ext4_dx_sort_entry *entry1 = (void *)arg1;
-	struct ext4_dx_sort_entry *entry2 = (void *)arg2;
+	struct ext4_dx_sort_entry *entry1 = (struct ext4_dx_sort_entry *)arg1;
+	struct ext4_dx_sort_entry *entry2 = (struct ext4_dx_sort_entry *)arg2;
 
 	if (entry1->hash == entry2->hash)
 		return 0;
@@ -879,7 +879,7 @@ ext4_dir_dx_insert_entry(struct ext4_inode_ref *inode_ref __unused,
 {
 	struct ext4_dir_idx_entry *old_index_entry = index_block->position;
 	struct ext4_dir_idx_entry *new_index_entry = old_index_entry + 1;
-	struct ext4_dir_idx_climit *climit = (void *)index_block->entries;
+	struct ext4_dir_idx_climit *climit = (struct ext4_dir_idx_climit *)index_block->entries;
 	struct ext4_dir_idx_entry *start_index = index_block->entries;
 	uint32_t count = ext4_dir_dx_climit_get_count(climit);
 
@@ -891,7 +891,7 @@ ext4_dir_dx_insert_entry(struct ext4_inode_ref *inode_ref __unused,
 	ext4_dir_dx_entry_set_block(new_index_entry, iblock);
 	ext4_dir_dx_entry_set_hash(new_index_entry, hash);
 	ext4_dir_dx_climit_set_count(climit, count + 1);
-	ext4_dir_set_dx_csum(inode_ref, (void *)index_block->b.data);
+	ext4_dir_set_dx_csum(inode_ref, (struct ext4_dir_en *)index_block->b.data);
 	ext4_trans_set_block_dirty(index_block->b.buf);
 }
 
@@ -913,7 +913,7 @@ static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 	uint32_t block_size = ext4_sb_get_block_size(&inode_ref->fs->sb);
 
 	/* Allocate buffer for directory entries */
-	uint8_t *entry_buffer = ext4_malloc(block_size);
+	uint8_t *entry_buffer = (uint8_t*)ext4_malloc(block_size);
 	if (entry_buffer == NULL)
 		return ENOMEM;
 
@@ -923,7 +923,7 @@ static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 	/* Allocate sort entry */
 	struct ext4_dx_sort_entry *sort;
 
-	sort = ext4_malloc(max_ecnt * sizeof(struct ext4_dx_sort_entry));
+	sort = (struct ext4_dx_sort_entry *)ext4_malloc(max_ecnt * sizeof(struct ext4_dx_sort_entry));
 	if (sort == NULL) {
 		ext4_free(entry_buffer);
 		return ENOMEM;
@@ -937,7 +937,7 @@ static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 	__memcpy(&hinfo_tmp, hinfo, sizeof(struct ext4_hash_info));
 
 	/* Load all valid entries to the buffer */
-	struct ext4_dir_en *de = (void *)old_data_block->data;
+	struct ext4_dir_en *de = (struct ext4_dir_en*)old_data_block->data;
 	uint8_t *entry_buffer_ptr = entry_buffer;
 	while ((void *)de < (void *)(old_data_block->data + block_size)) {
 		/* Read only valid entries */
@@ -967,7 +967,7 @@ static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 		}
 
 		size_t elen = ext4_dir_en_get_entry_len(de);
-		de = (void *)((uint8_t *)de + elen);
+		de = (struct ext4_dir_en *)((uint8_t *)de + elen);
 	}
 
 	qsort(sort, idx, sizeof(struct ext4_dx_sort_entry),
@@ -1026,7 +1026,7 @@ static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 		ptr = old_data_block->data + off;
 		__memcpy(ptr, sort[i].dentry, sort[i].rec_len);
 
-		struct ext4_dir_en *t = ptr;
+		struct ext4_dir_en *t = (struct ext4_dir_en *)ptr;
 		if (i < (mid - 1))
 			ext4_dir_en_set_entry_len(t, sort[i].rec_len);
 		else
@@ -1041,7 +1041,7 @@ static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 		ptr = new_data_block_tmp.data + off;
 		__memcpy(ptr, sort[i].dentry, sort[i].rec_len);
 
-		struct ext4_dir_en *t = ptr;
+		struct ext4_dir_en *t = (struct ext4_dir_en *)ptr;
 		if (i < (idx - 1))
 			ext4_dir_en_set_entry_len(t, sort[i].rec_len);
 		else
@@ -1062,8 +1062,8 @@ static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 		t = EXT4_DIRENT_TAIL(new_data_block_tmp.data, block_size);
 		ext4_dir_init_entry_tail(t);
 	}
-	ext4_dir_set_csum(inode_ref, (void *)old_data_block->data);
-	ext4_dir_set_csum(inode_ref, (void *)new_data_block_tmp.data);
+	ext4_dir_set_csum(inode_ref, (struct ext4_dir_en *)old_data_block->data);
+	ext4_dir_set_csum(inode_ref, (struct ext4_dir_en *)new_data_block_tmp.data);
 	ext4_trans_set_block_dirty(old_data_block->buf);
 	ext4_trans_set_block_dirty(new_data_block_tmp.buf);
 
@@ -1115,7 +1115,7 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 		ptrdiff_t levels = dxb - dx_blks;
 
 		ren = ((struct ext4_dir_idx_root *)dx_blks[0].b.data)->en;
-		struct ext4_dir_idx_climit *rclimit = (void *)ren;
+		struct ext4_dir_idx_climit *rclimit = (struct ext4_dir_idx_climit *)ren;
 		uint16_t root_limit = ext4_dir_dx_climit_get_limit(rclimit);
 		uint16_t root_count = ext4_dir_dx_climit_get_count(rclimit);
 
@@ -1137,7 +1137,7 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 		if (r != EOK)
 			return r;
 
-		struct ext4_dir_idx_node *new_node = (void *)b.data;
+		struct ext4_dir_idx_node *new_node = (struct ext4_dir_idx_node *)b.data;
 		struct ext4_dir_idx_entry *new_en = new_node->entries;
 
 		_memset(&new_node->fake, 0, sizeof(struct ext4_fake_dir_entry));
@@ -1194,12 +1194,12 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 			/* Finally insert new entry */
 			ext4_dir_dx_insert_entry(ino_ref, dx_blks, hash_right,
 						 new_iblk);
-			ext4_dir_set_dx_csum(ino_ref, (void*)dx_blks[0].b.data);
-			ext4_dir_set_dx_csum(ino_ref, (void*)dx_blks[1].b.data);
+			ext4_dir_set_dx_csum(ino_ref, (struct ext4_dir_en *)dx_blks[0].b.data);
+			ext4_dir_set_dx_csum(ino_ref, (struct ext4_dir_en *)dx_blks[1].b.data);
 			ext4_trans_set_block_dirty(dx_blks[0].b.buf);
 			ext4_trans_set_block_dirty(dx_blks[1].b.buf);
 
-			ext4_dir_set_dx_csum(ino_ref, (void *)b.data);
+			ext4_dir_set_dx_csum(ino_ref, (struct ext4_dir_en *)b.data);
 			ext4_trans_set_block_dirty(b.buf);
 			return ext4_block_set(ino_ref->fs->bdev, &b);
 		} else {
@@ -1208,19 +1208,19 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 			sz = leaf_count * sizeof(struct ext4_dir_idx_entry);
 			__memcpy(new_en, e, sz);
 
-			struct ext4_dir_idx_climit *new_climit = (void*)new_en;
+			struct ext4_dir_idx_climit *new_climit = (struct ext4_dir_idx_climit *)new_en;
 			if (meta_csum)
 				entry_space -= sizeof(struct ext4_dir_idx_tail);
 
 			ext4_dir_dx_climit_set_limit(new_climit, node_limit);
 
 			/* Set values in root node */
-			struct ext4_dir_idx_climit *new_root_climit = (void *)e;
+			struct ext4_dir_idx_climit *new_root_climit = (struct ext4_dir_idx_climit *)e;
 
 			ext4_dir_dx_climit_set_count(new_root_climit, 1);
 			ext4_dir_dx_entry_set_block(e, new_iblk);
 
-			struct ext4_dir_idx_root *r = (void *)dx_blks[0].b.data;
+			struct ext4_dir_idx_root *r = (struct ext4_dir_idx_root *)dx_blks[0].b.data;
 			r->info.indirect_levels = 1;
 
 			/* Add new entry to the path */
@@ -1230,8 +1230,8 @@ ext4_dir_dx_split_index(struct ext4_inode_ref *ino_ref,
 			dxb->b = b;
 			*new_dx_block = dxb;
 
-			ext4_dir_set_dx_csum(ino_ref, (void*)dx_blks[0].b.data);
-			ext4_dir_set_dx_csum(ino_ref, (void*)dx_blks[1].b.data);
+			ext4_dir_set_dx_csum(ino_ref, (struct ext4_dir_en *)dx_blks[0].b.data);
+			ext4_dir_set_dx_csum(ino_ref, (struct ext4_dir_en *)dx_blks[1].b.data);
 			ext4_trans_set_block_dirty(dx_blks[0].b.buf);
 			ext4_trans_set_block_dirty(dx_blks[1].b.buf);
 		}
@@ -1261,7 +1261,7 @@ int32_t ext4_dir_dx_add_entry(struct ext4_inode_ref *parent,
 	if (r != EOK)
 		return r;
 
-	if (!ext4_dir_dx_csum_verify(parent, (void*)root_blk.data)) {
+	if (!ext4_dir_dx_csum_verify(parent, (struct ext4_dir_en *)root_blk.data)) {
 		ext4_dbg(DEBUG_DIR_IDX,
 			 DBG_WARN "HTree root checksum failed."
 			 "Inode: %" PRIu32", "
@@ -1315,7 +1315,7 @@ int32_t ext4_dir_dx_add_entry(struct ext4_inode_ref *parent,
 	if (r != EOK)
 		goto release_index;
 
-	if (!ext4_dir_csum_verify(parent,(void *)target_block.data)) {
+	if (!ext4_dir_csum_verify(parent,(ext4_dir_en *)target_block.data)) {
 		ext4_dbg(DEBUG_DIR_IDX,
 				DBG_WARN "HTree leaf block checksum failed."
 				"Inode: %" PRIu32", "
@@ -1393,7 +1393,7 @@ int32_t ext4_dir_dx_reset_parent_inode(struct ext4_inode_ref *dir,
 	if (rc != EOK)
 		return rc;
 
-	if (!ext4_dir_dx_csum_verify(dir, (void *)block.data)) {
+	if (!ext4_dir_dx_csum_verify(dir, (struct ext4_dir_en *)block.data)) {
 		ext4_dbg(DEBUG_DIR_IDX,
 			 DBG_WARN "HTree root checksum failed."
 			 "Inode: %" PRIu32", "
@@ -1403,12 +1403,12 @@ int32_t ext4_dir_dx_reset_parent_inode(struct ext4_inode_ref *dir,
 	}
 
 	/* Initialize pointers to data structures */
-	struct ext4_dir_idx_root *root = (void *)block.data;
+	struct ext4_dir_idx_root *root = (struct ext4_dir_idx_root *)block.data;
 
 	/* Fill the inode field with a new parent ino. */
 	ext4_dx_dot_en_set_inode(&root->dots[1], parent_inode);
 
-	ext4_dir_set_dx_csum(dir, (void *)block.data);
+	ext4_dir_set_dx_csum(dir, (struct ext4_dir_en *)block.data);
 	ext4_trans_set_block_dirty(block.buf);
 
 	return ext4_block_set(dir->fs->bdev, &block);

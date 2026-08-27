@@ -57,16 +57,16 @@ uint64_t devstrs_hash(const void* item, uint64_t seed0, uint64_t seed1){
     return hashmap_sip(entry->name, strlen(entry->name), seed0, seed1);
 }
 
-static volatile hashmap* TIMap = nullptr;
-static volatile hashmap* StrMap = nullptr;
-static volatile hashmap* DevMan_Map = nullptr;
+static hashmap* TIMap = nullptr;
+static hashmap* StrMap = nullptr;
+static hashmap* DevMan_Map = nullptr;
 namespace Dev{
-    VDL ThisDev = {0};
+    VDL ThisDev = {(VsDevType)0};
     uint32_t ThisDevType = Undefined;
     uint32_t ThisDevIDX = 0;
     //DevManEntry* ThisEntry = nullptr;
 
-    void AddStorageDevice(VsDevType type, DevOPS ops, uint32_t SectorCount = 0, void* Class = nullptr) {
+    void AddStorageDevice(VsDevType type, DevOPS ops, uint32_t SectorCount, void* Class) {
         if(type > MAX_TYPE_C) return;
 
         // 先分配好内存，减少在锁内部滞留的时间
@@ -122,7 +122,7 @@ namespace Dev{
 
     VDL* GetSDEV(const char *Name){
         spinlock_lock(&dev_manager_lock);
-        DevStrSearch* search = (DevStrSearch*)hashmap_get(StrMap, &(DevStrSearch){.name = Name});
+        DevStrSearch* search = (DevStrSearch*)hashmap_get(StrMap, &(DevStrSearch){.name = (char*)Name});
         spinlock_unlock(&dev_manager_lock);
         if(search)
             return search->dev;

@@ -189,7 +189,7 @@ bool ps2_mouse_init(void) {
     wait_write();
     io_out8(PS2_CMD_PORT, PS2_CMD_ENABLE_PORT1);
     io_wait();
-    VDL PS2MouseDev = {0};
+    VDL PS2MouseDev = {};
     DevOPS ops = {0};
     ops.MemoryMap = PS2_MOUSE_MemoryMap;
     Dev::AddDevice(PS2MouseDev,X86_PS2_MOUSE,ops);

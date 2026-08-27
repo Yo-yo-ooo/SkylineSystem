@@ -21,7 +21,7 @@ extern "C" int32_t file_cache_writeback_callback(
 cpu_t ZeroCPU = {0};
 cpu_t *bsp_cpu = &ZeroCPU;
 cpu_t *smp_cpu_list[MAX_CPU] = {&ZeroCPU};
-volatile spinlock_t smp_lock = 0;
+spinlock_t smp_lock = 0;
 volatile uint64_t started_count = 0; 
 bool smp_started = false;
 int32_t smp_last_cpu = 0; 
@@ -220,7 +220,7 @@ void InitCPUThread(){
     init_thread->ctx.rflags = 0x202;
     
 init_thread_ready:
-    init_thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((smp_cpu_list[smp_bsp_cpu]->XsaveSize), PAGE_SIZE), true);
+    init_thread->fx_area = (char*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((smp_cpu_list[smp_bsp_cpu]->XsaveSize), PAGE_SIZE), false);
     _memset(init_thread->fx_area, 0, smp_cpu_list[smp_bsp_cpu]->XsaveSize);
     
     uint32_t eax = smp_cpu_list[smp_bsp_cpu]->XsaveMaskLo;

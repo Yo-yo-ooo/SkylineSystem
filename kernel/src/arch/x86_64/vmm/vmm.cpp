@@ -40,7 +40,7 @@ volatile bool IsPM5LVL = (paging_mode_request.response->mode == REQ_TOP_LVL);
 
 extern spinlock_t pmm_lock;
 #define PHYS_BASE(x) (x - executable_vaddr + executable_paddr)
-volatile pagemap_t* kernel_pagemap = nullptr;
+pagemap_t* kernel_pagemap = nullptr;
 extern "C" void mmu_invlpg(uint64_t vaddr);
 extern struct limine_memmap_response* pmm_memmap;
 extern char ld_limine_start[], ld_limine_end[], ld_text_start[], ld_text_end[];
@@ -343,8 +343,8 @@ namespace VMM {
 
     namespace Useless {
         uint64_t *NewLevel(uint64_t *level, uint64_t entry) {
-            uint64_t *new_level = PMM::Request();
-            _memset(HIGHER_HALF(new_level), 0, PAGE_SIZE);
+            uint64_t *new_level = (uint64_t*)PMM::Request();
+            _memset((void*)HIGHER_HALF(new_level), 0, PAGE_SIZE);
             level[entry] = (uint64_t)new_level | 0b111;
             return new_level;
         }
@@ -361,7 +361,7 @@ namespace VMM {
 #endif
             uint64_t pdpte_val = (uint64_t)pml4[PML4E(vaddr)];
             if (unlikely(!PAGE_EXISTS(pdpte_val))) return info;
-            uint64_t *pdpt = HIGHER_HALF(PTE_MASK(pdpte_val));
+            uint64_t *pdpt = (uint64_t*)HIGHER_HALF(PTE_MASK(pdpte_val));
             PREFETCH_RH(&pdpt[PDPTE(vaddr)]);
 
             uint64_t pde_val = pdpt[PDPTE(vaddr)];
@@ -370,7 +370,7 @@ namespace VMM {
                 info.phys = pde_val & 0x000FFFFFC0000000ULL; info.size = PAGE_1GB;
                 info.flags = pde_val & PTE_KEEP; return info;
             }
-            uint64_t *pd = HIGHER_HALF(PTE_MASK(pde_val));
+            uint64_t *pd = (uint64_t*)HIGHER_HALF(PTE_MASK(pde_val));
             PREFETCH_RH(&pd[PDE(vaddr)]);
 
             uint64_t pte_val = pd[PDE(vaddr)];
@@ -379,7 +379,7 @@ namespace VMM {
                 info.phys = pte_val & 0x000FFFFFFFE00000ULL; info.size = PAGE_2MB;
                 info.flags = pte_val & PTE_KEEP; return info;
             }
-            uint64_t *pt = HIGHER_HALF(PTE_MASK(pte_val));
+            uint64_t *pt = (uint64_t*)HIGHER_HALF(PTE_MASK(pte_val));
             uint64_t page_val = pt[PTE(vaddr)];
             if (unlikely(!PAGE_EXISTS(page_val))) return info;
             info.phys = page_val & 0x000FFFFFFFFFF000ULL; info.size = PAGE_SIZE;
@@ -407,7 +407,7 @@ namespace VMM {
         kernel_pagemap->pcid = AllocPCID();
         BitmapClearAll(kernel_pagemap->cpus_with_tlb);
         rb_root_init(&kernel_pagemap->vma_tree, nullptr, nullptr, nullptr, nullptr, nullptr);
-        _memset(kernel_pagemap->toplvl, 0, PAGE_SIZE);
+        _memset((void*)kernel_pagemap->toplvl, 0, PAGE_SIZE);
         VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(0x100000000000), 0);
 
         uint64_t ev = ea->virtual_base, ep = ea->physical_base;
@@ -508,15 +508,15 @@ namespace VMM {
 #endif
         uint64_t pdpte_val = (uint64_t)pml4[PML4E(vaddr)];
         if (unlikely(!PAGE_EXISTS(pdpte_val))) return;
-        uint64_t *pdpt = HIGHER_HALF(PTE_MASK(pdpte_val));
+        uint64_t *pdpt = (uint64_t*)HIGHER_HALF(PTE_MASK(pdpte_val));
         uint64_t pde_val = pdpt[PDPTE(vaddr)];
         if (unlikely(!PAGE_EXISTS(pde_val))) return;
         if (pde_val & VMM_PS_BIT) { pdpt[PDPTE(vaddr)] = 0; return; }
-        uint64_t *pd = HIGHER_HALF(PTE_MASK(pde_val));
+        uint64_t *pd = (uint64_t*)HIGHER_HALF(PTE_MASK(pde_val));
         uint64_t pte_val = pd[PDE(vaddr)];
         if (unlikely(!PAGE_EXISTS(pte_val))) return;
         if (pte_val & VMM_PS_BIT) { pd[PDE(vaddr)] = 0; return; }
-        uint64_t *pt = HIGHER_HALF(PTE_MASK(pte_val));
+        uint64_t *pt = (uint64_t*)HIGHER_HALF(PTE_MASK(pte_val));
         pt[PTE(vaddr)] = 0;
     }
 
@@ -554,9 +554,9 @@ namespace VMM {
     }
 
     pagemap_t *NewPM(){
-        pagemap_t *pm = HIGHER_HALF((pagemap_t*)PMM::Request());
+        pagemap_t *pm = (pagemap_t*)HIGHER_HALF((pagemap_t*)PMM::Request());
         pm->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
-        _memset(pm->toplvl, 0, PAGE_SIZE);
+        _memset((void*)pm->toplvl, 0, PAGE_SIZE);
         pm->vm_mappings = nullptr; pm->vma_lock = 0; pm->pt_lock = 0;
         pm->vma_head = pm->vma_cursor = nullptr;
         pm->pcid = AllocPCID();
@@ -729,7 +729,7 @@ namespace VMM {
     pagemap_t *Fork(pagemap_t *parent){
         pagemap_t *pm = HIGHER_HALF((pagemap_t*)PMM::Request());
         pm->toplvl = HIGHER_HALF((uint64_t*)PMM::Request());
-        _memset(pm->toplvl, 0, PAGE_SIZE);
+        _memset((void*)pm->toplvl, 0, PAGE_SIZE);
         for (uint64_t i = 256; i < 512; i++) pm->toplvl[i] = kernel_pagemap->toplvl[i];
         pm->pt_lock = 0; pm->vma_lock = 0; pm->vm_mappings = nullptr;
         pm->vma_head = pm->vma_cursor = nullptr;
@@ -805,7 +805,7 @@ namespace VMM {
             uint64_t entry = table[i];
             if (!(entry & 0x1)) continue;
             if (entry & VMM_PS_BIT) continue;
-            uint64_t *child = HIGHER_HALF(PTE_MASK(entry));
+            uint64_t *child = (uint64_t*)HIGHER_HALF(PTE_MASK(entry));
             if (level > 1) { FreePageTablesInternal(child, level - 1); PMM::Free(PHYSICAL(child)); }
         }
     }

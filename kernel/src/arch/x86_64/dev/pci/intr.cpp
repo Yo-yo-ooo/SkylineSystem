@@ -38,14 +38,14 @@ namespace PCI
             uint32_t MsgAddr = 0xfee00000u
                 | ((CpuId) << 12)
                 | (Redirect << 3) | (DestMode << 2);
-            PCI::PCI_MSIX_TABLE* Tbl = PCI::GetMSIXTblBaseAddr(Hdr, Cap);
+            PCI::PCI_MSIX_TABLE* Tbl = (PCI::PCI_MSIX_TABLE*)PCI::GetMSIXTblBaseAddr(Hdr, Cap);
             
             Tbl[TblIdx].msgAddr = MsgAddr;
             Tbl[TblIdx].msgData = Vector; // 必须是传入的 IDT 向量号
             __asm__ volatile ("mfence" ::: "memory");
             Tbl[TblIdx].vecCtrl &= ~1u; // 解除 Mask
             
-            idt_install_irq_cpu(CpuId, Vector, Handler);
+            idt_install_irq_cpu(CpuId, Vector, (void*)Handler);
 
             PCI::enable_bus_mastering((uint64_t)Hdr);
             Cap->MsgCtrl |= (1 << 15); // Enable

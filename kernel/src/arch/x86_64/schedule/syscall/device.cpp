@@ -12,13 +12,13 @@
 uint64_t sys_dev_read(uint64_t DevType,uint64_t DevIDX,\
 uint64_t buffer,uint64_t count,uint64_t offset,uint64_t ign_0,syscall_frame_t* nullframe){
     IGNORE_VALUE(ign_0);IGNORE_VALUE(nullframe);
-    return Dev::DeviceRead(DevType,DevIDX,offset,(void*)buffer,count);
+    return Dev::DeviceRead((VsDevType)DevType,(uint32_t)DevIDX,(size_t)offset,(void*)buffer,(size_t)count);
 }
 
 uint64_t sys_dev_write(uint64_t DevType,uint64_t DevIDX,\
 uint64_t buffer,uint64_t count,uint64_t offset,uint64_t ign_0,syscall_frame_t* nullframe){
     IGNORE_VALUE(ign_0);IGNORE_VALUE(nullframe);
-    return Dev::DeviceWrite(DevType,DevIDX,offset,(void*)buffer,count);
+    return Dev::DeviceWrite((VsDevType)DevType,DevIDX,offset,(void*)buffer,count);
 }
 
 uint64_t sys_dev_mmap(uint64_t DevType,uint64_t DevIDX,

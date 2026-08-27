@@ -47,7 +47,7 @@ namespace IOAPIC{
     }
 
     void RemapIRQ(uint32_t lapic_id, uint8_t irq, uint8_t vec, bool masked) {
-        madt_iso_t *iso = madt_iso_list[irq];
+        madt_iso_t *iso = (madt_iso_t *)madt_iso_list[irq];
         if (!iso) {
             IOAPIC::RemapGSI(lapic_id, irq, vec, (masked ? 1 << 16 : 0));
             return;

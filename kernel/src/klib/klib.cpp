@@ -56,8 +56,9 @@ void spinlock_unlock(spinlock_t* l) {
     atomic_store_4(l,0,0);
 }
 
+
 extern "C" void *__memcpy(void * d, const void * s, uint64_t n) { 
-    _memcpy(s, d, n);
+    _memcpy((void*)s, d, n);
     return d;
 }
 

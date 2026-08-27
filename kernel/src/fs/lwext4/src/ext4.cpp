@@ -112,7 +112,7 @@ struct ext4_mountpoint{
 
 
 static FS_PDESC fs = {
-    .write = ext4_fwrite,.read = ext4_fread,
+    .write = (decltype(fs.write))ext4_fwrite,.read = (decltype(fs.read))ext4_fread,
     .lseek = ext4_fseek_,.close = ext4_fclose_,
     .open = ext4_fopen_,.fsize = ext4_fsize_,.SIZEOF_FILE_DESC = sizeof(ext4_file)
 };
@@ -449,8 +449,8 @@ int32_t ext4_umount(const char *mount_point)
 
 	
     struct __hmap_s_mp *hsmp = 
-            hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? hsmp->MP : nullptr;
+            (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    mp = hsmp ? (struct ext4_mountpoint *)hsmp->MP : nullptr;
 
 	if (!mp)
 		return ENODEV;
@@ -484,8 +484,8 @@ Finish:
 static struct ext4_mountpoint *ext4_get_mount(const char *path)
 {
     struct __hmap_s_mp *hsmp = 
-        hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
-    ext4_mountpoint* mp = hsmp ? hsmp->MP : nullptr;
+        (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
+    ext4_mountpoint* mp = hsmp ? (ext4_mountpoint*)hsmp->MP : nullptr;
     //kinfoln("%p",mp);
     //kinfoln("Name Of MP:%s",mp ? mp->name : "NULL");
     return mp;
@@ -572,7 +572,7 @@ static int32_t __ext4_recover(const char *mount_point)
 
 	EXT4_MP_LOCK(mp);
 	if (ext4_sb_feature_com(&mp->fs.sb, EXT4_FCOM_HAS_JOURNAL)) {
-		struct jbd_fs *jbd_fs = ext4_calloc(1, sizeof(struct jbd_fs));
+		struct jbd_fs *jbd_fs = (struct jbd_fs *)ext4_calloc(1, sizeof(struct jbd_fs));
 		if (!jbd_fs) {
 			 r = ENOMEM;
 			 goto Finish;
@@ -749,8 +749,8 @@ int32_t ext4_mount_setup_locks(const char *mount_point,
 
 
     struct __hmap_s_mp *hsmp = 
-        hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
-    mp = hsmp ? hsmp->MP : nullptr;
+        (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    mp = hsmp ? (struct ext4_mountpoint *)hsmp->MP : nullptr;
     
 	if (!mp)
 		return ENOENT;
@@ -1691,7 +1691,7 @@ int32_t ext4_fread(ext4_file *file, void *buf, size_t size, size_t *rcnt)
     ext4_fsblk_t fblock_start;
     uint32_t fblock_count;
 
-    uint8_t *u8_buf = buf;
+    uint8_t *u8_buf = (uint8_t*)buf;
     int32_t r;
     struct ext4_inode_ref ref;
 
@@ -1871,7 +1871,7 @@ int32_t ext4_fwrite(ext4_file *file, const void *buf, size_t size, size_t *wcnt)
 	ext4_fsblk_t fblock_start;
 
 	struct ext4_inode_ref ref;
-	const uint8_t *u8_buf = buf;
+	const uint8_t *u8_buf = (const uint8_t*)buf;
 	int32_t r, rr = EOK;
 
 	ext4_assert(file && file->mp);
@@ -2805,7 +2805,7 @@ int32_t ext4_listxattr(const char *path, char *list, size_t size, size_t *ret_si
 
 	r = ext4_xattr_list(&inode_ref, NULL, &list_len);
 	if (r == EOK && list_len) {
-		xattr_list = ext4_malloc(list_len);
+		xattr_list = (ext4_xattr_list_entry *)ext4_malloc(list_len);
 		if (!xattr_list) {
 			ext4_fs_put_inode_ref(&inode_ref);
 			r = ENOMEM;
@@ -3372,11 +3372,11 @@ void test_lwext4_dir_ls(char *path){
 	kinfo("ls %s\n", path);
 
 	ext4_dir_open(&d, path);
-	de = ext4_dir_entry_next(&d);
+	de = (ext4_direntry *)ext4_dir_entry_next(&d);
 
 	while (de) {
 		kinfo("  %s%s\n", ext4_entry_to_str(de->inode_type), de->name);
-		de = ext4_dir_entry_next(&d);
+		de = (ext4_direntry *)ext4_dir_entry_next(&d);
 	}
 	ext4_dir_close(&d);
 }
@@ -3515,7 +3515,7 @@ void ext4_fs_test_all(){
     test_lwext4_dir_ls("/mp/");
 
     uint8_t buf[12] = "Hello WORLD";
-    if(test_lwext4_file_test(buf,strlen(buf),2) == true)
+    if(test_lwext4_file_test(buf,(uint32_t)strlen((const char*)buf),2) == true)
         kprintf("[Ext4 Test?]YESSSSSSSSSSSSSSSSS\n");
 
     //if(FSAllIdentify() == false)

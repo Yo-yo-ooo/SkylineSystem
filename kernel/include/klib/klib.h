@@ -59,13 +59,13 @@ void spinlock_lock(spinlock_t* l);
 void spinlock_unlock(spinlock_t* l);
 
 //class func pointer -> func pointer
-template <typename T>
+/*template <typename T>
 T CFCast(auto F){
 	union FT
 	{T   t;decltype(F) f;};
 	FT ft;ft.f=F;
 	return ft.t;  //此为技巧，利用联合将地址返回。
-}
+}*/
 
 #define __init
 #ifdef __x86_64__

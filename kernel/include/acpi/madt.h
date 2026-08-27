@@ -42,8 +42,8 @@ PACK(typedef struct madt_lapic_ovr_t{
     uint64_t lapic_addr;
 }) madt_lapic_ovr_t;
 
-extern volatile madt_ioapic_t *madt_ioapic;
-extern volatile madt_iso_t *madt_iso_list[16];
-extern volatile uint64_t madt_apic_address;
+extern madt_ioapic_t *madt_ioapic;
+extern madt_iso_t *madt_iso_list[16];
+extern uint64_t madt_apic_address;
 
 void MADT_Init();

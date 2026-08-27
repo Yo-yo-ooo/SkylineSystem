@@ -34,7 +34,7 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags, u
         return SYS_MAP_FAILED;
     }
 
-    uint64_t ret = VMM::Alloc(pagemap, page_count, true);
+    uint64_t ret = (uint64_t)VMM::Alloc(pagemap, page_count, true);
     if (ret == (uint64_t)SYS_MAP_FAILED || ret == 0) {
         return SYS_MAP_FAILED;
     }
@@ -47,8 +47,8 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags, u
 }
 
 uint64_t sys_mmap(uint64_t addr_,uint64_t length, uint64_t mode, \
-    uint64_t flags,uint64_t offset,syscall_frame_t *nullframe){
-    IGNORE_VALUE(nullframe);
+    uint64_t flags,uint64_t offset,uint64_t ign_0,syscall_frame_t *nullframe){
+    IGNORE_VALUE(ign_0);IGNORE_VALUE(nullframe);
     return sys_mmap_((void*)addr_,length,mode,flags,offset);
 }
 

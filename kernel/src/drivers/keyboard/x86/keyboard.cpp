@@ -145,7 +145,7 @@ void keyboard_init() {
     outb(0x64, 0xAE);
     
     // 注册中断
-    idt_install_irq(33, keyboard_handler);
+    idt_install_irq(33, (void*)keyboard_handler);
     IOAPIC::RemapIRQ(smp_bsp_cpu,1,33,false);
 }
 #endif

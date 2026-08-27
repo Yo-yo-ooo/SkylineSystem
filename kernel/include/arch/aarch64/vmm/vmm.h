@@ -56,7 +56,7 @@ enum page_size {
 
 namespace VMM
 {
-    extern volatile pagemap_t *kernel_pagemap;
+    extern pagemap_t *kernel_pagemap;
     extern volatile bool IsPM5LVL;
 
     void Init();

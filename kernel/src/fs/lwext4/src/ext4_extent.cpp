@@ -894,7 +894,7 @@ static int32_t ext4_find_extent(struct ext4_inode_ref *inode_ref, ext4_lblk_t bl
 	if (!path) {
 		int32_t path_depth = depth + 1;
 		/* account possible depth increase */
-		path = ext4_calloc(1, sizeof(struct ext4_extent_path) *
+		path = (ext4_extent_path*)ext4_calloc(1, sizeof(struct ext4_extent_path) *
 				     (path_depth + 1));
 		if (!path)
 			return ENOMEM;
@@ -1504,7 +1504,7 @@ again:
 		i = depth - (level - 1);
 		/* We split from leaf to the i-th node */
 		if (level > 0) {
-			npath = ext4_calloc(1, sizeof(struct ext4_extent_path) *
+			npath = (ext4_extent_path*)ext4_calloc(1, sizeof(struct ext4_extent_path) *
 					      (level));
 			if (!npath) {
 				ret = ENOMEM;

@@ -47,7 +47,7 @@ uint64_t NVME::Read(uint64_t offset, uint64_t size, void *buf) {
 	entry->OPCode = 0x02;
 	entry->NspIdent = this->dev->nspId;
 	while (size != res) {
-		entry->PRP[0] = VMM::GetPhysics(kernel_pagemap,buf) + res * 512;
+		entry->PRP[0] = VMM::GetPhysics(kernel_pagemap,(uint64_t)buf) + res * 512;
 		*(uint64_t *)&entry->Spec[0] = offset + res;
 		uint32_t blkSz = min(size - res, (1ul << 16));
 		entry->Spec[2] = blkSz - 1;
@@ -83,7 +83,7 @@ uint64_t NVME::Write(uint64_t offset, uint64_t size, void *buf) {
     entry->OPCode = 0x01;
 	entry->NspIdent = this->dev->nspId;
 	while (size != res) {
-		entry->PRP[0] = VMM::GetPhysics(kernel_pagemap,buf) + res * 512;
+		entry->PRP[0] = VMM::GetPhysics(kernel_pagemap,(uint64_t)buf) + res * 512;
 		*(uint64_t *)&entry->Spec[0] = offset + res;
 		uint32_t blkSz = min(size - res, (1ul << 16));
 		entry->Spec[2] = blkSz - 1;

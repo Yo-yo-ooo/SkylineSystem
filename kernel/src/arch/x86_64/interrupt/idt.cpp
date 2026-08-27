@@ -12,7 +12,7 @@ extern void FT_Clear();
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 
-volatile static idt_entry_t alignas(16) idt_entries[256];
+volatile static idt_entry_t idt_entries[256];
 extern "C" void *idt_int_table[];
 interrupt_handler_t handlers[256];
 
@@ -56,7 +56,7 @@ void idt_reinit(uint32_t CPUID) {
 }
 
 void idt_set_entry(uint16_t vector, void *isr, uint8_t flags) {
-    idt_entry_t *entry = &idt_entries[vector];
+    idt_entry_t *entry = (idt_entry_t*)&idt_entries[vector];
     entry->offset_low = (uint16_t)((uint64_t)isr & 0xFFFF);
     entry->selector = 0x08;
     entry->ist = 0;
@@ -106,7 +106,7 @@ extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
     // 【最高优先级修复 2】遍历所有 CPU 安装处理程序与位图，保证多核一致
     for (int32_t i = 0; i <= smp_last_cpu; i++) {
         if (smp_cpu_list[i] == nullptr) continue;
-        smp_cpu_list[i]->handlers[irq] = (uint64_t)handler;
+        smp_cpu_list[i]->handlers[irq] = (decltype(smp_cpu_list[i]->handlers[irq]))handler;
         smp_cpu_list[i]->IntrRegistCount++;
         uint32_t Index = irq / 64;
         uint32_t SIndex = irq % 64;
@@ -115,7 +115,7 @@ extern "C"  void idt_install_irq(uint8_t irq, void *handler) {
 }
 
 extern "C" void idt_install_irq_cpu(uint32_t cpuid,uint8_t irq, void* handler) {
-    smp_cpu_list[cpuid]->handlers[irq] = (uint64_t)handler;
+    smp_cpu_list[cpuid]->handlers[irq] = (decltype(smp_cpu_list[cpuid]->handlers[irq]))handler;
     smp_cpu_list[cpuid]->IntrRegistCount++;
     uint32_t Index = irq / 64;
     uint32_t SIndex = irq % 64;

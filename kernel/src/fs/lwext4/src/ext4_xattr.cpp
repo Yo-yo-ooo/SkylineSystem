@@ -313,7 +313,7 @@ const char *ext4_get_xattr_name_prefix(uint8_t name_index,
 	return NULL;
 }
 
-static const char ext4_xattr_empty_value;
+static const char ext4_xattr_empty_value = '\0';
 
 /**
  * @brief Insert/Remove/Modify the given entry

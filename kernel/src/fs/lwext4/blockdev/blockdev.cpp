@@ -128,7 +128,7 @@ static int32_t blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
 #else
     PartitionManager::SetCurPartition(bdev->DriverType,bdev->DriverIDX,bdev->wpart);
 #endif */
-    if(PartitionManager::Write(bdev->DriverType, bdev->DriverIDX, bdev->wpart, blk_id, blk_cnt, buf) == Dev::RW_OK)
+    if(PartitionManager::Write(bdev->DriverType, bdev->DriverIDX, bdev->wpart, blk_id, blk_cnt, (void*)buf) == Dev::RW_OK)
         return EOK;
     else
         return EIO;

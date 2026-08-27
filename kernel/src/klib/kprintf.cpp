@@ -40,7 +40,7 @@
 #include <klib/klib.h>
 #include <print/e9print.h>
 
-static volatile spinlock_t ptf_lock = 0;
+static spinlock_t ptf_lock = 0;
 extern uint32_t PrintFSERIAL;
 
 void _putchar(char character){
@@ -750,7 +750,7 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
             idx = _ntoa_long(out, buffer, idx, maxlen, (unsigned long)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
           }
           else {
-            const int32_t value = (flags & FLAGS_CHAR) ? (char)va_arg(va, int32_t) : (flags & FLAGS_SHORT) ? (short int32_t)va_arg(va, int32_t) : va_arg(va, int32_t);
+            const int32_t value = (flags & FLAGS_CHAR) ? (char)va_arg(va, int32_t) : (flags & FLAGS_SHORT) ? (short int)va_arg(va, int32_t) : va_arg(va, int32_t);
             idx = _ntoa_long(out, buffer, idx, maxlen, (uint32_t)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
           }
         }
@@ -765,7 +765,7 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
             idx = _ntoa_long(out, buffer, idx, maxlen, va_arg(va, unsigned long), false, base, precision, width, flags);
           }
           else {
-            const uint32_t value = (flags & FLAGS_CHAR) ? (uint8_t)va_arg(va, uint32_t) : (flags & FLAGS_SHORT) ? (unsigned short int32_t)va_arg(va, uint32_t) : va_arg(va, uint32_t);
+            const uint32_t value = (flags & FLAGS_CHAR) ? (uint8_t)va_arg(va, uint32_t) : (flags & FLAGS_SHORT) ? (unsigned short int)va_arg(va, uint32_t) : va_arg(va, uint32_t);
             idx = _ntoa_long(out, buffer, idx, maxlen, value, false, base, precision, width, flags);
           }
         }

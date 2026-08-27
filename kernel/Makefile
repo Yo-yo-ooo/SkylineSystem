@@ -14,10 +14,10 @@ include ../gdef.mk
 KARCH = $(BUILD_ARCH)
 override X86MEM_PATH = $(SS_BUILD_DIR)/ablib/arch/x86_64/x86mem
 # Destination directory on install (should always be empty by default).
-$(call USER_VARIABLE,DESTDIR,)
+ $(call USER_VARIABLE,DESTDIR,)
 
 # Install prefix; /usr/local is a good, standard default pick.
-$(call USER_VARIABLE,PREFIX,/usr/local)
+ $(call USER_VARIABLE,PREFIX,/usr/local)
 
 # Check if the architecture is supported.
 ifeq ($(filter $(KARCH),aarch64 loongarch64 riscv64 x86_64),)
@@ -25,27 +25,27 @@ ifeq ($(filter $(KARCH),aarch64 loongarch64 riscv64 x86_64),)
 endif
 
 # User controllable C++ compiler command.
-$(call USER_VARIABLE,KCXX,g++)
+ $(call USER_VARIABLE,KCXX,clang++)
 
 # User controllable C compiler command.
-$(call USER_VARIABLE,KCC,cc)
+ $(call USER_VARIABLE,KCC,clang)
 
 # User controllable linker command.
-$(call USER_VARIABLE,KLD,ld)
+ $(call USER_VARIABLE,KLD,ld.lld)
 
 # User controllable C flags.
-$(call USER_VARIABLE,KCFLAGS,-g -pipe)
+ $(call USER_VARIABLE,KCFLAGS,-g -pipe)
 
 # User controllable C preprocessor flags. We set none by default.
-$(call USER_VARIABLE,KCPPFLAGS,)
+ $(call USER_VARIABLE,KCPPFLAGS,)
 
 ifeq ($(KARCH),x86_64)
 # User controllable nasm flags.
-$(call USER_VARIABLE,KNASMFLAGS,-F dwarf -g)
+ $(call USER_VARIABLE,KNASMFLAGS,-F dwarf -g)
 endif
 
 # User controllable linker flags. We set none by default.
-$(call USER_VARIABLE,KLDFLAGS,)
+ $(call USER_VARIABLE,KLDFLAGS,)
 
 # Ensure the dependencies have been obtained.
 ifneq ($(shell ( test '$(MAKECMDGOALS)' = clean || test '$(MAKECMDGOALS)' = distclean ); echo $$?),0)
@@ -57,46 +57,77 @@ endif
 # Check if KCC is Clang.
 override KCC_IS_CLANG := $(shell ! $(KCC) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
 
-# Check if CXX is Clang.
-override KCXX_IS_CLANG := $(shell ! $(CXX) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
+# ★ 修复: 检测 KCXX 而不是 CXX (原版检测错变量, 环境里 CXX=g++ 时
+#   Clang 分支永远不进)
+override KCXX_IS_CLANG := $(shell ! $(KCXX) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
 
 ifndef NOStackCanary
-	KCFLAGS +=  -fstack-protector-strong \
-	-mstack-protector-guard=global 
+    KCFLAGS +=  -fstack-protector-strong \
+    -mstack-protector-guard=global 
 else
-	KCFLAGS +=  -fno-stack-protector 
+    KCFLAGS +=  -fno-stack-protector 
+endif
+
+# ==================== KASLR / DEBUG 控制 ====================
+# 用法:
+#   make                    → KASLR 构建 (-fPIE -pie, Limine KASLR=yes 生效)
+#   make DEBUG=1            → 调试构建 (无 KASLR, GDB 地址=链接地址)
+#
+# 依据: Clang 支持 -fPIE + -mcmodel=kernel 编译 (GCC 拒绝);
+#       -Bsymbolic + 内核在 2GB 窗口内 → lld 可将 32S 重定位 relax 成
+#       RELATIVE。链接后必须验证: readelf -r | grep 32S 为空。
+ifeq ($(KARCH),x86_64)
+    ifndef DEBUG
+        # Release: PIE + KASLR
+        KCFLAGS += -fPIE
+        KLDFLAGS += -pie
+        $(info ============================================)
+        $(info  BUILD: Release (KASLR enabled))
+        $(info  Flags: -fPIE -pie -mcmodel=kernel)
+        $(info  NOTE:  verify with 'readelf -r bin-$(KARCH)/$(OUTPUT) | grep 32S')
+        $(info        (empty output = OK; nonempty = add -fno-plt))
+        $(info ============================================)
+    else
+        $(info ============================================)
+        $(info  BUILD: DEBUG (no KASLR))
+        $(info  Flags: -fno-PIC -mcmodel=kernel)
+        $(info  GDB:   symbols = link addresses, direct use)
+        $(info ============================================)
+    endif
 endif
 
 # Internal C flags that should not be changed by the user.
 override KCFLAGS += \
-	-w \
-	-I$(SS_BUILD_DIR)/kernel/include \
-	-I$(SS_BUILD_DIR)/ablib \
+    -Wno-implicit-function-declaration \
+    -Wno-c++11-narrowing \
+    -w \
+    -Wno-everything \
+    -I$(SS_BUILD_DIR)/kernel/include \
+    -I$(SS_BUILD_DIR)/ablib \
     -nostdinc \
     -ffreestanding \
     -fno-stack-check \
     -fno-lto \
-    -fno-PIC \
     -ffunction-sections \
     -fdata-sections \
-	-O2 \
-	-g3 \
-	-DLIMINE_API_REVISION=5 \
-	-fpermissive \
-	-Wno-error=deprecated \
+    -O2 \
+    -g3 \
+    -DLIMINE_API_REVISION=5 \
+    -fpermissive \
+    -Wno-error=deprecated \
 
 # Internal C preprocessor flags that should not be changed by the user.
 override KCPPFLAGS := \
     -I src \
-	-isystem ../ablib/freestndchdrs/$(KARCH)/include \
-	-I$(SS_BUILD_DIR)/kernel/include \
-	-Ifakestdlib \
-	-DLIMINE_API_REVISION=6 \
+    -isystem ../ablib/freestndchdrs/$(KARCH)/include \
+    -I$(SS_BUILD_DIR)/kernel/include \
+    -Ifakestdlib \
+    -DLIMINE_API_REVISION=6 \
     $(KCPPFLAGS) \
     -MMD \
     -MP \
-	-fno-rtti \
-	-fno-exceptions
+    -fno-rtti \
+    -fno-exceptions
 
 KCC += -std=gnu17
 KCXX += -isystem  -std=gnu++17
@@ -113,25 +144,25 @@ ifeq ($(KARCH),x86_64)
         override KCC += \
             -target x86_64-unknown-none
     endif
-	ifeq ($(KCXX_IS_CLANG),1)
-		override KCXX += \
-			-target x86_64-unknown-none
-	endif
+    ifeq ($(KCXX_IS_CLANG),1)
+        override KCXX += \
+            -target x86_64-unknown-none
+    endif
     override KCFLAGS += \
         -m64 \
         -march=x86-64 \
         -mno-80387 \
-		-mno-mmx \
-		-mno-red-zone \
+        -mno-mmx \
+        -mno-red-zone \
         -mcmodel=kernel \
-		-mno-sse \
+        -mno-sse \
         -mno-sse2 \
-		-DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM) \
-		-DCOMPILER_SUPPORT_AVX512=$(if $(filter yes,$(COMPILER_SUPPORT_AVX512)),1,0) \
-		-DCOMPILER_SUPPORT_AVX=$(if $(filter yes,$(COMPILER_SUPPORT_AVX)),1,0) \
-		-DCOMPILER_SUPPORT_AVX2=$(if $(filter yes,$(COMPILER_SUPPORT_AVX2)),1,0) \
-		-DCOMPILER_SUPPORT_SSE_4_2=$(if $(filter yes,$(COMPILER_SUPPORT_SSE_4_2)),1,0) \
-		-DUSE_HOST_CPU_EXTENSIONS=$(USE_HOST_CPU_EXTENSIONS)
+        -DNOT_COMPILE_X86MEM=$(NOT_COMPILE_X86MEM) \
+        -DCOMPILER_SUPPORT_AVX512=$(if $(filter yes,$(COMPILER_SUPPORT_AVX512)),1,0) \
+        -DCOMPILER_SUPPORT_AVX=$(if $(filter yes,$(COMPILER_SUPPORT_AVX)),1,0) \
+        -DCOMPILER_SUPPORT_AVX2=$(if $(filter yes,$(COMPILER_SUPPORT_AVX2)),1,0) \
+        -DCOMPILER_SUPPORT_SSE_4_2=$(if $(filter yes,$(COMPILER_SUPPORT_SSE_4_2)),1,0) \
+        -DUSE_HOST_CPU_EXTENSIONS=$(USE_HOST_CPU_EXTENSIONS)
     override KLDFLAGS += \
         -m elf_x86_64
     override KNASMFLAGS += \
@@ -142,12 +173,12 @@ ifeq ($(KARCH),aarch64)
         override KCC += \
             -target aarch64-unknown-none
     endif
-	ifeq ($(KCXX_IS_CLANG),1)
-		override KCXX += \
-			-target aarch64-unknown-none
-	endif
+    ifeq ($(KCXX_IS_CLANG),1)
+        override KCXX += \
+            -target aarch64-unknown-none
+    endif
     override KCFLAGS += \
-		-mcpu=generic \
+        -mcpu=generic \
         -march=armv8-a+nofp+nosimd \
         -mgeneral-regs-only
     override KLDFLAGS += \
@@ -163,7 +194,7 @@ ifeq ($(KARCH),riscv64)
         override KCFLAGS += \
             -march=rv64imac_zicsr_zifencei
     endif
-	ifeq ($(KCXX_IS_CLANG),1)
+    ifeq ($(KCXX_IS_CLANG),1)
         override KCXX += \
             -target riscv64-unknown-none
         override KCPPFLAGS += \
@@ -184,10 +215,10 @@ ifeq ($(KARCH),loongarch64)
         override KCC += \
             -target loongarch64-unknown-none
     endif
-	ifeq ($(KCXX_IS_CLANG),1)
-		override KCXX += \
-			-target loongarch64-unknown-none
-	endif
+    ifeq ($(KCXX_IS_CLANG),1)
+        override KCXX += \
+            -target loongarch64-unknown-none
+    endif
     override KCFLAGS += \
         -march=loongarch64 \
         -mabi=lp64s
@@ -202,21 +233,17 @@ override KLDFLAGS += \
     -static \
     -z max-page-size=0x1000 \
     -gc-sections \
-	-Bsymbolic \
+    -Bsymbolic \
     -T linker-$(KARCH).ld
 
 
 # Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
 # object and header dependency file names.
-# 定义一个宏来统一处理文件查找逻辑，避免重复代码 (DRY 原则)
-# $1: 文件扩展名 (如 c, S, cpp)
-# 该宏会查找 src 下排除 arch 目录的通用文件，以及 src/arch/$(KARCH) 下的架构特定文件
 define find_sources
  $(patsubst src/%,%,$(shell find src -type f -name "*.$(1)" -not -path "*/arch/*" | LC_ALL=C sort)) \
  $(patsubst src/%,%,$(shell find src/arch/$(KARCH) -type f -name "*.$(1)" | LC_ALL=C sort))
 endef
 
-# 使用宏获取各类源文件列表
 CFILES := $(call find_sources,c)
 ASFILES := $(call find_sources,S)
 CPPFILES := $(call find_sources,cpp)
@@ -240,11 +267,26 @@ bin-$(KARCH)/$(OUTPUT): Makefile linker-$(KARCH).ld $(OBJ)
 	@echo LD kernel
 ifeq ($(NOT_COMPILE_X86MEM),0)
 	@$(KLD) $(OBJ) $(X86MEM_PATH)/memops.o \
-				$(KLDFLAGS) -o $@
+	            $(KLDFLAGS) -o $@
 else
 	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
 endif
-	
+
+# ★ KASLR 验证 target: 检查 32S 重定位是否清零
+.PHONY: kaslr-check
+kaslr-check: bin-$(KARCH)/$(OUTPUT)
+	@echo "== KASLR relocation check =="
+	@count=$$(readelf -r bin-$(KARCH)/$(OUTPUT) 2>/dev/null | grep -c 'R_X86_64_32' || true); \
+	if [ "$$count" = "0" ]; then \
+	    echo "[OK] No R_X86_64_32/32S relocations — KASLR safe"; \
+	else \
+	    echo "[FAIL] $$count 32/32S relocations remain:"; \
+	    readelf -r bin-$(KARCH)/$(OUTPUT) | grep 'R_X86_64_32' | head -20; \
+	    echo "Fix: add -fno-plt to KCFLAGS/KCPPFLAGS and rebuild"; \
+	    exit 1; \
+    fi
+	@type=$$(readelf -h bin-$(KARCH)/$(OUTPUT) | grep 'Type:'); \
+    echo "ELF $$type (need DYN for KASLR)"
 
 # Include header dependencies.
 -include $(HEADER_DEPS)
@@ -253,7 +295,6 @@ endif
 ifeq ($(KARCH), aarch64)
 obj-$(KARCH)/klib/0aarch64mem.cpp.o: KCFLAGS := -march=armv8-a+fp+simd $(filter-out -mgeneral-regs-only -march=armv8-a+nofp+nosimd, $(KCFLAGS))
 endif
-
 
 # Compilation rules for *.c files.
 obj-$(KARCH)/%.c.o: src/%.c Makefile
@@ -266,7 +307,6 @@ obj-$(KARCH)/%.S.o: src/%.S Makefile
 	@echo GAS $<
 	@mkdir -p "$$(dirname $@)"
 	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
-
 
 obj-$(KARCH)/%.cpp.o: src/%.cpp Makefile
 	@echo C++ $<
@@ -286,18 +326,15 @@ endif
 clean:
 	rm -rf bin-* obj-*
 
-# Remove everything built and generated including downloaded dependencies.
 .PHONY: distclean
 distclean:
 	rm -rf bin-* obj-* src/limine.h
 
-# Install the final built executable to its final on-root location.
 .PHONY: install
 install: all
 	install -d "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)"
 	install -m 644 bin-$(KARCH)/$(OUTPUT) "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)/$(OUTPUT)-$(KARCH)"
 
-# Try to undo whatever the "install" target did.
 .PHONY: uninstall
 uninstall:
 	rm -f "$(DESTDIR)$(PREFIX)/share/$(OUTPUT)/$(OUTPUT)-$(KARCH)"

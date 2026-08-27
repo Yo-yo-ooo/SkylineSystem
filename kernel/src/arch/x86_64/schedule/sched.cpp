@@ -723,7 +723,7 @@ namespace Schedule {
             if (likely(i < last)) PREFETCH_R(smp_cpu_list[i + 1]);
             cpu->timer_last_tick = PIT::TimeSinceBootMS();
             proc_t *proc = Schedule::NewProcess(false);
-            thread_t *idle_t = Schedule::NewKernelThread(proc, cpu->id, 15, sched_idle);
+            thread_t *idle_t = Schedule::NewKernelThread(proc, cpu->id, 15, (void*)sched_idle);
             uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
             Internal::RemoveFromQueue(cpu, idle_t);
             spin_unlock_irqrestore(&cpu->sched_lock, rflags);

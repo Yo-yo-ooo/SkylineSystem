@@ -59,8 +59,8 @@ bool NVME::InitQue(){
     kinfo("[NVME %p]: subQueSz:%d cmplQueSz:%d\n", (uint64_t)this, subQueSz, cmplQueSz);
 
     // 必须写入物理地址，且必须保证 kmalloc 返回的是页对齐内存
-    WriteReg64(NVME_CTRLREG_ASQ, VMM::GetPhysics(kernel_pagemap, this->sq[0]->Entries));
-    WriteReg64(NVME_CTRLREG_ACQ, VMM::GetPhysics(kernel_pagemap, this->cq[0]->Entries));
+    WriteReg64(NVME_CTRLREG_ASQ, VMM::GetPhysics(kernel_pagemap, (uint64_t)this->sq[0]->Entries));
+    WriteReg64(NVME_CTRLREG_ACQ, VMM::GetPhysics(kernel_pagemap, (uint64_t)this->cq[0]->Entries));
 
     {
         uint32_t ada = (this->sq[0]->Size - 1) | ((this->cq[0]->Size - 1) << 16);
@@ -149,7 +149,7 @@ NVME::NVMERequest *NVME::MakeReq(int32_t InputSize){
 bool NVME::CreateSubQue(NVME::NVMERequest *req, NVME::SubQue *subQue) {
     NVME::SubQueEntry *entry = &req->input[0];
     entry->OPCode = 0x01;
-    entry->PRP[0] = VMM::GetPhysics(kernel_pagemap, subQue->Entries);
+    entry->PRP[0] = VMM::GetPhysics(kernel_pagemap, (uint64_t)subQue->Entries);
     entry->Spec[0] = subQue->Ident | (((u32)subQue->Size - 1) << 16);
     entry->Spec[1] = 0b1 | (((u32)subQue->Trg->Ident) << 16);
     return true;
@@ -158,7 +158,7 @@ bool NVME::CreateSubQue(NVME::NVMERequest *req, NVME::SubQue *subQue) {
 bool NVME::CreateCmplQue(NVME::NVMERequest *req, NVME::CmplQue *cmplQue) {
     NVME::SubQueEntry *entry = &req->input[0];
     entry->OPCode = 0x05;
-    entry->PRP[0] = VMM::GetPhysics(kernel_pagemap, cmplQue->Entries);
+    entry->PRP[0] = VMM::GetPhysics(kernel_pagemap, (uint64_t)cmplQue->Entries);
     entry->Spec[0] = cmplQue->Ident | ((u32)(cmplQue->Size - 1) << 16);
     entry->Spec[1] = 0b11 | ((u32)(cmplQue->Ident) << 16);
     return true;
@@ -315,10 +315,10 @@ bool NVME::InitIntr() {
         vecNum = this->INTRNUM = min(vecNum, this->INTRNUM);
 
         PCI::PCI_MSIX_CAP *Cap = PCI::GetMSIXCap(this->phdr);
-        PCI::PCI_MSIX_TABLE* Tbl = PCI::GetMSIXTblBaseAddr(this->phdr, Cap);
+        PCI::PCI_MSIX_TABLE* Tbl = (PCI::PCI_MSIX_TABLE*)PCI::GetMSIXTblBaseAddr(this->phdr, Cap);
         
         for (int32_t i = 0; i < this->INTRNUM; i++){
-            uint32_t targetCpu = GetLWIntrCpu(); // 获取绑定的 CPU
+            uint32_t targetCpu = GetLWIntrCpu()->id; // 获取绑定的 CPU
             uint16_t vector = RequestFreeIRQPerCPU(); // 获取空闲向量号
 
             // 注册到全局路由表
@@ -337,7 +337,7 @@ bool NVME::InitIntr() {
             __asm__ volatile ("mfence" ::: "memory");
             Tbl[i].vecCtrl &= ~1u; // 解除 Mask 
             
-            idt_install_irq_cpu(targetCpu, vector, MSIXHandler);
+            idt_install_irq_cpu(targetCpu, vector, (void*)MSIXHandler);
         }
         PCI::enable_bus_mastering((uint64_t)this->phdr);
         Cap->MsgCtrl |= (1 << 15); // Enable
@@ -400,7 +400,7 @@ bool NVME::InitREQIdent(NVME::NVMERequest *req, u32 tp, u32 nspIden, void *buf){
     entry->OPCode = 0x6;
     entry->NspIdent = nspIden;
     entry->Spec[0] = tp;
-    entry->PRP[0] = VMM::GetPhysics(kernel_pagemap, buf);
+    entry->PRP[0] = VMM::GetPhysics(kernel_pagemap, (uint64_t)buf);
     return true;
 }
 #endif

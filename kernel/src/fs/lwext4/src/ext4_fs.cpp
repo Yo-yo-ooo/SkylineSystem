@@ -291,7 +291,7 @@ static void ext4_fs_mark_bitmap_end(int32_t start_bit, int32_t end_bit, void *bi
 		return;
 
 	for (i = start_bit; (unsigned)i < ((start_bit + 7) & ~7UL); i++)
-		ext4_bmap_bit_set(bitmap, i);
+		ext4_bmap_bit_set((uint8_t*)bitmap, i);
 
 	if (i < end_bit)
 		_memset((char *)bitmap + (i >> 3), 0xff, (end_bit - i) >> 3);
@@ -607,7 +607,7 @@ int32_t ext4_fs_get_block_group_ref(struct ext4_fs *fs, uint32_t bgid,
 	if (rc != EOK)
 		return rc;
 
-	ref->block_group = (void *)(ref->block.data + offset);
+	ref->block_group = (ext4_bgroup *)(ref->block.data + offset);
 	ref->fs = fs;
 	ref->index = bgid;
 	ref->dirty = false;

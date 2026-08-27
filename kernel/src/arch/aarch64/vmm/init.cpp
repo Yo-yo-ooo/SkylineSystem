@@ -228,7 +228,7 @@ namespace VMM {
         asm volatile("isb");
     }
 
-    volatile pagemap_t* kernel_pagemap = nullptr;
+    pagemap_t* kernel_pagemap = nullptr;
 
     void Init() {
         DetectPagingMode();

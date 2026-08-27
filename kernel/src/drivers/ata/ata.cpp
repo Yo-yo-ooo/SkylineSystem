@@ -84,14 +84,14 @@ u8 Read(u32 lba, u8* buffer, u32 sector_count) {
 }
 
 u8 FRegVsDEV_R(uint64_t lba, uint32_t SectorCount, void* Buffer){
-    if(ATA::Read(lba,Buffer, SectorCount) == ATA_OKAY)
+    if(ATA::Read(lba,(u8*)Buffer, SectorCount) == ATA_OKAY)
         return Dev::RW_OK;
     else 
         return Dev::RW_ERROR;
 }
 
 u8 FRegVsDEV_W(uint64_t lba, uint32_t SectorCount, void* Buffer){
-    if(ATA::Write(lba, Buffer,SectorCount) == ATA_OKAY)
+    if(ATA::Write(lba, (u8*)Buffer,SectorCount) == ATA_OKAY)
         return Dev::RW_OK;
     else 
         return Dev::RW_ERROR;
@@ -128,8 +128,8 @@ u8 Init() {
     if(ata_status != ATA_OKAY)
         return ata_status;
     DevOPS ops;
-    ops.Read = FRegVsDEV_R;
-    ops.Write = FRegVsDEV_W;
+    ops.Read_ = FRegVsDEV_R;
+    ops.Write_ = FRegVsDEV_W;
     ops.ReadBytes = nullptr;
     ops.WriteBytes = nullptr;
     ops.GetMaxSectorCount = nullptr;

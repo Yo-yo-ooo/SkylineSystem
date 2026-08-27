@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
-
+#define __KERNEL_INC__
 #include <klib/klib.h>
 #include <stdint.h>
 #include <arch/x86_64/cpu.h>

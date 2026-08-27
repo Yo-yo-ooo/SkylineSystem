@@ -106,7 +106,7 @@ int32_t ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs
 	    return r;
 	}
 
-	const struct ext4_mbr *mbr = (void *)parent->bdif->ph_bbuf;
+	const struct ext4_mbr *mbr = (const struct ext4_mbr *)parent->bdif->ph_bbuf;
 
 	if (to_le16(mbr->signature) != MBR_SIGNATURE) {
 		ext4_dbg(DEBUG_MBR, DBG_ERROR "ext4_mbr_scan: unknown "
@@ -178,7 +178,7 @@ int32_t ext4_mbr_write(struct ext4_blockdev *parent, struct ext4_mbr_parts *part
 	const uint32_t cyl_size = 63 * k;
 	const uint32_t cyl_count = disk_size / cyl_size;
 
-	struct ext4_mbr *mbr = (void *)parent->bdif->ph_bbuf;
+	struct ext4_mbr *mbr = (struct ext4_mbr *)parent->bdif->ph_bbuf;
 	_memset(mbr, 0, sizeof(struct ext4_mbr));
 
 	mbr->disk_id = disk_id;

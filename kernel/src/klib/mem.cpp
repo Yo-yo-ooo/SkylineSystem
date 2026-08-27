@@ -8,24 +8,19 @@
 #pragma GCC push_options
 #endif
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
+#define __KERNEL_INC__
 #include "../../../ablib/arch/x86_64/x86mem/x86mem.h"
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <klib/serial.h>
 
-#pragma GCC target("sse2")
-#include <emmintrin.h>
-#ifdef __AVX512F__
-#pragma GCC target("avx512f")
-#elif defined(__AVX2__)
-#pragma GCC target("avx2")
-#endif
-#elif defined(__x86_64__)
+#if defined(__x86_64__)
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/schedule/sched.h>
 #elif defined(__aarch64__)
 func_optimize(3) void NEON_MEMCPY(void* dst, const void* src, size_t size);
 func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
+#endif
 #endif
 
 #ifdef __x86_64__
@@ -96,7 +91,7 @@ void _memcpy(void* src, void* dest, uint64_t size){
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
     if(size >= 16384  && cpu->SupportSSE4_2){
-        int8_t *fx_area = Schedule::this_thread()->fx_area;
+        char *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
         XFXSAVE_CAS
@@ -126,7 +121,7 @@ void _memset(void* dest, uint8_t value, uint64_t size){
         goto base_ver;
     if(size >= 16384  && cpu->SupportSSE4_2){
         
-        int8_t *fx_area = Schedule::this_thread()->fx_area;
+        char *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
         XFXSAVE_CAS
@@ -155,7 +150,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
     if(size >= 32768  && cpu->SupportSSE4_2){
-        int8_t *fx_area = Schedule::this_thread()->fx_area;
+        char *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
         XFXSAVE_CAS
@@ -179,7 +174,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
     if(cpu == nullptr || (cpu->InIntr == true))
         goto base_ver;
     if(size >= 1048576  && cpu->SupportSSE4_2){
-        int8_t *fx_area = Schedule::this_thread()->fx_area;
+        char *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
         XFXSAVE_CAS

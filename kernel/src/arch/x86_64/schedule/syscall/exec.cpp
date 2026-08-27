@@ -221,7 +221,7 @@ static void sys_load_fail(proc_t *proc, thread_t *thread,
     if (buffer) kfree(buffer);
     execve_cleanup(argc, envc, argv, envp);
     if (thread) {
-        if (thread->fx_area)      VMM::Free(kernel_pagemap, thread->fx_area);
+        if (thread->fx_area)      VMM::Free(kernel_pagemap, (void*)thread->fx_area);
         if (thread->kernel_stack) VMM::Free(kernel_pagemap, (void*)thread->kernel_stack);
         kfree(thread);
     }
@@ -352,7 +352,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     }
 
     // fx_area 必须内核态私有(user=true 会映射成 U/S=1, 用户程序可直接读写)
-    thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
+    thread->fx_area = (char*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
     if (unlikely(!thread->fx_area)) {
         sys_load_fail(parent, thread, nullptr, buffer, argv, argc, envp, envc);
         return -ENOMEM;
@@ -428,7 +428,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     本侧只清理 thread 的内核资源 (用户侧随 pagemap 回收)。
     注: 检查与挂链间仍有窄窗口, 彻底修复需 proc 引用计数。 */
     if (unlikely(parent->exiting)) {
-        if (thread->fx_area)      VMM::Free(kernel_pagemap, thread->fx_area);
+        if (thread->fx_area)      VMM::Free(kernel_pagemap, (void*)thread->fx_area);
         if (thread->kernel_stack) VMM::Free(kernel_pagemap, (void*)thread->kernel_stack);
         kfree(thread);
         return -ESRCH;

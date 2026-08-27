@@ -12,6 +12,7 @@
 #define _avxmem_H
 
 #ifdef __x86_64__
+#ifndef __KERNEL_INC__
 #include <stddef.h>
 #include <stdint.h>
 
@@ -26,6 +27,7 @@
 
 #if defined(__AVX512F__)
 #include "./avx512fintrin.h"
+#endif
 #endif
 
 // Size limit (in bytes) before switching to non-temporal/streaming loads & stores

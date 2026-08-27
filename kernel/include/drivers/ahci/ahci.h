@@ -26,44 +26,45 @@ namespace AHCI
         SATAPI = 4
     };
 
+    
     struct HBAPort
     {
-        uint32_t commandListBase;
-        uint32_t commandListBaseUpper;
-        uint32_t fisBaseAddress;
-        uint32_t fisBaseAddressUpper;
-        uint32_t interruptStatus;
-        uint32_t interruptEnable;
-        uint32_t cmdStatus;
-        uint32_t rsv0;
-        uint32_t taskFileData;
-        uint32_t signature;
-        uint32_t sataStatus;
-        uint32_t sataControl;
-        uint32_t sataError;
-        uint32_t sataActive;
-        uint32_t commandIssue;
-        uint32_t sataNotification;
-        uint32_t fisSwitchControl;
-        uint32_t rsv1[11];
-        uint32_t vendor[4];
+        volatile uint32_t commandListBase;
+        volatile uint32_t commandListBaseUpper;
+        volatile uint32_t fisBaseAddress;
+        volatile uint32_t fisBaseAddressUpper;
+        volatile uint32_t interruptStatus;
+        volatile uint32_t interruptEnable;
+        volatile uint32_t cmdStatus;           
+        volatile uint32_t rsv0;
+        volatile uint32_t taskFileData;        
+        volatile uint32_t signature;
+        volatile uint32_t sataStatus;
+        volatile uint32_t sataControl;
+        volatile uint32_t sataError;
+        volatile uint32_t sataActive;
+        volatile uint32_t commandIssue;        
+        volatile uint32_t sataNotification;
+        volatile uint32_t fisSwitchControl;
+        volatile uint32_t rsv1[11];
+        volatile uint32_t vendor[4];
     };
 
     struct HBAMemory
     {
-        uint32_t hostCapability;
-        uint32_t globalHostControl;
-        uint32_t interruptStatus;
-        uint32_t portsImplemented;
-        uint32_t version;
-        uint32_t cccControl;
-        uint32_t cccPorts;
-        uint32_t enclosureManagementLocation;
-        uint32_t enclosureManagementControl;
-        uint32_t hostCapabilitiesExtended;
-        uint32_t biosHandoffCtrlStatus;
-        uint8_t rsv0[0x74];
-        uint8_t vendor[0x60];
+        volatile uint32_t hostCapability;
+        volatile uint32_t globalHostControl;    
+        volatile uint32_t interruptStatus;
+        volatile uint32_t portsImplemented;
+        volatile uint32_t version;
+        volatile uint32_t cccControl;
+        volatile uint32_t cccPorts;
+        volatile uint32_t enclosureManagementLocation;
+        volatile uint32_t enclosureManagementControl;
+        volatile uint32_t hostCapabilitiesExtended;
+        volatile uint32_t biosHandoffCtrlStatus;
+        volatile uint8_t rsv0[0x74];
+        volatile uint8_t vendor[0x60];
         HBAPort ports[32];
     };
 
@@ -159,6 +160,10 @@ namespace AHCI
         PortType portType;
         uint8_t* buffer;
         uint8_t portNumber;
+
+        bool     ident_cached = false;
+        uint64_t cached_max_sector = 0;
+        uint16_t cached_sector_size = 0;
 
         void Configure();
         void StartCMD();

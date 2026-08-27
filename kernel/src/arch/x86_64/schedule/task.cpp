@@ -111,9 +111,9 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
 
             if (t_cpu->current_thread != target) {
                 if (!target->IsForkThread && target->pagemap != kernel_pagemap) {
-                    if (target->stack && target->stack != target->kernel_stack) { VMM::Free(target->pagemap, target->stack); target->stack = 0; }
-                    if (target->sig_stack) { VMM::Free(target->pagemap, target->sig_stack); target->sig_stack = 0; }
-                    if (target->tls_base) { VMM::Free(target->pagemap, target->tls_base); target->tls_base = 0; }
+                    if (target->stack && target->stack != target->kernel_stack) { VMM::Free(target->pagemap, (void*)target->stack); target->stack = 0; }
+                    if (target->sig_stack) { VMM::Free(target->pagemap, (void*)target->sig_stack); target->sig_stack = 0; }
+                    if (target->tls_base) { VMM::Free(target->pagemap, (void*)target->tls_base); target->tls_base = 0; }
                 }
             }
 
@@ -152,9 +152,9 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
 
             if (t_cpu->current_thread != target) {
                 if (!target->IsForkThread && target->pagemap != kernel_pagemap) {
-                    if (target->stack && target->stack != target->kernel_stack) { VMM::Free(target->pagemap, target->stack); target->stack = 0; }
-                    if (target->sig_stack) { VMM::Free(target->pagemap, target->sig_stack); target->sig_stack = 0; }
-                    if (target->tls_base) { VMM::Free(target->pagemap, target->tls_base); target->tls_base = 0; }
+                    if (target->stack && target->stack != target->kernel_stack) { VMM::Free(target->pagemap, (void*)target->stack); target->stack = 0; }
+                    if (target->sig_stack) { VMM::Free(target->pagemap, (void*)target->sig_stack); target->sig_stack = 0; }
+                    if (target->tls_base) { VMM::Free(target->pagemap, (void*)target->tls_base); target->tls_base = 0; }
                 }
             }
 
@@ -279,7 +279,7 @@ namespace Schedule {
             proc_t *next = p->sibling;
 
             uint64_t flags = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
-            art_delete(pid2proc_tree, p->id, 8);
+            art_delete(pid2proc_tree, (const uint8_t*)&p->id, 8);
             spin_unlock_irqrestore(&PID2PROC_TREE_LOCK, flags);
 
             flags = spin_lock_irqsave(&PROC_LIST_LOCK);
@@ -330,8 +330,8 @@ namespace Schedule {
                 }
             }
         }
-        if (thread->fx_area) VMM::Free(kernel_pagemap, thread->fx_area);
-        if (thread->kernel_stack) VMM::Free(kernel_pagemap, thread->kernel_stack);
+        if (thread->fx_area) VMM::Free(kernel_pagemap, (void*)thread->fx_area);
+        if (thread->kernel_stack) VMM::Free(kernel_pagemap, (void*)thread->kernel_stack);
     }
 
     void KillThread(thread_t *thread) {
@@ -352,9 +352,9 @@ namespace Schedule {
 
         if (!was_running) {
             if (!thread->IsForkThread && thread->pagemap != kernel_pagemap) {
-                if (thread->stack && thread->stack != thread->kernel_stack) { VMM::Free(thread->pagemap, thread->stack); thread->stack = 0; }
-                if (thread->sig_stack) { VMM::Free(thread->pagemap, thread->sig_stack); thread->sig_stack = 0; }
-                if (thread->tls_base) { VMM::Free(thread->pagemap, thread->tls_base); thread->tls_base = 0; }
+                if (thread->stack && thread->stack != thread->kernel_stack) { VMM::Free(thread->pagemap, (void*)thread->stack); thread->stack = 0; }
+                if (thread->sig_stack) { VMM::Free(thread->pagemap, (void*)thread->sig_stack); thread->sig_stack = 0; }
+                if (thread->tls_base) { VMM::Free(thread->pagemap, (void*)thread->tls_base); thread->tls_base = 0; }
             }
         }
 
@@ -460,9 +460,9 @@ namespace Schedule {
         curr_thread->pagemap = kernel_pagemap;
 
         if (!curr_thread->IsForkThread && pm_to_destroy != kernel_pagemap) {
-            if (curr_thread->stack && curr_thread->stack != curr_thread->kernel_stack) { VMM::Free(pm_to_destroy, curr_thread->stack); curr_thread->stack = 0; }
-            if (curr_thread->sig_stack) { VMM::Free(pm_to_destroy, curr_thread->sig_stack); curr_thread->sig_stack = 0; }
-            if (curr_thread->tls_base) { VMM::Free(pm_to_destroy, curr_thread->tls_base); curr_thread->tls_base = 0; }
+            if (curr_thread->stack && curr_thread->stack != curr_thread->kernel_stack) { VMM::Free(pm_to_destroy, (void*)curr_thread->stack); curr_thread->stack = 0; }
+            if (curr_thread->sig_stack) { VMM::Free(pm_to_destroy, (void*)curr_thread->sig_stack); curr_thread->sig_stack = 0; }
+            if (curr_thread->tls_base) { VMM::Free(pm_to_destroy, (void*)curr_thread->tls_base); curr_thread->tls_base = 0; }
         }
 
         VMM::SwitchPageMap(kernel_pagemap);
@@ -554,7 +554,7 @@ namespace Schedule {
         }
     }
 
-    proc_t *NewProcess(bool user, bool Trusted = true) {
+    proc_t *NewProcess(bool user, bool Trusted) {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
@@ -662,12 +662,12 @@ namespace Schedule {
         uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = cpu->base_quantum / 2;
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), false);
+        thread->fx_area = (char*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP((cpu->XsaveSize), PAGE_SIZE), false);
         if (!thread->fx_area) { kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
-        if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(thread); return nullptr; }
+        if (!kernel_stack) { VMM::Free(kernel_pagemap, (void*)thread->fx_area); kfree(thread); return nullptr; }
         _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
         thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
         thread->stack = kernel_stack; thread->ctx.rip = (uint64_t)entry;
@@ -719,19 +719,19 @@ namespace Schedule {
             kfree(buffer); kfree(thread); return nullptr;
         }
 
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
+        thread->fx_area = (char*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
         if (!thread->fx_area) { kfree(buffer); kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
-        if (!kernel_stack) { VMM::Free(kernel_pagemap, thread->fx_area); kfree(buffer); kfree(thread); return nullptr; }
+        if (!kernel_stack) { VMM::Free(kernel_pagemap, (void*)thread->fx_area); kfree(buffer); kfree(thread); return nullptr; }
         _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
         thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
         uint64_t thread_stack = (uint64_t)VMM::Alloc(thread->pagemap, 8, true);
-        if (!thread_stack) { VMM::Free(kernel_pagemap, thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); kfree(buffer); kfree(thread); return nullptr; }
+        if (!thread_stack) { VMM::Free(kernel_pagemap, (void*)thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); kfree(buffer); kfree(thread); return nullptr; }
         thread->stack = thread_stack; thread->thread_stack = thread_stack + 8 * PAGE_SIZE;
         uint64_t sig_stack = (uint64_t)VMM::Alloc(thread->pagemap, 1, true);
-        if (!sig_stack) { VMM::Free(kernel_pagemap, thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); VMM::Free(thread->pagemap, (void*)thread_stack); kfree(buffer); kfree(thread); return nullptr; }
+        if (!sig_stack) { VMM::Free(kernel_pagemap, (void*)thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); VMM::Free(thread->pagemap, (void*)thread_stack); kfree(buffer); kfree(thread); return nullptr; }
         thread->sig_stack = sig_stack;
         thread->ctx.cs = 0x23; thread->ctx.ss = 0x1b; thread->ctx.rflags = 0x202;
         thread->ctx.rsp = thread->thread_stack;
@@ -745,7 +745,7 @@ namespace Schedule {
             uint64_t tls_mem = (uint64_t)VMM::Alloc(thread->pagemap, tls_pages, true);
             if (!tls_mem) {
                 kfree(buffer);
-                VMM::Free(kernel_pagemap, thread->fx_area);
+                VMM::Free(kernel_pagemap, (void*)thread->fx_area);
                 VMM::Free(kernel_pagemap, (void*)kernel_stack);
                 VMM::Free(thread->pagemap, (void*)thread_stack);
                 VMM::Free(thread->pagemap, (void*)sig_stack);
@@ -781,7 +781,7 @@ namespace Schedule {
         thread->state = THREAD_RUNNING;
         cpu_t *parent_cpu = get_cpu(parent->cpu_num);
         cpu_t *cpu = get_lw_cpu(parent_cpu);
-        thread->fx_area = VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
+        thread->fx_area = (char*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
         if (!thread->fx_area) { kfree(thread); return nullptr; }
 
         uint64_t rflags = spin_lock_irqsave(&parent_cpu->sched_lock);
