@@ -70,6 +70,7 @@ I have independently designed and implemented a comprehensive low-level stack fr
 > [!IMPORTANT]
 > Make sure you have install these software in linux
 > * gcc (VER > 10)
+> * clang (VER > 15)
 > * binutil
 > * xorriso
 > * make
