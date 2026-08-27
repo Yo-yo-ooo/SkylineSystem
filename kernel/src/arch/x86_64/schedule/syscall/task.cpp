@@ -1,5 +1,5 @@
-//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
-//SPDX-License-Identifier: GPL-2.0-only
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: GPL-2.0-only
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/schedule/syscall.h>
 #include <klib/errno.h>
@@ -20,8 +20,6 @@ uint64_t sys_gettid(GENERATE_IGN6()) {
     return Schedule::this_thread()->id;
 }
 
-
-
 uint64_t sys_exit(uint64_t code,GENERATE_IGN5()) {
     IGNV_5();
     Schedule::Exit((int32_t)code);
@@ -35,14 +33,17 @@ uint64_t sched_yield(GENERATE_IGN6()){
     return 0;
 }
 
-
 extern spinlock_t PID2PROC_TREE_LOCK;
 uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
     IGNV_4();
 
+    spinlock_lock(&PID2PROC_TREE_LOCK);
+    proc_t *proc = (proc_t*)art_search(pid2proc_tree,(const uint8_t*)&pid,8);
+    spinlock_unlock(&PID2PROC_TREE_LOCK);
+    if (!proc) return -ESRCH;
+
     asm volatile("cli");    // 必须关中断，保证切换过程绝对原子
     LAPIC::StopTimer();
-    proc_t *proc = (proc_t*)art_search(pid2proc_tree,(const uint8_t*)&pid,8);
     Schedule::PROC_KILL(proc);
 
     return 0;
@@ -51,7 +52,9 @@ uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
 uint64_t sys_fork(syscall_frame_t *frame){
     Schedule::PAUSE();
     proc_t* proc = Schedule::ForkProcess();
+    if (!proc) { Schedule::Resume(); return (uint64_t)-1; }
     thread_t *thread = Schedule::ForkThread(proc, Schedule::this_thread(), frame);
+    if (!thread) { Schedule::Resume(); return (uint64_t)-1; }
     Schedule::Resume();
     return proc->id;
 }
@@ -64,14 +67,38 @@ uint64_t sys_fork(syscall_frame_t *frame){
 #define PMM_2M_PAGES 512
 #endif
 
+/* ============================================================
+ * sys_pmmapSHARE — 返回值与寄存器通道契约 (正式 ABI):
+ *
+ *   rax (return value):
+ *     >= 0  成功 (历史语义, 不要依赖具体值)
+ *     <  0  -errno 失败
+ *
+ *   rdi (sideband, 仅成功时有效): resolved_src — src 进程侧 VA
+ *   rsi (sideband, 仅成功时有效): resolved_dst — dst 进程侧 VA
+ *
+ *   ★ 失败时 rdi/rsi 保证为 0 (内核在所有出口清零)。
+ *   调用方判 rax<0 必须丢弃 rdi/rsi; 即使忘了判,
+ *   0 地址也会让误用立刻 #PF 在明处, 而非静默用旧值。
+ *
+ *   ⚠ 使用约束: syscall 硬件只保证 rax/rcx/r11;
+ *   rdi/rsi 依赖本内核 syscall_entry stub 从栈帧恢复全部 GPR。
+ *   调用方必须在 syscall 返回后、任何其他函数调用之前锁存。
+ * ============================================================ */
 uint64_t sys_pmmapSHARE(
     uint64_t dst_pid, uint64_t dst_addr, uint64_t length,
     uint64_t flags,   uint64_t src_pid,  uint64_t src_addr,syscall_frame_t* frame
 ) {
+    /* ---------- 0. 契约初始化: 任何出口前先清零侧带通道 ----------
+     * 此后所有 return 路径(成功/失败)语义一致:
+     * rdi/rsi 非零 ⇔ 本次调用成功且为本次的双侧地址 */
+    volatile syscall_frame_t *vframe = frame;
+    vframe->rdi = 0;
+    vframe->rsi = 0;
+
     /* ---------- 1. 校验 ---------- */
     if (length == 0) return -EINVAL;
     proc_t *me = Schedule::this_proc();
-    //thread_t *ct = nullptr;
     if (!me || !me->IsTrusted) return -EPERM;
 
     if ((src_addr != 0 && (src_addr & (PAGE_SIZE - 1))) ||
@@ -87,7 +114,10 @@ uint64_t sys_pmmapSHARE(
         (src_addr != 0 && (src_addr >= USER_ADDR_LIMIT || src_addr + size < src_addr)))
         return -EINVAL;
 
+    /* flags 归一化: 三套体系 (PROT_/VMM_FLAG_/MM_) 的 bit0/bit1 恰好同值。
+       调用方至少要传 bit0 (读/P位) — 只传 bit1 (写) 会得到 P=0 的幽灵 PTE */
     uint64_t map_flags = flags | MM_USER;
+    if (!(map_flags & MM_READ)) map_flags |= MM_READ;
 
     /* ---------- 2. 解析进程 ---------- */
     spinlock_lock(&PID2PROC_TREE_LOCK);
@@ -187,8 +217,8 @@ uint64_t sys_pmmapSHARE(
     /* 4c. src 校验: 完全映射 + 拒绝 CoW (只穿透现成的、无主的页) */
     if (!src_new) {
         for (uint64_t off = 0; off < size; off += PAGE_SIZE) {
-            VMM::Useless::PageInfo si =
-                VMM::Useless::GetPageInfo(src_pm, resolved_src + off);
+            VMM::Internal::PageInfo si =
+                VMM::Internal::GetPageInfo(src_pm, resolved_src + off);
             if (si.size == 0 || (si.flags & VMM_COW_BIT)) { ok = false; goto unlock; }
         }
     }
@@ -198,8 +228,8 @@ uint64_t sys_pmmapSHARE(
      * 页表 + RefSharedPhys 计数。dst 的 PTE 与 src 的 PTE 指向同一物理帧:
      *   A 写 → 落到物理帧; B 读 → 从同一物理帧取 (缓存一致性保证互通) */
     for (uint64_t off = 0; off < size; ) {
-        VMM::Useless::PageInfo si =
-            VMM::Useless::GetPageInfo(src_pm, resolved_src + off);
+        VMM::Internal::PageInfo si =
+            VMM::Internal::GetPageInfo(src_pm, resolved_src + off);
         uint64_t sv = resolved_src + off;
         uint64_t dv = resolved_dst  + off;
         uint64_t phys, chunk;
@@ -229,9 +259,9 @@ uint64_t sys_pmmapSHARE(
     /* 4e. dst 侧 vm_mapping 登记 (CleanPM 需要走 FreeSharedRegion 递减引用) */
     VMM::NewMapping(dst_pm, resolved_dst, pages, map_flags | VMM_SHARED_BIT);
 
-    //ct = Schedule::this_thread();
-    frame->rdi = resolved_src;
-    frame->rsi = resolved_dst;
+    /* ---------- 成功: 填充侧带通道 (rdi=src VA, rsi=dst VA) ---------- */
+    vframe->rdi = resolved_src;
+    vframe->rsi = resolved_dst;
 
 unlock:
     if (pm_b != pm_a) {
@@ -241,7 +271,8 @@ unlock:
     spinlock_unlock(&pm_a->pt_lock);
     spinlock_unlock(&pm_a->vma_lock);
 
-    /* ---------- 5. Phase 3: 失败回滚 (VMM::Free 自取锁 → 必须在双锁外) ---------- */
+    /* ---------- 5. Phase 3: 失败回滚 (VMM::Free 自取锁 → 必须在双锁外) ----------
+     * rdi/rsi 保持入口清零状态 — 失败侧带必为 0 (契约保证) */
     if (!ok) {
         if (src_new) {
             spinlock_lock(&src_pm->vma_lock);
@@ -255,9 +286,7 @@ unlock:
         return -EINVAL;
     }
 
-    /* 返回: 双方各自的 VA 不同很正常 —— 共享的是物理帧, 不是虚拟地址。
-     * 调用方 == dst 返回 dst 侧 VA, 否则 src 侧 VA。
-     * 对方侧 VA 由调用方自行经 IPC 传递 (一进程一返回值的天然限制)。 */
+    /* rax: 成功 (>=0)。双侧地址经 rdi/rsi 侧带通道返回 */
     if (me == DestProc) return resolved_dst;
     return resolved_src;
 }

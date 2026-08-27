@@ -94,7 +94,7 @@ namespace VMM {
         }
     }
 
-    namespace Useless {
+    namespace Internal {
         uint64_t *NewLevel(uint64_t *level, uint64_t entry) {
             uint64_t *new_level = PMM::Request();
             _memset(HIGHER_HALF(new_level), 0, PAGE_SIZE);
@@ -185,7 +185,7 @@ namespace VMM {
             }
             return 0;
         }
-    } // namespace Useless
+    } // namespace Internal
 
     // ==================== TCR/MAIR/SCTLR 硬件初始化 ====================
     static void setup_mair() {
@@ -257,61 +257,61 @@ namespace VMM {
 
     // ==================== 动态感知映射函数 ====================
     void Map4K(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
-        uint64_t *l0_tbl = VMM::Useless::GetRoot(pagemap, vaddr);
+        uint64_t *l0_tbl = VMM::Internal::GetRoot(pagemap, vaddr);
         
         if (IsPM5LVL) {
             uint64_t l_m1_val = l0_tbl[L_MINUS1_INDEX(vaddr)];
-            if (!(l_m1_val & PTE_VALID)) l0_tbl = VMM::Useless::NewLevel(l0_tbl, L_MINUS1_INDEX(vaddr));
+            if (!(l_m1_val & PTE_VALID)) l0_tbl = VMM::Internal::NewLevel(l0_tbl, L_MINUS1_INDEX(vaddr));
             else l0_tbl = HIGHER_HALF(l_m1_val & 0x000FFFFFFFFFF000ULL);
         }
 
         uint64_t l0_val = l0_tbl[L0_INDEX(vaddr)];
         uint64_t *l1_tbl;
-        if (!(l0_val & PTE_VALID)) l1_tbl = VMM::Useless::NewLevel(l0_tbl, L0_INDEX(vaddr));
+        if (!(l0_val & PTE_VALID)) l1_tbl = VMM::Internal::NewLevel(l0_tbl, L0_INDEX(vaddr));
         else l1_tbl = HIGHER_HALF(l0_val & 0x000FFFFFFFFFF000ULL);
 
         uint64_t l1_val = l1_tbl[L1_INDEX(vaddr)];
         uint64_t *l2_tbl;
-        if (!(l1_val & PTE_VALID)) l2_tbl = VMM::Useless::NewLevel(l1_tbl, L1_INDEX(vaddr));
+        if (!(l1_val & PTE_VALID)) l2_tbl = VMM::Internal::NewLevel(l1_tbl, L1_INDEX(vaddr));
         else l2_tbl = HIGHER_HALF(l1_val & 0x000FFFFFFFFFF000ULL);
 
         uint64_t l2_val = l2_tbl[L2_INDEX(vaddr)];
         uint64_t *l3_tbl;
-        if (!(l2_val & PTE_VALID)) l3_tbl = VMM::Useless::NewLevel(l2_tbl, L2_INDEX(vaddr));
+        if (!(l2_val & PTE_VALID)) l3_tbl = VMM::Internal::NewLevel(l2_tbl, L2_INDEX(vaddr));
         else l3_tbl = HIGHER_HALF(l2_val & 0x000FFFFFFFFFF000ULL);
 
-        l3_tbl[L3_INDEX(vaddr)] = (paddr & 0x000FFFFFFFFFF000ULL) | PTE_VALID | PTE_PAGE | VMM::Useless::FlagsToPTE(flags);
+        l3_tbl[L3_INDEX(vaddr)] = (paddr & 0x000FFFFFFFFFF000ULL) | PTE_VALID | PTE_PAGE | VMM::Internal::FlagsToPTE(flags);
     }
 
     void Map2M(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
-        uint64_t *l0_tbl = VMM::Useless::GetRoot(pagemap, vaddr);
+        uint64_t *l0_tbl = VMM::Internal::GetRoot(pagemap, vaddr);
         
         if (IsPM5LVL) {
             uint64_t l_m1_val = l0_tbl[L_MINUS1_INDEX(vaddr)];
-            if (!(l_m1_val & PTE_VALID)) l0_tbl = VMM::Useless::NewLevel(l0_tbl, L_MINUS1_INDEX(vaddr));
+            if (!(l_m1_val & PTE_VALID)) l0_tbl = VMM::Internal::NewLevel(l0_tbl, L_MINUS1_INDEX(vaddr));
             else l0_tbl = HIGHER_HALF(l_m1_val & 0x000FFFFFFFFFF000ULL);
         }
 
         uint64_t l0_val = l0_tbl[L0_INDEX(vaddr)];
         uint64_t *l1_tbl;
-        if (!(l0_val & PTE_VALID)) l1_tbl = VMM::Useless::NewLevel(l0_tbl, L0_INDEX(vaddr));
+        if (!(l0_val & PTE_VALID)) l1_tbl = VMM::Internal::NewLevel(l0_tbl, L0_INDEX(vaddr));
         else l1_tbl = HIGHER_HALF(l0_val & 0x000FFFFFFFFFF000ULL);
 
         // 2MB Block 在 Level 1
-        l1_tbl[L1_INDEX(vaddr)] = (paddr & 0x000FFFFFE00000ULL) | PTE_VALID | PTE_BLOCK | VMM::Useless::FlagsToPTE(flags);
+        l1_tbl[L1_INDEX(vaddr)] = (paddr & 0x000FFFFFE00000ULL) | PTE_VALID | PTE_BLOCK | VMM::Internal::FlagsToPTE(flags);
     }
 
     void Map1G(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
-        uint64_t *l0_tbl = VMM::Useless::GetRoot(pagemap, vaddr);
+        uint64_t *l0_tbl = VMM::Internal::GetRoot(pagemap, vaddr);
         
         if (IsPM5LVL) {
             uint64_t l_m1_val = l0_tbl[L_MINUS1_INDEX(vaddr)];
-            if (!(l_m1_val & PTE_VALID)) l0_tbl = VMM::Useless::NewLevel(l0_tbl, L_MINUS1_INDEX(vaddr));
+            if (!(l_m1_val & PTE_VALID)) l0_tbl = VMM::Internal::NewLevel(l0_tbl, L_MINUS1_INDEX(vaddr));
             else l0_tbl = HIGHER_HALF(l_m1_val & 0x000FFFFFFFFFF000ULL);
         }
 
         // 1GB Block 在 Level 0
-        l0_tbl[L0_INDEX(vaddr)] = (paddr & 0x000FFFFFC0000000ULL) | PTE_VALID | PTE_BLOCK | VMM::Useless::FlagsToPTE(flags);
+        l0_tbl[L0_INDEX(vaddr)] = (paddr & 0x000FFFFFC0000000ULL) | PTE_VALID | PTE_BLOCK | VMM::Internal::FlagsToPTE(flags);
     }
 
     void Map(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags) {
@@ -319,10 +319,10 @@ namespace VMM {
     }
 
     void Unmap(pagemap_t *pagemap, uint64_t vaddr) {
-        Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, vaddr);
+        Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, vaddr);
         if (info.size == 0) return;
 
-        uint64_t *l0_tbl = VMM::Useless::GetRoot(pagemap, vaddr);
+        uint64_t *l0_tbl = VMM::Internal::GetRoot(pagemap, vaddr);
         if (IsPM5LVL) {
             uint64_t l_m1_val = l0_tbl[L_MINUS1_INDEX(vaddr)];
             if (!(l_m1_val & PTE_VALID)) return;
@@ -347,7 +347,7 @@ namespace VMM {
     }
 
     uint64_t GetPhysics(pagemap_t *pagemap, uint64_t vaddr) {
-        return VMM::Useless::GetPageInfo(pagemap, vaddr).phys;
+        return VMM::Internal::GetPageInfo(pagemap, vaddr).phys;
     }
 
     void MapRange(pagemap_t *pagemap, uint64_t vaddr, uint64_t paddr, uint64_t flags, uint64_t count) {
@@ -440,7 +440,7 @@ namespace VMM {
         if (!page_count) return nullptr;
         uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
         spinlock_lock(&pagemap->vma_lock);
-        uint64_t addr = VMM::Useless::InternalAlloc(pagemap, page_count, flags);
+        uint64_t addr = VMM::Internal::InternalAlloc(pagemap, page_count, flags);
         if (!addr) { spinlock_unlock(&pagemap->vma_lock); return nullptr; }
 
         uint64_t mapped = 0;
@@ -483,10 +483,10 @@ namespace VMM {
                 uint64_t vaddr = region->start;
                 uint64_t end = region->start + region->page_count * PAGE_SIZE;
                 while (vaddr < end) {
-                    Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, vaddr);
+                    Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, vaddr);
                     if (info.size == 0) { vaddr += PAGE_SIZE; continue; }
                     if (info.size == PAGE_1GB) {
-                        Useless::PageInfo next_info = VMM::Useless::GetPageInfo(pagemap, vaddr + PAGE_1GB);
+                        Internal::PageInfo next_info = VMM::Internal::GetPageInfo(pagemap, vaddr + PAGE_1GB);
                         if (next_info.size == PAGE_1GB && next_info.phys == info.phys + PAGE_1GB) {
                             PMM::Free2GB((void*)info.phys);
                             VMM::Unmap(pagemap, vaddr + PAGE_1GB); mmu_invlpg(vaddr + PAGE_1GB);
@@ -528,7 +528,7 @@ namespace VMM {
                     uint64_t vaddr = mapping->start;
                     uint64_t mapped = 0;
                     while (mapped < mapping->page_count) {
-                        Useless::PageInfo info = VMM::Useless::GetPageInfo(parent, vaddr);
+                        Internal::PageInfo info = VMM::Internal::GetPageInfo(parent, vaddr);
                         if (info.size == 0) break;
                         uint64_t new_flags = info.flags & ~PTE_AP_RO;
                         new_flags &= ~PTE_COW;
@@ -576,7 +576,7 @@ namespace VMM {
             uint64_t vaddr = region->start;
             uint64_t end = region->start + region->page_count * PAGE_SIZE;
             while(vaddr < end) {
-                Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, vaddr);
+                Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, vaddr);
                 if(info.size) {
                     if(info.size == PAGE_2MB) PMM::Free2MB((void*)info.phys);
                     else if(info.size == PAGE_1GB) PMM::Free2GB((void*)info.phys);
@@ -630,7 +630,7 @@ namespace VMM {
         uint64_t fault_addr = ALIGN_DOWN(far, PAGE_SIZE);
         pagemap_t *pagemap = t->pagemap;
 
-        Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, fault_addr);
+        Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, fault_addr);
         uint64_t old_phys = info.phys;
         if (!old_phys) {
             kerrorln("Segmentation fault (core undumped)");

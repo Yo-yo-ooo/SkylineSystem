@@ -114,7 +114,7 @@ namespace VMM{
         bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len);
     }
 
-    namespace Useless {
+    namespace Internal {
         struct PageInfo {
             uint64_t phys;
             uint64_t size;
@@ -126,7 +126,7 @@ namespace VMM{
         
         // 保持兼容，调用 VMA::InternalAlloc
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags);
-    } // namespace Useless
+    } // namespace Internal
 
     extern "C" void Init();
     

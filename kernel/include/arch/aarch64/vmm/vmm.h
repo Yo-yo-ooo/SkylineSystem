@@ -93,7 +93,7 @@ namespace VMM
     }
     
     // 底层页表查询
-    namespace Useless {
+    namespace Internal {
         typedef struct {
             uint64_t phys;
             uint64_t size;

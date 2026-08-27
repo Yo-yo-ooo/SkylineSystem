@@ -69,8 +69,8 @@ struct timespec
 static int64_t tv_s_off,tv_ms_off;
 uint64_t sys_gettimeofday(uint64_t tv,uint64_t tz, GENERATE_IGN4()) {
     IGNV_4();
-    uint64_t pv = VMM::Useless::GetPageInfo(Schedule::this_thread()->pagemap,tv).flags;
-    uint64_t pz = VMM::Useless::GetPageInfo(Schedule::this_thread()->pagemap,tz).flags;
+    uint64_t pv = VMM::Internal::GetPageInfo(Schedule::this_thread()->pagemap,tv).flags;
+    uint64_t pz = VMM::Internal::GetPageInfo(Schedule::this_thread()->pagemap,tz).flags;
     if((tv == NULL) || (tz == NULL) || 
         !(pv & MM_READ & MM_WRITE)|| !(pz & MM_READ & MM_WRITE))
         return -EFAULT;

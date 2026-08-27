@@ -42,5 +42,5 @@ uint64_t sys_load(uint64_t pathname, uint64_t argv, uint64_t envp)
 {return syscall(SYSCALL_LOAD,pathname,argv,envp,0,0,0);}
 uint64_t sys_launch(uint64_t pid)
 {return syscall(SYSCALL_LAUNCH,pid,0,0,0,0,0);}
-uint64_t sys_getpid(){return syscall(SYSCALL_GETTID,0,0,0,0,0,0);}
+uint64_t sys_getpid(){return syscall(SYSCALL_GETPID,0,0,0,0,0,0);}
 uint64_t sys_gettid(){return syscall(SYSCALL_GETTID,0,0,0,0,0,0);}

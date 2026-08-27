@@ -53,7 +53,7 @@ uint64_t PS2_MOUSE_MemoryMap(uint64_t length, uint64_t prot,
 
     // 2. 获取 VMA 锁（分配虚拟地址）
     spinlock_lock(&pm->vma_lock);
-    uint64_t vaddr = VMM::Useless::InternalAlloc(pm, 1, flags);
+    uint64_t vaddr = VMM::Internal::InternalAlloc(pm, 1, flags);
     if (!vaddr) {
         spinlock_unlock(&pm->vma_lock);
         kerrorln("PS2 mouse mmap: no virtual address");
@@ -74,7 +74,7 @@ uint64_t PS2_MOUSE_MemoryMap(uint64_t length, uint64_t prot,
 
     // 5. 将打印移到锁外！防止因打印内部锁导致死锁
     uint64_t pte_flags = 0;
-    pte_flags = VMM::Useless::GetPageInfo(pm, vaddr).flags;
+    pte_flags = VMM::Internal::GetPageInfo(pm, vaddr).flags;
     kinfoln("[PS2 mouse] mmap VADDR=0x%llx -> phys=0x%llx PTE.flags=0x%llx",
             (unsigned long long)vaddr,
             (unsigned long long)phys,

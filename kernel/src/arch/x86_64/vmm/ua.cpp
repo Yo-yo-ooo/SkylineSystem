@@ -48,7 +48,7 @@ namespace VMM {
             while (offset < len) {
                 uint64_t curr_u_vaddr = u_dest + offset;
 
-                                Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, curr_u_vaddr);
+                                Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr);
                 if (info.size == 0) {
                     // 主动按需分页：用户堆内存可能只有虚拟地址没有物理页
                     uint64_t page_start = curr_u_vaddr & ~(PAGE_SIZE - 1);
@@ -62,7 +62,7 @@ namespace VMM {
                     __asm__ volatile ("invlpg (%0)" : : "r"(page_start) : "memory");
                     
                     // 重新获取映射信息，拿到物理地址
-                    info = VMM::Useless::GetPageInfo(pagemap, curr_u_vaddr);
+                    info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr);
                     if (info.size == 0) {
                         spinlock_unlock(&pagemap->vma_lock);
                         return false; // 映射失败
@@ -97,7 +97,7 @@ namespace VMM {
                             __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)p), PAGE_2MB);
                             VMM::Map2M(pagemap, v, new_phys, new_flags);
                         }
-                        info = VMM::Useless::GetPageInfo(pagemap, curr_u_vaddr); // 重新获取信息
+                        info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr); // 重新获取信息
                     } else if (info.size == PAGE_2MB) {
                         uint64_t new_phys = (uint64_t)PMM::Request2MB();
                         __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)info.phys), PAGE_2MB);
@@ -159,7 +159,7 @@ namespace VMM {
             while (offset < len) {
                 uint64_t curr_u_vaddr = start_u_vaddr + offset;
 
-                VMM::Useless::PageInfo info = VMM::Useless::GetPageInfo(pagemap, curr_u_vaddr);
+                VMM::Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr);
                 if (info.size == 0) return false; // 未映射
 
                 size_t page_offset       = curr_u_vaddr & (info.size - 1);

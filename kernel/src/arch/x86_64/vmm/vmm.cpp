@@ -341,7 +341,7 @@ namespace VMM {
         }
     }
 
-    namespace Useless {
+    namespace Internal {
         uint64_t *NewLevel(uint64_t *level, uint64_t entry) {
             uint64_t *new_level = (uint64_t*)PMM::Request();
             _memset((void*)HIGHER_HALF(new_level), 0, PAGE_SIZE);
@@ -442,20 +442,20 @@ namespace VMM {
 #if CONFIG_VMM_5LVL_MAP == 1
         if (unlikely(IsPM5LVL)) {
             pml4 = (uint64_t*)pm->toplvl[PML5E(vaddr)];
-            if (unlikely(!PAGE_EXISTS(pml4))) pml4 = VMM::Useless::NewLevel(pm->toplvl, PML5E(vaddr));
+            if (unlikely(!PAGE_EXISTS(pml4))) pml4 = VMM::Internal::NewLevel(pm->toplvl, PML5E(vaddr));
             pml4 = HIGHER_HALF(PTE_MASK(pml4));
         }
 #endif
         uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
-        if (unlikely(!PAGE_EXISTS(pdpt))) pdpt = VMM::Useless::NewLevel(pml4, PML4E(vaddr));
+        if (unlikely(!PAGE_EXISTS(pdpt))) pdpt = VMM::Internal::NewLevel(pml4, PML4E(vaddr));
         pdpt = HIGHER_HALF(PTE_MASK(pdpt)); PREFETCH_RH(&pdpt[PDPTE(vaddr)]);
 
         uint64_t *pd = (uint64_t*)pdpt[PDPTE(vaddr)];
-        if (unlikely(!PAGE_EXISTS(pd))) pd = VMM::Useless::NewLevel(pdpt, PDPTE(vaddr));
+        if (unlikely(!PAGE_EXISTS(pd))) pd = VMM::Internal::NewLevel(pdpt, PDPTE(vaddr));
         pd = HIGHER_HALF(PTE_MASK(pd)); PREFETCH_RH(&pd[PDE(vaddr)]);
 
         uint64_t *pt = (uint64_t*)pd[PDE(vaddr)];
-        if (unlikely(!PAGE_EXISTS(pt))) pt = VMM::Useless::NewLevel(pd, PDE(vaddr));
+        if (unlikely(!PAGE_EXISTS(pt))) pt = VMM::Internal::NewLevel(pd, PDE(vaddr));
         pt = HIGHER_HALF(PTE_MASK(pt));
         pt[PTE(vaddr)] = (paddr & 0x000FFFFFFFFFF000ULL) | (flags & PTE_KEEP);
     }
@@ -465,16 +465,16 @@ namespace VMM {
 #if CONFIG_VMM_5LVL_MAP == 1
         if (unlikely(IsPM5LVL)) {
             pml4 = (uint64_t*)pm->toplvl[PML5E(vaddr)];
-            if (unlikely(!PAGE_EXISTS(pml4))) pml4 = VMM::Useless::NewLevel(pm->toplvl, PML5E(vaddr));
+            if (unlikely(!PAGE_EXISTS(pml4))) pml4 = VMM::Internal::NewLevel(pm->toplvl, PML5E(vaddr));
             pml4 = HIGHER_HALF(PTE_MASK(pml4));
         }
 #endif
         uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
-        if (unlikely(!PAGE_EXISTS(pdpt))) pdpt = VMM::Useless::NewLevel(pml4, PML4E(vaddr));
+        if (unlikely(!PAGE_EXISTS(pdpt))) pdpt = VMM::Internal::NewLevel(pml4, PML4E(vaddr));
         pdpt = HIGHER_HALF(PTE_MASK(pdpt)); PREFETCH_RH(&pdpt[PDPTE(vaddr)]);
 
         uint64_t *pd = (uint64_t*)pdpt[PDPTE(vaddr)];
-        if (unlikely(!PAGE_EXISTS(pd))) pd = VMM::Useless::NewLevel(pdpt, PDPTE(vaddr));
+        if (unlikely(!PAGE_EXISTS(pd))) pd = VMM::Internal::NewLevel(pdpt, PDPTE(vaddr));
         pd = HIGHER_HALF(PTE_MASK(pd));
         pd[PDE(vaddr)] = (paddr & 0x000FFFFFFFE00000ULL) | (flags & PTE_KEEP) | VMM_PS_BIT;
     }
@@ -484,12 +484,12 @@ namespace VMM {
 #if CONFIG_VMM_5LVL_MAP == 1
         if (unlikely(IsPM5LVL)) {
             pml4 = (uint64_t*)pm->toplvl[PML5E(vaddr)];
-            if (unlikely(!PAGE_EXISTS(pml4))) pml4 = VMM::Useless::NewLevel(pm->toplvl, PML5E(vaddr));
+            if (unlikely(!PAGE_EXISTS(pml4))) pml4 = VMM::Internal::NewLevel(pm->toplvl, PML5E(vaddr));
             pml4 = HIGHER_HALF(PTE_MASK(pml4));
         }
 #endif
         uint64_t *pdpt = (uint64_t*)pml4[PML4E(vaddr)];
-        if (unlikely(!PAGE_EXISTS(pdpt))) pdpt = VMM::Useless::NewLevel(pml4, PML4E(vaddr));
+        if (unlikely(!PAGE_EXISTS(pdpt))) pdpt = VMM::Internal::NewLevel(pml4, PML4E(vaddr));
         pdpt = HIGHER_HALF(PTE_MASK(pdpt));
         pdpt[PDPTE(vaddr)] = (paddr & 0x000FFFFFC0000000ULL) | (flags & PTE_KEEP) | VMM_PS_BIT;
     }
@@ -521,7 +521,7 @@ namespace VMM {
     }
 
     void Unmap(pagemap_t *pm, uint64_t vaddr){ UnmapNoFlush(pm, vaddr); LazyTLB::ShootdownPage(pm, vaddr); }
-    uint64_t GetPhysics(pagemap_t *pm, uint64_t v){ return VMM::Useless::GetPageInfo(pm, v).phys; }
+    uint64_t GetPhysics(pagemap_t *pm, uint64_t v){ return VMM::Internal::GetPageInfo(pm, v).phys; }
 
     void MapRange(pagemap_t *pm, uint64_t vaddr, uint64_t paddr, uint64_t flags, uint64_t count){
         uint64_t mapped = 0;
@@ -587,7 +587,7 @@ namespace VMM {
     static void FreeSharedRegion(pagemap_t *pm, uint64_t start, uint64_t end) {
         uint64_t v = start;
         while (v < end) {
-            Useless::PageInfo info = VMM::Useless::GetPageInfo(pm, v);
+            Internal::PageInfo info = VMM::Internal::GetPageInfo(pm, v);
             if (info.size == 0) { v += PAGE_SIZE; continue; }
             if (info.size > PAGE_SIZE) {
                 /* 大页: 清整块 PTE, 逐 4K 子页处理引用计数 */
@@ -610,10 +610,10 @@ namespace VMM {
     static void FreeOwnedRegion(pagemap_t *pm, uint64_t start, uint64_t end) {
         uint64_t v = start;
         while (v < end) {
-            Useless::PageInfo info = VMM::Useless::GetPageInfo(pm, v);
+            Internal::PageInfo info = VMM::Internal::GetPageInfo(pm, v);
             if (info.size == 0) { v += PAGE_SIZE; continue; }
             if (info.size == PAGE_1GB) {
-                Useless::PageInfo next = VMM::Useless::GetPageInfo(pm, v + PAGE_1GB);
+                Internal::PageInfo next = VMM::Internal::GetPageInfo(pm, v + PAGE_1GB);
                 if (next.size == PAGE_1GB && next.phys == info.phys + PAGE_1GB) {
                     PMM::Free2GB((void*)info.phys);
                     VMM::UnmapNoFlush(pm, v); VMM::UnmapNoFlush(pm, v + PAGE_1GB);
@@ -743,7 +743,7 @@ namespace VMM {
                 if (r->start >= HIGHER_HALF(0)) { r = r->next; continue; }
                 uint64_t v = r->start, mapped = 0;
                 while (mapped < r->page_count) {
-                    Useless::PageInfo info = VMM::Useless::GetPageInfo(parent, v);
+                    Internal::PageInfo info = VMM::Internal::GetPageInfo(parent, v);
                     if (info.size == 0) break;
                     uint64_t nf = (info.flags & ~MM_WRITE) | VMM_COW_BIT;
                     if (info.size == PAGE_1GB) {
@@ -843,7 +843,7 @@ namespace VMM {
 
         uint64_t fault_addr = ALIGN_DOWN(cr2, PAGE_SIZE);
         spinlock_lock(&pm->pt_lock);
-        Useless::PageInfo info = VMM::Useless::GetPageInfo(pm, fault_addr);
+        Internal::PageInfo info = VMM::Internal::GetPageInfo(pm, fault_addr);
 
         auto segv = [&](const char *why) -> uint32_t {
             spinlock_unlock(&pm->pt_lock);
