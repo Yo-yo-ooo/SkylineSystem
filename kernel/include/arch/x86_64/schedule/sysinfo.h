@@ -5,43 +5,74 @@
 #define _SYSINFO_H_
 
 #include <stdint.h>
-#include <pdef.h>
+#include <stddef.h>
 
-#define SYSINFO_MAGIC   0x49535953ULL     /* 'SYSI' LE */
-#define SYSINFO_ABI_VER     1                
+/* ============================================================
+ * SysInfo — 实时共享只读信息页 (多页, 按核数伸缩)
+ *
+ * 协议:
+ *   内核 = 唯一写者 (init 填静态, idle 线程刷动态)
+ *   用户 = 只读者 (PTE 无 W 位, 写入 #PF — 硬件级只读)
+ *   页数 = occupy_pages — 用户映射前就能从头知道
+ *   布局: 头不 packed (FAM 偏移 = sizeof 可靠),
+ *         ncpus 是 simd_mask[] 长度权威
+ *
+ * sys_sysinfo() 零参数 → 返回用户侧连续只读映射的起始 VA
+ *   映射长度 = occupy_pages * 4096
+ *   (物理帧不必连续 — 内核逐页穿透, 用户看到的是连续 VA)
+ * ============================================================ */
 
-PACK(typedef struct SysInfo {
+#define SYSINFO_MAGIC     0x49535953ULL      /* 'SYSI' LE */
+#define SYSINFO_ABI_VER  0                  // In Test Version (ABI VER=0)
+#define SYSINFO_MAX_CPUS 256
 
-    /* ---- 身份 (offset 0) ---- */
-    uint64_t magic;              /* SYSINFO_MAGIC — 结构没填错位置的凭证 */
-    uint32_t abi_version;        /* SYSINFO_ABI */
-    uint32_t kernel_version;     /* KERNEL_VERSION: major<<16|minor<<8|patch */
+typedef struct SysInfo {
 
-    /* ---- CPU (offset 16) ---- */
-    uint32_t ncpus;              /* 在线核心数 (smp_last_cpu+1) */
-    uint32_t cpu_family;         /* CPUID.1.EAX 打包: fam_ext<<20|fam<<16|ext_model<<12|model<<4|stepping */
-    uint32_t cpu_features_edx;   /* CPUID.1.EDX — fpu/tsc/msr/apic... */
-    uint32_t cpu_features_ecx;   /* CPUID.1.ECX — sse4_2/avx/rdrand...  */
-    char     cpu_brand[48];      /* CPUID.0x80000002~4 品牌串, 零结尾 */
+    /* ---- 映射元信息 (静态, 用户第一个读) ---- */
+    uint64_t occupy_pages;        /*  本结构映射占用的总页数 —
+                                     用户侧 munmap/遍历都以此为准 */
 
-    
-    uint32_t simd_mask[MAX_CPU];   /* 每核 xsave 掩码, 未用核=0 */
+    /* ---- 身份 (静态) ---- */
+    uint64_t magic;
+    uint32_t abi_version;
+    uint32_t kernel_version;     /* major<<16|minor<<8|patch, v1=0 */
 
-    
-    uint64_t mem_total;          /* 物理总量 = pmm_bitmap_pages << 12 */
-    uint64_t mem_free;           /* O(1) = PMM::FreePages() << 12 */
-    uint64_t mem_used;           /* total - free (PCP 缓存页含在 used) */
+    /* ---- CPU (静态) ---- */
+    uint32_t ncpus;              /*  simd_mask[] 长度权威 */
+    uint32_t cpu_family;
+    uint32_t cpu_features_edx;
+    uint32_t cpu_features_ecx;   /* 用户态 SIMD 分派依据 */
+    char     cpu_brand[48];
 
-    
-    uint64_t uptime_ms;          /* PIT::TimeSinceBootMS() */
-    uint64_t nprocs;             /* 存活进程数 (pid2proc_tree->size) */
-    uint64_t nthreads_approx;    /* ≈ sched_tid 累计分配 — 近似, 注记 */
-    uint64_t ctx_switches;       /* Σ per-CPU sched_stats */
+    /* ---- 内存 (idle 刷新) ---- */
+    uint64_t mem_total;
+    uint64_t mem_free;           /* PMM O(1) 计数器; PCP 页含在 used */
+    uint64_t mem_used;
 
-    
-    uint64_t reserved[8];        /* 恒 0; ABI 扩张空间 */
+    /* ---- 运行时 (idle 刷新) ---- */
+    uint64_t uptime_ms;
+    uint64_t nprocs;
+    uint64_t nthreads_approx;    /* ≈ sched_tid, 含已退出 — 近似 */
+    uint64_t ctx_switches;       /* Σ per-CPU */
 
-}) SysInfo;
+    /* ---- 预留 (恒 0, ABI 扩张) ---- */
+    uint64_t reserved[8];
 
+    /* ---- 尾随: 每核 SIMD 掩码 (静态), 有效长度 = ncpus ---- */
+    uint32_t simd_mask[];
+
+} SysInfo;
+
+/* 完整数据大小 (头 + n 个核) */
+#define SYSINFO_SIZE(ncpus) \
+    (sizeof(SysInfo) + (size_t)(ncpus) * sizeof(uint32_t))
+
+/* n 个核需要几页 */
+#define SYSINFO_PAGES(ncpus) \
+    ((SYSINFO_SIZE(ncpus) + 4095) / 4096)
+
+/* 满配页数 — 内核帧数组按此定长 */
+#define SYSINFO_MAX_PAGES \
+    ((SYSINFO_SIZE(SYSINFO_MAX_CPUS) + 4095) / 4096)
 
 #endif /* _SYSINFO_H_ */

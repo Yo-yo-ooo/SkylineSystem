@@ -78,7 +78,7 @@ uint64_t sys_fork(syscall_frame_t *frame){
  *   rdi (sideband, 仅成功时有效): resolved_src — src 进程侧 VA
  *   rsi (sideband, 仅成功时有效): resolved_dst — dst 进程侧 VA
  *
- *   ★ 失败时 rdi/rsi 保证为 0 (内核在所有出口清零)。
+ *    失败时 rdi/rsi 保证为 0 (内核在所有出口清零)。
  *   调用方判 rax<0 必须丢弃 rdi/rsi; 即使忘了判,
  *   0 地址也会让误用立刻 #PF 在明处, 而非静默用旧值。
  *
@@ -185,7 +185,7 @@ uint64_t sys_pmmapSHARE(
     }
 
     /* 4b. dst 侧: 区间就位 (仅 VA, 物理页来自 src)
-     * ★ 不能用 Alloc/EAlloc —— 它们会分配新物理页,
+     *  不能用 Alloc/EAlloc —— 它们会分配新物理页,
      *   随后被穿透映射覆盖 → 物理页孤儿泄漏 */
     if (dst_new) {
         resolved_dst = VMM::VMA::InternalAlloc(dst_pm, pages,
@@ -342,7 +342,7 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
     t->kernel_stack = kstack;
     t->kernel_rsp = kstack + PAGE_SIZE * 4;
 
-    /* ★ 用户栈 — 内核分配 (无 stack 参数的代价, 内核必须管):
+    /*  用户栈 — 内核分配 (无 stack 参数的代价, 内核必须管):
        在调用者的 pagemap 里分配, 8 页 (NewThread 同款) */
     uint64_t ustack = (uint64_t)VMM::Alloc(me->pagemap, 8, true);
     if (!ustack) {

@@ -7,7 +7,7 @@
 #include <mem/pmm.h>
 #include <arch/x86_64/pit/pit.h>
 
-/* ★ 修复: #pragma GCC optimize("O0") 对 Clang 无效 —
+/*  修复: #pragma GCC optimize("O0") 对 Clang 无效 —
    改用 optnone attribute (Clang/GCC 双兼容), 逐函数标注 */
 #if defined(__clang__)
   #define AHCI_NOOPT __attribute__((optnone))
@@ -342,12 +342,12 @@ namespace AHCI
 
         PCI::PCIHeader0* hdr0 = (PCI::PCIHeader0*)(uint64_t)pciBaseAddress;
 
-        /* ★ 修复 1: 使能 Memory Space + Bus Master (经 Header.Command, offset 0x04) */
+        /*  修复 1: 使能 Memory Space + Bus Master (经 Header.Command, offset 0x04) */
         uint16_t cmd = hdr0->Header.Command;
         cmd |= 0x6;                       // bit1=MSE, bit2=BusMaster
         hdr0->Header.Command = cmd;
 
-        /* ★ 修复 2: BAR5 解码 — 只保留一份正确实现:
+        /*  修复 2: BAR5 解码 — 只保留一份正确实现:
            - 64 位判据: low 的 bit2 (PCI 规范)
            - upper 32 位: 配置空间 offset 0x28。
              PCIHeader0 结构里 0x28 是 CardbusCISPtr (AHCI 无 CIS,
@@ -374,7 +374,7 @@ namespace AHCI
 
         this->ABAR = (HBAMemory*)(full_phys + hhdm_offset);
 
-        /* ★ 修复 3: ABAR 有效性验证 — version 必须在 0x1.0~0x2.x 范围,
+        /*  修复 3: ABAR 有效性验证 — version 必须在 0x1.0~0x2.x 范围,
            否则是映射错 (上次 PI==GHC==ver 全等就是这种) */
         uint32_t ver = ABAR->version;
         kinfoln("AHCI: ABAR=%p PI=%x GHC=%x ver=%x",

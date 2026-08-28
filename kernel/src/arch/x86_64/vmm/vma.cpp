@@ -99,7 +99,7 @@ namespace VMM{
         vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags) {
             if (vma_unlikely(!after)) return nullptr;
             vma_region_t *region = HIGHER_HALF((vma_region_t*)PMM::Request());
-            if (vma_unlikely(!region)) return nullptr;   /* ★ PMM 耗尽,调用方须判空 */
+            if (vma_unlikely(!region)) return nullptr;   /*  PMM 耗尽,调用方须判空 */
             region->start      = start;
             region->page_count = page_count;
             region->flags      = flags;
@@ -126,7 +126,7 @@ namespace VMM{
         bool IsRangeFree(pagemap_t *pagemap, uint64_t start, uint64_t page_count) {
             if (vma_unlikely(page_count == 0)) return false;
             uint64_t end = start + page_count * PAGE_SIZE;
-            if (vma_unlikely(end < start)) return false;          /* ★ 回绕 */
+            if (vma_unlikely(end < start)) return false;          /*  回绕 */
 
             vma_region_t *prev_r = vma_tree_find_le(&pagemap->vma_tree, start);
             if (prev_r && region_end(prev_r) > start)
@@ -169,7 +169,7 @@ namespace VMM{
             if (vma_unlikely(page_count == 0)) return 0;
 
             uint64_t need = page_count * PAGE_SIZE;
-            if (vma_unlikely(need / PAGE_SIZE != page_count)) return 0;  /* ★ 乘法回绕 */
+            if (vma_unlikely(need / PAGE_SIZE != page_count)) return 0;  /*  乘法回绕 */
 
             const uint64_t lo = pagemap->vma_head->start;
             /* 上界:lo 在哪个半区就用哪个半区顶端。
@@ -179,7 +179,7 @@ namespace VMM{
             const uint64_t hi = (lo >= HIGHER_HALF(0))
                               ? 0xFFFFFFFFFFFFFFFFULL
                               : (IsPM5LVL ? USER_SPACE_END_5LVL : 0x800000000000ULL);
-            if (vma_unlikely(lo >= hi || need > hi - lo)) return 0;      /* ★ 此后 hi-lo 恒正 */
+            if (vma_unlikely(lo >= hi || need > hi - lo)) return 0;      /*  此后 hi-lo 恒正 */
 
             // 1. Hint 路径:现有调用方(VMM::Alloc/EAlloc)全部传 0 → 结构性罕见
             if (vma_unlikely(hint >= lo && hint <= hi - need)) {
@@ -187,7 +187,7 @@ namespace VMM{
                 vma_region_t *next_r = vma_tree_find_gt(&pagemap->vma_tree, hint);
 
                 uint64_t prev_end  = prev_r ? region_end(prev_r) : lo;
-                if (prev_end < lo) prev_end = lo;    /* ★ ELF 镜像区域可低于 lo */
+                if (prev_end < lo) prev_end = lo;    /*  ELF 镜像区域可低于 lo */
                 uint64_t cur_start = next_r ? next_r->start : hi;
 
                 if (hint >= prev_end && hint + need <= cur_start) {
@@ -251,7 +251,7 @@ namespace VMM{
                         cur_node = rb_first(pagemap->vma_tree.node);
                         if (cur_node) {
                             vma_region_t *first_r = container_of(cur_node, vma_region_t, rb_node);
-                            if (first_r->start > lo && first_r->start - lo >= need) {  /* ★ 钳制 */
+                            if (first_r->start > lo && first_r->start - lo >= need) {  /*  钳制 */
                                 best_after = nullptr;
                                 best_addr  = lo;
                                 found = true;

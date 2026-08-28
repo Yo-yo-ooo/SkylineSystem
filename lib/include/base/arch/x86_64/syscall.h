@@ -19,6 +19,42 @@ extern "C" {
 #define VMM_FLAG_CACHE_DISABLE  (1 << 4)        /* PCD */
 #define VMM_FLAG_PAT            (1 << 7)        /* PAT */
 
+typedef struct SysInfo {
+
+    /* ---- 映射元信息 (静态, 用户第一个读) ---- */
+    uint64_t occupy_pages;        /*  本结构映射占用的总页数 —
+                                     用户侧 munmap/遍历都以此为准 */
+
+    /* ---- 身份 (静态) ---- */
+    uint64_t magic;
+    uint32_t abi_version;
+    uint32_t kernel_version;     /* major<<16|minor<<8|patch, v1=0 */
+
+    /* ---- CPU (静态) ---- */
+    uint32_t ncpus;              /*  simd_mask[] 长度权威 */
+    uint32_t cpu_family;
+    uint32_t cpu_features_edx;
+    uint32_t cpu_features_ecx;   /* 用户态 SIMD 分派依据 */
+    char     cpu_brand[48];
+
+    /* ---- 内存 (idle 刷新) ---- */
+    uint64_t mem_total;
+    uint64_t mem_free;           /* PMM O(1) 计数器; PCP 页含在 used */
+    uint64_t mem_used;
+
+    /* ---- 运行时 (idle 刷新) ---- */
+    uint64_t uptime_ms;
+    uint64_t nprocs;
+    uint64_t nthreads_approx;    /* ≈ sched_tid, 含已退出 — 近似 */
+    uint64_t ctx_switches;       /* Σ per-CPU */
+
+    /* ---- 预留 (恒 0, ABI 扩张) ---- */
+    uint64_t reserved[8];
+
+    /* ---- 尾随: 每核 SIMD 掩码 (静态), 有效长度 = ncpus ---- */
+    uint32_t simd_mask[];
+
+} SysInfo;
 
 #define syscall(num, a1, a2, a3, a4, a5, a6) ({ \
     long _ret; \
@@ -57,7 +93,7 @@ uint64_t sys_load(uint64_t pathname, uint64_t argv, uint64_t envp);
 uint64_t sys_launch(uint64_t pid);
 uint64_t sys_getpid();
 uint64_t sys_gettid();
-uint64_t sys_getsysinfo(uint64_t buf, uint64_t buflen);
+uint64_t sys_getsysinfo();
 uint64_t sys_thread_launch(uint64_t entry, uint64_t hint);
 
 #ifdef __cplusplus

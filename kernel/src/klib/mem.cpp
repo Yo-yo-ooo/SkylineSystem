@@ -76,7 +76,7 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
         } \
         asm volatile("" ::: "memory"); \
         cpu->preempt_count--; \
-        /* ★ 恢复进入时的完整 rflags — 之前 IF=0 恢复关,
+        /*  恢复进入时的完整 rflags — 之前 IF=0 恢复关,
            之前 IF=1 恢复开。sti 永远不再无条件出现 */ \
         asm volatile("pushq %0\n\tpopfq" :: "r"(__fx_rflags_save_) : "memory", "cc"); \
     }while(0);
@@ -98,7 +98,7 @@ void _memcpy(void* src, void* dest, uint64_t size){
         char *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
-        uint64_t __fx_rflags_save_;          /* ★ 声明挪到函数体级 */
+        uint64_t __fx_rflags_save_;          /*  声明挪到函数体级 */
         XFXSAVE_CAS
         cpu->OverLoadableFuncs.MemcpyCore(dest,src,size);
         XFXSAVE_CASB
@@ -128,7 +128,7 @@ void _memset(void* dest, uint8_t value, uint64_t size){
         char *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
-        uint64_t __fx_rflags_save_;          /* ★ */
+        uint64_t __fx_rflags_save_;          /*  */
         XFXSAVE_CAS
         cpu->OverLoadableFuncs.MemsetCore(dest,value,size);
         XFXSAVE_CASB
@@ -157,7 +157,7 @@ void _memmove(void* dest,void* src, uint64_t size) {
         char *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
-        uint64_t __fx_rflags_save_;          /* ★ */
+        uint64_t __fx_rflags_save_;          /*  */
         XFXSAVE_CAS
         cpu->OverLoadableFuncs.MemmoveCore(dest,src,size);
         XFXSAVE_CASB
@@ -182,7 +182,7 @@ int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size){
         char *fx_area = Schedule::this_thread()->fx_area;
         if(fx_area == nullptr)
             goto base_ver;
-        uint64_t __fx_rflags_save_;          /* ★ */
+        uint64_t __fx_rflags_save_;          /*  */
         XFXSAVE_CAS
         int32_t result = cpu->OverLoadableFuncs.MemcmpCore(buffer1,buffer2,size,1);
         XFXSAVE_CASB

@@ -432,7 +432,7 @@ namespace VMM {
         }
         VMM::SwitchPageMap(kernel_pagemap);
 
-        /* ★ 引用计数红黑树: 仅跟踪共享页, 无预分配大数组 */
+        /*  引用计数红黑树: 仅跟踪共享页, 无预分配大数组 */
         RefcountTreeInit();
         kpokln("VMM: refcount rb-tree initialized (shared-page tracking only)");
     }

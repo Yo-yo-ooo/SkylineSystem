@@ -57,7 +57,7 @@ endif
 # Check if KCC is Clang.
 override KCC_IS_CLANG := $(shell ! $(KCC) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
 
-# ★ 修复: 检测 KCXX 而不是 CXX (原版检测错变量, 环境里 CXX=g++ 时
+#  修复: 检测 KCXX 而不是 CXX (原版检测错变量, 环境里 CXX=g++ 时
 #   Clang 分支永远不进)
 override KCXX_IS_CLANG := $(shell ! $(KCXX) --version 2>/dev/null | grep 'clang' >/dev/null 2>&1; echo $$?)
 
@@ -272,7 +272,7 @@ else
 	@$(KLD) $(OBJ) $(KLDFLAGS) -o $@
 endif
 
-# ★ KASLR 验证 target: 检查 32S 重定位是否清零
+#  KASLR 验证 target: 检查 32S 重定位是否清零
 .PHONY: kaslr-check
 kaslr-check: bin-$(KARCH)/$(OUTPUT)
 	@echo "== KASLR relocation check =="

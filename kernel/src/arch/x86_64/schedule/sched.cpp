@@ -125,6 +125,7 @@ static void reclaim_zombie_list(cpu_t *cpu, thread_t *head) {
     }
 }
 
+extern void sys_sysinfo_idle_refresh(void);
 void sched_idle() {
     while (true) {
         cpu_t *cpu = this_cpu();
@@ -144,6 +145,7 @@ void sched_idle() {
         Schedule::DrainProcZombieList(cpu);
 
         file_cache_idle_handler(cpu->file_cache);
+        sys_sysinfo_idle_refresh();
         asm volatile("sti; hlt; cli" ::: "memory");
     }
 }

@@ -46,5 +46,5 @@ uint64_t sys_getpid(){return syscall(SYSCALL_GETPID,0,0,0,0,0,0);}
 uint64_t sys_gettid(){return syscall(SYSCALL_GETTID,0,0,0,0,0,0);}
 uint64_t sys_thread_launch(uint64_t entry, uint64_t hint)
 {return syscall(SYSCALL_THREAD_LAUNCH,entry,hint,0,0,0,0);}
-uint64_t sys_getsysinfo(uint64_t buf, uint64_t buflen)
-{return syscall(SYSCALL_GET_SYSINFO,buf,buflen,0,0,0,0);}
+uint64_t sys_getsysinfo()
+{return syscall(SYSCALL_GET_SYSINFO,0,0,0,0,0,0);}

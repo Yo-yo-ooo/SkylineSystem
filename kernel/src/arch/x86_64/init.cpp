@@ -37,6 +37,7 @@ extern "C" int32_t file_cache_writeback_callback(
     const uint8_t *key, 
     uint32_t key_len, void *data, size_t data_len
 );
+extern void sys_sysinfo_init(void);
 
 extern void enable_smep_smap();
 void __init x86_64_init(void){
@@ -106,6 +107,7 @@ void __init x86_64_init(void){
     Schedule::Install();
 
     atomic_store_4(&PrintFSERIAL,1,0);
+    sys_sysinfo_init();
 
     proc_t *proc = Schedule::NewProcess(true);
 

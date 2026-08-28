@@ -40,6 +40,8 @@ int main() {
     /* 1. 读协议 — 证明 desktop 写的数据 hw2 能看见 */
     out_u64("fb_len  = ", PROTO_FB_LEN);
     out_u64("fb_addr = ", PROTO_FB_ADDR);
+    SysInfo *Ap = ((SysInfo*)sys_getsysinfo());
+    out_u64("ABI VER == =",Ap->abi_version);
 
     if (PROTO_FB_LEN == 0) {
         out_str("protocol empty — desktop didn't write?\n");

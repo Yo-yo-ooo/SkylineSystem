@@ -20,7 +20,7 @@ void TLoad(FrameBuffer *Fb){
     uint64_t desk_fb_va = sys_pmmapSHARE(dstPID, 0, Fb->BufferSize,
                                           7, pid, 0);
 
-    /* ★ Sideband latch: rdi = src VA (hw2 side), rsi = dst VA (our side).
+    /*  Sideband latch: rdi = src VA (hw2 side), rsi = dst VA (our side).
        MUST be the very first statement after the syscall — any
        intervening call clobbers these registers. The asm read is
        explicit; a plain "register ... asm("rdi")" binding is only
@@ -53,7 +53,7 @@ void TLoad(FrameBuffer *Fb){
          proto[1] = framebuffer size in bytes */
     memset((void*)_4KELFSection, 0, 4096);
     volatile uint64_t *proto = (volatile uint64_t*)_4KELFSection;
-    proto[0] = hw2_fb_va;          /* ★ hw2 reads this and paints */
+    proto[0] = hw2_fb_va;          /*  hw2 reads this and paints */
     proto[1] = Fb->BufferSize;
     proto[2] = Fb->Width;
     proto[3] = Fb->Height;
