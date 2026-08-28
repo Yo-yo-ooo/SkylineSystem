@@ -2,7 +2,7 @@
 
 void PGPThread(){
     for(;;){
-        sys_yield();
+        //sys_yield();
     }
 }
 

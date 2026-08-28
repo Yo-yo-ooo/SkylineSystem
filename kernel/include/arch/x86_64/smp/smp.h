@@ -131,6 +131,7 @@ typedef struct cpu_t {
     bool ISSMEP_ENABLEED = false;
     bool ISSMAP_ENABLEED = false;
     file_cache_cpu_t *file_cache;
+    uint64_t rip_avg_rate;
 } cpu_t;
 
 constexpr uint64_t SIZEOF_CPU_T = sizeof(cpu_t);

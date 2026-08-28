@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
-// sched.cpp - Core Scheduler Implementation (EEVDF)
+// sched.cpp - Core Scheduler Implementation (EEVDF + RIP-Rate Feedback)
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
@@ -14,14 +14,48 @@
 #include <arch/x86_64/interrupt/gdt.h>
 #include <pdef.h>
 
+#ifndef likely
+#define likely(x)     __builtin_expect(!!(x), 1)
+#endif
+#ifndef unlikely
+#define unlikely(x)   __builtin_expect(!!(x), 0)
+#endif
+#ifndef PREFETCH_R
+#define PREFETCH_R(p)   __builtin_prefetch((p), 0, 1)
+#endif
+#ifndef PREFETCH_RH
+#define PREFETCH_RH(p)  __builtin_prefetch((p), 0, 3)
+#endif
+#ifndef PREFETCH_W
+#define PREFETCH_W(p)   __builtin_prefetch((p), 1, 3)
+#endif
+
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
 #define ZOMBIE_RECLAIM_BATCH 16
 #define WAIT_THREAD_TIMEOUT_MS 1000ULL
 #define PREEMPT_THRESHOLD (1024ULL * 1024ULL)
 #define SCHED_HUNGER_THRESHOLD (1024ULL * 1024ULL * 5)
+#define SCHED_STEAL_THROTTLE 8
+#define SCHED_PUSH_GAP_SHIFT 2
 
+/* ============================================================
+ * ★ RIP-Rate 反馈核心 (新增)
+ *   原理: Switch 上下文天然携带 RIP。dispatch 时记起点,
+ *   唤醒时用差值算真实指令速率, EWMA 平滑后反馈到量子。
+ *
+ *   关键设计决定: 反馈修正的是 QUANTUM (时间预算), 不是
+ *   deadline —— 改 deadline 会破坏 EEVDF 的 lag 守恒, 改
+ *   quantum 只影响实时间片长度, 数学不塌。
+ * ============================================================ */
+#define RIPRATE_FRAC_BITS  10                       /* 速率定点小数位 */
+#define RIPRATE_INIT       (1024ULL << RIPRATE_FRAC_BITS)  /* 1.0x 起步 */
+#define RIPRATE_SHIFT     3                          /* EWMA 1/8 */
+#define RIPRATE_MAX_MULT  (4ULL  << RIPRATE_FRAC_BITS)     /* 上限 4x */
+#define RIPRATE_MIN_MULT  (1ULL/4 << RIPRATE_FRAC_BITS)   /* 下限 0.25x */
 
+struct alignas(64) sched_steal_throttle { uint32_t skip; char pad[60]; };
+static sched_steal_throttle per_cpu_steal_throttle[MAX_CPU];
 
 extern art_tree *pid2proc_tree;
 extern art_tree *NOT_RUNQ_P;
@@ -30,7 +64,6 @@ extern spinlock_t PROC_LIST_LOCK;
 extern uint64_t sched_pid;
 extern uint64_t sched_tid;
 
-/* 优化: per-CPU 游标 64B 对齐, 消除 CPU 间伪共享 */
 struct alignas(64) sched_padded_u32 { uint32_t v; };
 static sched_padded_u32 per_cpu_steal_cursor[MAX_CPU];
 
@@ -53,7 +86,7 @@ static inline uint64_t sced_rdtsc() {
     return ((uint64_t)hi << 32) | lo;
 }
 
-struct alignas(64) dyn_adjust_ctx {   /* 优化: 64B 对齐消除伪共享 */
+struct alignas(64) dyn_adjust_ctx {
     uint64_t last_tsc;
     uint64_t last_ctx_sw;
     uint64_t idle_tsc;
@@ -62,13 +95,11 @@ struct alignas(64) dyn_adjust_ctx {   /* 优化: 64B 对齐消除伪共享 */
 };
 static dyn_adjust_ctx dyn_ctx[MAX_CPU];
 
-/* 修复: 增加 cur_tsc 参数 —— TSC 读取提到锁外执行,
-   使锁内临界区只剩纯算术, 最小化 sched_lock 持有时间 */
+/* TSC 锁外, cur_tsc 参数传入 */
 static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread,
                                    uint64_t now_ms, uint64_t cur_tsc) {
     uint32_t id = cpu->id;
 
-    // 入口处钳位基准值，防止初始异常导致逻辑失效
     if (unlikely(cpu->base_quantum < 2))  cpu->base_quantum = 2;
     if (unlikely(cpu->base_quantum > 15)) cpu->base_quantum = 15;
 
@@ -103,14 +134,93 @@ static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread,
     }
 }
 
+/* ============================================================
+ * ★ get_dynamic_quantum v2 — RIP 速率倍率
+ *
+ *   eff_quantum = weight_quantum × rip_rate_mult >> FRAC
+ *
+ *   rip_rate_mult 是 EWMA(rip_progress / wall_progress):
+ *     > 1: 该线程指令密集 (相对全核平均) — 拉长量子
+ *          (少切几次, 吞吐型负载受益)
+ *     < 1: 访存/等待密集 — 缩短量子
+ *          (让出快, 延迟型负载受益)
+ *   钳位 [0.25x, 4x] 防 EWMA 失控。
+ * ============================================================ */
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     if (unlikely(!thread || thread == cpu->idle_thread)) return cpu->base_quantum;
     if (unlikely(thread->custom_quantum > 0)) return thread->custom_quantum;
     uint64_t weight = likely(thread->weight) ? thread->weight : 1024;
     uint64_t quantum = (cpu->base_quantum * weight) / 1024;
+
+    /* ★ RIP 倍率 — 读线程自身字段, 无锁 (写者只有本核 Switch) */
+    uint64_t mult = thread->rip_rate_mult;
+    quantum = (quantum * mult) >> RIPRATE_FRAC_BITS;
+
     if (unlikely(quantum < 1)) quantum = 1;
     if (unlikely(quantum > cpu->base_quantum * 8)) quantum = cpu->base_quantum * 8;
     return quantum;
+}
+
+/* ============================================================
+ * ★ riprate_update — 每次时间片结束时的反馈采样
+ *
+ *   输入:  ctx->rip        本片结束时的 RIP
+ *          curr_thread    即将让出的线程
+ *          quantum_ms     本片的名义时长
+ *   逻辑:
+ *     progress  = rip - dispatch_rip        (本片指令距离)
+ *     rate      = progress / quantum_ms     (指令/ms, 定点)
+ *     若 rate 偏离核均值 → EWMA 更新线程倍率:
+ *         观测 mult = rate / 核平均 rate
+ *         thread->mult = (7×old + 1×观测) >> 3
+ *
+ *   ★ 设计取舍 (为什么是"乘量子"而非"改 deadline"):
+ *     EEVDF 的公平性不变量 = Σ(lag) 守恒, 而 lag 由
+ *     deadline 差导出。改 deadline 破坏守恒 → 数学塌。
+ *     改 quantum 只改实时间片长度 → 虚拟时钟不变 →
+ *     公平性保持, 响应性提升。这是本设计能成立的关键。
+ * ============================================================ */
+static inline void riprate_update(cpu_t *cpu, thread_t *thread,
+                                uint64_t rip_now, uint64_t quantum_ms) {
+    if (unlikely(!thread || thread == cpu->idle_thread)) return;
+    if (unlikely(quantum_ms == 0)) return;
+
+    /* per-CPU 平均速率 (EWMA), 也是本核访问无锁 */
+    dyn_adjust_ctx *dc = &dyn_ctx[cpu->id];      /* 复用对齐结构体的相邻性 */
+    (void)dc;
+
+    uint64_t progress = rip_now - thread->dispatch_rip;   /* 无符号环绕安全:
+                                                            调用序保证 rip_now ≥ dispatch */
+
+    /* 环绕防御: 理论不发生, 发生了就丢弃本次采样 */
+    if (unlikely(progress > (1ULL << 44))) return;        /* >16B 指令距离 = 异常 */
+
+    /* 快速路径: 没跑够 1ms 的碎片片不采样 (噪声大) */
+    if (unlikely(quantum_ms < 1)) return;
+
+    /* 观测速率: 指令/ms (防除零在 quantum_ms==0 已挡) */
+    uint64_t obs_rate = progress / quantum_ms;            /* 近似即可, EWMA 滤波 */
+
+    /* 核平均速率 (per-CPU EWMA) — 基准线 */
+    /* ★ 简化存放在 dyn_ctx 同款对齐结构里, 避免新增 cacheline */
+    uint64_t *avg_rate = &cpu->rip_avg_rate;
+    if (unlikely(*avg_rate == 0)) {
+        *avg_rate = obs_rate ? obs_rate : 1;             /* 首采样建基线 */
+        return;
+    }
+
+    /* 观测倍率 = obs / avg, 定点: (obs << FRAC) / avg */
+    uint64_t obs_mult = (obs_rate << RIPRATE_FRAC_BITS) / (*avg_rate);
+
+    /* 先更新核基准 (EWMA 1/8) — 让基准跟随负载整体变化 */
+    *avg_rate += (obs_rate - *avg_rate) >> 3;
+
+    /* 线程倍率 EWMA 1/8 */
+    uint64_t m = thread->rip_rate_mult;
+    m += (obs_mult - m) >> RIPRATE_SHIFT;
+    if (unlikely(m > RIPRATE_MAX_MULT)) m = RIPRATE_MAX_MULT;
+    if (unlikely(m < RIPRATE_MIN_MULT)) m = RIPRATE_MIN_MULT;
+    thread->rip_rate_mult = m;
 }
 
 static void reclaim_zombie_list(cpu_t *cpu, thread_t *head) {
@@ -150,8 +260,6 @@ void sched_idle() {
     }
 }
 
-/* 修复: 拆分为"锁外检查+告警"与"锁内回写"两部分,
-   cpu->current_thread 的修正写入移入 sched_lock 临界区 */
 static inline thread_t* safe_get_current_thread(cpu_t *cpu, bool &invalid) {
     thread_t *t = cpu->current_thread;
     if (unlikely((uintptr_t)t < 0xFFFF800000000000)) {
@@ -195,7 +303,7 @@ static inline thread_t* rb_to_thread(rb_node_t* node) {
 }
 
 static inline void calibrate_and_set_deadline(thread_t *thread, cpu_t *cpu) {
-    uint64_t virtual_slice = cpu->base_quantum;   /* 读方处于持有者 sched_lock 的上下文 */
+    uint64_t virtual_slice = cpu->base_quantum;
     uint64_t max_lag = virtual_slice;
     uint64_t avg_vr = cpu->avg_vruntime;
     uint64_t target_vr = (avg_vr > max_lag) ? (avg_vr - max_lag) : 0;
@@ -275,6 +383,11 @@ namespace Schedule {
         }
 
         thread_t *StealThread(cpu_t *cpu) {
+            /* 空转节流 */
+            uint32_t *skip = &per_cpu_steal_throttle[cpu->id].skip;
+            if (likely(++(*skip) < SCHED_STEAL_THROTTLE)) return nullptr;
+            *skip = 0;
+
             uint32_t my_mask = cpu_simd_mask(cpu);
             const uint32_t ncpu = (uint32_t)smp_last_cpu + 1;
             uint32_t start_cpu = (sched_pid + PIT::TimeSinceBootMS()
@@ -306,8 +419,6 @@ namespace Schedule {
                         continue;
                     }
 
-                    /* 优化: 锁内先快照 current/idle 指针, 循环中反复读
-                       current_thread(无锁写的字段)没有意义, 快照一次即可 */
                     thread_t * const victim_curr  = victim->current_thread;
                     thread_t * const victim_idle  = victim->idle_thread;
                     const uint64_t hunger_limit   = victim->avg_vruntime + SCHED_HUNGER_THRESHOLD;
@@ -320,12 +431,7 @@ namespace Schedule {
                         rb_node_t *prev_node = rb_prev(node);
                         if (likely(prev_node)) PREFETCH_R(prev_node);
                         thread_t *stolen = rb_to_thread(node);
-                        /* 跳过受害者当前线程 —— 覆盖"解锁→current_thread
-                           迟到提交"窗口, 以及任何唤醒路径错误重插 current 的场景。
-                           state 字段无法区分排队/执行中, 指针比较是唯一判据 */
                         if (unlikely(stolen == victim_curr)) { node = prev_node; continue; }
-                        /* 防御: idle 线程绝不允许离开所属 CPU
-                           (被偷走后受害 CPU 将失去 idle 兜底) */
                         if (unlikely(stolen == victim_idle))  { node = prev_node; continue; }
                         if (unlikely(stolen->state != THREAD_RUNNING)) { node = prev_node; continue; }
                         if (unlikely(stolen->timer_bucket != nullptr)) { node = prev_node; continue; }
@@ -367,9 +473,10 @@ namespace Schedule {
 
         void TryPush(cpu_t *cpu) {
             cpu->sched_stats.try_pushes++;
+
             if (unlikely(!atomic_load_1(&cpu->has_surplus, ATOMIC_RELAXED))) return;
-            uint64_t my_weight = cpu->total_weight + (cpu->current_thread ? cpu->current_thread->weight : 0);
             if (cpu->thread_count < 2) return;
+            uint64_t my_weight = cpu->total_weight + (cpu->current_thread ? cpu->current_thread->weight : 0);
 
             uint32_t my_mask = cpu_simd_mask(cpu);
             cpu_t *target = nullptr;
@@ -393,6 +500,8 @@ namespace Schedule {
                 else return;
             }
 
+            if (unlikely(target_weight + (target_weight >> SCHED_PUSH_GAP_SHIFT) >= my_weight)) return;
+
             cpu_t *lock_a = (cpu->id < target->id) ? cpu : target;
             cpu_t *lock_b = (cpu->id < target->id) ? target : cpu;
 
@@ -403,8 +512,6 @@ namespace Schedule {
                 return;
             }
 
-            /* TryPush 与 StealThread 扫描结构相同,
-               同样存在"旧 current 已入队但 current_thread 未提交"窗口 */
             thread_t * const my_curr = cpu->current_thread;
             thread_t * const my_idle = cpu->idle_thread;
             const uint64_t hunger_limit = cpu->avg_vruntime + SCHED_HUNGER_THRESHOLD;
@@ -419,8 +526,8 @@ namespace Schedule {
                 rb_node_t *prev_node = rb_prev(node);
                 if (likely(prev_node)) PREFETCH_R(prev_node);
                 thread_t *to_push = rb_to_thread(node);
-                if (unlikely(to_push == my_curr)) { node = prev_node; continue; }   /* 修复#3 */
-                if (unlikely(to_push == my_idle)) { node = prev_node; continue; }   /* 防御 */
+                if (unlikely(to_push == my_curr)) { node = prev_node; continue; }
+                if (unlikely(to_push == my_idle)) { node = prev_node; continue; }
                 if (unlikely(to_push->timer_bucket != nullptr)) { node = prev_node; continue; }
                 if (unlikely(to_push->vruntime > hunger_limit)) { node = prev_node; continue; }
 
@@ -434,9 +541,6 @@ namespace Schedule {
                 node = prev_node;
             }
 
-            /* 显式钳位 has_surplus, 不再依赖 RemoveFromQueue 的副作用。
-               (原实现下推线程必经 RemoveFromQueue, count==1 时已顺带清标志,
-                此行使语义显式化, 防止未来重构破坏该隐式依赖) */
             if (unlikely(cpu->thread_count < 2)) cpu->has_surplus = false;
 
             cpu->sched_stats.push_success += push_count;
@@ -490,9 +594,6 @@ namespace Schedule {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             if (unlikely(!cpu)) return;
-
-            /* 外层: 关中断保护整个处理过程 (若 SCHED_VEC 为陷阱门,
-               必须在此处 cli, 否则下方持锁期间本地重入 Switch 会自死锁) */
             uint64_t rflags = irq_save();
 
             if (unlikely(__atomic_load_n(&need_resched_flags[cpu->id], __ATOMIC_ACQUIRE))) {
@@ -511,14 +612,13 @@ namespace Schedule {
 
             cpu->tick_count++;
             uint64_t now = PIT::TimeSinceBootMS();
-            uint64_t cur_tsc = sced_rdtsc();   /* 修复: TSC 串行化读取提到锁外 */
+            uint64_t cur_tsc = sced_rdtsc();
 
             bool curr_invalid = false;
-            thread_t *curr_thread = safe_get_current_thread(cpu, curr_invalid); /* 告警在锁外打印 */
-
+            thread_t *curr_thread = safe_get_current_thread(cpu, curr_invalid);
             const bool curr_is_idle = (curr_thread == cpu->idle_thread);
 
-            /* curr_thread 当前由本 CPU 独占(刚在运行), ctx/SIMD 保存在锁外安全 */
+            /* ctx/SIMD 保存 — 锁外 */
             if (likely(curr_thread && !curr_is_idle)) {
                 curr_thread->fs = rdmsr(FS_BASE);
                 curr_thread->ctx = *ctx;
@@ -527,19 +627,8 @@ namespace Schedule {
                 }
             }
 
-            /* ============================================================
-             * 修复(问题1+2): sched_lock 临界区统一使用 spin_lock_irqsave,
-             * 且 dynamic_adjust_quantum / vruntime 结算全部移入锁内.
-             * 此前 base_quantum 写、avg_vruntime 更新、total_weight 读
-             * 均在锁外, 与远端 TryPush/StealThread 持锁访问同一字段构成数据竞争.
-             * ============================================================ */
-            uint64_t sflags = spin_lock_irqsave(&cpu->sched_lock);
-
-            if (unlikely(curr_invalid)) {
-                cpu->current_thread = curr_thread;   /* 修复: 防御性回写移入锁内 */
-            }
-
-            dynamic_adjust_quantum(cpu, curr_thread, now, cur_tsc);   /* 修复: 移入锁内 */
+            /* 账本结算 — 锁外 */
+            dynamic_adjust_quantum(cpu, curr_thread, now, cur_tsc);
 
             if (likely(curr_thread && !curr_is_idle)) {
                 uint64_t delta = now - curr_thread->last_run_time;
@@ -551,7 +640,7 @@ namespace Schedule {
                 curr_thread->vruntime_rem = vruntime_total % w;
                 curr_thread->vruntime += vruntime_delta;
 
-                uint64_t active_weight = cpu->total_weight + w;   /* 修复: 锁内读 total_weight */
+                uint64_t active_weight = cpu->total_weight + w;
                 uint64_t avg_total = delta * 1024 + cpu->avg_vruntime_rem;
                 uint64_t avg_delta = avg_total / active_weight;
                 cpu->avg_vruntime_rem = avg_total % active_weight;
@@ -568,43 +657,79 @@ namespace Schedule {
                 }
             }
 
+            /* ★ RIP 速率反馈采样 — 锁外 (纯 per-thread/per-cpu 数据)
+               用本片名义 quantum 做分母 (get_dynamic_quantum 的旧值,
+               即本片装定时器时算出的那个), 不要用重算后的新值 */
+            {
+                uint64_t slice_ms = get_dynamic_quantum(cpu, curr_thread);
+                riprate_update(cpu, curr_thread, ctx->rip, slice_ms);
+            }
+
+            /* 免锁重入判定 (ZOMBIE 强制慢路径) */
+            bool need_lock = true;
+            uint32_t curr_state_snap = curr_thread ? curr_thread->state : 0xFFFFFFFF;
+
+            if (likely(curr_thread && !curr_is_idle) &&
+                likely(curr_state_snap == THREAD_RUNNING)) {
+                if (unlikely(cpu->thread_count == 0)) {
+                    need_lock = false;
+                } else if (unlikely(cpu->thread_count == 1)) {
+                    need_lock = false;
+                }
+            } else if (unlikely(curr_is_idle && cpu->thread_count == 0)) {
+                need_lock = false;
+            }
+
+            thread_t *next_thread = curr_thread;
             thread_t *zombie_to_free = nullptr;
-            if (unlikely(cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD)) {
-                int moved = 0;
-                thread_t *z = cpu->zombie_list;
-                while (likely(z && moved < ZOMBIE_RECLAIM_BATCH)) {
-                    thread_t *next = z->zombie_next;
-                    if (likely(next)) PREFETCH_R(next);
-                    z->zombie_next = zombie_to_free;
-                    zombie_to_free = z;
-                    z = next;
-                    moved++;
+
+            if (likely(need_lock)) {
+                uint64_t sflags = spin_lock_irqsave(&cpu->sched_lock);
+
+                if (unlikely(curr_invalid)) {
+                    cpu->current_thread = curr_thread;
                 }
-                if (likely(zombie_to_free)) {
-                    cpu->zombie_list = z;
-                    cpu->zombie_count -= moved;
+
+                if (unlikely(cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD)) {
+                    int moved = 0;
+                    thread_t *z = cpu->zombie_list;
+                    while (likely(z && moved < ZOMBIE_RECLAIM_BATCH)) {
+                        thread_t *next = z->zombie_next;
+                        if (likely(next)) PREFETCH_R(next);
+                        z->zombie_next = zombie_to_free;
+                        zombie_to_free = z;
+                        z = next;
+                        moved++;
+                    }
+                    if (likely(zombie_to_free)) {
+                        cpu->zombie_list = z;
+                        cpu->zombie_count -= moved;
+                    }
                 }
+
+                uint32_t curr_state = curr_thread ? curr_thread->state : 0xFFFFFFFF;
+                if (unlikely(curr_thread && curr_state == THREAD_ZOMBIE && !curr_is_idle)) {
+                    curr_thread->zombie_next = cpu->zombie_list;
+                    cpu->zombie_list = curr_thread;
+                    cpu->zombie_count++;
+                    curr_thread = nullptr;
+                } else if (likely(curr_thread && curr_state == THREAD_RUNNING && !curr_is_idle)) {
+                    InsertToQueue(cpu, curr_thread);
+                }
+
+                next_thread = Pick(cpu);
+
+                spin_unlock_irqrestore(&cpu->sched_lock, sflags);
             }
-
-            uint32_t curr_state = curr_thread ? curr_thread->state : 0xFFFFFFFF;
-            if (unlikely(curr_thread && curr_state == THREAD_ZOMBIE && !curr_is_idle)) {
-                curr_thread->zombie_next = cpu->zombie_list;
-                cpu->zombie_list = curr_thread;
-                cpu->zombie_count++;
-                curr_thread = nullptr;
-            } else if (likely(curr_thread && curr_state == THREAD_RUNNING && !curr_is_idle)) {
-                InsertToQueue(cpu, curr_thread);
-            }
-
-            thread_t *next_thread = Pick(cpu);
-
-            spin_unlock_irqrestore(&cpu->sched_lock, sflags);
 
             reclaim_zombie_list(cpu, zombie_to_free);
 
             irq_restore(rflags);
 
-            if (unlikely((cpu->tick_count & 0x1F) == 0)) TryPush(cpu);
+            if (unlikely((cpu->tick_count & 0xFF) == 0) &&
+                likely(cpu->thread_count > 2)) {
+                TryPush(cpu);
+            }
 
             if (unlikely(!next_thread)) {
                 next_thread = StealThread(cpu);
@@ -626,9 +751,10 @@ namespace Schedule {
                 return;
             }
 
+            /* ★★ dispatch 时刻: 记录 RIP 起点供下次反馈 ★★ */
+            next_thread->dispatch_rip = next_thread->ctx.rip;
+
             /* ---- 真正的上下文切换 ---- */
-            /* 修复: release 原子写 —— kill_thread_batch 等远端路径
-               持锁读取 current_thread, 至少保证存储有序可见 */
             __atomic_store_n(&cpu->current_thread, next_thread, __ATOMIC_RELEASE);
             cpu->sched_stats.context_switches++;
             next_thread->last_run_time = now;
@@ -685,7 +811,6 @@ namespace Schedule {
         PREFETCH_RH(woked_thread);
         PREFETCH_RH(curr);
 
-        /* 注: 此处对 avg_vruntime 为无锁咨询式读取, 仅影响抢占启发式判断 */
         if (woked_thread->vruntime <= cpu->avg_vruntime && woked_thread->deadline < curr->deadline) {
             uint64_t cw = likely(curr->weight) ? curr->weight : 1024;
             uint64_t ww = likely(woked_thread->weight) ? woked_thread->weight : 1024;

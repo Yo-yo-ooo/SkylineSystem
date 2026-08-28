@@ -86,6 +86,8 @@ typedef struct thread_t {
     uint64_t vruntime_rem;
     uint64_t min_vruntime_subtree;
     struct thread_t *zombie_next; 
+    uint64_t rip_rate_mult;
+    uint64_t dispatch_rip;
 } thread_t;
 
 typedef struct proc_t {
