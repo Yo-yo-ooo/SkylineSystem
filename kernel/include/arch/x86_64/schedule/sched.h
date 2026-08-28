@@ -88,6 +88,8 @@ typedef struct thread_t {
     struct thread_t *zombie_next; 
     uint64_t rip_rate_mult;
     uint64_t dispatch_rip;
+    uint64_t rip_quantum_adj;
+    uint64_t rip_last_sample_ms;
 } thread_t;
 
 typedef struct proc_t {

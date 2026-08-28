@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
-// sched.cpp - Rate-aware EEVDF Schedule ALGO IMPL
+// sched.cpp - Rate-aware EEVDF (REEVDF) Schedule ALGO IMPL
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
@@ -14,22 +14,6 @@
 #include <arch/x86_64/interrupt/gdt.h>
 #include <pdef.h>
 
-#ifndef likely
-#define likely(x)     __builtin_expect(!!(x), 1)
-#endif
-#ifndef unlikely
-#define unlikely(x)   __builtin_expect(!!(x), 0)
-#endif
-#ifndef PREFETCH_R
-#define PREFETCH_R(p)   __builtin_prefetch((p), 0, 1)
-#endif
-#ifndef PREFETCH_RH
-#define PREFETCH_RH(p)  __builtin_prefetch((p), 0, 3)
-#endif
-#ifndef PREFETCH_W
-#define PREFETCH_W(p)   __builtin_prefetch((p), 1, 3)
-#endif
-
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
 #define ZOMBIE_RECLAIM_BATCH 16
@@ -39,20 +23,21 @@
 #define SCHED_STEAL_THROTTLE 8
 #define SCHED_PUSH_GAP_SHIFT 2
 
-/* ============================================================
- * ★ RIP-Rate 反馈核心 (新增)
- *   原理: Switch 上下文天然携带 RIP。dispatch 时记起点,
- *   唤醒时用差值算真实指令速率, EWMA 平滑后反馈到量子。
- *
- *   关键设计决定: 反馈修正的是 QUANTUM (时间预算), 不是
- *   deadline —— 改 deadline 会破坏 EEVDF 的 lag 守恒, 改
- *   quantum 只影响实时间片长度, 数学不塌。
- * ============================================================ */
-#define RIPRATE_FRAC_BITS  10                       /* 速率定点小数位 */
-#define RIPRATE_INIT       (1024ULL << RIPRATE_FRAC_BITS)  /* 1.0x 起步 */
-#define RIPRATE_SHIFT     3                          /* EWMA 1/8 */
-#define RIPRATE_MAX_MULT  (4ULL  << RIPRATE_FRAC_BITS)     /* 上限 4x */
-#define RIPRATE_MIN_MULT  (1ULL/4 << RIPRATE_FRAC_BITS)   /* 下限 0.25x */
+
+#define RIPRATE_FRAC_BITS  10
+#define RIPRATE_INIT       (1024ULL << RIPRATE_FRAC_BITS)   /* 1.0x */
+#define RIPRATE_SHIFT     3                                  /* EWMA 1/8 */
+#define RIPRATE_MAX_MULT  (4ULL  << RIPRATE_FRAC_BITS)      /* 4x 上限 */
+#define RIPRATE_MIN_MULT  (256ULL)                          /* 0.25x 下限 (定点: 256 = 0.25<<10) */
+#define RIPRATE_ONE       (1024ULL << RIPRATE_FRAC_BITS)   /* 1.0x 常量 */
+
+/*  直接修正项的钳位 (± 量子偏移上限, 单位: LAPIC tick 基准的量子单位) */
+#define RIPADJ_MAX        4                                  /* 最多 +4 */
+#define RIPADJ_MIN       (-4)                               /* 最多 -4 */
+/*  老化阈值 — 超过这个 ms 没采样, 倍率向 1.0 收缩一步 */
+#define RIPRATE_AGING_MS 50ULL
+/*  衰减步长 1/16 (位移 4) */
+#define RIPRATE_DECAY_SHIFT 4
 
 struct alignas(64) sched_steal_throttle { uint32_t skip; char pad[60]; };
 static sched_steal_throttle per_cpu_steal_throttle[MAX_CPU];
@@ -135,92 +120,126 @@ static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread,
 }
 
 /* ============================================================
- * ★ get_dynamic_quantum v2 — RIP 速率倍率
+ *  get_dynamic_quantum — 倍率乘法 + 直接修正项叠加
  *
- *   eff_quantum = weight_quantum × rip_rate_mult >> FRAC
+ *    eff = (weight_quantum × mult >> FRAC) + rip_quantum_adj
  *
- *   rip_rate_mult 是 EWMA(rip_progress / wall_progress):
- *     > 1: 该线程指令密集 (相对全核平均) — 拉长量子
- *          (少切几次, 吞吐型负载受益)
- *     < 1: 访存/等待密集 — 缩短量子
- *          (让出快, 延迟型负载受益)
- *   钳位 [0.25x, 4x] 防 EWMA 失控。
+ *  两个通道并存的理由:
+ *    乘法通道: 稳态塑形 (长期特征)
+ *    修正通道: 快速双向响应 (即时偏差) — 这是你本次要求的
+ *    "修正还能减" 的直接实现: adj 是有符号的, 可正可负
  * ============================================================ */
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     if (unlikely(!thread || thread == cpu->idle_thread)) return cpu->base_quantum;
-    if (unlikely(thread->custom_quantum > 0)) return thread->custom_quantum;
-    uint64_t weight = likely(thread->weight) ? thread->weight : 1024;
-    uint64_t quantum = (cpu->base_quantum * weight) / 1024;
 
-    /* ★ RIP 倍率 — 读线程自身字段, 无锁 (写者只有本核 Switch) */
-    uint64_t mult = thread->rip_rate_mult;
-    quantum = (quantum * mult) >> RIPRATE_FRAC_BITS;
+    uint64_t base;
+    /*  custom_quantum 作为基准而非硬覆盖 — 反馈仍生效 */
+    if (unlikely(thread->custom_quantum > 0)) {
+        base = thread->custom_quantum;
+    } else {
+        uint64_t weight = likely(thread->weight) ? thread->weight : 1024;
+        base = (cpu->base_quantum * weight) / 1024;
+    }
 
-    if (unlikely(quantum < 1)) quantum = 1;
-    if (unlikely(quantum > cpu->base_quantum * 8)) quantum = cpu->base_quantum * 8;
-    return quantum;
+    /* 乘法通道 */
+    uint64_t q = (base * thread->rip_rate_mult) >> RIPRATE_FRAC_BITS;
+
+    /*  直接修正通道 — 有符号加减 */
+    int32_t adj = thread->rip_quantum_adj;
+    if (likely(adj > 0)) {
+        q += (uint64_t)adj;
+    } else if (unlikely(adj < 0)) {
+        uint64_t sub = (uint64_t)(-adj);
+        q = (q > sub) ? (q - sub) : 1;
+    }
+
+    if (unlikely(q < 1)) q = 1;
+    if (unlikely(q > cpu->base_quantum * 8)) q = cpu->base_quantum * 8;
+    return q;
 }
 
 /* ============================================================
- * ★ riprate_update — 每次时间片结束时的反馈采样
+ *  riprate_update — 双向采样 + 老化衰减 + 修正计算
  *
- *   输入:  ctx->rip        本片结束时的 RIP
- *          curr_thread    即将让出的线程
- *          quantum_ms     本片的名义时长
- *   逻辑:
- *     progress  = rip - dispatch_rip        (本片指令距离)
- *     rate      = progress / quantum_ms     (指令/ms, 定点)
- *     若 rate 偏离核均值 → EWMA 更新线程倍率:
- *         观测 mult = rate / 核平均 rate
- *         thread->mult = (7×old + 1×观测) >> 3
+ *  采样路径 (不变量):
+ *    progress  = rip_now - dispatch_rip
+ *    obs_rate  = progress / slice_ms
+ *    obs_mult  = obs_rate / cpu->rip_avg_rate       (定点)
  *
- *   ★ 设计取舍 (为什么是"乘量子"而非"改 deadline"):
- *     EEVDF 的公平性不变量 = Σ(lag) 守恒, 而 lag 由
- *     deadline 差导出。改 deadline 破坏守恒 → 数学塌。
- *     改 quantum 只改实时间片长度 → 虚拟时钟不变 →
- *     公平性保持, 响应性提升。这是本设计能成立的关键。
  * ============================================================ */
 static inline void riprate_update(cpu_t *cpu, thread_t *thread,
-                                uint64_t rip_now, uint64_t quantum_ms) {
+                                uint64_t rip_now, uint64_t slice_ms,
+                                uint64_t now_ms) {
     if (unlikely(!thread || thread == cpu->idle_thread)) return;
-    if (unlikely(quantum_ms == 0)) return;
+    if (unlikely(slice_ms == 0)) return;
 
-    /* per-CPU 平均速率 (EWMA), 也是本核访问无锁 */
-    dyn_adjust_ctx *dc = &dyn_ctx[cpu->id];      /* 复用对齐结构体的相邻性 */
-    (void)dc;
+    /* ---- a) 老化检查 (先于采样, 用上次采样时间戳) ---- */
+    uint64_t last_sample = thread->rip_last_sample_ms;
+    if (unlikely(last_sample != 0 && (now_ms - last_sample) > RIPRATE_AGING_MS)) {
+        /* mult → 1.0 收缩 1/16 */
+        uint64_t m = thread->rip_rate_mult;
+        if (likely(m > RIPRATE_ONE)) {
+            m -= (m - RIPRATE_ONE) >> RIPRATE_DECAY_SHIFT;
+        } else if (unlikely(m < RIPRATE_ONE)) {
+            m += (RIPRATE_ONE - m) >> RIPRATE_DECAY_SHIFT;
+        }
+        thread->rip_rate_mult = m;
 
-    uint64_t progress = rip_now - thread->dispatch_rip;   /* 无符号环绕安全:
-                                                            调用序保证 rip_now ≥ dispatch */
+        /* adj → 0 收缩 */
+        int32_t adj = thread->rip_quantum_adj;
+        if (likely(adj > 0)) adj -= (adj + 7) >> RIPRATE_DECAY_SHIFT;  /* ≥1 步 */
+        else if (unlikely(adj < 0)) adj += ((-adj) + 7) >> RIPRATE_DECAY_SHIFT;
+        thread->rip_quantum_adj = adj;
+    }
+    thread->rip_last_sample_ms = now_ms;
 
-    /* 环绕防御: 理论不发生, 发生了就丢弃本次采样 */
-    if (unlikely(progress > (1ULL << 44))) return;        /* >16B 指令距离 = 异常 */
+    /* ---- 采样 ---- */
+    uint64_t progress = rip_now - thread->dispatch_rip;
 
-    /* 快速路径: 没跑够 1ms 的碎片片不采样 (噪声大) */
-    if (unlikely(quantum_ms < 1)) return;
+    /* 环绕/异常防御 */
+    if (unlikely(progress > (1ULL << 44))) return;
 
-    /* 观测速率: 指令/ms (防除零在 quantum_ms==0 已挡) */
-    uint64_t obs_rate = progress / quantum_ms;            /* 近似即可, EWMA 滤波 */
+    /* 碎片段噪声大, 只做老化不做速率采样 */
+    if (unlikely(slice_ms < 1)) return;
 
-    /* 核平均速率 (per-CPU EWMA) — 基准线 */
-    /* ★ 简化存放在 dyn_ctx 同款对齐结构里, 避免新增 cacheline */
+    uint64_t obs_rate = progress / slice_ms;
+    if (unlikely(obs_rate == 0)) return;         /* 完全停滞, 不采样 */
+
     uint64_t *avg_rate = &cpu->rip_avg_rate;
     if (unlikely(*avg_rate == 0)) {
-        *avg_rate = obs_rate ? obs_rate : 1;             /* 首采样建基线 */
-        return;
+        *avg_rate = obs_rate;
+        return;                                  /* 首采样只建基线 */
     }
 
-    /* 观测倍率 = obs / avg, 定点: (obs << FRAC) / avg */
+    /* 观测倍率 = obs / avg, 定点 */
     uint64_t obs_mult = (obs_rate << RIPRATE_FRAC_BITS) / (*avg_rate);
+    if (unlikely(obs_mult > RIPRATE_MAX_MULT << 2)) return;  /* 离群值丢弃 */
 
-    /* 先更新核基准 (EWMA 1/8) — 让基准跟随负载整体变化 */
+    /* 先更新核基准 (EWMA 1/8) */
     *avg_rate += (obs_rate - *avg_rate) >> 3;
 
-    /* 线程倍率 EWMA 1/8 */
+    /* ---- b) 倍率 EWMA (双向, 承 v1) ---- */
     uint64_t m = thread->rip_rate_mult;
     m += (obs_mult - m) >> RIPRATE_SHIFT;
     if (unlikely(m > RIPRATE_MAX_MULT)) m = RIPRATE_MAX_MULT;
     if (unlikely(m < RIPRATE_MIN_MULT)) m = RIPRATE_MIN_MULT;
     thread->rip_rate_mult = m;
+
+    /* ---- b) 直接修正项 (v2 新增, 你要的"减"通道) ---- */
+    /* dev = obs_mult - 1.0, 定点; 符号扩展 */
+    int64_t dev = (int64_t)obs_mult - (int64_t)RIPRATE_ONE;
+
+    /* 修正步长: dev >> 6 → 每次最多动 dev/64, 温和收敛 */
+    int32_t step = (int32_t)(dev >> 6);
+    if (unlikely(step == 0)) {
+        /* 小偏差也保证至少 ±1 的修正, 否则永远修不动 */
+        step = (dev > 0) ? 1 : ((dev < 0) ? -1 : 0);
+    }
+
+    int32_t adj = thread->rip_quantum_adj + step;
+    if (unlikely(adj > RIPADJ_MAX)) adj = RIPADJ_MAX;
+    if (unlikely(adj < RIPADJ_MIN)) adj = RIPADJ_MIN;
+    thread->rip_quantum_adj = adj;
 }
 
 static void reclaim_zombie_list(cpu_t *cpu, thread_t *head) {
@@ -383,7 +402,6 @@ namespace Schedule {
         }
 
         thread_t *StealThread(cpu_t *cpu) {
-            /* 空转节流 */
             uint32_t *skip = &per_cpu_steal_throttle[cpu->id].skip;
             if (likely(++(*skip) < SCHED_STEAL_THROTTLE)) return nullptr;
             *skip = 0;
@@ -657,12 +675,10 @@ namespace Schedule {
                 }
             }
 
-            /* ★ RIP 速率反馈采样 — 锁外 (纯 per-thread/per-cpu 数据)
-               用本片名义 quantum 做分母 (get_dynamic_quantum 的旧值,
-               即本片装定时器时算出的那个), 不要用重算后的新值 */
+            /* ★ RIP 反馈采样 — 锁外, v2 传入 now 做老化 */
             {
                 uint64_t slice_ms = get_dynamic_quantum(cpu, curr_thread);
-                riprate_update(cpu, curr_thread, ctx->rip, slice_ms);
+                riprate_update(cpu, curr_thread, ctx->rip, slice_ms, now);
             }
 
             /* 免锁重入判定 (ZOMBIE 强制慢路径) */
@@ -751,9 +767,6 @@ namespace Schedule {
                 return;
             }
 
-            /* ★★ dispatch 时刻: 记录 RIP 起点供下次反馈 ★★ */
-            next_thread->dispatch_rip = next_thread->ctx.rip;
-
             /* ---- 真正的上下文切换 ---- */
             __atomic_store_n(&cpu->current_thread, next_thread, __ATOMIC_RELEASE);
             cpu->sched_stats.context_switches++;
@@ -775,6 +788,9 @@ namespace Schedule {
             if (unlikely(next_thread->fx_area)) {
                 cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
+
+            /* ★ dispatch 时刻: RIP 起点快照 (v2: 时机不变) */
+            next_thread->dispatch_rip = next_thread->ctx.rip;
 
             quantum = (likely(next_thread != cpu->idle_thread))
                     ? get_dynamic_quantum(cpu, next_thread)
