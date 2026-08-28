@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
-// sched.cpp - Core Scheduler Implementation (EEVDF + RIP-Rate Feedback)
+// sched.cpp - Rate-aware EEVDF Schedule ALGO IMPL
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
