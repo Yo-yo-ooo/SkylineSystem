@@ -20,10 +20,7 @@ extern uint64_t sched_tid;
 extern volatile uint64_t started_count;
 
 /* LAPIC→逻辑核号表 — SIMD 掩码枚举与调度器同源 */
-extern uint8_t apic_id_to_logical[256];
-
-static_assert(MAX_CPU <= SYSINFO_MAX_CPUS,
-              "kernel MAX_CPU exceeds SysInfo page cap");
+extern uint8_t apic_id_to_logical[MAX_CPU * 2];
 
 /* ==================== 页本体 ====================
     VMM::EAlloc 直接分配 — VA/物理页/VMA 一次到位:
@@ -77,7 +74,7 @@ void sys_sysinfo_init(void) {
          started_count 只数 AP (BSP 不进 smp_cpu_init,
          等待条件 < cpu_count-1 为证), +1 补 BSP */
     uint32_t ncpus = (uint32_t)started_count + 1;
-    if (ncpus > SYSINFO_MAX_CPUS) ncpus = SYSINFO_MAX_CPUS;
+    if (ncpus > MAX_CPU) ncpus = MAX_CPU;
     if (ncpus == 0) ncpus = 1;            /* 防御: 永不该到 0 */
 
     uint32_t npages = (uint32_t)SYSINFO_PAGES(ncpus);
@@ -171,43 +168,75 @@ void sys_sysinfo_idle_refresh(void) {
 }
 
 /* ============================================================
- * sys_sysinfo — 零参数, 返回用户侧连续只读映射起始 VA
+ * sys_sysinfo — 双语义接口:
  *
- *   用户:  SysInfo *si = (SysInfo*)sys_sysinfo();
- *          之后直接读 — 无 syscall 无拷贝无锁
- *   只读由 PTE 保证 (无 MM_WRITE), 用户写入即 #PF
+ *   sys_sysinfo(0)        → 映射: 返回用户侧只读映射起始 VA
+ *   sys_sysinfo(va > 0)   → 释放: 解除 va 处的 kinfo 映射
+ *                           返回 0 成功 / -errno
  * ============================================================ */
-uint64_t sys_sysinfo(GENERATE_IGN6())
-{
-    IGNV_6();
+uint64_t sys_sysinfo(uint64_t arg, GENERATE_IGN5()){
+    IGNV_5();
 
     proc_t *me = Schedule::this_proc();
     if (!me) return (uint64_t)(-EPERM);
+    pagemap_t *pm = (pagemap_t*)me->pagemap;
+    if (!pm) return (uint64_t)(-EFAULT);
 
     if (!kinfo_ready || !kinfo)
         return (uint64_t)(-ENODEV);
 
-    pagemap_t *pm = (pagemap_t*)me->pagemap;
-    if (!pm) return (uint64_t)(-EFAULT);
+    /* ==================== 释放路径 (arg > 0) ==================== */
+    if (arg != 0) {
+        uint64_t va = arg;
 
-    /* 用户侧挑连续 npages 的 VA 槽 */
+        /* 对齐检查 */
+        if (va & 0xFFF) return (uint64_t)(-EINVAL);
+
+        /* ---- 验证 1: 该 VA 有 VMA 区域, 且长度 == kinfo 页数 ---- */
+        vma_region_t *r = VMM::VMA::FindRegion(pm, va);
+        if (!r || r->start != va)
+            return (uint64_t)(-EINVAL);          /* 不是区域起点 */
+
+        if (r->page_count != kinfo_npages)
+            return (uint64_t)(-EINVAL);          /* 长度对不上 —
+                                                    不是我们的映射 */
+
+        /* ---- 验证 2: 首页物理帧 == kinfo 首帧 (确证是 kinfo 映射,
+                        防止误拆同长度的其他映射) ---- */
+        uint64_t kphys0 = VMM::GetPhysics((pagemap_t*)kernel_pagemap,
+                                           (uint64_t)kinfo);
+        uint64_t uphys0 = VMM::GetPhysics(pm, va);
+        if (!kphys0 || uphys0 != kphys0)
+            return (uint64_t)(-EINVAL);
+
+        /* ---- 解除映射: 逐页 UnmapNoFlush + 一次 shootdown ----
+              只拆 PTE — 物理帧是 kinfo 的, 绝不能 Free */
+        for (uint32_t i = 0; i < kinfo_npages; i++)
+            VMM::UnmapNoFlush(pm, va + (uint64_t)i * 4096);
+        VMM::LazyTLB::ShootdownFull(pm);
+
+        /* 摘 VMA 区间 */
+        VMM::VMA::RemoveRegion(pm, r);
+        kinfoln("OK! REMOVE SYSINFO MAPPING!");
+
+        return 0;
+    }
+
+    /* ==================== 映射路径 (arg == 0) ==================== */
     uint64_t va = VMM::VMA::InternalAlloc(pm, kinfo_npages,
                                            MM_READ | MM_USER, 0);
     if (!va) return (uint64_t)(-ENOMEM);
 
-    /*  逐页只读穿透 — 物理帧经 GetPhysics 从 VMM 反查 */
     for (uint32_t i = 0; i < kinfo_npages; i++) {
         uint64_t kv = (uint64_t)kinfo + (uint64_t)i * 4096;
         uint64_t phys = VMM::GetPhysics((pagemap_t*)kernel_pagemap, kv);
         if (unlikely(!phys)) {
-            /* 理论不可达 (EAlloc 已映射) — 防御中止 */
             return (uint64_t)(-ENODEV);
         }
         VMM::Map4K(pm, va + (uint64_t)i * 4096, phys,
                    MM_READ | MM_USER);
     }
 
-    /* VMA 登记 — sys_mmap 的教训: 不登记则 Free/CleanPM 语义不完整 */
     if (!VMM::VMA::FindRegion(pm, va))
         VMM::VMA::AddRegion(pm, va, kinfo_npages,
                             MM_READ | MM_USER);

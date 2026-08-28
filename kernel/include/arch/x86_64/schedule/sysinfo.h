@@ -17,14 +17,12 @@
  *   布局: 头不 packed (FAM 偏移 = sizeof 可靠),
  *         ncpus 是 simd_mask[] 长度权威
  *
- * sys_sysinfo() 零参数 → 返回用户侧连续只读映射的起始 VA
  *   映射长度 = occupy_pages * 4096
  *   (物理帧不必连续 — 内核逐页穿透, 用户看到的是连续 VA)
  * ============================================================ */
 
 #define SYSINFO_MAGIC     0x49535953ULL      /* 'SYSI' LE */
 #define SYSINFO_ABI_VER  0                  // In Test Version (ABI VER=0)
-#define SYSINFO_MAX_CPUS 256
 
 typedef struct SysInfo {
 
@@ -73,6 +71,6 @@ typedef struct SysInfo {
 
 /* 满配页数 — 内核帧数组按此定长 */
 #define SYSINFO_MAX_PAGES \
-    ((SYSINFO_SIZE(SYSINFO_MAX_CPUS) + 4095) / 4096)
+    ((SYSINFO_SIZE(MAX_CPU) + 4095) / 4096)
 
 #endif /* _SYSINFO_H_ */

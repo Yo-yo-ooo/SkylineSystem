@@ -72,7 +72,7 @@ void syscall_init() {
 
     syscall_lists[SYSCALL_MMAP] = sys_mmap;
     syscall_lists[SYSCALL_MUNMAP] = sys_munmap;
-    syscall_lists[SYSCALL_GET_SYSINFO] = sys_sysinfo;
+    syscall_lists[SYSCALL_SYSINFO] = sys_sysinfo;
     
     syscall_lists[18] = sys_arch_prctl;
     syscall_lists[20] = sys_getrandom;

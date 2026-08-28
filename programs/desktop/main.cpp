@@ -11,6 +11,7 @@
 static char intTo_stringOutput[128];
 
 extern void TLoad(FrameBuffer *Fb);
+extern void RegThreadPerCpu();
 
 // 处理无符号 64 位整数
 const char *to_string(uint64_t value)
@@ -123,6 +124,7 @@ int main(){
     }*/
     
     TLoad(&fb);
+    RegThreadPerCpu();
     
     MouseInit();
 

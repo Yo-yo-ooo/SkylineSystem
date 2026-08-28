@@ -93,7 +93,8 @@ uint64_t sys_load(uint64_t pathname, uint64_t argv, uint64_t envp);
 uint64_t sys_launch(uint64_t pid);
 uint64_t sys_getpid();
 uint64_t sys_gettid();
-uint64_t sys_getsysinfo();
+uint64_t sys_sysinfo(uint64_t ARG);
+uint64_t sys_yield();
 uint64_t sys_thread_launch(uint64_t entry, uint64_t hint);
 
 #ifdef __cplusplus

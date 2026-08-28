@@ -23,6 +23,6 @@
 #define SYSCALL_MMAP            14
 #define SYSCALL_MUNMAP          15
 
-#define SYSCALL_GET_SYSINFO     16
+#define SYSCALL_SYSINFO         16
 
 #endif

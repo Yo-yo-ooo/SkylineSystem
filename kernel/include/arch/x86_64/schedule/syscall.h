@@ -122,7 +122,7 @@ uint64_t sys_pmmapSHARE(
     syscall_frame_t* frame
 );
 uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4());
-uint64_t sys_sysinfo(GENERATE_IGN6());
+uint64_t sys_sysinfo(uint64_t arg, GENERATE_IGN5());
 uint64_t sys_dev_mmap(uint64_t DevType,uint64_t DevIDX,
 uint64_t length,uint64_t prot,uint64_t offset,uint64_t VADDR,syscall_frame_t *nullframe);
 uint64_t sys_dev_getinfo(

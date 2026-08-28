@@ -28,7 +28,7 @@ int32_t smp_last_cpu = 0;
 extern volatile struct limine_mp_response *mp_response;
 extern void enable_smep_smap();
 
-uint32_t apic_id_to_logical[256] = {0};
+uint32_t apic_id_to_logical[MAX_CPU * 2] = {0};
 
 void smp_setup_kstack(cpu_t *cpu) {
     void *rsps = (void*)VMM::Alloc(kernel_pagemap, 8, false);
