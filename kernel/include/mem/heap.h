@@ -65,10 +65,46 @@ namespace SLAB{
     int64_t FindFree(slab_cache_t *cache);
 }
 
+#ifdef __x86_64__
+/*
+ * SLUB named object caches: fixed-size, typed kernel objects with a per-CPU
+ * active slab and a lock-free embedded freelist. The descriptor is opaque;
+ * the implementation lives alongside SLAB in mem/heap.cpp.
+ */
+struct kmem_cache;
+namespace SLUB {
+    kmem_cache *Create(const char *name, size_t obj_size, size_t align = 8);
+    void        Destroy(kmem_cache *cache);
+    void       *Alloc(kmem_cache *cache);
+    void        Free(kmem_cache *cache, void *obj);
+    size_t      ObjectSize(const kmem_cache *cache);
+    uint64_t    AllocCount(const kmem_cache *cache);
+    uint64_t    FreeCount(const kmem_cache *cache);
+
+    // One-shot smoke test, run from VMM::Init once MM is live.
+    bool SelfTest();
+
+    // Fuse SLUB into the generic kmalloc family.
+    bool   InitKmalloc();
+    bool   KmallocOnline();
+    void  *Kmalloc(size_t size);
+    bool   TryFree(void *obj);
+    size_t TryGetSize(void *obj);
+    uint32_t LastFailStage();
+}
+extern "C" {
+    kmem_cache *kmem_cache_create(const char *name, uint64_t obj_size, uint64_t align);
+    void        kmem_cache_destroy(kmem_cache *cache);
+    void       *kmem_cache_alloc(kmem_cache *cache);
+    void        kmem_cache_free(kmem_cache *cache, void *obj);
+}
+#endif
+
 extern "C"{
 void* kmalloc(uint64_t size);
 void kfree(void* ptr);
 void* krealloc(void* ptr, uint64_t size);
+void* kmalloc_aligned(uint64_t size, uint64_t align);
 void *kcalloc(size_t numitems, size_t size);
 }
 uint64_t GetPtrPointAreaSize(void *ptr);

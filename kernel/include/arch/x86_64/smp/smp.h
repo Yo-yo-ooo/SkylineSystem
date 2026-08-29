@@ -46,6 +46,9 @@ typedef struct sched_stats_t {
 typedef void (*interrupt_handler_t)(context_t*);
 
 #define MAX_SLAB_ORDER 7
+/* Depth of each CPU's incoming TLB-shootdown queue. Sized to absorb a whole
+   deferred batch (LazyTLB::BatchCommit) in addition to concurrent requests. */
+#define TLB_SHOOTDOWN_QMAX 64
 typedef struct {
     void* freelist[MAX_SLAB_ORDER]; 
     uint32_t count[MAX_SLAB_ORDER]; 
@@ -126,7 +129,7 @@ typedef struct cpu_t {
         pagemap_t *pm;
         uint64_t   vaddr;
         uint8_t    type; // 1=单页, 2=单PM全刷, 3=全局全刷
-    } shootdown_queue[32];
+    } shootdown_queue[TLB_SHOOTDOWN_QMAX];
     volatile uint32_t shootdown_count;
     bool ISSMEP_ENABLEED = false;
     bool ISSMAP_ENABLEED = false;

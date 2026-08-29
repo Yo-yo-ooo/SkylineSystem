@@ -60,6 +60,14 @@ void __init x86_64_init(void){
     InitFunc("PMM",PMM::Init());
     InitFunc("VMM",VMM::Init());
     InitFunc("SLAB",SLAB::Init());
+#ifdef __x86_64__
+    // SLUB fuses into kmalloc only once SLAB itself is live: SLUB::Create borrows
+    // SLAB for its cache descriptors, and the self-test mixes both allocators.
+    if (SLUB::InitKmalloc()) { kpokln("SLUB: kmalloc caches online (16..1024 B)"); }
+    else                     { kpokln("SLUB: kmalloc caches unavailable, using SLAB"); }
+    if (SLUB::SelfTest()) { kpokln("SLUB: self-test OK (named cache + kmalloc fusion)"); }
+    else                  { kpokln("SLUB: self-test FAILED stage=%u", SLUB::LastFailStage()); }
+#endif
     InitFunc("ACPI",ACPI::Init((void*)RSDP_ADDR));
     InitFunc("MADT",MADT_Init());
     //DISABLE PIC

@@ -153,10 +153,22 @@ namespace VMM{
         // 新增：优化后的查找和分配接口
         vma_region_t *FindRegion(pagemap_t *pagemap, uint64_t addr);
         uint64_t InternalAlloc(pagemap_t *pagemap, uint64_t page_count, uint64_t flags, uint64_t hint = 0);
+
+        // Split a region at a page-aligned address; returns the new tail region.
+        vma_region_t *SplitRegion(pagemap_t *pagemap, vma_region_t *region, uint64_t split_addr);
+        // Coalesce a region with adjacent neighbours that share identical flags.
+        vma_region_t *MergeRegion(pagemap_t *pagemap, vma_region_t *region);
     }
 
     namespace LazyTLB{
         void ShootdownFull(pagemap_t *pm);
+
+        // Deferred/batched shootdown: collect page invalidations with zero IPIs,
+        // then drain them with a single IPI per remote CPU at BatchCommit.
+        void BatchBegin(pagemap_t *pm);          // open a batch (masks local IRQs)
+        void DeferredPage(pagemap_t *pm, uint64_t vaddr); // local INVLPG now, defer remote
+        void BatchCommit(void);                  // flush the batch, one IPI per target
+        void BatchAbort(void);                   // drop the batch without IPIs
     } // namespace LazyTLB
     
 

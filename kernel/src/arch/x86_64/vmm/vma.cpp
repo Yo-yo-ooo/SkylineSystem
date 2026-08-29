@@ -72,6 +72,69 @@ namespace VMM{
             return best;
         }
 
+        // Detach a region from both the ordered list and the rb-tree, release it.
+        static void vma_destroy_locked(pagemap_t *pagemap, vma_region_t *r) {
+            if (pagemap->vma_cursor == r) pagemap->vma_cursor = r->prev;
+            if (r->rb_root) { rb_erase(r->rb_root, &r->rb_node); r->rb_root = nullptr; }
+            r->next->prev = r->prev;
+            r->prev->next = r->next;
+            PMM::Free(PHYSICAL((void*)r));
+        }
+
+        // Split @region at a page-aligned @split_addr. The original node keeps
+        // [start, split); a freshly allocated node owns [split, end) and inherits
+        // the flags. Returns the new tail node, nullptr on a bad argument.
+        vma_region_t *SplitRegion(pagemap_t *pagemap, vma_region_t *region, uint64_t split_addr) {
+            if (vma_unlikely(!pagemap || !region || region == pagemap->vma_head)) return nullptr;
+            uint64_t split = ALIGN_DOWN(split_addr, PAGE_SIZE);
+            uint64_t r_start = region->start;
+            uint64_t r_end   = region_end(region);
+            if (vma_unlikely(split <= r_start || split >= r_end)) return nullptr;
+
+            uint64_t head_pages = (split - r_start) / PAGE_SIZE;
+            uint64_t tail_pages = (r_end - split) / PAGE_SIZE;
+
+            vma_region_t *tail = InsertRegion(region, split, tail_pages, region->flags);
+            if (vma_unlikely(!tail)) return nullptr;
+            region->page_count = head_pages;
+            tail->rb_root = &pagemap->vma_tree;
+            rb_insert(&pagemap->vma_tree, &tail->rb_node, vma_rb_cmp);
+            return tail;
+        }
+
+        // Coalesce @region with physically adjacent list neighbours that carry
+        // identical flags. Returns the surviving node (== @region if no merge).
+        // Adjacency is verified by address bounds in addition to list position,
+        // so a non-ordered list can only under-merge, never fuse unrelated ranges.
+        vma_region_t *MergeRegion(pagemap_t *pagemap, vma_region_t *region) {
+            if (vma_unlikely(!pagemap || !region || region == pagemap->vma_head)) return region;
+            vma_region_t *sentinel = pagemap->vma_head;
+
+            // Absorb following neighbours first.
+            vma_region_t *cur = region->next;
+            while (cur != sentinel &&
+                   region_end(region) == cur->start &&
+                   cur->flags == region->flags) {
+                vma_region_t *nxt = cur->next;
+                region->page_count += cur->page_count;
+                vma_destroy_locked(pagemap, cur);
+                cur = nxt;
+            }
+
+            // Then let identical predecessors absorb @region, walking backward.
+            vma_region_t *prev = region->prev;
+            while (prev != sentinel &&
+                   region_end(prev) == region->start &&
+                   prev->flags == region->flags) {
+                vma_region_t *before = prev->prev;
+                prev->page_count += region->page_count;
+                vma_destroy_locked(pagemap, region);
+                region = prev;
+                prev = before;
+            }
+            return region;
+        }
+
         void SetStart(pagemap_t *pagemap, uint64_t start, uint64_t page_count) {
             (void)page_count;
             /* 幂等:已初始化的 pagemap 只调整下界。
@@ -113,14 +176,13 @@ namespace VMM{
 
         vma_region_t *AddRegion(pagemap_t *pagemap, uint64_t start, uint64_t page_count, uint64_t flags) {
             if (vma_unlikely(!pagemap->vma_head || page_count == 0)) return nullptr;
-            /* 注意:仍无重叠吸收 —— 两个 PT_LOAD 共享边界页时会产生同键节点,
-               find_le 命中哪条看树形。页表才是权限的最终裁决,VMA flags 仅做记录,
-               所以风险是记账错乱而非内存安全。合并逻辑上轮给过,按需取用。 */
             vma_region_t *region = InsertRegion(pagemap->vma_head->prev, start, page_count, flags);
             if (vma_unlikely(!region)) return nullptr;
             region->rb_root = &pagemap->vma_tree;
             rb_insert(&pagemap->vma_tree, &region->rb_node, vma_rb_cmp);
-            return region;
+            // Auto-coalesce adjacent ranges with identical flags so back-to-back
+            // PT_LOAD/mmap regions never accumulate a duplicate tree key.
+            return MergeRegion(pagemap, region);
         }
 
         bool IsRangeFree(pagemap_t *pagemap, uint64_t start, uint64_t page_count) {

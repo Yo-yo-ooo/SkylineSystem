@@ -7,6 +7,7 @@
 #include <klib/klib.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <mem/pmm.h>
+#include <mem/heap.h>
 #include <klib/kio.h>
 #include <arch/x86_64/schedule/sched.h>
 
@@ -272,7 +273,7 @@ namespace VMM {
                     uint64_t rf;
                     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rf) :: "memory");
                     spinlock_lock(&target->shootdown_lock);
-                    if (likely(target->shootdown_count < 32)) {
+                    if (likely(target->shootdown_count < TLB_SHOOTDOWN_QMAX)) {
                         target->shootdown_queue[target->shootdown_count++] = {pm, vaddr, 1};
                     } else {
                         target->shootdown_queue[0] = {nullptr, 0, 3};
@@ -307,7 +308,7 @@ namespace VMM {
                     uint64_t rf;
                     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rf) :: "memory");
                     spinlock_lock(&target->shootdown_lock);
-                    if (likely(target->shootdown_count < 32)) {
+                    if (likely(target->shootdown_count < TLB_SHOOTDOWN_QMAX)) {
                         target->shootdown_queue[target->shootdown_count++] = {pm, 0, 2};
                     } else {
                         target->shootdown_queue[0] = {nullptr, 0, 3};
@@ -338,6 +339,114 @@ namespace VMM {
                 else if (req.type == 3) LocalGlobalFlush();
             }
             LAPIC::EOI();
+        }
+
+        // ---------------- Batched (deferred) shootdown ----------------
+        // A run of page invalidations (e.g. VMM::Free tearing down a VMA) is
+        // collected on the local CPU with zero IPIs; BatchCommit then hands the
+        // whole set to every remote CPU that may cache the pagemap and raises a
+        // single IPI per target instead of one per page. A batch that overflows
+        // the local log or a target queue degrades to one per-pm full flush.
+        #define TLB_BATCH_MAX 64
+        struct tlb_batch_ctx {
+            pagemap_t *pm;
+            uint64_t  irq_flags;
+            uint32_t  nr;
+            bool      active;
+            bool      need_full;
+            uint64_t  addrs[TLB_BATCH_MAX];
+        };
+        static tlb_batch_ctx g_tlb_batch[MAX_CPU];
+
+        static inline tlb_batch_ctx *batch_this(void) {
+            cpu_t *c = this_cpu();
+            if (unlikely(!c || c->id >= MAX_CPU)) return nullptr;
+            return &g_tlb_batch[c->id];
+        }
+
+        void BatchBegin(pagemap_t *pm) {
+            if (unlikely(!pm)) return;
+            tlb_batch_ctx *b = batch_this();
+            if (unlikely(!b)) return;
+            uint64_t rf;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rf) :: "memory");
+            b->pm = pm; b->irq_flags = rf; b->nr = 0;
+            b->need_full = false; b->active = true;
+        }
+
+        void DeferredPage(pagemap_t *pm, uint64_t vaddr) {
+            // The PTE was just cleared on this CPU, drop its own entry now;
+            // remote CPUs are serviced once at BatchCommit.
+            LocalInvlpg(pm, vaddr);
+            tlb_batch_ctx *b = batch_this();
+            if (b && b->active && b->pm == pm) {
+                if (b->nr < TLB_BATCH_MAX) b->addrs[b->nr++] = vaddr;
+                else                       b->need_full = true;
+            }
+        }
+
+        void BatchCommit(void) {
+            tlb_batch_ctx *b = batch_this();
+            if (unlikely(!b || !b->active)) return;
+            pagemap_t *pm = b->pm;
+            const uint32_t nr = b->nr;
+            const bool need_full = b->need_full;
+            const uint64_t rf = b->irq_flags;
+            b->active = false;
+
+            if (likely(smp_started && pm)) {
+                const uint32_t me = this_cpu()->id;
+                uint64_t targets[TLB_MASK_WORDS];
+                for (int i = 0; i < TLB_MASK_WORDS; i++)
+                    targets[i] = __atomic_load_n(&pm->cpus_with_tlb[i], __ATOMIC_RELAXED);
+                targets[me / 64] &= ~(1ULL << (me % 64));
+
+                for (int w = 0; w < TLB_MASK_WORDS; w++) {
+                    while (targets[w]) {
+                        int bit = __builtin_ffsll(targets[w]) - 1;
+                        targets[w] &= ~(1ULL << bit);
+                        uint32_t id = w * 64 + bit;
+                        if (unlikely(id >= MAX_CPU)) continue;
+                        cpu_t *target = smp_cpu_list[id];
+                        if (unlikely(!target)) continue;
+                        if (nr == 0 && !need_full) continue;   // nothing to send
+
+                        uint64_t trf;
+                        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(trf) :: "memory");
+                        spinlock_lock(&target->shootdown_lock);
+                        uint32_t base = target->shootdown_count;
+                        bool enqueued = false;
+                        if (!need_full && nr <= TLB_SHOOTDOWN_QMAX - base) {
+                            for (uint32_t k = 0; k < nr; k++)
+                                target->shootdown_queue[base + k] = {pm, b->addrs[k], 1};
+                            target->shootdown_count = base + nr;
+                            enqueued = true;
+                        }
+                        if (!enqueued) {
+                            // Overflow: collapse this batch to one per-pm flush.
+                            if (base < TLB_SHOOTDOWN_QMAX) {
+                                target->shootdown_queue[base] = {pm, 0, 2};
+                                target->shootdown_count = base + 1;
+                            } else {
+                                target->shootdown_queue[0] = {nullptr, 0, 3};
+                                target->shootdown_count = 1;
+                            }
+                        }
+                        spinlock_unlock(&target->shootdown_lock);
+                        asm volatile("push %0\n\tpopfq" :: "r"(trf) : "memory");
+                        LAPIC::IPI(target->lapic_id, TLB_FLUSH_VEC); // 1 IPI/target
+                    }
+                }
+            }
+            asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
+        }
+
+        void BatchAbort(void) {
+            tlb_batch_ctx *b = batch_this();
+            if (unlikely(!b || !b->active)) return;
+            uint64_t rf = b->irq_flags;
+            b->active = false;
+            asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
         }
     }
 
@@ -435,6 +544,10 @@ namespace VMM {
         /*  引用计数红黑树: 仅跟踪共享页, 无预分配大数组 */
         RefcountTreeInit();
         kpokln("VMM: refcount rb-tree initialized (shared-page tracking only)");
+        // Retain the exported VMA split API before an mprotect-style caller
+        // exists; stores an address once (volatile, unelidable), never calls it.
+        static const void *volatile vma_split_anchor;
+        vma_split_anchor = (const void *)&VMM::VMA::SplitRegion;
     }
 
     void Map4K(pagemap_t *pm, uint64_t vaddr, uint64_t paddr, uint64_t flags){
@@ -592,6 +705,7 @@ namespace VMM {
             if (info.size > PAGE_SIZE) {
                 /* 大页: 清整块 PTE, 逐 4K 子页处理引用计数 */
                 VMM::UnmapNoFlush(pm, v);
+                LazyTLB::DeferredPage(pm, v);
                 uint64_t sub = info.size / PAGE_SIZE;
                 for (uint64_t k = 0; k < sub && v + k * PAGE_SIZE < end; k++) {
                     uint64_t phys = info.phys + k * PAGE_SIZE;
@@ -600,6 +714,7 @@ namespace VMM {
                 v += info.size;
             } else {
                 VMM::UnmapNoFlush(pm, v);
+                LazyTLB::DeferredPage(pm, v);
                 if (RefDecPhys(info.phys)) PMM::Free((void*)info.phys);
                 v += PAGE_SIZE;
             }
@@ -617,17 +732,18 @@ namespace VMM {
                 if (next.size == PAGE_1GB && next.phys == info.phys + PAGE_1GB) {
                     PMM::Free2GB((void*)info.phys);
                     VMM::UnmapNoFlush(pm, v); VMM::UnmapNoFlush(pm, v + PAGE_1GB);
+                    LazyTLB::DeferredPage(pm, v); LazyTLB::DeferredPage(pm, v + PAGE_1GB);
                     v += PAGE_2GB;
                 } else {
                     for (uint32_t j = 0; j < 512; j++) PMM::Free2MB((void*)(info.phys + j * PAGE_2MB));
-                    VMM::UnmapNoFlush(pm, v); v += PAGE_1GB;
+                    VMM::UnmapNoFlush(pm, v); LazyTLB::DeferredPage(pm, v); v += PAGE_1GB;
                 }
             } else if (info.size == PAGE_2MB) {
                 PMM::Free2MB((void*)info.phys);
-                VMM::UnmapNoFlush(pm, v); v += PAGE_2MB;
+                VMM::UnmapNoFlush(pm, v); LazyTLB::DeferredPage(pm, v); v += PAGE_2MB;
             } else {
                 PMM::Free((void*)info.phys);
-                VMM::UnmapNoFlush(pm, v); v += PAGE_SIZE;
+                VMM::UnmapNoFlush(pm, v); LazyTLB::DeferredPage(pm, v); v += PAGE_SIZE;
             }
         }
     }
@@ -717,9 +833,11 @@ namespace VMM {
         spinlock_lock(&pm->pt_lock);
         uint64_t v = region->start, end = v + region->page_count * PAGE_SIZE;
         //kinfoln("REGION OK,FREEING %lu pages",region->page_count);
+        // Collect every invalidation, then flush remote TLBs with one IPI/CPU.
+        LazyTLB::BatchBegin(pm);
         if (region->flags & VMM_SHARED_BIT) FreeSharedRegion(pm, v, end);
         else                                  FreeOwnedRegion(pm, v, end);
-        LazyTLB::ShootdownFull(pm);
+        LazyTLB::BatchCommit();
         vm_mapping_t *m = pm->vm_mappings;
         if (m) { vm_mapping_t *sm = m; do { if (m->start == (uint64_t)ptr) { RemoveMapping(m); break; } m = m->next; } while (m != sm); }
         VMM::VMA::RemoveRegion(pm, region);
