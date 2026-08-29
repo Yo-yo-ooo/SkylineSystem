@@ -871,8 +871,14 @@ namespace Schedule {
             Internal::RemoveFromQueue(cpu, idle_t);
             spin_unlock_irqrestore(&cpu->sched_lock, rflags);
             cpu->idle_thread = idle_t;
-            //cpu->current_thread = idle_t;
-            //idle_t->last_run_time = PIT::TimeSinceBootMS();
+            /* APs finish smp_cpu_init() with current_thread still NULL (that
+               boot path never assigns it), so their first Switch trips
+               "Invalid current_thread pointer: 0". Bind every not-yet-running
+               CPU to its own idle thread. The BSP already owns init_thread
+               (set by InitCPUThread); a live current must never be clobbered. */
+            if (cpu->current_thread == nullptr)
+                cpu->current_thread = idle_t;
+            idle_t->last_run_time = PIT::TimeSinceBootMS();
 
             dyn_ctx[i].last_adjust_ms = PIT::TimeSinceBootMS();
             dyn_ctx[i].last_ctx_sw = cpu->sched_stats.context_switches;
