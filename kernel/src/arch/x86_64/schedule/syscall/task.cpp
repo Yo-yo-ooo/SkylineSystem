@@ -360,6 +360,31 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
     t->ctx.cs = 0x23; t->ctx.ss = 0x1b; t->ctx.rflags = 0x202;
     t->thread_stack = t->ctx.rsp;
 
+    /* ---- Per-thread TLS: clone the caller TLS block --------------------
+       Threads share the pagemap, but every thread needs its OWN static-TLS
+       area and its own TCB (the [fs:0] self pointer). Snapshot the caller's
+       whole TLS block, then relocate the TCB self pointer into the new copy.
+       The context switch loads it through WRFSBASE(t->fs). A caller without
+       TLS leaves t->fs == 0, preserving the previous behaviour. */
+    if (curr->tls_base && curr->tls_pages) {
+        uint64_t new_tls = (uint64_t)VMM::Alloc(me->pagemap, curr->tls_pages, true);
+        if (!new_tls) {
+            VMM::Free(me->pagemap, (void*)ustack);
+            VMM::Free(kernel_pagemap, (void*)kstack);
+            VMM::Free(kernel_pagemap, t->fx_area);
+            kfree(t);
+            return -ENOMEM;
+        }
+        __memcpy((void*)new_tls, (void*)curr->tls_base,
+                 curr->tls_pages * PAGE_SIZE);
+        /* The TCB sits at a fixed offset inside the block; move it with the copy. */
+        uint64_t new_fs = curr->fs + (new_tls - curr->tls_base);
+        *(uint64_t*)new_fs = new_fs;                 /* relocate [fs:0] self ptr */
+        t->tls_base  = new_tls;
+        t->tls_pages = curr->tls_pages;
+        t->fs        = new_fs;
+    }
+
     /* ---- 一切就绪, 最后一刻发射 (此后 t 不可再碰) ---- */
     Schedule::Internal::ProcessAddThread(me, t);
 
