@@ -22,6 +22,12 @@ public:
     void DrawCircle(uint64_t xc, uint64_t yc, uint64_t r, uint32_t Color);
     void DrawRoundedRect(uint64_t X, uint64_t Y, uint64_t W, uint64_t H, uint64_t R, uint32_t Color, bool Fill);
     void DrawProportionalUI();
+
+    // Render the wallpaper into a caller-owned off-screen ARGB bitmap that
+    // is tightly packed (pitch == Width) and never touches the scanout FB.
+    // This turns the wallpaper into a standalone bitmap the compositor can
+    // register as its bottom layer (layer 0). Buffer must hold W*H uint32.
+    void RenderWallpaper(uint32_t* buffer);
     void FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, uint32_t color);
 
     ~BasicDraw(){}

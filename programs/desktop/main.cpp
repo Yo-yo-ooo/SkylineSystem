@@ -8,10 +8,10 @@
 #include <stdio.h>
 #include <base/font/ttf/ttf.h>
 #include <mouse/ps2.h>
+#include <synthesizer/window.h>
 static char intTo_stringOutput[128];
 
 extern void TLoad(FrameBuffer *Fb);
-extern void RegThreadPerCpu();
 
 // 处理无符号 64 位整数
 const char *to_string(uint64_t value)
@@ -83,24 +83,45 @@ int main(){
     uint64_t FbAddr = MapFB();
     fb = GetFBInfo();
     fb.BaseAddress = (void*)FbAddr;
-    
+
+    //
+
+    /* ---- wallpaper -> compositor layer 0 --------------------------------
+       The wallpaper is rendered OFF-SCREEN into a tightly packed bitmap and
+       registered as a full-screen window on the bottom layer, instead of
+       being painted directly onto the scanout framebuffer. The parallel
+       compositor blits it every frame while strip-sweeping the screen. */
+    uint32_t scrW = (uint32_t)fb.Width;
+    uint32_t scrH = (uint32_t)fb.Height;
+    size_t wallBytes = (size_t)scrW * scrH * sizeof(uint32_t);
+    uint32_t* wallBuf = (uint32_t*)malloc(wallBytes);
+    if (wallBuf == nullptr)
+        syscall(24, (long)"FAULT: wallpaper OOM", 20, 0, 0, 0, 0);
+
     BasicDraw bd((FrameBuffer*)&fb);
-    // 绘制自适应UI
-    bd.DrawProportionalUI();
+    bd.RenderWallpaper(wallBuf);              // build wallpaper layer bitmap
 
-    
-    syscall(24,(long)to_string(fb.BufferSize),256,0,0,0,0);
+    /* ---- bring up the compositor and mount wallpaper as layer 0 ---- */
+    Compositor& comp = Compositor::Get();
+    if (!comp.Init((FrameBuffer*)&fb))
+        syscall(24, (long)"FAULT: comp OOM", 15, 0, 0, 0, 0);
 
-    uint64_t bufsz = __atomic_load_n(&fb.BufferSize, __ATOMIC_ACQUIRE);
-    size_t x = (size_t)fb.BufferSize;
-    syscall(24,(long)to_string(x),256,0,0,0,0);
-    void *UIBase = malloc(x);
-    
-    if(UIBase == nullptr)
-        syscall(24, (long)"FAULT!", 7, 0, 0, 0, 0);    
-    
-    syscall(24, (long)msg, 13, 0, 0, 0, 0);
-    memcpy(UIBase,fb.BaseAddress,fb.BufferSize);
+    static Window wallpaperWin;
+    wallpaperWin.PosX = wallpaperWin.PosY = 0;
+    wallpaperWin.SizeX = scrW;
+    wallpaperWin.SizeY = scrH;
+    wallpaperWin.FrameStartX = wallpaperWin.FrameStartY = 0;
+    wallpaperWin.FrameEndX = scrW;
+    wallpaperWin.FrameEndY = scrH;
+    wallpaperWin.FbAddr = (uint64_t)wallBuf;
+
+    TLoad(&fb);
+
+    CompLayer* layer0 = comp.CreateLayer(0);
+    comp.RegisterWindow(&wallpaperWin, layer0);
+    comp.StartWorkers();                      // one pinned worker per CPU
+
+    MouseInit();
 
     /* TTF_Font *TTFFont;
     uint8_t TF = TTF_ReadFont(&TTFFont,"/mp/SourceHanSerifTC_Medium.ttf",64,32);
@@ -108,7 +129,7 @@ int main(){
         // 打印前缀
         syscall(24, (long)"FAULT! Code: ", 13, 0, 0, 0, 0);   
         
-        // 显式转换为无符号 64 位整数，或者直接传 TF 让它隐式提升为 int
+        // 显式转换为无符号的 64 位整数，或者直接传 TF 让它隐式提升为 int
         const char * TF_STR = to_string((uint64_t)TF); 
         
         uint64_t len = 0;
@@ -122,33 +143,19 @@ int main(){
         void *p = malloc(0x666d);
         free(p);
     }*/
-    
-    TLoad(&fb);
-    RegThreadPerCpu();
-    
-    MouseInit();
-
 
     int32_t prev_x = -100; 
     int32_t prev_y = -100;
     
-    // 提前获取指针和宽高，避免每次循环都解引用
-    uint32_t* fb_ptr = (uint32_t*)fb.BaseAddress;
-    uint32_t* ui_ptr = (uint32_t*)UIBase;
-    int32_t fb_width = fb.Width;
-    int32_t fb_height = fb.Height;
-    int32_t fb_psl = fb.PixelsPerScanLine; // 每行像素数
+    int32_t fb_width = (int32_t)fb.Width;
+    int32_t fb_height = (int32_t)fb.Height;
 
     ps2_mouse_state_t *p = (ps2_mouse_state_t*)mouse_addr;
 
     uint32_t seq1, seq2;
     int32_t mx, my;
 
-    
-
     for(;;){
-        //syscall(24, (long)msg, 13, 0, 0, 0, 0);
-
         while (true) {
             // 读取开始前的序列号
             seq1 = __atomic_load_n(&p->seq, __ATOMIC_ACQUIRE);
@@ -181,32 +188,17 @@ int main(){
             continue;
         }
 
-        for (int y = 0; y < 16; y++) {
-            int py = prev_y + y;
-            if (py < 0 || py >= fb_height) continue; // 越界跳过
-            
-            for (int x = 0; x < 16; x++) {
-                int px = prev_x + x;
-                if (px < 0 || px >= fb_width) continue; // 越界跳过
-                
-                // 从背景恢复到显存
-                fb_ptr[py * fb_psl + px] = ui_ptr[py * fb_psl + px];
-            }
-        }
+        // Re-composite the whole screen across all CPUs: layer 0 wallpaper
+        // is re-laid first, then every higher layer stacks on top. This also
+        // erases the previous cursor, so no manual 16x16 restore is needed.
+        comp.Compose();
 
-        DrawMousePointer(mx, my, &fb);
+        // Paint the cursor on top of the freshly composited frame.
+        DrawMousePointer(mx, my, (FrameBuffer*)&fb);
 
         prev_x = mx;
         prev_y = my;
     }
-    syscall(24, (long)"OHOHOHOHO!", 7, 0, 0, 0, 0);    
-
-    //while (true);
-    
-
     syscall(9, 0, 0, 0, 0, 0, 0); // Exit
-    syscall(24, (long)msg, 13, 0, 0, 0, 0);
-    
-    while (true);
     return 0;
 }

@@ -272,3 +272,19 @@ void BasicDraw::DrawProportionalUI() {
         }
     }
 }
+
+// Render the wallpaper into a tightly-packed off-screen bitmap (pitch == W)
+// so it becomes a standalone layer-0 surface instead of the scanout FB.
+void BasicDraw::RenderWallpaper(uint32_t* buffer) {
+    if (!buffer) return;
+
+    FrameBuffer off = *FrameBuf;
+    off.BaseAddress       = buffer;
+    off.PixelsPerScanLine = FrameBuf->Width;   // tight pitch for the layer
+    off.BufferSize        = FrameBuf->Width * FrameBuf->Height * sizeof(uint32_t);
+
+    FrameBuffer* saved = FrameBuf;
+    FrameBuf = &off;
+    DrawProportionalUI();
+    FrameBuf = saved;
+}
