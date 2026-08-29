@@ -45,11 +45,9 @@ static_assert(MAX_SLAB_ORDER >= 1 && MAX_SLAB_ORDER <= 16, "bad MAX_SLAB_ORDER")
 #endif
 
 slab_cache_t caches[MAX_SLAB_ORDER];
-
-// ── 新增统计（slab_cache_t 在 pdef.h，不能加字段，用平行数组）──
 static uint64_t g_cache_lock_acquires[MAX_SLAB_ORDER];
 
-// ── freepointer 混淆 cookie（启动熵）──
+// ── freepointer 混淆 cookie──
 static uint64_t g_freeptr_cookie = 0;
 
 // ── 页池 ──
@@ -58,7 +56,6 @@ static slab_page_t *g_pool_tail = nullptr;
 static uint32_t     g_pool_count = 0;
 static spinlock_t   g_pool_lock = 0;
 
-// ═══════════ 低层工具 ═══════════
 
 static inline uint64_t irq_save() {
     uint64_t flags;
