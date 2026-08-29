@@ -9,12 +9,17 @@
 #include <klib/types.h>
 #include <arch/x86_64/schedule/ssignal.h>
 
-typedef void (*sig_handler_t)(uint32_t sig_num, void* data);
+enum SigType : uint32_t{
+    SIG_CPU_EXCEPTION           = 0,
+    SIG_CPU_INTURRUPT           = 1,
+    SIG_PROC_COMMUNICATE        = 2
+};
 
-typedef struct sig_action{
-    uint64_t SignalNum;
-    sig_handler_t Handler;
-}sig_action_t;
+namespace Schedule{
+    namespace Signal{
+        void SigRegister(SigType Type, void (*SIGHandler)(SigType Type));
+    }
+} // namespace Schedule
 
 
 

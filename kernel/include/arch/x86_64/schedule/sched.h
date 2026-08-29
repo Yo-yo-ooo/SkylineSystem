@@ -43,11 +43,7 @@ typedef struct thread_t {
     context_t ctx;
     uint64_t fs;
     bool user;
-    uint64_t sig_deliver;
-    uint64_t sig_mask;
-    context_t sig_ctx;
     uint64_t sig_stack;
-    uint64_t sig_fs;
     pagemap_t *pagemap;
     uint64_t exit_code;
     uint64_t flags;
