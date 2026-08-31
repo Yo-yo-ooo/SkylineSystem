@@ -128,6 +128,13 @@ public:
        present, so pointer tracking stays fluid independent of scene cost. */
     void            CursorMoveTo(int32_t x, int32_t y);
 
+    /* Dirty-rectangle scene presentation: Invalidate() unions a scene region
+       that changed in the off-screen buffer; Present() pushes only the union
+       of those rectangles to the scanout (cursor kept on top). Compose() is
+       the conservative full-screen rebuild + present path. */
+    void            Invalidate(int32_t x0, int32_t y0, int32_t x1, int32_t y1);
+    void            Present();
+
     void            Shutdown();
 
     uint32_t             WorkerCount() const { return ncpus_; }
@@ -162,27 +169,35 @@ private:
        present phase: present_seq_ releases workers to copy back_->front,
                       done_present_ counts workers that finished presenting.  */
     uint64_t        frame_seq_;
-    uint64_t        present_seq_;
     uint32_t        started_cnt_;
     uint32_t        done_compose_;
-    uint32_t        done_present_;
 
     CompWinNode*    FindNode(Window* w);
-    void            ComposeStripToBack(uint32_t id); /* clear+stack -> back_ */
-    void            PresentStrip(uint32_t id);       /* back_ -> scanout      */
+    void            ComposeStripToBack(uint32_t id); /* scene -> offscreen back_ */
     void            ComposeSingleThreaded();
-    /* independent save-under cursor overlay, drawn straight on the scanout */
-    void            cursorRestore();                    /* restore backdrop  */
-    void            cursorStamp(int32_t x, int32_t y);  /* save-under+arrow  */
+    /* single-point scanout commit; the main thread is the ONLY fb writer */
+    void            blitSceneAvoidCursor(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
+                                         int32_t ox,int32_t oy,int32_t nx,int32_t ny);
+    void            paintSquareFromBack(int32_t x, int32_t y);
+    void            blendCursorSquare(int32_t x, int32_t y);
+    void            overlayCursorFinal(int32_t ox,int32_t oy,int32_t nx,int32_t ny);
+    void            commitScene(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
+                                int32_t ox,int32_t oy,int32_t nx,int32_t ny);
     void            InsertLayerOrdered(CompLayer* layer);
     void            LockList();
     void            UnlockList();
 
-    /* independent cursor overlay state (drawn directly on the scanout) */
+    /* independent cursor overlay; always the LAST thing drawn on scanout */
     int32_t         cur_x_;
     int32_t         cur_y_;
     uint8_t         cur_visible_;
-    uint32_t*       cursor_save_;   /* 16x16 backdrop saved under pointer   */
-    int32_t         save_x_, save_y_;
-    uint8_t         save_valid_;    /* cursor_save_ holds a real backdrop   */
+    /* square where the arrow is CURRENTLY painted on the scanout; it can lag
+       cur_ while a full-screen scene blit is in flight, so the blit knows
+       which on-screen arrow square to preserve. -1 = no arrow committed. */
+    int32_t         committed_x_;
+    int32_t         committed_y_;
+
+    /* accumulated scene dirty rectangle (union), flushed by Present() */
+    int32_t         dx0_, dy0_, dx1_, dy1_;
+    uint8_t         dirty_;
 };

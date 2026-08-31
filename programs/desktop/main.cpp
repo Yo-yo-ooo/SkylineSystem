@@ -199,7 +199,9 @@ int main(){
                 __asm__ __volatile__("pause" ::: "memory");
                 continue;
             }
-            comp.SetCursor(mx, my, true);
+            /* Fast overlay move only (SetCursor is NOT called here: it would
+               move the logical target without painting and starve the move).
+               CursorMoveTo erases the committed square and stamps the new one. */
             comp.CursorMoveTo(mx, my);
             last_move = now;
             prev_x = mx;

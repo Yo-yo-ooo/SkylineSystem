@@ -14,6 +14,15 @@
  */
 static uint32_t g_strip_ticket = 0;
 
+/* Freestanding 32-bit span equality (no libc memcmp declaration needed);
+   -O2 lowers a word loop like this to a fast vectorised compare. Used by the
+   dirty-rectangle compare-and-blit path to skip unchanged scanout spans. */
+static inline bool span_eq_u32(const uint32_t* a, const uint32_t* b, uint32_t words) {
+    for (uint32_t i = 0; i < words; ++i)
+        if (a[i] != b[i]) return false;
+    return true;
+}
+
 /* One global compositor — all members are trivial/POD, so BSS zero-init
    needs no dynamic constructor (matches -fno-threadsafe-statics). */
 static Compositor g_compositor;
@@ -76,13 +85,13 @@ bool Compositor::Init(FrameBuffer* screen) {
     strips_     = nullptr;
     layer_head_ = layer_tail_ = nullptr;
     list_lock_  = 0;
-    frame_seq_  = present_seq_ = 0;
-    started_cnt_ = done_compose_ = done_present_ = 0;
+    frame_seq_  = 0;
+    started_cnt_ = done_compose_ = 0;
     cur_x_ = cur_y_ = 0;
     cur_visible_ = 0;
-    save_x_ = save_y_ = 0;
-    save_valid_ = 0;
-    cursor_save_ = nullptr;
+    committed_x_ = committed_y_ = -1;
+    dx0_ = dy0_ = dx1_ = dy1_ = 0;
+    dirty_ = 0;
 
     /* Off-screen compose target, same layout as the scanout (pitch == PSL).
        All clear/stack work happens here so the visible front buffer is only
@@ -90,10 +99,6 @@ bool Compositor::Init(FrameBuffer* screen) {
     back_bytes_ = screen_.PixelsPerScanLine * screen_.Height * COMP_BPP;
     back_ = (uint32_t*)malloc((size_t)back_bytes_);
     if (!back_) return false;
-
-    /* save-under scratch for the independent cursor overlay (16x16 px) */
-    cursor_save_ = (uint32_t*)malloc(16u * 16u * COMP_BPP);
-    if (!cursor_save_) { free(back_); back_ = nullptr; return false; }
 
     return true;
 }
@@ -285,110 +290,189 @@ void Compositor::ComposeStripToBack(uint32_t id) {
 }
 
 /* ========================================================================== */
-/*  Phase 2: copy one finished strip from back buffer to visible scanout.     */
-/*  Source is a complete frame, so the front is overwritten with final pixels */
-/*  only — never a cleared/black intermediate state.                          */
+/*  SINGLE-POINT SCANOUT COMMIT - dirty-rect blit + cursor-last overlay       */
+/*  Scene work always lands in the invisible back_ first; the main thread is  */
+/*  the ONLY writer of the visible framebuffer. It blits scene rows from back_*/
+/*  while SKIPPING the (old/new) cursor squares, then paints the cursor last  */
+/*  from the authoritative back_ backdrop, so a scene present never blanks    */
+/*  the pointer (no flicker), and a pure move touches only two 16x16 boxes.   */
 /* ========================================================================== */
-void Compositor::PresentStrip(uint32_t id) {
-    const Strip&    s = strips_[id];
-    const uint64_t  pitch = (uint64_t)screen_.PixelsPerScanLine;
-    const uint8_t*  src = (const uint8_t*)back_;
-    uint8_t*        dst = (uint8_t*)screen_.BaseAddress;
+#define SKY_CURS 16
 
-    uint64_t offset = (uint64_t)s.y0 * pitch * COMP_BPP;
-    uint64_t bytes  = (uint64_t)(s.y1 - s.y0) * pitch * COMP_BPP;
-    memcpy(dst + offset, src + offset, bytes);
+/* Dirty-rectangle commit: push back_->fb over [x0,x1)x[y0,y1), leaving the  */
+/* up-to-two cursor squares (old ox,oy / new nx,ny) untouched, and writing a  */
+/* scene span ONLY where its pixels differ (compare-and-blit). Static frames */
+/* therefore perform zero scanout writes outside the cursor squares.         */
+void Compositor::blitSceneAvoidCursor(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
+                                      int32_t ox,int32_t oy,int32_t nx,int32_t ny) {
+    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
+    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
+    const int32_t W = (int32_t)screen_.Width, H = (int32_t)screen_.Height;
+    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
+    if (x1 > W) x1 = W; if (y1 > H) y1 = H;
+    if (x0 >= x1 || y0 >= y1) return;
+    const int32_t cyA[2] = { oy, ny }, cxA[2] = { ox, nx };
+    for (int32_t y = y0; y < y1; ++y) {
+        const uint32_t* s = back_ + (uint64_t)y * pitch;
+        uint32_t*       d = fb   + (uint64_t)y * pitch;
+        int32_t exL[2], exR[2]; int ne = 0;
+        for (int r = 0; r < 2; ++r) {
+            if (y >= cyA[r] && y < cyA[r] + SKY_CURS) {
+                exL[ne] = cxA[r]; exR[ne] = cxA[r] + SKY_CURS; ++ne;
+            }
+        }
+        for (int a = 1; a < ne; ++a)          /* sort <=2 spans by left edge */
+            if (exL[a] < exL[a-1]) {
+                int32_t t; t=exL[a];exL[a]=exL[a-1];exL[a-1]=t;
+                t=exR[a];exR[a]=exR[a-1];exR[a-1]=t;
+            }
+        int32_t cur = x0;
+        for (int e = 0; e < ne; ++e) {
+            int32_t a = exL[e], b = exR[e];
+            if (a < 0) a = 0; if (b > W) b = W;
+            /* dirty-rect compare-and-blit: write a span ONLY if the scene
+               actually changed. On a static frame every span compares equal
+               and the scanout is left byte-for-byte untouched, so there is no
+               full-screen rewrite window a scanline/snapshot could catch. */
+            if (a > cur && !span_eq_u32(d + cur, s + cur, (uint32_t)(a - cur)))
+                memcpy(d + cur, s + cur, (size_t)(a - cur) * COMP_BPP);
+            if (b > cur) cur = b;
+        }
+        if (cur < x1 && !span_eq_u32(d + cur, s + cur, (uint32_t)(x1 - cur)))
+            memcpy(d + cur, s + cur, (size_t)(x1 - cur) * COMP_BPP);
+    }
+}
+
+/* Copy the 16x16 scene at (x,y) from the authoritative back_ onto the fb. */
+void Compositor::paintSquareFromBack(int32_t x, int32_t y) {
+    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
+    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
+    const int32_t W = (int32_t)screen_.Width, H = (int32_t)screen_.Height;
+    for (int cy = 0; cy < SKY_CURS; ++cy) {
+        int32_t py = y + cy; if (py < 0 || py >= H) continue;
+        const uint32_t* s = back_ + (uint64_t)py * pitch;
+        uint32_t*       d = fb   + (uint64_t)py * pitch;
+        for (int cx = 0; cx < SKY_CURS; ++cx) {
+            int32_t px = x + cx; if (px < 0 || px >= W) continue;
+            d[px] = s[px];
+        }
+    }
+}
+
+/* Build the FINAL 16x16 square (backdrop from back_ + arrow merged) in a local
+   cell, then publish it to the fb in one pass. The cursor square therefore
+   never passes through a cursor-less state (no 'clear then redraw' window a
+   scanline or snapshot could catch -> no flicker). */
+void Compositor::blendCursorSquare(int32_t x, int32_t y) {
+    uint32_t cell[SKY_CURS * SKY_CURS];
+    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
+    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
+    const int32_t W = (int32_t)screen_.Width, H = (int32_t)screen_.Height;
+
+    /* 1) backdrop from the authoritative cursor-less scene in back_ */
+    for (int cy = 0; cy < SKY_CURS; ++cy) {
+        int32_t py = y + cy;
+        uint32_t* crow = cell + cy * SKY_CURS;
+        if (py < 0 || py >= H) { for (int cx=0;cx<SKY_CURS;++cx) crow[cx]=0; continue; }
+        const uint32_t* srow = back_ + (uint64_t)py * pitch;
+        for (int cx = 0; cx < SKY_CURS; ++cx) {
+            int32_t px = x + cx;
+            crow[cx] = (px >= 0 && px < W) ? srow[px] : 0u;
+        }
+    }
+    /* 2) merge the arrow glyph into the finished cell */
+    if (cur_visible_)
+        for (int cy = 0; cy < SKY_CURS; ++cy) {
+            const char* row = kCursorArrow[cy];
+            uint32_t* crow = cell + cy * SKY_CURS;
+            for (int cx = 0; cx < SKY_CURS; ++cx) {
+                char g = row[cx];
+                if (g == '*')      crow[cx] = 0xFF000000u;  /* black outline */
+                else if (g == 'O') crow[cx] = 0xFFFFFFFFu;  /* white fill    */
+            }
+        }
+    /* 3) publish the finished square; compare-and-blit each row so a static
+          cursor writes NOTHING to the scanout (fb stays byte-identical, hence
+          no transient a scanline/snapshot could ever catch -> no flicker). */
+    int32_t xs = (x < 0) ? 0 : x;
+    int32_t xe = x + SKY_CURS; if (xe > W) xe = W;
+    for (int cy = 0; cy < SKY_CURS; ++cy) {
+        int32_t py = y + cy; if (py < 0 || py >= H) continue;
+        if (xs >= xe) continue;
+        uint32_t*       d = fb + (uint64_t)py * pitch + xs;
+        const uint32_t* s = cell + cy * SKY_CURS + (xs - x);
+        size_t bytes = (size_t)(xe - xs) * COMP_BPP;
+        if (!span_eq_u32(d, s, (uint32_t)(xe - xs))) memcpy(d, s, bytes);
+    }
+}
+
+/* Cursor is the LAST scanout write of a frame. Draw the NEW finished square
+   FIRST, then restore the OLD square to the plain scene. At every instant at
+   least one arrow is present (two coexist only for nanoseconds), so the
+   pointer can never vanish -> no flicker. Tracks the on-screen square in
+   committed_ so an in-flight scene blit knows which arrow to preserve. */
+void Compositor::overlayCursorFinal(int32_t ox,int32_t oy,int32_t nx,int32_t ny) {
+    blendCursorSquare(nx, ny);
+    if ((ox != nx || oy != ny) && ox >= 0 && oy >= 0)
+        paintSquareFromBack(ox, oy);
+    cur_x_ = committed_x_ = nx;
+    cur_y_ = committed_y_ = ny;
+}
+
+/* Commit one scene rectangle, then finalize the cursor: compose the scene
+   FIRST and draw the pointer LAST, at its freshest position. */
+void Compositor::commitScene(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
+                             int32_t ox,int32_t oy,int32_t nx,int32_t ny) {
+    blitSceneAvoidCursor(x0,y0,x1,y1,ox,oy,nx,ny);
+    overlayCursorFinal(ox,oy,nx,ny);
 }
 
 void Compositor::ComposeSingleThreaded() {
     for (uint32_t i = 0; i < ncpus_; i++) ComposeStripToBack(i);
-    /* present the SCENE ONLY -- the cursor is never part of the back buffer */
-    memcpy(screen_.BaseAddress, back_, (size_t)back_bytes_);
-    /* then overlay the independent cursor layer directly on the scanout */
-    save_valid_ = 0;
-    cursorStamp(cur_x_, cur_y_);
+    /* scene finished off-screen; single commit preserves then redraws cursor */
+    commitScene(0, 0, (int32_t)screen_.Width, (int32_t)screen_.Height,
+                committed_x_, committed_y_, cur_x_, cur_y_);
+    dirty_ = 0;
 }
 
 void Compositor::SetCursor(int32_t x, int32_t y, bool visible) {
+    uint8_t v = visible ? 1u : 0u;
+    if (v != cur_visible_) { committed_x_ = committed_y_ = -1; } /* force repaint */
     cur_x_ = x;
     cur_y_ = y;
-    cur_visible_ = visible ? 1u : 0u;
+    cur_visible_ = v;
 }
 
-/* ---- independent save-under cursor overlay, straight on the scanout ----
- * Composition (wallpaper+windows) renders the cursor-less scene into back_,
- * while the pointer is a separate layer that only ever touches the visible
- * framebuffer. cursorStamp() saves the 16x16 backdrop it is about to cover,
- * then draws the arrow; cursorRestore() writes that backdrop back to erase
- * it. A pointer move is therefore a 16x16 erase+stamp = O(16^2), with no
- * full-screen recompose/present. Clips at every edge. */
-void Compositor::cursorRestore() {
-    if (!save_valid_ || !cursor_save_) return;
-    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
-    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
-    const int32_t W = (int32_t)screen_.Width;
-    const int32_t H = (int32_t)screen_.Height;
-    for (int cy = 0; cy < 16; ++cy) {
-        int32_t py = save_y_ + cy;
-        if (py < 0 || py >= H) continue;
-        uint32_t* d = fb + (uint64_t)py * pitch;
-        const uint32_t* s = cursor_save_ + cy * 16;
-        for (int cx = 0; cx < 16; ++cx) {
-            int32_t px = save_x_ + cx;
-            if (px < 0 || px >= W) continue;
-            d[px] = s[cx];
-        }
+/* ---- dirty-rectangle scene API ----------------------------------------- */
+void Compositor::Invalidate(int32_t x0,int32_t y0,int32_t x1,int32_t y1) {
+    if (x0 >= x1 || y0 >= y1) return;
+    if (!dirty_) { dx0_=x0; dy0_=y0; dx1_=x1; dy1_=y1; dirty_=1; }
+    else {
+        if (x0 < dx0_) dx0_ = x0; if (y0 < dy0_) dy0_ = y0;
+        if (x1 > dx1_) dx1_ = x1; if (y1 > dy1_) dy1_ = y1;
     }
-    save_valid_ = 0;
 }
 
-void Compositor::cursorStamp(int32_t x, int32_t y) {
-    if (!cur_visible_ || !screen_.BaseAddress || !cursor_save_) return;
-    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
-    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
-    const int32_t W = (int32_t)screen_.Width;
-    const int32_t H = (int32_t)screen_.Height;
-    cur_x_ = x; cur_y_ = y;
-
-    /* 1) save the backdrop under the new 16x16 square */
-    for (int cy = 0; cy < 16; ++cy) {
-        int32_t py = y + cy;
-        uint32_t* srow = cursor_save_ + cy * 16;
-        if (py < 0 || py >= H) continue;
-        const uint32_t* src = fb + (uint64_t)py * pitch;
-        for (int cx = 0; cx < 16; ++cx) {
-            int32_t px = x + cx;
-            srow[cx] = (px >= 0 && px < W) ? src[px] : 0u;
-        }
-    }
-
-    /* 2) stamp the arrow glyph over the saved region */
-    for (int cy = 0; cy < 16; ++cy) {
-        int32_t py = y + cy;
-        if (py < 0 || py >= H) continue;
-        const char* row = kCursorArrow[cy];
-        uint32_t* d = fb + (uint64_t)py * pitch;
-        for (int cx = 0; cx < 16; ++cx) {
-            int32_t px = x + cx;
-            if (px < 0 || px >= W) continue;
-            char g = row[cx];
-            if (g == '*')      d[px] = 0xFF000000u;   /* black outline */
-            else if (g == 'O') d[px] = 0xFFFFFFFFu;   /* white fill    */
-            /* '.' transparent: the saved backdrop already sits there */
-        }
-    }
-    save_x_ = x; save_y_ = y; save_valid_ = 1;
+/* Push only the accumulated scene dirty rectangle to the scanout, keeping
+   the cursor on top; clears the dirty union afterwards. */
+void Compositor::Present() {
+    if (!back_ || !dirty_) return;
+    commitScene(dx0_,dy0_,dx1_,dy1_, committed_x_,committed_y_,cur_x_,cur_y_);
+    dirty_ = 0;
 }
 
-/* Fast pointer path used by the main loop: erase the old square from its
-   saved backdrop and stamp the new one, entirely on the scanout. */
+/* Fast pointer path: the scene is untouched - only the old and new 16x16
+   cursor dirty squares are refreshed straight from back_, so tracking costs
+   O(16^2) with no recompose/full-screen present. */
 void Compositor::CursorMoveTo(int32_t x, int32_t y) {
-    if (x == cur_x_ && y == cur_y_ && save_valid_) return;
-    cursorRestore();
-    cursorStamp(x, y);
+    if (x == committed_x_ && y == committed_y_) return;
+    overlayCursorFinal(committed_x_, committed_y_, x, y);
 }
 
-/* ---- worker: compose to back, barrier, then present ---------------------- */
+/* ---- worker: render its strip into the OFF-SCREEN back_ only ------------
+ * Workers never touch the visible framebuffer; the main thread is the sole
+ * scanout writer (single commit point), which keeps the cursor on top and
+ * removes present/cursor flicker. */
 void Compositor::WorkerEntry(uint32_t id) {
     __atomic_add_fetch(&started_cnt_, 1, __ATOMIC_RELEASE);
 
@@ -404,16 +488,8 @@ void Compositor::WorkerEntry(uint32_t id) {
         } while (true);
         last_seq = seq;
 
-        ComposeStripToBack(id);                                   /* phase 1 */
+        ComposeStripToBack(id);                 /* scene -> back_ only */
         __atomic_add_fetch(&done_compose_, 1, __ATOMIC_RELEASE);
-
-        /* hold present until the main thread confirms the WHOLE back frame */
-        uint32_t pwait = 0;
-        while (__atomic_load_n(&present_seq_, __ATOMIC_ACQUIRE) < seq)
-            comp_backoff(pwait);
-
-        PresentStrip(id);                                         /* phase 2 */
-        __atomic_add_fetch(&done_present_, 1, __ATOMIC_RELEASE);
     }
 }
 
@@ -453,13 +529,11 @@ void Compositor::StartWorkers() {
         if (strips_[i].y1 > H) strips_[i].y1 = H;
     }
 
-    /* reset barrier and launch one pinned worker per CPU (hint == cpu id) */
+    /* reset render barrier; workers render to off-screen back_ only */
     g_strip_ticket = 0;
     __atomic_store_n(&started_cnt_,  0, __ATOMIC_SEQ_CST);
     __atomic_store_n(&done_compose_, 0, __ATOMIC_SEQ_CST);
-    __atomic_store_n(&done_present_, 0, __ATOMIC_SEQ_CST);
     __atomic_store_n(&frame_seq_,    0, __ATOMIC_SEQ_CST);
-    __atomic_store_n(&present_seq_,  0, __ATOMIC_SEQ_CST);
     __atomic_store_n(&shutdown_,     0, __ATOMIC_SEQ_CST);
 
     /* Strip 0 is rendered by the main thread itself; launch workers ONLY
@@ -486,38 +560,26 @@ void Compositor::Compose() {
        frame gaps jittered by whole scheduling quanta (stuttery pointer). */
     const uint32_t peers = ncpus_ - 1;
 
-    /* phase 1: publish frame; peers render strips 1..N-1, main does strip 0 */
+    /* phase 1 (off-screen): peers render strips 1..N-1 to back_, main strip 0 */
     __atomic_store_n(&done_compose_, 0, __ATOMIC_RELEASE);
-    __atomic_store_n(&done_present_, 0, __ATOMIC_RELEASE);
     __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
     ComposeStripToBack(0);
-    /* Peers run truly in parallel and finish in tens of us: spin (PAUSE)
-       instead of paying a full scheduler round-trip; comp_backoff only
-       yields after a bounded budget if a peer was ever preempted. */
     uint32_t cw = 0;
     while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < peers)
         comp_backoff(cw);
 
-    /* Release peers to present the cursor-less scene. */
-    __atomic_store_n(&present_seq_, frame_seq_, __ATOMIC_RELEASE);
-
-    /* phase 2: main presents its own strip 0, then wait only for the peers */
-    PresentStrip(0);
-    uint32_t pw = 0;
-    while (__atomic_load_n(&done_present_, __ATOMIC_ACQUIRE) < peers)
-        comp_backoff(pw);
-
-    /* Every scene strip is now on the scanout; overlay the independent
-       cursor layer LAST, directly on the framebuffer, so no present strip
-       can overwrite it. The wholesale present invalidated the save-under. */
-    save_valid_ = 0;
-    cursorStamp(cur_x_, cur_y_);
+    /* phase 2 (single commit point, main thread only): push the whole scene
+       to the scanout while preserving the cursor square, then draw the
+       cursor LAST at its freshest position. Workers never touch the fb, so
+       the pointer is never erased by an in-flight present -> no flicker. */
+    commitScene(0, 0, (int32_t)screen_.Width, (int32_t)screen_.Height,
+                committed_x_, committed_y_, cur_x_, cur_y_);
+    dirty_ = 0;
 }
 
 void Compositor::Shutdown() {
     __atomic_store_n(&shutdown_, 1, __ATOMIC_RELEASE);
     __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);   /* wake waiters */
-    if (strips_)      { free(strips_);      strips_ = nullptr; }
-    if (cursor_save_) { free(cursor_save_); cursor_save_ = nullptr; }
-    if (back_)        { free(back_);       back_ = nullptr; }
+    if (strips_) { free(strips_); strips_ = nullptr; }
+    if (back_)   { free(back_);   back_ = nullptr; }
 }
