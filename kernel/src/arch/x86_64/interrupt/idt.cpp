@@ -146,6 +146,11 @@ extern "C" void idt_irq_handler(context_t *ctx) {
     }
     interrupt_handler_t handler = cpu->handlers[ctx->int_no];
     if (!handler) {
+        /* SCHED_VEC is a self-rearming timer/preemption interrupt that can be
+           latched in the brief window before a CPU installs its handler during
+           SMP bring-up. Dropping one is harmless (the next tick re-enters the
+           scheduler); acknowledge and continue instead of panicking. */
+        if (ctx->int_no == SCHED_VEC) { LAPIC::EOI(); return; }
         kerror("(PANIC)Uncaught IRQ #%d.\n", ctx->int_no);
         if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
         return;

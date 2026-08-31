@@ -295,7 +295,8 @@ void sched_idle() {
 static inline thread_t* safe_get_current_thread(cpu_t *cpu, bool &invalid) {
     thread_t *t = cpu->current_thread;
     if (unlikely((uintptr_t)t < 0xFFFF800000000000)) {
-        kwarn("Invalid current_thread pointer: %p, resetting to idle\n", t);
+        /* Corrupted/early current: recover to idle silently. A serial print on
+           this per-tick hot path is itself a major source of mouse stutter. */
         invalid = true;
         return cpu->idle_thread;
     }
@@ -626,6 +627,22 @@ namespace Schedule {
             cpu_t *cpu = this_cpu();
             if (unlikely(!cpu)) return;
             uint64_t rflags = irq_save();
+
+            /* Early SMP bring-up window: an AP arms its first LAPIC tick and
+               sti inside smp_cpu_init() before Schedule::Install() creates its
+               idle_thread and binds current_thread. There is nothing to schedule
+               yet, so rearm the timer and return. Falling through to the full
+               EEVDF path here dereferences a null idle thread and emits a slow
+               serial warning on every tick, which floods the log and stalls the
+               mouse interrupt / compositor. Latch current to idle as soon as the
+               idle thread exists. */
+            if (unlikely(!cpu->idle_thread || !cpu->current_thread)) {
+                if (cpu->idle_thread) cpu->current_thread = cpu->idle_thread;
+                LAPIC::Oneshot(SCHED_VEC, cpu->base_quantum * cpu->lapic_ticks);
+                LAPIC::EOI();
+                irq_restore(rflags);
+                return;
+            }
 
             if (unlikely(__atomic_load_n(&need_resched_flags[cpu->id], __ATOMIC_ACQUIRE))) {
                 __atomic_store_n(&need_resched_flags[cpu->id], false, __ATOMIC_RELEASE);
