@@ -80,6 +80,9 @@ bool Compositor::Init(FrameBuffer* screen) {
     started_cnt_ = done_compose_ = done_present_ = 0;
     cur_x_ = cur_y_ = 0;
     cur_visible_ = 0;
+    save_x_ = save_y_ = 0;
+    save_valid_ = 0;
+    cursor_save_ = nullptr;
 
     /* Off-screen compose target, same layout as the scanout (pitch == PSL).
        All clear/stack work happens here so the visible front buffer is only
@@ -87,6 +90,10 @@ bool Compositor::Init(FrameBuffer* screen) {
     back_bytes_ = screen_.PixelsPerScanLine * screen_.Height * COMP_BPP;
     back_ = (uint32_t*)malloc((size_t)back_bytes_);
     if (!back_) return false;
+
+    /* save-under scratch for the independent cursor overlay (16x16 px) */
+    cursor_save_ = (uint32_t*)malloc(16u * 16u * COMP_BPP);
+    if (!cursor_save_) { free(back_); back_ = nullptr; return false; }
 
     return true;
 }
@@ -295,40 +302,90 @@ void Compositor::PresentStrip(uint32_t id) {
 
 void Compositor::ComposeSingleThreaded() {
     for (uint32_t i = 0; i < ncpus_; i++) ComposeStripToBack(i);
-    PaintCursorToBack();                              /* pointer baked in    */
+    /* present the SCENE ONLY -- the cursor is never part of the back buffer */
     memcpy(screen_.BaseAddress, back_, (size_t)back_bytes_);
+    /* then overlay the independent cursor layer directly on the scanout */
+    save_valid_ = 0;
+    cursorStamp(cur_x_, cur_y_);
 }
 
-/* Bake the software arrow into the finished off-screen frame. Called after
-   every strip has composed to back_ and BEFORE the present release, so the
-   scanout only ever receives a frame that already contains the pointer. */
 void Compositor::SetCursor(int32_t x, int32_t y, bool visible) {
     cur_x_ = x;
     cur_y_ = y;
     cur_visible_ = visible ? 1u : 0u;
 }
 
-void Compositor::PaintCursorToBack() {
-    if (!cur_visible_ || !back_) return;
-
-    const uint32_t pitch = (uint32_t)screen_.PixelsPerScanLine;
-    const int32_t  sw    = (int32_t)screen_.Width;
-    const int32_t  sh    = (int32_t)screen_.Height;
-
-    for (int cy = 0; cy < 16; cy++) {
-        int32_t py = cur_y_ + cy;
-        if (py < 0 || py >= sh) continue;
-        const char* row = kCursorArrow[cy];
-        uint32_t* dline = back_ + (uint64_t)py * pitch;
-        for (int cx = 0; cx < 16; cx++) {
-            int32_t px = cur_x_ + cx;
-            if (px < 0 || px >= sw) continue;
-            char g = row[cx];
-            if (g == '*')      dline[px] = 0xFF000000u;   /* black outline */
-            else if (g == 'O') dline[px] = 0xFFFFFFFFu;   /* white fill    */
-            /* '.' stays transparent: keep composited pixels underneath */
+/* ---- independent save-under cursor overlay, straight on the scanout ----
+ * Composition (wallpaper+windows) renders the cursor-less scene into back_,
+ * while the pointer is a separate layer that only ever touches the visible
+ * framebuffer. cursorStamp() saves the 16x16 backdrop it is about to cover,
+ * then draws the arrow; cursorRestore() writes that backdrop back to erase
+ * it. A pointer move is therefore a 16x16 erase+stamp = O(16^2), with no
+ * full-screen recompose/present. Clips at every edge. */
+void Compositor::cursorRestore() {
+    if (!save_valid_ || !cursor_save_) return;
+    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
+    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
+    const int32_t W = (int32_t)screen_.Width;
+    const int32_t H = (int32_t)screen_.Height;
+    for (int cy = 0; cy < 16; ++cy) {
+        int32_t py = save_y_ + cy;
+        if (py < 0 || py >= H) continue;
+        uint32_t* d = fb + (uint64_t)py * pitch;
+        const uint32_t* s = cursor_save_ + cy * 16;
+        for (int cx = 0; cx < 16; ++cx) {
+            int32_t px = save_x_ + cx;
+            if (px < 0 || px >= W) continue;
+            d[px] = s[cx];
         }
     }
+    save_valid_ = 0;
+}
+
+void Compositor::cursorStamp(int32_t x, int32_t y) {
+    if (!cur_visible_ || !screen_.BaseAddress || !cursor_save_) return;
+    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
+    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
+    const int32_t W = (int32_t)screen_.Width;
+    const int32_t H = (int32_t)screen_.Height;
+    cur_x_ = x; cur_y_ = y;
+
+    /* 1) save the backdrop under the new 16x16 square */
+    for (int cy = 0; cy < 16; ++cy) {
+        int32_t py = y + cy;
+        uint32_t* srow = cursor_save_ + cy * 16;
+        if (py < 0 || py >= H) continue;
+        const uint32_t* src = fb + (uint64_t)py * pitch;
+        for (int cx = 0; cx < 16; ++cx) {
+            int32_t px = x + cx;
+            srow[cx] = (px >= 0 && px < W) ? src[px] : 0u;
+        }
+    }
+
+    /* 2) stamp the arrow glyph over the saved region */
+    for (int cy = 0; cy < 16; ++cy) {
+        int32_t py = y + cy;
+        if (py < 0 || py >= H) continue;
+        const char* row = kCursorArrow[cy];
+        uint32_t* d = fb + (uint64_t)py * pitch;
+        for (int cx = 0; cx < 16; ++cx) {
+            int32_t px = x + cx;
+            if (px < 0 || px >= W) continue;
+            char g = row[cx];
+            if (g == '*')      d[px] = 0xFF000000u;   /* black outline */
+            else if (g == 'O') d[px] = 0xFFFFFFFFu;   /* white fill    */
+            /* '.' transparent: the saved backdrop already sits there */
+        }
+    }
+    save_x_ = x; save_y_ = y; save_valid_ = 1;
+}
+
+/* Fast pointer path used by the main loop: erase the old square from its
+   saved backdrop and stamp the new one, entirely on the scanout. */
+void Compositor::CursorMoveTo(int32_t x, int32_t y) {
+    if (x == cur_x_ && y == cur_y_ && save_valid_) return;
+    cursorRestore();
+    cursorStamp(x, y);
 }
 
 /* ---- worker: compose to back, barrier, then present ---------------------- */
@@ -362,7 +419,8 @@ void Compositor::WorkerEntry(uint32_t id) {
 
 /* C trampoline: kernel passes rdi = 0, so obtain the strip id from a ticket */
 extern "C" void CompWorkerTrampoline() {
-    uint32_t id = __atomic_fetch_add(&g_strip_ticket, 1, __ATOMIC_SEQ_CST);
+    /* id 0 is reserved for the main thread (help-the-work); workers own 1..N-1 */
+    uint32_t id = 1u + __atomic_fetch_add(&g_strip_ticket, 1, __ATOMIC_SEQ_CST);
     Compositor::Get().WorkerEntry(id);
 }
 
@@ -404,50 +462,62 @@ void Compositor::StartWorkers() {
     __atomic_store_n(&present_seq_,  0, __ATOMIC_SEQ_CST);
     __atomic_store_n(&shutdown_,     0, __ATOMIC_SEQ_CST);
 
-    for (uint32_t i = 0; i < n; i++) {
-        sys_thread_launch((uint64_t)CompWorkerTrampoline, i);
+    /* Strip 0 is rendered by the main thread itself; launch workers ONLY
+       for the other cores so each frame barrier never has to hand this core
+       to a same-core worker. */
+    uint32_t peers = (n > 1) ? n - 1 : 0;
+    for (uint32_t i = 0; i < peers; i++) {
+        sys_thread_launch((uint64_t)CompWorkerTrampoline, i + 1);
     }
-
-    /* wait until every worker has entered its render loop */
-    /* main waits for peers INCLUDING the worker pinned to this same core, so
-       yield immediately here -- a PAUSE spin would starve that same-core peer. */
-    while (__atomic_load_n(&started_cnt_, __ATOMIC_ACQUIRE) < n) {
-        sys_yield();
-    }
+    uint32_t sw = 0;
+    while (__atomic_load_n(&started_cnt_, __ATOMIC_ACQUIRE) < peers)
+        comp_backoff(sw);
     launched_ = 1;
 }
 
 void Compositor::Compose() {
-    if (!launched_ || ncpus_ == 0 || !back_) {  /* degenerate fallback */
-        if (ncpus_ == 0) ncpus_ = 1;
-        if (back_) ComposeSingleThreaded();
-        return;
-    }
+    if (!back_) { ComposeSingleThreaded(); return; }
+    if (!launched_ || ncpus_ <= 1) { ComposeSingleThreaded(); return; }
 
-    /* phase 1: publish frame; workers render their strips into back_ */
+    /* Peers are workers pinned to the OTHER cores; the main thread renders
+       strip 0 itself (help-the-work). The old design launched a worker on
+       EVERY core including this one and sys_yield()'d at each barrier: on a
+       shared core that is main<->worker ping-pong through the scheduler, and
+       frame gaps jittered by whole scheduling quanta (stuttery pointer). */
+    const uint32_t peers = ncpus_ - 1;
+
+    /* phase 1: publish frame; peers render strips 1..N-1, main does strip 0 */
     __atomic_store_n(&done_compose_, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&done_present_, 0, __ATOMIC_RELEASE);
     __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
-    while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < ncpus_)
-        sys_yield();
+    ComposeStripToBack(0);
+    /* Peers run truly in parallel and finish in tens of us: spin (PAUSE)
+       instead of paying a full scheduler round-trip; comp_backoff only
+       yields after a bounded budget if a peer was ever preempted. */
+    uint32_t cw = 0;
+    while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < peers)
+        comp_backoff(cw);
 
-    /* Whole back frame is complete: stamp the pointer into it, then release
-       every worker to present. The scanout thus never shows a cursor-less
-       intermediate frame (no pointer flicker). */
-    PaintCursorToBack();
+    /* Release peers to present the cursor-less scene. */
+    __atomic_store_n(&present_seq_, frame_seq_, __ATOMIC_RELEASE);
 
-    /* whole back frame is complete -> release every worker to present */
-    __atomic_store_n(&present_seq_, __atomic_load_n(&frame_seq_, __ATOMIC_RELAXED),
-                     __ATOMIC_RELEASE);
+    /* phase 2: main presents its own strip 0, then wait only for the peers */
+    PresentStrip(0);
+    uint32_t pw = 0;
+    while (__atomic_load_n(&done_present_, __ATOMIC_ACQUIRE) < peers)
+        comp_backoff(pw);
 
-    /* phase 2: wait until every strip is copied back_ -> scanout */
-    while (__atomic_load_n(&done_present_, __ATOMIC_ACQUIRE) < ncpus_)
-        sys_yield();
+    /* Every scene strip is now on the scanout; overlay the independent
+       cursor layer LAST, directly on the framebuffer, so no present strip
+       can overwrite it. The wholesale present invalidated the save-under. */
+    save_valid_ = 0;
+    cursorStamp(cur_x_, cur_y_);
 }
 
 void Compositor::Shutdown() {
     __atomic_store_n(&shutdown_, 1, __ATOMIC_RELEASE);
     __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);   /* wake waiters */
-    if (strips_) { free(strips_); strips_ = nullptr; }
-    if (back_)   { free(back_);   back_   = nullptr; }
+    if (strips_)      { free(strips_);      strips_ = nullptr; }
+    if (cursor_save_) { free(cursor_save_); cursor_save_ = nullptr; }
+    if (back_)        { free(back_);       back_ = nullptr; }
 }

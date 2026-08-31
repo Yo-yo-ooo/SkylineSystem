@@ -117,11 +117,16 @@ public:
        are not running or the back buffer could not be allocated. */
     void            Compose();
 
-    /* Software cursor: instead of painting the pointer onto the scanout
-       AFTER present (which briefly exposes a cursor-less frame and makes the
-       arrow flicker), the pointer is baked into the off-screen back buffer
-       and presented together with the whole frame. Set before Compose(). */
+    /* The software cursor is an INDEPENDENT LAYER written directly onto the
+       scanout; it is never baked into the compose back buffer. SetCursor
+       updates its target and Compose() re-stamps it after presenting. */
     void            SetCursor(int32_t x, int32_t y, bool visible);
+
+    /* Fast pointer path: restore the saved 16x16 backdrop under the old
+       square and stamp the new one straight on the framebuffer. Cost is
+       O(16^2) with no back-buffer recompose, worker wakeup or full-screen
+       present, so pointer tracking stays fluid independent of scene cost. */
+    void            CursorMoveTo(int32_t x, int32_t y);
 
     void            Shutdown();
 
@@ -166,13 +171,18 @@ private:
     void            ComposeStripToBack(uint32_t id); /* clear+stack -> back_ */
     void            PresentStrip(uint32_t id);       /* back_ -> scanout      */
     void            ComposeSingleThreaded();
-    void            PaintCursorToBack();            /* bake pointer into back_ */
+    /* independent save-under cursor overlay, drawn straight on the scanout */
+    void            cursorRestore();                    /* restore backdrop  */
+    void            cursorStamp(int32_t x, int32_t y);  /* save-under+arrow  */
     void            InsertLayerOrdered(CompLayer* layer);
     void            LockList();
     void            UnlockList();
 
-    /* software cursor state (baked into back_ before every present) */
+    /* independent cursor overlay state (drawn directly on the scanout) */
     int32_t         cur_x_;
     int32_t         cur_y_;
     uint8_t         cur_visible_;
+    uint32_t*       cursor_save_;   /* 16x16 backdrop saved under pointer   */
+    int32_t         save_x_, save_y_;
+    uint8_t         save_valid_;    /* cursor_save_ holds a real backdrop   */
 };

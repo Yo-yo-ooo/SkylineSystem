@@ -147,12 +147,16 @@ int main(){
 
     MouseInit();
 
-    /* Frame pacing: cap active redraws near 60 FPS and merge the burst of
-       PS/2 packets a physical move produces into one frame; when the pointer
-       is still, refresh at a low rate so console content still updates. */
+    /* Two independent layers:
+       - SCENE (wallpaper + windows): composited off-screen and presented at
+         a modest rate -- it changes slowly.
+       - POINTER: its own layer written straight to the scanout. A move only
+         restores the saved 16x16 backdrop and re-stamps the arrow
+         (CursorMoveTo): O(16^2), workers stay asleep, no full-screen copy. */
     const uint64_t tsc_per_ms = probe_tsc_per_ms();
-    const uint64_t move_gap   = 16u  * tsc_per_ms;   /* ~60 FPS while moving */
-    const uint64_t idle_gap   = 50u  * tsc_per_ms;   /* ~20 FPS when still   */
+    const uint64_t move_gap   = 16u  * tsc_per_ms;   /* pointer overlay ~60Hz */
+    const uint64_t scene_gap  = 33u  * tsc_per_ms;   /* recompose scene ~30Hz */
+    const uint64_t idle_gap   = 50u  * tsc_per_ms;   /* scene refresh, still  */
 
     int32_t prev_x = -100;
     int32_t prev_y = -100;
@@ -164,7 +168,8 @@ int main(){
 
     uint32_t seq1, seq2;
     int32_t mx, my;
-    uint64_t last_frame = rdtsc64();
+    uint64_t last_move  = rdtsc64();
+    uint64_t last_scene = rdtsc64();
 
     comp.SetCursor(0, 0, true);
 
@@ -186,21 +191,38 @@ int main(){
 
         uint64_t now = rdtsc64();
         bool moved = (mx != prev_x || my != prev_y);
-        if (now - last_frame < (moved ? move_gap : idle_gap)) {
-            /* too soon for another frame: yield instead of busy-spinning or
-               hammering a full-screen compose for every single packet */
-            sys_yield();
-            continue;
+
+        if (moved) {
+            /* Pointer overlay fast path: spin-pace at ~60Hz, then erase and
+               re-stamp only the 16x16 square directly on the scanout. */
+            if (now - last_move < move_gap) {
+                __asm__ __volatile__("pause" ::: "memory");
+                continue;
+            }
+            comp.SetCursor(mx, my, true);
+            comp.CursorMoveTo(mx, my);
+            last_move = now;
+            prev_x = mx;
+            prev_y = my;
+
+            /* Recompose the underlying scene at ~30Hz so console/window
+               output still advances while the pointer is moving; Compose()
+               re-stamps the cursor at its current position afterwards. */
+            if (now - last_scene >= scene_gap) {
+                comp.Compose();
+                last_scene = now;
+            }
+        } else {
+            /* Pointer still: refresh the scene (with its cursor overlay) at
+               a low rate and yield between tries to spare the core. */
+            if (now - last_scene < idle_gap) { sys_yield(); continue; }
+            comp.SetCursor(mx, my, true);
+            comp.Compose();
+            last_scene = now;
+            last_move  = now;
+            prev_x = mx;
+            prev_y = my;
         }
-
-        /* The pointer is baked into the off-screen frame by the compositor
-           and presented with it, so there is never a cursor-less frame. */
-        comp.SetCursor(mx, my, true);
-        comp.Compose();
-
-        last_frame = now;
-        prev_x = mx;
-        prev_y = my;
     }
     syscall(9, 0, 0, 0, 0, 0, 0);
     return 0;
