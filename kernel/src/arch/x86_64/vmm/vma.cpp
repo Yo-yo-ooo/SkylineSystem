@@ -8,6 +8,8 @@
 #include <klib/klib.h>
 
 extern volatile bool IsPM5LVL;
+extern uint64_t rdrand64_retry(int retries);   /* global HW RNG, defined in cpu/safe.cpp */
+extern int has_rdrand(void);
 
 // ─── 分支提示:只标「结构性不对称」的分支 ───
 // 判据:空指针守卫、调用模式恒定(如 hint==0)、罕见事件。
@@ -23,6 +25,22 @@ namespace VMM{
         // 区域终点:三处重复表达式收敛(下溢钳制只需写一次)
         static inline uint64_t region_end(const vma_region_t *r) {
             return r->start + r->page_count * PAGE_SIZE;
+        }
+
+        /* ASLR entropy: prefer hardware RDRAND, fall back to a TSC-seeded
+           splitmix64 stream. User VMA allocation is a rare path. */
+        static inline uint64_t aslr_random() {
+            uint64_t v = 0;
+            if(has_rdrand())
+                v = rdrand64_retry(4);
+            if (v != 0) return v;
+            uint32_t lo, hi;
+            __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+            static uint64_t sv = 0x9E3779B97F4A7C15ULL;
+            uint64_t z = (sv += 0x9E3779B97F4A7C15ULL) ^ (((uint64_t)hi << 32) | lo);
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+            return z ^ (z >> 31);
         }
 
         static int vma_rb_cmp(const rb_node_t *a, const rb_node_t *b) {
@@ -231,6 +249,13 @@ namespace VMM{
             if (vma_unlikely(page_count == 0)) return 0;
 
             uint64_t need = page_count * PAGE_SIZE;
+            const bool is_user = (flags & MM_USER) != 0;
+            /* Canonical top of a 4-level user address space. A user pagemap also
+               carries shared high-half VMAs, whose addresses look like a gigantic
+               free gap to next-fit; every user gap is capped here so a large
+               allocation (e.g. the framebuffer) can never cross into PML4[256+],
+               which is the supervisor-shared half. */
+            const uint64_t USER_CEIL = 0x0000800000000000ULL;
             if (vma_unlikely(need / PAGE_SIZE != page_count)) return 0;  /*  乘法回绕 */
 
             const uint64_t lo = pagemap->vma_head->start;
@@ -266,6 +291,7 @@ namespace VMM{
             // 2. Next-Fit 环形扫描
             vma_region_t *best_after = nullptr;
             uint64_t      best_addr  = 0;
+            uint64_t      best_gap_hi = 0;  /* upper bound of the CHOSEN gap (rb order) */
             bool          found      = false;
 
             rb_node_t *start_node = (pagemap->vma_cursor && pagemap->vma_cursor != pagemap->vma_head)
@@ -274,6 +300,7 @@ namespace VMM{
 
             if (vma_unlikely(!start_node)) {
                 best_addr = lo;                       // 空树:前面守卫已保证 [lo,hi) 装得下
+                best_gap_hi = is_user ? USER_CEIL : hi;
                 found = true;
             } else {
                 rb_node_t *cur_node = start_node;
@@ -296,12 +323,14 @@ namespace VMM{
                     uint64_t gap_hi = next_node
                         ? container_of(next_node, vma_region_t, rb_node)->start
                         : hi;
+                    if (is_user && gap_hi > USER_CEIL) gap_hi = USER_CEIL;
 
                     /* 顺序分配(栈/fx/TLS 逐段向上顶)是主导负载:
                        游标处间隙通常一步命中 */
                     if (vma_likely(gap_hi > gap_lo && gap_hi - gap_lo >= need)) {
                         best_after = cur_r;
                         best_addr  = gap_lo;
+                        best_gap_hi = gap_hi;
                         found = true;
                         break;
                     }
@@ -316,6 +345,7 @@ namespace VMM{
                             if (first_r->start > lo && first_r->start - lo >= need) {  /*  钳制 */
                                 best_after = nullptr;
                                 best_addr  = lo;
+                                best_gap_hi = first_r->start;
                                 found = true;
                                 break;
                             }
@@ -325,6 +355,25 @@ namespace VMM{
             }
 
             if (vma_unlikely(!found)) return 0;
+
+            /* ASLR: slide a user region to a random page-aligned offset INSIDE
+               the exact gap next-fit selected. The slide ceiling is an
+               INDEPENDENT canonical user bound (4-level paging tops out at
+               0x0000800000000000, matching USER_ADDR_LIMIT in exec.cpp); it does
+               NOT trust the next-fit 'hi', which collapses to ~0 when the VMA
+               lower bound is misclassified by address half. best_gap_hi (rb
+               order) only narrows the window. When no safe room exists the
+               deterministic next-fit address best_addr is kept. */
+            if (is_user) {
+                uint64_t slide_hi = best_gap_hi;
+                if (slide_hi == 0 || slide_hi > USER_CEIL)
+                    slide_hi = USER_CEIL;
+                if (slide_hi > best_addr && slide_hi - best_addr > need) {
+                    uint64_t slack_pages = (slide_hi - best_addr - need) / PAGE_SIZE;
+                    if (slack_pages > 0)
+                        best_addr += (aslr_random() % slack_pages) * PAGE_SIZE;
+                }
+            }
 
             vma_region_t *after = best_after ? best_after : pagemap->vma_head;
             vma_region_t *r = InsertRegion(after, best_addr, page_count, flags);

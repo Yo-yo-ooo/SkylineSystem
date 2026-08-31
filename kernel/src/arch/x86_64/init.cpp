@@ -86,6 +86,13 @@ void __init x86_64_init(void){
     bsp_cpu->file_cache = (file_cache_cpu_t*)kmalloc(sizeof(file_cache_cpu_t));
     file_cache_cpu_init(bsp_cpu->file_cache, bsp_cpu->id,file_cache_writeback_callback);
     InitFunc("SMP",smp_init());
+    /* Route the legacy PIT (IRQ0/GSI0) to vector 32 on the BSP and unmask it.
+       The 8259 PIC is fully masked above, so without this IOAPIC redirection no
+       timer IRQ ever arrives: TicksSinceBoot stays at 0 and TimeSinceBootMS() is
+       frozen. That stalls EEVDF vruntime accounting, Rate-aware quantum feedback
+       and every timeout, which produced the ~14s worker-startup stall and the
+       runtime compositor/mouse freeze. */
+    IOAPIC::RemapIRQ(bsp_cpu->lapic_id, 0, 32, false);
     InitFunc("RTC",RTC::InitRTC());
     InitFunc("SIMD Core 0",simd_cpu_init(this_cpu()));
     InitFunc("Intel SMEP & SMAP",enable_smep_smap());

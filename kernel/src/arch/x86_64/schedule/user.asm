@@ -24,7 +24,8 @@
 [extern syscall_handler]
 
 syscall_entry:
-    cli                               ; syscall不会自动关中断
+    cli
+    clac                              ; force AC=0: userspace cannot pre-set it to bypass SMAP                               ; syscall不会自动关中断
     swapgs                            ; 切换为内核 GS
 
     mov [gs:16], rsp                  ; 保存用户栈到 cpu_t.user_scratch

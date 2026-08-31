@@ -22,8 +22,42 @@ static inline void cpu_relax() {
     __asm__ __volatile__("pause" ::: "memory");
 }
 
+/* Adaptive wait: spin with PAUSE for a bounded budget first (a peer CPU
+   usually makes progress within a few hundred spins, at zero scheduling
+   cost); only drop into sys_yield() once the budget is spent. Pure
+   sys_yield() polling is pathological here: when this CPU's runqueue holds
+   only the waiter, every yield takes a full scheduling interrupt only to
+   re-pick the same thread, drowning the whole system in context switches. */
+#define COMP_SPIN_BUDGET 2048u
+static inline void comp_backoff(uint32_t &spin) {
+    if (spin < COMP_SPIN_BUDGET) { cpu_relax(); ++spin; }
+    else { sys_yield(); spin = 0; }
+}
+
+
 static inline int64_t max_i64(int64_t a, int64_t b) { return a > b ? a : b; }
 static inline int64_t min_i64(int64_t a, int64_t b) { return a < b ? a : b; }
+
+/* Classic 16x16 arrow pointer. '*' = black outline, 'O' = white fill,
+   '.' = transparent (keeps whatever was composited underneath). */
+static const char* const kCursorArrow[16] = {
+    "*...............",
+    "**..............",
+    "*O*.............",
+    "*OO*............",
+    "*OOO*...........",
+    "*OOOO*..........",
+    "*OOOOO*.........",
+    "*OOOOOO*........",
+    "*OOOOOOO*.......",
+    "*OOOO*****......",
+    "*OO*O*..........",
+    "*O*.*O*.........",
+    "**..*O*.........",
+    "*....*O*........",
+    ".....*O*........",
+    "......*........."
+};
 
 /* ========================================================================== */
 /*  Compositor                                                                */
@@ -44,6 +78,8 @@ bool Compositor::Init(FrameBuffer* screen) {
     list_lock_  = 0;
     frame_seq_  = present_seq_ = 0;
     started_cnt_ = done_compose_ = done_present_ = 0;
+    cur_x_ = cur_y_ = 0;
+    cur_visible_ = 0;
 
     /* Off-screen compose target, same layout as the scanout (pitch == PSL).
        All clear/stack work happens here so the visible front buffer is only
@@ -259,7 +295,40 @@ void Compositor::PresentStrip(uint32_t id) {
 
 void Compositor::ComposeSingleThreaded() {
     for (uint32_t i = 0; i < ncpus_; i++) ComposeStripToBack(i);
+    PaintCursorToBack();                              /* pointer baked in    */
     memcpy(screen_.BaseAddress, back_, (size_t)back_bytes_);
+}
+
+/* Bake the software arrow into the finished off-screen frame. Called after
+   every strip has composed to back_ and BEFORE the present release, so the
+   scanout only ever receives a frame that already contains the pointer. */
+void Compositor::SetCursor(int32_t x, int32_t y, bool visible) {
+    cur_x_ = x;
+    cur_y_ = y;
+    cur_visible_ = visible ? 1u : 0u;
+}
+
+void Compositor::PaintCursorToBack() {
+    if (!cur_visible_ || !back_) return;
+
+    const uint32_t pitch = (uint32_t)screen_.PixelsPerScanLine;
+    const int32_t  sw    = (int32_t)screen_.Width;
+    const int32_t  sh    = (int32_t)screen_.Height;
+
+    for (int cy = 0; cy < 16; cy++) {
+        int32_t py = cur_y_ + cy;
+        if (py < 0 || py >= sh) continue;
+        const char* row = kCursorArrow[cy];
+        uint32_t* dline = back_ + (uint64_t)py * pitch;
+        for (int cx = 0; cx < 16; cx++) {
+            int32_t px = cur_x_ + cx;
+            if (px < 0 || px >= sw) continue;
+            char g = row[cx];
+            if (g == '*')      dline[px] = 0xFF000000u;   /* black outline */
+            else if (g == 'O') dline[px] = 0xFFFFFFFFu;   /* white fill    */
+            /* '.' stays transparent: keep composited pixels underneath */
+        }
+    }
 }
 
 /* ---- worker: compose to back, barrier, then present ---------------------- */
@@ -268,19 +337,23 @@ void Compositor::WorkerEntry(uint32_t id) {
 
     uint64_t last_seq = 0;
     while (!__atomic_load_n(&shutdown_, __ATOMIC_ACQUIRE)) {
-        uint64_t seq = __atomic_load_n(&frame_seq_, __ATOMIC_ACQUIRE);
-        if (seq == last_seq) {                 /* no new frame yet */
-            sys_yield();
-            continue;
-        }
+        uint64_t seq;
+        uint32_t wait = 0;
+        do {                                   /* spin/yield until a frame */
+            seq = __atomic_load_n(&frame_seq_, __ATOMIC_ACQUIRE);
+            if (seq != last_seq) break;
+            if (__atomic_load_n(&shutdown_, __ATOMIC_ACQUIRE)) return;
+            comp_backoff(wait);
+        } while (true);
         last_seq = seq;
 
         ComposeStripToBack(id);                                   /* phase 1 */
         __atomic_add_fetch(&done_compose_, 1, __ATOMIC_RELEASE);
 
         /* hold present until the main thread confirms the WHOLE back frame */
+        uint32_t pwait = 0;
         while (__atomic_load_n(&present_seq_, __ATOMIC_ACQUIRE) < seq)
-            sys_yield();
+            comp_backoff(pwait);
 
         PresentStrip(id);                                         /* phase 2 */
         __atomic_add_fetch(&done_present_, 1, __ATOMIC_RELEASE);
@@ -331,11 +404,16 @@ void Compositor::StartWorkers() {
     __atomic_store_n(&present_seq_,  0, __ATOMIC_SEQ_CST);
     __atomic_store_n(&shutdown_,     0, __ATOMIC_SEQ_CST);
 
-    for (uint32_t i = 0; i < n; i++)
+    for (uint32_t i = 0; i < n; i++) {
         sys_thread_launch((uint64_t)CompWorkerTrampoline, i);
+    }
 
     /* wait until every worker has entered its render loop */
-    while (__atomic_load_n(&started_cnt_, __ATOMIC_ACQUIRE) < n) sys_yield();
+    /* main waits for peers INCLUDING the worker pinned to this same core, so
+       yield immediately here -- a PAUSE spin would starve that same-core peer. */
+    while (__atomic_load_n(&started_cnt_, __ATOMIC_ACQUIRE) < n) {
+        sys_yield();
+    }
     launched_ = 1;
 }
 
@@ -352,6 +430,11 @@ void Compositor::Compose() {
     __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
     while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < ncpus_)
         sys_yield();
+
+    /* Whole back frame is complete: stamp the pointer into it, then release
+       every worker to present. The scanout thus never shows a cursor-less
+       intermediate frame (no pointer flicker). */
+    PaintCursorToBack();
 
     /* whole back frame is complete -> release every worker to present */
     __atomic_store_n(&present_seq_, __atomic_load_n(&frame_seq_, __ATOMIC_RELAXED),

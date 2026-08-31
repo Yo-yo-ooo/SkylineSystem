@@ -27,6 +27,7 @@ bool smp_started = false;
 int32_t smp_last_cpu = 0; 
 extern volatile struct limine_mp_response *mp_response;
 extern void enable_smep_smap();
+void sched_idle();   /* real idle loop: queue self-check + halt */
 
 uint32_t apic_id_to_logical[MAX_CPU * 2] = {0};
 
@@ -133,9 +134,17 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
         smp_last_cpu = logical_id; 
     spinlock_unlock(&smp_lock);
     
+    /* Arm the FIRST periodic scheduler tick before idling. An AP that halts
+       with its LAPIC timer left disabled (InitTimer ends with the timer
+       disabled) has no fallback when the remote launch/wake IPI is missed: it
+       would sleep until an unrelated IPI arrives (observed ~14s stalls). The
+       tick guarantees the scheduler is re-entered every base slice. */
+    LAPIC::Oneshot(SCHED_VEC, cpu->base_quantum * cpu->lapic_ticks);
     asm volatile("sti");
-    while (true)
-        __asm__ volatile ("hlt");
+    /* Run the real idle loop on this boot stack; the first Switch snapshots
+       this context as the idle thread context. Does not return. */
+    sched_idle();
+    __builtin_unreachable();
 }
 
 void smp_init() {

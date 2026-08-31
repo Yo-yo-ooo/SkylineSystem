@@ -6,6 +6,7 @@
 #include <elf/elf.h>
 #include <arch/x86_64/cpu.h>
 #include <mem/pmm.h>
+#include <arch/x86_64/cpu/smap.h>
 
 spinlock_t dbgout_lock = 0;
 
@@ -16,6 +17,7 @@ uint64_t sys_dbgsout(uint64_t CharsAddr,uint64_t OutSize,GENERATE_IGN4()){
     spinlock_lock(&dbgout_lock);
     kinfo("App Serial Output: ");
     char *buf = (char*)CharsAddr;
+    SmapGuard ug;   // buf is a user string, read under SMAP override
     for(size_t i = 0;i < OutSize;i++){
         Serial::_Write(*(buf + i));
     }

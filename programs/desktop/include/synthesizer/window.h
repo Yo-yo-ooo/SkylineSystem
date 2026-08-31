@@ -117,6 +117,12 @@ public:
        are not running or the back buffer could not be allocated. */
     void            Compose();
 
+    /* Software cursor: instead of painting the pointer onto the scanout
+       AFTER present (which briefly exposes a cursor-less frame and makes the
+       arrow flicker), the pointer is baked into the off-screen back buffer
+       and presented together with the whole frame. Set before Compose(). */
+    void            SetCursor(int32_t x, int32_t y, bool visible);
+
     void            Shutdown();
 
     uint32_t             WorkerCount() const { return ncpus_; }
@@ -160,7 +166,13 @@ private:
     void            ComposeStripToBack(uint32_t id); /* clear+stack -> back_ */
     void            PresentStrip(uint32_t id);       /* back_ -> scanout      */
     void            ComposeSingleThreaded();
+    void            PaintCursorToBack();            /* bake pointer into back_ */
     void            InsertLayerOrdered(CompLayer* layer);
     void            LockList();
     void            UnlockList();
+
+    /* software cursor state (baked into back_ before every present) */
+    int32_t         cur_x_;
+    int32_t         cur_y_;
+    uint8_t         cur_visible_;
 };

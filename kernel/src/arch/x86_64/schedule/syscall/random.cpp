@@ -10,6 +10,7 @@
 #include <klib/kio.h>
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/drivers/hpet/hpet.h>
+#include <arch/x86_64/cpu/smap.h>
 
 #define GRND_NONBLOCK	0x0001
 #define GRND_RANDOM	0x0002
@@ -32,7 +33,8 @@ uint64_t sys_getrandom(uint64_t buf, uint64_t size, uint64_t flags,
 	if ((flags & (GRND_INSECURE | GRND_RANDOM)) == (GRND_INSECURE | GRND_RANDOM))
 		return -EINVAL;
 
-	uint8_t *ret_buf = (uint8_t *) buf;
+    uint8_t *ret_buf = (uint8_t *) buf;
+    SmapGuard ug;   // ret_buf is the caller's user buffer
     uint64_t length = size;
     while (length >= 8) {
         uint64_t value = (uint64_t) ((RND::rand(1337, 0, 0x8FFFFFFF) % 65535)

@@ -8,6 +8,7 @@
 #include <klib/algorithm/queue.h>
 #include <arch/x86_64/drivers/hpet/hpet.h>
 #include <arch/x86_64/rtc/rtc.h>
+#include <arch/x86_64/cpu/smap.h>
 
 static const int32_t CLOCK_REALTIME = 0;
 static const int32_t CLOCK_MONOTONIC = 1;
@@ -44,8 +45,7 @@ uint64_t sys_time(uint64_t tloc,GENERATE_IGN5()) {
     int64_t x = mktime(RTC::Year,RTC::Month,RTC::Day,RTC::Hour,RTC::Minute,RTC::Second);
     if(likely((time_t*)tloc == nullptr))
         return x;
-    else
-        *((time_t*)tloc) = x;
+    else { SmapGuard ug; *((time_t*)tloc) = x; }
     return (uint64_t)((time_t)-1);
 }
 struct timeval {
@@ -83,21 +83,24 @@ uint64_t sys_gettimeofday(uint64_t tv,uint64_t tz, GENERATE_IGN4()) {
     struct timeval time_value;
     time_value.tv_sec = seconds - tv_s_off;
     time_value.tv_usec = microseconds - tv_ms_off;
-    *((struct timeval*)tv) = time_value;
+    { SmapGuard ug; *((struct timeval*)tv) = time_value; }
 
     return 0;
 }
 
 uint64_t sys_settimeofday(uint64_t tv,uint64_t tz, GENERATE_IGN4()) {
     IGNV_4();
-    tv_s_off = ((struct timeval*)tv)->tv_sec;
-    tv_ms_off = ((struct timeval*)tv)->tv_usec;
+    { SmapGuard ug;   // read the caller's struct timeval
+      tv_s_off = ((struct timeval*)tv)->tv_sec;
+      tv_ms_off = ((struct timeval*)tv)->tv_usec;
+    }
     return 0;
 }
 
 uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, GENERATE_IGN4()) {
     IGNV_4();
     struct timespec *tp_ = (struct timespec *)tp;
+    SmapGuard ug;   // tp_ is a user timespec
     switch (clkid)
     {
     case CLOCK_MONOTONIC_COARSE:

@@ -63,6 +63,11 @@ static_assert(sizeof(sched_prio_to_weight)/sizeof(sched_prio_to_weight[0]) == 16
               "sched_prio_to_weight must have 16 entries");
 
 volatile bool need_resched_flags[MAX_CPU] = {false};
+/* Set by an explicit Schedule::Yield(): unlike a timer tick, a voluntary
+ * yield MUST hand the CPU to another runnable thread even when the runqueue
+ * holds only that single contender (otherwise the lockless fast path keeps
+ * running the caller and the lone peer is never scheduled). */
+volatile bool yield_request_flags[MAX_CPU] = {false};
 
 
 static inline uint64_t sced_rdtsc() {
@@ -275,6 +280,14 @@ void sched_idle() {
 
         file_cache_idle_handler(cpu->file_cache);
         sys_sysinfo_idle_refresh();
+        /* Self-remedy: never rely solely on a remote wakeup IPI, which can be
+           missed while a CPU halts with interrupts briefly closed or before its
+           first scheduler tick is armed. If a runnable thread is already queued
+           on this CPU, enter the scheduler directly instead of blindly halting.
+           The periodic LAPIC SCHED tick bounds worst-case latency to one slice. */
+        if (unlikely(cpu->thread_count > 0)) {
+            asm volatile("int %0" :: "i"(SCHED_VEC));
+        }
         asm volatile("sti; hlt; cli" ::: "memory");
     }
 }
@@ -618,6 +631,11 @@ namespace Schedule {
                 __atomic_store_n(&need_resched_flags[cpu->id], false, __ATOMIC_RELEASE);
             }
 
+            /* Voluntary yield? Consume the flag so the lockless fast path
+               below cannot skip the only other runnable thread. */
+            const bool yield_req = __atomic_exchange_n(
+                &yield_request_flags[cpu->id], false, __ATOMIC_ACQ_REL);
+
             if (unlikely(cpu->preempt_count > 1)) {
                 if (likely(cpu->current_thread)) {
                     uint64_t q = get_dynamic_quantum(cpu, cpu->current_thread);
@@ -685,11 +703,16 @@ namespace Schedule {
             bool need_lock = true;
             uint32_t curr_state_snap = curr_thread ? curr_thread->state : 0xFFFFFFFF;
 
-            if (likely(curr_thread && !curr_is_idle) &&
+            if (likely(curr_thread && !curr_is_idle && !yield_req) &&
                 likely(curr_state_snap == THREAD_RUNNING)) {
+                /* Lockless fast path ONLY when no other thread is queued.
+                   thread_count excludes the running curr, so ==0 means there
+                   is truly no competitor. A count of 1 means one waiter is
+                   ready: the timer tick MUST take the slow path so EEVDF can
+                   preempt. Treating ==1 as lockless starved the sole same-core
+                   peer (a non-yielding spinner could never be preempted by the
+                   tick, observed as ~14s first-schedule stalls). */
                 if (unlikely(cpu->thread_count == 0)) {
-                    need_lock = false;
-                } else if (unlikely(cpu->thread_count == 1)) {
                     need_lock = false;
                 }
             } else if (unlikely(curr_is_idle && cpu->thread_count == 0)) {
@@ -761,7 +784,7 @@ namespace Schedule {
                 if (likely(next_thread != cpu->idle_thread)) {
                     quantum = get_dynamic_quantum(cpu, next_thread);
                 }
-                LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
+            LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
                 LAPIC::EOI();
                 irq_restore(rflags);
                 return;
@@ -888,7 +911,12 @@ namespace Schedule {
 
     thread_t* this_thread() { cpu_t* cpu = this_cpu(); return likely(cpu) ? cpu->current_thread : nullptr; }
     proc_t *this_proc() { thread_t* t = this_thread(); return likely(t) ? t->parent : nullptr; }
-    void Yield() { LAPIC::StopTimer(); asm volatile("int %0" :: "i"(SCHED_VEC)); }
+    void Yield() {
+        cpu_t *yc = this_cpu();
+        if (yc) __atomic_store_n(&yield_request_flags[yc->id], true, __ATOMIC_RELEASE);
+        LAPIC::StopTimer();
+        asm volatile("int %0" :: "i"(SCHED_VEC));
+    }
     void PAUSE() { LAPIC::StopTimer(); }
     void Resume() {
         cpu_t* cur_cpu = this_cpu();

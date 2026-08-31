@@ -122,6 +122,12 @@ namespace AHCI
         /***Wait for a reply***/
         uint64_t s = PIT::TimeSinceBootMS() + 3000;
         bool timeout = true;
+        /* The syscall path runs with IRQs masked (syscall_entry does cli).
+           Spinning on device completion with IRQs off monopolises this core
+           for up to the whole timeout and starves peer threads pinned to it.
+           Keep IRQs enabled while polling so the scheduler can preempt us, and
+           restore the masked state expected by the syscall ABI on the way out. */
+        asm volatile("sti");
         while(PIT::TimeSinceBootMS() < s)
         {
             if((hbaPort->commandIssue & 1) == 0)
@@ -129,7 +135,9 @@ namespace AHCI
                 timeout = false;
                 break;
             }
+            asm volatile("pause");
         }
+        asm volatile("cli");
         
         if (timeout)
         {
@@ -222,14 +230,23 @@ namespace AHCI
         hbaPort->commandIssue = 1 << slot;
         
         uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
+        /* The syscall path runs with IRQs masked (syscall_entry does cli).
+           Spinning on device completion with IRQs off monopolises this core
+           for up to the whole timeout and starves peer threads pinned to it.
+           Keep IRQs enabled while polling so the scheduler can preempt us, and
+           restore the masked state expected by the syscall ABI on the way out. */
+        asm volatile("sti");
         while (PIT::TimeSinceBootMS() < deadline)
         {
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
+                asm volatile("cli");
                 return false;
             }
+            asm volatile("pause");
         }
+        asm volatile("cli");
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
             return false;
@@ -302,13 +319,21 @@ namespace AHCI
         hbaPort->commandIssue = 1<<slot;
 
         uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
+        /* The syscall path runs with IRQs masked (syscall_entry does cli).
+           Spinning on device completion with IRQs off monopolises this core
+           for up to the whole timeout and starves peer threads pinned to it.
+           Keep IRQs enabled while polling so the scheduler can preempt us, and
+           restore the masked state expected by the syscall ABI on the way out. */
+        asm volatile("sti");
         while (PIT::TimeSinceBootMS() < deadline)
         {
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
-            if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
-                return false;
+            if (hbaPort->interruptStatus & HBA_PxIS_TFES)
+            { asm volatile("cli"); return false; }
+            asm volatile("pause");
         }
+        asm volatile("cli");
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
                 return false;

@@ -2,6 +2,7 @@
 //SPDX-License-Identifier: MIT
 #include <string.h>
 #include <ctype.h>
+#include <stdbool.h>
 
 char* strcat(char* dest, const char* source){
 	if (dest == NULL || source == NULL){		//合法性校验

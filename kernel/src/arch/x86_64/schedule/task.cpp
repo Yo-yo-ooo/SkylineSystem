@@ -13,6 +13,7 @@
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/interrupt/gdt.h>
+#include <arch/x86_64/cpu/smap.h>      // SmapGuard
 
 #ifndef likely
 #define likely(x)     __builtin_expect(!!(x), 1)
@@ -577,15 +578,27 @@ namespace Schedule {
     void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]) {
         /* 修复: envp 允许 NULL (空环境) —— 原实现 !envp 直接 return,
            连 argv/argc 都不写, 用户程序拿到垃圾栈帧 */
-        if (argc <= 0 || !argv) return;
+        /* A no-argument process (argc==0 / argv==NULL) still needs a valid
+           SysV initial stack frame: RSP must point INSIDE the mapped stack at
+           argc, followed by NULL-terminated argv[]/envp[]. The old early return
+           left RSP exactly on the stack region's upper boundary (an unmapped
+           page); it only worked because the sig-stack was allocated immediately
+           above under deterministic placement. ASLR moves the sig-stack away,
+           turning that page into a hole and faulting on the first pop in _start.
+           Normalize to argc=0 and fall through to build the minimal frame. */
+        if (argc < 0) return;
+        if (argc == 0 || !argv) argc = 0;
         char **kernel_argv = nullptr, **kernel_envp = nullptr;
         uint64_t *thread_argv = nullptr, *thread_envp = nullptr;
         int32_t envc = 0; uint64_t offset = 0;
         uint64_t stack_top = 0; pagemap_t *restore = nullptr;
 
-        kernel_argv = (char**)kmalloc(argc * sizeof(char*));
-        if (!kernel_argv) return;
-        for (int32_t i = 0; i < argc; i++) kernel_argv[i] = nullptr;
+        kernel_argv = nullptr;
+        if (argc > 0) {
+            kernel_argv = (char**)kmalloc(argc * sizeof(char*));
+            if (!kernel_argv) return;
+            for (int32_t i = 0; i < argc; i++) kernel_argv[i] = nullptr;
+        }
         for (int32_t i = 0; i < argc; i++) {
             if(!argv[i]) goto cleanup;
             int32_t size = strlen(argv[i]) + 1;
@@ -608,11 +621,16 @@ namespace Schedule {
             }
         }
 
-        thread_argv = (uint64_t*)kmalloc(argc * sizeof(uint64_t));
-        if (!thread_argv) goto cleanup;
+        thread_argv = nullptr;
+        if (argc > 0) {
+            thread_argv = (uint64_t*)kmalloc(argc * sizeof(uint64_t));
+            if (!thread_argv) goto cleanup;
+        }
         stack_top = thread->ctx.rsp;
         if ((argc + envc) % 2 == 0) offset = 8;
         restore = VMM::SwitchPageMap(thread->pagemap);
+        {
+        SmapGuard stack_ug;   // below we write argv/envp into the live user stack
         for (int32_t i = 0; i < argc; i++) {
             int32_t size = strlen(kernel_argv[i]) + 1;
             offset += ALIGN_UP(size, 16);
@@ -636,6 +654,7 @@ namespace Schedule {
         offset += 8; *(uint64_t*)(stack_top - offset) = 0;
         for (int32_t i = argc - 1; i >= 0; i--) { offset += 8; *(uint64_t*)(stack_top - offset) = thread_argv[i]; }
         offset += 8; *(uint64_t*)(stack_top - offset) = argc;
+        }   /* close SmapGuard scope; the inner goto cleanup destructs it */
         VMM::SwitchPageMap(restore);
         thread->ctx.rsp = stack_top - offset;
 
@@ -753,8 +772,10 @@ namespace Schedule {
             }
             uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
             VMM::SwitchPageMap(thread->pagemap);
-            __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
-            *(uint64_t*)tcb_base = tcb_base;
+            { SmapGuard tls_ug;   // TLS image + TCB self pointer are user pages
+              __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
+              *(uint64_t*)tcb_base = tcb_base;
+            }
             VMM::SwitchPageMap(kernel_pagemap);
             thread->fs = tcb_base; thread->tls_base = tls_mem; thread->tls_pages = tls_pages;
         }

@@ -2,6 +2,7 @@
 //SPDX-License-Identifier: MIT
 #include <stdint.h>
 #include <stddef.h>
+#include <stdalign.h>
 #include <base/defs.h>
 
 #define ALLOC_BLOCK_MAGIC 0x536B796C696E6521ULL // "Skyline!"

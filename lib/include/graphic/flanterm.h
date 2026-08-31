@@ -123,6 +123,7 @@ void flanterm_set_oob_output(struct flanterm_context *ctx, uint64_t oob_output);
 void flanterm_clear(struct flanterm_context *ctx);
 
 struct flanterm_context *flanterm_ttf_init(FrameBuffer *fb, TTF_Font *font, size_t margin);
+TTF_Font *console_font(void);
 void flanterm_ttf_resize(struct flanterm_context *ctx, FrameBuffer *fb, TTF_Font *font, size_t margin);
 
 #ifdef __cplusplus

@@ -8,6 +8,7 @@
 #include <klib/algorithm/art.h>
 #include <atomic/atomic.h>
 #include <arch/x86_64/lapic/lapic.h>
+#include <arch/x86_64/cpu/smap.h>      // SmapGuard
 
 extern art_tree *pid2proc_tree;
 
@@ -375,11 +376,12 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
             kfree(t);
             return -ENOMEM;
         }
-        __memcpy((void*)new_tls, (void*)curr->tls_base,
-                 curr->tls_pages * PAGE_SIZE);
-        /* The TCB sits at a fixed offset inside the block; move it with the copy. */
         uint64_t new_fs = curr->fs + (new_tls - curr->tls_base);
-        *(uint64_t*)new_fs = new_fs;                 /* relocate [fs:0] self ptr */
+        { SmapGuard tls_ug;   /* both source and dest TLS blocks are user pages */
+          __memcpy((void*)new_tls, (void*)curr->tls_base,
+                   curr->tls_pages * PAGE_SIZE);
+          *(uint64_t*)new_fs = new_fs;             /* relocate [fs:0] self ptr */
+        }
         t->tls_base  = new_tls;
         t->tls_pages = curr->tls_pages;
         t->fs        = new_fs;
@@ -395,7 +397,7 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
 
     /* 唤醒目标核 (launch 语义: 注册即启动, 核可能睡着不知道队列有货) */
     cpu_t *self = this_cpu();
-    if (cpu != self) LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+    if (cpu != self) LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
 
     return t->id;
 }

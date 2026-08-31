@@ -8,7 +8,10 @@
 #include <arch/x86_64/lapic/lapic.h>
 #include <atomic/atomic.h>
 #include <fs/fc.h>          // fd_manager_destroy
+#include <arch/x86_64/cpu/smap.h>   // SmapGuard for direct user access
 
+extern int has_rdrand(void);
+extern uint64_t rdrand64_retry(int retries);
 
 #define SYS_MAX_PATH     4096
 #define SYS_MAX_ARGLEN   32768
@@ -46,6 +49,7 @@ static int64_t copy_user_str(const char *src, char **out, uint64_t cap) {
     if (!src) return 0;
     char *dst = (char*)kmalloc(cap);
     if (unlikely(!dst)) return -ENOMEM;
+    SmapGuard ug;   // src lives in the caller's user pages (SMAP override)
     for (uint64_t i = 0; i < cap - 1; i++) {
         char c = src[i];
         dst[i] = c;
@@ -60,6 +64,7 @@ static int64_t copy_user_strarray(char **src, char ***out_arr, int *out_cnt, int
     *out_arr = nullptr; *out_cnt = 0;
     if (!src) return 0;                       // POSIX 允许 NULL (空参数表)
 
+    SmapGuard ug;   // src[] is a user pointer array; nested copy_user_str is re-entrant
     int n = 0;
     while (n < max_n && src[n]) n++;
     if (unlikely(n == max_n)) return -E2BIG;  // 无结尾或超限, 保守拒绝
@@ -93,7 +98,18 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
         kerrorln("LOAD FILE NOT ELF!");
         return 0;
     }
-    if (hdr->e_type != 2) {
+    /* ET_EXEC (2) loads at its linked (fixed) address; ET_DYN (3) is a PIE
+       and receives a random page-aligned load bias (ASLR code randomisation). */
+    uint64_t load_bias = 0;
+    if (hdr->e_type == 3) {
+        
+        uint64_t rv = 0;
+        if(has_rdrand())
+            rv = rdrand64_retry(4);
+        if (!rv) { uint32_t _lo,_hi; __asm__ __volatile__("rdtsc":"=a"(_lo),"=d"(_hi));
+                   rv = ((uint64_t)_hi<<32)|_lo; rv ^= (uint64_t)(uintptr_t)hdr; }
+        load_bias = 0x10000000ULL + ((rv >> 12) % 0x3F00000ULL) * PAGE_SIZE;
+    } else if (hdr->e_type != 2) {
         kinfoln("ELF TYPE %d", hdr->e_type);
         kerrorln("ELF> LOAD ELF FILE TYPE NOT SUPPORT!");
         return 0;
@@ -132,6 +148,7 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
     for (int i = 0; i < hdr->e_phnum; i++) {
         Elf64::Elf64_Phdr *phdr = &phdrs[i];
         if (phdr->p_type == 1) {
+            const uint64_t eff_vaddr = phdr->p_vaddr + load_bias;
             uint64_t filesz = phdr->p_filesz;
             /* 修复: 畸形段防御 —— filesz>memsz 会写穿映射区, 钳到 memsz */
             if (unlikely(filesz > phdr->p_memsz)) filesz = phdr->p_memsz;
@@ -142,16 +159,16 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
                 return 0;
             }
             /* 修复: 目标地址必须在用户半区, 防止把内核地址映射进用户页表 */
-            if (unlikely(phdr->p_vaddr >= USER_ADDR_LIMIT ||
-                         phdr->p_vaddr + phdr->p_memsz >= USER_ADDR_LIMIT ||
-                         phdr->p_vaddr + phdr->p_memsz < phdr->p_vaddr)) {
-                kerrorln("ELF> SEGMENT VADDR ILLEGAL: 0x%lx", phdr->p_vaddr);
+            if (unlikely(eff_vaddr >= USER_ADDR_LIMIT ||
+                         eff_vaddr + phdr->p_memsz >= USER_ADDR_LIMIT ||
+                         eff_vaddr + phdr->p_memsz < eff_vaddr)) {
+                kerrorln("ELF> SEGMENT VADDR ILLEGAL: 0x%lx", eff_vaddr);
                 VMM::SwitchPageMap(restore_pm ? restore_pm : (pagemap_t*)kernel_pagemap);
                 return 0;
             }
 
-            uint64_t start = ALIGN_DOWN(phdr->p_vaddr, PAGE_SIZE);
-            uint64_t end = ALIGN_UP(phdr->p_vaddr + phdr->p_memsz, PAGE_SIZE);
+            uint64_t start = ALIGN_DOWN(eff_vaddr, PAGE_SIZE);
+            uint64_t end = ALIGN_UP(eff_vaddr + phdr->p_memsz, PAGE_SIZE);
             uint64_t flags = MM_READ | MM_WRITE | MM_USER;
             for (uint64_t p = start; p < end; p += PAGE_SIZE) {
                 // 两个 PT_LOAD 共享边界页时,第二段会重新分配物理页
@@ -165,9 +182,11 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
             VMM::NewMapping(pagemap, start, (end - start) / PAGE_SIZE, flags);
             // 登记 VMA:否则 Fork 克隆不到镜像、进程退出时这些页无人释放
             VMM::VMA::AddRegion(pagemap, start, (end - start) / PAGE_SIZE, flags);
-            __memcpy((void*)phdr->p_vaddr, (void*)(data + phdr->p_offset), filesz);
-            if (phdr->p_memsz > filesz)
-                _memset((void*)(phdr->p_vaddr + filesz), 0, phdr->p_memsz - filesz);
+            { SmapGuard seg_ug;   // write segment bytes into the live user mapping
+              __memcpy((void*)eff_vaddr, (void*)(data + phdr->p_offset), filesz);
+              if (phdr->p_memsz > filesz)
+                  _memset((void*)(eff_vaddr + filesz), 0, phdr->p_memsz - filesz);
+            }
             if (end > max_vaddr)
                 max_vaddr = end;
             kinfoln("ELF LOADER PT_LOAD: vaddr=[0x%lx~0x%lx], filesz=0x%lx, memsz=0x%lx, flags=0x%x",
@@ -190,7 +209,7 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
     VMM::VMA::SetStart(pagemap, max_vaddr, 1);
     kpokln("LOAD ELF!");
 
-    return hdr->e_entry;
+    return hdr->e_entry + load_bias;
 }
 
 /* 兼容包装: 保持原 6 参数签名 —— task.cpp 的 extern 声明按此签名 mangle,
@@ -404,8 +423,10 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         }
         uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
         VMM::SwitchPageMap(thread->pagemap);
-        __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
-        *(uint64_t*)tcb_base = tcb_base;
+        { SmapGuard tls_ug;   // TLS initial image and TCB self-pointer are user pages
+          __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
+          *(uint64_t*)tcb_base = tcb_base;
+        }
         VMM::SwitchPageMap(caller_pm);
         thread->fs = tcb_base;
         thread->tls_base = tls_mem;
@@ -518,9 +539,9 @@ uint64_t sys_launch(uint64_t pid, GENERATE_IGN5()){
 
     // 唤醒目标 CPU:"塞进队列"和"CPU 知道要跑它"是两件事
     if (cpu != me)
-        LAPIC::IPI(cpu->lapic_id, SCHED_VEC + 1);
+        LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
     else
-        asm volatile("int %0" :: "i"(SCHED_VEC + 1));
+        asm volatile("int %0" :: "i"(SCHED_VEC));
 
     return 0;
 }

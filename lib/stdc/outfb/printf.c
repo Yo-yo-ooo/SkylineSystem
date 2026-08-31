@@ -50,11 +50,49 @@
 
 static spinlock_t ptf_lock = 0;
 
-static inline struct flanterm_context* get_current_stdout(void) {
-    // TODO: stdout flanterm address(Get From 0x400000!)
-    
-    return NULL; 
+#define CONSOLE_PROTO_VA   0x400000UL
+#define CONSOLE_FONT_PATH  "/mp/SourceHanSerifTC_Medium.ttf"
+#define CONSOLE_FONT_PX    22
+#define CONSOLE_MARGIN     6
+
+static struct flanterm_context *g_stdout_ctx;
+static FrameBuffer g_stdout_fb;
+static TTF_Font *g_stdout_font;
+
+/* Load the shared console TTF exactly once; exposed so the window client can
+ * paint its title bar with the same font instead of loading a second copy. */
+TTF_Font *console_font(void) {
+    if (g_stdout_font == NULL) {
+        if (TTF_ReadFont(&g_stdout_font, CONSOLE_FONT_PATH,
+                         CONSOLE_FONT_PX, 192) != 0)
+            g_stdout_font = NULL;
+    }
+    return g_stdout_font;
 }
+
+static struct flanterm_context* get_current_stdout(void) {
+    if (g_stdout_ctx) return g_stdout_ctx;
+
+    volatile uint64_t *proto = (volatile uint64_t *)CONSOLE_PROTO_VA;
+    uint64_t fb_va = proto[0];
+    uint64_t fb_sz = proto[1];
+    if (fb_va == 0 || fb_sz == 0)
+        return NULL;                 /* parent has not published the fb yet */
+
+    g_stdout_fb.BaseAddress       = (void *)fb_va;
+    g_stdout_fb.BufferSize        = fb_sz;
+    g_stdout_fb.Width             = proto[2];
+    g_stdout_fb.Height            = proto[3];
+    g_stdout_fb.PixelsPerScanLine = proto[4];
+
+    g_stdout_font = console_font();
+    if (g_stdout_font == NULL)
+        return NULL;                /* font unavailable: printf degrades */
+
+    g_stdout_ctx = flanterm_ttf_init(&g_stdout_fb, g_stdout_font, CONSOLE_MARGIN);
+    return g_stdout_ctx;
+}
+
 
 // =========================================================================
 
