@@ -18,7 +18,7 @@
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
 #define ZOMBIE_RECLAIM_BATCH 16
-/* v3: WAIT_THREAD_TIMEOUT_MS (从未使用) / SCHED_HUNGER_THRESHOLD (死代码) /
+/*  WAIT_THREAD_TIMEOUT_MS (从未使用) / SCHED_HUNGER_THRESHOLD (死代码) /
        PREEMPT_THRESHOLD (量纲错误, 被 TriggerPreempt 的 slice 分数替代) 已删除 */
 #define SCHED_STEAL_THROTTLE 8
 #define SCHED_PUSH_GAP_SHIFT 2
@@ -34,7 +34,7 @@
 #define RIPRATE_SHIFT      3                                 /* EWMA 1/8 */
 #define RIPRATE_MAX_MULT   (4ULL  << RIPRATE_FRAC_BITS)     /* 4x 上限 */
 #define RIPRATE_MIN_MULT   (1ULL << (RIPRATE_FRAC_BITS - 2))/* 0.25x 下限 = 256 */
-/* v3: 观测值超过 16x 时钳位 (而非丢弃) — 丢弃会让慢基线永远追不上快线程 */
+/*  观测值超过 16x 时钳位 (而非丢弃) — 丢弃会让慢基线永远追不上快线程 */
 #define RIPRATE_OUTLIER_MULT (16ULL << RIPRATE_FRAC_BITS)
 
 /*  直接修正项的钳位 (± 量子偏移上限, 单位: LAPIC tick 基准的量子单位) */
@@ -143,7 +143,7 @@ static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread,
  *    乘法通道: 稳态塑形 (长期特征)
  *    修正通道: 快速双向响应 (即时偏差) — adj 有符号, 可正可负
  *
- *  v3: mult == 0 (零初始化、从未采样) 按 1.0x 处理,
+ *   mult == 0 (零初始化、从未采样) 按 1.0x 处理,
  *      防止新线程首个量子被压成 1 tick.
  * ============================================================ */
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
@@ -158,7 +158,7 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
         base = (cpu->base_quantum * weight) / 1024;
     }
 
-    /* 乘法通道 (v3: 零初始化防御) */
+    /* 乘法通道 ( 零初始化防御) */
     uint64_t mult = likely(thread->rip_rate_mult) ? thread->rip_rate_mult : RIPRATE_ONE;
     uint64_t q = (base * mult) >> RIPRATE_FRAC_BITS;
 
@@ -176,40 +176,15 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     return q;
 }
 
-/* ============================================================
- *  riprate_update — v3 修复版: 双向采样 + 老化衰减 + 修正计算
- *
- *  采样路径 (不变量, v3 修正为逐采样窗口):
- *    progress  = rip_now - 上次采样点的 RIP (dispatch 时初始化,
- *                每次采样后重臂 — dispatch_rip 兼任该快照)
- *    elapsed   = 本次实际运行时长 (调用方由 last_run_time 结算,
- *                而非编程量子 — 被提前打断的窗口不再被高估)
- *    obs_rate  = progress / elapsed
- *    obs_mult  = obs_rate / cpu->rip_avg_rate    (定点 Q10)
- *
- *  v3 变更:
- *    1. EWMA 全部改为"先比大小再加减": 无符号 (obs - avg) 在
- *       obs < avg 时回绕成 2^64-d, 右移后 ≈ 2^61 而非 d/8 —
- *       一次"应下调"的采样就把值炸飞 (旧版 mult 恒 4x 的根因).
- *    2. 窗口逐点重臂: 免锁快路径连续 N 个量子不切换时, 旧算法
- *       把 N 个量子的 progress 除以单个量子, obs_rate 膨胀 N 倍.
- *    3. 离群值钳位 (16x) 而非丢弃.
- *    4. adj 老化步长保证 ≥1.
- *
- *  已知局限 (设计取舍, 见评审 P2):
- *    - RIP 不是完美 progress 代理 (rep 前缀 / 紧回跳循环),
- *      后续可换 IA32_FIXED_CTR0 (instret);
- *    - ms 粒度使短量子采样噪声偏大, EWMA 可吸收.
- * ============================================================ */
 static inline void riprate_update(cpu_t *cpu, thread_t *thread,
                                   uint64_t rip_now, uint64_t elapsed_ms,
                                   uint64_t now_ms) {
     if (unlikely(!thread || thread == cpu->idle_thread)) return;
 
-    /* v3: 零初始化防御 — 未显式初始化的 mult 视作 1.0x */
+    
     if (unlikely(thread->rip_rate_mult == 0)) thread->rip_rate_mult = RIPRATE_ONE;
 
-    /* ---- a) 老化检查 (先于采样, 用上次采样时间戳) ---- */
+    
     uint64_t last_sample = thread->rip_last_sample_ms;
     if (unlikely(last_sample != 0 && (now_ms - last_sample) > RIPRATE_AGING_MS)) {
         /* mult → 1.0 收缩 1/16. 收缩不会越过 1.0 (减量 ≤ 差值),
@@ -258,7 +233,7 @@ static inline void riprate_update(cpu_t *cpu, thread_t *thread,
         return;                                  /* 首采样只建基线 */
     }
 
-    /* v3: 离群钳位 (16x) 而非丢弃. 丢弃的问题: 首采样建了慢基线后,
+    /* 离群钳位 (16x) 而非丢弃. 丢弃的问题: 首采样建了慢基线后,
      * 快线程的观测永远 > 16x 被丢, 基线永远卡在慢速率.
      * 钳位后 EWMA 每采样最多把基线拉高 ~2x, 几个采样即可收敛. */
     uint64_t obs_cap = (*avg_rate * RIPRATE_OUTLIER_MULT) >> RIPRATE_FRAC_BITS;
@@ -495,7 +470,7 @@ namespace Schedule {
 
                     uint64_t rflags1 = 0;
                     int retries = 0;
-                    /* v3: 重试上限语义化 — 恰好 100 次尝试, 失败即放弃
+                    /*  重试上限语义化 — 恰好 100 次尝试, 失败即放弃
                        (旧写法 retries 达 101 才退出, 正确性靠巧合) */
                     while (unlikely(!spin_trylock_irqsave(&victim->sched_lock, &rflags1))) {
                         if (unlikely(++retries >= 100)) break;
@@ -510,7 +485,7 @@ namespace Schedule {
 
                     thread_t * const victim_curr  = victim->current_thread;
                     thread_t * const victim_idle  = victim->idle_thread;
-                    /* v3: hunger 检查已删 — 入队时 calibrate clamp 保证
+                    /*  hunger 检查已删 — 入队时 calibrate clamp 保证
                      * 队列中 vruntime ≤ avg + 2q, 而 avg 单调递增,
                      * "vr > avg + 5M" 永假 (死代码). */
 
@@ -604,7 +579,7 @@ namespace Schedule {
 
             thread_t * const my_curr = cpu->current_thread;
             thread_t * const my_idle = cpu->idle_thread;
-            /* v3: hunger 检查已删 (同 StealThread — 死代码) */
+            /*  hunger 检查已删 (同 StealThread — 死代码) */
 
             int push_count = 0;
             rb_node_t *node = rb_last(cpu->runqueue_root.node);
@@ -761,7 +736,7 @@ namespace Schedule {
             /* 账本结算 — 锁外 */
             dynamic_adjust_quantum(cpu, curr_thread, now, cur_tsc);
 
-            /* v3: 实际运行时长 — 由 last_run_time 结算得出 (而非编程量子),
+            /*  实际运行时长 — 由 last_run_time 结算得出 (而非编程量子),
              * 传给 riprate_update 做采样窗口分母 */
             uint64_t last_slice_ms = 0;
 
@@ -794,7 +769,7 @@ namespace Schedule {
             }
 
             /* ★ RIP 反馈采样 — 锁外.
-             * v3: 传实际运行时长 (last_slice_ms), riprate_update 内部
+             *  传实际运行时长 (last_slice_ms), riprate_update 内部
              * 按采样点重臂 RIP 快照 — 修复快路径连续运行时把 N 个
              * 量子的 progress 除以单个量子的窗口错位 */
             riprate_update(cpu, curr_thread, ctx->rip, last_slice_ms, now);
