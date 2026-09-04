@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
 // sched.cpp - Rate-aware EEVDF (REEVDF) Schedule ALGO IMPL
+
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
@@ -17,23 +18,28 @@
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
 #define ZOMBIE_RECLAIM_BATCH 16
-#define WAIT_THREAD_TIMEOUT_MS 1000ULL
-#define PREEMPT_THRESHOLD (1024ULL * 1024ULL)
-#define SCHED_HUNGER_THRESHOLD (1024ULL * 1024ULL * 5)
+/* v3: WAIT_THREAD_TIMEOUT_MS (从未使用) / SCHED_HUNGER_THRESHOLD (死代码) /
+       PREEMPT_THRESHOLD (量纲错误, 被 TriggerPreempt 的 slice 分数替代) 已删除 */
 #define SCHED_STEAL_THROTTLE 8
 #define SCHED_PUSH_GAP_SHIFT 2
 
 
+/* ============================================================
+ *  RIP 速率反馈 — 全部定点 Q10 (1.0x = 1024)
+ * ============================================================ */
 #define RIPRATE_FRAC_BITS  10
-#define RIPRATE_INIT       (1024ULL << RIPRATE_FRAC_BITS)   /* 1.0x */
-#define RIPRATE_SHIFT     3                                  /* EWMA 1/8 */
-#define RIPRATE_MAX_MULT  (4ULL  << RIPRATE_FRAC_BITS)      /* 4x 上限 */
-#define RIPRATE_MIN_MULT  (256ULL)                          /* 0.25x 下限 (定点: 256 = 0.25<<10) */
-#define RIPRATE_ONE       (1024ULL << RIPRATE_FRAC_BITS)   /* 1.0x 常量 */
+/* v3 FIX: Q10 下 1.0x = 1<<10. 旧值 1024<<10 是 Q20 量纲 */
+#define RIPRATE_INIT       (1ULL << RIPRATE_FRAC_BITS)      /* 1.0x */
+#define RIPRATE_ONE        (1ULL << RIPRATE_FRAC_BITS)      /* 1.0x 常量 */
+#define RIPRATE_SHIFT      3                                 /* EWMA 1/8 */
+#define RIPRATE_MAX_MULT   (4ULL  << RIPRATE_FRAC_BITS)     /* 4x 上限 */
+#define RIPRATE_MIN_MULT   (1ULL << (RIPRATE_FRAC_BITS - 2))/* 0.25x 下限 = 256 */
+/* v3: 观测值超过 16x 时钳位 (而非丢弃) — 丢弃会让慢基线永远追不上快线程 */
+#define RIPRATE_OUTLIER_MULT (16ULL << RIPRATE_FRAC_BITS)
 
 /*  直接修正项的钳位 (± 量子偏移上限, 单位: LAPIC tick 基准的量子单位) */
 #define RIPADJ_MAX        4                                  /* 最多 +4 */
-#define RIPADJ_MIN       (-4)                               /* 最多 -4 */
+#define RIPADJ_MIN       (-4)                                /* 最多 -4 */
 /*  老化阈值 — 超过这个 ms 没采样, 倍率向 1.0 收缩一步 */
 #define RIPRATE_AGING_MS 50ULL
 /*  衰减步长 1/16 (位移 4) */
@@ -108,9 +114,13 @@ static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread,
             uint64_t ctx_sw = cpu->sched_stats.context_switches - dc->last_ctx_sw;
 
             if (idle_ratio > 50) {
+                /* 大量空闲: 拉长量子, 摊薄定时器/切换开销 */
                 if (likely(cpu->base_quantum < 15)) cpu->base_quantum++;
             } else if (unlikely(idle_ratio < 10 && ctx_sw > 500)) {
-                if (likely(cpu->base_quantum > 2)) cpu->base_quantum--;
+                /* v3 FIX: 高负载 + 切换风暴 → 拉长量子降低切换频率.
+                 * 旧代码在这里 quantum--, 方向反了: 切换已经过多,
+                 * 缩短量子只会制造更多切换. */
+                if (likely(cpu->base_quantum < 15)) cpu->base_quantum++;
             } else {
                 if (cpu->base_quantum > 5) cpu->base_quantum--;
                 else if (cpu->base_quantum < 5) cpu->base_quantum++;
@@ -131,8 +141,10 @@ static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread,
  *
  *  两个通道并存的理由:
  *    乘法通道: 稳态塑形 (长期特征)
- *    修正通道: 快速双向响应 (即时偏差) — 这是你本次要求的
- *    "修正还能减" 的直接实现: adj 是有符号的, 可正可负
+ *    修正通道: 快速双向响应 (即时偏差) — adj 有符号, 可正可负
+ *
+ *  v3: mult == 0 (零初始化、从未采样) 按 1.0x 处理,
+ *      防止新线程首个量子被压成 1 tick.
  * ============================================================ */
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     if (unlikely(!thread || thread == cpu->idle_thread)) return cpu->base_quantum;
@@ -146,15 +158,16 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
         base = (cpu->base_quantum * weight) / 1024;
     }
 
-    /* 乘法通道 */
-    uint64_t q = (base * thread->rip_rate_mult) >> RIPRATE_FRAC_BITS;
+    /* 乘法通道 (v3: 零初始化防御) */
+    uint64_t mult = likely(thread->rip_rate_mult) ? thread->rip_rate_mult : RIPRATE_ONE;
+    uint64_t q = (base * mult) >> RIPRATE_FRAC_BITS;
 
     /*  直接修正通道 — 有符号加减 */
     int32_t adj = thread->rip_quantum_adj;
     if (likely(adj > 0)) {
         q += (uint64_t)adj;
     } else if (unlikely(adj < 0)) {
-        uint64_t sub = (uint64_t)(-adj);
+        uint64_t sub = (uint64_t)(-(int64_t)adj);
         q = (q > sub) ? (q - sub) : 1;
     }
 
@@ -164,24 +177,43 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
 }
 
 /* ============================================================
- *  riprate_update — 双向采样 + 老化衰减 + 修正计算
+ *  riprate_update — v3 修复版: 双向采样 + 老化衰减 + 修正计算
  *
- *  采样路径 (不变量):
- *    progress  = rip_now - dispatch_rip
- *    obs_rate  = progress / slice_ms
- *    obs_mult  = obs_rate / cpu->rip_avg_rate       (定点)
+ *  采样路径 (不变量, v3 修正为逐采样窗口):
+ *    progress  = rip_now - 上次采样点的 RIP (dispatch 时初始化,
+ *                每次采样后重臂 — dispatch_rip 兼任该快照)
+ *    elapsed   = 本次实际运行时长 (调用方由 last_run_time 结算,
+ *                而非编程量子 — 被提前打断的窗口不再被高估)
+ *    obs_rate  = progress / elapsed
+ *    obs_mult  = obs_rate / cpu->rip_avg_rate    (定点 Q10)
  *
+ *  v3 变更:
+ *    1. EWMA 全部改为"先比大小再加减": 无符号 (obs - avg) 在
+ *       obs < avg 时回绕成 2^64-d, 右移后 ≈ 2^61 而非 d/8 —
+ *       一次"应下调"的采样就把值炸飞 (旧版 mult 恒 4x 的根因).
+ *    2. 窗口逐点重臂: 免锁快路径连续 N 个量子不切换时, 旧算法
+ *       把 N 个量子的 progress 除以单个量子, obs_rate 膨胀 N 倍.
+ *    3. 离群值钳位 (16x) 而非丢弃.
+ *    4. adj 老化步长保证 ≥1.
+ *
+ *  已知局限 (设计取舍, 见评审 P2):
+ *    - RIP 不是完美 progress 代理 (rep 前缀 / 紧回跳循环),
+ *      后续可换 IA32_FIXED_CTR0 (instret);
+ *    - ms 粒度使短量子采样噪声偏大, EWMA 可吸收.
  * ============================================================ */
 static inline void riprate_update(cpu_t *cpu, thread_t *thread,
-                                uint64_t rip_now, uint64_t slice_ms,
-                                uint64_t now_ms) {
+                                  uint64_t rip_now, uint64_t elapsed_ms,
+                                  uint64_t now_ms) {
     if (unlikely(!thread || thread == cpu->idle_thread)) return;
-    if (unlikely(slice_ms == 0)) return;
+
+    /* v3: 零初始化防御 — 未显式初始化的 mult 视作 1.0x */
+    if (unlikely(thread->rip_rate_mult == 0)) thread->rip_rate_mult = RIPRATE_ONE;
 
     /* ---- a) 老化检查 (先于采样, 用上次采样时间戳) ---- */
     uint64_t last_sample = thread->rip_last_sample_ms;
     if (unlikely(last_sample != 0 && (now_ms - last_sample) > RIPRATE_AGING_MS)) {
-        /* mult → 1.0 收缩 1/16 */
+        /* mult → 1.0 收缩 1/16. 收缩不会越过 1.0 (减量 ≤ 差值),
+           原 clamp 范围保持不变, 无需重新钳位 */
         uint64_t m = thread->rip_rate_mult;
         if (likely(m > RIPRATE_ONE)) {
             m -= (m - RIPRATE_ONE) >> RIPRATE_DECAY_SHIFT;
@@ -190,24 +222,34 @@ static inline void riprate_update(cpu_t *cpu, thread_t *thread,
         }
         thread->rip_rate_mult = m;
 
-        /* adj → 0 收缩 */
+        /* adj → 0 收缩.
+         * v3 FIX: (x+7)>>4 在 |adj| ≤ 8 时恒为 0, 而 clamp 是 ±4 —
+         * 旧代码 adj 永不衰减. (x+15)>>4 = ceil(x/16) 保证 ≥1 步. */
         int32_t adj = thread->rip_quantum_adj;
-        if (likely(adj > 0)) adj -= (adj + 7) >> RIPRATE_DECAY_SHIFT;  /* ≥1 步 */
-        else if (unlikely(adj < 0)) adj += ((-adj) + 7) >> RIPRATE_DECAY_SHIFT;
+        if (likely(adj > 0)) {
+            adj -= (int32_t)(((uint32_t)adj + 15) >> RIPRATE_DECAY_SHIFT);
+        } else if (unlikely(adj < 0)) {
+            uint32_t mag = (uint32_t)(-(int64_t)adj);
+            adj += (int32_t)((mag + 15) >> RIPRATE_DECAY_SHIFT);
+        }
         thread->rip_quantum_adj = adj;
     }
     thread->rip_last_sample_ms = now_ms;
 
-    /* ---- 采样 ---- */
-    uint64_t progress = rip_now - thread->dispatch_rip;
+    /* 同毫秒内双 tick: 窗口无效, 只做老化 (见上) 不做速率采样 */
+    if (unlikely(elapsed_ms == 0)) return;
 
-    /* 环绕/异常防御 */
+    /* ---- 采样: 逐点窗口 ----
+     * dispatch_rip 在 dispatch 时初始化, 此处每采样重臂 —
+     * 早退路径 (离群/停滞) 也不累积窗口, 下次采样从干净起点开始 */
+    uint64_t progress = rip_now - thread->dispatch_rip;
+    thread->dispatch_rip = rip_now;
+
+    /* 环绕/异常防御: 紧回跳循环的 RIP 可能倒退 → 无符号回绕成巨值,
+     * 该样本丢弃 (窗口已重臂, 不污染下一次) */
     if (unlikely(progress > (1ULL << 44))) return;
 
-    /* 碎片段噪声大, 只做老化不做速率采样 */
-    if (unlikely(slice_ms < 1)) return;
-
-    uint64_t obs_rate = progress / slice_ms;
+    uint64_t obs_rate = progress / elapsed_ms;
     if (unlikely(obs_rate == 0)) return;         /* 完全停滞, 不采样 */
 
     uint64_t *avg_rate = &cpu->rip_avg_rate;
@@ -216,22 +258,35 @@ static inline void riprate_update(cpu_t *cpu, thread_t *thread,
         return;                                  /* 首采样只建基线 */
     }
 
+    /* v3: 离群钳位 (16x) 而非丢弃. 丢弃的问题: 首采样建了慢基线后,
+     * 快线程的观测永远 > 16x 被丢, 基线永远卡在慢速率.
+     * 钳位后 EWMA 每采样最多把基线拉高 ~2x, 几个采样即可收敛. */
+    uint64_t obs_cap = (*avg_rate * RIPRATE_OUTLIER_MULT) >> RIPRATE_FRAC_BITS;
+    if (unlikely(obs_rate > obs_cap)) obs_rate = obs_cap;
+
     /* 观测倍率 = obs / avg, 定点 */
     uint64_t obs_mult = (obs_rate << RIPRATE_FRAC_BITS) / (*avg_rate);
-    if (unlikely(obs_mult > RIPRATE_MAX_MULT << 2)) return;  /* 离群值丢弃 */
 
-    /* 先更新核基准 (EWMA 1/8) */
-    *avg_rate += (obs_rate - *avg_rate) >> 3;
+    /* 核基准 EWMA (v3 FIX: 先比大小再加减, 防无符号回绕) */
+    if (likely(obs_rate >= *avg_rate)) {
+        *avg_rate += (obs_rate - *avg_rate) >> 3;
+    } else {
+        *avg_rate -= (*avg_rate - obs_rate) >> 3;
+    }
 
-    /* ---- b) 倍率 EWMA (双向, 承 v1) ---- */
+    /* ---- b) 倍率 EWMA (双向, v3 FIX 同上防回绕) ---- */
     uint64_t m = thread->rip_rate_mult;
-    m += (obs_mult - m) >> RIPRATE_SHIFT;
+    if (likely(obs_mult >= m)) {
+        m += (obs_mult - m) >> RIPRATE_SHIFT;
+    } else {
+        m -= (m - obs_mult) >> RIPRATE_SHIFT;
+    }
     if (unlikely(m > RIPRATE_MAX_MULT)) m = RIPRATE_MAX_MULT;
     if (unlikely(m < RIPRATE_MIN_MULT)) m = RIPRATE_MIN_MULT;
     thread->rip_rate_mult = m;
 
-    /* ---- b) 直接修正项 (v2 新增, 你要的"减"通道) ---- */
-    /* dev = obs_mult - 1.0, 定点; 符号扩展 */
+    /* ---- c) 直接修正项 (有符号 "减" 通道) ---- */
+    /* dev = obs_mult - 1.0, 定点 */
     int64_t dev = (int64_t)obs_mult - (int64_t)RIPRATE_ONE;
 
     /* 修正步长: dev >> 6 → 每次最多动 dev/64, 温和收敛 */
@@ -438,13 +493,15 @@ namespace Schedule {
 
                     cpu->sched_stats.steal_attempts++;
 
-                    uint64_t rflags1;
+                    uint64_t rflags1 = 0;
                     int retries = 0;
+                    /* v3: 重试上限语义化 — 恰好 100 次尝试, 失败即放弃
+                       (旧写法 retries 达 101 才退出, 正确性靠巧合) */
                     while (unlikely(!spin_trylock_irqsave(&victim->sched_lock, &rflags1))) {
-                        if (unlikely(++retries > 100)) break;
+                        if (unlikely(++retries >= 100)) break;
                         asm volatile("pause");
                     }
-                    if (unlikely(retries > 100)) continue;
+                    if (unlikely(retries >= 100)) continue;
 
                     if (victim->thread_count <= 1) {
                         spin_unlock_irqrestore(&victim->sched_lock, rflags1);
@@ -453,7 +510,9 @@ namespace Schedule {
 
                     thread_t * const victim_curr  = victim->current_thread;
                     thread_t * const victim_idle  = victim->idle_thread;
-                    const uint64_t hunger_limit   = victim->avg_vruntime + SCHED_HUNGER_THRESHOLD;
+                    /* v3: hunger 检查已删 — 入队时 calibrate clamp 保证
+                     * 队列中 vruntime ≤ avg + 2q, 而 avg 单调递增,
+                     * "vr > avg + 5M" 永假 (死代码). */
 
                     thread_t *stolen_batch[SCHED_STEAL_BATCH];
                     int stolen_count = 0;
@@ -467,7 +526,6 @@ namespace Schedule {
                         if (unlikely(stolen == victim_idle))  { node = prev_node; continue; }
                         if (unlikely(stolen->state != THREAD_RUNNING)) { node = prev_node; continue; }
                         if (unlikely(stolen->timer_bucket != nullptr)) { node = prev_node; continue; }
-                        if (unlikely(stolen->vruntime > hunger_limit)) { node = prev_node; continue; }
 
                         RemoveFromQueue(victim, stolen);
                         stolen_batch[stolen_count++] = stolen;
@@ -546,7 +604,7 @@ namespace Schedule {
 
             thread_t * const my_curr = cpu->current_thread;
             thread_t * const my_idle = cpu->idle_thread;
-            const uint64_t hunger_limit = cpu->avg_vruntime + SCHED_HUNGER_THRESHOLD;
+            /* v3: hunger 检查已删 (同 StealThread — 死代码) */
 
             int push_count = 0;
             rb_node_t *node = rb_last(cpu->runqueue_root.node);
@@ -561,7 +619,6 @@ namespace Schedule {
                 if (unlikely(to_push == my_curr)) { node = prev_node; continue; }
                 if (unlikely(to_push == my_idle)) { node = prev_node; continue; }
                 if (unlikely(to_push->timer_bucket != nullptr)) { node = prev_node; continue; }
-                if (unlikely(to_push->vruntime > hunger_limit)) { node = prev_node; continue; }
 
                 __atomic_store_n(&to_push->state, THREAD_TRANSFER, __ATOMIC_RELEASE);
                 RemoveFromQueue(cpu, to_push);
@@ -578,6 +635,17 @@ namespace Schedule {
             cpu->sched_stats.push_success += push_count;
             spin_unlock_irqrestore(&lock_b->sched_lock, rflags_b);
             spin_unlock_irqrestore(&lock_a->sched_lock, rflags);
+
+            /* v3 FIX: 推送成功且目标空闲时立刻 IPI 唤醒. 旧版目标若正
+             * hlt, 要等一个 idle 量子的 LAPIC tick 才捡起推送线程.
+             * 目标非空闲则不打扰 — 它的下一个 tick (至多一个当前量子)
+             * 会捡起; Steal 是兜底的 pull 侧机制. */
+            if (unlikely(push_count > 0)) {
+                thread_t *tcurr = __atomic_load_n(&target->current_thread, __ATOMIC_ACQUIRE);
+                if (tcurr == target->idle_thread) {
+                    LAPIC::IPI(target->lapic_id, SCHED_VEC);
+                }
+            }
         }
 
         thread_t *Pick(cpu_t *cpu) {
@@ -625,7 +693,12 @@ namespace Schedule {
         void Switch(context_t *ctx) {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
-            if (unlikely(!cpu)) return;
+            if (unlikely(!cpu)) {
+                /* v3 FIX: 早退也要 EOI, 否则 LAPIC ISR 位悬挂,
+                 * 阻断后续中断 delivery */
+                LAPIC::EOI();
+                return;
+            }
             uint64_t rflags = irq_save();
 
             /* Early SMP bring-up window: an AP arms its first LAPIC tick and
@@ -644,15 +717,11 @@ namespace Schedule {
                 return;
             }
 
-            if (unlikely(__atomic_load_n(&need_resched_flags[cpu->id], __ATOMIC_ACQUIRE))) {
-                __atomic_store_n(&need_resched_flags[cpu->id], false, __ATOMIC_RELEASE);
-            }
-
-            /* Voluntary yield? Consume the flag so the lockless fast path
-               below cannot skip the only other runnable thread. */
-            const bool yield_req = __atomic_exchange_n(
-                &yield_request_flags[cpu->id], false, __ATOMIC_ACQ_REL);
-
+            /* v3 FIX: preempt_count 检查提前到标志消费之前.
+             * 旧代码在函数顶部就清掉 need_resched / 消费 yield 标志,
+             * 若随后走 preempt_count>1 早退, 抢占请求被无声吞掉,
+             * 只能等下个 tick. 现在标志保持锁存 — CheckPreempt()
+             * 在 preempt_count 归零后会重新触发 SCHED_VEC. */
             if (unlikely(cpu->preempt_count > 1)) {
                 if (likely(cpu->current_thread)) {
                     uint64_t q = get_dynamic_quantum(cpu, cpu->current_thread);
@@ -662,6 +731,15 @@ namespace Schedule {
                 irq_restore(rflags);
                 return;
             }
+
+            if (unlikely(__atomic_load_n(&need_resched_flags[cpu->id], __ATOMIC_ACQUIRE))) {
+                __atomic_store_n(&need_resched_flags[cpu->id], false, __ATOMIC_RELEASE);
+            }
+
+            /* Voluntary yield? Consume the flag so the lockless fast path
+               below cannot skip the only other runnable thread. */
+            const bool yield_req = __atomic_exchange_n(
+                &yield_request_flags[cpu->id], false, __ATOMIC_ACQ_REL);
 
             cpu->tick_count++;
             uint64_t now = PIT::TimeSinceBootMS();
@@ -683,10 +761,15 @@ namespace Schedule {
             /* 账本结算 — 锁外 */
             dynamic_adjust_quantum(cpu, curr_thread, now, cur_tsc);
 
+            /* v3: 实际运行时长 — 由 last_run_time 结算得出 (而非编程量子),
+             * 传给 riprate_update 做采样窗口分母 */
+            uint64_t last_slice_ms = 0;
+
             if (likely(curr_thread && !curr_is_idle)) {
                 uint64_t delta = now - curr_thread->last_run_time;
                 curr_thread->last_run_time = now;
                 if (unlikely(delta == 0)) delta = 1;
+                last_slice_ms = delta;
                 uint64_t w = likely(curr_thread->weight) ? curr_thread->weight : 1024;
                 uint64_t vruntime_total = delta * 1024 + curr_thread->vruntime_rem;
                 uint64_t vruntime_delta = vruntime_total / w;
@@ -710,11 +793,11 @@ namespace Schedule {
                 }
             }
 
-            /* ★ RIP 反馈采样 — 锁外, v2 传入 now 做老化 */
-            {
-                uint64_t slice_ms = get_dynamic_quantum(cpu, curr_thread);
-                riprate_update(cpu, curr_thread, ctx->rip, slice_ms, now);
-            }
+            /* ★ RIP 反馈采样 — 锁外.
+             * v3: 传实际运行时长 (last_slice_ms), riprate_update 内部
+             * 按采样点重臂 RIP 快照 — 修复快路径连续运行时把 N 个
+             * 量子的 progress 除以单个量子的窗口错位 */
+            riprate_update(cpu, curr_thread, ctx->rip, last_slice_ms, now);
 
             /* 免锁重入判定 (ZOMBIE 强制慢路径) */
             bool need_lock = true;
@@ -801,7 +884,7 @@ namespace Schedule {
                 if (likely(next_thread != cpu->idle_thread)) {
                     quantum = get_dynamic_quantum(cpu, next_thread);
                 }
-            LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
+                LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
                 LAPIC::EOI();
                 irq_restore(rflags);
                 return;
@@ -829,7 +912,9 @@ namespace Schedule {
                 cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
 
-            /* ★ dispatch 时刻: RIP 起点快照 (v2: 时机不变) */
+            /* ★ RIP 窗口起点快照 — v3 语义: riprate_update 每次采样后
+             * 会重臂此字段 (它只在调度器内部使用), 与 last_run_time
+             * 共同构成逐采样的 窗口 */
             next_thread->dispatch_rip = next_thread->ctx.rip;
 
             quantum = (likely(next_thread != cpu->idle_thread))
@@ -868,11 +953,19 @@ namespace Schedule {
         PREFETCH_RH(curr);
 
         if (woked_thread->vruntime <= cpu->avg_vruntime && woked_thread->deadline < curr->deadline) {
-            uint64_t cw = likely(curr->weight) ? curr->weight : 1024;
-            uint64_t ww = likely(woked_thread->weight) ? woked_thread->weight : 1024;
-            uint64_t w_prod = cw * ww;
-            uint64_t remaining_vr = curr->deadline - curr->vruntime;
-            if (likely(w_prod != 0 && remaining_vr < PREEMPT_THRESHOLD / w_prod)) {
+            /* v3 FIX: "接近 slice 末尾就不抢" 的判定重写.
+             * 旧代码两个 bug:
+             *   1) remaining_vr = deadline - vruntime 无防御 — 运行中
+             *      vruntime 已越过入队时刻的 deadline 时下溢成 ~2^64;
+             *   2) PREEMPT_THRESHOLD (2^20 vruntime 单位 ≈ 17 分钟) 与
+             *      remaining (∈ [0, ~15]) 量纲不符, 行为随权重组合随机.
+             * 新判定: 剩余虚拟 slice 不足 1/4 (ceil) 就不打断 —
+             * 省一次上下文切换, 延迟代价 ≤ 1/4 实际 slice.
+             * 注意 vruntime 是全局单位, 该分数对任意权重都对应
+             * 实际 slice 的同一比例. */
+            uint64_t remaining_vr = (curr->deadline > curr->vruntime)
+                                  ? (curr->deadline - curr->vruntime) : 0;
+            if (likely(remaining_vr < (((uint64_t)cpu->base_quantum + 3) >> 2))) {
                 return;
             }
 
