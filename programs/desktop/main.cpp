@@ -4,6 +4,7 @@
 #include <syscall.h>
 #include <graphic/basicdraw.hpp>
 #include <graphic/winstyle.h>
+#include <graphic/flanterm.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -13,6 +14,10 @@
 static char intTo_stringOutput[128];
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place);
+
+/* Caption glyph painter shared with loader.cpp (normal + maximized chrome). */
+void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
+                          int32_t bodyW, int32_t titleH, int maximized);
 
 // 处理无符号 64 位整数
 const char *to_string(uint64_t value)
@@ -88,6 +93,69 @@ const char* to_string(char value)
     return intTo_stringOutput;
 }
 
+/* ========================================================================== */
+/*  Window-manager helpers: taskbar, normal/maximized geometry, content mirror */
+/* ========================================================================== */
+
+/* Paint the bottom taskbar and its single console app-button straight into
+   the wallpaper bitmap (compositor layer 0). `minimized` selects the active
+   "click to restore" look with a Fluent accent edge. */
+static void wm_draw_taskbar(uint32_t* wall, uint32_t W, uint32_t H, bool minimized) {
+    FrameBuffer lb;
+    lb.BaseAddress       = wall;
+    lb.BufferSize        = (uint64_t)W * H * sizeof(uint32_t);
+    lb.Width = lb.PixelsPerScanLine = W;
+    lb.Height            = H;
+
+    const uint32_t barH = SKYWIN_TASKBAR_H;
+    const uint32_t y0   = H - barH;
+    DrawFillRect(&lb, 0, y0, W, barH, SKYRGB_TASKBAR);
+    DrawFillRect(&lb, 0, y0, W, 1, SKYRGB_SEP);
+
+    const uint32_t bx = 8, by = y0 + 6, bw = 200, bh = barH - 12;
+    DrawFillRect(&lb, bx, by, bw, bh, minimized ? SKYRGB_TBTN_ON : SKYRGB_TBTN_IDLE);
+    DrawRect(&lb, bx, by, bw, bh, minimized ? SKYRGB_ACCENT : SKYRGB_BORDER);
+    if (minimized) DrawFillRect(&lb, bx, by, 3, bh, SKYRGB_ACCENT);
+
+    TTF_Font* f = console_font();
+    if (f)
+        TTF_DrawText(&lb, f, (int32_t)bx + 14, (int32_t)(by + (bh - 22) / 2),
+                     "Skyline Console", minimized ? 0xFFFFFFFFu : SKYRGB_INK);
+}
+
+/* Switch the console window to its fixed rounded NORMAL surface. Called only
+   between synchronous Compose() frames, when the workers are parked on the
+   barrier and cannot observe a half-updated Window. */
+static void wm_apply_normal(Window* w, const SkyWinPlacement* pl,
+                           uint32_t nx, uint32_t ny) {
+    w->PosX = nx;  w->PosY = ny;
+    w->SizeX = SKYWIN_SURF_W;  w->SizeY = SKYWIN_SURF_H;
+    w->FbAddr = pl->desk_surf;
+    w->HasAlpha = 1;
+}
+
+/* Switch the console window to the opaque, full-work-area MAXIMIZED surface. */
+static void wm_apply_max(Window* w, const uint32_t* maxSurf,
+                        uint32_t mw, uint32_t mh) {
+    w->PosX = 0;  w->PosY = 0;
+    w->SizeX = mw;  w->SizeY = mh;
+    w->FbAddr = (uint64_t)maxSurf;
+    w->HasAlpha = 0;
+}
+
+/* While maximized, mirror the client's latest terminal pixels (it keeps
+   writing its fixed NORMAL shared surface) 1:1 into the maximized client area.
+   No scaling, so glyphs stay crisp; only CONTENT_W x CONTENT_H pixels move. */
+static void wm_sync_max_content(uint32_t* maxSurf, uint32_t maxW,
+                                const uint32_t* normSurf) {
+    for (uint32_t r = 0; r < SKYWIN_CONTENT_H; r++) {
+        const uint32_t* sp = normSurf
+            + (uint64_t)(SKYWIN_CONTENT_Y + r) * SKYWIN_SURF_W + SKYWIN_CONTENT_X;
+        uint32_t* dp = maxSurf + (uint64_t)(SKYWIN_TITLE_H + r) * maxW;
+        memcpy(dp, sp, (size_t)SKYWIN_CONTENT_W * sizeof(uint32_t));
+    }
+}
+
 
 int main(){
     FrameBuffer fb;
@@ -103,6 +171,7 @@ int main(){
 
     BasicDraw bd((FrameBuffer*)&fb);
     bd.RenderWallpaper(wallBuf);
+    wm_draw_taskbar(wallBuf, scrW, scrH, false);   /* restore entry on layer 0 */
 
     Compositor& comp = Compositor::Get();
     if (!comp.Init((FrameBuffer*)&fb)) return 1;
@@ -139,6 +208,29 @@ int main(){
         comp.RegisterWindow(&consoleWin, layer1);
     }
 
+    /* Desktop-owned (NOT shared with the client) full-work-area surface used
+       only while maximized: opaque, no rounded shadow margin. The live text is
+       mirrored in from the normal shared surface each frame (wm_sync). */
+    const uint32_t maxW = scrW;
+    const uint32_t maxH = scrH - SKYWIN_TASKBAR_H;
+    uint32_t* maxSurf = (uint32_t*)malloc((size_t)maxW * maxH * sizeof(uint32_t));
+    if (maxSurf) {
+        FrameBuffer mb;
+        mb.BaseAddress       = maxSurf;
+        mb.BufferSize        = (uint64_t)maxW * maxH * sizeof(uint32_t);
+        mb.Width = mb.PixelsPerScanLine = maxW;
+        mb.Height            = maxH;
+        DrawFillRect(&mb, 0, 0, maxW, SKYWIN_TITLE_H, SKYRGB_TITLE);
+        DrawFillRect(&mb, 0, SKYWIN_TITLE_H, maxW, maxH - SKYWIN_TITLE_H, SKYRGB_PAPER);
+        DrawFillRect(&mb, 0, SKYWIN_TITLE_H - 1, maxW, 1, SKYRGB_SEP);
+        TTF_Font* mf = console_font();
+        if (mf)
+            TTF_DrawText(&mb, mf, 14, (SKYWIN_TITLE_H - 22) / 2,
+                         "Skyline Console", SKYRGB_INK);
+        SkyPaintCaptionIcons(&mb, 0, 0, (int32_t)maxW,
+                             (int32_t)SKYWIN_TITLE_H, 1);
+    }
+
     comp.StartWorkers();
 
     for (int warm = 0; warm < 8; warm++) {
@@ -172,6 +264,14 @@ int main(){
     uint64_t last_move  = rdtsc64();
     uint64_t last_scene = rdtsc64();
 
+    /* ---- window-manager interaction state ---- */
+    enum { WM_NORMAL = 0, WM_MAX = 1, WM_MIN = 2 } wmMode = WM_NORMAL;
+    uint32_t normX = place.x, normY = place.y;  /* normal surface top-left    */
+    bool     prevLeft = false, dragging = false;
+    int32_t  grabDX = 0, grabDY = 0;
+    int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 taskbar */
+    uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
+
     comp.SetCursor(0, 0, true);
 
     for(;;){
@@ -181,6 +281,7 @@ int main(){
             if (seq1 & 1) continue;
             mx = p->x;
             my = p->y;
+            ml = p->left;
             seq2 = __atomic_load_n(&p->seq, __ATOMIC_ACQUIRE);
             if (seq1 == seq2) break;
         }
@@ -192,6 +293,104 @@ int main(){
 
         uint64_t now = rdtsc64();
         bool moved = (mx != prev_x || my != prev_y);
+
+        /* ==================== Window-manager interaction ==================== */
+        const bool leftDown = (ml != 0);
+
+        /* Current BODY rectangle on screen (the visible rect; the normal
+           surface adds the SKYWIN_SHADOW margin around it). */
+        const int32_t M  = (int32_t)SKYWIN_SHADOW;
+        const int32_t th = (int32_t)SKYWIN_TITLE_H;
+        int32_t bx, by, bw;
+        if (wmMode == WM_MAX) { bx = 0; by = 0; bw = (int32_t)maxW; }
+        else { bx = (int32_t)normX + M; by = (int32_t)normY + M; bw = (int32_t)SKYWIN_W; }
+
+        /* taskbar app-button hit rectangle (fixed, on layer 0) */
+        const int32_t tbX0 = 8, tbW = 200;
+        const int32_t tbY0 = fb_height - (int32_t)SKYWIN_TASKBAR_H + 6;
+        const int32_t tbH  = (int32_t)SKYWIN_TASKBAR_H - 12;
+        auto inBox = [&](int32_t x0, int32_t y0, int32_t ww, int32_t hh) {
+            return mx >= x0 && mx < x0 + ww && my >= y0 && my < y0 + hh;
+        };
+        bool wmDirty = false;   /* a state change happened -> repaint now     */
+
+        if (leftDown && !prevLeft) {                 /* press edge: classify  */
+            pressHit = 0;
+            if (wmMode != WM_MIN) {
+                int32_t minL   = bx + bw - 3 * (int32_t)SKYWIN_BTN_W;
+                int32_t maxL   = bx + bw - 2 * (int32_t)SKYWIN_BTN_W;
+                int32_t closeL = bx + bw - 1 * (int32_t)SKYWIN_BTN_W;
+                if      (inBox(closeL, by, (int32_t)SKYWIN_BTN_W, th)) pressHit = 4;
+                else if (inBox(maxL,   by, (int32_t)SKYWIN_BTN_W, th)) pressHit = 3;
+                else if (inBox(minL,   by, (int32_t)SKYWIN_BTN_W, th)) pressHit = 2;
+                else if (wmMode == WM_NORMAL && inBox(bx, by, bw, th)) {
+                    pressHit = 1;                    /* caption empty area    */
+                    dragging = true;
+                    grabDX = mx - (int32_t)normX;    /* grab vs SURFACE origin*/
+                    grabDY = my - (int32_t)normY;
+                }
+            }
+            if (pressHit == 0 && inBox(tbX0, tbY0, tbW, tbH)) pressHit = 5;
+        }
+
+        if (leftDown && dragging && wmMode == WM_NORMAL) {     /* drag move   */
+            int32_t nx = mx - grabDX, ny = my - grabDY;
+            const int32_t xLo = -((int32_t)SKYWIN_SURF_W - 120);
+            const int32_t xHi = fb_width  - 120;
+            const int32_t yLo = -M;
+            const int32_t yHi = fb_height - (int32_t)SKYWIN_TASKBAR_H - th - M;
+            if (nx < xLo) nx = xLo; if (nx > xHi) nx = xHi;
+            if (ny < yLo) ny = yLo; if (ny > yHi) ny = yHi;
+            normX = (uint32_t)nx; normY = (uint32_t)ny;
+            comp.MoveWindow(&consoleWin, normX, normY);
+        }
+
+        if (!leftDown && prevLeft) {                 /* release edge: action  */
+            bool fire = false;
+            if (pressHit >= 2 && pressHit <= 4 && wmMode != WM_MIN) {
+                int32_t lx = bx + bw - (5 - pressHit) * (int32_t)SKYWIN_BTN_W;
+                fire = inBox(lx, by, (int32_t)SKYWIN_BTN_W, th);
+            } else if (pressHit == 5) {
+                fire = inBox(tbX0, tbY0, tbW, tbH);
+            }
+            dragging = false;
+            if (fire) {
+                if (pressHit == 2 || pressHit == 4) {        /* minimize/close */
+                    wmMode = WM_MIN;
+                    comp.SetVisible(&consoleWin, false);
+                    wm_draw_taskbar(wallBuf, scrW, scrH, true);
+                    wmDirty = true;
+                } else if (pressHit == 3 && maxSurf) {       /* maximize toggle*/
+                    if (wmMode == WM_NORMAL) {
+                        wmMode = WM_MAX;
+                        wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
+                    } else if (wmMode == WM_MAX) {
+                        wmMode = WM_NORMAL;
+                        wm_apply_normal(&consoleWin, &place, normX, normY);
+                    }
+                    wmDirty = true;
+                } else if (pressHit == 5) {                   /* taskbar toggle */
+                    if (wmMode == WM_MIN) {
+                        wmMode = WM_NORMAL;
+                        wm_apply_normal(&consoleWin, &place, normX, normY);
+                        comp.SetVisible(&consoleWin, true);
+                        wm_draw_taskbar(wallBuf, scrW, scrH, false);
+                    } else {
+                        wmMode = WM_MIN;
+                        comp.SetVisible(&consoleWin, false);
+                        wm_draw_taskbar(wallBuf, scrW, scrH, true);
+                    }
+                    wmDirty = true;
+                }
+            }
+            pressHit = 0;
+        }
+        prevLeft = leftDown;
+
+        /* While maximized, mirror the client's latest text before composing. */
+        if (wmMode == WM_MAX && maxSurf)
+            wm_sync_max_content(maxSurf, maxW, (const uint32_t*)place.desk_surf);
+        if (wmDirty) { comp.Compose(); last_scene = rdtsc64(); }
 
         if (moved) {
             /* Pointer overlay fast path: spin-pace at ~60Hz, then erase and
@@ -211,7 +410,9 @@ int main(){
             /* Recompose the underlying scene at ~30Hz so console/window
                output still advances while the pointer is moving; Compose()
                re-stamps the cursor at its current position afterwards. */
-            if (now - last_scene >= scene_gap) {
+            /* Drag the caption at the pointer rate so the window tracks the
+               hand 1:1; otherwise recompose the slow-changing scene ~30Hz. */
+            if (dragging || now - last_scene >= scene_gap) {
                 comp.Compose();
                 last_scene = now;
             }

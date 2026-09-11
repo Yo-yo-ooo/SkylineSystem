@@ -74,6 +74,36 @@ static inline float rounded_sdf(float px, float py, float rx, float ry, float r)
     return __builtin_sqrtf(qx * qx + qy * qy) - r;
 }
 
+/* Stamp the three Win11 caption glyphs (minimize / maximize-or-restore /
+   close), right-aligned inside a body whose top-left within the tightly
+   packed surface is (bx0,by0) and whose width is bodyW. Shared by the fixed
+   normal chrome (rounded shadow surface) and the full-work-area maximized
+   chrome, so their click hit-areas can never drift apart. maximized != 0 draws
+   the two overlapping boxes "restore" glyph on the middle button. */
+void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
+                          int32_t bodyW, int32_t titleH, int maximized) {
+    const int32_t bw = (int32_t)SKYWIN_BTN_W;
+    const int32_t cy = by0 + titleH / 2;
+
+    /* minimize: one horizontal rule centred in [B-3BTN, B-2BTN) */
+    int32_t cx = bx0 + (int32_t)SKYWIN_BTN_MIN_L((uint32_t)bodyW) + bw / 2;
+    DrawLine(s, cx - 5, cy, cx + 5, cy, SKYRGB_CLOSE);
+
+    /* maximize / restore: hollow square, or two overlapping squares */
+    cx = bx0 + (int32_t)SKYWIN_BTN_MAX_L((uint32_t)bodyW) + bw / 2;
+    if (maximized) {
+        DrawRect(s, cx - 2, cy - 8, 7, 7, SKYRGB_CLOSE);    /* rear box  */
+        DrawRect(s, cx - 5, cy - 5, 10, 10, SKYRGB_CLOSE);  /* front box */
+    } else {
+        DrawRect(s, cx - 5, cy - 5, 10, 10, SKYRGB_CLOSE);
+    }
+
+    /* close: a cross centred in the right-most button */
+    cx = bx0 + (int32_t)SKYWIN_BTN_CLOSE_L((uint32_t)bodyW) + bw / 2;
+    DrawLine(s, cx - 5, cy - 5, cx + 5, cy + 5, SKYRGB_CLOSE);
+    DrawLine(s, cx + 5, cy - 5, cx - 5, cy + 5, SKYRGB_CLOSE);
+}
+
 static void paint_console_chrome(FrameBuffer *wb) {
     const int32_t SW = (int32_t)SKYWIN_SURF_W;
     const int32_t SH = (int32_t)SKYWIN_SURF_H;
@@ -146,12 +176,8 @@ static void paint_console_chrome(FrameBuffer *wb) {
         TTF_DrawText(wb, font, M + 14, M + (TH - 22) / 2,
                      "Skyline Console", SKYRGB_INK);
 
-    /* 5) close cross, centred inside the right-most caption button area */
-    int32_t capX0 = M + (int32_t)SKYWIN_W - (int32_t)SKYWIN_CAPBTN_W;
-    int32_t ccx   = capX0 + (int32_t)SKYWIN_CAPBTN_W / 2;
-    int32_t ccy   = M + TH / 2;
-    DrawLine(wb, ccx - 5, ccy - 5, ccx + 5, ccy + 5, SKYRGB_CLOSE);
-    DrawLine(wb, ccx + 5, ccy - 5, ccx - 5, ccy + 5, SKYRGB_CLOSE);
+    /* 5) caption glyphs: minimize / maximize / close, right-aligned */
+    SkyPaintCaptionIcons(wb, M, M, (int32_t)SKYWIN_W, TH, 0);
 }
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place) {

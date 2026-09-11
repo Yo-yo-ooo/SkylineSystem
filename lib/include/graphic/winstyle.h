@@ -31,7 +31,21 @@ extern "C" {
 #define SKYWIN_H          400u   /* body height                             */
 #define SKYWIN_RADIUS      8u   /* Win11-style corner radius               */
 #define SKYWIN_TITLE_H    32u   /* modern caption/title-bar height         */
-#define SKYWIN_CAPBTN_W   46u   /* caption (close) button area width       */
+#define SKYWIN_CAPBTN_W   46u   /* width of EACH caption button (min/max/x) */
+#define SKYWIN_BTN_W      SKYWIN_CAPBTN_W
+/* Body-local left x of each RIGHT-aligned caption button for a body whose
+   width is B (the normal body is SKYWIN_W wide; the maximized surface spans
+   the whole work-area width). Right-to-left order matches Win11:
+     close    [B-1*BTN, B)
+     maximize [B-2*BTN, B-1*BTN)
+     minimize [B-3*BTN, B-2*BTN)                                        */
+#define SKYWIN_BTN_CLOSE_L(B) ((B) - 1u * SKYWIN_BTN_W)
+#define SKYWIN_BTN_MAX_L(B)   ((B) - 2u * SKYWIN_BTN_W)
+#define SKYWIN_BTN_MIN_L(B)   ((B) - 3u * SKYWIN_BTN_W)
+
+/* Bottom desktop taskbar height; it hosts the minimized-window restore
+   entry. A maximized window fills the work area ABOVE this bar. */
+#define SKYWIN_TASKBAR_H   40u
 
 /* The ARGB surface is larger than the body: a symmetric margin around it    *
  * holds the soft drop shadow and the anti-aliased corner falloff. The body  *
@@ -99,6 +113,10 @@ typedef struct SkyWinPlacement {
 #define SKYRGB_PAPER    0xFF000000u  /* terminal paper; matches flanterm bg  */
 #define SKYRGB_INK      0xFFECECECu  /* caption glyph, near white            */
 #define SKYRGB_CLOSE    0xFFD8D8DEu  /* close cross glyph                    */
+#define SKYRGB_TASKBAR  0xFF1C1C20u  /* bottom taskbar strip                 */
+#define SKYRGB_TBTN_IDLE 0xFF2A2A30u /* taskbar app button, window shown     */
+#define SKYRGB_TBTN_ON  0xFF3A3A42u  /* taskbar app button, minimized/active */
+#define SKYRGB_ACCENT   0xFF60CDFFu  /* Fluent active/accent indicator       */
 
 #ifdef __cplusplus
 }
