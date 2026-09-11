@@ -16,3 +16,5 @@ a.si4project/
 *.zip
 *.log
 *.png
+!skyline_window.png
+!skyline_closeup.png
