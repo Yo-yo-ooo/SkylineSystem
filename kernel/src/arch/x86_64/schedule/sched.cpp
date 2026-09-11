@@ -1,7 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
 // sched.cpp - Rate-aware EEVDF (REEVDF) Schedule ALGO IMPL
-
+//
+// 结构总览:
+//   公平层  每CPU运行队列 (deadline 排序 rb-tree + 子树最小 vruntime
+//           增广); vruntime/虚拟时钟/资格判定; lag 钳位
+//   粒度层  quantum = base × weight/1024 × fused_mult + adj
+//   反馈层  四层闭环: 信号 (pagemap^ring 标签, TSC 执行期分母) /
+//           基线 (per-thread 慢 EWMA) / 控制 (快慢双通道 + 死区 +
+//           有符号修正) / 统计 (per-CPU 计数 + 振荡检测)
+//   SMP     push (过剩主动推) + pull (空闲偷取) 双向均衡
+//   回收    僵尸批量搬出锁外释放
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/interrupt/idt.h>
 #include <arch/x86_64/smp/smp.h>
@@ -18,9 +27,9 @@
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
 #define ZOMBIE_RECLAIM_BATCH 16
-/*  WAIT_THREAD_TIMEOUT_MS (从未使用) / SCHED_HUNGER_THRESHOLD (死代码) /
-       PREEMPT_THRESHOLD (量纲错误, 被 TriggerPreempt 的 slice 分数替代) 已删除 */
 #define SCHED_STEAL_THROTTLE 8
+/* 推送门槛: 仅当 my_weight > target × (1 + 1/2^SHIFT) 才推.
+ * shift 越小门槛越高 (越保守). */
 #define SCHED_PUSH_GAP_SHIFT 2
 
 
@@ -28,22 +37,70 @@
  *  RIP 速率反馈 — 全部定点 Q10 (1.0x = 1024)
  * ============================================================ */
 #define RIPRATE_FRAC_BITS  10
-/* v3 FIX: Q10 下 1.0x = 1<<10. 旧值 1024<<10 是 Q20 量纲 */
-#define RIPRATE_INIT       (1ULL << RIPRATE_FRAC_BITS)      /* 1.0x */
+#define RIPRATE_INIT       (1ULL << RIPRATE_FRAC_BITS)      /* 1.0x, 文档用 */
 #define RIPRATE_ONE        (1ULL << RIPRATE_FRAC_BITS)      /* 1.0x 常量 */
-#define RIPRATE_SHIFT      3                                 /* EWMA 1/8 */
+#define RIPRATE_SHIFT      3                                 /* 全局观测 EWMA 1/8 */
 #define RIPRATE_MAX_MULT   (4ULL  << RIPRATE_FRAC_BITS)     /* 4x 上限 */
-#define RIPRATE_MIN_MULT   (1ULL << (RIPRATE_FRAC_BITS - 2))/* 0.25x 下限 = 256 */
-/*  观测值超过 16x 时钳位 (而非丢弃) — 丢弃会让慢基线永远追不上快线程 */
-#define RIPRATE_OUTLIER_MULT (16ULL << RIPRATE_FRAC_BITS)
+#define RIPRATE_MIN_MULT   (1ULL << (RIPRATE_FRAC_BITS - 2))/* 0.25x 下限 */
+#define RIPRATE_OUTLIER_MULT (16ULL << RIPRATE_FRAC_BITS)   /* 离群钳位 16x */
 
-/*  直接修正项的钳位 (± 量子偏移上限, 单位: LAPIC tick 基准的量子单位) */
-#define RIPADJ_MAX        4                                  /* 最多 +4 */
-#define RIPADJ_MIN       (-4)                                /* 最多 -4 */
-/*  老化阈值 — 超过这个 ms 没采样, 倍率向 1.0 收缩一步 */
+/* 双时间尺度 / 基线 / 死区 / 振荡检测 */
+#define RIP_FAST_SHIFT     2    /* 快通道 EWMA 1/4 (捕突发) */
+#define RIP_SLOW_SHIFT     4    /* 慢通道 EWMA 1/16 (稳态) */
+#define RIP_BASE_SHIFT     6    /* per-thread 基线 EWMA 1/64 */
+#define RIP_DEAD_ZONE      (RIPRATE_ONE >> 5)   /* 3.125%: 死区内不动 adj */
+#define RIP_OUTLIER_STREAK_MAX 4                /* 连续离群 → 基线重置 */
+#define RIP_FAST_W_NORM_Q10  256                /* 快通道常规融合权重 25% */
+#define RIP_FAST_W_OSC_Q10   64                 /* 振荡时 6.25% */
+#define RIP_OSC_HI  (RIPRATE_ONE >> 2)          /* |dev| 均值 > 25% → 慢模式 */
+#define RIP_OSC_LO  (RIPRATE_ONE >> 3)          /* < 12.5% → 恢复 (迟滞) */
+
+/* 短窗口防御. 阈值依据: 典型窗口 = base_quantum(∈[2,15]) × w/1024 ×
+ * mult, weight-1024 常态 ~5ms — 门槛必须显著小于典型窗口, 否则会把
+ * 正常采样一并关掉; 3ms 下墙钟 ±1ms 量化误差 ≤ 33%. */
+#define RIP_MIN_SAMPLE_MS  3
+
+/* 直接修正项的钳位 (± 量子偏移上限) */
+#define RIPADJ_MAX        4
+#define RIPADJ_MIN       (-4)
+/* 老化: 每隔 50ms 无采样收缩一步; 超过 16 个周期直接归零 */
 #define RIPRATE_AGING_MS 50ULL
-/*  衰减步长 1/16 (位移 4) */
+#define RIPRATE_AGING_MAX_STEPS 16ULL
 #define RIPRATE_DECAY_SHIFT 4
+
+/* 融合权重 per-CPU: 单写者 = 本核 Switch, 导出读取用 relaxed 原子.
+ * 全局单旋钮会让单核噪声振荡把所有核的快通道一起压低. */
+struct alignas(64) rip_fast_weight_ctx { volatile uint32_t w; char pad[60]; };
+static rip_fast_weight_ctx rip_fast_weight[MAX_CPU];
+
+/* per-CPU 反馈统计 — 全 u32, 单 cache line 64B (per-CPU 数据无伪
+ * 共享, 但热路径少摸一行仍是净赚). samples 以 ~500/s 计 ~100 天
+ * 回绕 — 统计量, 回绕良性. */
+struct alignas(64) rip_stats_ctx {
+    uint32_t samples;        /* 有效样本数 */
+    uint32_t outliers;       /* 回绕 / 离群钳位 */
+    uint32_t tag_invalid;    /* pagemap/ring 切换失效 */
+    uint32_t short_windows;  /* 短窗口防御命中 */
+    uint32_t stalled;        /* obs_rate == 0 的停滞样本 */
+    uint32_t dead_zone;      /* 死区命中 */
+    uint32_t sat_hi;         /* adj 顶轨 */
+    uint32_t sat_lo;         /* adj 底轨 */
+    uint32_t base_resets;    /* 基线重置 (连续离群) */
+    uint32_t tsc_mismatch;   /* TSC/墙钟矛盾 → 回退墙钟 */
+    uint32_t mean_abs_dev;   /* 最近 64 样本 |dev| 均值 (Q10) */
+    uint32_t abs_dev_sum;    /* 窗口累计 (≤ 64×15360, u32 安全) */
+    uint32_t dev_window;
+    uint32_t near_reset;     /* streak ≥ 半程未触发 (接近基线重置) */
+    uint32_t wf_clamped;     /* 融合权重防御分支命中 (数组写坏) */
+    char     pad[4];
+};
+static rip_stats_ctx rip_stats[MAX_CPU];
+
+/* 可选 TSC 校准钩子 — 返回 TSC 每毫秒周期数.
+ * 返回 0 (默认弱符号) = 未校准, 采样走墙钟分母.
+ * 在别处定义强符号 (必须是同名同签名的普通 C++ 函数, C 文件里
+ * 符号对不上) 即可启用 "执行期分母" — 剔除窗口内的中断时间. */
+__attribute__((weak)) uint64_t sched_tsc_per_ms(void) { return 0; }
 
 struct alignas(64) sched_steal_throttle { uint32_t skip; char pad[60]; };
 static sched_steal_throttle per_cpu_steal_throttle[MAX_CPU];
@@ -117,9 +174,8 @@ static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread,
                 /* 大量空闲: 拉长量子, 摊薄定时器/切换开销 */
                 if (likely(cpu->base_quantum < 15)) cpu->base_quantum++;
             } else if (unlikely(idle_ratio < 10 && ctx_sw > 500)) {
-                /* v3 FIX: 高负载 + 切换风暴 → 拉长量子降低切换频率.
-                 * 旧代码在这里 quantum--, 方向反了: 切换已经过多,
-                 * 缩短量子只会制造更多切换. */
+                /* 高负载 + 切换风暴: 拉长量子降低切换频率
+                 * (缩短量子只会制造更多切换) */
                 if (likely(cpu->base_quantum < 15)) cpu->base_quantum++;
             } else {
                 if (cpu->base_quantum > 5) cpu->base_quantum--;
@@ -135,22 +191,21 @@ static void dynamic_adjust_quantum(cpu_t *cpu, thread_t *curr_thread,
 }
 
 /* ============================================================
- *  get_dynamic_quantum — 倍率乘法 + 直接修正项叠加
+ *  get_dynamic_quantum — 基准 × 快慢融合倍率 + 有符号修正项
  *
- *    eff = (weight_quantum × mult >> FRAC) + rip_quantum_adj
+ *    eff = (base × fused_mult >> FRAC) + rip_quantum_adj
  *
- *  两个通道并存的理由:
- *    乘法通道: 稳态塑形 (长期特征)
- *    修正通道: 快速双向响应 (即时偏差) — adj 有符号, 可正可负
- *
- *   mult == 0 (零初始化、从未采样) 按 1.0x 处理,
- *      防止新线程首个量子被压成 1 tick.
+ *  fused_mult = (mf·wf + ms·(1024−wf)) >> 10 — 凸组合, 融合值
+ *  必落在 [MIN_MULT, MAX_MULT] 内. wf 为本核融合权重 (振荡检测
+ *  动态调整: 常态 25% / 振荡 6.25%).
+ *  custom_quantum 语义: 既是基准也是天花板 — 倍率只能把它往下
+ *  拉, 反馈在 cap 之内双向生效.
+ *  mult == 0 (零初始化/从未采样) 按 1.0x 处理.
  * ============================================================ */
 static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     if (unlikely(!thread || thread == cpu->idle_thread)) return cpu->base_quantum;
 
     uint64_t base;
-    /*  custom_quantum 作为基准而非硬覆盖 — 反馈仍生效 */
     if (unlikely(thread->custom_quantum > 0)) {
         base = thread->custom_quantum;
     } else {
@@ -158,11 +213,18 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
         base = (cpu->base_quantum * weight) / 1024;
     }
 
-    /* 乘法通道 ( 零初始化防御) */
-    uint64_t mult = likely(thread->rip_rate_mult) ? thread->rip_rate_mult : RIPRATE_ONE;
+    uint64_t mf  = likely(thread->rip_mult_fast) ? thread->rip_mult_fast : RIPRATE_ONE;
+    uint64_t msl = likely(thread->rip_mult_slow) ? thread->rip_mult_slow : RIPRATE_ONE;
+    uint32_t wf  = __atomic_load_n(&rip_fast_weight[cpu->id].w, __ATOMIC_RELAXED);
+    if (unlikely(wf == 0 || wf > (uint32_t)RIPRATE_ONE)) {
+        wf = RIP_FAST_W_NORM_Q10;
+        rip_stats[cpu->id].wf_clamped++;   /* 数组被写坏的观测 */
+    }
+    uint64_t mult = (mf * wf + msl * (RIPRATE_ONE - wf)) >> RIPRATE_FRAC_BITS;
+
     uint64_t q = (base * mult) >> RIPRATE_FRAC_BITS;
 
-    /*  直接修正通道 — 有符号加减 */
+    /* 直接修正通道 — 有符号加减 */
     int32_t adj = thread->rip_quantum_adj;
     if (likely(adj > 0)) {
         q += (uint64_t)adj;
@@ -172,108 +234,266 @@ static inline uint64_t get_dynamic_quantum(cpu_t *cpu, thread_t *thread) {
     }
 
     if (unlikely(q < 1)) q = 1;
-    if (unlikely(q > cpu->base_quantum * 8)) q = cpu->base_quantum * 8;
+    /* cap 尊重 custom_quantum 的显式意图 (统一 8×base 截断会把
+     * 大值 custom 砍掉 — custom=50/base=2 会变 16) */
+    uint64_t cap = cpu->base_quantum * 8;
+    if (unlikely((uint64_t)thread->custom_quantum > cap)) cap = thread->custom_quantum;
+    if (unlikely(q > cap)) q = cap;
     return q;
 }
 
+/* ============================================================
+ *  riprate_update — RIP 速率反馈 (每 tick 对当前线程采样)
+ *
+ *  信号层: tag = pagemap ^ (cs&3). pagemap 是对齐内核指针, 低 2 位
+ *    为 0, 与 RPL 异或无碰撞. tag 变化 = 地址空间或特权级切换,
+ *    本窗口 RIP 差分与历史不可比 → 只重臂不采样.
+ *    分母优先用 TSC 执行期, 否则墙钟 ms.
+ *
+ *  基线层: rip_base_self (1/64 慢 EWMA). mult 语义 = "当前节奏相对
+ *    自身历史的变化" — 稳态一切归 1.0, 反馈只在阶段变化时起作用
+ *    (公平性由 vruntime 承担, 与 mult 正交, 基线漂移只损失整形
+ *    精度). 连续 4 次离群 (≥16x) → 基线重播种为当前速率.
+ *    cpu->rip_avg_rate 仅作观测更新, 不参与控制.
+ *
+ *  控制层: 快 1/4 / 慢 1/16 双 EWMA, 各自钳 [0.25x, 4x];
+ *    死区 3.125% (防噪声把 adj 顶轨); adj = dev>>6 步进的有符号
+ *    偏置, ±4 轨道, 饱和计数暴露. 刻意不做跨通道抗饱和馈入:
+ *    mult→quantum→采样→adj→mult 的二阶耦合回路有自激风险,
+ *    有界偏置 + 可观测已足够.
+ *
+ *  统计层: per-CPU 计数 + 64 样本 |dev| 均值 → 振荡检测 (迟滞
+ *    25%/12.5%) 调整本核融合权重. 统计先于死区累计 — 死区样本
+ *    也是偏差, 收敛判据不能对其失明.
+ *
+ *  窗口不变量:
+ *    progress = rip_now − 上次采样点 RIP (dispatch 时初始化,
+ *               每次采样后无条件重臂 — 早退路径不累积窗口)
+ *    elapsed  = 实际运行时长 (调用方由 last_run_time 结算, 而非
+ *               编程量子 — 被提前打断的窗口不被高估)
+ *
+ *  已知取舍: RIP 不是完美的 progress 代理 (rep 前缀期间 RIP 不
+ *  动, 回跳循环回绕被丢弃) — 可换 IA32_FIXED_CTR0; 墙钟 ms 粒度
+ *  噪声由双通道 EWMA 吸收.
+ * ============================================================ */
 static inline void riprate_update(cpu_t *cpu, thread_t *thread,
-                                  uint64_t rip_now, uint64_t elapsed_ms,
+                                  uint64_t rip_now, uint64_t cs,
+                                  uint64_t wall_ms, uint64_t cur_tsc,
                                   uint64_t now_ms) {
     if (unlikely(!thread || thread == cpu->idle_thread)) return;
 
-    
-    if (unlikely(thread->rip_rate_mult == 0)) thread->rip_rate_mult = RIPRATE_ONE;
+    rip_stats_ctx *st = &rip_stats[cpu->id];
 
-    
+    /* 零初始化防御 (双通道) */
+    if (unlikely(thread->rip_mult_fast == 0)) thread->rip_mult_fast = RIPRATE_ONE;
+    if (unlikely(thread->rip_mult_slow == 0)) thread->rip_mult_slow = RIPRATE_ONE;
+
+    /* ---- 0) 信号标签: 地址空间/特权级可比性 ---- */
+    uint64_t tag = (uint64_t)thread->pagemap ^ (uint64_t)(cs & 3);
+    if (unlikely(thread->rip_signal_tag == 0 || thread->rip_signal_tag != tag)) {
+        thread->rip_signal_tag = tag;
+        thread->dispatch_rip = rip_now;        /* 窗口重臂, 不采样 */
+        thread->rip_last_tsc = cur_tsc;
+        thread->rip_last_sample_ms = now_ms;
+        st->tag_invalid++;
+        return;
+    }
+
+    /* ---- 1) 老化: 按离 CPU 间隔成比例衰减 ----
+     * steps = gap / AGING_MS (封顶), 逐周期收缩 1/16; 超过 16 个
+     * 周期 (≥800ms 没跑) 直接归位 — 陈旧反馈无意义.
+     * 持续运行的线程 gap ≈ 一个 slice → steps = 0, 不衰减.
+     * 归零分支不 return — mult/adj 归位后继续采样, 首采样建基
+     * 线不受影响. dispatch 处刻意不重置 rip_last_sample_ms:
+     * 睡眠时长必须进入老化计算, 否则长睡线程带着陈旧 mult 回来. */
     uint64_t last_sample = thread->rip_last_sample_ms;
-    if (unlikely(last_sample != 0 && (now_ms - last_sample) > RIPRATE_AGING_MS)) {
-        /* mult → 1.0 收缩 1/16. 收缩不会越过 1.0 (减量 ≤ 差值),
-           原 clamp 范围保持不变, 无需重新钳位 */
-        uint64_t m = thread->rip_rate_mult;
-        if (likely(m > RIPRATE_ONE)) {
-            m -= (m - RIPRATE_ONE) >> RIPRATE_DECAY_SHIFT;
-        } else if (unlikely(m < RIPRATE_ONE)) {
-            m += (RIPRATE_ONE - m) >> RIPRATE_DECAY_SHIFT;
-        }
-        thread->rip_rate_mult = m;
+    if (unlikely(last_sample != 0)) {
+        uint64_t steps = (now_ms - last_sample) / RIPRATE_AGING_MS;
+        if (unlikely(steps > RIPRATE_AGING_MAX_STEPS)) {
+            thread->rip_mult_fast = RIPRATE_ONE;
+            thread->rip_mult_slow = RIPRATE_ONE;
+            thread->rip_quantum_adj = 0;
+        } else {
+            for (uint64_t i = 0; i < steps; i++) {
+                /* 收缩不会越过 1.0 (减量 ≤ 差值), 无需再 clamp */
+                uint64_t mf = thread->rip_mult_fast;
+                if (likely(mf > RIPRATE_ONE))       mf -= (mf - RIPRATE_ONE) >> RIPRATE_DECAY_SHIFT;
+                else if (unlikely(mf < RIPRATE_ONE)) mf += (RIPRATE_ONE - mf) >> RIPRATE_DECAY_SHIFT;
+                thread->rip_mult_fast = mf;
 
-        /* adj → 0 收缩.
-         * v3 FIX: (x+7)>>4 在 |adj| ≤ 8 时恒为 0, 而 clamp 是 ±4 —
-         * 旧代码 adj 永不衰减. (x+15)>>4 = ceil(x/16) 保证 ≥1 步. */
-        int32_t adj = thread->rip_quantum_adj;
-        if (likely(adj > 0)) {
-            adj -= (int32_t)(((uint32_t)adj + 15) >> RIPRATE_DECAY_SHIFT);
-        } else if (unlikely(adj < 0)) {
-            uint32_t mag = (uint32_t)(-(int64_t)adj);
-            adj += (int32_t)((mag + 15) >> RIPRATE_DECAY_SHIFT);
+                uint64_t msl = thread->rip_mult_slow;
+                if (likely(msl > RIPRATE_ONE))       msl -= (msl - RIPRATE_ONE) >> RIPRATE_DECAY_SHIFT;
+                else if (unlikely(msl < RIPRATE_ONE)) msl += (RIPRATE_ONE - msl) >> RIPRATE_DECAY_SHIFT;
+                thread->rip_mult_slow = msl;
+
+                /* (x+15)>>4 = ceil(x/16), 保证 ≥1 步 */
+                int32_t adj = thread->rip_quantum_adj;
+                if (likely(adj > 0)) {
+                    adj -= (int32_t)(((uint32_t)adj + 15) >> RIPRATE_DECAY_SHIFT);
+                } else if (unlikely(adj < 0)) {
+                    uint32_t mag = (uint32_t)(-(int64_t)adj);
+                    adj += (int32_t)((mag + 15) >> RIPRATE_DECAY_SHIFT);
+                }
+                thread->rip_quantum_adj = adj;
+            }
         }
-        thread->rip_quantum_adj = adj;
     }
     thread->rip_last_sample_ms = now_ms;
 
-    /* 同毫秒内双 tick: 窗口无效, 只做老化 (见上) 不做速率采样 */
-    if (unlikely(elapsed_ms == 0)) return;
+    /* 窗口 TSC 基准: 无条件重臂 — 早退路径不污染下一窗口 */
+    uint64_t tsc_dt = cur_tsc - thread->rip_last_tsc;
+    thread->rip_last_tsc = cur_tsc;
 
-    /* ---- 采样: 逐点窗口 ----
-     * dispatch_rip 在 dispatch 时初始化, 此处每采样重臂 —
-     * 早退路径 (离群/停滞) 也不累积窗口, 下次采样从干净起点开始 */
+    if (unlikely(wall_ms == 0)) return;
+
+    /* ---- 2) 执行期分母 ----
+     * tri-state 缓存: -1 = 未查询, 0 = 未校准(弱默认), >0 = 周期数.
+     * 只缓存"非零值"在默认配置下永远不命中 (0 是合法值).
+     * 首次并发查询写同值 — 良性. */
+    static int64_t tsc_per_ms_cache = -1;
+    int64_t tpm = tsc_per_ms_cache;
+    if (unlikely(tpm < 0)) {
+        tpm = (int64_t)sched_tsc_per_ms();
+        tsc_per_ms_cache = tpm;
+    }
+    uint64_t elapsed = wall_ms;
+    if (likely(tpm > 0)) {
+        uint64_t exec_ms = tsc_dt / (uint64_t)tpm;
+        if (likely(exec_ms != 0 && exec_ms <= wall_ms)) {
+            elapsed = exec_ms;                 /* 纯执行时间, 剔除中断 */
+        } else if (unlikely(exec_ms > wall_ms)) {
+            st->tsc_mismatch++;                /* 频率估计不可信 → 墙钟兜底 */
+        }
+        /* exec_ms == 0: 亚毫秒窗口 → 墙钟兜底 */
+    }
+
+    /* ---- 3) RIP 差分 (逐点重臂) ---- */
     uint64_t progress = rip_now - thread->dispatch_rip;
     thread->dispatch_rip = rip_now;
-
-    /* 环绕/异常防御: 紧回跳循环的 RIP 可能倒退 → 无符号回绕成巨值,
+    /* 回绕/异常防御: 紧回跳循环的 RIP 倒退 → 无符号回绕成巨值,
      * 该样本丢弃 (窗口已重臂, 不污染下一次) */
-    if (unlikely(progress > (1ULL << 44))) return;
+    if (unlikely(progress > (1ULL << 44))) { st->outliers++; return; }
 
-    uint64_t obs_rate = progress / elapsed_ms;
-    if (unlikely(obs_rate == 0)) return;         /* 完全停滞, 不采样 */
-
-    uint64_t *avg_rate = &cpu->rip_avg_rate;
-    if (unlikely(*avg_rate == 0)) {
-        *avg_rate = obs_rate;
-        return;                                  /* 首采样只建基线 */
+    uint64_t obs_rate = progress / elapsed;
+    if (unlikely(obs_rate == 0)) {
+        /* 停滞样本: 单独计数. dispatch_rip 已在上方重臂, 无需再写.
+         * 刻意不更新基线: 从零速率播种基线是错的, 且停滞期基线
+         * 冻结正是后续快相位触发 outlier→重置的前提. */
+        st->stalled++;
+        return;
     }
 
-    /* 离群钳位 (16x) 而非丢弃. 丢弃的问题: 首采样建了慢基线后,
-     * 快线程的观测永远 > 16x 被丢, 基线永远卡在慢速率.
-     * 钳位后 EWMA 每采样最多把基线拉高 ~2x, 几个采样即可收敛. */
-    uint64_t obs_cap = (*avg_rate * RIPRATE_OUTLIER_MULT) >> RIPRATE_FRAC_BITS;
-    if (unlikely(obs_rate > obs_cap)) obs_rate = obs_cap;
+    /* ---- 4) per-thread 基线 ---- */
+    if (unlikely(thread->rip_base_self == 0)) {
+        thread->rip_base_self = obs_rate;     /* 首样本只建基线 */
+        return;
+    }
+    uint64_t baseline = thread->rip_base_self;
 
-    /* 观测倍率 = obs / avg, 定点 */
-    uint64_t obs_mult = (obs_rate << RIPRATE_FRAC_BITS) / (*avg_rate);
+    /* ---- 4b) 短窗口防御: 只走基线慢通道 ----
+     * 关闭两条路径:
+     *   a) "mult↓ → 量子↓ → 窗口↓ → 量化噪声↑" 的放大回路;
+     *   b) 亚毫秒窗口被记账强制 delta=1 → obs_rate 系统性低估.
+     * 基线 1/64 EWMA 天然吸噪, 短窗口仍可跟踪. mult 下降到窗口
+     * ≈ 门槛处自然驻留 (慢线程拿 ~3ms 短片 — 正是反馈想要的行
+     * 为结果), 恢复走边界波动 + 离 CPU 老化两条路.
+     * 碎片窗口也不递增离群 streak — 抢占噪声不驱动假基线重置. */
+    if (unlikely(elapsed < RIP_MIN_SAMPLE_MS)) {
+        if (obs_rate >= baseline) baseline += (obs_rate - baseline) >> RIP_BASE_SHIFT;
+        else                      baseline -= (baseline - obs_rate) >> RIP_BASE_SHIFT;
+        thread->rip_base_self = baseline;
+        st->short_windows++;
+        return;
+    }
 
-    /* 核基准 EWMA (v3 FIX: 先比大小再加减, 防无符号回绕) */
-    if (likely(obs_rate >= *avg_rate)) {
-        *avg_rate += (obs_rate - *avg_rate) >> 3;
+    /* ---- 5) 观测倍率 + 离群 (对照更新前的基线) ---- */
+    uint64_t obs_mult = (obs_rate << RIPRATE_FRAC_BITS) / baseline;
+    if (unlikely(obs_mult > RIPRATE_OUTLIER_MULT)) {
+        /* 离群钳位而非丢弃: 丢弃会让慢基线永远追不上快线程 */
+        obs_mult = RIPRATE_OUTLIER_MULT;
+        st->outliers++;
+        if (unlikely(++thread->rip_outlier_streak >= RIP_OUTLIER_STREAK_MAX)) {
+            /* 连续离群: 基线失真 (异频核迁移/阶段剧变) → 直接重播种.
+             * 注意不是"新线程"路径 — base 重设为非零当前速率 */
+            thread->rip_base_self = obs_rate;
+            thread->rip_mult_fast = RIPRATE_ONE;
+            thread->rip_mult_slow = RIPRATE_ONE;
+            thread->rip_quantum_adj = 0;
+            thread->rip_outlier_streak = 0;
+            st->base_resets++;
+            return;
+        }
+        /* 接近触发观测 (streak 2..3 未重置) — 只加计数不改逻辑 */
+        if (unlikely(thread->rip_outlier_streak >= (RIP_OUTLIER_STREAK_MAX >> 1))) {
+            st->near_reset++;
+        }
     } else {
-        *avg_rate -= (*avg_rate - obs_rate) >> 3;
+        thread->rip_outlier_streak = 0;
     }
 
-    /* ---- b) 倍率 EWMA (双向, v3 FIX 同上防回绕) ---- */
-    uint64_t m = thread->rip_rate_mult;
-    if (likely(obs_mult >= m)) {
-        m += (obs_mult - m) >> RIPRATE_SHIFT;
-    } else {
-        m -= (m - obs_mult) >> RIPRATE_SHIFT;
-    }
-    if (unlikely(m > RIPRATE_MAX_MULT)) m = RIPRATE_MAX_MULT;
-    if (unlikely(m < RIPRATE_MIN_MULT)) m = RIPRATE_MIN_MULT;
-    thread->rip_rate_mult = m;
+    /* 基线慢速 EWMA (1/64) */
+    if (obs_rate >= baseline) baseline += (obs_rate - baseline) >> RIP_BASE_SHIFT;
+    else                      baseline -= (baseline - obs_rate) >> RIP_BASE_SHIFT;
+    thread->rip_base_self = baseline;
 
-    /* ---- c) 直接修正项 (有符号 "减" 通道) ---- */
-    /* dev = obs_mult - 1.0, 定点 */
+    /* 全局基线: 纯观测, 不参与控制 (单写者 = 本核 Switch, 安全) */
+    {
+        uint64_t *g = &cpu->rip_avg_rate;
+        if (unlikely(*g == 0)) *g = obs_rate;
+        else if (obs_rate >= *g) *g += (obs_rate - *g) >> RIPRATE_SHIFT;
+        else                     *g -= (*g - obs_rate) >> RIPRATE_SHIFT;
+    }
+
+    /* ---- 6) 双时间尺度 EWMA ----
+     * 先比大小再加减: 无符号 (obs − avg) 在 obs < avg 时回绕成
+     * 2^64−d, 右移后 ≈ 2^61 而非 d/8 — 一次"应下调"的采样会把
+     * 值炸飞. */
+    uint64_t mf = thread->rip_mult_fast;
+    if (obs_mult >= mf) mf += (obs_mult - mf) >> RIP_FAST_SHIFT;
+    else                mf -= (mf - obs_mult) >> RIP_FAST_SHIFT;
+
+    uint64_t msl = thread->rip_mult_slow;
+    if (obs_mult >= msl) msl += (obs_mult - msl) >> RIP_SLOW_SHIFT;
+    else                 msl -= (msl - obs_mult) >> RIP_SLOW_SHIFT;
+
+    if (unlikely(mf > RIPRATE_MAX_MULT))  mf = RIPRATE_MAX_MULT;
+    if (unlikely(mf < RIPRATE_MIN_MULT))  mf = RIPRATE_MIN_MULT;
+    if (unlikely(msl > RIPRATE_MAX_MULT)) msl = RIPRATE_MAX_MULT;
+    if (unlikely(msl < RIPRATE_MIN_MULT)) msl = RIPRATE_MIN_MULT;
+    thread->rip_mult_fast = mf;
+    thread->rip_mult_slow = msl;
+
+    /* ---- 7) 统计层 (先于死区: 噪声也是偏差) ---- */
     int64_t dev = (int64_t)obs_mult - (int64_t)RIPRATE_ONE;
-
-    /* 修正步长: dev >> 6 → 每次最多动 dev/64, 温和收敛 */
-    int32_t step = (int32_t)(dev >> 6);
-    if (unlikely(step == 0)) {
-        /* 小偏差也保证至少 ±1 的修正, 否则永远修不动 */
-        step = (dev > 0) ? 1 : ((dev < 0) ? -1 : 0);
+    st->samples++;
+    st->abs_dev_sum += (uint32_t)(dev < 0 ? -dev : dev);
+    if (unlikely(++st->dev_window >= 64)) {
+        st->mean_abs_dev = st->abs_dev_sum >> 6;
+        st->abs_dev_sum = 0;
+        st->dev_window = 0;
+        /* 振荡检测 (迟滞): >25% 降快权重 / <12.5% 恢复 */
+        uint32_t cur_w = __atomic_load_n(&rip_fast_weight[cpu->id].w, __ATOMIC_RELAXED);
+        if (unlikely(cur_w == 0)) cur_w = RIP_FAST_W_NORM_Q10;
+        uint32_t w = cur_w;
+        if (unlikely(st->mean_abs_dev > RIP_OSC_HI))     w = RIP_FAST_W_OSC_Q10;
+        else if (likely(st->mean_abs_dev < RIP_OSC_LO))  w = RIP_FAST_W_NORM_Q10;
+        if (unlikely(w != cur_w)) {
+            __atomic_store_n(&rip_fast_weight[cpu->id].w, w, __ATOMIC_RELAXED);
+        }
     }
 
+    /* ---- 8) 死区: |dev| < 3.125% 不动 adj ---- */
+    if (likely(dev > -(int64_t)RIP_DEAD_ZONE && dev < (int64_t)RIP_DEAD_ZONE)) {
+        st->dead_zone++;
+        return;
+    }
+
+    /* ---- 9) 修正通道: 比例步长 + 轨道钳位 (饱和计数暴露) ---- */
+    int32_t step = (int32_t)(dev >> 6);
+    if (unlikely(step == 0)) step = (dev > 0) ? 1 : -1;
     int32_t adj = thread->rip_quantum_adj + step;
-    if (unlikely(adj > RIPADJ_MAX)) adj = RIPADJ_MAX;
-    if (unlikely(adj < RIPADJ_MIN)) adj = RIPADJ_MIN;
+    if (unlikely(adj > RIPADJ_MAX)) { adj = RIPADJ_MAX; st->sat_hi++; }
+    if (unlikely(adj < RIPADJ_MIN)) { adj = RIPADJ_MIN; st->sat_lo++; }
     thread->rip_quantum_adj = adj;
 }
 
@@ -366,6 +586,8 @@ static inline thread_t* rb_to_thread(rb_node_t* node) {
 }
 
 static inline void calibrate_and_set_deadline(thread_t *thread, cpu_t *cpu) {
+    /* deadline 偏移未按权重缩放 (真 EEVDF 为 ve + slice/w) —
+     * eligible 集内排序近似 vruntime 序, 有意简化 */
     uint64_t virtual_slice = cpu->base_quantum;
     uint64_t max_lag = virtual_slice;
     uint64_t avg_vr = cpu->avg_vruntime;
@@ -445,6 +667,24 @@ namespace Schedule {
             update_min_vruntime_upward(&thread->rb_node);
         }
 
+        /* ============================================================
+         *  锁纪律与无死锁证明
+         *
+         *  全调度器仅三处阻塞获取 sched_lock, 且获取时均不持有任何
+         *  其他 sched_lock:
+         *    1. Switch:      自己的锁 (TryPush/Steal 都在其释放后调用);
+         *    2. TryPush:     pair 中较低 id 的锁 (第一把); 第二把 trylock;
+         *    3. StealThread: victim 锁先释放, 再阻塞取自己的锁 —
+         *                    此刻它不持有任何锁.
+         *  → hold-and-wait 对阻塞获取不存在 → 等待环不可能 → 无死锁.
+         *  所有临界区内部无阻塞调用, 阻塞等待的时长上界 = 最长单个
+         *  临界区 (TryPush 双锁段 ≤ 8 次 rb 迁移, 微秒级).
+         *  StealThread 的调用者是刚 Pick 不到线程、马上要转 idle 的
+         *  CPU, 由它承担这个有界等待是零成本的.
+         *  压测验证点: ① sched_lock 最大持锁时长 (临界区前后取 TSC);
+         *  ② steal_attempts/thread_steals 比值; ③ 最坏 Pick→dispatch
+         *  延迟. 三者有界即与证明一致.
+         * ============================================================ */
         thread_t *StealThread(cpu_t *cpu) {
             uint32_t *skip = &per_cpu_steal_throttle[cpu->id].skip;
             if (likely(++(*skip) < SCHED_STEAL_THROTTLE)) return nullptr;
@@ -470,8 +710,7 @@ namespace Schedule {
 
                     uint64_t rflags1 = 0;
                     int retries = 0;
-                    /*  重试上限语义化 — 恰好 100 次尝试, 失败即放弃
-                       (旧写法 retries 达 101 才退出, 正确性靠巧合) */
+                    /* trylock 重试上限: 恰好 100 次尝试, 失败即放弃 */
                     while (unlikely(!spin_trylock_irqsave(&victim->sched_lock, &rflags1))) {
                         if (unlikely(++retries >= 100)) break;
                         asm volatile("pause");
@@ -485,9 +724,8 @@ namespace Schedule {
 
                     thread_t * const victim_curr  = victim->current_thread;
                     thread_t * const victim_idle  = victim->idle_thread;
-                    /*  hunger 检查已删 — 入队时 calibrate clamp 保证
-                     * 队列中 vruntime ≤ avg + 2q, 而 avg 单调递增,
-                     * "vr > avg + 5M" 永假 (死代码). */
+                    /* 无需饥饿过滤: 入队钳位保证队列内 vruntime ≤ avg+2q
+                     * 且 avg 单调递增 — 从队尾 (最不紧迫) 取即可 */
 
                     thread_t *stolen_batch[SCHED_STEAL_BATCH];
                     int stolen_count = 0;
@@ -500,6 +738,8 @@ namespace Schedule {
                         if (unlikely(stolen == victim_curr)) { node = prev_node; continue; }
                         if (unlikely(stolen == victim_idle))  { node = prev_node; continue; }
                         if (unlikely(stolen->state != THREAD_RUNNING)) { node = prev_node; continue; }
+                        /* 有挂起定时器的线程与特定 CPU 的定时器桶绑定,
+                         * 迁走会孤儿化定时器 */
                         if (unlikely(stolen->timer_bucket != nullptr)) { node = prev_node; continue; }
 
                         RemoveFromQueue(victim, stolen);
@@ -509,11 +749,14 @@ namespace Schedule {
 
                     if (likely(stolen_count > 0)) {
                         for (int j = 0; j < stolen_count; j++) {
+                            /* TRANSFER: 线程不在任何队列的迁移窗口,
+                             * 唤醒者/定时器不会误操作 */
                             __atomic_store_n(&stolen_batch[j]->state, THREAD_TRANSFER, __ATOMIC_RELEASE);
                             PREFETCH_W(stolen_batch[j]);
                         }
                         spin_unlock_irqrestore(&victim->sched_lock, rflags1);
 
+                        /* 阻塞获取, 但此刻不持有任何锁 (victim 已释放) */
                         uint64_t rflags2 = spin_lock_irqsave(&cpu->sched_lock);
                         for (int j = 0; j < stolen_count; j++) {
                             stolen_batch[j]->cpu_num = cpu->id;
@@ -545,8 +788,13 @@ namespace Schedule {
 
             uint32_t my_mask = cpu_simd_mask(cpu);
             cpu_t *target = nullptr;
-            cpu_t *fallback_target = nullptr;
             uint64_t target_weight = UINT64_MAX;
+            /* fallback (异 SIMD 掩码) 权重必须随指针一起记录 — 只存
+             * 指针不存权重的话, 纯 fallback 场景下 target_weight 保持
+             * UINT64_MAX 哨兵, gap 检查恒为真 → 跨掩码推送死路径.
+             * 最小值追踪, 与同掩码路径语义一致. */
+            cpu_t *fallback_target = nullptr;
+            uint64_t fallback_weight = UINT64_MAX;
 
             const int32_t last = smp_last_cpu;
             for (int32_t i = 0; i <= last; i++) {
@@ -556,16 +804,25 @@ namespace Schedule {
                 uint64_t ow = other->total_weight + (other->current_thread ? other->current_thread->weight : 0);
                 if (ow < my_weight && ow < target_weight) {
                     if (cpu_simd_mask(other) == my_mask) { target = other; target_weight = ow; }
-                    else if (unlikely(!fallback_target)) { fallback_target = other; }
+                    else if (ow < fallback_weight) { fallback_target = other; fallback_weight = ow; }
                 }
             }
 
+            bool cross_mask_push = false;
             if (unlikely(!target)) {
-                if (fallback_target) target = fallback_target;
+                if (fallback_target) {
+                    target = fallback_target;
+                    target_weight = fallback_weight;
+                    cross_mask_push = true;
+                }
                 else return;
             }
 
-            if (unlikely(target_weight + (target_weight >> SCHED_PUSH_GAP_SHIFT) >= my_weight)) return;
+            /* 门槛 = target×(1+1/2^shift), 移位越小门槛越高.
+             * 跨掩码迁移成本更高 → >>1 (50% 失衡), 同掩码 >>2 (25%).
+             * 注意方向: 加大移位是放宽不是收紧. */
+            const uint32_t gap_shift = cross_mask_push ? 1 : SCHED_PUSH_GAP_SHIFT;
+            if (unlikely(target_weight + (target_weight >> gap_shift) >= my_weight)) return;
 
             cpu_t *lock_a = (cpu->id < target->id) ? cpu : target;
             cpu_t *lock_b = (cpu->id < target->id) ? target : cpu;
@@ -579,7 +836,6 @@ namespace Schedule {
 
             thread_t * const my_curr = cpu->current_thread;
             thread_t * const my_idle = cpu->idle_thread;
-            /*  hunger 检查已删 (同 StealThread — 死代码) */
 
             int push_count = 0;
             rb_node_t *node = rb_last(cpu->runqueue_root.node);
@@ -611,10 +867,9 @@ namespace Schedule {
             spin_unlock_irqrestore(&lock_b->sched_lock, rflags_b);
             spin_unlock_irqrestore(&lock_a->sched_lock, rflags);
 
-            /* v3 FIX: 推送成功且目标空闲时立刻 IPI 唤醒. 旧版目标若正
-             * hlt, 要等一个 idle 量子的 LAPIC tick 才捡起推送线程.
-             * 目标非空闲则不打扰 — 它的下一个 tick (至多一个当前量子)
-             * 会捡起; Steal 是兜底的 pull 侧机制. */
+            /* 推送成功且目标空闲 → IPI 立刻唤醒, 不等目标的 idle 量子.
+             * 跨掩码推送涉及 fx_area 在不同 XsaveMask 的 CPU 间保存/
+             * 加载, 混合掩码系统上需实测该路径 */
             if (unlikely(push_count > 0)) {
                 thread_t *tcurr = __atomic_load_n(&target->current_thread, __ATOMIC_ACQUIRE);
                 if (tcurr == target->idle_thread) {
@@ -631,12 +886,17 @@ namespace Schedule {
             thread_t *root_t = rb_to_thread(root);
             thread_t *best = nullptr;
 
+            /* 整树无 eligible → 直接取最左 (deadline 最小) 兜底,
+             * 防饥饿 */
             if (unlikely(root_t->min_vruntime_subtree > avg_vr)) {
                 best = first_runnable(root);
                 if (likely(best)) RemoveFromQueue(cpu, best);
                 return best;
             }
 
+            /* 下降搜索: 树按 deadline 排序, 增广字段使 "子树是否含
+             * eligible" 成为 O(1) 判断 → O(log n) 找到
+             * eligible 且 deadline 最小的节点 */
             rb_node_t *node = root;
             while (likely(node)) {
                 rb_node_t *l = node->left;
@@ -669,8 +929,7 @@ namespace Schedule {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
             if (unlikely(!cpu)) {
-                /* v3 FIX: 早退也要 EOI, 否则 LAPIC ISR 位悬挂,
-                 * 阻断后续中断 delivery */
+                /* 早退也要 EOI, 否则 LAPIC ISR 位悬挂, 阻断后续中断 */
                 LAPIC::EOI();
                 return;
             }
@@ -679,11 +938,8 @@ namespace Schedule {
             /* Early SMP bring-up window: an AP arms its first LAPIC tick and
                sti inside smp_cpu_init() before Schedule::Install() creates its
                idle_thread and binds current_thread. There is nothing to schedule
-               yet, so rearm the timer and return. Falling through to the full
-               EEVDF path here dereferences a null idle thread and emits a slow
-               serial warning on every tick, which floods the log and stalls the
-               mouse interrupt / compositor. Latch current to idle as soon as the
-               idle thread exists. */
+               yet, so rearm the timer and return. Latch current to idle as soon
+               as the idle thread exists. */
             if (unlikely(!cpu->idle_thread || !cpu->current_thread)) {
                 if (cpu->idle_thread) cpu->current_thread = cpu->idle_thread;
                 LAPIC::Oneshot(SCHED_VEC, cpu->base_quantum * cpu->lapic_ticks);
@@ -692,11 +948,9 @@ namespace Schedule {
                 return;
             }
 
-            /* v3 FIX: preempt_count 检查提前到标志消费之前.
-             * 旧代码在函数顶部就清掉 need_resched / 消费 yield 标志,
-             * 若随后走 preempt_count>1 早退, 抢占请求被无声吞掉,
-             * 只能等下个 tick. 现在标志保持锁存 — CheckPreempt()
-             * 在 preempt_count 归零后会重新触发 SCHED_VEC. */
+            /* 抢占被禁: 只重臂返回. 不消费 need_resched/yield 标志 —
+             * 在此处清掉的话请求会被无声吞掉; 标志保持锁存,
+             * CheckPreempt 在计数归零后重新触发 SCHED_VEC. */
             if (unlikely(cpu->preempt_count > 1)) {
                 if (likely(cpu->current_thread)) {
                     uint64_t q = get_dynamic_quantum(cpu, cpu->current_thread);
@@ -724,7 +978,8 @@ namespace Schedule {
             thread_t *curr_thread = safe_get_current_thread(cpu, curr_invalid);
             const bool curr_is_idle = (curr_thread == cpu->idle_thread);
 
-            /* ctx/SIMD 保存 — 锁外 */
+            /* ctx/SIMD 保存 — 锁外 (这些字段只有运行该线程的核会碰,
+             * 迁移用 THREAD_TRANSFER 窗口保证无人触碰) */
             if (likely(curr_thread && !curr_is_idle)) {
                 curr_thread->fs = rdmsr(FS_BASE);
                 curr_thread->ctx = *ctx;
@@ -736,8 +991,9 @@ namespace Schedule {
             /* 账本结算 — 锁外 */
             dynamic_adjust_quantum(cpu, curr_thread, now, cur_tsc);
 
-            /*  实际运行时长 — 由 last_run_time 结算得出 (而非编程量子),
-             * 传给 riprate_update 做采样窗口分母 */
+            /* 实际运行时长 — 由 last_run_time 结算 (而非编程量子).
+             * delta==0 强制为 1: 亚毫秒窗口 (被唤醒抢占提前打断) 的
+             * 系统性低估由 riprate_update 的最小采样门兜底. */
             uint64_t last_slice_ms = 0;
 
             if (likely(curr_thread && !curr_is_idle)) {
@@ -745,18 +1001,23 @@ namespace Schedule {
                 curr_thread->last_run_time = now;
                 if (unlikely(delta == 0)) delta = 1;
                 last_slice_ms = delta;
+                /* vruntime 单位: weight-1024 下的 1ms. 余数进位保证
+                 * 长跑精确, 轻线程不被整型除法系统性少记. */
                 uint64_t w = likely(curr_thread->weight) ? curr_thread->weight : 1024;
                 uint64_t vruntime_total = delta * 1024 + curr_thread->vruntime_rem;
                 uint64_t vruntime_delta = vruntime_total / w;
                 curr_thread->vruntime_rem = vruntime_total % w;
                 curr_thread->vruntime += vruntime_delta;
 
+                /* 虚拟时钟: 负载相关速率 (所有可运行权重的加权),
+                 * 稳态下各线程 vruntime 收敛到时钟附近 → 份额=权重比 */
                 uint64_t active_weight = cpu->total_weight + w;
                 uint64_t avg_total = delta * 1024 + cpu->avg_vruntime_rem;
                 uint64_t avg_delta = avg_total / active_weight;
                 cpu->avg_vruntime_rem = avg_total % active_weight;
                 cpu->avg_vruntime += avg_delta;
             } else if (unlikely(curr_is_idle)) {
+                /* 空闲按 1024 权重推进时钟 (≈真实时间), 维持跨核可比 */
                 uint64_t delta = now - curr_thread->last_run_time;
                 curr_thread->last_run_time = now;
                 if (likely(delta > 0)) {
@@ -768,11 +1029,9 @@ namespace Schedule {
                 }
             }
 
-            /* ★ RIP 反馈采样 — 锁外.
-             *  传实际运行时长 (last_slice_ms), riprate_update 内部
-             * 按采样点重臂 RIP 快照 — 修复快路径连续运行时把 N 个
-             * 量子的 progress 除以单个量子的窗口错位 */
-            riprate_update(cpu, curr_thread, ctx->rip, last_slice_ms, now);
+            /* RIP 反馈采样 — 锁外 (cs/TSC 供信号层) */
+            riprate_update(cpu, curr_thread, ctx->rip, ctx->cs,
+                           last_slice_ms, cur_tsc, now);
 
             /* 免锁重入判定 (ZOMBIE 强制慢路径) */
             bool need_lock = true;
@@ -784,9 +1043,7 @@ namespace Schedule {
                    thread_count excludes the running curr, so ==0 means there
                    is truly no competitor. A count of 1 means one waiter is
                    ready: the timer tick MUST take the slow path so EEVDF can
-                   preempt. Treating ==1 as lockless starved the sole same-core
-                   peer (a non-yielding spinner could never be preempted by the
-                   tick, observed as ~14s first-schedule stalls). */
+                   preempt (==1 as lockless starved the sole peer ~14s). */
                 if (unlikely(cpu->thread_count == 0)) {
                     need_lock = false;
                 }
@@ -804,6 +1061,7 @@ namespace Schedule {
                     cpu->current_thread = curr_thread;
                 }
 
+                /* 僵尸批量搬出: kfree 昂贵, 不碰锁; 每次有界 */
                 if (unlikely(cpu->zombie_count >= ZOMBIE_RECLAIM_THRESHOLD)) {
                     int moved = 0;
                     thread_t *z = cpu->zombie_list;
@@ -865,7 +1123,12 @@ namespace Schedule {
                 return;
             }
 
-            /* ---- 真正的上下文切换 ---- */
+            /* ---- 真正的上下文切换 ----
+             * ctx 指向中断栈上的寄存器现场: 上面已把当前线程现场存入
+             * 其 thread 结构, 此处覆写为 next 的现场, iret 返回时即
+             * "返回进" next — 用户态可见的通用寄存器切换零汇编.
+             * 只需手工处理中断帧装不下的状态: TSS 内核栈、CR3、
+             * FS base、xsave. */
             __atomic_store_n(&cpu->current_thread, next_thread, __ATOMIC_RELEASE);
             cpu->sched_stats.context_switches++;
             next_thread->last_run_time = now;
@@ -887,10 +1150,16 @@ namespace Schedule {
                 cpu->OverLoadableFuncs.LoadSIMDState(next_thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
             }
 
-            /* ★ RIP 窗口起点快照 — v3 语义: riprate_update 每次采样后
-             * 会重臂此字段 (它只在调度器内部使用), 与 last_run_time
-             * 共同构成逐采样的 窗口 */
+            /* RIP 窗口起点快照: 连同信号标签一起初始化, 首个采样窗口
+             * 从 dispatch 起就是可比的. rip_last_tsc 与 dispatch 快照
+             * 配套 (否则首窗口 TSC 差分横跨上次运行的陈旧值); 运行中
+             * 的 pagemap/ring 切换由 tag 失效路径接管 — 两者是不相交
+             * 的路径, 都必要. rip_last_sample_ms 刻意不在此重置:
+             * 离 CPU 时长必须进入老化计算. */
             next_thread->dispatch_rip = next_thread->ctx.rip;
+            next_thread->rip_signal_tag =
+                (uint64_t)next_thread->pagemap ^ (uint64_t)(next_thread->ctx.cs & 3);
+            next_thread->rip_last_tsc = cur_tsc;
 
             quantum = (likely(next_thread != cpu->idle_thread))
                     ? get_dynamic_quantum(cpu, next_thread)
@@ -900,6 +1169,24 @@ namespace Schedule {
             LAPIC::EOI();
             irq_restore(rflags);
         }
+    }
+
+    /* 反馈统计导出 — 接到现有 proc/sysinfo/debug 接口上.
+     * 跨核读取是近似快照 (无锁) — 调试用途足够.
+     * 边界用 smp_last_cpu: 落在 (smp_last_cpu, MAX_CPU) 区间的
+     * id 读到的是 BSS 全零, 返回 true 会误导. */
+    bool GetRipStats(uint32_t cpu_id, uint64_t out[14]) {
+        if (unlikely(cpu_id >= MAX_CPU || cpu_id > (uint32_t)smp_last_cpu)) return false;
+        rip_stats_ctx *st = &rip_stats[cpu_id];
+        out[0]  = st->samples;      out[1]  = st->outliers;
+        out[2]  = st->tag_invalid;  out[3]  = st->short_windows;
+        out[4]  = st->stalled;      out[5]  = st->dead_zone;
+        out[6]  = st->sat_hi;       out[7]  = st->sat_lo;
+        out[8]  = st->base_resets;  out[9]  = st->tsc_mismatch;
+        out[10] = st->mean_abs_dev;
+        out[11] = __atomic_load_n(&rip_fast_weight[cpu_id].w, __ATOMIC_RELAXED);
+        out[12] = st->near_reset;   out[13] = st->wf_clamped;
+        return true;
     }
 
     void CheckPreempt(context_t *ctx) {
@@ -928,16 +1215,11 @@ namespace Schedule {
         PREFETCH_RH(curr);
 
         if (woked_thread->vruntime <= cpu->avg_vruntime && woked_thread->deadline < curr->deadline) {
-            /* v3 FIX: "接近 slice 末尾就不抢" 的判定重写.
-             * 旧代码两个 bug:
-             *   1) remaining_vr = deadline - vruntime 无防御 — 运行中
-             *      vruntime 已越过入队时刻的 deadline 时下溢成 ~2^64;
-             *   2) PREEMPT_THRESHOLD (2^20 vruntime 单位 ≈ 17 分钟) 与
-             *      remaining (∈ [0, ~15]) 量纲不符, 行为随权重组合随机.
-             * 新判定: 剩余虚拟 slice 不足 1/4 (ceil) 就不打断 —
-             * 省一次上下文切换, 延迟代价 ≤ 1/4 实际 slice.
-             * 注意 vruntime 是全局单位, 该分数对任意权重都对应
-             * 实际 slice 的同一比例. */
+            /* 剩余虚拟 slice 防下溢 (deadline 是入队时刻的, 运行中
+             * vruntime 已前进). 剩余不足 1/4 (ceil) 就不打断 — 省一
+             * 次上下文切换, 延迟代价 ≤ 1/4 实际 slice. vruntime 是
+             * 全局单位, 该分数对任意权重都对应实际 slice 的同一
+             * 比例. */
             uint64_t remaining_vr = (curr->deadline > curr->vruntime)
                                   ? (curr->deadline - curr->vruntime) : 0;
             if (likely(remaining_vr < (((uint64_t)cpu->base_quantum + 3) >> 2))) {
@@ -954,6 +1236,10 @@ namespace Schedule {
     }
 
     void Init() {
+        /* per-CPU 融合权重显式初始化 (静态零 + 读取端防御双保险) */
+        for (uint32_t i = 0; i < MAX_CPU; i++) {
+            __atomic_store_n(&rip_fast_weight[i].w, RIP_FAST_W_NORM_Q10, __ATOMIC_RELAXED);
+        }
         if (unlikely(!pid2proc_tree)) {
             pid2proc_tree = (art_tree*)kmalloc(sizeof(art_tree));
             if (unlikely(art_tree_init(pid2proc_tree) != 0)) Panic("ART TREE INIT FAILED!");
@@ -980,10 +1266,10 @@ namespace Schedule {
             spin_unlock_irqrestore(&cpu->sched_lock, rflags);
             cpu->idle_thread = idle_t;
             /* APs finish smp_cpu_init() with current_thread still NULL (that
-               boot path never assigns it), so their first Switch trips
-               "Invalid current_thread pointer: 0". Bind every not-yet-running
-               CPU to its own idle thread. The BSP already owns init_thread
-               (set by InitCPUThread); a live current must never be clobbered. */
+               boot path never assigns it), so their first Switch would trip
+               on a null current. Bind every not-yet-running CPU to its own
+               idle thread. The BSP already owns init_thread; a live current
+               must never be clobbered. */
             if (cpu->current_thread == nullptr)
                 cpu->current_thread = idle_t;
             idle_t->last_run_time = PIT::TimeSinceBootMS();

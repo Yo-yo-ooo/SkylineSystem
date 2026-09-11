@@ -62,6 +62,11 @@ typedef struct Window {
     uint32_t FrameEndX, FrameEndY;
     // Frame Buffer Base Address (window-local ARGB surface, pitch == SizeX)
     uint64_t FbAddr;
+    /* 0 = fully opaque surface, whole rows are blitted with memcpy (fast path
+       for the wallpaper and ordinary windows). 1 = the surface carries
+       per-pixel alpha (anti-aliased rounded corners / soft drop shadow) and
+       is source-over blended onto whatever is stacked below during compose. */
+    uint8_t  HasAlpha;
 } Window;
 
 /* ---------------------------------------------------------------------------

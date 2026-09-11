@@ -47,6 +47,42 @@ static inline void comp_backoff(uint32_t &spin) {
 static inline int64_t max_i64(int64_t a, int64_t b) { return a > b ? a : b; }
 static inline int64_t min_i64(int64_t a, int64_t b) { return a < b ? a : b; }
 
+/* Source-over blend one ARGB pixel over an already-flattened (opaque) scene. */
+static inline uint32_t src_over_argb(uint32_t s, uint32_t d) {
+    uint32_t a = s >> 24;
+    if (a == 255u) return s;
+    if (a == 0u)   return d;
+    uint32_t ia = 255u - a;
+    uint32_t sr = (s >> 16) & 0xFF, sg = (s >> 8) & 0xFF, sb = s & 0xFF;
+    uint32_t dr = (d >> 16) & 0xFF, dg = (d >> 8) & 0xFF, db = d & 0xFF;
+    uint32_t r = (sr * a + dr * ia + 128u) >> 8;
+    uint32_t g = (sg * a + dg * ia + 128u) >> 8;
+    uint32_t b = (sb * a + db * ia + 128u) >> 8;
+    return 0xFF000000u | (r << 16) | (g << 8) | b;
+}
+
+/* Blend one window row that may carry per-pixel alpha (anti-aliased rounded
+   corners, soft shadow). Runs of fully-opaque pixels are bulk-copied with
+   memcpy, fully-transparent pixels keep the destination, and only the sparse
+   edge/shadow pixels pay for a blend — so an opaque body stays one memcpy. */
+static inline void blend_row_argb(uint32_t* dst, const uint32_t* src, uint32_t n) {
+    uint32_t i = 0;
+    while (i < n) {
+        uint32_t a = src[i] >> 24;
+        if (a == 255u) {
+            uint32_t j = i + 1;
+            while (j < n && (src[j] >> 24) == 255u) ++j;
+            memcpy(dst + i, src + i, (size_t)(j - i) * sizeof(uint32_t));
+            i = j;
+        } else if (a == 0u) {
+            ++i;                                   /* keep what is underneath */
+        } else {
+            dst[i] = src_over_argb(src[i], dst[i]);
+            ++i;
+        }
+    }
+}
+
 /* Classic 16x16 arrow pointer. '*' = black outline, 'O' = white fill,
    '.' = transparent (keeps whatever was composited underneath). */
 static const char* const kCursorArrow[16] = {
@@ -283,7 +319,10 @@ void Compositor::ComposeStripToBack(uint32_t id) {
                 uint32_t sx = (uint32_t)(cx0 - w->PosX);
                 const uint32_t* sline = src + (uint64_t)sy * wpitch + sx;
                 uint32_t*       dline = dst + (uint64_t)y * pitch + cx0;
-                memcpy(dline, sline, copy_b);                  /* whole rows   */
+                if (w->HasAlpha)
+                    blend_row_argb(dline, sline, cw);   /* rounded/shadowed    */
+                else
+                    memcpy(dline, sline, copy_b);       /* opaque, whole rows  */
             }
         }
     }

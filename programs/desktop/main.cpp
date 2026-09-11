@@ -134,6 +134,7 @@ int main(){
         consoleWin.FrameEndX   = SKYWIN_CONTENT_X + SKYWIN_CONTENT_W;
         consoleWin.FrameEndY   = SKYWIN_CONTENT_Y + SKYWIN_CONTENT_H;
         consoleWin.FbAddr = place.desk_surf;
+        consoleWin.HasAlpha = 1;   /* rounded corners + soft drop shadow      */
         layer1 = comp.CreateLayer(1);
         comp.RegisterWindow(&consoleWin, layer1);
     }

@@ -62,6 +62,9 @@ struct TTF_Font_Internal {
     float scale;
     int32_t pixel_height;
     int32_t ascent;
+    int32_t descent;     /* stbtt convention: negative below baseline */
+    int32_t line_gap;    /* typographic line gap, in pixels */
+    int32_t line_height; /* ascent - descent + line_gap (+1 px guard) */
     bool is_initialized;
 
     int32_t cache_capacity;
@@ -446,7 +449,13 @@ void TTF_SetPixelHeight(TTF_Font *font, int32_t pixel_height) {
     font->scale = stbtt_ScaleForPixelHeight(&font->info, (float)pixel_height);
     int32_t ascent, descent, lineGap;
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &lineGap);
-    font->ascent = (int32_t)(ascent * font->scale);
+    font->ascent   = (int32_t)(ascent * font->scale);
+    font->descent  = (int32_t)(descent * font->scale); /* negative */
+    font->line_gap = (int32_t)(lineGap * font->scale);
+    /* Typographic line spacing. Per-axis truncation can shave a pixel, so add
+       one: a row box must be at least as tall as any glyph ink box, otherwise
+       the next row's background erases the bottom edge of the row above. */
+    font->line_height = font->ascent - font->descent + font->line_gap + 1;
 }
 
 void TTF_SetOversampling(TTF_Font *font, int32_t oversampling) {
@@ -497,6 +506,14 @@ void TTF_GetTextSize(TTF_Font *font, const char *text, int32_t *out_width, int32
     }
     if (out_width) *out_width = max_x;
     if (out_height) *out_height = max_y - min_y;
+}
+
+/* Typographic line height (ascent - descent + line gap), in pixels. Text row
+   layout MUST use this instead of the ink height of one run: ink height has no
+   leading and lets adjacent rows clip each other's edges. */
+int32_t TTF_GetLineHeight(TTF_Font *font) {
+    if (!font || !font->is_initialized) return 0;
+    return font->line_height;
 }
 
 const TTF_Bitmap* TTF_GetGlyphBitmap(TTF_Font *font, int32_t codepoint, int32_t *out_advance, int32_t *out_off_x, int32_t *out_off_y) {

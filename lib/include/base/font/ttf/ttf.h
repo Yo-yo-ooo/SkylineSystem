@@ -48,6 +48,7 @@ void TTF_SetOversampling(TTF_Font *font, int32_t oversampling);
 void TTF_SetFontStyle(TTF_Font *font, int32_t bold_strength, float italic_skew);
 
 void TTF_GetTextSize(TTF_Font *font, const char *text, int32_t *out_width, int32_t *out_height);
+int32_t TTF_GetLineHeight(TTF_Font *font);
 
 TTF_Bitmap TTF_RenderChar(TTF_Font *font, int32_t codepoint, int32_t *out_x_offset, int32_t *out_y_offset);
 TTF_Bitmap TTF_RenderText(TTF_Font *font, const char *text);

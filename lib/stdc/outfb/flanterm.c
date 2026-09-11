@@ -71,6 +71,11 @@ static void draw_rect(FrameBuffer *fb, int x, int y, int w, int h, uint32_t colo
     if (y + h > fb_h) h = fb_h - y;
     if (unlikely(w <= 0 || h <= 0)) return;
 
+    /* Terminal cells are always opaque: the colour tables and the clear path
+       carry 0x00RRGGBB whose alpha byte is 0; force alpha = 0xFF so the
+       per-pixel-alpha compositor never treats paper/cursor as see-through. */
+    color |= 0xFF000000u;
+
     uint32_t *row_start = fb_ptr + (size_t)y * pitch + x;
     size_t row_bytes = (size_t)w * 4;
 
@@ -1393,7 +1398,12 @@ void flanterm_ttf_resize(struct flanterm_context *ctx, FrameBuffer *fb, TTF_Font
     if (unlikely(w <= 0)) w = 8;
     if (unlikely(h <= 0)) h = 16;
     ctx->char_width = w;
-    ctx->char_height = h;
+    /* Row pitch MUST be the font's typographic line height (ascent-descent+
+       line gap), never the ink height of "M": that has zero leading and the
+       next row's background rect erases the lowest pixels of the row above,
+       visible as the previous line's bottom edge being clipped. */
+    int32_t line_h = TTF_GetLineHeight(font);
+    ctx->char_height = (line_h > h) ? line_h : h;
 
     int cols = (ctx->screen_width - margin * 2) / ctx->char_width;
     int rows = (ctx->screen_height - margin * 2) / ctx->char_height;
