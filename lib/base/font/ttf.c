@@ -260,7 +260,7 @@ static TTF_CacheNode* get_glyph(TTF_Font* font, int32_t codepoint) {
     TTF_MUTEX_LOCK(font->lock);
 
     int32_t idx = hash_find(font, codepoint);
-    if (idx != -1) {
+    if (idx != -1 && idx >= 0 && idx < font->cache_capacity) {
         cache_unlink_lru(font, idx);
         cache_push_front_lru(font, idx);
         TTF_ATOMIC_FETCH_ADD(&font->hit_count, 1);
@@ -273,10 +273,22 @@ static TTF_CacheNode* get_glyph(TTF_Font* font, int32_t codepoint) {
 
     if (font->free_list != -1) {
         idx = font->free_list;
-        font->free_list = font->cache_nodes[idx].lru_next;
+        /* Defensive: a corrupted free-list index must never be dereferenced. */
+        if (idx < 0 || idx >= font->cache_capacity) {
+            font->free_list = -1;
+            TTF_MUTEX_UNLOCK(font->lock);
+            return NULL;
+        }
+        int32_t nxt = font->cache_nodes[idx].lru_next;
+        if (nxt != -1 && (nxt < 0 || nxt >= font->cache_capacity)) nxt = -1;
+        font->free_list = nxt;
     } else {
         idx = font->lru_tail;
-        if (idx == -1) { TTF_MUTEX_UNLOCK(font->lock); return NULL; }
+        /* Defensive: a corrupted LRU tail must never be dereferenced. */
+        if (idx < 0 || idx >= font->cache_capacity) {
+            TTF_MUTEX_UNLOCK(font->lock);
+            return NULL;
+        }
         cache_unlink_lru(font, idx);
         hash_remove(font, font->cache_nodes[idx].codepoint);
         if (font->cache_nodes[idx].bmp.pixels) {

@@ -104,11 +104,19 @@ void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
     DrawLine(s, cx + 5, cy - 5, cx - 5, cy + 5, SKYRGB_CLOSE);
 }
 
-static void paint_console_chrome(FrameBuffer *wb) {
-    const int32_t SW = (int32_t)SKYWIN_SURF_W;
-    const int32_t SH = (int32_t)SKYWIN_SURF_H;
+/* Rasterize the modern rounded/shadowed chrome for a body of bodyW x bodyH
+   placed at (M,M) inside a surface whose scanline pitch is surfW and whose
+   painted height is surfH. The fixed normal surface passes the tightly-packed
+   SKYWIN_SURF_* size; the WM runtime resize surface passes a fixed maximum
+   pitch and only the current body height, so a resized window keeps the exact
+   same Win11 look (pixels right/below the body stay alpha 0 and are skipped by
+   the compositor). restoreGlyph selects the two-box "restore" caption icon. */
+void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
+                         int32_t bodyW, int32_t bodyH, int restoreGlyph) {
+    const int32_t SW = surfW;
+    const int32_t SH = surfH;
     const int32_t M  = (int32_t)SKYWIN_SHADOW;
-    const float   BW = (float)SKYWIN_W, BH = (float)SKYWIN_H;
+    const float   BW = (float)bodyW, BH = (float)bodyH;
     const float   R  = (float)SKYWIN_RADIUS;
     const int32_t TH = (int32_t)SKYWIN_TITLE_H;
     const float   HW = BW * 0.5f, HH = BH * 0.5f;
@@ -177,7 +185,13 @@ static void paint_console_chrome(FrameBuffer *wb) {
                      "Skyline Console", SKYRGB_INK);
 
     /* 5) caption glyphs: minimize / maximize / close, right-aligned */
-    SkyPaintCaptionIcons(wb, M, M, (int32_t)SKYWIN_W, TH, 0);
+    SkyPaintCaptionIcons(wb, M, M, bodyW, TH, restoreGlyph);
+}
+
+/* The one-shot fixed normal surface is the sized painter at SKYWIN_W x H. */
+static void paint_console_chrome(FrameBuffer *wb) {
+    SkyPaintChromeSized(wb, (int32_t)SKYWIN_SURF_W, (int32_t)SKYWIN_SURF_H,
+                        (int32_t)SKYWIN_W, (int32_t)SKYWIN_H, 0);
 }
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place) {

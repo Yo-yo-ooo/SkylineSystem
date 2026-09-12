@@ -52,6 +52,11 @@ extern "C" void syscall_entry();
 syscall_lists[x] = sys_xxxx //! <---- it means some feature in this syscall doesn't complete!
 syscall_lists[x] = sys_xxxx //? <---- it means i don't know how to impl this syscall
 */
+/* time.cpp: wall-clock seconds derived from the RTC; exposed to userspace as
+   syscall 17 (SYSCALL_TIME). Calling it with a null buffer just returns the
+   current civil-time second count (see sys_time in syscall/time.cpp). */
+uint64_t sys_time(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,syscall_frame_t*);
+
 void syscall_init() {
     
     syscall_lists[SYSCALL_FOPEN] = sys_fopen;
@@ -73,7 +78,8 @@ void syscall_init() {
     syscall_lists[SYSCALL_MMAP] = sys_mmap;
     syscall_lists[SYSCALL_MUNMAP] = sys_munmap;
     syscall_lists[SYSCALL_SYSINFO] = sys_sysinfo;
-    
+    syscall_lists[17] = sys_time;            /* SYSCALL_TIME: RTC wall seconds */
+
     syscall_lists[18] = sys_arch_prctl;
     syscall_lists[20] = sys_getrandom;
     syscall_lists[21] = sys_dev_mmap;

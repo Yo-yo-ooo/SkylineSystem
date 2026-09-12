@@ -44,8 +44,17 @@ extern "C" {
 #define SKYWIN_BTN_MIN_L(B)   ((B) - 3u * SKYWIN_BTN_W)
 
 /* Bottom desktop taskbar height; it hosts the minimized-window restore
-   entry. A maximized window fills the work area ABOVE this bar. */
-#define SKYWIN_TASKBAR_H   40u
+   entry on the left and a clock/power tray on the right. A maximized window
+   fills the work area ABOVE this bar. */
+#define SKYWIN_TASKBAR_H   44u
+
+/* Interactive resize: an invisible hit band this wide around the body edges
+   lets the user drag an edge/corner to resize the window (8 directions). The
+   client content is a fixed bitmap, so it stays 1:1 crisp in the top-left and
+   the body is clamped to these minimums / the work-area maximums. */
+#define SKYWIN_RESIZE_BORDER 8u
+#define SKYWIN_MIN_W       340u
+#define SKYWIN_MIN_H       220u
 
 /* The ARGB surface is larger than the body: a symmetric margin around it    *
  * holds the soft drop shadow and the anti-aliased corner falloff. The body  *
@@ -117,6 +126,17 @@ typedef struct SkyWinPlacement {
 #define SKYRGB_TBTN_IDLE 0xFF2A2A30u /* taskbar app button, window shown     */
 #define SKYRGB_TBTN_ON  0xFF3A3A42u  /* taskbar app button, minimized/active */
 #define SKYRGB_ACCENT   0xFF60CDFFu  /* Fluent active/accent indicator       */
+#define SKYRGB_TRAY_INK 0xFFE9E9EFu  /* clock text / power glyph, soft white  */
+#define SKYRGB_TB_HILITE 0xFF34343Cu /* 1px luminous hairline on bar's top    */
+/* Acrylic taskbar: each bar pixel keeps this much of the wallpaper and mixes
+   the rest with a cool-dark fill, so the wallpaper glows through (Win11/macOS
+   translucency) instead of sitting behind a flat black strip. */
+#define SKY_ACRYLIC_BASE  0xFF1B1B21u
+#define SKY_ACRYLIC_KEEP  26u       /* 0..255 wallpaper fraction retained     */
+/* Wall-clock display zone. QEMU's CMOS RTC defaults to UTC; shift to local
+   civil time here (UTC+8, Asia/Shanghai). Change if the RTC is localtime. */
+#define SKY_LOCAL_TZ_MIN  (8 * 60)
+#define SKY_TRAY_MARGIN   14u       /* right inset of the clock/power tray    */
 
 #ifdef __cplusplus
 }

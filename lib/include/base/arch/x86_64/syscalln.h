@@ -24,6 +24,7 @@
 #define SYSCALL_MUNMAP          15
 
 #define SYSCALL_SYSINFO         16
+#define SYSCALL_TIME            17   /* RTC wall-clock seconds (sys_time) */
 
 
 #define SYSCALL_DEV_MMAP        21
