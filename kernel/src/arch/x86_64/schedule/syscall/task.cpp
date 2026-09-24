@@ -38,16 +38,22 @@ uint64_t sched_yield(GENERATE_IGN6()){
 extern spinlock_t PID2PROC_TREE_LOCK;
 uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
     IGNV_4();
+    (void)sig;   /* no signal facility: terminate semantics only */
+
+    proc_t *me = Schedule::this_proc();
+    if (!me || !me->IsTrusted) return -EPERM;
 
     spinlock_lock(&PID2PROC_TREE_LOCK);
     proc_t *proc = (proc_t*)art_search(pid2proc_tree,(const uint8_t*)&pid,8);
     spinlock_unlock(&PID2PROC_TREE_LOCK);
-    if (!proc) return -ESRCH;
+    if (!proc || proc->exiting) return -ESRCH;
+    if (proc == me) return -EPERM;                       /* use sys_exit for self */
+    if (proc->pagemap == kernel_pagemap) return -EPERM;  /* never kill a kernel proc */
 
-    asm volatile("cli");    // 必须关中断，保证切换过程绝对原子
-    LAPIC::StopTimer();
-    Schedule::PROC_KILL(proc);
-
+    /* Safe teardown of an unrelated process: mark it exiting, synchronously
+       pull every thread off all CPUs, close its FDs, and queue the body for
+       asynchronous reclaim. The caller keeps running (PROC_KILL is self-kill). */
+    Schedule::DeleteProc(proc);
     return 0;
 }
 

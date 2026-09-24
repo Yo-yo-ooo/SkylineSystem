@@ -262,6 +262,7 @@ uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place) {
 
     if (place) {
         place->desk_surf = desk_whole;
+        place->client_pid = pid;
         place->w = SKYWIN_SURF_W;
         place->h = SKYWIN_SURF_H;
         place->x = (Fb->Width  > SKYWIN_SURF_W) ? (uint32_t)((Fb->Width  - SKYWIN_SURF_W) / 2u) : 0u;

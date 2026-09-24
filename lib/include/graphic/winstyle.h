@@ -107,6 +107,7 @@ extern "C" {
    whole ARGB SURFACE (body + shadow margin); x/y is its top-left on scanout. */
 typedef struct SkyWinPlacement {
     uint64_t desk_surf;   /* desktop-side alias VA of the whole surface    */
+    uint64_t client_pid;  /* spawned console process (hw2) pid, for kill   */
     uint32_t w, h;        /* surface size (SKYWIN_SURF_W x SKYWIN_SURF_H)  */
     uint32_t x, y;        /* top-left position on the scanout (centered)   */
 } SkyWinPlacement;

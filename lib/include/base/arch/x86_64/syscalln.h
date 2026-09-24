@@ -25,6 +25,7 @@
 
 #define SYSCALL_SYSINFO         16
 #define SYSCALL_TIME            17   /* RTC wall-clock seconds (sys_time) */
+#define SYSCALL_KILL           19   /* terminate a process (sys_kill) */
 
 
 #define SYSCALL_DEV_MMAP        21

@@ -79,6 +79,7 @@ void syscall_init() {
     syscall_lists[SYSCALL_MUNMAP] = sys_munmap;
     syscall_lists[SYSCALL_SYSINFO] = sys_sysinfo;
     syscall_lists[17] = sys_time;            /* SYSCALL_TIME: RTC wall seconds */
+    syscall_lists[19] = sys_kill;            /* SYSCALL_KILL: terminate a process */
 
     syscall_lists[18] = sys_arch_prctl;
     syscall_lists[20] = sys_getrandom;

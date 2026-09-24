@@ -62,9 +62,14 @@ tight `for(;;)` loops.
 - **⚡ CPU-parallel software compositor** — one worker pinned per online CPU
   renders a horizontal screen strip; a barrier-separated double buffer removes
   tearing, and scene traversal is **O(window count)**.
-- **🪟 Modern Win11/Fluent-style UI** — SDF anti-aliased rounded corners, soft
-  directional drop shadows and true per-pixel ARGB blending over the
-  wallpaper, all composited by a userspace window manager.
+- **🪟 A real window manager, not just a window** — SDF anti-aliased rounded
+  corners and soft directional drop shadows, plus caption-bar **dragging**,
+  **maximize**, **minimize** (restore from the taskbar pill) and
+  **8-direction edge/corner resizing**; the close button really **terminates
+  the client process** and reclaims its threads and pages through `sys_kill`.
+- **📊 Acrylic taskbar with a live calendar** — a Win11/macOS-style translucent
+  taskbar with an app pill, a battery indicator and a two-line clock showing
+  **HH:MM over YYYY/M/D**, converted from the kernel's real UTC epoch time.
 - **🖱️ A pointer that never stalls** — the cursor is its own layer written
   straight to the scanout in O(16²), fully decoupled from scene composition;
   moving the mouse never wakes the workers or recomposes the screen.
@@ -81,17 +86,12 @@ tight `for(;;)` loops.
 ### 🖼️ Screenshots
 
 <p align="center">
-  <img src="skyline_window.png" alt="Win11-style rounded console" width="720">
-  <br><em>A Win11/Fluent-style rounded console: anti-aliased corners composite
-  over the wallpaper, a soft directional shadow lifts the window, and a flat
-  dark caption carries the title and the close control.</em>
+  <img src="skyline_modern_desktop.png" alt="Modern desktop with acrylic taskbar" width="760">
+  <br><em>The modern desktop: a rounded console composite over the wallpaper and
+  an acrylic taskbar showing the app pill, a battery indicator and a two-line
+  clock (HH:MM over YYYY/M/D).</em>
 </p>
 
-<p align="center">
-  <img src="skyline_closeup.png" alt="Rounded corners and soft shadow" width="720">
-  <br><em>Close-up: 8 px SDF-rounded corners, a 1 px luminous hairline rim and a
-  quadratic-falloff shadow — rendered entirely in software.</em>
-</p>
 
 ### 🧠 3EVDF — a Rate-aware EEVDF scheduler
 
@@ -131,6 +131,12 @@ The desktop is a data-parallel renderer with **zero per-pixel locking**:
   entire window decoration; a console client is plain standard C
   (`printf` + `return 0`) with zero Skyline-specific boilerplate and builds
   unmodified on any hosted toolchain.
+- **Full window lifecycle in userspace** — the WM handles caption drag,
+  maximize, minimize and 8-way edge resize, and the close button drives
+  `sys_kill` so the client process — every thread and its whole address space —
+  is genuinely reclaimed, not just detached. A lightweight rectangle previews
+  live during resize; the heavy rounded/shadowed chrome is rasterized once on
+  release, keeping the pointer at full speed throughout.
 
 Text comes from an in-tree TTF rasterizer: LRU + hash-table glyph caching, CJK
 typography rules, true typographic line height and boundary-clipped alpha
@@ -158,7 +164,8 @@ blending onto the linear framebuffer.
 | Security | ✅ | KASLR, SMAP, isolated address spaces |
 | Device drivers | ✅ / 🚧 | PS/2, framebuffer, AHCI/ATA/ATAPI, NVMe, USB |
 | Filesystems | ✅ | FAT, ext4 (lwext4), SAF packed format |
-| GUI / compositor | ✅ | Parallel strips, rounded windows, TTF/CJK, SW cursor |
+| GUI / window manager | ✅ | Parallel strips, rounded windows, drag/max/min/8-way resize, kill, TTF/CJK, SW cursor |
+| Taskbar / clock | ✅ | Acrylic bar, app pill, battery icon, two-line HH:MM + YYYY/M/D |
 | Userspace | ✅ | Own libc/`printf`, ELF loader, threads + TLS, shared memory |
 | Networking | 🚧 | Early stack skeleton |
 | Other architectures | 🚧 | aarch64 / RISC-V / LoongArch build templates |

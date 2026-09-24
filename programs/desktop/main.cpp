@@ -101,6 +101,9 @@ const char* to_string(char value)
 /*  runtime resize surface and 1:1 client-content mirror.                     */
 /* ========================================================================== */
 
+/* Calendar fields the tray shows (Win11-style two-line clock). */
+struct WmDateTime { int year, month, day, hh, mm; };
+
 /* Integer source-over used for the taskbar's acrylic darkening. */
 static inline uint32_t wm_acrylic_pixel(uint32_t wallpaper) {
     const uint32_t k  = SKY_ACRYLIC_KEEP;
@@ -131,7 +134,7 @@ static void wm_draw_battery(FrameBuffer* fb, int32_t x, int32_t y, uint32_t ink)
    2 closed (no app entry). */
 static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
                             uint32_t W, uint32_t H, int appState,
-                            int hh, int mm, bool haveClock) {
+                            const WmDateTime* dt, bool haveClock) {
     FrameBuffer lb;
     lb.BaseAddress       = wall;
     lb.BufferSize        = (uint64_t)W * H * sizeof(uint32_t);
@@ -162,34 +165,69 @@ static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
                          "Skyline Console", appState == 1 ? 0xFFFFFFFFu : SKYRGB_INK);
     }
 
-    /* 3) right tray: battery glyph + local HH:MM, right aligned */
-    char clk[6];
-    clk[0] = (char)('0' + hh / 10); clk[1] = (char)('0' + hh % 10);
-    clk[2] = ':';
-    clk[3] = (char)('0' + mm / 10); clk[4] = (char)('0' + mm % 10);
-    clk[5] = '\0';
-
+    /* 3) right tray: battery glyph + Win11-style two-line clock, right aligned */
     TTF_Font* tf = console_font();
-    int32_t tw = 62, th = 22;
-    if (tf && haveClock) TTF_GetTextSize(tf, clk, &tw, &th);
-    int32_t clkX = (int32_t)W - (int32_t)SKY_TRAY_MARGIN - (haveClock ? tw : 0);
-    int32_t clkY = (int32_t)y0 + ((int32_t)barH - 22) / 2;
-    int32_t batX = clkX - 10 - 21;
+    char line1[8] = "", line2[16] = "";
+    if (haveClock && dt) {
+        line1[0] = (char)('0' + dt->hh / 10); line1[1] = (char)('0' + dt->hh % 10);
+        line1[2] = ':';
+        line1[3] = (char)('0' + dt->mm / 10); line1[4] = (char)('0' + dt->mm % 10);
+        line1[5] = '\0';
+
+        /* second line: YYYY/M/D (unpadded month/day, Win11 CJK locale look) */
+        int n = 0;
+        const char* ys = to_string((uint64_t)dt->year);
+        while (*ys) line2[n++] = *ys++;
+        line2[n++] = '/';
+        if (dt->month >= 10) { line2[n++] = '1'; line2[n++] = (char)('0' + dt->month - 10); }
+        else line2[n++] = (char)('0' + dt->month);
+        line2[n++] = '/';
+        if (dt->day >= 10) { line2[n++] = (char)('0' + dt->day / 10); line2[n++] = (char)('0' + dt->day % 10); }
+        else line2[n++] = (char)('0' + dt->day);
+        line2[n] = '\0';
+    }
+
+    int32_t w1 = 0, w2 = 0, th = 15;
+    if (tf && haveClock) {
+        TTF_GetTextSize(tf, line1, &w1, &th);
+        int32_t th2 = th;
+        TTF_GetTextSize(tf, line2, &w2, &th2);
+    }
+    int32_t blockW = w1 > w2 ? w1 : w2;
+    int32_t blockH = 2 * th + 2;
+    int32_t right  = (int32_t)W - (int32_t)SKY_TRAY_MARGIN;
+    int32_t blockTop = (int32_t)y0 + ((int32_t)barH - blockH) / 2;
+    int32_t batX = right - blockW - 10 - 21;
     int32_t batY = (int32_t)y0 + ((int32_t)barH - 12) / 2;
     wm_draw_battery(&lb, batX, batY, SKYRGB_TRAY_INK);
-    if (tf && haveClock)
-        TTF_DrawText(&lb, tf, clkX, clkY, clk, SKYRGB_TRAY_INK);
+    if (tf && haveClock) {
+        TTF_DrawText(&lb, tf, right - w1, blockTop,             line1, SKYRGB_TRAY_INK);
+        TTF_DrawText(&lb, tf, right - w2, blockTop + th + 2,    line2, SKYRGB_TRAY_INK);
+    }
 }
 
-/* Read the wall clock via SYSCALL_TIME (RTC civil seconds, UTC). mktime is
-   linear in H/M/S, so total mod 86400 recovers H*3600+M*60+S regardless of
-   the calendar fields; shift to local time by SKY_LOCAL_TZ_MIN. */
-static bool wm_read_clock(int* hh, int* mm) {
+/* Convert the UTC epoch seconds from SYSCALL_TIME into local civil date/time,
+   applying the fixed timezone offset. Day conversion is the Howard Hinnant
+   civil-from-days algorithm (era/400-year cycle, no per-year loop). */
+static bool wm_read_datetime(WmDateTime* dt) {
     int64_t s = (int64_t)syscall(SYSCALL_TIME, 0, 0, 0, 0, 0, 0);
     if (s < 0) return false;
-    uint64_t local = (uint64_t)(s + (int64_t)SKY_LOCAL_TZ_MIN * 60) % 86400u;
-    *hh = (int)(local / 3600u);
-    *mm = (int)((local / 60u) % 60u);
+    int64_t ls = s + (int64_t)SKY_LOCAL_TZ_MIN * 60;
+    int64_t days = ls / 86400;
+    int64_t rem  = ls % 86400;
+    if (rem < 0) { rem += 86400; days -= 1; }
+    dt->hh = (int)(rem / 3600);
+    dt->mm = (int)((rem / 60) % 60);
+
+    int64_t d   = days + 719468;
+    int64_t era = (d >= 0 ? d : d - 146096) / 146097;
+    int64_t doe = d - era * 146097;
+    int64_t y   = (doe - doe / 1460 + doe / 36524 - doe / 146097) / 365;
+    int64_t doy = doe - (365 * y + y / 4 - y / 100);
+    int64_t mp  = (5 * doy + 2) / 153;
+    dt->day   = (int)(doy - (153 * mp + 2) / 5 + 1);
+    dt->month = (int)(mp < 10 ? mp + 3 : mp - 9);
+    dt->year  = (int)(y + era * 400 + (dt->month <= 2 ? 1 : 0));
     return true;
 }
 
@@ -319,10 +357,10 @@ int main(){
     Compositor& comp = Compositor::Get();
     if (!comp.Init((FrameBuffer*)&fb)) return 1;
 
-    int bootHH = 0, bootMM = 0;
-    bool haveClock = wm_read_clock(&bootHH, &bootMM);
+    WmDateTime bootDT;
+    bool haveClock = wm_read_datetime(&bootDT);
     if (cleanBar)
-        wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 0, bootHH, bootMM, haveClock);
+        wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 0, &bootDT, haveClock);
 
     static Window wallpaperWin;
     wallpaperWin.PosX = wallpaperWin.PosY = 0;
@@ -434,7 +472,6 @@ int main(){
     int32_t  rsX = 0, rsY = 0, rsW = 0, rsH = 0, rsMX = 0, rsMY = 0;
     int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz */
     uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
-    int      clkHH = bootHH, clkMM = bootMM;
 
     comp.SetCursor(0, 0, true);
 
@@ -594,16 +631,19 @@ int main(){
             resizing = false;
 
             if (fire) {
+                WmDateTime fireDT;
+                bool haveDT = wm_read_datetime(&fireDT);
                 int tbState = (wmMode == WM_MIN) ? 1 : 0;
                 if (pressHit == 2) {                        /* minimize         */
                     wmMode = WM_MIN;
                     comp.SetVisible(&consoleWin, false);
-                    wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 1, clkHH, clkMM, haveClock);
+                    wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 1, &fireDT, haveDT);
                     wmDirty = true;
-                } else if (pressHit == 4) {                 /* close: unregister */
+                } else if (pressHit == 4) {                 /* close: kill + unregister */
                     wmMode = WM_CLOSED;
+                    if (place.client_pid) sys_kill(place.client_pid, 0);
                     comp.UnregisterWindow(&consoleWin);
-                    wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 2, clkHH, clkMM, haveClock);
+                    wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 2, &fireDT, haveDT);
                     wmDirty = true;
                 } else if (pressHit == 3 && (maxSurf)) {    /* maximize toggle  */
                     if (wmMode == WM_NORMAL) {
@@ -628,7 +668,7 @@ int main(){
                         tbState = 1;
                     }
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tbState,
-                                    clkHH, clkMM, haveClock);
+                                    &fireDT, haveDT);
                     wmDirty = true;
                 }
             }
@@ -647,15 +687,14 @@ int main(){
                               (int32_t)normW, (int32_t)normH,
                               (const uint32_t*)place.desk_surf);
 
-        /* Poll the wall clock twice a minute; repaint the tray on change. */
+        /* Poll the wall clock twice a minute; repaint the tray each tick. */
         if (cleanBar && now - last_clock >= clock_gap) {
             last_clock = now;
-            int nhh = clkHH, nmm = clkMM;
-            if (wm_read_clock(&nhh, &nmm) && (nhh != clkHH || nmm != clkMM)) {
-                clkHH = nhh; clkMM = nmm;
+            WmDateTime ndt;
+            if (wm_read_datetime(&ndt)) {
                 int tstate = (wmMode == WM_MIN) ? 1 : (wmMode == WM_CLOSED ? 2 : 0);
                 wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tstate,
-                                clkHH, clkMM, true);
+                                &ndt, true);
                 wmDirty = true;
             }
         }

@@ -91,6 +91,7 @@ uint64_t sys_pmmapSHARE(
 uint64_t sched_yield();
 uint64_t sys_load(uint64_t pathname, uint64_t argv, uint64_t envp);
 uint64_t sys_launch(uint64_t pid);
+uint64_t sys_kill(uint64_t pid, uint64_t sig);
 uint64_t sys_getpid();
 uint64_t sys_gettid();
 uint64_t sys_sysinfo(uint64_t ARG);
