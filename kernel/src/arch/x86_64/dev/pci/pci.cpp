@@ -301,6 +301,8 @@ namespace PCI
         ps.mi.ProgIF = ProgIF;
         ps.mi.RSVD = 0;
         PCIDevMapS *p = (PCIDevMapS*)hashmap_get(PCIDevMap,&ps);
+        if (p == NULL)
+            return NULL; // no matching device
         return (PCI::PCIDeviceHeader*)p->PCIDevBaseAddr;
     }
 

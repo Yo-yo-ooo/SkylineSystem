@@ -16,7 +16,59 @@
 #ifdef __x86_64__
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/schedule/sched.h>
-void usleep_usec(uint64_t x){ PIT::Sleep(x); }
+
+static inline void xhci_cpuid0(uint32_t leaf, uint32_t vals[4]) {
+    asm volatile("cpuid"
+        : "=a"(vals[0]), "=b"(vals[1]), "=c"(vals[2]), "=d"(vals[3])
+        : "0"(leaf));
+}
+
+static inline uint64_t xhci_rdtsc0(void) {
+    uint32_t lo, hi;
+    asm volatile("lfence\n\trdtsc" : "=a"(lo), "=d"(hi) :: "memory");
+    return ((uint64_t)hi << 32) | lo;
+}
+
+// TSC ticks per microsecond. Prefer CPUID leaf 0x15 (core crystal clock
+// ratio), then leaf 0x16 (nominal TSC frequency in MHz), and fall back to a
+// conservative 1 GHz assumption.
+static uint64_t xhci_tsc_per_usec(void) {
+    uint32_t r[4];
+    xhci_cpuid0(0x15, r);
+    if (r[0] != 0 && r[1] != 0 && r[2] != 0) {
+        uint64_t tscHz = (uint64_t)r[2] * r[1] / r[0];
+        if (tscHz >= 1000000) return tscHz / 1000000ULL;
+    }
+    xhci_cpuid0(0x16, r);
+    if (r[1] != 0) return (uint64_t)r[1]; // EBX = nominal TSC MHz
+    return 1000;
+}
+
+// Interrupt-independent microsecond delay used during early controller
+// bring-up, where IF may be clear and PIT ticks therefore cannot advance.
+static void xhci_udelay_poll(uint64_t usec) {
+    static uint64_t perUsec = 0;
+    if (!perUsec) perUsec = xhci_tsc_per_usec();
+    uint64_t start = xhci_rdtsc0();
+    uint64_t target = perUsec * usec;
+    while (xhci_rdtsc0() - start < target) asm volatile("pause");
+}
+
+void usleep_usec(uint64_t usec){
+    uint64_t rf;
+    asm volatile("pushfq\n\tpop %0" : "=r"(rf));
+    if ((rf >> 9) & 1) {
+        // Interrupts are live: use the tick-driven sleep (which also yields).
+        // PIT::Sleep takes milliseconds; round up so a sub-millisecond wait
+        // still covers at least one timer tick instead of returning at once.
+        PIT::Sleep((usec + 999) / 1000);
+    } else {
+        // Early enumeration runs with interrupts masked (the driver starts
+        // before the global sti): busy-wait on the TSC so we never spin
+        // forever waiting for a PIT tick that cannot arrive.
+        xhci_udelay_poll(usec);
+    }
+}
 #endif
 
 extern "C" void XHCI_IRQHandler(context_t* ctx) {
@@ -48,6 +100,9 @@ static ERSTEntry* g_erst = nullptr;
 static spinlock_t g_evtRingLock = 0;
 
 static SlotInfo g_slots[MAX_SLOTS];
+// Set while a port is being reset/enumerated so a Port Status Change event
+// delivered during the blocking enumeration cannot re-enter HandlePortChange.
+static bool g_portBusy[256];
 
 struct PendingCommand {
     rb_node_t node; uint64_t trbPtr;
@@ -93,7 +148,16 @@ static void freeDMA(void* p) {
     if (p) VMM::Free((pagemap_t*)kernel_pagemap, p);
 }
 
-static inline uint64_t virt_to_phys(void* v) { return (uint64_t)v - hhdm_offset; }
+// DMA buffers come from VMM::Alloc, whose virtual addresses are not in the
+// HHDM, so resolve the physical frame through the page map instead of
+// subtracting hhdm_offset.
+static inline uint64_t virt_to_phys(void* v) {
+    uint64_t va = (uint64_t)v;
+    // GetPhysics resolves only the page-frame base; OR in the within-page
+    // offset so a buffer not aligned to a page still gets the correct
+    // physical TRB / buffer address.
+    return VMM::GetPhysics((pagemap_t*)kernel_pagemap, va) | (va & 0xFFF);
+}
 static inline void writeOp(uint32_t off, uint32_t v) { *((volatile uint32_t*)((uint64_t)g_op + off)) = v; }
 static inline uint32_t readOp(uint32_t off) { return *((volatile uint32_t*)((uint64_t)g_op + off)); }
 static inline void ringDoorbell(uint8_t slot, uint8_t target) { *((volatile uint32_t*)((uint64_t)g_doorbells + (slot * 4))) = target; }
@@ -138,15 +202,17 @@ static bool EnqueueAndTrack(TRBRingState* ring, uint8_t slotID, uint8_t dbTarget
 
 static void processEvent(volatile TRB* evt) {
     uint8_t trbType = (evt->control >> 10) & 0x3F;
-    uint8_t cc = evt->status & 0xFF;
+    // Completion Code is the high byte of the TRB Status field; the low 24
+    // bits hold the TRB Transfer Length.
+    uint8_t cc = (evt->status >> 24) & 0xFF;
     uint8_t slotID = (evt->control >> 24) & 0xFF;
 
     switch (trbType) {
         case TRB_TRANSFER_EVENT: {
             uint64_t trbPtr = evt->parameter;
-            uint32_t xferred = evt->status >> 17;
-            
-            // 1. 先推进 dequeue
+            uint32_t xferred = evt->status & 0xFFFFFFu;
+
+            // 1. Advance the ring dequeue pointer past the completed TRB.
             if (slotID > 0 && slotID <= MAX_SLOTS) {
                 for (int i = 0; i < 31; i++) {
                     TRBRingState* ring = &g_slots[slotID].rings[i];
@@ -154,19 +220,22 @@ static void processEvent(volatile TRB* evt) {
                         uint64_t rs = virt_to_phys((void*)ring->base);
                         uint64_t re = rs + TRANSFER_RING_SIZE * sizeof(TRB);
                         if (trbPtr >= rs && trbPtr < re) {
-                            volatile TRB* vt = (volatile TRB*)(trbPtr + hhdm_offset);
+                            // Resolve the completed TRB by its physical index
+                            // in the ring; the ring VA is not in the HHDM, so
+                            // do not convert via hhdm_offset.
+                            uint32_t physIdx = (uint32_t)((trbPtr - rs) / sizeof(TRB));
                             uint64_t rf;
                             usb_spin_lock_irqsave(&ring->lock, rf);
-                            uint32_t idx = vt - ring->base;
-                            ring->dequeue = (idx == TRANSFER_RING_SIZE - 1) ? ring->base : vt + 1;
+                            ring->dequeue = (physIdx == TRANSFER_RING_SIZE - 1)
+                                ? ring->base : ring->base + physIdx + 1;
                             usb_spin_unlock_irqrestore(&ring->lock, rf);
                             break;
                         }
                     }
                 }
             }
-            
-            // 2. 处理 pending transfer
+
+            // 2. Resolve the pending transfer.
             PendingTransfer* async_pt = nullptr;
             uint64_t flags;
             usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
@@ -185,7 +254,7 @@ static void processEvent(volatile TRB* evt) {
             }
             usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
 
-            // 3. 锁外执行回调
+            // 3. Run async callbacks outside the lock.
             if (async_pt) {
                 ((void(*)(uint8_t*, uint32_t, void*))async_pt->callback)((uint8_t*)async_pt->buf, xferred, async_pt->ctx);
                 kfree(async_pt);
@@ -223,7 +292,7 @@ void PollEventRing() {
         volatile TRB* trb = g_evtRingDeq;
         uint8_t cv = (trb->control & 1u);
         if (cv != g_evtRingCycle) break;
-        
+
         TRB evtCopy;
         __memcpy(&evtCopy, (const void*)trb, sizeof(TRB));
         g_evtRingDeq++;
@@ -232,12 +301,13 @@ void PollEventRing() {
             g_evtRingCycle ^= 1;
         }
         usb_spin_unlock_irqrestore(&g_evtRingLock, flags);
-        
+
         processEvent(&evtCopy);
-        
+
         usb_spin_lock_irqsave(&g_evtRingLock, flags);
     }
-    
+
+    // Publish the new Event Ring Dequeue Pointer (bit3 = EHB).
     uint64_t erdp = virt_to_phys((void*)g_evtRingDeq) | (1u << 3);
     g_intRegs->erdp_lo = (uint32_t)erdp;
     g_intRegs->erdp_hi = (uint32_t)(erdp >> 32);
@@ -269,15 +339,16 @@ uint8_t SubmitCommandBlocking(volatile TRB* cmdTrb, uint32_t timeoutMs) {
     usb_spin_lock_irqsave(&g_pendingCmdsLock, flags);
     rb_insert(&g_pendingCmds, &pc.node, pending_cmd_cmp);
     usb_spin_unlock_irqrestore(&g_pendingCmdsLock, flags);
-    
+
     ringDoorbell(0, 0);
     
     for(uint32_t i=0; i<timeoutMs*1000; i++) {
         if (pc.completed) break;
         PollEventRing();
+        if (pc.completed) break;
         usleep_usec(1);
     }
-    
+
     usb_spin_lock_irqsave(&g_pendingCmdsLock, flags);
     rb_erase(&g_pendingCmds, &pc.node);
     usb_spin_unlock_irqrestore(&g_pendingCmdsLock, flags);
@@ -330,7 +401,9 @@ void InitXHCIFromPCI(PCI::PCIHeader0* hdr) {
     g_maxSlots = (g_cap->hcsparams1 >> 0) & 0xFF;
     g_maxPorts = (g_cap->hcsparams1 >> 24) & 0xFF;
     g_op = (OpRegs*)((uint64_t)g_cap + g_cap->capLength);
-    g_intRegs = (IntRegSet*)((uint64_t)g_cap + g_cap->rtsoff);
+    // Interrupter 0's register set starts 0x20 bytes into the runtime space;
+    // rtsoff itself points at the Microframe Index register.
+    g_intRegs = (IntRegSet*)((uint64_t)g_cap + g_cap->rtsoff + 0x20);
     g_doorbells = (uint32_t*)((uint64_t)g_cap + g_cap->dboff);
 
     uint32_t hcs2 = g_cap->hcsparams2;
@@ -342,7 +415,9 @@ void InitXHCIFromPCI(PCI::PCIHeader0* hdr) {
     for (uint32_t i = 0; i < MAX_SLOTS; i++) g_slots[i].used = false;
 
     writeOp(offsetof(OpRegs, usbcmd), 0);
-    resetController();
+    if (!resetController()) return;
+    kinfo("[xHCI] v%x, %u slots, %u ports\n",
+          g_cap->hciversion, g_maxSlots, g_maxPorts);
 
     g_dcbaap = (uint64_t*)allocDMA(sizeof(uint64_t) * (g_maxSlots + 1));
     if (scratchpadBufs > 0) {
@@ -380,48 +455,78 @@ void InitXHCIFromPCI(PCI::PCIHeader0* hdr) {
     writeOp(offsetof(OpRegs, usbcmd), cmd);
 
     for (uint32_t p = 1; p <= g_maxPorts; p++) {
-        volatile OpRegs::PortReg* portReg = &g_op->ports[p-1];
+        volatile PortReg* portReg = &g_op->ports[p-1];
         if (!(portReg->portsc & PORTSC_PP)) {
             portReg->portsc = PORTSC_PP;
             usleep_usec(20000);
         }
     }
     for (uint32_t p = 1; p <= g_maxPorts; p++) {
-        volatile OpRegs::PortReg* portReg = &g_op->ports[p-1];
-        if (portReg->portsc & PORTSC_CCS) HandlePortChange(p);
+        volatile PortReg* portReg = &g_op->ports[p-1];
+        uint32_t psc = portReg->portsc;
+        if (psc & PORTSC_CCS) HandlePortChange(p);
     }
 }
 
-void HandlePortChange(uint8_t port) {
-    volatile OpRegs::PortReg* portReg = &g_op->ports[port-1];
-    uint32_t portsc = portReg->portsc;
-    
-    if (portsc & PORTSC_CSC) {
-        if (portsc & PORTSC_CCS) {
-            portReg->portsc = (portsc & ~PORTSC_PLS) | PORTSC_PR;
-            for (uint32_t i = 0; i < 100000; i++) {
-                if (portReg->portsc & PORTSC_PRC) break;
-                usleep_usec(1000);
-            }
-            if (!(portReg->portsc & PORTSC_PRC)) {
-                kprintf("[xHCI] Port %u reset timeout\n", port);
-                return;
-            }
-            uint8_t spd = (portReg->portsc & PORTSC_PSPD) >> 10;
-            EnumerateDevice(port, (USB::USB_SPEED)spd);
-        } else {
-            kprintf("[xHCI] Port %u disconnected\n", port);
-            for (uint32_t i = 1; i <= g_maxSlots; i++) {
-                if (g_slots[i].used && g_slots[i].port == port) {
-                    DestroyDevice(i);
-                    break;
-                }
-            }
-        }
-        portReg->portsc = PORTSC_CSC;
+// Map the xHCI Port Speed field (PORTSC bits 13:10) to the USB speed enum.
+// xHCI encoding: 1=Full, 2=Low, 3=High, 4=Super (5=SuperSpeed Plus).
+static USB::USB_SPEED map_port_speed(uint32_t pspd) {
+    switch (pspd) {
+        case 1:  return USB::USB_SPEED::FULL;
+        case 2:  return USB::USB_SPEED::LOW;
+        case 4:  return USB::USB_SPEED::SUPER;
+        case 3:
+        default: return USB::USB_SPEED::HIGH;
     }
+}
+
+// Inverse mapping: USB speed enum to the PORTSC speed value stored in the
+// Speed field of the Slot Context.
+static uint32_t speed_to_pspd(USB::USB_SPEED s) {
+    switch (s) {
+        case USB::USB_SPEED::FULL: return 1;
+        case USB::USB_SPEED::LOW:  return 2;
+        case USB::USB_SPEED::HIGH: return 3;
+        case USB::USB_SPEED::SUPER: return 4;
+    }
+    return 3;
+}
+
+void HandlePortChange(uint8_t port) {
+    volatile PortReg* portReg = &g_op->ports[port-1];
+    uint32_t portsc = portReg->portsc;
+
+    // Acknowledge the change bits up front. If enumeration is already running
+    // for this port, drop the event instead of re-entering the state machine.
+    bool alreadyBusy = g_portBusy[port];
+    if (portsc & PORTSC_CSC) portReg->portsc = PORTSC_CSC;
     if (portsc & PORTSC_PRC) portReg->portsc = PORTSC_PRC;
     if (portsc & PORTSC_PEC) portReg->portsc = PORTSC_PEC;
+    if (alreadyBusy || !(portsc & PORTSC_CSC)) return;
+
+    g_portBusy[port] = true;
+    if (portsc & PORTSC_CCS) {
+        portReg->portsc = (portsc & ~PORTSC_PLS) | PORTSC_PR;
+        for (uint32_t i = 0; i < 100000; i++) {
+            if (portReg->portsc & PORTSC_PRC) break;
+            usleep_usec(1000);
+        }
+        uint32_t afterRst = portReg->portsc;
+        if (afterRst & PORTSC_PRC) {
+            uint32_t pspd = (afterRst & PORTSC_PSPD) >> 10;
+            EnumerateDevice(port, map_port_speed(pspd));
+        } else {
+            kwarn("[xHCI] port %u reset timeout\n", port);
+        }
+    } else {
+        for (uint32_t i = 1; i <= g_maxSlots; i++) {
+            if (g_slots[i].used && g_slots[i].port == port) {
+                DestroyDevice(i);
+                break;
+            }
+        }
+    }
+    g_portBusy[port] = false;
 }
 
 bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed) {
@@ -436,10 +541,22 @@ bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed) {
     struct InputCtx { InputControlContext ic; SlotContext slot; EndpointContext ep[31]; };
     InputCtx* inputCtx = (InputCtx*)allocDMA(sizeof(InputCtx));
     inputCtx->ic.add = (1u << 0) | (1u << 1);
-    inputCtx->slot.speed = (uint32_t)speed; inputCtx->slot.ctxEntries = 1; inputCtx->slot.rootHubPort = port;
+    inputCtx->slot.speed = speed_to_pspd(speed);
+    inputCtx->slot.ctxEntries = 1;
+    inputCtx->slot.rootHubPort = port;
     
-    uint16_t mps = (speed == USB::USB_SPEED::LOW || speed == USB::USB_SPEED::FULL) ? 8 : 64;
-    inputCtx->ep[0].epType = 4; inputCtx->ep[0].maxPacketSize = mps; inputCtx->ep[0].averageTRBLen = 8;
+    // Control endpoint 0 max packet size by enumerated speed: SuperSpeed is
+    // 512, high speed 64, and full/low start at 8 (refined after the device
+    // descriptor is read).
+    uint16_t mps;
+    switch (speed) {
+        case USB::USB_SPEED::LOW:
+        case USB::USB_SPEED::FULL: mps = 8;   break;
+        case USB::USB_SPEED::SUPER: mps = 512; break;
+        default:                   mps = 64;  // HIGH
+    }
+    inputCtx->ep[0].epType = 4; inputCtx->ep[0].cerr = 3;
+    inputCtx->ep[0].maxPacketSize = mps; inputCtx->ep[0].averageTRBLen = mps;
     
     volatile TRB* ep0Ring = (volatile TRB*)allocDMA(TRANSFER_RING_SIZE * sizeof(TRB));
     inputCtx->ep[0].dequeueCycleState = virt_to_phys((void*)ep0Ring) | 1u;
@@ -450,7 +567,7 @@ bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed) {
     g_slots[slot].rings[0].lock = 0;
 
     TRB addrCmd = {}; addrCmd.parameter = virt_to_phys(inputCtx); addrCmd.control = (TRB_ADDRESS_DEVICE << 10) | (slot << 24) | (1u << 5);
-    SubmitCommandBlocking(&addrCmd, 1000);
+    if (SubmitCommandBlocking(&addrCmd, 1000) == 0) return false;
     freeDMA(inputCtx);
 
     USB::DeviceDescriptor devDesc = {};
@@ -465,6 +582,8 @@ bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed) {
     if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::SET_CONFIGURATION, 1, 0, nullptr, 0)) return false;
 
     USB::Device* dev = USB::CreateDevice(slot, port, speed, devDesc, cfgBuf, totalLen);
+    kinfo("[xHCI] dev slot%u %04x:%04x on p%u\n",
+          slot, devDesc.idVendor, devDesc.idProduct, port);
     USB::RouteDeviceToClassDriver(dev);
     return true;
 }
@@ -517,7 +636,7 @@ void DestroyDevice(uint8_t slotID) {
 
 void ResetEndpoint(uint8_t slotID, uint8_t epAddr) {
     uint8_t epIdx = (epAddr & 0xF) * 2 + ((epAddr & 0x80) ? 1 : 0);
-    uint8_t dci = epIdx + 1;
+    uint8_t dci = epIdx;
 
     TRB stopCmd = {}; stopCmd.control = (TRB_STOP_EP << 10) | (slotID << 24) | (dci << 16) | (1u << 5);
     SubmitCommandBlocking(&stopCmd, 1000);
@@ -566,10 +685,21 @@ void ResetEndpoint(uint8_t slotID, uint8_t epAddr) {
 
 bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, uint16_t len, bool inDir) {
     TRBRingState* ring = &g_slots[slotID].rings[0];
-    
+
+    // The caller's data buffer can live on a stack or any virtual address whose
+    // virt_to_phys translation is not reliable for DMA. Stage every data phase
+    // through a page-aligned DMA bounce buffer and copy in/out around it.
+    void* dmaBuf = nullptr;
+    if (len > 0) {
+        size_t dmaPages = (len + 0xFFF) >> 12;
+        dmaBuf = allocDMA(dmaPages << 12);
+        if (!dmaBuf) return false;
+        if (!inDir) __memcpy(dmaBuf, buf, len); // OUT: stage host->device data
+    }
+
     uint64_t flags;
     usb_spin_lock_irqsave(&ring->lock, flags);
-    
+
     volatile TRB* start_enqueue = ring->enqueue;
     uint8_t start_cycle = ring->cycle;
     
@@ -595,21 +725,23 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
     TRB setupTrb = {};
     setupTrb.parameter = *(uint64_t*)setup; setupTrb.status = 8;
     setupTrb.control = (TRB_SETUP_STAGE << 10) | (1u << 6) | (1u << 5);
-    if (len > 0) setupTrb.control |= (inDir ? 2u : 3u) << 16;
+    if (len > 0) setupTrb.control |= (inDir ? 3u : 2u) << 16;
     
     if (!try_enqueue(setupTrb)) {
         ring->enqueue = start_enqueue; ring->cycle = start_cycle;
         usb_spin_unlock_irqrestore(&ring->lock, flags);
+        if (dmaBuf) freeDMA(dmaBuf);
         return false;
     }
     
     if (len > 0) {
         TRB dataTrb = {};
-        dataTrb.parameter = virt_to_phys(buf); dataTrb.status = len;
+        dataTrb.parameter = virt_to_phys(dmaBuf ? dmaBuf : buf); dataTrb.status = len;
         dataTrb.control = (TRB_DATA_STAGE << 10) | (1u << 5) | (inDir ? (1u << 16) : 0);
         if (!try_enqueue(dataTrb)) {
             ring->enqueue = start_enqueue; ring->cycle = start_cycle;
             usb_spin_unlock_irqrestore(&ring->lock, flags);
+            if (dmaBuf) freeDMA(dmaBuf);
             return false;
         }
     }
@@ -634,37 +766,58 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
         
         ring->enqueue = start_enqueue; ring->cycle = start_cycle;
         usb_spin_unlock_irqrestore(&ring->lock, flags);
+        if (dmaBuf) freeDMA(dmaBuf);
         return false;
     }
     
     ringDoorbell(slotID, 1);
     usb_spin_unlock_irqrestore(&ring->lock, flags);
-    
+
     for(uint32_t i=0; i<100000; i++) {
         if (pt.completed) break;
         PollEventRing();
         usleep_usec(10);
     }
-    
+
     usb_spin_lock_irqsave(&g_pendingTransfersLock, pflags);
     rb_erase(&g_pendingTransfers, &pt.node);
     usb_spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
-    
-    return pt.completed && (pt.completionCode == CC_SUCCESS || pt.completionCode == CC_SHORT_PKT);
+
+    bool ok = pt.completed &&
+              (pt.completionCode == CC_SUCCESS || pt.completionCode == CC_SHORT_PKT);
+    if (dmaBuf) {
+        if (inDir && ok) __memcpy(buf, dmaBuf, len); // IN: hand device data out
+        freeDMA(dmaBuf);
+    }
+    return ok;
 }
 
 bool SubmitNormalTransfer(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t len, bool inDir, bool isoch) {
     uint8_t epIdx = (epAddr & 0xF) * 2 + (inDir ? 1 : 0);
     TRBRingState* ring = &g_slots[slotID].rings[epIdx];
-    
+
+    // Stage the transfer through a page-aligned DMA bounce buffer; the caller's
+    // buffer may live on a stack or another virtual address whose virt_to_phys
+    // translation is not reliable for DMA (same hazard as control transfers).
+    void* dmaBuf = nullptr;
+    if (len > 0) {
+        size_t dmaPages = (len + 0xFFF) >> 12;
+        dmaBuf = allocDMA(dmaPages << 12);
+        if (!dmaBuf) return false;
+        if (!inDir) __memcpy(dmaBuf, buf, len); // OUT: stage host->device data
+    }
+
     TRB trb = {};
-    trb.parameter = virt_to_phys(buf); trb.status = len;
+    trb.parameter = virt_to_phys(dmaBuf ? dmaBuf : buf); trb.status = len;
     trb.control = ((isoch ? TRB_ISOCH : TRB_NORMAL) << 10) | (1u << 5);
-    
+
     PendingTransfer pt = {}; rb_init_node(&pt.node); pt.completed = false; pt.async = false;
     pt.slotID = slotID;
-    if (!EnqueueAndTrack(ring, slotID, epIdx + 1, trb, &pt)) return false;
-    
+    if (!EnqueueAndTrack(ring, slotID, epIdx, trb, &pt)) {
+        if (dmaBuf) freeDMA(dmaBuf);
+        return false;
+    }
+
     for(uint32_t i=0; i<100000; i++) {
         if (pt.completed) break;
         PollEventRing();
@@ -674,8 +827,13 @@ bool SubmitNormalTransfer(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t le
     usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
     rb_erase(&g_pendingTransfers, &pt.node);
     usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
-    
-    return pt.completed && (pt.completionCode == CC_SUCCESS || pt.completionCode == CC_SHORT_PKT);
+
+    bool ok = pt.completed && (pt.completionCode == CC_SUCCESS || pt.completionCode == CC_SHORT_PKT);
+    if (dmaBuf) {
+        if (inDir && ok) __memcpy(buf, dmaBuf, len); // IN: hand device data out
+        freeDMA(dmaBuf);
+    }
+    return ok;
 }
 
 bool ConfigureEndpoint(uint8_t slotID, uint8_t epAddr, USB::EP_TYPE type, uint16_t mps, uint8_t interval) {
@@ -686,13 +844,18 @@ bool ConfigureEndpoint(uint8_t slotID, uint8_t epAddr, USB::EP_TYPE type, uint16
     __memcpy(&inputCtx->slot, &devCtx->slot, sizeof(SlotContext));
     
     uint8_t epIdx = (epAddr & 0xF) * 2 + ((epAddr & 0x80) ? 1 : 0);
-    uint8_t dci = epIdx + 1;
-    
+    // DCI for a non-control endpoint is 2*EPnum + direction, equal to epIdx;
+    // only control EP0 uses DCI 1. The earlier epIdx+1 shifted every
+    // bulk/interrupt context up by one, so the real device endpoint stalled.
+    uint8_t dci = epIdx;
+
     inputCtx->ic.add |= (1u << 0); 
     inputCtx->ic.add |= (1u << dci);
     if (dci > inputCtx->slot.ctxEntries) inputCtx->slot.ctxEntries = dci;
     
-    EndpointContext* epCtx = &inputCtx->ep[epIdx];
+    // Input context: ep[0] holds DCI 1 (EP0), so the context for DCI d lives at
+    // ep[d-1], matching the controller's 32+32*d layout.
+    EndpointContext* epCtx = &inputCtx->ep[dci - 1];
     epCtx->epType = (uint32_t)type & 0x7;
     epCtx->maxPacketSize = mps; epCtx->interval = interval; epCtx->averageTRBLen = mps;
     
@@ -707,7 +870,7 @@ bool ConfigureEndpoint(uint8_t slotID, uint8_t epAddr, USB::EP_TYPE type, uint16
     g_slots[slotID].rings[epIdx].dequeue = ring;
     g_slots[slotID].rings[epIdx].cycle = 1;
     g_slots[slotID].rings[epIdx].lock = 0;
-    
+
     TRB cmd = {}; cmd.parameter = virt_to_phys(inputCtx); cmd.control = (TRB_CONFIGURE_EP << 10) | (slotID << 24) | (1u << 5);
     uint8_t ret = SubmitCommandBlocking(&cmd, 1000);
     freeDMA(inputCtx);
@@ -719,12 +882,12 @@ void StartAsyncInterrupt(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t len
     TRBRingState* ring = &g_slots[slotID].rings[epIdx];
     
     TRB trb = {}; trb.parameter = virt_to_phys(buf); trb.status = len; trb.control = (TRB_NORMAL << 10) | (1u << 5);
-    
+
     PendingTransfer* pt = (PendingTransfer*)kmalloc(sizeof(PendingTransfer));
     rb_init_node(&pt->node); pt->completed = false; pt->async = true; pt->callback = (void*)cb; pt->ctx = ctx; pt->buf = buf; pt->len = len;
     pt->slotID = slotID;
     
-    if (!EnqueueAndTrack(ring, slotID, epIdx + 1, trb, pt)) {
+    if (!EnqueueAndTrack(ring, slotID, epIdx, trb, pt)) {
         uint64_t flags;
         usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
         rb_erase(&g_pendingTransfers, &pt->node);
@@ -743,7 +906,7 @@ void StartAsyncIsoch(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t len, bo
     rb_init_node(&pt->node); pt->completed = false; pt->async = true; pt->callback = (void*)cb; pt->ctx = ctx; pt->buf = buf; pt->len = len;
     pt->slotID = slotID;
     
-    if (!EnqueueAndTrack(ring, slotID, epIdx + 1, trb, pt)) {
+    if (!EnqueueAndTrack(ring, slotID, epIdx, trb, pt)) {
         uint64_t flags;
         usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
         rb_erase(&g_pendingTransfers, &pt->node);

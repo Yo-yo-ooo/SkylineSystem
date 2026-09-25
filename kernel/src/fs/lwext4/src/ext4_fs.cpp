@@ -83,22 +83,33 @@ int32_t ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev,
 	fs->read_only = read_only;
 
 	r = ext4_sb_read(fs->bdev, &fs->sb);
-    debugpln("HIT!(2.5)");
-	if (r != EOK){
-        kinfo("Hit!(ext4_sb_read)");
+	if (r != EOK)
 		return r;
-    }
-    debugpln("Hit!(ext4_sb_read)");
+
 	if (!ext4_sb_check(&fs->sb))
 		return ENOTSUP;
-    debugpln("Hit!(ext4_sb_read)2");
+
 	bsize = ext4_sb_get_block_size(&fs->sb);
 	if (bsize > EXT4_MAX_BLOCK_SIZE)
 		return ENXIO;
-    debugpln("Hit!(ext4_sb_read)3");
+
 	r = ext4_fs_check_features(fs, &read_only);
 	if (r != EOK)
 		return r;
+
+	/* An orphan_file left on an image that was not cleanly unmounted may
+	 * hold inodes awaiting truncate/unlink recovery. This port does not
+	 * implement the orphan-file recovery pass, so such an image is forced
+	 * read-only to avoid operating on half-deleted metadata. A clean image
+	 * (s_state VALID_FS, the normal mkfs/umount case) keeps full read-write
+	 * access; its orphan file is empty. orphan_file is a *compatible*
+	 * feature, so images without it are unaffected. */
+	if (ext4_sb_feature_com(&fs->sb, EXT4_FCOM_ORPHAN_FILE) &&
+	    !(ext4_get16(&fs->sb, state) & EXT4_SUPERBLOCK_STATE_VALID_FS)) {
+		kwarnln("orphan_file needs recovery; not implemented, "
+			"mounting read-only");
+		read_only = true;
+	}
 
 	if (read_only)
 		fs->read_only = read_only;
@@ -115,14 +126,13 @@ int32_t ext4_fs_init(struct ext4_fs *fs, struct ext4_blockdev *bdev,
 		fs->inode_block_limits[i] = fs->inode_block_limits[i - 1] +
 					    fs->inode_blocks_per_level[i];
 	}
-    debugpln("Hit!(ext4_sb_read)4");
+
 	/*Validate FS*/
 	tmp = ext4_get16(&fs->sb, state);
 	if (tmp & EXT4_SUPERBLOCK_STATE_ERROR_FS)
 		ext4_dbg(DEBUG_FS, DBG_WARN
 				"last umount error: superblock fs_error flag\n");
 
-    debugpln("Hit!(ext4_sb_read)5");
 	if (!fs->read_only) {
 		/* Mark system as mounted */
 		ext4_set16(&fs->sb, state, EXT4_SUPERBLOCK_STATE_ERROR_FS);
@@ -174,8 +184,8 @@ static void ext4_fs_debug_features_inc(uint32_t features_incompatible)
 		ext4_dbg(DEBUG_FS, DBG_NONE "ea_inode\n");
 	if (features_incompatible & EXT4_FINCOM_DIRDATA)
 		ext4_dbg(DEBUG_FS, DBG_NONE "dirdata\n");
-	if (features_incompatible & EXT4_FINCOM_BG_USE_META_CSUM)
-		ext4_dbg(DEBUG_FS, DBG_NONE "meta_csum\n");
+	if (features_incompatible & EXT4_FINCOM_CSUM_SEED)
+		ext4_dbg(DEBUG_FS, DBG_NONE "csum_seed\n");
 	if (features_incompatible & EXT4_FINCOM_LARGEDIR)
 		ext4_dbg(DEBUG_FS, DBG_NONE "largedir\n");
 	if (features_incompatible & EXT4_FINCOM_INLINE_DATA)
@@ -195,6 +205,14 @@ static void ext4_fs_debug_features_comp(uint32_t features_compatible)
 		ext4_dbg(DEBUG_FS, DBG_NONE "resize_inode\n");
 	if (features_compatible & EXT4_FCOM_DIR_INDEX)
 		ext4_dbg(DEBUG_FS, DBG_NONE "dir_index\n");
+	if (features_compatible & EXT4_FCOM_SPARSE_SUPER2)
+		ext4_dbg(DEBUG_FS, DBG_NONE "sparse_super2\n");
+	if (features_compatible & EXT4_FCOM_FAST_COMMIT)
+		ext4_dbg(DEBUG_FS, DBG_NONE "fast_commit\n");
+	if (features_compatible & EXT4_FCOM_STABLE_INODES)
+		ext4_dbg(DEBUG_FS, DBG_NONE "stable_inodes\n");
+	if (features_compatible & EXT4_FCOM_ORPHAN_FILE)
+		ext4_dbg(DEBUG_FS, DBG_NONE "orphan_file\n");
 }
 
 static void ext4_fs_debug_features_ro(uint32_t features_ro)

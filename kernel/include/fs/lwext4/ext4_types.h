@@ -171,9 +171,24 @@ struct ext4_sblock {
 	uint32_t backup_bgs[2];	/* groups with sparse_super2 SBs */
 	uint8_t  encrypt_algos[4];	/* Encryption algorithms in use  */
 	uint8_t  encrypt_pw_salt[16];	/* Salt used for string2key algorithm */
-	uint32_t lpf_ino;		/* Location of the lost+found inode */
-	uint32_t padding[100];	/* Padding to the end of the block */
-	uint32_t checksum;		/* crc32c(superblock) */
+	uint32_t lpf_ino;			/* 0x268 lost+found inode */
+	uint32_t prj_quota_inum;		/* 0x26C project quota inode */
+	uint32_t checksum_seed;		/* 0x270 crc32c(uuid) checksum seed */
+	uint8_t  wtime_hi;			/* 0x274 high byte of write time */
+	uint8_t  mtime_hi;			/* 0x275 high byte of mod time */
+	uint8_t  mkfs_time_hi;		/* 0x276 high byte of mkfs time */
+	uint8_t  lastcheck_hi;		/* 0x277 high byte of lastcheck */
+	uint8_t  first_error_time_hi;	/* 0x278 */
+	uint8_t  last_error_time_hi;	/* 0x279 */
+	uint8_t  first_error_errcode;	/* 0x27A */
+	uint8_t  last_error_errcode;	/* 0x27B */
+	uint16_t encoding;			/* 0x27C filename charset encoding */
+	uint16_t encoding_flags;	/* 0x27E charset flags */
+	uint32_t orphan_file_inum;	/* 0x280 inode of the orphan file */
+	uint16_t def_resuid_hi;		/* 0x284 high bits of default resuid */
+	uint16_t def_resgid_hi;		/* 0x286 high bits of default resgid */
+	uint32_t padding[93];		/* 0x288 padding to end of block */
+	uint32_t checksum;			/* 0x3FC crc32c(superblock) */
 };
 
 #pragma pack(pop)
@@ -215,6 +230,10 @@ struct ext4_sblock {
 #define EXT4_FCOM_EXT_ATTR 0x0008
 #define EXT4_FCOM_RESIZE_INODE 0x0010
 #define EXT4_FCOM_DIR_INDEX 0x0020
+#define EXT4_FCOM_SPARSE_SUPER2 0x0200 /* Backup superblock in last groups */
+#define EXT4_FCOM_FAST_COMMIT 0x0400   /* JBD2 fast-commit log */
+#define EXT4_FCOM_STABLE_INODES 0x0800
+#define EXT4_FCOM_ORPHAN_FILE 0x1000   /* Orphan file exists */
 
 /*
  * Read-only compatible features
@@ -242,11 +261,11 @@ struct ext4_sblock {
 #define EXT4_FINCOM_64BIT 0x0080
 #define EXT4_FINCOM_MMP 0x0100
 #define EXT4_FINCOM_FLEX_BG 0x0200
-#define EXT4_FINCOM_EA_INODE 0x0400	 /* EA in inode */
-#define EXT4_FINCOM_DIRDATA 0x1000	  /* data in dirent */
-#define EXT4_FINCOM_BG_USE_META_CSUM 0x2000 /* use crc32c for bg */
-#define EXT4_FINCOM_LARGEDIR 0x4000	 /* >2GB or 3-lvl htree */
-#define EXT4_FINCOM_INLINE_DATA 0x8000      /* data in inode */
+#define EXT4_FINCOM_EA_INODE 0x0400	 /* large EA stored in an external inode */
+#define EXT4_FINCOM_DIRDATA 0x1000	 /* historical: data embedded in dirent */
+#define EXT4_FINCOM_CSUM_SEED 0x2000	 /* metadata checksum seed enabled */
+#define EXT4_FINCOM_LARGEDIR 0x4000	 /* >2GB dir or 3-level htree */
+#define EXT4_FINCOM_INLINE_DATA 0x8000  /* data stored inside the inode */
 
 /*
  * EXT2 supported feature set
@@ -279,7 +298,7 @@ struct ext4_sblock {
 #define EXT4_SUPPORTED_FINCOM                              \
 	(EXT4_FINCOM_FILETYPE | EXT4_FINCOM_META_BG |      \
 	 EXT4_FINCOM_EXTENTS | EXT4_FINCOM_FLEX_BG |       \
-	 EXT4_FINCOM_64BIT)
+	 EXT4_FINCOM_64BIT | EXT4_FINCOM_LARGEDIR)
 
 #define EXT4_SUPPORTED_FRO_COM                             \
 	(EXT4_FRO_COM_SPARSE_SUPER |                       \

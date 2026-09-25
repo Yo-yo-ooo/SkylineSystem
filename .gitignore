@@ -17,3 +17,10 @@ a.si4project/
 *.log
 *.png
 !skyline_modern_desktop.png
+/*.c
+/*.h
+/*.py
+/*.sh
+/*.log
+/*.json
+/*.txt

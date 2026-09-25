@@ -114,6 +114,7 @@ void Init(Device* dev, Interface* ifce) {
         Endpoint& e = ifce->endpoints[i];
         if (e.type == EP_TYPE::INT_IN && e.dir == EP_DIR::IN) {
             uint8_t* buf = (uint8_t*)kmalloc(e.maxPacketSize);
+            for (uint32_t z = 0; z < e.maxPacketSize; z++) buf[z] = 0;
             ctx->intBuf = buf;
             XHCI::StartAsyncInterrupt(dev->slotID, e.address, buf, e.maxPacketSize, interruptInCallback, dev);
             break;

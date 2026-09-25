@@ -6,6 +6,7 @@
 #include <mem/heap.h>
 #include <klib/cstr.h>
 #include <drivers/usb/xhci.h>
+#include <drivers/dev/dev.h>
 
 namespace USB::MSC {
 
@@ -41,17 +42,21 @@ static bool resetRecovery(Device* msc) {
     return true;
 }
 
-bool ReadBlock(Device* msc, uint32_t lba, void* buf) {
+bool ReadBlocks(Device* msc, uint32_t lba, uint32_t cnt, void* buf) {
+    if (cnt == 0) return true;
     uint8_t cb[16] = {0};
-    cb[0] = 0x28; cb[2] = (lba >> 24) & 0xFF; cb[3] = (lba >> 16) & 0xFF; cb[4] = (lba >> 8) & 0xFF; cb[5] = lba & 0xFF; cb[8] = 1;
-    
-    uint32_t tag = sendCBW(msc, 0, 0x80, msc->blockSize, cb, 10);
+    cb[0] = 0x28; cb[2] = (lba >> 24) & 0xFF; cb[3] = (lba >> 16) & 0xFF;
+    cb[4] = (lba >> 8) & 0xFF; cb[5] = lba & 0xFF;
+    cb[7] = (cnt >> 8) & 0xFF; cb[8] = cnt & 0xFF;
+    uint32_t dataLen = cnt * msc->blockSize;
+
+    uint32_t tag = sendCBW(msc, 0, 0x80, dataLen, cb, 10);
     if (tag == 0xFFFFFFFF) return false;
-    if (!USB::BulkTransfer(msc->usbDev->slotID, msc->bulkInEp, buf, msc->blockSize, true)) {
+    if (!USB::BulkTransfer(msc->usbDev->slotID, msc->bulkInEp, buf, dataLen, true)) {
         resetRecovery(msc);
         return false;
     }
-    CSW csw; 
+    CSW csw;
     if (!readCSW(msc, &csw, tag)) {
         resetRecovery(msc);
         return false;
@@ -59,17 +64,21 @@ bool ReadBlock(Device* msc, uint32_t lba, void* buf) {
     return true;
 }
 
-bool WriteBlock(Device* msc, uint32_t lba, const void* buf) {
+bool WriteBlocks(Device* msc, uint32_t lba, uint32_t cnt, const void* buf) {
+    if (cnt == 0) return true;
     uint8_t cb[16] = {0};
-    cb[0] = 0x2A; cb[2] = (lba >> 24) & 0xFF; cb[3] = (lba >> 16) & 0xFF; cb[4] = (lba >> 8) & 0xFF; cb[5] = lba & 0xFF; cb[8] = 1;
-    
-    uint32_t tag = sendCBW(msc, 0, 0x00, msc->blockSize, cb, 10);
+    cb[0] = 0x2A; cb[2] = (lba >> 24) & 0xFF; cb[3] = (lba >> 16) & 0xFF;
+    cb[4] = (lba >> 8) & 0xFF; cb[5] = lba & 0xFF;
+    cb[7] = (cnt >> 8) & 0xFF; cb[8] = cnt & 0xFF;
+    uint32_t dataLen = cnt * msc->blockSize;
+
+    uint32_t tag = sendCBW(msc, 0, 0x00, dataLen, cb, 10);
     if (tag == 0xFFFFFFFF) return false;
-    if (!USB::BulkTransfer(msc->usbDev->slotID, msc->bulkOutEp, (void*)buf, msc->blockSize, false)) {
+    if (!USB::BulkTransfer(msc->usbDev->slotID, msc->bulkOutEp, (void*)buf, dataLen, false)) {
         resetRecovery(msc);
         return false;
     }
-    CSW csw; 
+    CSW csw;
     if (!readCSW(msc, &csw, tag)) {
         resetRecovery(msc);
         return false;
@@ -111,6 +120,23 @@ void Init(USB::Device* dev, Interface* ifce) {
                 msc->numBlocks = __builtin_bswap32(resp.lastLBA) + 1;
                 msc->blockSize = __builtin_bswap32(resp.blockSize);
                 kprintf("[MSC] Block size: %u, Blocks: %llu\n", msc->blockSize, msc->numBlocks);
+
+                // Register the USB mass-storage device as a block device using
+                // the unified 512-byte sector convention (blockSize is 512).
+                DevOPS ops;
+                _memset(&ops, 0, sizeof(ops));
+                ops.Read = [](void* i, uint64_t lba, uint32_t cnt, void* buf) -> uint8_t {
+                    Device* m = (Device*)i;
+                    return ReadBlocks(m, (uint32_t)lba, cnt, buf) ? Dev::RW_OK : Dev::RW_ERROR;
+                };
+                ops.Write = [](void* i, uint64_t lba, uint32_t cnt, void* buf) -> uint8_t {
+                    Device* m = (Device*)i;
+                    return WriteBlocks(m, (uint32_t)lba, cnt, buf) ? Dev::RW_OK : Dev::RW_ERROR;
+                };
+                ops.GetMaxSectorCount = [](void* i) -> uint64_t {
+                    return ((Device*)i)->numBlocks;
+                };
+                Dev::AddStorageDevice(VsDevType::USBSTORAGE, ops, (uint32_t)msc->numBlocks, msc);
             }
         }
     }

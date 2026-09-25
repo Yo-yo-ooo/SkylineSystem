@@ -117,16 +117,6 @@ static inline uint32_t wm_acrylic_pixel(uint32_t wallpaper) {
     return 0xFF000000u | (r << 16) | (g << 8) | b;
 }
 
-/* Compact battery glyph: a rounded outline, a positive nub and a near-full
-   green fill. This VM/desktop has no battery bus or ACPI control-method
-   battery, so the icon denotes "on external power / charged" rather than a
-   measured percentage; wire a real gauge here once a battery driver exists. */
-static void wm_draw_battery(FrameBuffer* fb, int32_t x, int32_t y, uint32_t ink) {
-    DrawRect(fb, x, y, 19, 12, ink);                 /* hollow body outline   */
-    DrawFillRect(fb, x + 19, y + 3, 2, 6, ink);      /* positive nub          */
-    DrawFillRect(fb, x + 2, y + 2, 14, 8, 0xFF76D9A4u); /* ~90% green charge  */
-}
-
 /* Paint the bottom taskbar straight into the wallpaper bitmap (compositor
    layer 0). `cleanBar` is the pristine wallpaper strip; it is restored first
    so repeatedly repainting (clock tick / state change) never compounds the
@@ -165,7 +155,7 @@ static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
                          "Skyline Console", appState == 1 ? 0xFFFFFFFFu : SKYRGB_INK);
     }
 
-    /* 3) right tray: battery glyph + Win11-style two-line clock, right aligned */
+    /* 3) right tray: Win11-style two-line clock, right aligned */
     TTF_Font* tf = console_font();
     char line1[8] = "", line2[16] = "";
     if (haveClock && dt) {
@@ -197,9 +187,6 @@ static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
     int32_t blockH = 2 * th + 2;
     int32_t right  = (int32_t)W - (int32_t)SKY_TRAY_MARGIN;
     int32_t blockTop = (int32_t)y0 + ((int32_t)barH - blockH) / 2;
-    int32_t batX = right - blockW - 10 - 21;
-    int32_t batY = (int32_t)y0 + ((int32_t)barH - 12) / 2;
-    wm_draw_battery(&lb, batX, batY, SKYRGB_TRAY_INK);
     if (tf && haveClock) {
         TTF_DrawText(&lb, tf, right - w1, blockTop,             line1, SKYRGB_TRAY_INK);
         TTF_DrawText(&lb, tf, right - w2, blockTop + th + 2,    line2, SKYRGB_TRAY_INK);

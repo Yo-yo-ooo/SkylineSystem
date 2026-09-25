@@ -424,7 +424,13 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
         VMM::SwitchPageMap(thread->pagemap);
         { SmapGuard tls_ug;   // TLS initial image and TCB self-pointer are user pages
-          __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
+          // Zero the whole TLS+TCB region first. PT_TLS carries .tdata for the
+          // first tls_filesz bytes and .tbss (zero-initialized) for the rest up
+          // to tls_memsz; only the .tdata image is copied below, so the .tbss
+          // portion (and page padding) must be cleared explicitly or __thread
+          // state such as the per-class free caches starts as garbage.
+          _memset((void*)tls_mem, 0, tls_pages * PAGE_SIZE);
+          __memcpy((void*)tls_mem, (void*)(buffer + tls_offset), tls_filesz);
           *(uint64_t*)tcb_base = tcb_base;
         }
         VMM::SwitchPageMap(caller_pm);

@@ -2,6 +2,8 @@
 //SPDX-License-Identifier: GPL-2.0-only
 #include <arch/pinc.h>
 #include <drivers/ahci/ahci.h>
+#include <drivers/nvme/nvme.h>
+#include <drivers/usb/xhci.h>
 #include <drivers/ata/ata.h>
 #include <drivers/keyboard/x86/keyboard.h>
 #include <drivers/dev/dev.h>
@@ -108,6 +110,16 @@ void __init x86_64_init(void){
     if(ACPI::mcfg == NULL){PCI::DoPCIWithoutMCFG();}
     else{InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));}
     InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
+    {
+        PCI::PCIDeviceHeader *nvmeBase = PCI::FindPCIDev(0x01, 0x08, 0x02);
+        if (nvmeBase)
+            InitFunc("NVME", new class NVME(reinterpret_cast<PCI::PCIHeader0*>(nvmeBase)));
+    }
+    {
+        PCI::PCIDeviceHeader *xhciBase = PCI::FindPCIDev(0x0C, 0x03, 0x30);
+        if (xhciBase)
+            XHCI::InitXHCIFromPCI(reinterpret_cast<PCI::PCIHeader0*>(xhciBase));
+    }
 
     InitFunc("PS/2 MOUSE(x86)",ps2_mouse_init());
     InitFunc("KEYBOARD(x86)",keyboard_init());

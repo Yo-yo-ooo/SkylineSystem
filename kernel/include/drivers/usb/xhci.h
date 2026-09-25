@@ -28,31 +28,71 @@ PACK(union TRB {
     uint8_t raw[16];
 });
 
-PACK(struct InputControlContext { uint32_t add; uint32_t drop; uint8_t pad[24]; });
+PACK(struct InputControlContext { uint32_t drop; uint32_t add; uint8_t pad[24]; });
 PACK(struct SlotContext {
-    uint32_t routeString:20; uint32_t speed:4; uint32_t mtt:1; uint32_t hub:1;
-    uint32_t ctxEntries:5; uint32_t maxExitLatency:16; uint32_t rootHubPort:8;
-    uint32_t numPorts:8; uint32_t ttHubSlotID:8; uint32_t ttPortNum:8;
-    uint32_t pad1:16; uint32_t pad2[3];
+    // Dword 0 (dev_info)
+    uint32_t routeString:20;  // bits 19:0
+    uint32_t speed:4;         // bits 23:20, PORTSC speed encoding (1..4)
+    uint32_t rsvd24:1;        // bit 24
+    uint32_t mtt:1;           // bit 25: LS/FS via HS hub
+    uint32_t hub:1;           // bit 26
+    uint32_t ctxEntries:5;    // bits 31:27, last valid DCI
+    // Dword 1 (dev_info2)
+    uint32_t maxExitLatency:16; // bits 15:0
+    uint32_t rootHubPort:8;     // bits 23:16
+    uint32_t rsvd_dw1:8;        // bits 31:24
+    // Dword 2 (tt_info)
+    uint32_t numPorts:8;        // bits 7:0
+    uint32_t ttHubSlotID:8;     // bits 15:8
+    uint32_t ttPortNum:8;       // bits 23:16
+    uint32_t ttThinkTime:2;     // bits 25:24
+    uint32_t intrTarget:6;      // bits 31:26
+    // Dword 3 (dev_state)
+    uint32_t deviceAddress:8;   // bits 7:0
+    uint32_t rsvd_dw3:19;       // bits 26:8
+    uint32_t slotState:5;       // bits 31:27
+    // Dword 4-7 reserved: every context occupies 32 bytes, so EP0 starts at
+    // offset 32 of the device/input context.
+    uint32_t pad[4];
 });
 PACK(struct EndpointContext {
-    uint32_t epState:2; uint32_t rsvd1:3; uint32_t mult:2; uint32_t maxPStreams:5;
-    uint32_t lsa:1; uint32_t interval:8; uint32_t rsvd2:8; uint32_t rsvd3:1;
-    uint32_t cer:1; uint32_t epType:3; uint32_t rsvd4:3; uint32_t hid0:1;
-    uint32_t maxBurstSize:8; uint32_t maxPacketSize:16;
-    uint64_t dequeueCycleState; uint32_t averageTRBLen; uint32_t maxESITPayload; uint32_t pad[3];
+    // Dword 0 (ep_info)
+    uint32_t epState:3;       // bits 2:0
+    uint32_t rsvd0:5;         // bits 7:3
+    uint32_t mult:2;          // bits 9:8
+    uint32_t maxPStreams:5;   // bits 14:10
+    uint32_t lsa:1;           // bit 15
+    uint32_t interval:8;      // bits 23:16 (bInterval)
+    uint32_t rsvd0b:8;        // bits 31:24
+    // Dword 1 (ep_info2)
+    uint32_t rsvd1:1;         // bit 0
+    uint32_t cerr:2;          // bits 2:1
+    uint32_t epType:3;        // bits 5:3
+    uint32_t rsvd6:2;         // bits 7:6
+    uint32_t maxBurstSize:8;  // bits 15:8
+    uint32_t maxPacketSize:16; // bits 31:16
+    // Dword 2-3: TR Dequeue Pointer; low bit 0 = Dequeue Cycle State
+    uint64_t dequeueCycleState;
+    // Dword 4
+    uint16_t averageTRBLen;    // bits 15:0
+    uint16_t esitPayloadLow;   // bits 31:16
+    // Dword 5-7 reserved
+    uint32_t pad[3];
 });
 PACK(struct DeviceContext { SlotContext slot; EndpointContext ep[31]; });
 PACK(struct ERSTEntry { uint64_t segAddr; uint32_t segSize; uint32_t rsvd; });
 
 PACK(struct CapRegs { uint8_t capLength; uint8_t reserved; uint16_t hciversion; uint32_t hcsparams1; uint32_t hcsparams2; uint32_t hcsparams3; uint32_t hccparams1; uint32_t dboff; uint32_t rtsoff; uint32_t hccparams2; });
-PACK(struct OpRegs { 
+PACK(struct PortReg { uint32_t portsc; uint32_t portpmsc; uint32_t portli; uint32_t porthlpmc; });
+PACK(struct OpRegs {
     uint32_t usbcmd; uint32_t usbsts; uint32_t pagesize; uint8_t pad0[8]; uint32_t dnctrl;
-    uint32_t crcr_lo; uint32_t crcr_hi; uint32_t dcbaap_lo; uint32_t dcbaap_hi; uint32_t config;
-    uint8_t pad1[0x40-0x3C]; 
-    PACK(struct PortReg { uint32_t portsc; uint32_t portpmsc; uint32_t portli; uint32_t porthlpmc; }) ports[255]; 
+    uint32_t crcr_lo; uint32_t crcr_hi;
+    uint8_t pad_cr[0x30 - 0x20];
+    uint32_t dcbaap_lo; uint32_t dcbaap_hi; uint32_t config;
+    uint8_t pad_cfg[0x400 - 0x3C];
+    PortReg ports[255];
 });
-PACK(struct IntRegSet { uint32_t iman; uint32_t imod; uint32_t erstsz; uint32_t erstba_lo; uint32_t erstba_hi; uint32_t erdp_lo; uint32_t erdp_hi; });
+PACK(struct IntRegSet { uint32_t iman; uint32_t imod; uint32_t erstsz; uint32_t rsvd_0c; uint32_t erstba_lo; uint32_t erstba_hi; uint32_t erdp_lo; uint32_t erdp_hi; });
 
 constexpr uint32_t CMD_RING_SIZE = 256;
 constexpr uint32_t EVT_RING_SIZE = 256;

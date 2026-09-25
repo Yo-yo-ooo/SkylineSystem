@@ -26,7 +26,7 @@ struct Device {
 
 void Init(USB::Device* dev, Interface* ifce);
 void Deinit(USB::Device* dev); // 新增
-bool ReadBlock (Device* msc, uint32_t lba, void* buf);
-bool WriteBlock(Device* msc, uint32_t lba, const void* buf);
+bool ReadBlocks (Device* msc, uint32_t lba, uint32_t cnt, void* buf);
+bool WriteBlocks(Device* msc, uint32_t lba, uint32_t cnt, const void* buf);
 
 } // namespace USB::MSC

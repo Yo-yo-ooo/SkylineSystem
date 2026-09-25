@@ -19,6 +19,15 @@
 #define REQ_IDENTIFY_TYPE_NSP		0x0
 #define REQ_IDENTIFY_TYPE_CTRL		0x1
 #define REQ_IDENTIFY_TYPE_NSPLST	0x2
+
+/* Completion queue DW3 (Status field) layout:
+   bit 0 = Phase Tag (P), bits 8:1 = Status Code (SC),
+   bits 10:9 = Status Code Type (SCT), bit 14 = Do Not Retry (DNR).
+   A successful completion has SC == 0 and SCT == 0. */
+static inline uint16_t nvme_status_sc(uint16_t st)  { return (uint16_t)((st >> 1) & 0xFF); }
+static inline uint16_t nvme_status_sct(uint16_t st) { return (uint16_t)((st >> 9) & 0x3); }
+static inline bool nvme_status_ok(uint16_t st)      { return ((st >> 1) & 0x3FF) == 0; }
+
 //nvme controller register offset
 #define NVME_CTRLREG_CAP            0x0
 #define NVME_CTRLREG_VS             0x8
@@ -212,6 +221,7 @@ public:
     typedef struct NVMEDev {
         int32_t nspId;
         uint64_t size;
+        uint32_t lbaBytes;   // formatted logical block size in bytes
 
         uint64_t *host;
 
@@ -225,7 +235,9 @@ public:
     NVME(PCI::PCIHeader0 *header);
 
     void Request(NVME::SubQue *subQue, NVME::NVMERequest *req);
-    
+    // Harvest phase-matching completion entries (IRQ handler and bring-up poll).
+    void PollCQ(NVME::CmplQue* cmpq);
+
     NVME::NVMERequest *MakeReq(int32_t InputSize);
     bool TryInsertRequest(NVME::SubQue *subQue, NVME::NVMERequest *req);
 
@@ -289,6 +301,11 @@ private:
     
     int32_t GetSpareReq(NVME::NVMEDev *dev);
     NVME::SubQue *FindIOSubQue();
+    /* Fill e->PRP[0..1] for a page-aligned kernel buffer. Returns the
+       allocated PRP-list page (kernel VA) which the caller frees after the
+       command completes, nullptr when no list is needed, or (void*)-1 on
+       allocation failure. */
+    void* BuildPRP(NVME::SubQueEntry* e, void* buf, uint32_t nbytes);
     bool InitQue(); // Just for NVME::NVME(*p)
     bool InitIntr();
     bool InitNsp();

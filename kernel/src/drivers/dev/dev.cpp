@@ -104,7 +104,7 @@ namespace Dev{
 
         spinlock_unlock(&dev_manager_lock); // 释放锁
 
-        debugpln("[AddStorageDevice] Registered: %s", DeviceInfo->Name);
+        kinfo("[dev] registered %s (%u sectors)", DeviceInfo->Name, SectorCount);
     }
 
 
@@ -317,6 +317,7 @@ namespace Dev{
             case SAS:return "sas";
             case Undefined:return "UNDEF";
             case FrameBuffer:return "fb";
+            case USBSTORAGE:return "usb";
             default:return "UNDEF";
         }
     }

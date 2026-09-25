@@ -11,6 +11,13 @@
                     |  $$$$$$/                                      |  $$$$$$/
                      \______/                                        \______/
 ```
+<p align="center">
+  <img src="skyline_modern_desktop.png" alt="SkylineSystem modern desktop" width="820">
+  <br><em>A from-scratch x86_64 SMP OS with a CPU-parallel software compositor —
+  a rounded console over the wallpaper and an acrylic taskbar with app pill,
+  battery and a live clock. Boots in 128 MB, scales across cores.</em>
+</p>
+
 ## License
 [![GPL-2.0 Kernel](https://img.shields.io/badge/Kernel-GPLv2--only-red)](./LICENSES/GPL-2.0-only)
 [![MIT Userspace](https://img.shields.io/badge/Userspace-MIT-green)](./LICENSES/MIT.txt)
@@ -82,16 +89,6 @@ tight `for(;;)` loops.
   AHCI/ATA/ATAPI, NVMe and USB, plus FAT, ext4 (lwext4) and the SAF format.
 - **🪶 Tiny and self-contained** — a single Limine image (BIOS + UEFI), a
   traditional Makefile build and freestanding `-Wall -Wextra -Werror`.
-
-### 🖼️ Screenshots
-
-<p align="center">
-  <img src="skyline_modern_desktop.png" alt="Modern desktop with acrylic taskbar" width="760">
-  <br><em>The modern desktop: a rounded console composite over the wallpaper and
-  an acrylic taskbar showing the app pill, a battery indicator and a two-line
-  clock (HH:MM over YYYY/M/D).</em>
-</p>
-
 
 ### 🧠 3EVDF — a Rate-aware EEVDF scheduler
 
