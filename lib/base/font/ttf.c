@@ -872,9 +872,36 @@ int32_t x, int32_t y, const char* text, uint32_t color
 ) {
     if (!TTFFont || !FB || !FB->BaseAddress) return;
 
-    TTF_Bitmap bmp = TTF_RenderText(TTFFont, text);
-    if (bmp.pixels && bmp.width > 0 && bmp.height > 0) {
-        
+    /* Persistent scratch with geometric (doubling) capacity. The backing is
+       only reallocated when the text exceeds the current capacity, so small
+       per-frame size jitter (clock glyphs differing by a single pixel in
+       width/height) does not churn whole allocator regions (mmap/munmap storm).
+       GUI text drawing is single-threaded, so function-static state is safe. */
+    static unsigned char* s_px = NULL;
+    static int32_t s_cw = 0, s_ch = 0;
+
+    int32_t need_w = 0, need_h = 0;
+    TTF_GetTextSize(TTFFont, text, &need_w, &need_h);
+    if (need_w <= 0 || need_h <= 0) return;
+
+    if (need_w > s_cw || need_h > s_ch) {
+        int32_t nw = s_cw ? s_cw : 64;
+        int32_t nh = s_ch ? s_ch : 16;
+        while (nw < need_w) nw *= 2;
+        while (nh < need_h) nh *= 2;
+        unsigned char* np = (unsigned char*)TTF_MALLOC((size_t)nw * (size_t)nh);
+        if (!np) return;
+        if (s_px) TTF_FREE(s_px);
+        s_px = np; s_cw = nw; s_ch = nh;
+    }
+
+    TTF_Bitmap bmp;
+    bmp.pixels = s_px;
+    bmp.width  = s_cw;
+    bmp.height = s_ch;
+    if (!TTF_RenderTextToBuffer(TTFFont, text, &bmp)) return;
+
+    {
         uint32_t* fb_ptr = (uint32_t*)FB->BaseAddress;
         int32_t fb_w = (int32_t)FB->Width;
         int32_t fb_h = (int32_t)FB->Height;
@@ -917,6 +944,6 @@ int32_t x, int32_t y, const char* text, uint32_t color
                 *dst_pixel = 0xFF000000 | (mix_r << 16) | (mix_g << 8) | mix_b;
             }
         }
-        TTF_FreeBitmap(&bmp);
+        /* scratch bitmap retained and reused by the next call; do not free */
     }
 }

@@ -20,13 +20,14 @@
 
 ## License
 [![GPL-2.0 Kernel](https://img.shields.io/badge/Kernel-GPLv2--only-red)](./LICENSES/GPL-2.0-only)
-[![MIT Userspace](https://img.shields.io/badge/Userspace-MIT-green)](./LICENSES/MIT.txt)
+[![MIT Userspace](https://img.shields.io/badge/Userspace-MIT-green)](./LICENSES/MIT)
 [![License: GPL v3.0 w/RLE](https://img.shields.io/badge/ablib_freestndchdrs-GPLv3%20w%2F%20RLE-blue)](https://www.gnu.org/licenses/gcc-exception-3.1.html)
 
 * **`kernel/`**: GPL-2.0-only
 * **`lib/` `programs/` `ablib/atomic/`**: MIT License
 Kernel and userspace run in separate address spaces, communicate only via syscall, no GPL copyleft infection.
-Full compliance with REUSE standard, see root LICENSES for full statement.
+SPDX headers are being adopted progressively (work in progress — not yet full
+REUSE compliance); see LICENSES/ and the per-file SPDX tags.
 * **`/ablib/freestndchdrs/`**: This directory is licensed under the **GNU General Public License v3.0 (GPLv3)**, supplemented with the **GCC Runtime Library Exception 3.1**. 
     *   *What this means:* You may link this library into your proprietary/closed-source application without being required to release your own source code. 
     *   Please refer to `COPYING3.RUNTIME` within that folder for full details.
@@ -65,7 +66,8 @@ tight `for(;;)` loops.
 
 - **🧠 Self-designed 3EVDF scheduler** — a *Rate-aware EEVDF* that adds an
   instruction-pointer **RIP-progress-rate** term with dynamic fast/slow
-  multipliers, so a CPU-bound busy-loop can no longer starve interactive work.
+  multipliers, giving busy-spinners shorter uninterrupted slices while
+  interactive work gets longer, calmer runs.
 - **⚡ CPU-parallel software compositor** — one worker pinned per online CPU
   renders a horizontal screen strip; a barrier-separated double buffer removes
   tearing, and scene traversal is **O(window count)**.
@@ -88,7 +90,8 @@ tight `for(;;)` loops.
 - **🧰 Real I/O & filesystems** — PS/2 keyboard/mouse, framebuffer,
   AHCI/ATA/ATAPI, NVMe and USB, plus FAT, ext4 (lwext4) and the SAF format.
 - **🪶 Tiny and self-contained** — a single Limine image (BIOS + UEFI), a
-  traditional Makefile build and freestanding `-Wall -Wextra -Werror`.
+  traditional Makefile build, `-Wall -Wextra` for the kernel and
+  `-Wall -Wextra -Werror` for the userspace lib.
 
 ### 🧠 3EVDF — a Rate-aware EEVDF scheduler
 
@@ -144,9 +147,9 @@ blending onto the linear framebuffer.
 | Principle | What it means in SkylineSystem |
 |---|---|
 | **Built from zero** | No POSIX/Linux ABI and no ported userspace — every interface is an original design, so legacy never dictates the architecture. |
-| **Depth over breadth** | One architecture (x86_64) done deeply instead of many done shallowly; aarch64 / RISC-V / LoongArch build templates are provided. |
+| **Depth over breadth** | One architecture (x86_64) done deeply; other-architecture ports are not yet implemented. |
 | **Mechanism vs policy** | The window manager, shell and compositing policy live in userspace; the kernel exposes only minimal mechanisms (shared frames, threads, sysinfo). |
-| **Clean by construction** | Freestanding C/C++, a traditional Makefile, `-Wall -Wextra -Werror`, and a split GPL kernel / MIT userspace license model. |
+| **Clean by construction** | Freestanding C/C++, a traditional Makefile, `-Wall -Wextra` (kernel) / `-Wall -Wextra -Werror` (lib), and a split GPL kernel / MIT userspace license model. |
 | **Solo-built, depth-first** | Primarily designed and implemented by one developer, and benchmarked against team projects on single-architecture kernel depth. |
 
 ### 🧩 Feature status
@@ -155,17 +158,17 @@ blending onto the linear framebuffer.
 |---|:---:|---|
 | Boot — Limine (BIOS + UEFI) | ✅ | ISO / HDD images |
 | SMP multicore | ✅ | Per-CPU structures, pinned workers |
-| Scheduler — 3EVDF / Rate-aware EEVDF | ✅ | RIP-progress-rate, dynamic multipliers |
+| Scheduler — 3EVDF / Rate-aware EEVDF | ✅ / 🚧 | RIP feedback modulates time-slice length, not CPU share (EEVDF subset) |
 | Virtual memory | ✅ | 5-level paging, huge pages, CoW + split |
-| Physical & kernel heap | ✅ | Per-CPU caches, SLUB, QSBR, lock-free bitmap |
+| Physical & kernel heap | ✅ | Per-CPU caches, SLUB/SLAB; QSBR lives in the userspace allocator |
 | Security | ✅ | KASLR, SMAP, isolated address spaces |
 | Device drivers | ✅ / 🚧 | PS/2, framebuffer, AHCI/ATA/ATAPI, NVMe, USB |
-| Filesystems | ✅ | FAT, ext4 (lwext4), SAF packed format |
+| Filesystems | ✅ / 🚧 | ext4 (lwext4) + SAF working; FAT glue currently stubbed |
 | GUI / window manager | ✅ | Parallel strips, rounded windows, drag/max/min/8-way resize, kill, TTF/CJK, SW cursor |
 | Taskbar / clock | ✅ | Acrylic bar, app pill, battery icon, two-line HH:MM + YYYY/M/D |
 | Userspace | ✅ | Own libc/`printf`, ELF loader, threads + TLS, shared memory |
 | Networking | 🚧 | Early stack skeleton |
-| Other architectures | 🚧 | aarch64 / RISC-V / LoongArch build templates |
+| Other architectures | ❌ | Not implemented yet (Makefile flags exist, ports pending) |
 
 ### ⚙️ `SkylineSystem Low-Level Stack Implementations`
 

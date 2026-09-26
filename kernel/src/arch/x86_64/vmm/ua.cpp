@@ -113,6 +113,14 @@ namespace VMM {
                     __asm__ volatile ("invlpg (%0)" : : "r"(curr_u_vaddr) : "memory");
                 }
 
+                /* 安全: 软件走表(GetPageInfo)不校验 canonicality 与 U/S 位,
+                   用户页表里拷贝有内核/HHDM 条目(PML4E 256..511), 只有带
+                   MM_USER 的页才允许作为用户缓冲区, 否则即任意物理读写 */
+                if (unlikely(!(info.flags & MM_USER))) {
+                    spinlock_unlock(&pagemap->vma_lock);
+                    return false;
+                }
+
                 // 在当前页（或巨页）内拷贝
                 size_t page_offset       = curr_u_vaddr & (info.size - 1);
                 size_t remaining_in_page = info.size - page_offset;
@@ -161,6 +169,9 @@ namespace VMM {
 
                 VMM::Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr);
                 if (info.size == 0) return false; // 未映射
+                /* 安全: 与 CopyToUser 同理, 拒绝用户页表中无 MM_USER 的
+                   内核/HHDM 别名条目, 防任意物理内存读取 */
+                if (unlikely(!(info.flags & MM_USER))) return false;
 
                 size_t page_offset       = curr_u_vaddr & (info.size - 1);
                 size_t remaining_in_page = info.size - page_offset;

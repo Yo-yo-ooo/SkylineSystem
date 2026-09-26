@@ -84,17 +84,10 @@ DRESULT disk_read (
 	UINT count		/* Number of sectors to read */
 )
 {
-	/* DRESULT res;
-	int32_t result;
-
-    if(pdrv > Dev::vsdev_list_idx)
-        return RES_ERROR;
-
-	Dev::SetSDev(pdrv);
-    if(Dev::Read(sector, count, buff) == Dev::RW_OK)
-        return RES_OK;
-    else
-        return RES_ERROR; */
+	/* 修复: 原函数体被整体注释且无 return(UB, 返回值未定义)。
+	   在接入块设备层之前显式返回错误, 避免 FatFs 拿到垃圾 DRESULT。 */
+	(void)pdrv; (void)buff; (void)sector; (void)count;
+	return RES_ERROR;
 }
 
 
@@ -112,17 +105,9 @@ DRESULT disk_write (
 	UINT count			/* Number of sectors to write */
 )
 {
-	DRESULT res;
-	int32_t result;
-
-    /* if(pdrv > Dev::vsdev_list_idx)
-        return RES_ERROR;
-
-	Dev::SetSDev(pdrv);
-    if(Dev::Write(sector, count, buff) == Dev::RW_OK)
-        return RES_OK;
-    else
-        return RES_ERROR; */
+	/* 修复: 同上 —— 原函数体注释掉且无 return, 属未定义行为。 */
+	(void)pdrv; (void)buff; (void)sector; (void)count;
+	return RES_ERROR;
 }
 
 #endif
@@ -138,12 +123,8 @@ DRESULT disk_ioctl (
 	void *buff		/* Buffer to send/receive control data */
 )
 {
-	/* DRESULT res;
-	int32_t result;
-
-	if(pdrv > Dev::vsdev_list_idx)
-        return RES_ERROR;
-
-	return RES_OK; */
+	/* 修复: 同上 —— 原函数体注释掉且无 return, 属未定义行为。 */
+	(void)pdrv; (void)cmd; (void)buff;
+	return RES_ERROR;
 }
 

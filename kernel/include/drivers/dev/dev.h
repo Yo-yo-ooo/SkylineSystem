@@ -21,9 +21,10 @@ typedef enum VsDevType
     FrameBuffer,
     X86_PS2_MOUSE,
     USBSTORAGE,
+    X86_KEYBOARD,
 }VsDevType;
 
-#define MAX_TYPE_C 8
+#define MAX_TYPE_C 9
 
 typedef struct DevOPS{ //存储器抽象层
     //Storage Device Must impl this!

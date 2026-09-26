@@ -23,9 +23,10 @@ uint8_t GetPartitionSize(VsDevType DriverType, uint32_t DriverID, uint32_t Parti
     if (Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) return 2;
 
     if (IS_GPT(dpt)) {
-        uint32_t entry_count;
+        uint32_t entry_count = 0;
         // GPT Header 在 LBA 1 (512字节处)
-        Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &entry_count);
+        if (Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &entry_count) == Dev::RW_ERROR)
+            return 4; /* 修复: 原忽略读失败, entry_count 为垃圾 */
         if (PartitionID >= entry_count) return 4;
 
         GPT_PTE gptpte;
@@ -33,6 +34,8 @@ uint8_t GetPartitionSize(VsDevType DriverType, uint32_t DriverID, uint32_t Parti
             return 5;
 
         if (gptpte.PartitionStart == 0) { PartitionSize = 0; return 0; }
+        /* 修复: End < Start 时无符号下溢到 ~2^64 */
+        if (gptpte.PartitionEnd < gptpte.PartitionStart) { PartitionSize = 0; return 8; }
         PartitionSize = (gptpte.PartitionEnd - gptpte.PartitionStart) + 1;
         return 0;
     } else {
@@ -52,8 +55,9 @@ uint8_t GetPartitionStart(VsDevType DriverType, uint32_t DriverID, uint32_t Part
     if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) return 2;
 
     if(IS_GPT(dpt)) {
-        uint32_t buffer;
-        Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &buffer);
+        uint32_t buffer = 0;
+        if (Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &buffer) == Dev::RW_ERROR)
+            return 4; /* 修复: 原忽略读失败 */
         if(PartitionID >= buffer) return 4;
 
         GPT_PTE gptpte;
@@ -77,8 +81,9 @@ uint8_t GetPartitionEnd(VsDevType DriverType, uint32_t DriverID, uint32_t Partit
     if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) return 2;
 
     if(IS_GPT(dpt)) {
-        uint32_t buffer;
-        Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &buffer);
+        uint32_t buffer = 0;
+        if (Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &buffer) == Dev::RW_ERROR)
+            return 4; /* 修复: 原忽略读失败 */
         if(PartitionID >= buffer) return 4;
 
         GPT_PTE gptpte;
@@ -104,11 +109,12 @@ uint8_t GetPartitionCount(VsDevType DriverType, uint32_t DriverID) {
     if(Dev::ReadBytes(MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR) return 0;
 
     if(IS_GPT(dpt)) {
-        uint32_t buffer;
+        uint32_t buffer = 0;
         // 简单返回分区表项总数（通常是128）
         if(Dev::ReadBytes(512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &buffer) == Dev::RW_ERROR)
             return 0;
-        return (uint8_t)buffer;
+        /* 修复: 原 (uint8_t) 截断, >=256 时归零 */
+        return buffer > 0xFF ? 0xFF : (uint8_t)buffer;
     } else {
         uint8_t count = 0;
         for(uint8_t i = 0; i < MBR_PARTITION_MAX; i++) {

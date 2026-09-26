@@ -1,8 +1,9 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
-//SPDX-License-Identifier: GPL-2.0-only
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+/* 修复: 本文件是 Linux UAPI 拷贝, 原双重 SPDX 标签矛盾 —— 统一为
+   Linux-syscall-note 版(原内核头文件许可) */
 #pragma once
 
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _ASM_X86_PRCTL_H
 #define _ASM_X86_PRCTL_H
 

@@ -98,10 +98,9 @@ endif
 
 # Internal C flags that should not be changed by the user.
 override KCFLAGS += \
+    -Wall -Wextra \
     -Wno-implicit-function-declaration \
     -Wno-c++11-narrowing \
-    -w \
-    -Wno-everything \
     -I$(SS_BUILD_DIR)/kernel/include \
     -I$(SS_BUILD_DIR)/ablib \
     -nostdinc \
@@ -121,6 +120,7 @@ override KCPPFLAGS := \
     -I src \
     -isystem ../ablib/freestndchdrs/$(KARCH)/include \
     -I$(SS_BUILD_DIR)/kernel/include \
+    -I../lib/include \
     -Ifakestdlib \
     -DLIMINE_API_REVISION=6 \
     $(KCPPFLAGS) \

@@ -274,13 +274,13 @@ ifeq ($(NOT_COMPILE_X86MEM),0)
 	$(MAKE) -C ablib/arch/x86_64/x86mem
 endif
 	if [ ! -f "$(PROGRAM_IMAGE_NAME).img" ]; then \
-		@echo "Creating program image $(PROGRAM_IMAGE_NAME).img ..."; \
+		echo "Creating program image $(PROGRAM_IMAGE_NAME).img ..."; \
 		qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2; \
 		qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G; \
 		dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2; \
 		mkfs.ext4 -O ^metadata_csum ./$(PROGRAM_IMAGE_NAME).img; \
 	else \
-		yes | mkfs.ext4 -O ^metadata_csum ./$(PROGRAM_IMAGE_NAME).img; \
+		echo "Program image $(PROGRAM_IMAGE_NAME).img exists - keeping it (skip mkfs; wipe manually if intended)"; \
 	fi
 	@$(MAKE) -C lib
 	@$(MAKE) -C programs
@@ -294,13 +294,13 @@ ma:
 	@$(MAKE) -C res/saf
 ifeq ($(KARCH),x86_64)
 	if [ ! -f "$(PROGRAM_IMAGE_NAME).img" ]; then \
-		@echo "Creating program image $(PROGRAM_IMAGE_NAME).img ..."; \
+		echo "Creating program image $(PROGRAM_IMAGE_NAME).img ..."; \
 		qemu-img create $(PROGRAM_IMAGE_NAME).img 1000M -f qcow2; \
 		qemu-img resize $(PROGRAM_IMAGE_NAME).img 2G; \
 		dd if=/dev/zero of=$(PROGRAM_IMAGE_NAME).img bs=1G count=2; \
 		mkfs.ext4 -O ^metadata_csum ./$(PROGRAM_IMAGE_NAME).img; \
 	else \
-		yes | mkfs.ext4 -O ^metadata_csum ./$(PROGRAM_IMAGE_NAME).img; \
+		echo "Program image $(PROGRAM_IMAGE_NAME).img exists - keeping it (skip mkfs; wipe manually if intended)"; \
 	fi
 	@$(MAKE) -C programs
 endif

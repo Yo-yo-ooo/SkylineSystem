@@ -609,6 +609,12 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
     file_cache_entry_t *e = (file_cache_entry_t *)art_search(&s->index, key, key_len);
 
     if (likely(e)) {
+        /* 修复: 被跨 CPU 广播置为 INVALID/FLUSHING/FAILED 的条目不得继续
+           命中, 否则 fwrite 之后其他核会读回陈旧数据 */
+        if (unlikely(e->state != FC_STATE_CACHED)) {
+            spinlock_unlock(&s->lock);
+            return NULL;
+        }
         // 数据完整性校验 (仅堆数据; 内联数据随条目生存, 由条目自身完整性覆盖)
         if (e->data && e->data != e->inline_data) {
             if (unlikely(fc_crc32_partial(e->data, e->data_len) != e->crc32)) {

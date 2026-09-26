@@ -997,7 +997,10 @@ namespace Schedule {
             uint64_t last_slice_ms = 0;
 
             if (likely(curr_thread && !curr_is_idle)) {
-                uint64_t delta = now - curr_thread->last_run_time;
+                /* 防御: last_run_time==0 表示从未被 dispatch 记账(如启动引导
+                   线程), 按运行 0ms 处理, 避免 delta=uptime 污染 vruntime。 */
+                uint64_t delta = curr_thread->last_run_time
+                               ? now - curr_thread->last_run_time : 0;
                 curr_thread->last_run_time = now;
                 if (unlikely(delta == 0)) delta = 1;
                 last_slice_ms = delta;

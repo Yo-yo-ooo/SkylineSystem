@@ -201,7 +201,11 @@ namespace AHCI
 
         commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
         commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
-        commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1;
+        /* 修复: 循环已把 sectorCount 递减为 0, (sectorCount<<9)-1 会把
+           22 位 byteCount 写成 0x3FFFFF(~4MB DMA 越界)。末条 PRDT 的扇区数
+           必须由原始请求 sectorCountCopy 推导(余 0 即整 16 扇区)。 */
+        commandTable->prdtEntry[i].byteCount =
+            ((sectorCountCopy & 0xF) ? (sectorCountCopy & 0xF) : 16) * 512 - 1;
         commandTable->prdtEntry[i].interruptOnCompletion = 1;
         
         FIS_REG_H2D* cmdFIS = (FIS_REG_H2D*)(&commandTable->commandFIS);
@@ -290,7 +294,11 @@ namespace AHCI
 
         commandTable->prdtEntry[i].dataBaseAddress = (uint32_t)(uint64_t)buffer;
         commandTable->prdtEntry[i].dataBaseAddressUpper = (uint32_t)((uint64_t)buffer >> 32);
-        commandTable->prdtEntry[i].byteCount = (sectorCount << 9) - 1;
+        /* 修复: 循环已把 sectorCount 递减为 0, (sectorCount<<9)-1 会把
+           22 位 byteCount 写成 0x3FFFFF(~4MB DMA 越界)。末条 PRDT 的扇区数
+           必须由原始请求 sectorCountCopy 推导(余 0 即整 16 扇区)。 */
+        commandTable->prdtEntry[i].byteCount =
+            ((sectorCountCopy & 0xF) ? (sectorCountCopy & 0xF) : 16) * 512 - 1;
         commandTable->prdtEntry[i].interruptOnCompletion = 1;
         
         FIS_REG_H2D* cmdFIS = (FIS_REG_H2D*)(&commandTable->commandFIS);

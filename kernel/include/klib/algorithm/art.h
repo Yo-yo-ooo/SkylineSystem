@@ -1,7 +1,8 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-// This Art Tree IMPL's Author I did't know who
-// Please Connect the author if you know who
+/* Adapted from libart (MIT License) — https://github.com/armon/libart
+   Original copyright: Copyright (c) 2012, Armon Dadgar.
+   The original MIT notice must be preserved; see LICENSES/MIT. */
 #pragma once
 #ifndef _ART_H_
 #define _ART_H_

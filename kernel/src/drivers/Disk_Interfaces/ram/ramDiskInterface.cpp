@@ -15,8 +15,10 @@ namespace RamDiskInterface
 
     void Init(uint64_t sectorCount)
     {
-        SectorCount = sectorCount;
         Buffer = (uint8_t*)kmalloc(sectorCount * 512); //Malloc For Ram Disk
+        /* 修复: 分配失败时不得继续使用空指针 */
+        if (!Buffer) { SectorCount = 0; return; }
+        SectorCount = sectorCount;
         _memset(Buffer, 0, sectorCount * 512);
     }
 
@@ -27,7 +29,9 @@ namespace RamDiskInterface
         {
             if (s >= SectorCount)
                 return false;
-            _memcpy(Buffer + (s * 512), buf + (s * 512), 512);
+            /* 修复: 原用绝对扇区号 s 索引调用者缓冲区 -> sector!=0 时越界读写,
+               应使用相对偏移 (s - sector) */
+            _memcpy(Buffer + (s * 512), buf + ((s - sector) * 512), 512);
         }
         return true;
     }
@@ -39,7 +43,8 @@ namespace RamDiskInterface
         {
             if (s >= SectorCount)
                 return false;
-            _memcpy(buf + (s * 512), Buffer + (s * 512), 512);
+            /* 修复: 同上 —— 调用者缓冲区用相对偏移索引 */
+            _memcpy(buf + ((s - sector) * 512), Buffer + (s * 512), 512);
         }
         return true;
     }

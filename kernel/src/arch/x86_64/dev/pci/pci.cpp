@@ -48,6 +48,29 @@ uint64_t pdev_hash(const void *item, uint64_t seed0, uint64_t seed1) {
 
 namespace PCI
 {
+    /* Registered PCI drivers; probed automatically as functions enumerate. */
+    static const PCIDriver* g_probeDrivers[32];
+    static uint8_t g_probeCount = 0;
+
+    void RegisterDriver(const PCIDriver* driver) {
+        if (driver && g_probeCount < 32)
+            g_probeDrivers[g_probeCount++] = driver;
+    }
+
+    /* Match one freshly-enumerated function against every registered driver
+       and fire its probe hook. The config-space MMIO window covers the whole
+       type-0 header, so the PCIDeviceHeader* is also a valid PCIHeader0*. */
+    static void ProbeFunction(PCIDeviceHeader* hdr) {
+        PCIHeader0* h0 = reinterpret_cast<PCIHeader0*>(hdr);
+        for (uint8_t i = 0; i < g_probeCount; i++) {
+            const PCIDriver* d = g_probeDrivers[i];
+            if (d->probe && hdr->Class == d->cls &&
+                hdr->SubClass == d->sub && hdr->Prog_IF == d->progif) {
+                kprintf("[PCI] probing %s ...\n", d->name);
+                d->probe(h0);
+            }
+        }
+    }
 
     uint32_t read_pci0(uint32_t bus, uint32_t dev, uint32_t function,uint8_t registeroffset){
         uint32_t id = 1U << 31 | ((bus & 0xff) << 16) | ((dev & 0x1f) << 11) |
@@ -283,6 +306,10 @@ namespace PCI
         //kinfoln("%X",(uint64_t)pciDeviceHeader);
         ms.PCIDevBaseAddr = (uint64_t)pciDeviceHeader;
         hashmap_set(PCIDevMap,&ms);
+
+        /* scan -> trigger: bind any matching driver the instant this function
+           is discovered (PCIDevMap already holds it for later lookups). */
+        ProbeFunction(pciDeviceHeader);
 
         return;
     }

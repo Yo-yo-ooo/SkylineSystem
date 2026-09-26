@@ -365,8 +365,9 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
     }
 
 
-    struct __hmap_s_mp *hsmp = (struct __hmap_s_mp *)hashmap_get(HMapS_MP, 
-                                &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+    /* 修复: 复合字面量取地址在 C++ 下为临时对象(clang 报错), 改命名局部变量 */
+    struct __hmap_s_mp hkey = {}; hkey.MPName = (char*)mount_point;
+    struct __hmap_s_mp *hsmp = (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &hkey);
     //kinfoln("%s",mount_point);
 
     if (!hsmp) {
@@ -448,8 +449,9 @@ int32_t ext4_umount(const char *mount_point)
 	struct ext4_mountpoint *mp = 0;
 
 	
+    struct __hmap_s_mp hkey = {}; hkey.MPName = (char*)mount_point; /* 修复: 同上 */
     struct __hmap_s_mp *hsmp = 
-            (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+            (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &hkey);
     mp = hsmp ? (struct ext4_mountpoint *)hsmp->MP : nullptr;
 
 	if (!mp)
@@ -483,8 +485,9 @@ Finish:
 
 static struct ext4_mountpoint *ext4_get_mount(const char *path)
 {
+    struct __hmap_s_mp hkey = {}; hkey.MPName = (char*)GetMountPointName(path); /* 修复: 同上 */
     struct __hmap_s_mp *hsmp = 
-        (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)GetMountPointName(path)});
+        (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &hkey);
     ext4_mountpoint* mp = hsmp ? (ext4_mountpoint*)hsmp->MP : nullptr;
     //kinfoln("%p",mp);
     //kinfoln("Name Of MP:%s",mp ? mp->name : "NULL");
@@ -748,8 +751,9 @@ int32_t ext4_mount_setup_locks(const char *mount_point,
 	struct ext4_mountpoint *mp = 0;
 
 
+    struct __hmap_s_mp hkey = {}; hkey.MPName = (char*)mount_point; /* 修复: 同上 */
     struct __hmap_s_mp *hsmp = 
-        (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &(struct __hmap_s_mp){.MPName = (char*)mount_point});
+        (struct __hmap_s_mp *)hashmap_get(HMapS_MP, &hkey);
     mp = hsmp ? (struct ext4_mountpoint *)hsmp->MP : nullptr;
     
 	if (!mp)

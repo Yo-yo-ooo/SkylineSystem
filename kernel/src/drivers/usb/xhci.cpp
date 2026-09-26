@@ -12,6 +12,7 @@
 #include <klib/algorithm/rbtree.h>
 #include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/interrupt/idt.h>
+#include <arch/x86_64/dev/pci/pci.h>
 
 #ifdef __x86_64__
 #include <arch/x86_64/pit/pit.h>
@@ -210,7 +211,10 @@ static void processEvent(volatile TRB* evt) {
     switch (trbType) {
         case TRB_TRANSFER_EVENT: {
             uint64_t trbPtr = evt->parameter;
-            uint32_t xferred = evt->status & 0xFFFFFFu;
+            /* The event's low 24 bits are the RESIDUAL bytes not transferred,
+               not the number of bytes that moved. A full-length completion
+               therefore reports 0 here. */
+            uint32_t residual = evt->status & 0xFFFFFFu;
 
             // 1. Advance the ring dequeue pointer past the completed TRB.
             if (slotID > 0 && slotID <= MAX_SLOTS) {
@@ -243,12 +247,14 @@ static void processEvent(volatile TRB* evt) {
             rb_node_t* found = rb_search(&g_pendingTransfers, &key.node, pending_xfer_cmp);
             if (found) {
                 PendingTransfer* pt = container_of(found, PendingTransfer, node);
+                uint32_t actual = pt->len >= residual ? pt->len - residual : 0;
                 if (pt->async) {
                     rb_erase(&g_pendingTransfers, &pt->node);
                     async_pt = pt;
+                    async_pt->transferred = actual;
                 } else {
                     pt->completionCode = (CC)cc;
-                    pt->transferred = xferred;
+                    pt->transferred = actual;
                     pt->completed = true;
                 }
             }
@@ -256,7 +262,7 @@ static void processEvent(volatile TRB* evt) {
 
             // 3. Run async callbacks outside the lock.
             if (async_pt) {
-                ((void(*)(uint8_t*, uint32_t, void*))async_pt->callback)((uint8_t*)async_pt->buf, xferred, async_pt->ctx);
+                ((void(*)(uint8_t*, uint32_t, void*))async_pt->callback)((uint8_t*)async_pt->buf, async_pt->transferred, async_pt->ctx);
                 kfree(async_pt);
             }
             break;
@@ -449,6 +455,32 @@ void InitXHCIFromPCI(PCI::PCIHeader0* hdr) {
     g_intRegs->erdp_lo = (uint32_t)virt_to_phys((void*)g_evtRing);
     g_intRegs->erdp_hi = (uint32_t)(virt_to_phys((void*)g_evtRing) >> 32);
     g_intRegs->iman |= (1u << 1);
+
+    /* Wire completion events to a real CPU interrupt. Without MSI-X the event
+       ring is only drained inside synchronous transfer waits, so asynchronous
+       HID interrupt-IN completions are never observed. Route interrupter 0
+       (MSI-X table entry 0) to one vector on a present CPU. */
+    {
+        PCI::PCI_MSIX_CAP* msix = PCI::GetMSIXCap(hdr);
+        if (msix) {
+            cpu_t* tcpu = GetLWIntrCpu();
+            uint8_t cpuId = tcpu ? tcpu->id : 0;
+            uint16_t vector = RequestFreeIRQPerCPU();
+            PCI::PCI_MSIX_TABLE* tbl =
+                (PCI::PCI_MSIX_TABLE*)PCI::GetMSIXTblBaseAddr(hdr, msix);
+            tbl[0].msgAddr = 0xfee00000u | ((uint32_t)cpuId << 12);
+            tbl[0].msgData = vector;
+            __asm__ volatile ("mfence" ::: "memory");
+            tbl[0].vecCtrl &= ~1u;       /* unmask table entry 0 */
+            idt_install_irq_cpu(cpuId, vector, (void*)XHCI_IRQHandler);
+            PCI::enable_bus_mastering((uint64_t)hdr);
+            msix->MsgCtrl |=  (1u << 15);  /* MSI-X enable */
+            msix->MsgCtrl &= ~(1u << 14);  /* function mask off */
+            kinfo("[xHCI] MSI-X vec%u cpu%u\n", vector, cpuId);
+        } else {
+            kwarn("[xHCI] no MSI-X; async input needs polling\n");
+        }
+    }
 
     uint32_t cmd = readOp(offsetof(OpRegs, usbcmd));
     cmd |= USBCMD_INTE | USBCMD_HSEE | USBCMD_EWE | USBCMD_RUN;
@@ -780,7 +812,12 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
     }
 
     usb_spin_lock_irqsave(&g_pendingTransfersLock, pflags);
-    rb_erase(&g_pendingTransfers, &pt.node);
+    /* 修复: 事件处理器(processEvent)完成本传输时已按 trbPtr 摘除节点,
+       此处直接 rb_erase 会双删并破坏红黑树; 先搜索确认节点仍在树上 */
+    PendingTransfer key = {}; rb_init_node(&key.node); key.trbPtr = pt.trbPtr;
+    rb_node_t* found = rb_search(&g_pendingTransfers, &key.node, pending_xfer_cmp);
+    if (found && found == &pt.node)
+        rb_erase(&g_pendingTransfers, &pt.node);
     usb_spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
 
     bool ok = pt.completed &&
@@ -825,7 +862,11 @@ bool SubmitNormalTransfer(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t le
     }
     uint64_t flags;
     usb_spin_lock_irqsave(&g_pendingTransfersLock, flags);
-    rb_erase(&g_pendingTransfers, &pt.node);
+    /* 修复: 同上 —— processEvent 可能已摘除本节点, 防双删 */
+    PendingTransfer key = {}; rb_init_node(&key.node); key.trbPtr = pt.trbPtr;
+    rb_node_t* found = rb_search(&g_pendingTransfers, &key.node, pending_xfer_cmp);
+    if (found && found == &pt.node)
+        rb_erase(&g_pendingTransfers, &pt.node);
     usb_spin_unlock_irqrestore(&g_pendingTransfersLock, flags);
 
     bool ok = pt.completed && (pt.completionCode == CC_SUCCESS || pt.completionCode == CC_SHORT_PKT);

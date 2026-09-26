@@ -152,8 +152,11 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
             uint64_t filesz = phdr->p_filesz;
             /* 修复: 畸形段防御 —— filesz>memsz 会写穿映射区, 钳到 memsz */
             if (unlikely(filesz > phdr->p_memsz)) filesz = phdr->p_memsz;
-            /* 修复: 段数据不得越过文件缓冲区 */
-            if (unlikely(data_len != 0 && phdr->p_offset + filesz > data_len)) {
+            /* 修复: 段数据不得越过文件缓冲区。
+               原写法 phdr->p_offset + filesz 在 p_offset 接近 UINT64_MAX 时
+               回绕, 可绕过检查导致下方 memcpy 越界读内核内存。改为无回绕形式。 */
+            if (unlikely(data_len != 0 &&
+                         (phdr->p_offset > data_len || filesz > data_len - phdr->p_offset))) {
                 kerrorln("ELF> SEGMENT DATA OUT OF BOUNDS!");
                 VMM::SwitchPageMap(restore_pm ? restore_pm : (pagemap_t*)kernel_pagemap);
                 return 0;

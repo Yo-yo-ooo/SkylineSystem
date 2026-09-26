@@ -135,6 +135,9 @@ GENERATE_IGN3()) {
                 // 直接在内存中修改缓存对应位置的数据 (Write-through 策略)
                 __memcpy((void*)((uint64_t)cached_data + cur_offset), kbuf, wcnt);
                 // 因为数据已经同步写入磁盘了，所以不需要标记脏页，缓存与磁盘保持一致
+                /* 修复: 原地更新后必须跨 CPU 失效, 否则其他核的缓存条目
+                   仍持有旧字节(陈旧读) */
+                file_cache_invalidate(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len);
             } else {
                 // 写入超出了缓存范围，现有缓存不再能代表文件前缀，使其失效
                 file_cache_put(cpu->file_cache, cache_entry);

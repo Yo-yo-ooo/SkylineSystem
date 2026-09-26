@@ -119,6 +119,13 @@ void Init(USB::Device* dev, Interface* ifce) {
             if (readCSW(msc, &csw, tag)) {
                 msc->numBlocks = __builtin_bswap32(resp.lastLBA) + 1;
                 msc->blockSize = __builtin_bswap32(resp.blockSize);
+                /* 修复: 本驱动按 512 字节扇区约定换算 LBA 偏移,
+                   非 512 的介质直接拒绝注册, 否则偏移错位导致数据损坏 */
+                if (msc->blockSize != 512) {
+                    kerrorln("[MSC] unsupported block size %u (only 512 supported)",
+                             msc->blockSize);
+                    return;
+                }
                 kprintf("[MSC] Block size: %u, Blocks: %llu\n", msc->blockSize, msc->numBlocks);
 
                 // Register the USB mass-storage device as a block device using

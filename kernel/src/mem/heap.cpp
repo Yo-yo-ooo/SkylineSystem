@@ -998,6 +998,14 @@ void Free(kmem_cache *c, void *obj) {
 
     uint64_t flags = irq_save();
     uint32_t before = (uint32_t)__atomic_fetch_sub(&s->inuse, 1u, __ATOMIC_ACQ_REL);
+    /* 修复: inuse==0 表示双重释放 —— 原实现会让 inuse 下溢并把对象再次
+       压入空闲链(自环), 同一指针被无限次重复分配; 回滚计数并拒绝 */
+    if (unlikely(before == 0)) {
+        __atomic_add_fetch(&s->inuse, 1u, __ATOMIC_ACQ_REL);
+        irq_restore(flags);
+        slab_fatal("SLUB error: double free detected (inuse==0)\n");
+        return;
+    }
     uint32_t after  = before - 1;
     slub_stack_push(&s->freelist, obj);
     __atomic_add_fetch(&c->free_count, 1, __ATOMIC_RELAXED);

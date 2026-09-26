@@ -192,6 +192,9 @@ public:
         uint16_t Phase, Ident;
 
         CmplQueEntry *Entries;
+        /* 修复: PollCQ 被中断与轮询并发调用时用于互斥的收割权令牌
+           (AllocCmplQue 整体 memset, 自动初始化为 0) */
+        volatile uint8_t harvesting;
     } CmplQue;
 
     typedef struct NVMERequest {

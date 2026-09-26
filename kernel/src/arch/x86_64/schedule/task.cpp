@@ -54,10 +54,15 @@ static inline void detach_thread_from_proc(thread_t *thread) {
 }
 
 static inline void wait_for_transfer(thread_t *t) {
-    uint64_t wait_start = PIT::TimeSinceBootMS();
+    uint64_t last_log = 0;
     while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == THREAD_TRANSFER) {
-        if (PIT::TimeSinceBootMS() - wait_start > WAIT_THREAD_TIMEOUT_MS) {
-            Panic("Thread stuck in TRANSFER state for too long!");
+        /* 修复: 用户态可达的 kill 路径超时不再整机 Panic; 保持等待语义
+           (放弃回收会让调用方释放仍在运行的线程 -> UAF), 只定期告警 */
+        uint64_t now = PIT::TimeSinceBootMS();
+        if (now - last_log > WAIT_THREAD_TIMEOUT_MS) {
+            kerrorln("Thread %lu stuck in TRANSFER state - keep waiting",
+                     (uint64_t)t->id);
+            last_log = now;
         }
         asm volatile("pause");
     }
@@ -69,8 +74,12 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
     uint64_t batch_start = PIT::TimeSinceBootMS();
 
     while (true) {
-        if (unlikely(PIT::TimeSinceBootMS() - batch_start > KILL_RETRY_TIMEOUT_MS))
-            Panic("kill_thread_batch: target stuck (state/cpu migration race)");
+        if (unlikely(PIT::TimeSinceBootMS() - batch_start > KILL_RETRY_TIMEOUT_MS)) {
+            /* 修复: 不再整机 Panic —— 记录并继续重试(控制流语义不变) */
+            kerrorln("kill_thread_batch: target %lu still stuck - keep retrying",
+                     (uint64_t)target->id);
+            batch_start = PIT::TimeSinceBootMS();
+        }
 
         wait_for_transfer(target);
 
@@ -395,7 +404,13 @@ namespace Schedule {
             if (!cpu) break;
             thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
             if (curr != thread) break;
-            if (PIT::TimeSinceBootMS() - start_time > WAIT_THREAD_TIMEOUT_MS) Panic("WaitForThreadOffCpu: Thread stuck on CPU (timeout)");
+            if (PIT::TimeSinceBootMS() - start_time > WAIT_THREAD_TIMEOUT_MS) {
+                /* 修复: 不再整机 Panic —— 继续等待并定期告警
+                   (提前返回会导致释放仍在运行的线程) */
+                kerrorln("WaitForThreadOffCpu: thread %lu still on CPU %u - keep waiting",
+                         (uint64_t)thread->id, cpu_num);
+                start_time = PIT::TimeSinceBootMS();
+            }
             asm volatile("pause");
         }
     }
@@ -669,6 +684,9 @@ namespace Schedule {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
+        /* 修复: last_run_time 未初始化时首片记账 delta = now-0 = uptime,
+           会一次性把 vruntime/avg_vruntime 抬到开机时长。初始化为当前时间。 */
+        thread->last_run_time = PIT::TimeSinceBootMS();
         thread->timer_cpu = cpu_num;
         thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
         thread->cpu_num = cpu_num; thread->parent = parent;
@@ -704,6 +722,9 @@ namespace Schedule {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
+        /* 修复: last_run_time 未初始化时首片记账 delta = now-0 = uptime,
+           会一次性把 vruntime/avg_vruntime 抬到开机时长。初始化为当前时间。 */
+        thread->last_run_time = PIT::TimeSinceBootMS();
         thread->timer_cpu = cpu_num;
         thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
         thread->cpu_num = cpu_num; thread->parent = parent; thread->pagemap = parent->pagemap;
@@ -794,6 +815,9 @@ namespace Schedule {
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
+        /* 修复: last_run_time 未初始化时首片记账 delta = now-0 = uptime,
+           会一次性把 vruntime/avg_vruntime 抬到开机时长。初始化为当前时间。 */
+        thread->last_run_time = PIT::TimeSinceBootMS();
         /* 修复: state 必须在 ProcessAddThread 之前设置 ——
            THREAD_ZOMBIE==0 语义下, 挂链后再补设存在 ZOMBIE 窗口,
            并发 SyncKillProcThreads 命中窗口会让 kill_thread_batch

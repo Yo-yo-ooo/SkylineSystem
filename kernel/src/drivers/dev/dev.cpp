@@ -94,7 +94,8 @@ namespace Dev{
         __memcpy(&DeviceInfo->ops, &ops, sizeof(DevOPS));
 
         // 3. 录入全局查找表
-        hashmap_set(StrMap, &(DevStrSearch){.name = DeviceInfo->Name, .dev = DeviceInfo});
+        DevStrSearch str_key = {}; str_key.name = DeviceInfo->Name; str_key.dev = DeviceInfo;
+        hashmap_set(StrMap, &str_key); /* 修复: 复合字面量改命名局部变量 */
         
         DevManEntry entry = {
             .key = {.type = type, .index = TypeIndex}, 
@@ -116,13 +117,18 @@ namespace Dev{
         spinlock_lock(&dev_manager_lock);
         DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &key);
         spinlock_unlock(&dev_manager_lock);
+        /* 修复: 查找失败时 ThisEntry 为 NULL, 原代码直接解引用 -> 崩溃 */
+        if (!ThisEntry || !ThisEntry->dev) { ThisDev = {}; return; }
         ThisDev = *ThisEntry->dev;
     }
 
 
     VDL* GetSDEV(const char *Name){
+        /* 修复: 原 &(DevStrSearch){...} 是 C 复合字面量取地址,
+           C++ 下为临时对象, 生命周期不保(clang 报错) */
+        DevStrSearch key = {}; key.name = (char*)Name;
         spinlock_lock(&dev_manager_lock);
-        DevStrSearch* search = (DevStrSearch*)hashmap_get(StrMap, &(DevStrSearch){.name = (char*)Name});
+        DevStrSearch* search = (DevStrSearch*)hashmap_get(StrMap, &key);
         spinlock_unlock(&dev_manager_lock);
         if(search)
             return search->dev;
@@ -131,8 +137,9 @@ namespace Dev{
 
     VDL* GetSDEV(VsDevType Type, uint32_t idx){
         DevManKey key = {.type = Type, .index = idx};
+        DevManEntry lookup = {}; lookup.key = key; /* 修复: 复合字面量改命名局部变量 */
         spinlock_lock(&dev_manager_lock);
-        DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &(DevManEntry){.key = key});
+        DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &lookup);
         spinlock_unlock(&dev_manager_lock);
         if(ThisEntry)
             return ThisEntry->dev;

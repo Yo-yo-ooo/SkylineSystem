@@ -29,6 +29,20 @@ namespace PCI
 
     void DoPCIWithoutMCFG();
 
+    /* ---- PCI driver auto-probe model ---------------------------------------
+     * A driver registers a PCIDriver descriptor (match tuple class/sub/progif
+     * plus a probe hook) BEFORE the bus is enumerated. EnumerateFunction then
+     * fires probe() the moment a matching function is discovered, instead of
+     * the board init hard-coding FindPCIDev() + per-driver constructors. */
+    struct PCIDriver {
+        const char* name;
+        uint8_t cls;
+        uint8_t sub;
+        uint8_t progif;
+        void (*probe)(PCIHeader0*);
+    };
+    void RegisterDriver(const PCIDriver* driver);
+
     uint32_t read_pci0(uint32_t bus, uint32_t dev, uint32_t function,uint8_t registeroffset);
 
     extern const char* unknownString;

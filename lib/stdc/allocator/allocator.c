@@ -9,9 +9,6 @@
 #include <stdc/stdlib.h>
 #include <base/base.h>
 
-#define PTF(x) syscall(24, (long)x, sizeof(x), 0, 0, 0, 0);
-//#define PTF(x)
-
 extern volatile uint64_t SizeClassTable[75][3];
 
 // ============================================================================
@@ -64,7 +61,8 @@ void LessCore(void* x, uint64_t y) {
 
 void* MoreCore(uint64_t PageCount) {
     uint64_t p = sys_mmap(0, PageCount, 2, 0, 0);
-    return (p != 0 && p != (uint64_t)-1ULL) ? (void*)p : NULL;
+    if (p != 0 && p != (uint64_t)-1ULL) return (void*)p;
+    return NULL;
 }
 
 // ============================================================================

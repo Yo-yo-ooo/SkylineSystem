@@ -68,7 +68,10 @@ static inline bool is_user_address(uint64_t addr){
 
 static inline bool is_user_buffer_valid(uint64_t addr, size_t count) {
     if (addr > addr + count) return false; 
-    return (addr + count) <= 0xFFFF800000000000;
+    /* 修复: 原上界 0xFFFF800000000000 会放行 0x800000000000..0xFFFF7FFFFFFFFF
+       (4 级分页下非规范, 且 PML4E=256 与 HHDM 别名槽重合)。4 级用户半区是
+       [0, 2^47), 收紧到开区间上界 0x800000000000。 */
+    return (addr + count) <= 0x0000800000000000ULL;
 }
 typedef struct vma_region_t {
     uint64_t start;

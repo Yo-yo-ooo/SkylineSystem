@@ -127,7 +127,8 @@ u8 Init() {
     u8 ata_status = Identify(ATA_PRIMARY, ATA_MASTER);
     if(ata_status != ATA_OKAY)
         return ata_status;
-    DevOPS ops;
+    DevOPS ops = {}; /* 修复: 原为未清零栈结构, AddStorageDevice 按 sizeof 整拷
+                        会把未赋值成员的垃圾指针注册进设备表 */
     ops.Read_ = FRegVsDEV_R;
     ops.Write_ = FRegVsDEV_W;
     ops.ReadBytes = nullptr;

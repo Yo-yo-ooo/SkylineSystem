@@ -12,13 +12,35 @@
 uint64_t sys_dev_read(uint64_t DevType,uint64_t DevIDX,\
 uint64_t buffer,uint64_t count,uint64_t offset,uint64_t ign_0,syscall_frame_t* nullframe){
     IGNORE_VALUE(ign_0);IGNORE_VALUE(nullframe);
-    return Dev::DeviceRead((VsDevType)DevType,(uint32_t)DevIDX,(size_t)offset,(void*)buffer,(size_t)count);
+    /* 修复: 原实现把裸用户指针直接交给驱动 —— SMAP 开启时内核写用户页
+       会 #PF, 且无任何范围校验。改为内核 bounce buffer + CopyToUser。 */
+    if (count == 0) return 1;
+    if (count > (1u << 20)) return 0; /* 单次上限 1MB, 防大分配 */
+    void *kbuf = kmalloc(count);
+    if (!kbuf) return 0;
+    uint8_t r = Dev::DeviceRead((VsDevType)DevType,(uint32_t)DevIDX,(size_t)offset,kbuf,(size_t)count);
+    uint64_t ret = 0;
+    if (r && VMM::UserAccess::CopyToUser(Schedule::this_proc()->pagemap, buffer, kbuf, count))
+        ret = 1;
+    kfree(kbuf);
+    return ret;
 }
 
 uint64_t sys_dev_write(uint64_t DevType,uint64_t DevIDX,\
 uint64_t buffer,uint64_t count,uint64_t offset,uint64_t ign_0,syscall_frame_t* nullframe){
     IGNORE_VALUE(ign_0);IGNORE_VALUE(nullframe);
-    return Dev::DeviceWrite((VsDevType)DevType,DevIDX,offset,(void*)buffer,count);
+    /* 修复: 同上 —— CopyFromUser 到 bounce buffer 再交给驱动 */
+    if (count == 0) return 1;
+    if (count > (1u << 20)) return 0;
+    void *kbuf = kmalloc(count);
+    if (!kbuf) return 0;
+    if (!VMM::UserAccess::CopyFromUser(Schedule::this_proc()->pagemap, kbuf, (void*)buffer, count)) {
+        kfree(kbuf);
+        return 0;
+    }
+    uint8_t r = Dev::DeviceWrite((VsDevType)DevType,DevIDX,offset,kbuf,count);
+    kfree(kbuf);
+    return r ? 1 : 0;
 }
 
 uint64_t sys_dev_mmap(uint64_t DevType,uint64_t DevIDX,
@@ -47,7 +69,11 @@ uint64_t sys_dev_getinfo(
     GENERATE_IGN3()
 ){
     IGNV_3();
-    uint64_t paddrud = VMM::GetPhysics(Schedule::this_proc()->pagemap, UserDesc) + hhdm_offset;
+    /* 修复: (1) 删除对未校验 UserDesc 的 GetPhysics 空操作;
+       (2) 原代码把 &dev.DescBaseAddr(栈上字段地址)当数据源, 拷贝
+           DescLength 字节会越界读栈并泄漏内核地址 —— 应拷贝
+           DescBaseAddr 指向的真实描述符内容;
+       (3) 增加长度上限并检查拷贝结果。 */
     VDL dev = Dev::FindDevice((VsDevType)DevType, (uint32_t)DevIDX);
     if (dev.DescLength == 0 || dev.DescBaseAddr == 0)
         return -1; // 设备不存在
@@ -55,8 +81,10 @@ uint64_t sys_dev_getinfo(
         return -2; // 无效指针
     if(is_user_address(UserDesc) == false)
         return -3; // 只能写入用户态地址
-    else
-        VMM::UserAccess::CopyToUser(Schedule::this_proc()->pagemap, UserDesc, &dev.DescBaseAddr, dev.DescLength);
-    
+    if (dev.DescLength > 4096)
+        return -4; // 异常长度, 拒绝
+    if (!VMM::UserAccess::CopyToUser(Schedule::this_proc()->pagemap, UserDesc,
+                                     (const void*)dev.DescBaseAddr, dev.DescLength))
+        return -5; // 拷贝失败
     return 0; // 成功
 }

@@ -216,11 +216,11 @@ int32_t file_cache_writeback_callback(
     const uint8_t *key, 
     uint32_t key_len, void *data, size_t data_len
 ) {
-    if (!key || key_len == 0 || !data || data_len == 0) return;
+    if (!key || key_len == 0 || !data || data_len == 0) return -1; /* 修复: 原为无值 return(UB) */
 
     // 1. 分配内存并拷贝路径，确保以 '\0' 结尾
     char *kpath = (char *)kmalloc(key_len + 1);
-    if (!kpath) return;
+    if (!kpath) return -1; /* 修复: 同上 */
     __memcpy(kpath, key, key_len);
     kpath[key_len] = '\0';
 
@@ -257,12 +257,18 @@ int32_t file_cache_writeback_callback(
     
     if (err != 0 || wcnt != data_len) {
         kinfo("[FC_WRITEBACK] Incomplete writeback for %s (wrote %zu/%zu)\n", kpath, wcnt, data_len);
+        /* 修复: 写入不完整必须报失败, 否则脏页被误判为已落盘 */
+        MP->FSOPS->close(filedesc);
+        kfree(filedesc);
+        kfree(kpath);
+        return -1;
     }
 
     // 7. 关闭文件并释放资源
     MP->FSOPS->close(filedesc);
     kfree(filedesc);
     kfree(kpath);
+    return 0; /* 修复: 原函数无最终 return(UB, 调用方拿垃圾 eax 判成败) */
 }
 
 } // extern "C"

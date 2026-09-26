@@ -26,6 +26,9 @@ namespace SAF
         int index = StrIndexOf(path, '/');
         if (index == -1) 
             index = strlen(path);
+        /* 修复: 路径分量 >= 128 会溢出栈上 buffer[128] */
+        if (index >= 128)
+            return NULL;
         const char* next = path + index;//copy_until('/', path, buffer);
         _memcpy((char*)path, buffer, index);
         
@@ -34,7 +37,7 @@ namespace SAF
 
         for (int i = 0; i < folder_node->num_children; i++) {
             saf_node_hdr_t* child = (saf_node_hdr_t*) ((uint64_t) base + (uint64_t) folder_node->children[i]);
-            if (strcmp(buffer, child->name)) 
+            if (!strcmp(buffer, child->name)) /* 修复: 原条件反了 —— 命中才递归 */
             {
                 return initrd_find(next, base, child);
             }

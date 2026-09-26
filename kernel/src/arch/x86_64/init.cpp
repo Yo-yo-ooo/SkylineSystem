@@ -42,6 +42,22 @@ extern "C" int32_t file_cache_writeback_callback(
 extern void sys_sysinfo_init(void);
 
 extern void enable_smep_smap();
+
+/* PCI scan -> trigger probe wrappers. Each driver is bound the moment its
+   matching PCI function enumerates, so the board init no longer hard-codes
+   FindPCIDev() + constructors. USB MSC follows automatically: once the xHCI
+   function probes, its downstream enumeration registers mass-storage LUNs. */
+static void pci_probe_ahci(PCI::PCIHeader0* h) { new AHCI::AHCIDriver(&h->Header); }
+static void pci_probe_nvme(PCI::PCIHeader0* h) { new class NVME(h); }
+static void pci_probe_xhci(PCI::PCIHeader0* h) { XHCI::InitXHCIFromPCI(h); }
+
+static const PCI::PCIDriver kAhciDriver =
+    {"AHCI", 0x01, 0x06, 0x01, pci_probe_ahci};
+static const PCI::PCIDriver kNvmeDriver =
+    {"NVMe", 0x01, 0x08, 0x02, pci_probe_nvme};
+static const PCI::PCIDriver kXhciDriver =
+    {"xHCI", 0x0C, 0x03, 0x30, pci_probe_xhci};
+
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
     WELCOME_X86_64
@@ -107,19 +123,14 @@ void __init x86_64_init(void){
     InitFunc("VsDev",Dev::Init());
     InitFunc("File & MP MAN",InitFFMAN());
     //InitFunc("ATA",ATA::Init());
+    /* Register PCI drivers first, then enumerate the bus: each matching
+       function is probed the instant it is discovered (AHCI / NVMe / xHCI;
+       USB mass storage follows automatically once xHCI probes). */
+    PCI::RegisterDriver(&kAhciDriver);
+    PCI::RegisterDriver(&kNvmeDriver);
+    PCI::RegisterDriver(&kXhciDriver);
     if(ACPI::mcfg == NULL){PCI::DoPCIWithoutMCFG();}
     else{InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));}
-    InitFunc("AHCI",new AHCI::AHCIDriver(PCI::FindPCIDev(0x01, 0x06, 0x01)));
-    {
-        PCI::PCIDeviceHeader *nvmeBase = PCI::FindPCIDev(0x01, 0x08, 0x02);
-        if (nvmeBase)
-            InitFunc("NVME", new class NVME(reinterpret_cast<PCI::PCIHeader0*>(nvmeBase)));
-    }
-    {
-        PCI::PCIDeviceHeader *xhciBase = PCI::FindPCIDev(0x0C, 0x03, 0x30);
-        if (xhciBase)
-            XHCI::InitXHCIFromPCI(reinterpret_cast<PCI::PCIHeader0*>(xhciBase));
-    }
 
     InitFunc("PS/2 MOUSE(x86)",ps2_mouse_init());
     InitFunc("KEYBOARD(x86)",keyboard_init());

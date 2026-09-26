@@ -37,7 +37,12 @@ static volatile struct limine_paging_mode_request paging_mode_request = {
     .min_mode = LIMINE_PAGING_MODE_X86_64_MIN
 };
 
-volatile bool IsPM5LVL = (paging_mode_request.response->mode == REQ_TOP_LVL);
+/* 修复: 原表达式 mode == REQ_TOP_LVL 语义为"是否拿到所请求的模式",
+   4 级构建下恒为 true, 与变量名相反 -> 用户态地址上限被放宽到 5 级
+   (USER_SPACE_END_5LVL), 使 0x800000000000+p 通过校验并经软件走表
+   解析到 HHDM 别名(PML4E=256) -> 任意物理内存读写。改为直接比对
+   5 级模式常量(参考 aarch64/init.cpp 的写法)。 */
+volatile bool IsPM5LVL = (paging_mode_request.response->mode == LIMINE_PAGING_MODE_X86_64_5LVL);
 
 extern spinlock_t pmm_lock;
 #define PHYS_BASE(x) (x - executable_vaddr + executable_paddr)
@@ -769,7 +774,10 @@ namespace VMM {
                 if (p) { VMM::Map2M(pm,cv,(uint64_t)p,flags); mapped+=512; continue; }
             }
             void* p = PMM::Request();
-            if (unlikely(!p)) { kerrorln("PMM: OOM in Alloc"); goto err_a; }
+            if (unlikely(!p)) {
+                kerrorln("PMM: OOM in Alloc");
+                goto err_a;
+            }
             VMM::Map4K(pm, cv, (uint64_t)p, flags); mapped += 1;
         }
         VMM::NewMapping(pm, addr, pc, flags);
@@ -878,6 +886,9 @@ namespace VMM {
                     }
                     v += info.size;
                 }
+                /* 修复: 父进程 region 也必须打 SHARED 位, 否则父退出走
+                   FreeOwnedRegion 直接 PMM::Free 而子进程仍映射 -> 物理页二次分配 */
+                r->flags |= VMM_SHARED_BIT;
                 VMM::VMA::AddRegion(pm, r->start, r->page_count, r->flags | VMM_SHARED_BIT);
                 VMM::NewMapping(pm, r->start, r->page_count, r->flags | VMM_SHARED_BIT);
                 r = r->next;
@@ -931,6 +942,24 @@ namespace VMM {
     void DestroyPM(pagemap_t *pm){
         if (unlikely(!pm)) return;
         VMM::CleanPM(pm);
+        /* 修复(lite): 远程 CPU 的 shootdown 队列仍可能持有本 pm 的条目,
+           IPIHandler 会在 pm 释放后解引用/写 pm->cpus_with_tlb (UAF)。
+           这里等待各远程队列排空再释放, 大幅收窄窗口; 完整修复需
+           per-CPU 完成计数(见豆包清单 B03-full)。自旋带上限防永久挂起。 */
+        if (likely(smp_started)) {
+            for (int i = 0; i <= smp_last_cpu; i++) {
+                cpu_t *c = smp_cpu_list[i];
+                if (unlikely(!c || c == this_cpu())) continue;
+                uint64_t spins = 0;
+                while (__atomic_load_n(&c->shootdown_count, __ATOMIC_ACQUIRE) != 0) {
+                    if (unlikely(++spins > 100000000ULL)) {
+                        kerrorln("DestroyPM: cpu %d shootdown queue not drained - proceeding", c->id);
+                        break;
+                    }
+                    asm volatile("pause");
+                }
+            }
+        }
         int sl = IsPM5LVL ? 5 : 4;
         FreePageTablesInternal(pm->toplvl, sl);
         FreePCID(pm->pcid);

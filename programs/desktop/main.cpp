@@ -6,6 +6,7 @@
 #include <graphic/basicdraw.hpp>
 #include <graphic/winstyle.h>
 #include <graphic/flanterm.h>
+#include <graphic/kbdshare.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -16,11 +17,17 @@ static char intTo_stringOutput[128];
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place);
 
+/* Generic windowed-app spawn (defined in loader.cpp); notepad uses it. */
+uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
+                          uint32_t bodyW, uint32_t bodyH,
+                          SkyWinPlacement *place);
+
 /* Caption glyph painter + sized chrome rasterizer, both defined in loader.cpp */
 void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
                           int32_t bodyW, int32_t titleH, int maximized);
 void SkyPaintChromeSized(FrameBuffer* s, int32_t surfW, int32_t surfH,
-                         int32_t bodyW, int32_t bodyH, int restoreGlyph);
+                         int32_t bodyW, int32_t bodyH, int restoreGlyph,
+                         const char* title);
 
 // 处理无符号 64 位整数
 const char *to_string(uint64_t value)
@@ -283,7 +290,7 @@ static void wm_rebuild_resize(uint32_t* rzSurf, int32_t rzPitch,
     rb.BufferSize        = (uint64_t)rzPitch * rows * sizeof(uint32_t);
     rb.Width = rb.PixelsPerScanLine = rzPitch;
     rb.Height            = rows;
-    SkyPaintChromeSized(&rb, rzPitch, rows, nw, nh, 0);
+    SkyPaintChromeSized(&rb, rzPitch, rows, nw, nh, 0, "Skyline Console");
     wm_mirror_content(rzSurf, rzPitch, M, M + (int32_t)SKYWIN_TITLE_H,
                       nw, nh, normSurf);
 }
@@ -380,6 +387,31 @@ int main(){
         comp.RegisterWindow(&consoleWin, layer1);
     }
 
+    /* ---- Notepad: a second, interactive windowed app (layer 2) ----------
+       Spawned through the same generic surface-sharing path; it mmaps the
+       keyboard event ring and edits text. Offset from the centered console so
+       both stacked windows stay visible. */
+#if 1  /* notepad enabled */
+    static SkyWinPlacement notePlace;
+    static Window noteWin;
+    const uint32_t NOTE_W = 560u, NOTE_H = 420u;
+    if (SpawnWindowedApp(&fb, "/mp/notepad.elf", "Notepad",
+                         NOTE_W, NOTE_H, &notePlace)) {
+        noteWin.PosX = notePlace.x + 90u;
+        noteWin.PosY = notePlace.y + 70u;
+        noteWin.SizeX = notePlace.w;
+        noteWin.SizeY = notePlace.h;
+        noteWin.FrameStartX = SKYWIN_SHADOW;
+        noteWin.FrameStartY = SKYWIN_SHADOW + SKYWIN_TITLE_H;
+        noteWin.FrameEndX   = SKYWIN_SHADOW + NOTE_W;
+        noteWin.FrameEndY   = SKYWIN_SHADOW + NOTE_H - SKYWIN_RADIUS;
+        noteWin.FbAddr   = notePlace.desk_surf;
+        noteWin.HasAlpha = 1;
+        CompLayer* layer2 = comp.CreateLayer(2);
+        comp.RegisterWindow(&noteWin, layer2);
+    }
+#endif
+
     /* Desktop-owned (NOT shared with the client) full-work-area surface used
        only while maximized: opaque, no rounded shadow margin. The live text is
        mirrored in from the normal shared surface each frame. */
@@ -420,6 +452,14 @@ int main(){
     }
 
     MouseInit();
+
+    /* WM-side keyboard channel: map the same shared event ring (the notepad
+       app is the text consumer; the WM reads global keys / future focus). */
+    static KbdShared* wmKbd = nullptr;
+    uint64_t kbdAddr = syscall(SYSCALL_DEV_MMAP, (uint64_t)KBD_DEV_TYPE,
+                               0, 0, 0, 0, 0);
+    if ((int64_t)kbdAddr > 0) wmKbd = (KbdShared*)kbdAddr;
+    uint64_t wmKbdCursor = 0;
 
     /* Two independent layers:
        - SCENE (wallpaper + windows): composited off-screen and presented at
@@ -478,6 +518,17 @@ int main(){
         if (my < 0) my = 0;
         if (mx >= fb_width - 16) mx = fb_width - 16;
         if (my >= fb_height - 16) my = fb_height - 16;
+
+        /* Drain the WM keyboard cursor (multi-reader ring; notepad has its
+           own). Global shortcuts would be handled here; text goes to notepad. */
+        if (wmKbd) {
+            uint64_t kh = __atomic_load_n(&wmKbd->head, __ATOMIC_ACQUIRE);
+            while (wmKbdCursor < kh) {
+                KbdEvent ke = wmKbd->ring[wmKbdCursor & (KBD_RING_CAP - 1u)];
+                (void)ke;
+                wmKbdCursor++;
+            }
+        }
 
         uint64_t now = rdtsc64();
         bool moved = (mx != prev_x || my != prev_y);

@@ -112,7 +112,8 @@ void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
    same Win11 look (pixels right/below the body stay alpha 0 and are skipped by
    the compositor). restoreGlyph selects the two-box "restore" caption icon. */
 void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
-                         int32_t bodyW, int32_t bodyH, int restoreGlyph) {
+                         int32_t bodyW, int32_t bodyH, int restoreGlyph,
+                         const char* title) {
     const int32_t SW = surfW;
     const int32_t SH = surfH;
     const int32_t M  = (int32_t)SKYWIN_SHADOW;
@@ -182,7 +183,7 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
     TTF_Font *font = console_font();
     if (font)
         TTF_DrawText(wb, font, M + 14, M + (TH - 22) / 2,
-                     "Skyline Console", SKYRGB_INK);
+                     title ? title : "", SKYRGB_INK);
 
     /* 5) caption glyphs: minimize / maximize / close, right-aligned */
     SkyPaintCaptionIcons(wb, M, M, bodyW, TH, restoreGlyph);
@@ -191,27 +192,35 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
 /* The one-shot fixed normal surface is the sized painter at SKYWIN_W x H. */
 static void paint_console_chrome(FrameBuffer *wb) {
     SkyPaintChromeSized(wb, (int32_t)SKYWIN_SURF_W, (int32_t)SKYWIN_SURF_H,
-                        (int32_t)SKYWIN_W, (int32_t)SKYWIN_H, 0);
+                        (int32_t)SKYWIN_W, (int32_t)SKYWIN_H, 0,
+                        "Skyline Console");
 }
 
-uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place) {
+/* Spawn a windowed userspace app and hand it an ARGB surface (chrome painted
+   by the WM before launch) plus the fixed protocol page. Generic over the elf
+   path, title and body size; TLoad and the notepad launch both use this. */
+uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
+                          uint32_t bodyW, uint32_t bodyH,
+                          SkyWinPlacement *place) {
     if (!Fb || !Fb->BaseAddress) return 0;
 
-    uint64_t pid = sys_load((uint64_t)"/mp/hw2.elf", 0, 0);
+    uint64_t pid = sys_load((uint64_t)elf, 0, 0);
     if ((int64_t)pid < 0) return 0;
 
     uint64_t self      = sys_getpid();
-    uint64_t winBytes  = align_up((uint64_t)SKYWIN_SURF_W * SKYWIN_SURF_H * sizeof(uint32_t),
+    uint32_t surfW     = bodyW + 2u * SKYWIN_SHADOW;
+    uint32_t surfH     = bodyH + 2u * SKYWIN_SHADOW;
+    uint64_t winBytes  = align_up((uint64_t)surfW * surfH * sizeof(uint32_t),
                                   PAGE_SIZE);
 
-    /* share 1: hw2 owns the fresh window surface, desktop aliases it. */
+    /* share 1: client owns the fresh window surface, desktop aliases it. */
     uint64_t r1 = sys_pmmapSHARE(self, 0, winBytes, SHARE_FLAGS,
                                  (uint64_t)pid, 0);
-    uint64_t hw2_whole = 0, desk_whole = 0;
-    read_sideband(&hw2_whole, &desk_whole);
-    if ((int64_t)r1 < 0 || hw2_whole == 0 || desk_whole == 0) return 0;
+    uint64_t client_whole = 0, desk_whole = 0;
+    read_sideband(&client_whole, &desk_whole);
+    if ((int64_t)r1 < 0 || client_whole == 0 || desk_whole == 0) return 0;
 
-    /* share 2: hw2 fixed protocol page -> desktop alias for writing. */
+    /* share 2: client fixed protocol page -> desktop alias for writing. */
     uint64_t r2 = sys_pmmapSHARE(self, 0, PAGE_SIZE, SHARE_FLAGS,
                                  (uint64_t)pid, SKYWIN_PROTO_PAGE_VA);
     uint64_t proto_src = 0, proto = 0;
@@ -219,54 +228,52 @@ uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place) {
     (void)proto_src;
     if ((int64_t)r2 < 0 || proto == 0) return 0;
 
-    /* Inner text-area origin inside the tightly-packed ARGB surface. Rows are
-       strided by the SURFACE pitch (which is wider than the body, to carry the
-       shadow/AA margin). */
+    /* Inner content-area origin inside the ARGB surface. */
+    const uint32_t contentX = SKYWIN_SHADOW;
+    const uint32_t contentY = SKYWIN_SHADOW + SKYWIN_TITLE_H;
+    const uint32_t contentW = bodyW;
+    const uint32_t contentH = bodyH - SKYWIN_TITLE_H - SKYWIN_RADIUS;
     uint64_t content_off =
-        ((uint64_t)SKYWIN_CONTENT_Y * SKYWIN_SURF_W + SKYWIN_CONTENT_X) * sizeof(uint32_t);
+        ((uint64_t)contentY * surfW + contentX) * sizeof(uint32_t);
 
     memset((void*)proto, 0, PAGE_SIZE);
     volatile uint64_t *q = (volatile uint64_t*)proto;
-    q[SKYWIN_PROTO_CONTENT_VA]  = hw2_whole + content_off;
-    q[SKYWIN_PROTO_CONTENT_SZ]  = (uint64_t)SKYWIN_SURF_W * SKYWIN_CONTENT_H * sizeof(uint32_t);
-    q[SKYWIN_PROTO_CONTENT_W]   = SKYWIN_CONTENT_W;
-    q[SKYWIN_PROTO_CONTENT_H]   = SKYWIN_CONTENT_H;
-    q[SKYWIN_PROTO_PITCH]       = SKYWIN_SURF_W;           /* surface pitch */
-    q[SKYWIN_PROTO_WHOLE_VA]    = hw2_whole;
-    q[SKYWIN_PROTO_WIN_W]       = SKYWIN_SURF_W;
-    q[SKYWIN_PROTO_WIN_H]       = SKYWIN_SURF_H;
+    q[SKYWIN_PROTO_CONTENT_VA]  = client_whole + content_off;
+    q[SKYWIN_PROTO_CONTENT_SZ]  = (uint64_t)surfW * contentH * sizeof(uint32_t);
+    q[SKYWIN_PROTO_CONTENT_W]   = contentW;
+    q[SKYWIN_PROTO_CONTENT_H]   = contentH;
+    q[SKYWIN_PROTO_PITCH]       = surfW;
+    q[SKYWIN_PROTO_WHOLE_VA]    = client_whole;
+    q[SKYWIN_PROTO_WIN_W]       = surfW;
+    q[SKYWIN_PROTO_WIN_H]       = surfH;
 
-    /* The window MANAGER paints the decoration itself on its own alias of the
-       shared surface, BEFORE the client is launched: zero concurrency (the
-       client has not started) and the client never needs chrome code. */
+    /* The WM paints the decoration on its alias BEFORE the client launches. */
     FrameBuffer wb;
     wb.BaseAddress       = (void*)desk_whole;
-    wb.BufferSize        = SKYWIN_SURF_W * SKYWIN_SURF_H * sizeof(uint32_t);
-    wb.Width             = SKYWIN_SURF_W;
-    wb.Height            = SKYWIN_SURF_H;
-    wb.PixelsPerScanLine = SKYWIN_SURF_W;      /* tightly packed ARGB surface */
-    paint_console_chrome(&wb);
+    wb.BufferSize        = (uint64_t)surfW * surfH * sizeof(uint32_t);
+    wb.Width             = surfW;
+    wb.Height            = surfH;
+    wb.PixelsPerScanLine = surfW;
+    SkyPaintChromeSized(&wb, (int32_t)surfW, (int32_t)surfH,
+                        (int32_t)bodyW, (int32_t)bodyH, 0, title);
 
     if ((int64_t)sys_launch(pid) < 0) return 0;
 
-    /* The client is a plain, portable Hello World and performs NO window/ready
-       handshake at all. The chrome was fully painted above before launch, so
-       the surface can never be half-filled or torn. Just yield a bounded
-       number of times to let the fresh client load its font and emit its
-       initial printf output before the window is mounted; any text that does
-       not finish in this window is picked up by the compositor's periodic
-       Compose afterwards. The client may even return from main() (and exit)
-       right away: the shared physical frames survive via their refcount while
-       this WM keeps the dst mapping, so the painted window stays on screen. */
+    /* Let the fresh client load its font / finish startup before mounting. */
     for (uint32_t s = 0; s < SKYWIN_STARTUP_YIELDS; s++) sys_yield();
 
     if (place) {
-        place->desk_surf = desk_whole;
+        place->desk_surf  = desk_whole;
         place->client_pid = pid;
-        place->w = SKYWIN_SURF_W;
-        place->h = SKYWIN_SURF_H;
-        place->x = (Fb->Width  > SKYWIN_SURF_W) ? (uint32_t)((Fb->Width  - SKYWIN_SURF_W) / 2u) : 0u;
-        place->y = (Fb->Height > SKYWIN_SURF_H) ? (uint32_t)((Fb->Height - SKYWIN_SURF_H) / 2u) : 0u;
+        place->w = surfW;
+        place->h = surfH;
+        place->x = (Fb->Width  > surfW) ? (uint32_t)((Fb->Width  - surfW) / 2u) : 0u;
+        place->y = (Fb->Height > surfH) ? (uint32_t)((Fb->Height - surfH) / 2u) : 0u;
     }
     return desk_whole;
+}
+
+uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place) {
+    return SpawnWindowedApp(Fb, "/mp/hw2.elf", "Skyline Console",
+                            SKYWIN_W, SKYWIN_H, place);
 }

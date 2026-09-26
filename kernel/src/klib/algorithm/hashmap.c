@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
-// motified form https://github.com/tidwall/hashmap.c
+/* Adapted from hashmap.c (MIT License) — https://github.com/tidwall/hashmap.c
+   Original copyright: Copyright (c) 2018 Josh Baker.
+   The original MIT notice must be preserved; see LICENSES/MIT. */
 #include <klib/klibc.h>
 #include <klib/algorithm/hmap.h>
 #include <klib/algorithm/rbtree.h>

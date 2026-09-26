@@ -12,6 +12,11 @@ namespace FrameBufferDevice{
         uint64_t length,uint64_t prot,
         uint64_t offset,uint64_t VADDR
     ){
+        /* 修复: 帧缓冲是全屏可写映射, 原实现任何进程都能重复映射。
+           改为"首个请求者独占"(即启动时第一个映射它的合成器进程),
+           之后一律拒绝 —— 不依赖 pid 编号, 对启动顺序变化健壮 */
+        static volatile uint32_t fb_claimed = 0;
+        if (__atomic_test_and_set(&fb_claimed, __ATOMIC_ACQUIRE)) return 0;
         uint64_t fb_siz = Fb->BufferSize;
         kinfoln("FB Base Address: 0x%X, Size: %lu bytes", Fb->BaseAddress, fb_siz);
         pagemap_t *pm = Schedule::this_proc()->pagemap;

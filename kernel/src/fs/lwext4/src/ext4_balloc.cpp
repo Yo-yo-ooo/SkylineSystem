@@ -250,7 +250,7 @@ int32_t ext4_balloc_free_blocks(struct ext4_inode_ref *inode_ref,
 		 * and and last block belongs to other bg.*/
 		if (bg_last != bg_first) {
 			ext4_dbg(DEBUG_BALLOC, DBG_WARN "FLEX_BG: disabled & "
-				"bg_last: %"PRIu32" bg_first: %"PRIu32"\n",
+				"bg_last: %" PRIu32" bg_first: %" PRIu32"\n",
 				bg_last, bg_first);
 		}
 	}

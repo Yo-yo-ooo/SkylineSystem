@@ -1,6 +1,8 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
-// motified from https://github.com/armon/libart/blob/master/src/art.c
+/* Adapted from libart (MIT License) — https://github.com/armon/libart
+   Original copyright: Copyright (c) 2012, Armon Dadgar.
+   The original MIT notice must be preserved; see LICENSES/MIT. */
 #include <klib/algorithm/art.h>
 #include <klib/klibc.h>
 #include <stdbool.h>

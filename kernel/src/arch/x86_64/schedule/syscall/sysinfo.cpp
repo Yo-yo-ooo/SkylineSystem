@@ -223,6 +223,12 @@ uint64_t sys_sysinfo(uint64_t arg, GENERATE_IGN5()){
     }
 
     /* ==================== 映射路径 (arg == 0) ==================== */
+    /* Live-refresh dynamic counters here too: a CPU-bound userspace that
+       never lets the idle thread run would otherwise read a stale snapshot
+       left from early boot. These are cheap O(1) reads. */
+    __atomic_store_n(&kinfo->mem_free, PMM::FreePages() << 12, __ATOMIC_RELAXED);
+    __atomic_store_n(&kinfo->uptime_ms, PIT::TimeSinceBootMS(), __ATOMIC_RELAXED);
+
     uint64_t va = VMM::VMA::InternalAlloc(pm, kinfo_npages,
                                            MM_READ | MM_USER, 0);
     if (!va) return (uint64_t)(-ENOMEM);

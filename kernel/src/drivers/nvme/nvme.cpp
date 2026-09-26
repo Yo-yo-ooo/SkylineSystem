@@ -448,12 +448,16 @@ bool NVME::InitIntr() {
     if (this->flags & NVME_FLAG_MISIX) {
         kinfo("[NVME: %p]: use msix\n", (uint64_t)this);
         int32_t vecNum = PCI_MSIX_CAP_VecNum(this->MSIX);
-        vecNum = this->INTRNUM = min(vecNum, this->INTRNUM);
+        this->INTRNUM = min(vecNum, this->INTRNUM);
+        /* 修复: INTRNUM<2 -> nIO=INTRNUM-1=0 -> rw.cpp "% nIO" 除零。
+           至少保留 2; MSI-X 表项仅初始化前 vecNum 个(其余队列由
+           Request 的轮询路径兜底, 不会挂起) */
+        if (this->INTRNUM < 2) this->INTRNUM = 2;
 
         PCI::PCI_MSIX_CAP *Cap = PCI::GetMSIXCap(this->phdr);
         PCI::PCI_MSIX_TABLE* Tbl = (PCI::PCI_MSIX_TABLE*)PCI::GetMSIXTblBaseAddr(this->phdr, Cap);
         
-        for (int32_t i = 0; i < this->INTRNUM; i++){
+        for (int32_t i = 0; i < this->INTRNUM && i < vecNum; i++){
             uint32_t targetCpu = GetLWIntrCpu()->id; // 获取绑定的 CPU
             uint16_t vector = RequestFreeIRQPerCPU(); // 获取空闲向量号
 
@@ -490,6 +494,10 @@ bool NVME::InitIntr() {
    call from the MSI-X handler or by polling during bring-up; when no new entry
    has been posted the phase check ends the loop immediately. */
 void NVME::PollCQ(NVME::CmplQue *cmpq){
+    /* 修复: PollCQ 会被 MSI-X 中断处理器与本线程轮询并发调用, 对
+       Pos/Phase 的非原子更新会互相跳过条目(完成被漏收 -> 请求永久挂起)。
+       用非阻塞收割权令牌串行化; 中断上下文拿不到令牌立即返回, 无死锁。 */
+    if (__atomic_test_and_set(&cmpq->harvesting, __ATOMIC_ACQUIRE)) return;
 #define NVME_PHASE(cq) ((*(uint16_t*)(&(cq)->Entries[(cq)->Pos].Status)) & 1)
     while (NVME_PHASE(cmpq) == cmpq->Phase) {
         NVME::CmplQueEntry *entry = &cmpq->Entries[cmpq->Pos++];
@@ -504,6 +512,8 @@ void NVME::PollCQ(NVME::CmplQue *cmpq){
 
         // Account for the commands the controller consumed and advance Head.
         uint16_t consumed = (entry->SubQueHdrPtr - SQ->Head + SQ->Size) % SQ->Size;
+        /* 修复: 防御重复收割导致 consumed 超过 Load 时 uint16 下溢 */
+        if (consumed > SQ->Load) consumed = SQ->Load;
         SQ->Head = entry->SubQueHdrPtr;
         SQ->Load -= consumed;
 
@@ -517,6 +527,7 @@ void NVME::PollCQ(NVME::CmplQue *cmpq){
         }
     }
 #undef NVME_PHASE
+    __atomic_clear(&cmpq->harvesting, __ATOMIC_RELEASE);
 }
 
 void MSIXHandler(context_t *ctx){

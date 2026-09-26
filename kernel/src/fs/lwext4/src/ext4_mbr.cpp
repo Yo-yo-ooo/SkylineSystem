@@ -129,8 +129,8 @@ int32_t ext4_mbr_scan(struct ext4_blockdev *parent, struct ext4_mbr_bdevs *bdevs
 		ext4_dbg(DEBUG_MBR, "mbr_part: %d\n", (int32_t)i);
 		ext4_dbg(DEBUG_MBR, "\tstatus: 0x%x\n", pe->status);
 		ext4_dbg(DEBUG_MBR, "\ttype 0x%x:\n", pe->type);
-		ext4_dbg(DEBUG_MBR, "\tfirst_lba: 0x%"PRIx32"\n", pe->first_lba);
-		ext4_dbg(DEBUG_MBR, "\tsectors: 0x%"PRIx32"\n", pe->sectors);
+		ext4_dbg(DEBUG_MBR, "\tfirst_lba: 0x%" PRIx32"\n", pe->first_lba);
+		ext4_dbg(DEBUG_MBR, "\tsectors: 0x%" PRIx32"\n", pe->sectors);
 
 		if (!pe->sectors)
 			continue; /*Empty entry*/

@@ -6,6 +6,7 @@
 
 #if defined(__x86_64__)
   #include <arch/x86_64/smp/smp.h>
+  #include <arch/x86_64/schedule/sched.h>
   #define PMM_HAS_PCP 1   // per-CPU single-page cache
 #endif
 
@@ -434,17 +435,19 @@ void* Request(uint64_t n) {
             if (cpu->pmm_cache_count > 0)
                 return cpu->pmm_cache[--cpu->pmm_cache_count];
         
+            int64_t taken = 0;
             IrqSpinGuard g(&pmm_lock);
             void* page = alloc_pages_locked(1);
             if (page) {
-                free_pages -= 1;                        
+                free_pages -= 1; taken = 1;
                 uint32_t cached_before = cpu->pmm_cache_count;
                 for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count < PMM_PCP_MAX; i++) {
                     void* extra = alloc_pages_locked(1);
                     if (!extra) break;
                     cpu->pmm_cache[cpu->pmm_cache_count++] = extra;
                 }
-                free_pages -= (uint64_t)(cpu->pmm_cache_count - cached_before);
+                uint64_t ex = (uint64_t)cpu->pmm_cache_count - (uint64_t)cached_before;
+                free_pages -= ex; taken += (int64_t)ex;
             }
             return page;
         }
@@ -455,7 +458,7 @@ void* Request(uint64_t n) {
     {
         IrqSpinGuard g(&pmm_lock);
         page = alloc_pages_locked(n);
-        if (page) free_pages -= n;                      
+        if (page) { free_pages -= n; }
     }
     if (!page)
         kerror("PMM: out of contiguous physical memory (%lu pages)\n", (unsigned long)n);
@@ -483,7 +486,7 @@ void Free(void* ptr, uint64_t n) {
                     if (bit < bitmap_last_free) bitmap_last_free = bit;
                     flushed++;
                 }
-                free_pages += flushed;                
+                free_pages += flushed;
             }
             cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
             return;                                     
@@ -497,7 +500,7 @@ void Free(void* ptr, uint64_t n) {
 
     IrqSpinGuard g(&pmm_lock);
     mark_free(start, n);
-    free_pages += n;                                   
+    free_pages += n;
 }
 
 // --- 2MiB allocation ---
