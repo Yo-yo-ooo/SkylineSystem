@@ -327,6 +327,7 @@ static int32_t write_bgroup_block(struct ext4_blockdev *bd,
 		uint64_t bg_start_block = aux_info->first_data_block +
 					  j * info->blocks_per_group;
 		uint32_t blk_off = 0;
+		(void)blk_off; /* 修复: 仅赋值未使用 */
 
 		blk_off += aux_info->bg_desc_blocks;
 		if (has_superblock(info, j)) {
@@ -371,6 +372,7 @@ static int32_t write_bgroups(struct ext4_blockdev *bd, struct fs_aux_info *aux_i
 		uint64_t bg_start_block = aux_info->first_data_block +
 			aux_info->first_data_block + i * info->blocks_per_group;
 		uint32_t blk_off = 0;
+		(void)blk_off; /* 修复: 仅赋值未使用 */
 
 		bg_desc = (struct ext4_bgroup *)(aux_info->bg_desc_blk + k * dsc_size);
 		bg_free_blk = info->blocks_per_group -

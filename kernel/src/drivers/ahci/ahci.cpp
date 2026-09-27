@@ -154,7 +154,7 @@ namespace AHCI
 
     AHCI_NOOPT int32_t Port::FindCommandSlot()
     {
-        uint32_t cmdSlots = 32;
+        int32_t cmdSlots = 32;
         uint32_t slots = (hbaPort->sataActive | hbaPort->commandIssue);
         for (int32_t i = 0; i < cmdSlots; i++)
         {
@@ -437,7 +437,7 @@ namespace AHCI
 
             if (portType == PortType::SATA){
                 kprintf("\033[38;2;255;165;0m* SATA drive\033[0m\n");
-                SataDiskInterface* sataDiskInterface = new SataDiskInterface(port);
+                new SataDiskInterface(port); /* 修复: 构造即注册, 变量未使用 */
             }
         }
     }

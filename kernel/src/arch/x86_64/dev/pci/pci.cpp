@@ -115,7 +115,7 @@ namespace PCI
                         } */
                         //pciDevices[pciDeviceidx++] = device;
 
-                        if(device->Class == 0x060400 || (device->Class & 0xFFFF00) == 0x060400){
+                        if((uint32_t)device->Class == 0x060400){ /* 修复: Class 为 uint8_t, 显式转换保持原语义 */
                             return;
                         }
                     }
@@ -581,7 +581,7 @@ namespace PCI
     PCI::MSI_CAP32* GetMSICap(PCI::PCIHeader0 *Header){
         uint64_t BaseAddr = (uint64_t)Header;
         uint8_t *Ptr = (uint8_t*)(Header->CapabilitiesPtr + BaseAddr);
-        for(uint8_t i = 0;Ptr[1] != 0;i++){
+        for(;Ptr[1] != 0;){ /* 修复: 原 i 仅自增未使用 */
             if(Ptr[0] == 0x05){ //PCI MSI Capability ID
                 return (PCI::MSI_CAP32*)((uint64_t)Ptr);
             }
@@ -593,7 +593,7 @@ namespace PCI
     PCI::PCI_MSIX_CAP* GetMSIXCap(PCI::PCIHeader0 *Header){
         uint64_t BaseAddr = (uint64_t)Header;
         uint8_t *Ptr = (uint8_t*)(Header->CapabilitiesPtr + BaseAddr);
-        for(uint8_t i = 0;Ptr[1] != 0;i++){
+        for(;Ptr[1] != 0;){ /* 修复: 原 i 仅自增未使用 */
             if(Ptr[0] == 0x11){ //PCI MSIX Capability ID
                 return (PCI::PCI_MSIX_CAP*)((uint64_t)Ptr);
             }
@@ -636,12 +636,13 @@ namespace PCI
     uint8_t *FindCapability(PCI::PCIHeader0 *Hdr,uint8_t CapID){
         uint64_t BaseAddr = (uint64_t)Hdr;
         uint8_t *Ptr = (uint8_t*)(Hdr->CapabilitiesPtr + BaseAddr);
-        for(uint8_t i = 0;Ptr[1] != 0;i++){
+        for(;Ptr[1] != 0;){ /* 修复: 原 i 仅自增未使用 */
             if(Ptr[0] == CapID){ //PCI XXX Capability ID
                 return (uint8_t*)((uint64_t)Ptr);
             }
             Ptr = (uint8_t*)(BaseAddr + Ptr[1]);
         }
+        return nullptr; /* 修复: 原函数落空无返回值 */
     }
 
 }

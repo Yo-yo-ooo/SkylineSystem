@@ -263,7 +263,7 @@ namespace VMM{
                原三目 is_user_address(0)?...:... 两种分页模式下恒真:
                4 级下用户 VMA 可被分进非规范空洞;内核 pagemap 则 hi<lo,
                全靠 hi-lo 无符号下溢「碰巧」放行。现在语义显式。 */
-            const uint64_t hi = (lo >= HIGHER_HALF(0))
+            const uint64_t hi = (lo >= (uint64_t)HIGHER_HALF(0))
                               ? 0xFFFFFFFFFFFFFFFFULL
                               : (IsPM5LVL ? USER_SPACE_END_5LVL : 0x800000000000ULL);
             if (vma_unlikely(lo >= hi || need > hi - lo)) return 0;      /*  此后 hi-lo 恒正 */

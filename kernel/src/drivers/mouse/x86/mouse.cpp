@@ -36,7 +36,7 @@ void ps2_mouse_handler(registers *regs);
 
 
 __attribute__((aligned(PAGE_SIZE)))
-ps2_mouse_event PS2MouseEvent = {0};
+ps2_mouse_event PS2MouseEvent = {}; /* 修复: 嵌套初始化加括号告警 */
 
 uint64_t PS2_MOUSE_MemoryMap(uint64_t length, uint64_t prot,
                              uint64_t offset, uint64_t /*hint*/)

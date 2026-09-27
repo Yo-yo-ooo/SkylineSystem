@@ -114,7 +114,8 @@ namespace PIT
 
     void Sleepd(uint64_t seconds)
     {
-        Sleepd((uint64_t)(seconds * 1000));
+        /* 修复: 原递归调用自身(无限递归)且先乘后转; 应调用 Sleep(ms) */
+        Sleep(seconds * 1000);
     }
 
     uint64_t GetFrequency()

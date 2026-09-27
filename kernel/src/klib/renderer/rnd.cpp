@@ -13,10 +13,9 @@ namespace Renderer
     {
         uint64_t fbBase = (uint64_t)Fb->BaseAddress;
         uint64_t pxlsPerScanline = Fb->PixelsPerScanLine;
-        uint64_t fbHeight = Fb->Height;
 
-        for (int64_t y = 0; y < Fb->Height; y++)
-            for (int64_t x = 0; x < Fb->Width; x++)
+        for (int64_t y = 0; (uint64_t)y < Fb->Height; y++)
+            for (int64_t x = 0; (uint64_t)x < Fb->Width; x++)
                 *((uint32_t*)(fbBase + 4 * (x + pxlsPerScanline * y))) = col;
 
         //ft_ctx->clear(ft_ctx, true);       

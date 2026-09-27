@@ -101,6 +101,20 @@ override KCFLAGS += \
     -Wall -Wextra \
     -Wno-implicit-function-declaration \
     -Wno-c++11-narrowing \
+    -Wno-macro-redefined \
+    -Wno-missing-field-initializers \
+    -Wno-missing-declarations \
+    -Wno-unknown-pragmas \
+    -Wno-address-of-packed-member \
+    -Wno-null-pointer-arithmetic \
+    -Wno-null-pointer-subtraction \
+    -Wno-null-conversion \
+    -Wno-null-arithmetic \
+    -Wno-unused-parameter \
+    -Wno-unused-value \
+    -Wno-unused-function \
+    -Wno-incompatible-pointer-types-discards-qualifiers \
+    -Wno-writable-strings \
     -I$(SS_BUILD_DIR)/kernel/include \
     -I$(SS_BUILD_DIR)/ablib \
     -nostdinc \

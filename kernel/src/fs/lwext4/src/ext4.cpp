@@ -444,7 +444,6 @@ int32_t ext4_mount(struct ext4_blockdev *bd, const char *mount_point,
 
 int32_t ext4_umount(const char *mount_point)
 {
-	int32_t i;
 	int32_t r;
 	struct ext4_mountpoint *mp = 0;
 
@@ -747,7 +746,6 @@ int32_t ext4_mount_point_stats(const char *mount_point,
 int32_t ext4_mount_setup_locks(const char *mount_point,
 			   const struct ext4_lock *locks)
 {
-	uint32_t i;
 	struct ext4_mountpoint *mp = 0;
 
 
@@ -3474,7 +3472,7 @@ FS_TYPE IdentifyExtx(
     uint32_t PartitionID,
     bool Use_Virt_Image
 ){
-    uint64_t PStart;
+    uint64_t PStart = 0; /* 修复: 初始化, 防未初始化使用 */
     if(Use_Virt_Image == true){
         PStart = 0;
         goto Identify;

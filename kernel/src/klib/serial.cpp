@@ -28,6 +28,7 @@ namespace Serial
         {
             //osData.debugTerminalWindow->Log("Serial PCI CARD AT: 0x{}", ConvertHexToString(pciCard), Colors.yellow);
             uint64_t bar0 = ((PCI::PCIHeader0*)pciCard)->BAR0;
+            (void)bar0; /* 修复: 未使用 */
             //osData.debugTerminalWindow->Log("Serial PCI CARD BAR0: {}", ConvertHexToString(bar0), Colors.yellow);
             //pciIoBase = bar0;// & (~0x3);
             //pciIoBase = bar2;// & (~0x3);
@@ -130,12 +131,12 @@ namespace Serial
             io_wait(100);
         }
         
-        for (int32_t i = 0; i < 5000 && Sinb(5) & 1 == 1; i++)
+        for (int32_t i = 0; i < 5000 && (Sinb(5) & 1) == 1; i++)
             Sinb(0);
         
         Soutb(4, 0x1E);    // Set in loopback mode, test the serial chip
         
-        for (int32_t i = 0; i < 5000 && Sinb(5) & 1 == 1; i++)
+        for (int32_t i = 0; i < 5000 && (Sinb(5) & 1) == 1; i++)
             Sinb(0);
         
         Soutb(0, 0xAE);    // Test serial chip (send byte 0xAE and check if serial returns same byte)
@@ -199,7 +200,7 @@ namespace Serial
     bool _CanRead()
     {
 #ifdef __x86_64__
-        return SerialWorks && (Sinb(5) & 1 == 1);
+        return SerialWorks && ((Sinb(5) & 1) == 1); /* 修复: 加括号明确优先级 */
 #endif
     }
 

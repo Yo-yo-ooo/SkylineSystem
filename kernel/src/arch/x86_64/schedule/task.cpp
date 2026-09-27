@@ -622,7 +622,7 @@ namespace Schedule {
             __memcpy(kernel_argv[i], argv[i], size);
         }
 
-        if (envp) { while (envp[envc++]); envc -= 1; }   // 修复: envp NULL 时 envc=0
+        if (envp) { while (envp[envc++] != nullptr) {} envc -= 1; }   // 修复: envp NULL 时 envc=0
         if (envc > 0) {
             kernel_envp = (char**)kmalloc(envc * sizeof(char*));
             if (!kernel_envp) goto cleanup;

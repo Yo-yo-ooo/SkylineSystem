@@ -35,7 +35,7 @@ namespace SAF
         //assert(current->flags == FLAG_ISFOLDER);
         saf_node_folder_t* folder_node = (saf_node_folder_t*) current;
 
-        for (int i = 0; i < folder_node->num_children; i++) {
+        for (uint64_t i = 0; i < folder_node->num_children; i++) { /* 修复: 符号比较 */
             saf_node_hdr_t* child = (saf_node_hdr_t*) ((uint64_t) base + (uint64_t) folder_node->children[i]);
             if (!strcmp(buffer, child->name)) /* 修复: 原条件反了 —— 命中才递归 */
             {
@@ -110,9 +110,10 @@ namespace SAF
     dir_t initrd_dir_at(initrdMount* mount, int idx, const char* path)
     {
         // debugf("dir_at: %s (%d)", path, idx);
-        char path_cpy[strlen(path) + 1];
-        _memcpy((char*)path, path_cpy, strlen(path) + 1);
-        path_cpy[strlen(path)] = 0;;
+        char path_cpy[256]; /* 修复: 原为 VLA(C++ 扩展), 改定长 + 长度守卫 */
+        size_t plen = strlen(path);
+        if (plen >= sizeof(path_cpy)) { dir_t d = {.is_none = true}; return d; }
+        _memcpy((char*)path, path_cpy, plen + 1);
 
         saf_node_hdr_t* folder = initrd_find(path, mount->driver_specific_data, (saf_node_hdr_t*) mount->driver_specific_data);
 
@@ -132,7 +133,7 @@ namespace SAF
 
         saf_node_folder_t* folder_node = (saf_node_folder_t*) folder;
 
-        if (idx > folder_node->num_children - 1) {
+        if ((uint64_t)idx >= folder_node->num_children) { /* 修复: 符号比较 + num_children==0 下溢 */
             dir_t dir = {
                 .is_none = true,
             };

@@ -1299,7 +1299,7 @@ namespace Schedule {
         for (int32_t i = 0; i <= last; i++) {
             cpu_t *c = smp_cpu_list[i];
             if (likely(i < last)) PREFETCH_R(smp_cpu_list[i + 1]);
-            if (likely(c && i != cur_cpu->id)) LAPIC::IPI(c->lapic_id, SCHED_VEC);
+            if (likely(c && (uint32_t)i != cur_cpu->id)) LAPIC::IPI(c->lapic_id, SCHED_VEC);
         }
         LAPIC::IPI(cur_cpu->lapic_id, SCHED_VEC);
     }

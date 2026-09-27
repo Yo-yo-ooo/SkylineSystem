@@ -4,6 +4,7 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/cpu/smap.h>
 #include <klib/klib.h>
+#include <arch/x86_64/cpu.h> /* rdmsr/wrmsr/IA32_EFER */
 
 /* Global SMAP gate: true only after CR4.SMAP is set (SMP is homogeneous). */
 bool g_smap_enabled = false;
@@ -27,6 +28,18 @@ void enable_smep_smap() {
         g_smap_enabled = true;
         /* Clear any stale RFLAGS.AC left by firmware/bootloader. */
         asm volatile("clac" ::: "memory");
+    }
+
+    /* 修复(B25/W^X): 启用 NX —— CPUID 0x80000001 EDX bit 20, EFER.NXE = bit 11。
+       NXE 未启用时 PTE bit63 是保留位, 设置即 #PF, 因此此前 MM_NX 形同虚设 */
+    {
+        uint32_t neax = 0x80000001, nebx, necx, nedx;
+        asm volatile("cpuid" : "=a"(neax), "=b"(nebx), "=c"(necx), "=d"(nedx)
+                     : "a"(0x80000001) : );
+        if (nedx & (1u << 20)) {
+            uint64_t efer = rdmsr(IA32_EFER);
+            wrmsr(IA32_EFER, efer | (1ULL << 11));
+        }
     }
 }
 

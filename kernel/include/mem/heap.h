@@ -109,7 +109,9 @@ void *kcalloc(size_t numitems, size_t size);
 }
 uint64_t GetPtrPointAreaSize(void *ptr);
 
-inline void operator delete(void* p) {kfree(p);}
-inline void operator delete(void* ptr, unsigned long){kfree(ptr);}
-inline void operator delete[](void* ptr) noexcept {kfree(ptr);}
+/* 修复: 原在头文件内联定义替换版 operator delete, clang 报 -Winline-new-delete;
+   改为声明于头文件、定义于 src/mem/new.cpp */
+void operator delete(void* p);
+void operator delete(void* ptr, unsigned long);
+void operator delete[](void* ptr) noexcept;
 #include "new.hpp"

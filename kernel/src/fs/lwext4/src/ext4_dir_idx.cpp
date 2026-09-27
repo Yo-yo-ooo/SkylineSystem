@@ -931,6 +931,7 @@ static int32_t ext4_dir_dx_split_data(struct ext4_inode_ref *inode_ref,
 
 	uint32_t idx = 0;
 	uint32_t real_size = 0;
+	(void)real_size; /* 修复: 仅赋值未使用 */
 
 	/* Initialize hinfo */
 	struct ext4_hash_info hinfo_tmp;

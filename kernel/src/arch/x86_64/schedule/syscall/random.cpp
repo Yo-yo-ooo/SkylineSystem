@@ -21,7 +21,7 @@ uint64_t sys_getrandom(uint64_t buf, uint64_t size, uint64_t flags,
 {
     IGNV_3();
 	//struct iov_iter iter;
-	int ret;
+	//int ret; /* 修复: 未使用, 已删除 */
 
 	if (flags & ~(GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE))
 		return -EINVAL;

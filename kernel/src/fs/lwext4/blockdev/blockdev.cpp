@@ -132,7 +132,6 @@ static int32_t blockdev_bwrite(struct ext4_blockdev *bdev, const void *buf,
         return EOK;
     else
         return EIO;
-	return EIO;
 }
 /******************************************************************************/
 static int32_t blockdev_close(struct ext4_blockdev *bdev)

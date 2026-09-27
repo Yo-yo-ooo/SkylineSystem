@@ -2,7 +2,7 @@
 //SPDX-License-Identifier: GPL-2.0-only
 #include <arch/x86_64/rtc/rtc.h>
 #include <klib/cstr.h>
-#define CURRENT_YEAR_STR        (__DATE__ + 7)                            // Change this each year!
+#define CURRENT_YEAR_STR        (&(__DATE__[7]))                         // Change this each year!
 
 // https://wiki.osdev.org/CMOS#RTC_Update_In_Progress
 
@@ -83,6 +83,8 @@ namespace RTC
         year = get_RTC_register(0x09);
         if(century_register != 0) 
             century = get_RTC_register(century_register);
+        else
+            century = CURRENT_YEAR / 100; /* 修复: 无世纪寄存器时 century 未初始化 */
         
     
         do 
@@ -136,7 +138,7 @@ namespace RTC
             year += century * 100;
         } else {
             year += (CURRENT_YEAR / 100) * 100;
-            if(year < CURRENT_YEAR) 
+            if((int32_t)year < CURRENT_YEAR) 
             year += 100;
         }
     }

@@ -156,9 +156,11 @@ void __init x86_64_init(void){
     char *envp[] = {nullptr};
     thread_t *desktop = Schedule::NewThread(proc, 0, 0, 
         "/mp/desktop.elf", 1, argv, envp);  
+    (void)desktop;
     proc_t *proc2 = Schedule::NewProcess(true);
     thread_t *desktop2 = Schedule::NewThread(proc2, 0, 1, 
         "/mp/hw.elf", 1, argv, envp);  
+    (void)desktop2;
     /*proc_t *proc3 = Schedule::NewProcess(true);
     thread_t *desktop3 = Schedule::NewThread(proc3, 0, 1, 
         "/mp/hw2.elf", 1, argv, envp);   */

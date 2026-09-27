@@ -138,8 +138,6 @@ static inline bool RefDecPhys(uint64_t phys) {
 
     if (--found->count == 0) {
         /* 最后一个引用: 从树摘除并释放 rc_node 结构 */
-        rb_node_t hint_key = {};
-        /* rb_erase 会清 hint (若匹配), 做法是 CAS root->hint */
         rb_erase_raw(&rc_tree, &found->rb);
         rc_tree.cnt--;
         spinlock_unlock(&rc_tree_lock);
@@ -508,8 +506,9 @@ namespace VMM {
     void Init(){
         VMM::LazyTLB::Init();
         uint64_t pat = 0;
-        pat |= (0 << 0); pat |= (1 << 8); pat |= (4 << 16); pat |= (6 << 24);
-        pat |= (5 << 32); pat |= (1 << 40); pat |= (7 << 48); pat |= (7 << 56);
+        pat |= (0u << 0); pat |= (1u << 8); pat |= (4u << 16); pat |= (6u << 24);
+        /* 修复: 原 (5 << 32) 等为 int 左移 >= 宽度, UB(-Wshift-count-overflow) */
+        pat |= (5ULL << 32); pat |= (1ULL << 40); pat |= (7ULL << 48); pat |= (7ULL << 56);
         wrmsr(0x277, pat);
 
         struct limine_executable_address_response *ea = limine_executable_address.response;
@@ -553,6 +552,7 @@ namespace VMM {
         // exists; stores an address once (volatile, unelidable), never calls it.
         static const void *volatile vma_split_anchor;
         vma_split_anchor = (const void *)&VMM::VMA::SplitRegion;
+        (void)vma_split_anchor; /* 修复: 仅赋值未使用 */
     }
 
     void Map4K(pagemap_t *pm, uint64_t vaddr, uint64_t paddr, uint64_t flags){
@@ -775,6 +775,7 @@ namespace VMM {
             }
             void* p = PMM::Request();
             if (unlikely(!p)) {
+                PMM::dbg_dump();
                 kerrorln("PMM: OOM in Alloc");
                 goto err_a;
             }
@@ -866,7 +867,7 @@ namespace VMM {
             VMM::VMA::SetStart(pm, parent->vma_head->start, 0);
             vma_region_t *r = parent->vma_head;
             do {
-                if (r->start >= HIGHER_HALF(0)) { r = r->next; continue; }
+                if (r->start >= (uint64_t)HIGHER_HALF(0)) { r = r->next; continue; }
                 uint64_t v = r->start, mapped = 0;
                 while (mapped < r->page_count) {
                     Internal::PageInfo info = VMM::Internal::GetPageInfo(parent, v);
@@ -907,7 +908,7 @@ namespace VMM {
             while (r != pm->vma_head) {
                 vma_region_t *next = r->next;
                 if (likely(next != pm->vma_head)) PREFETCH_RH(next);
-                if (r->start < HIGHER_HALF(0)) {
+                if (r->start < (uint64_t)HIGHER_HALF(0)) {
                     uint64_t v = r->start, end = v + r->page_count * PAGE_SIZE;
                     if (r->flags & VMM_SHARED_BIT) FreeSharedRegion(pm, v, end);
                     else                            FreeOwnedRegion(pm, v, end);
@@ -970,6 +971,7 @@ namespace VMM {
         uint64_t cr2 = 0; __asm__ volatile ("movq %%cr2, %0" : "=r"(cr2));
         uint64_t ec = ctx->error_code;
         bool p = ec & 1, wr = ec & 2, us = ec & 4, id = ec & 16;
+        (void)p; /* 修复: p 未使用, 显式忽略 */
 
         thread_t *t = Schedule::this_thread();
         if (unlikely(!smp_started || !this_cpu() || !t)) {

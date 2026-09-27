@@ -10,16 +10,16 @@
 #include <arch/x86_64/rtc/rtc.h>
 #include <arch/x86_64/cpu/smap.h>
 
-static const int32_t CLOCK_REALTIME = 0;
+static const int32_t CLOCK_REALTIME __attribute__((unused)) = 0;
 static const int32_t CLOCK_MONOTONIC = 1;
-static const int32_t CLOCK_PROCESS_CPUTIME_ID = 2;
-static const int32_t CLOCK_THREAD_CPUTIME_ID = 3;
-static const int32_t CLOCK_REALTIME_COARSE = 4;
-static const int32_t CLOCK_MONOTONIC_RAW = 4;
-static const int32_t CLOCK_MONOTONIC_COARSE = 6;
-static const int32_t CLOCK_BOOTTIME = 7;
-static const int32_t CLOCK_TAI = 11;
-static const int32_t CLOCK_BOOTTIME_ALARM = 9;
+static const int32_t CLOCK_PROCESS_CPUTIME_ID __attribute__((unused)) = 2;
+static const int32_t CLOCK_THREAD_CPUTIME_ID __attribute__((unused)) = 3;
+static const int32_t CLOCK_REALTIME_COARSE __attribute__((unused)) = 4;
+static const int32_t CLOCK_MONOTONIC_RAW __attribute__((unused)) = 4;
+static const int32_t CLOCK_MONOTONIC_COARSE __attribute__((unused)) = 6;
+static const int32_t CLOCK_BOOTTIME __attribute__((unused)) = 7;
+static const int32_t CLOCK_TAI __attribute__((unused)) = 11;
+static const int32_t CLOCK_BOOTTIME_ALARM __attribute__((unused)) = 9;
 
 uint64_t mktime (uint32_t year, uint32_t mon,
     uint32_t day, uint32_t hour,

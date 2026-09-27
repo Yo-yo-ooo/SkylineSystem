@@ -130,7 +130,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     spinlock_lock(&smp_lock);
     kpok("Initialized CPU (Logical:%d, APIC:%d).\n", logical_id, mp_info->lapic_id);
     started_count++;
-    if (logical_id > smp_last_cpu) 
+    if ((int64_t)logical_id > (int64_t)smp_last_cpu) 
         smp_last_cpu = logical_id; 
     spinlock_unlock(&smp_lock);
     

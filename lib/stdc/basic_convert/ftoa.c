@@ -186,16 +186,10 @@ nanzero:
 
 unsigned int ftoahex(char *s, float f, int *K)
 {
-#if defined(__clang__)
-/* 修复: -Wunterminated-string-initialization 是 Clang 专有告警, gcc 不认,
-   -Werror 下未知 pragma 变成硬错误; 仅对 Clang 启用 */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunterminated-string-initialization"
-#endif
     static const char hex[16] = "0123456789abcdef";
-#if defined(__clang__)
 #pragma GCC diagnostic pop
-#endif
     uint32_t k = 6, uval = 0, tmp;
     int mk = 0;
     _f32 f2;

@@ -190,6 +190,24 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
               if (phdr->p_memsz > filesz)
                   _memset((void*)(eff_vaddr + filesz), 0, phdr->p_memsz - filesz);
             }
+            /* 修复(B25/W^X): 装载完成后按 ELF 段权限收紧 —— PF_X=1 可执行,
+               PF_W=2 可写; 不可执行段加 NX, 不可写段去掉 W(需 EFER.NXE 已启用) */
+            if (!(phdr->p_flags & 1) || !(phdr->p_flags & 2)) {
+                uint64_t prot_flags = MM_READ | MM_USER |
+                                      ((phdr->p_flags & 2) ? MM_WRITE : 0) |
+                                      ((phdr->p_flags & 1) ? 0 : MM_NX);
+                for (uint64_t p = start; p < end; p += PAGE_SIZE) {
+                    VMM::Internal::PageInfo pi = VMM::Internal::GetPageInfo(pagemap, p);
+                    if (pi.size == PAGE_2MB) {
+                        VMM::Map2M(pagemap, p, pi.phys, prot_flags);
+                        __asm__ volatile("invlpg (%0)" : : "r"(p) : "memory");
+                        p += PAGE_2MB - PAGE_SIZE;
+                    } else if (pi.size == PAGE_SIZE) {
+                        VMM::Map4K(pagemap, p, pi.phys, prot_flags);
+                        __asm__ volatile("invlpg (%0)" : : "r"(p) : "memory");
+                    }
+                }
+            }
             if (end > max_vaddr)
                 max_vaddr = end;
             kinfoln("ELF LOADER PT_LOAD: vaddr=[0x%lx~0x%lx], filesz=0x%lx, memsz=0x%lx, flags=0x%x",

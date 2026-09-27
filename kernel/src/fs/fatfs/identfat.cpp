@@ -76,7 +76,7 @@ FS_TYPE IdentifyFat(
     uint32_t PartitionID,bool Use_Virt_Image
 ){
     uint64_t nclst;
-    uint64_t PStart;
+    uint64_t PStart = 0; /* 修复: 初始化, 防未初始化使用 */
     uint8_t buffer[36];
     char FSName[8];
     uint32_t fasize,tsect,sysect;

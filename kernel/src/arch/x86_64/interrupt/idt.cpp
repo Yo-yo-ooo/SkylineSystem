@@ -139,7 +139,8 @@ extern "C" cpu_t* GetLWIntrCpu(){
 
 extern "C" void idt_irq_handler(context_t *ctx) {
     cpu_t* cpu = this_cpu();
-    if (!cpu || !cpu->handlers) {
+    /* 修复: cpu->handlers 是数组成员, 取址恒真, 原 !cpu->handlers 为死条件 */
+    if (!cpu) {
         kerror("CPU or Handlers not initialized for IDT %d\n", ctx->int_no);
         if (ctx->int_no >= 0x20 && ctx->int_no < 0x40) LAPIC::EOI();
         return;

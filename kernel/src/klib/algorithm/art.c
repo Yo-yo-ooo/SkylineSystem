@@ -109,6 +109,7 @@ static art_node* alloc_node(uint8_t type) {
             break;
         default:
             Panic("Abort!");
+            return NULL; /* 修复: 原落空后 n 未初始化即被解引用 */
     }
     n->type = type;
     return n;
@@ -748,7 +749,7 @@ static int32_t prefix_mismatch(const art_node *n, const uint8_t *key, int32_t ke
      */
     if (unlikely(n->partial_len > MAX_PREFIX_LEN)) {
         // Prefix is longer than what we've checked, find a leaf for full comparison
-        art_leaf *l = minimum(n);   /* [栈安全] 已迭代化 */
+        art_leaf *l = minimum((art_node*)n);   /* 修复: minimum 参数非 const, 显式转换 */
         /* ========== 性能修复：限制比较上限为节点前缀总长度，避免多余比较 ========== */
         max_cmp = _min__art(_min__art((int32_t)l->key_len, key_len) - depth, n->partial_len);
         for (; idx < max_cmp; idx++) {

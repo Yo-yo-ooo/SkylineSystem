@@ -217,7 +217,9 @@ static void processEvent(volatile TRB* evt) {
             uint32_t residual = evt->status & 0xFFFFFFu;
 
             // 1. Advance the ring dequeue pointer past the completed TRB.
-            if (slotID > 0 && slotID <= MAX_SLOTS) {
+            /* 修复: slotID 为 uint8_t, <= MAX_SLOTS(256) 恒真且允许越界访问
+               g_slots[256]; 改为 < MAX_SLOTS */
+            if (slotID > 0 && (uint32_t)slotID < MAX_SLOTS) { /* 修复: uint8<256 恒真告警 */
                 for (int i = 0; i < 31; i++) {
                     TRBRingState* ring = &g_slots[slotID].rings[i];
                     if (ring->base) {

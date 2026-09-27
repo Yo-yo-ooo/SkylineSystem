@@ -443,7 +443,7 @@ bool NVME::InitIntr() {
         return false;
     }else{this->flags |= NVME_FLAG_MISIX;}
 
-    this->INTRNUM = max(2, min(NVME_MAX_INTRNUM, smp_cpu_count));
+    this->INTRNUM = (int32_t)max(2u, min((uint32_t)NVME_MAX_INTRNUM, (uint32_t)smp_cpu_count));
     
     if (this->flags & NVME_FLAG_MISIX) {
         kinfo("[NVME: %p]: use msix\n", (uint64_t)this);
@@ -535,7 +535,7 @@ void MSIXHandler(context_t *ctx){
     uint8_t vector = ctx->int_no & 0xFF;
 
     // Resolve the instance and queue through the global routing table.
-    if (vector >= 256 || !nvme_irq_routes[vector].valid) {
+    if (!nvme_irq_routes[vector].valid) { /* 修复: vector 为 uint8_t, >=256 恒假 */
         kerror("Spurious NVME interrupt on CPU %d, Vector %d\n", cpuid, vector);
         return;
     }

@@ -19,26 +19,14 @@
 * along with this program; if not, write to the Free Software
 * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
 */
+#pragma once
 #include <stddef.h>
 #include <klib/klib.h>
 
-inline void *operator new(size_t, void *ptr_) throw() {return ptr_;}
-inline void* operator new[](unsigned long size) {
-    void* ptr;
-    if (ptr = kmalloc(size)) {
-        return ptr;
-    }
-    kerror("BAD MALLOC %p", ptr);
-    for (;;) {
-#ifdef __x86_64__
-        asm volatile("hlt");
-#elif defined (__aarch64__) || defined (__riscv)
-        asm volatile("wfi");
-#elif defined (__loongarch64)
-        asm volatile("idle 0");
-#endif
-    }
-}
+/* 修复: 原在头文件内联定义替换版 operator new, clang 报 -Winline-new-delete;
+   改为声明于头文件、定义于 src/mem/new.cpp(避免多重定义, 消 222 条警告) */
+void *operator new(size_t, void *ptr_) throw();
+void *operator new[](unsigned long size);
 
 extern const char* _X__file__;
 extern const char* _X__func__;

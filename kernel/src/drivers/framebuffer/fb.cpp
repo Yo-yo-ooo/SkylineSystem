@@ -46,6 +46,7 @@ namespace FrameBufferDevice{
         default:
             break;
         }
+        return 0; /* 修复: 原落空无返回值 */
     }
 
     void Init(){

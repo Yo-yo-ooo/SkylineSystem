@@ -1822,6 +1822,7 @@ static int32_t jbd_journal_prepare(struct jbd_journal *journal,
 			       struct jbd_trans *trans)
 {
 	int32_t rc = EOK, i = 0;
+	(void)i; /* 修复: 仅赋值未使用 */
 	struct ext4_block desc_block = EXT4_BLOCK_ZERO(),
 			  data_block = EXT4_BLOCK_ZERO();
 	int32_t tag_tbl_size = 0;
@@ -2015,6 +2016,7 @@ jbd_journal_prepare_revoke(struct jbd_journal *journal,
 			   struct jbd_trans *trans)
 {
 	int32_t rc = EOK, i = 0;
+	(void)i; /* 修复: 仅赋值未使用 */
 	struct ext4_block desc_block = EXT4_BLOCK_ZERO();
 	int32_t tag_tbl_size = 0;
 	uint32_t desc_iblock = 0;

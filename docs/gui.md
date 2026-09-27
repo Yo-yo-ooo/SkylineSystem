@@ -17,11 +17,11 @@
 
 
 ```
-在线 CPU 数 N  ← sys\_sysinfo(16)
+在线 CPU 数 N  ← sys\_sysinfo(0)
 
 屏幕水平切成 N 条带（disjoint Y range）
 
-每条带 pin 一个 worker 渲染
+主线程渲染条带 0, 其余 N-1 条带各起一个 worker 渲染
 ```
 
 

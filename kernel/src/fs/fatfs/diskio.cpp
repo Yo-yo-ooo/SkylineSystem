@@ -41,8 +41,7 @@ DSTATUS disk_initialize (
 	BYTE pdrv				/* Physical drive nmuber to identify the drive */
 )
 {
-	DSTATUS stat;
-	int32_t result;
+/* 修复: 未使用变量已删除(原 DSTATUS stat; int32_t result;) */
 /*
 	switch (pdrv) {
 	case DEV_RAM :
