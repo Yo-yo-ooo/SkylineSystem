@@ -165,7 +165,17 @@ static bool file_cache_should_evict(file_cache_cpu_t *s, file_cache_entry_t *cur
 
 #pragma region LRU & Memory Management
 
+/* 修复(#GP): LRU 走链前校验指针——内核对象均为高半区(HHDM)地址,
+   非规范/低半区指针必为已释放内存复用后的垃圾, 直接停止遍历 */
+static inline bool fc_bad_ptr(const void *p) {
+    return ((uint64_t)p >> 48) != 0xFFFF;
+}
+
 static inline void fc_lru_remove(file_cache_cpu_t *s, file_cache_entry_t *e) {
+    /* 修复(#GP): 幂等化——条目已被摘链时(双删路径)直接返回,
+       否则会经已释放条目的垃圾指针写坏 lru_head/lru_tail */
+    if (unlikely(!e->lru_prev && !e->lru_next && s->lru_head != e && s->lru_tail != e))
+        return;
     if (e->lru_prev) e->lru_prev->lru_next = e->lru_next;
     else             s->lru_head = e->lru_next;
     if (e->lru_next) e->lru_next->lru_prev = e->lru_prev;
@@ -233,13 +243,14 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
     bool hit = false;
 
     for (file_cache_entry_t *cur = s->lru_head; cur && (uint32_t)scan_cnt < s->evict_scan_window; cur = cur->lru_next) {
+        if (unlikely(fc_bad_ptr(cur))) break; /* 修复(#GP): 链上垃圾指针, 停止 */
         if (likely(cur->lru_next)) PREFETCH_R(cur->lru_next);   // 优化: 预取 LRU 下一节点
 
         if (unlikely(cur->pending_reclaim && cur->pin_count == 0)) {
             /* 原实现不做 art_delete —— CRC 校验失败的条目仍挂在 ART 中,
                此处释放后 ART 残留悬垂指针。补上 art_delete (幂等, 不在树中返回 NULL) */
             void *av = art_delete(&s->index, cur->key, cur->key_len);
-            (void)av;
+            if (unlikely(av == NULL)) { cur = cur->lru_next; continue; } /* 修复(#GP): 已摘除, 勿双删 */
             fc_lru_remove(s, cur);
             s->total_cache_bytes -= cur->data_len;
             if (cur->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= cur->data_len;
@@ -728,7 +739,12 @@ void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
             /* 防御性 art_delete —— pending_reclaim 条目可能仍在 ART 中
                (如 CRC 失败路径设置标志后无人 put), 不删除会留下悬垂指针 */
             void *av = art_delete(&s->index, e->key, e->key_len);
-            (void)av;
+            if (unlikely(av == NULL)) {
+                /* 修复(#GP): 已不在 ART = 已被 pick_and_unlink_victim 等路径
+                   摘除并释放, 不能再 lru_remove/free, 否则写坏 LRU(双删) */
+                spinlock_unlock(&s->lock);
+                return;
+            }
             fc_lru_remove(s, e);
             s->total_cache_bytes -= e->data_len;
             if (e->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= e->data_len;
@@ -894,6 +910,10 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
         exist->total_io_len += data_len;
         exist->is_dirty = is_dirty;
         exist->writeback_retries = 0;
+        /* 修复(#GP): 复用条目必须清掉 pending/INVALID 状态, 否则后续 put
+           会按"待回收"路径再次摘链释放(双删) */
+        exist->state = FC_STATE_CACHED;
+        exist->pending_reclaim = false;
         exist->access_freq = (exist->access_freq == 0) ? 1 : exist->access_freq + 1;
         if (file_size > 0) exist->file_size = file_size;
         if (file_id != 0) exist->file_id = file_id;
@@ -1190,6 +1210,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
     file_cache_entry_t *cur = s->lru_head;
     while (cur && (uint32_t)vic_cnt < dyn_flush_batch) { /* 修复: 符号比较 */
         file_cache_entry_t *next = cur->lru_next;
+        if (unlikely(next && fc_bad_ptr(next))) break; /* 修复(#GP): 链上垃圾指针, 停止 */
         if (likely(next)) PREFETCH_R(next);   // 优化
         if (unlikely(cur->pending_reclaim && cur->pin_count == 0)) {
             void *art_val = art_delete(&s->index, cur->key, cur->key_len);
@@ -1280,6 +1301,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
         if (dyn_quota_batch > 512) dyn_quota_batch = 512;
 
         while (e_quota && quota_scan_cnt < dyn_quota_batch && (uint32_t)vic_cnt < dyn_flush_batch) {
+            if (unlikely(fc_bad_ptr(e_quota))) break; /* 修复(#GP): lru_tail/链上垃圾指针 */
             file_cache_entry_t *prev = e_quota->lru_prev;
             if (likely(prev)) PREFETCH_R(prev);   // 优化: 从尾向头扫描预取前驱
             if (e_quota->file_id != 0 && e_quota->pin_count == 0 && e_quota->state == FC_STATE_CACHED && !e_quota->is_dirty) {
@@ -1334,6 +1356,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
 
     while (cur && (uint32_t)scan_cnt < dyn_reverse_scan && (uint32_t)vic_cnt < dyn_flush_batch) {
         file_cache_entry_t *next = cur->lru_next;
+        if (unlikely(next && fc_bad_ptr(next))) break; /* 修复(#GP): 链上垃圾指针, 停止 */
         if (likely(next)) PREFETCH_R(next);   // 优化
         if (cur->file_size > batch_max_size) batch_max_size = cur->file_size;
         if (cur->pin_count == 0 && cur->state == FC_STATE_CACHED && !cur->is_dirty) {
