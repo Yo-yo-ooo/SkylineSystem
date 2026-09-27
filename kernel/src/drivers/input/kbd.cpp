@@ -10,18 +10,33 @@
 
 namespace Kbd {
 
-/* Single shared event page: kernel produces under g_lock, clients read
-   (mmap read-only) with their own cursors. Fits in one 4 KiB page. */
+/* Single shared event page: kernel produces under g_lock; clients consume
+   events and publish their own reader cursors, so the mapping is user
+   writable. Fits in one 4 KiB page. */
 __attribute__((aligned(PAGE_SIZE)))
 static KbdShared g_shared;
 static spinlock_t g_lock = 0;
+static uint64_t g_lost = 0;   /* events overwritten before the slowest reader */
 
 void Post(uint16_t key, uint8_t action, uint8_t mods) {
-    /* 修复: Post 可被 IRQ1 中断路径调用(keyboard.cpp 的键盘 ISR), 普通
-       spinlock_lock 若与本 CPU 上正在持锁的上下文重入将永久自旋(同核
-       自死锁); 换 irqsave 版本关中断后再拿锁。 */
+    /* Post may run from the IRQ1 path; use the irqsave lock so a context
+       already holding g_lock on this CPU cannot self-deadlock. */
     uint64_t rflags = spin_lock_irqsave(&g_lock);
     uint64_t h = g_shared.head;
+
+    /* Before overwriting the slot of event (h-CAP), observe the slowest
+       active reader; if it has not consumed that event the overwrite loses it. */
+    if (h >= KBD_RING_CAP) {
+        uint64_t slowest = 0; bool any = false;
+        for (uint32_t i = 0; i < KBD_MAX_READERS; i++) {
+            uint64_t c = g_shared.consumer[i];
+            if (c == 0) continue;
+            uint64_t s = c - 1;
+            if (!any || s < slowest) { slowest = s; any = true; }
+        }
+        if (any && slowest <= h - KBD_RING_CAP) g_lost++;
+    }
+
     KbdEvent& e = g_shared.ring[h & (KBD_RING_CAP - 1u)];
     e.key = key;
     e.action = action;
@@ -31,11 +46,15 @@ void Post(uint16_t key, uint8_t action, uint8_t mods) {
     spin_unlock_irqrestore(&g_lock, rflags);
 }
 
-/* Map the shared event page into the calling GUI process (user, NX). */
+uint64_t LostCount() {
+    return __atomic_load_n(&g_lost, __ATOMIC_RELAXED);
+}
+
+/* Map the shared event page into the calling GUI process (user, RW, NX). */
 static uint64_t KbdMmap(uint64_t /*len*/, uint64_t /*prot*/,
                         uint64_t /*off*/, uint64_t /*hint*/) {
     pagemap_t* pm = Schedule::this_proc()->pagemap;
-    uint64_t flags = MM_USER | VMM_FLAG_PRESENT | MM_NX;
+    uint64_t flags = MM_USER | VMM_FLAG_PRESENT | MM_WRITE | MM_NX;
 
     uint64_t phys = VMM::GetPhysics(kernel_pagemap, (uint64_t)&g_shared);
     if (!phys) return 0;

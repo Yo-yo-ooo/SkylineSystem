@@ -10,4 +10,5 @@
 namespace Kbd {
     void Post(uint16_t key, uint8_t action, uint8_t mods);
     void Init();
+    uint64_t LostCount();
 }

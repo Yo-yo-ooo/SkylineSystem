@@ -3473,6 +3473,8 @@ FS_TYPE IdentifyExtx(
     bool Use_Virt_Image
 ){
     uint64_t PStart = 0; /* 修复: 初始化, 防未初始化使用 */
+    VDL* d = Dev::GetSDEV(DriverType,DriverID);
+    if (!d) return {PARTITION_TYPE_UNKNOWN,5};
     if(Use_Virt_Image == true){
         PStart = 0;
         goto Identify;
@@ -3483,8 +3485,7 @@ FS_TYPE IdentifyExtx(
     }else{
 Identify:
         struct ext4_sblock sb;
-        Dev::SetSDev(DriverType,DriverID);
-        if(Dev::ReadBytes(
+        if(Dev::ReadBytes(d,
             PStart + EXT4_SUPERBLOCK_OFFSET,
             EXT4_SUPERBLOCK_SIZE,&sb) == false)
             return {PARTITION_TYPE_UNKNOWN,6};

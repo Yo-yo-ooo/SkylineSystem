@@ -459,7 +459,8 @@ int main(){
     uint64_t kbdAddr = syscall(SYSCALL_DEV_MMAP, (uint64_t)KBD_DEV_TYPE,
                                0, 0, 0, 0, 0);
     if ((int64_t)kbdAddr > 0) wmKbd = (KbdShared*)kbdAddr;
-    uint64_t wmKbdCursor = 0;
+    int wmKbdSlot = wmKbd ? kbd_reader_register(wmKbd) : -1;
+    uint64_t wmKbdCursor = wmKbdSlot >= 0 ? kbd_reader_pos(wmKbd, wmKbdSlot) : 0;
 
     /* Two independent layers:
        - SCENE (wallpaper + windows): composited off-screen and presented at
@@ -523,11 +524,13 @@ int main(){
            own). Global shortcuts would be handled here; text goes to notepad. */
         if (wmKbd) {
             uint64_t kh = __atomic_load_n(&wmKbd->head, __ATOMIC_ACQUIRE);
+            wmKbdCursor = kbd_reader_resync(wmKbd, wmKbdCursor);
             while (wmKbdCursor < kh) {
                 KbdEvent ke = wmKbd->ring[wmKbdCursor & (KBD_RING_CAP - 1u)];
                 (void)ke;
                 wmKbdCursor++;
             }
+            if (wmKbdSlot >= 0) kbd_reader_setpos(wmKbd, wmKbdSlot, wmKbdCursor);
         }
 
         uint64_t now = rdtsc64();

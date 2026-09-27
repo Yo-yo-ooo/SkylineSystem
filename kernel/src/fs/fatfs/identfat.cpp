@@ -81,14 +81,15 @@ FS_TYPE IdentifyFat(
     char FSName[8];
     uint32_t fasize,tsect,sysect;
     uint16_t nrsv;
+    VDL* d = Dev::GetSDEV(DriverType,DriverID);
+    if (!d) return {PARTITION_TYPE_UNKNOWN,5};
     if(Use_Virt_Image == true)
         PStart = 0;
     else{
-        Dev::SetSDev(DriverType,DriverID);
         if(GetPartitionStart(DriverType,DriverID,PartitionID,PStart) != 0)
             return {PARTITION_TYPE_UNKNOWN,5};
     }
-    if(Dev::ReadBytes(PStart + 3,8,FSName) == false){
+    if(Dev::ReadBytes(d,PStart + 3,8,FSName) == false){
             return {PARTITION_TYPE_UNKNOWN,6};
     /*A simple check of exfat 
     Some Partition may not write "EXFAT   " 
@@ -97,7 +98,7 @@ FS_TYPE IdentifyFat(
     }elif(strcmp(FSName,"EXFAT   ") == 0){
             return {PARTITION_TYPE_EXFAT,0};
     }else{
-        if(Dev::ReadBytes(PStart,36,buffer) == false)
+        if(Dev::ReadBytes(d,PStart,36,buffer) == false)
             return {PARTITION_TYPE_UNKNOWN,6};
 
 //check_eexfat: /*Check FS type except ExFat*/

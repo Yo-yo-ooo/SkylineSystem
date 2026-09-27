@@ -128,9 +128,12 @@ typedef struct cpu_t {
     struct shootdown_req {
         pagemap_t *pm;
         uint64_t   vaddr;
-        uint8_t    type; // 1=单页, 2=单PM全刷, 3=全局全刷
+        uint8_t    type;    // 1=page, 2=full pm, 3=global
+        int8_t     ack_cpu; // initiator CPU to ACK after servicing; -1 = none
     } shootdown_queue[TLB_SHOOTDOWN_QMAX];
-    volatile uint32_t shootdown_count;
+    volatile uint32_t shootdown_head;  // FIFO consumer index (this CPU)
+    volatile uint32_t shootdown_tail;  // FIFO producer index (initiators)
+    volatile int32_t  shootdown_acks;  // initiator: outstanding ACK counter
     bool ISSMEP_ENABLEED = false;
     bool ISSMAP_ENABLEED = false;
     file_cache_cpu_t *file_cache;

@@ -8,17 +8,17 @@
 │  programs/  —— 窗口管理器、控制台、合成器 (MIT)           │
 ├─────────────────────────────────────────────────────────┤
 │  lib/  —— 自由 standing libc (printf/string/malloc/TTF)   │
-│  系统调用边界 (syscalln.h, 共 17 号)                     │
+│  系统调用边界 (syscalln.h, 内核共注册 25 个槽位)            │
 ├─────────────────────────────────────────────────────────┤
 │  内核 (GPL-2.0-only)                                     │
 │  ├─ 调度   schedule/   3EVDF、线程、信号、定时器          │
-│  ├─ 内存   vmm/ mem/   五级页表、PMM、SLUB、VMA          │
+│  ├─ 内存   vmm/ mem/   4级页表(5级预留)、PMM、SLUB、VMA   │
 │  ├─ 并发   smp/        per-CPU、AP bring-up、IPI         │
 │  ├─ 中断   interrupt/  GDT/IDT/ISR、LAPIC/IOAPIC/PIC     │
-│  ├─ 文件   fs/         VFS(fd/fc)、SAF、lwext4、FAT      │
-│  ├─ 驱动   drivers/    NVMe/AHCI/ATA、USB(xHCI)、PS/2、FB│
-│  ├─ 网络   net/        lwip 移植 (骨架阶段)               │
-│  └─ 数据结构 klib/algorithm/  ART 基数树、RBTree、hashmap │
+│  ├─ 文件   fs/         VFS(fd/fc)、SAF、lwext4、FAT(空壳) │
+│  ├─ 驱动   drivers/    NVMe/AHCI、USB(xHCI)、PS/2、FB     │
+│  ├─ 网络   net/        lwIP vendored 但从未初始化(死代码)  │
+│  └─ 数据结构 klib/algorithm/  ART、RBTree、hashmap(改编)  │
 ├─────────────────────────────────────────────────────────┤
 │  Limine 引导协议 (BIOS + UEFI) → 进入 64-bit 直接执行     │
 └─────────────────────────────────────────────────────────┘
@@ -32,7 +32,7 @@
 |---|---|
 | `kernel/src/arch/x86_64/` | 架构相关：`schedule/`、`vmm/`、`smp/`、`interrupt/`、`lapic/`、`ioapic/`、`pci/`、`drivers/` |
 | `kernel/src/mem/` | `pmm.cpp`（物理页）、`heap.cpp` / `new.cpp` / `new2.cpp`（SLUB） |
-| `kernel/src/klib/algorithm/` | `art.c`（自适应基数树）、`hashmap.c`、`rbtree`、`queue` |
+| `kernel/src/klib/algorithm/` | `art.c`（自适应基数树，**改编自 libart/MIT，归属已恢复**）、`hashmap.c`（**改编自 tidwall/hashmap.c/MIT**）、`rbtree`、`queue` |
 | `kernel/src/fs/` | `fc.cpp`（文件缓存）、`fd.cpp`（文件描述符）、`saf/`、`fatfs/`、`lwext4/` |
 | `kernel/include/` | 与 `src` 镜像的头文件树 |
 | `programs/` | 用户态：`desktop/`（WM+合成器）、`helloworld*/` |
@@ -40,7 +40,7 @@
 | `ablib/` | 手写高频 libc 原语（memcpy/memset，AVX/AVX2 分发） |
 | `res/scripts/` | QEMU 启动脚本（Linux / WSL / Windows） |
 
-> `lwext4`、`fatfs`、`lwip`、`flanterm`、`limine-protocol` 是第三方移植，不属于自研。
+> `lwext4`、`fatfs`、`lwip`、`flanterm`、`limine-protocol`、`stb_truetype` 是第三方移植/借用，不属于自研。lwIP 从未初始化（编译进镜像但无调用者）。
 
 ## 3. 启动时序
 
@@ -53,7 +53,7 @@ Serial 输出就位
   → IDT
   → FPU（不支持则 hcf）
   → PMM（物理页）
-  → VMM（内核页表、五级映射）
+  → VMM（内核页表、4 级映射；5 级路径编译外）
   → SLAB → SLUB kmalloc（16..1024 B）→ SLUB 自检
   → ACPI / MADT
   → 屏蔽 8259 PIC（outb 0xff 到 0x21/0xa1），使能 ICMR
@@ -64,7 +64,7 @@ Serial 输出就位
   → IOAPIC::RemapIRQ(0→vec32)   ← 把 PIT GSI0 重定向到向量 32
   → RTC
   → simd_cpu_init(0)    ← XSave/AVX 特性探测
-  → enable_smep_smap()
+  → enable_smep_smap()   ← SMEP/SMAP + 按 CPUID 启用 EFER.NXE
   → Schedule::Init()
   → InitCPUThread()     ← 造出 init 线程作为一切进程的祖先
   → syscall_init()      ← 挂 MSR_LSTAR / 系统调用入口
@@ -90,5 +90,7 @@ Serial 输出就位
 ## 4. 地址空间与安全
 
 - 内核镜像由 Limine 给 HHDM（Higher Half Direct Map）偏移，启动早期打印 `HHDM OFFSET`。
-- 支持 **KASLR**，构建后必须跑 `cd kernel && make kaslr-check` 确认镜像布局没有破坏该特性。
-- 用户态/内核态地址空间隔离，`enable_smep_smap()` 打开 SMEP（不可执行用户页）与 SMAP（内核访问用户页需显式开关）。
+- **KASLR 仅由引导器提供**（构建用 `-fPIE/-pie`，装载随机化）；内核自身无随机化逻辑。构建后必须跑 `cd kernel && make kaslr-check` 确认没有 32 位绝对重定位残留。
+- 用户态/内核态地址空间隔离，`enable_smep_smap()` 打开 SMEP 与 SMAP（内核访问用户页需显式开关），并按 CPUID 启用 **EFER.NXE**。
+- 用户态 **W^X**：ELF 装载完成后按段 `p_flags` 收紧映射（不可写段去 W、不可执行段加 NX）。
+- 用户/内核拷贝（`ua.cpp`）强制 `MM_USER` 校验与 4 级用户半区上界——曾存在"用户态经 HHDM 别名读写任意物理内存"的漏洞，已修复。

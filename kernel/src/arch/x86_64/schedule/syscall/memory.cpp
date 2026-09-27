@@ -49,15 +49,6 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags, u
         VMM::VMA::AddRegion(pagemap, ret, page_count, MM_READ | MM_WRITE | MM_USER);
     }
 
-    { proc_t* mp = Schedule::this_proc();
-      uint64_t pid = mp ? mp->id : 63;
-      static uint32_t s_mmseq = 0;
-      if (s_mmseq < 300)
-          kprintf("MM seq=%lu pid=%lu pc=%lu\n",
-                  (unsigned long)s_mmseq, (unsigned long)pid,
-                  (unsigned long)page_count);
-      s_mmseq++;
-      PMM::dbg_mcharge(pid, (int64_t)page_count); }
     return ret;
 }
 
@@ -100,8 +91,6 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length,
     spinlock_unlock(&pm->vma_lock);
 
     VMM::Free(pm, (void*)addr);
-    { proc_t* mp = Schedule::this_proc();
-      PMM::dbg_mcharge(mp ? mp->id : 63, -(int64_t)pages); }
     return 0;
 }
 

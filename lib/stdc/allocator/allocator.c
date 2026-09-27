@@ -761,7 +761,12 @@ static void _skyline_free_internal(void* ptr) {
             }
         }
     } else {
-        if (tls_large_cache_cnt[idx] < LARGE_OBJ_CACHE_MAX) {
+        /* Cache only modest large blocks. A cached 8/16/32 MB object is pinned
+           without being returned to the PMM; up to four of them can hold
+           ~128 MB per thread. Oversized blocks bypass the cache and are
+           munmap'd immediately on free. */
+        if (size_class < (4ULL * 1024 * 1024) &&
+            tls_large_cache_cnt[idx] < LARGE_OBJ_CACHE_MAX) {
             *(void**)block_addr = tls_large_cache[idx];
             tls_large_cache[idx] = (void*)block_addr;
             tls_large_cache_cnt[idx]++;

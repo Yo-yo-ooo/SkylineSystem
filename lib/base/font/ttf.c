@@ -834,35 +834,41 @@ uint8_t TTF_ReadFont(
         return 3;
     }
 
-    unsigned char* font_data = (unsigned char*)malloc(file_size);
-    if (!font_data) {
+    /* Read the file straight into the font's persistent data buffer. The old
+       path malloc'd a temporary ~30 MB block, then TTF_LoadFontFromMemory
+       malloc'd + memcpy'd a second ~30 MB; that temporary was only returned to
+       the per-thread large cache (not to the PMM), so every font load pinned
+       ~64 MB. Read directly into the final buffer: one allocation, no copy. */
+    TTF_Font* rf = *out_font;
+    rf->data = (unsigned char*)malloc(file_size);
+    if (!rf->data) {
         fclose(fd);
-        TTF_DestroyFont(*out_font);
+        TTF_DestroyFont(rf);
         *out_font = NULL;
         return 4;
     }
 
-    // fread 参数顺序应为 (ptr, size, nmemb, stream)
-    size_t read_bytes = fread(font_data, 1, file_size, fd);
+    /* fread argument order is (ptr, size, nmemb, stream). */
+    size_t read_bytes = fread(rf->data, 1, file_size, fd);
     fclose(fd);
 
     if (read_bytes != file_size) {
-        free(font_data);
-        TTF_DestroyFont(*out_font);
+        free(rf->data); rf->data = NULL;
+        TTF_DestroyFont(rf);
         *out_font = NULL;
         return 6;
     }
 
-    bool success = TTF_LoadFontFromMemory(*out_font, font_data, file_size, pixel_height);
-    free(font_data);
-
-    if (!success) {
-        TTF_DestroyFont(*out_font);
+    int32_t foff = stbtt_GetFontOffsetForIndex(rf->data, 0);
+    if (foff < 0 || !stbtt_InitFont(&rf->info, rf->data, foff)) {
+        free(rf->data); rf->data = NULL;
+        TTF_DestroyFont(rf);
         *out_font = NULL;
         return 5;
     }
-
-    TTF_SetOversampling(*out_font, 2);
+    rf->is_initialized = true;
+    TTF_SetPixelHeight(rf, pixel_height);
+    TTF_SetOversampling(rf, 2);
     return 0;
 }
 

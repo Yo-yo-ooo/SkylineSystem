@@ -70,10 +70,6 @@ namespace Dev{
     constexpr uint8_t RW_OK = 1;
     constexpr uint8_t RW_ERROR = 0;
 
-    extern uint32_t ThisDevType;
-    extern uint32_t ThisDevIDX;
-    extern VDL ThisDev;
-
     void Init();
 
     const char* TypeToString(VsDevType type);
@@ -82,12 +78,12 @@ namespace Dev{
     VDL* GetSDEV(const char *Name);
     VDL* GetSDEV(VsDevType Type, uint32_t idx);
 
-    void SetSDev(VsDevType type, u32 idx);
-
-    uint8_t Read(uint64_t lba, uint32_t SectorCount, void* Buffer);
-    uint8_t Write(uint64_t lba, uint32_t SectorCount, void* Buffer);
-    uint8_t ReadBytes(uint64_t address, uint32_t Count, void* Buffer);
-    uint8_t WriteBytes(uint64_t address, uint32_t Count, void* Buffer);
+    /* Explicit device-handle access: there is no global "current device", so
+       concurrent callers on different CPUs cannot interleave selections. */
+    uint8_t Read(VDL* dev, uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t Write(VDL* dev, uint64_t lba, uint32_t SectorCount, void* Buffer);
+    uint8_t ReadBytes(VDL* dev, uint64_t address, uint32_t Count, void* Buffer);
+    uint8_t WriteBytes(VDL* dev, uint64_t address, uint32_t Count, void* Buffer);
 
     void AddDevice(VDL DeviceInfo,VsDevType DeviceType,DevOPS OPS);
     VDL FindDevice(VsDevType DeviceType,uint32_t DeviceIndex);

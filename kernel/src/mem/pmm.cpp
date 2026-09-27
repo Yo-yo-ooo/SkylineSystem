@@ -86,43 +86,6 @@ uint64_t FreePages() {
     return __atomic_load_n(&free_pages, __ATOMIC_RELAXED);   // 单 u64 松散读
 }
 
-/* [DBG] Per-pid global-pool accounting (temporary: root-cause notepad OOM).
-   Pages taken from / returned to the global pool are charged to the calling
-   pid; dbg_dump() prints every pid's net holdings once, at the first OOM. */
-static uint64_t dbg_pa[64], dbg_pf[64];
-static uint64_t dbg_ma[64], dbg_mf[64];
-static uint64_t dbg_snap_seq = 0;
-void dbg_mcharge(uint64_t pid, int64_t pages) {
-    if (pid > 63) pid = 63;
-    if (pages > 0) dbg_ma[pid] += (uint64_t)pages;
-    else if (pages < 0) dbg_mf[pid] += (uint64_t)(-pages);
-}
-void dbg_charge(int64_t pages) {
-    proc_t* lp = Schedule::this_proc();
-    uint64_t pid = lp ? lp->id : 63;
-    if (pid > 63) pid = 63;
-    if (pages > 0) dbg_pa[pid] += (uint64_t)pages;
-    else if (pages < 0) dbg_pf[pid] += (uint64_t)(-pages);
-}
-void dbg_snapshot(const char* why) {
-    kerror("=== DBGPM #%lu [%s] free=%lu ===\n",
-           (unsigned long)dbg_snap_seq, why, free_pages);
-    dbg_snap_seq++;
-    for (uint64_t pid = 0; pid < 64; pid++) {
-        if (!dbg_pa[pid] && !dbg_pf[pid] && !dbg_ma[pid] && !dbg_mf[pid]) continue;
-        int64_t net = (int64_t)dbg_pa[pid] - (int64_t)dbg_pf[pid];
-        int64_t mnet = (int64_t)dbg_ma[pid] - (int64_t)dbg_mf[pid];
-        kerror("DBG pid=%lu pool.net=%ld mmap.take=%lu mmap.ret=%lu mmap.net=%ld\n",
-               pid, (long)net, dbg_ma[pid], dbg_mf[pid], (long)mnet);
-    }
-}
-void dbg_dump(void) {
-    static int once = 0;
-    if (once) return;
-    once = 1;
-    dbg_snapshot("OOM");
-}
-
 // Clear / set bit range [first, last) in one pass over the covered words.
 static inline void bits_clear(uint64_t* map, uint64_t first, uint64_t last) {
     if (first >= last) return;
@@ -472,12 +435,10 @@ void* Request(uint64_t n) {
             if (cpu->pmm_cache_count > 0)
                 return cpu->pmm_cache[--cpu->pmm_cache_count];
         
-            int64_t taken = 0;
-            (void)taken; /* 修复: 仅赋值未使用 */
             IrqSpinGuard g(&pmm_lock);
             void* page = alloc_pages_locked(1);
             if (page) {
-                free_pages -= 1; taken = 1;
+                free_pages -= 1;
                 uint32_t cached_before = cpu->pmm_cache_count;
                 for (int i = 0; i < PMM_PCP_BATCH && cpu->pmm_cache_count < PMM_PCP_MAX; i++) {
                     void* extra = alloc_pages_locked(1);
@@ -485,9 +446,8 @@ void* Request(uint64_t n) {
                     cpu->pmm_cache[cpu->pmm_cache_count++] = extra;
                 }
                 uint64_t ex = (uint64_t)cpu->pmm_cache_count - (uint64_t)cached_before;
-                free_pages -= ex; taken += (int64_t)ex;
+                free_pages -= ex;
             }
-            dbg_charge(taken);
             return page;
         }
     }
@@ -497,7 +457,7 @@ void* Request(uint64_t n) {
     {
         IrqSpinGuard g(&pmm_lock);
         page = alloc_pages_locked(n);
-        if (page) { free_pages -= n; dbg_charge((int64_t)n); }
+        if (page) { free_pages -= n; }
     }
     if (!page)
         kerror("PMM: out of contiguous physical memory (%lu pages)\n", (unsigned long)n);
@@ -526,7 +486,6 @@ void Free(void* ptr, uint64_t n) {
                     flushed++;
                 }
                 free_pages += flushed;
-                dbg_charge(-(int64_t)flushed);
             }
             cpu->pmm_cache[cpu->pmm_cache_count++] = ptr;
             return;                                     
@@ -541,7 +500,6 @@ void Free(void* ptr, uint64_t n) {
     IrqSpinGuard g(&pmm_lock);
     mark_free(start, n);
     free_pages += n;
-    dbg_charge(-(int64_t)n);
 }
 
 // --- 2MiB allocation ---

@@ -72,6 +72,6 @@ smp_init()  (BSP 上)
 
 ## 6. 亲和性
 
-- `cpu_simd_mask(cpu)` 给出该核的 SMT/拓扑掩码；
-- 负载均衡（见 scheduler.md）优先在同掩码内 push/steal，避免跨 L3 搬线程；
-- GUI 合成器的 worker 也按在线 CPU 数 pin，一核一条水平条带（见 gui.md）。
+- `cpu_simd_mask(cpu)` 给出该核的 **SIMD 指令集位图**——注意它不是 SMT/拓扑掩码（内核中没有任何 APIC-ID/核兄弟拓扑数据），旧文档的 "SMT" 说法不实；
+- 负载均衡（见 scheduler.md）优先在同掩码内 push/steal；
+- GUI 合成器的 worker 按在线 CPU 数 pin，一核一条水平条带（见 gui.md）。

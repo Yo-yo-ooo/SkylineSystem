@@ -138,7 +138,8 @@ int main() {
                              0, 0, 0, 0, 0);
     if ((int64_t)kbdVA <= 0) return 1;
     KbdShared* kbd = (KbdShared*)kbdVA;
-    uint64_t cursor = 0;
+    int kbdSlot = kbd_reader_register(kbd);
+    uint64_t cursor = kbdSlot >= 0 ? kbd_reader_pos(kbd, kbdSlot) : 0;
 
     TTF_Font* font = nullptr;
     TTF_ReadFont(&font, "/mp/SourceHanSerifTC_Medium.ttf", 20, 256);
@@ -182,12 +183,14 @@ int main() {
 
     for (;;) {
         uint64_t h = __atomic_load_n(&kbd->head, __ATOMIC_ACQUIRE);
+        cursor = kbd_reader_resync(kbd, cursor);
         bool changed = false;
         while (cursor < h) {
             KbdEvent e = kbd->ring[cursor & (KBD_RING_CAP - 1u)];
             if (e.action == KBD_ACTION_DOWN) { ed_key(e.key); changed = true; }
             cursor++;
         }
+        if (kbdSlot >= 0) kbd_reader_setpos(kbd, kbdSlot, cursor);
         if (changed) render();
         sys_yield();   /* event loop: stay cheap, text editing is not 60 Hz */
     }

@@ -61,10 +61,6 @@ static hashmap* TIMap = nullptr;
 static hashmap* StrMap = nullptr;
 static hashmap* DevMan_Map = nullptr;
 namespace Dev{
-    VDL ThisDev = {(VsDevType)0};
-    uint32_t ThisDevType = Undefined;
-    uint32_t ThisDevIDX = 0;
-    //DevManEntry* ThisEntry = nullptr;
 
     void AddStorageDevice(VsDevType type, DevOPS ops, uint32_t SectorCount, void* Class) {
         if(type > MAX_TYPE_C) return;
@@ -110,19 +106,6 @@ namespace Dev{
 
 
 
-    void SetSDev(VsDevType type, u32 idx){
-        ThisDevType = type;
-        ThisDevIDX = idx;
-        DevManKey key = {.type = type, .index = idx};
-        spinlock_lock(&dev_manager_lock);
-        DevManEntry* ThisEntry = (DevManEntry*)hashmap_get(DevMan_Map, &key);
-        spinlock_unlock(&dev_manager_lock);
-        /* 修复: 查找失败时 ThisEntry 为 NULL, 原代码直接解引用 -> 崩溃 */
-        if (!ThisEntry || !ThisEntry->dev) { ThisDev = {}; return; }
-        ThisDev = *ThisEntry->dev;
-    }
-
-
     VDL* GetSDEV(const char *Name){
         /* 修复: 原 &(DevStrSearch){...} 是 C 复合字面量取地址,
            C++ 下为临时对象, 生命周期不保(clang 报错) */
@@ -147,35 +130,35 @@ namespace Dev{
     }
 
 
-    u8 Read(uint64_t lba, uint32_t SectorCount, void* Buffer){
-        if(ThisDev.type != VsDevType::Undefined)
-            return ThisDev.ops.Read(ThisDev.classp,lba, SectorCount, Buffer);
+    u8 Read(VDL* dev, uint64_t lba, uint32_t SectorCount, void* Buffer){
+        if(dev && dev->type != VsDevType::Undefined && dev->ops.Read)
+            return dev->ops.Read(dev->classp,lba, SectorCount, Buffer);
         else
             return false;
     }
 
-    u8 Write(uint64_t lba, uint32_t SectorCount, void* Buffer){
-        if(ThisDev.type != VsDevType::Undefined)
-            return ThisDev.ops.Write(ThisDev.classp,lba, SectorCount, Buffer);
+    u8 Write(VDL* dev, uint64_t lba, uint32_t SectorCount, void* Buffer){
+        if(dev && dev->type != VsDevType::Undefined && dev->ops.Write)
+            return dev->ops.Write(dev->classp,lba, SectorCount, Buffer);
         else
             return false;
     }
 
-    u8 ReadBytes(uint64_t address, uint32_t Count, void* Buffer){
-        if(ThisDev.type != VsDevType::Undefined){
-            if(ThisDev.ops.ReadBytes != nullptr)
-                return ThisDev.ops.ReadBytes(ThisDev.classp,address, Count, Buffer);
+    u8 ReadBytes(VDL* dev, uint64_t address, uint32_t Count, void* Buffer){
+        if(dev && dev->type != VsDevType::Undefined){
+            if(dev->ops.ReadBytes != nullptr)
+                return dev->ops.ReadBytes(dev->classp,address, Count, Buffer);
             else {
                 if (Count == 0)
                     return true;
-                if (address + Count > ThisDev.MaxSectorCount * 512)
+                if (address + Count > dev->MaxSectorCount * 512)
                     return false;
                 
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));
                 uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);//"Malloc for Read Buffer"
                 _memset(buffer2, 0, tempSectorCount * 512);
 
-                if (!ThisDev.ops.Read(ThisDev.classp,(address / 512), tempSectorCount, buffer2))
+                if (!dev->ops.Read(dev->classp,(address / 512), tempSectorCount, buffer2))
                 {
                     uint16_t offset = address % 512;
                     for (uint64_t i = 0; i < Count; i++)
@@ -199,14 +182,14 @@ namespace Dev{
         }
     }
 
-    u8 WriteBytes(uint64_t address, uint32_t Count, void* Buffer){
-        if(ThisDev.type != VsDevType::Undefined){
-            if(ThisDev.ops.WriteBytes != nullptr)
-                return ThisDev.ops.WriteBytes(ThisDev.classp,address, Count, Buffer);
+    u8 WriteBytes(VDL* dev, uint64_t address, uint32_t Count, void* Buffer){
+        if(dev && dev->type != VsDevType::Undefined){
+            if(dev->ops.WriteBytes != nullptr)
+                return dev->ops.WriteBytes(dev->classp,address, Count, Buffer);
             else{
                 if (Count == 0)
                     return true;
-                if (address + Count > ThisDev.MaxSectorCount * 512)
+                if (address + Count > dev->MaxSectorCount * 512)
                     return false;
                 
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));
@@ -215,7 +198,7 @@ namespace Dev{
                 if (tempSectorCount == 1)
                 {
                     _memset(buffer2, 0, 512);
-                    if (!ThisDev.ops.Read(ThisDev.classp,(address / 512), 1, buffer2))
+                    if (!dev->ops.Read(dev->classp,(address / 512), 1, buffer2))
                     {
                         kfree(buffer2);
                         
@@ -226,7 +209,7 @@ namespace Dev{
                     for (uint64_t i = 0; i < Count; i++)
                         buffer2[i + offset] = ((uint8_t*)Buffer)[i];
 
-                    if (!ThisDev.ops.Write(ThisDev.classp,(address / 512), 1, buffer2))
+                    if (!dev->ops.Write(dev->classp,(address / 512), 1, buffer2))
                     {
                         kfree(buffer2);
                         
@@ -242,7 +225,7 @@ namespace Dev{
                     {
 
                         _memset(buffer2, 0, 512);
-                        if (!ThisDev.ops.Read(ThisDev.classp,(address / 512), 1, buffer2))
+                        if (!dev->ops.Read(dev->classp,(address / 512), 1, buffer2))
                         {
                             kfree(buffer2);
                             
@@ -258,7 +241,7 @@ namespace Dev{
                         for (uint64_t i = 0; i < specialCount; i++)
                             buffer2[i + offset] = ((uint8_t*)Buffer)[i];
 
-                        if (!ThisDev.ops.Write(ThisDev.classp,(address / 512), 1, buffer2))
+                        if (!dev->ops.Write(dev->classp,(address / 512), 1, buffer2))
                         {
                             kfree(buffer2);
                             
@@ -267,7 +250,7 @@ namespace Dev{
                     }
                     {
                         _memset(buffer2, 0, 512);
-                        if (!ThisDev.ops.Read(ThisDev.classp,((address + Count) / 512), 1, buffer2))
+                        if (!dev->ops.Read(dev->classp,((address + Count) / 512), 1, buffer2))
                         {
                             kfree(buffer2);
                             
@@ -282,7 +265,7 @@ namespace Dev{
                         for (int64_t i = 0; i < specialCount; i++)
                             buffer2[i] = ((uint8_t*)Buffer)[i + blehus];
 
-                        if (!ThisDev.ops.Write(ThisDev.classp,((address + Count) / 512), 1, buffer2))
+                        if (!dev->ops.Write(dev->classp,((address + Count) / 512), 1, buffer2))
                         {
                             kfree(buffer2);
                             
@@ -295,7 +278,7 @@ namespace Dev{
                         {
                             uint64_t newSectorStartId = newAddr / 512;
 
-                            if (!ThisDev.ops.Write(ThisDev.classp,newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset)))
+                            if (!dev->ops.Write(dev->classp,newSectorStartId, newSectorCount, (void*)((uint64_t)Buffer + addrOffset)))
                             {
                                 kfree(buffer2);
                                 

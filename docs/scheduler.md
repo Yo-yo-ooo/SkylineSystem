@@ -1,105 +1,66 @@
-# 3EVDF —— Rate-aware EEVDF 调度器
+# 调度器 —— vruntime 调度 + RIP 速率反馈（曾用名 3EVDF）
 
-源码：`kernel/src/arch/x86_64/schedule/sched.cpp`（约 44 KB）、`task.cpp`、`timer.cpp`、`syscall/`。
+源码：`kernel/src/arch/x86_64/schedule/sched.cpp`、`task.cpp`、`timer.cpp`、`syscall/`。
 
-## 1. 它在标准 EEVDF 上加了什么
+> 本文档只描述代码**实际做到**的事，并明确列出**没有做到**的事。
 
-经典 EEVDF（Earliest Eligible Virtual Deadline First）按**虚拟时间 vruntime** 和 lag 选下一个线程，能保证公平，但它分不清两件事：
+## 1. 实际结构
 
-- 一个线程在**真实推进**（渲染、解码、响应用户输入）；
-- 一个线程只是在 `for(;;)` 里**空烧 CPU**，VRuntime 走得很快却对系统毫无贡献。
+每个 CPU 一棵**红黑树**运行队列，键为 `vruntime`，节点增广 `min_vruntime_subtree`（子树最小值），比较点带 `PREFETCH_R`。线程按权重（`sched_prio_to_weight[16]`）得到基准时间片，`vruntime` 按**真实流逝毫秒 × 1024 / weight** 推进，`avg_vruntime` 按负载加权速率推进。
 
-3EVDF（Rate-aware EEVDF / REEVDF）引入一个 **RIP-progress-rate** 信号：在内核里采样线程指令指针的推进速度，经 EWMA 得到快/慢倍率，**运行时回灌 EEVDF 的量子计算**。于是：
+`Pick()` 只用 `vruntime` 与 `avg_vruntime` 做选择：沿"子树含 eligible 节点"的分支下降，取最小者。
 
-- 推进快、I/O 密集、交互型线程 → 给更长的量子、更容易被选中；
-- 纯忙等自旋线程 → 被自动压短量子；
-- **应用侧不需要写任何 `yield()`**。
+## 2. RIP-progress-rate 反馈（3EVDF 部分）—— 它改什么、不改什么
 
-实测：128 MB 内存下，一个进程起 4 个 `for(;;)` 线程，鼠标采样与屏幕合成依旧平滑；旧调度器同样负载必须显式 `sys_yield()` 才不卡。
-
-## 2. 定点数与反馈通道
-
-所有速率计算用 **Q10 定点**（`1.0x = 1<<10 = 1024`），避免内核浮点。
-
-```c
-#define RIPRATE_FRAC_BITS  10
-#define RIPRATE_ONE        (1 << 10)   /* 1.0x */
-#define RIPRATE_SHIFT      3           /* EWMA α = 1/8 */
-#define RIPRATE_MAX_MULT   (4  << 10)  /* 4x 上限 */
-#define RIPRATE_MIN_MULT   (1  << 8)   /* 0.25x 下限 */
-#define RIPRATE_OUTLIER_MULT (16 << 10)/* 观测>16x 钳位而非丢弃 */
-```
-
-最终量子是**两条通道叠加**：
+每个 tick 对当前线程采样 RIP 推进量，经 Q10 定点双通道 EWMA 得到快/慢倍率 `mult`（钳制 [0.25x, 4x]），加一个 ±4 tick 的有符号修正项 `adj`，叠加出**每个线程的时间片长度**：
 
 ```text
-eff = (weight_quantum × mult >> FRAC) + rip_quantum_adj
+eff_quantum = (base × fused_mult >> 10) + adj
 ```
 
-| 通道 | 作用 | 特征 |
-|---|---|---|
-| **乘法通道** `mult` | 稳态塑形：线程长期是快是慢 | EWMA 慢收敛，老化时向 1.0 收缩 |
-| **修正通道** `adj` | 即时偏差的快速双向响应 | 有符号，范围 ±4 个 tick，可正可负 |
+该结果只用于 **LAPIC oneshot 定时器的时长**（`sched.cpp` 中 `get_dynamic_quantum()` 的调用点）。
 
-设计理由：乘法通道负责长期特征，修正通道负责瞬时纠偏；两个独立通道比单个倍率更不容易震荡。
+**它不改的事（重要）**：
 
-### 采样与老化
+- `Pick()` 中**不出现** `mult` / `adj` —— 选择仍由 `vruntime` 决定；
+- `vruntime` 按真实时间记账，**不被倍率缩放**；
+- 因此反馈影响的是**抢占节奏/中断延迟**（忙等线程更频繁被打断、推进快的线程获得更长的不间断运行），**不改变 CPU 份额**；
+- 公平性由 vruntime 机制承担，与速率反馈正交。
 
-- `rip_last_sample_ms` 超过 `RIPRATE_AGING_MS = 50ms` 没采样：`mult` 按 1/16 步长向 1.0 收缩，`adj` 向 0 收缩。注释里专门记录了一个 bug：旧公式 `(x+7)>>4` 在 `|adj|≤8` 时恒为 0，导致 adj 永不衰减，改成 `(x+15)>>4` 才保证至少走一步。
-- 同一毫秒内两个 tick：窗口无效，只做老化不做速率采样。
-- 离群观测（>16x）钳位到 16x 而不是直接丢弃——否则慢基线永远追不上突然变快的线程。
-- 新线程 `mult==0` 一律按 1.0 处理，防止第一个量子被压成 1 个 tick。
+## 3. EEVDF 成分的真实程度
 
-## 3. 运行队列与 Pick
+- `calibrate_and_set_deadline()` 在**每次入队**时把 `vruntime` 钳进 `[avg−q, avg+2q]` 并令 `deadline = vruntime + base_quantum`；
+- 时间片**未按权重缩放**（源码注释自认"有意简化"），于是 deadline ≡ vruntime + 常数，eligibility 判定与虚拟 deadline 实际退化为冗余控制 —— 队列序即 vruntime 序；
+- 所以这是**EEVDF 结构的子集**，不是完整的 EEVDF。README 与本文档均按此描述。
 
-每个 CPU 一棵**红黑树**，键是 vruntime；每个节点额外缓存 `min_vruntime_subtree`（子树最小值）。
+## 4. 动态基准量子与老化
 
-- `Pick()` 沿"子树最小值 ≤ avg_vruntime"的分支向下走，用 `min_vruntime_subtree` 做剪枝，命中 eligible 线程平均只走树高；
-- 每个比较点都 `PREFETCH_R` 左子/右子节点，减少 cache miss；
-- `InsertToQueue` / `RemoveFromQueue` 沿 parent 链向上更新 `min_vruntime_subtree`；
-- 权重表 `sched_prio_to_weight[16]` 与 CBSD nice 权重同量级，并用 `static_assert` 锁死 16 项。
+`dynamic_adjust_quantum()` 每 100ms 按空闲占比/上下文切换数调整 `base_quantum`（钳制 [2,15] tick）。速率反馈侧：
 
-## 4. 动态基准量子
-
-`dynamic_adjust_quantum()` 每 100ms 看一眼本 CPU：
-
-- 空闲时间占比 > 50% → 拉长 `base_quantum`（摊薄定时器/切换开销）；
-- 空闲 < 10% 且上下文切换 > 500 次 → **也拉长**（注释 v3 FIX：旧代码在这里缩短量子，方向反了——切换已经过多，缩短只会制造更多切换）；
-- 否则向 5 收敛。
-
-`base_quantum` 被钳在 [2, 15] tick。
+- 50ms 未采样 → `mult` 按 1/16 步长向 1.0 收缩、`adj` 向 0 收缩（源码注释记录过 `(x+7)>>4` 在 |adj|≤8 时恒 0 的老 bug）；
+- 离群观测（>16x）钳位到 16x；
+- 新线程 `mult==0` 按 1.0 处理。
 
 ## 5. SMP 负载均衡
 
-双机制：
-
-### Active push（`TryPush`）
-- 本 CPU `has_surplus` 且线程数 ≥2 时触发；
-- 遍历所有 CPU，按总权重找最轻的目标；**优先同 SMT/亲和掩码**，不同核作为 fallback；
-- 双锁按 `cpu.id` 大小顺序获取，杜绝 ABBA 死锁；
-- 只推 `rb_last` 起的尾部（权重最大/最老的）一批（`SCHED_STEAL_BATCH=8`）；
-- **推完若目标正 hlt，立刻发 LAPIC IPI 唤醒**（v3 FIX：旧版要等一个 idle 量子的 tick 才捡起来）。
-
-### Lazy steal（`StealThread`）
-- 每 `SCHED_STEAL_THROTTLE=8` 次才真扫一次，避免空转；
-- 两趟扫描：先只找同 SMT 掩码核，找不到再退化到任意核；
-- `spin_trylock` 重试上限 100 次，失败就换下一个受害者（注释：旧写法 retries 到 101 才退出，正确性靠巧合）；
-- 偷到后先标 `THREAD_TRANSFER` 释放受害者锁，再拿本 CPU 锁入队，缩小临界区。
-
-### 公平性说明
-- 队列里 vruntime 在入队时 `calibrate_and_set_deadline` 就被 clamp 到 `avg+2q` 以内，因此旧代码里"vr > avg+5M"的饥饿检查恒假，已作为死代码删除。
+- **Active push（`TryPush`）**：本核盈余且线程 ≥2 时，按总权重找最轻目标，优先**同 SIMD 特性掩码**（注意：`cpu_simd_mask()` 是 SIMD 指令集位图，**不是 SMT 拓扑**；内核里没有 APIC-ID/核兄弟数据），双锁按 `cpu.id` 排序防 ABBA，批量 `SCHED_STEAL_BATCH=8`，推完若目标 hlt 立即发 IPI 唤醒。
+- **Lazy steal（`StealThread`）**：每 8 次节流扫一次；先同掩码后任意核；`spin_trylock` 上限 100 次；偷到先标 `THREAD_TRANSFER` 再换锁入队。
 
 ## 6. 抢占与上下文切换
 
-`Schedule::Switch()` 是 SCHED_VEC 的 ISR，关键顺序：
+`Schedule::Switch()`（SCHED_VEC ISR）：先停 LAPIC 定时器 → `this_cpu==nullptr` 也 EOI → AP 早期窗口重 arm 返回 → `preempt_count > 1` 不清标志只重排 oneshot → 自愿 `yield()` 走独立 `yield_request_flags`。
 
-1. 先停 LAPIC 定时器；
-2. 拿当前 cpu；`this_cpu==nullptr` 时也要 EOI，否则 ISR 位悬挂、后续中断全堵；
-3. AP 早期窗口（idle/current 还没建好）直接重 arm 定时器返回；
-4. `preempt_count > 1` 时**不清** need_resched/yield 标志，只是重排下一个 oneshot——注释 v3 FIX：旧代码在函数顶部就消费标志，若后面走早退，抢占请求被无声吞掉；
-5. 自愿 `yield()` 通过独立的 `yield_request_flags` 锁存，确保即便 runqueue 里只有一个竞争者也必须把 CPU 让出去。
+**已知缺陷（未修）**：`CheckPreempt()` 在代码树中没有调用者，`preempt_count` 归零后的重新触发依赖下一次定时器 tick。
 
-## 7. 调参常量速查
+## 7. 已知修复与新线程记账
+
+新线程的 `last_run_time` 曾在所有创建点未初始化（首片 `delta = uptime`，抬飞 vruntime）；现已**在创建点初始化**并在记账处对 `==0` 做防御。线程创建点均 `memset` 后赋值，行为确定。
+
+## 8. 测试现状（诚实）
+
+**没有调度质量基准。** `sched_bench.cpp` 只校验 EWMA 数值的收敛行为（过冲/稳态步进），不测公平性、唤醒延迟或尾延迟。任何"实测流畅"的说法均未写入本文档 —— 桌面流畅性目前由**独立光标层 + 合成器结构**保证，而非由调度器反馈的份额控制。
+
+## 9. 调参常量速查
 
 | 常量 | 值 | 含义 |
 |---|---|---|

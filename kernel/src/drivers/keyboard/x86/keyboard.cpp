@@ -8,7 +8,6 @@
 #include <klib/kio.h>
 #include <drivers/keyboard/x86/keyboard_map.h>
 #include <drivers/input/kbd.h>
-#include <mem/pmm.h>
 
 /* ---- PS/2 set-1 scancode -> shared event-ring state machine ------------- */
 static bool k_lshift = false, k_rshift = false;
@@ -75,7 +74,6 @@ static void feed_normal(uint8_t base, bool up) {
 }
 
 static void feed_scancode(uint8_t code) {
-    if (code == 0x58) { PMM::dbg_snapshot("F12"); return; } /* [DBG] manual */
     if (code == 0xE0) { k_ext = true; return; }
     if (code == 0x00 || code == 0xFF) { k_ext = false; return; }
 

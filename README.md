@@ -13,9 +13,9 @@
 ```
 <p align="center">
   <img src="skyline_modern_desktop.png" alt="SkylineSystem modern desktop" width="820">
-  <br><em>A from-scratch x86_64 SMP OS with a CPU-parallel software compositor —
+  <br><em>An x86_64 SMP hobby OS with a CPU-parallel software compositor —
   a rounded console over the wallpaper and an acrylic taskbar with app pill,
-  battery and a live clock. Boots in 128 MB, scales across cores.</em>
+  battery and a live clock. Runs in QEMU (tested with 512 MB – 2 GB RAM).</em>
 </p>
 
 ## License
@@ -28,16 +28,20 @@
 Kernel and userspace run in separate address spaces, communicate only via syscall, no GPL copyleft infection.
 SPDX headers are being adopted progressively (work in progress — not yet full
 REUSE compliance); see LICENSES/ and the per-file SPDX tags.
+
+> [!NOTE]
+> The kernel vendors third-party code (lwIP, FatFs, lwext4, flanterm, SAF,
+> and adapted libart / tidwall hashmap). Their licenses are BSD-3 / BSD-2 /
+> FatFs-license / MIT respectively and are preserved in the source files.
+
 * **`/ablib/freestndchdrs/`**: This directory is licensed under the **GNU General Public License v3.0 (GPLv3)**, supplemented with the **GCC Runtime Library Exception 3.1**. 
     *   *What this means:* You may link this library into your proprietary/closed-source application without being required to release your own source code. 
     *   Please refer to `COPYING3.RUNTIME` within that folder for full details.
 
 > [!CAUTION]
-> Don't run it in real machine because it's now in test
-> If Build Failed, please open an issue or contact me
-> The General Build Faild reason is you don't have install the required dependencies <br>
-> [OR] You are building for unsupported architecture <br>
-
+> Don't run it on a real machine — it is still in test.
+> If the build fails, please open an issue or contact me.
+> The most common reasons are missing dependencies or an unsupported architecture.
 
 ---
 
@@ -45,149 +49,160 @@ REUSE compliance); see LICENSES/ and the per-file SPDX tags.
 
 ![arch](https://img.shields.io/badge/arch-x86__64-blue)
 ![smp](https://img.shields.io/badge/SMP-multicore-brightgreen)
-![scratch](https://img.shields.io/badge/built-from%20scratch-brightgreen)
+![scratch](https://img.shields.io/badge/hobby%20OS-brightgreen)
 ![noposix](https://img.shields.io/badge/POSIX-not%20used-lightgrey)
 ![boot](https://img.shields.io/badge/boot-Limine%20BIOS%2BUEFI-blue)
-![ram](https://img.shields.io/badge/runs%20in-128MB-orange)
+![ram](https://img.shields.io/badge/tested%20with-512MB%2B-orange)
 
-> **A modern, from-scratch SMP operating system for x86_64 — scheduler, virtual
-> memory, filesystems, drivers, a userspace libc, a CPU-parallel GUI compositor
-> and a window manager, every layer original and all in this tree.**
+> **A hobby x86_64 SMP operating system — scheduler, virtual memory,
+> filesystems, drivers, a userspace libc, a CPU-parallel GUI compositor and
+> a window manager, all in this tree. Many layers are original; some data
+> structures and filesystems are adapted or vendored (see License above).**
 
 SkylineSystem is **not** a Linux distribution and does **not** target the
-POSIX/Linux ABI. Every syscall interface, allocator, scheduler and GUI protocol
-is designed here on purpose. The project chases **depth on one architecture** —
-a genuinely modern, desktop-class core — instead of a thin compatibility shell
-over somebody else's design. It boots in **128 MB of RAM**, scales across cores,
-and keeps the pointer and the screen fluid even while userspace spins inside
-tight `for(;;)` loops.
+POSIX/Linux ABI. It chases **depth on one architecture** (x86_64). It has
+been tested in QEMU only, with 512 MB – 2 GB of guest RAM; the earlier
+"128 MB" claim was never verified and has been removed.
 
 ### 🚀 Highlights
 
-- **🧠 Self-designed 3EVDF scheduler** — a *Rate-aware EEVDF* that adds an
-  instruction-pointer **RIP-progress-rate** term with dynamic fast/slow
-  multipliers, giving busy-spinners shorter uninterrupted slices while
-  interactive work gets longer, calmer runs.
-- **⚡ CPU-parallel software compositor** — one worker pinned per online CPU
-  renders a horizontal screen strip; a barrier-separated double buffer removes
-  tearing, and scene traversal is **O(window count)**.
-- **🪟 A real window manager, not just a window** — SDF anti-aliased rounded
-  corners and soft directional drop shadows, plus caption-bar **dragging**,
-  **maximize**, **minimize** (restore from the taskbar pill) and
-  **8-direction edge/corner resizing**; the close button really **terminates
-  the client process** and reclaims its threads and pages through `sys_kill`.
-- **📊 Acrylic taskbar with a live calendar** — a Win11/macOS-style translucent
-  taskbar with an app pill, a battery indicator and a two-line clock showing
-  **HH:MM over YYYY/M/D**, converted from the kernel's real UTC epoch time.
-- **🖱️ A pointer that never stalls** — the cursor is its own layer written
-  straight to the scanout in O(16²), fully decoupled from scene composition;
-  moving the mouse never wakes the workers or recomposes the screen.
-- **💾 A serious memory stack** — 5-level paging, 1 GB / 2 MB huge pages,
-  copy-on-write with dynamic huge-page splitting, per-CPU physical caches, a
-  SLUB kernel heap, VMA management and batched TLB flushes.
-- **🔐 Hardening built in** — KASLR, SMAP, isolated user/kernel address spaces
-  and refcounted shared-memory grants.
-- **🧰 Real I/O & filesystems** — PS/2 keyboard/mouse, framebuffer,
-  AHCI/ATA/ATAPI, NVMe and USB, plus FAT, ext4 (lwext4) and the SAF format.
-- **🪶 Tiny and self-contained** — a single Limine image (BIOS + UEFI), a
-  traditional Makefile build, `-Wall -Wextra` for the kernel and
+- **🧠 3EVDF scheduler** — a vruntime-based scheduler with an EEVDF-inspired
+  structure plus a **RIP-progress-rate** feedback term (Q10 fixed point,
+  dual-channel EWMA). The feedback modulates each thread's **time-slice
+  length** (the LAPIC oneshot quantum); it does **not** change CPU share —
+  see the honest description in `docs/scheduler.md`.
+- **⚡ CPU-parallel software compositor** — the main thread renders strip 0
+  and **N−1 workers** render the remaining horizontal strips into an
+  off-screen back buffer; the main thread alone commits the frame to the
+  scanout. Per-frame cost is O(strips × windows).
+- **🪟 A working window manager** — SDF anti-aliased rounded corners and soft
+  directional drop shadows, plus caption-bar **dragging**, **maximize**,
+  **minimize** (restore from the taskbar pill) and **8-direction
+  edge/corner resizing** for the console window; the close button really
+  **terminates the client process** through `sys_kill`. (Notepad is
+  registered but not yet managed by the WM — see `docs/gui.md`.)
+- **📊 Acrylic taskbar with a live calendar** — a Win11/macOS-style
+  translucent taskbar with an app pill, a battery indicator and a two-line
+  clock showing **HH:MM over YYYY/M/D**.
+- **🖱️ A decoupled cursor layer** — the cursor is its own layer written
+  straight to the scanout in O(16²), independent of scene composition;
+  moving the mouse does not trigger a full recompose.
+- **💾 A real memory stack** — **4-level paging** (5-level code paths exist
+  but are compiled out), 1 GB / 2 MB huge pages, copy-on-write (2 MB CoW
+  copies the whole 2 MB; only 1 GB pages split, down to 2 MB), per-CPU
+  physical-page caches, a SLUB kernel heap, VMA management and batched TLB
+  shootdowns.
+- **🔐 Hardening** — bootloader-provided KASLR slide, SMEP, SMAP,
+  isolated user/kernel address spaces, refcounted shared-memory grants, and
+  **W^X in userspace**: EFER.NXE is enabled and ELF segments are tightened
+  to their `p_flags` (no-exec + no-write where declared).
+- **🧰 Real I/O & filesystems** — PS/2 keyboard/mouse, framebuffer, AHCI,
+  NVMe and USB (xHCI + MSC/HID); ext4 via lwext4 and the SAF archive format.
+  **FAT glue is currently stubbed** and ATA/ATAPI are unregistered dead code.
+- **🪶 Small and self-contained** — a single Limine image (BIOS + UEFI), a
+  traditional Makefile build, and a **zero-warning kernel build**
+  (`-Wall -Wextra`, 0 warnings as of this revision) with
   `-Wall -Wextra -Werror` for the userspace lib.
 
-### 🧠 3EVDF — a Rate-aware EEVDF scheduler
+### 🧠 3EVDF — an honest description
 
-Plain EEVDF schedules from virtual time and lag, but it cannot distinguish a
-thread that is **making real progress** from one that is simply **burning the
-CPU in a tight loop**. 3EVDF adds a **RIP-progress-rate** signal: the kernel
-samples how fast a thread's instruction pointer advances, derives fast/slow
-multipliers and feeds them back into EEVDF's parameters at runtime. Progressing
-and I/O-bound threads are favoured, while pure busy-spinners are throttled —
-with **no manual `yield()` required from the application**.
+The scheduler keeps a per-CPU red-black tree keyed by `vruntime`, augmented
+with `min_vruntime_subtree` and prefetch hints, plus weighted time-slices,
+dynamic base-quantum adjustment and SMP push/steal load balancing.
 
-**Measured on this system:** with only **128 MB** of RAM, a single process that
-launches **four `for(;;)` threads** still leaves mouse sampling and display
-compositing perfectly smooth; on the earlier scheduler that same workload only
-stayed responsive with an explicit `sys_yield()`.
+On top of that, **3EVDF** samples each thread's RIP progress between timer
+ticks, derives fast/slow multipliers (Q10 fixed point, dual-channel EWMA
+with dead-zone and hysteresis) and uses them to lengthen or shorten the
+thread's **preemption quantum** — busy-spinners are interrupted more often
+and progressing threads get longer uninterrupted runs.
+
+**What it is not:** the feedback does not enter `Pick()` — selection is
+vruntime-based, vruntime is charged from real elapsed time, and the virtual
+deadline is `vruntime + const` (not weight-scaled). So 3EVDF shapes
+**interrupt latency**, not CPU share. There is **no quantitative benchmark**
+yet: `sched_bench.cpp` only validates that the EWMA values converge.
+Details: `docs/scheduler.md`.
 
 ### 🎞️ A parallel compositor and a modern GUI stack
 
 The desktop is a data-parallel renderer with **zero per-pixel locking**:
 
-- **N workers = online CPUs**, discovered at runtime through `sys_sysinfo`; the
-  screen is divided into N equal horizontal strips on disjoint Y ranges.
-- **Two barrier-separated phases per frame** — every worker first renders its
-  strip into an invisible back buffer, and rows reach the scanout only after
-  the whole frame is finished, so a preempted worker can never flash a black
-  horizontal band (no tearing).
-- **Two independent, dynamic linked lists** — layers, and windows inside each
-  layer. Each window is visited once with an O(1) clip test and blitted a full
-  scanline at a time; traversal is **O(window count)**, never a per-pixel
-  top-most search.
-- **Dirty-rectangle, compare-and-blit presentation** — a static scene performs
-  zero scanout writes outside the cursor squares.
-- **Per-pixel ARGB alpha** — rounded corners and shadows source-over blend over
-  whatever is below, while runs of opaque pixels still use `memcpy`, so the
-  visual effect costs almost nothing.
-- **The WM owns the chrome, the app stays portable** — the desktop paints the
-  entire window decoration; a console client is plain standard C
-  (`printf` + `return 0`) with zero Skyline-specific boilerplate and builds
-  unmodified on any hosted toolchain.
-- **Full window lifecycle in userspace** — the WM handles caption drag,
-  maximize, minimize and 8-way edge resize, and the close button drives
-  `sys_kill` so the client process — every thread and its whole address space —
-  is genuinely reclaimed, not just detached. A lightweight rectangle previews
-  live during resize; the heavy rounded/shadowed chrome is rasterized once on
-  release, keeping the pointer at full speed throughout.
+- **N strips, N−1 worker threads** — the online CPU count comes from
+  `sys_sysinfo`; the main thread renders strip 0 itself and one worker is
+  launched per remaining CPU, pinned by the kernel.
+- **Double-buffered, single commit point** — every worker renders its strip
+  into an invisible back buffer; only the main thread blits the finished
+  frame to the scanout. The completion barrier is a simple counter (not a
+  generation-checked barrier), so the "no tearing" guarantee has a residual
+  race window that has not been fully closed — see `docs/gui.md`.
+- **Layer + window linked lists** — each window gets one clip test per
+  strip and is blitted a scanline at a time; no per-pixel top-most search.
+  Per-frame traversal is O(strips × windows).
+- **Dirty-rectangle, compare-and-blit presentation** — a static scene
+  performs zero scanout writes outside the cursor squares.
+- **Per-pixel ARGB alpha** — rounded corners and shadows source-over blend,
+  while runs of opaque pixels use `memcpy`.
+- **The WM owns the chrome** — the desktop paints the entire window
+  decoration; a console client is plain C (`printf` + `return 0`) linked
+  against the in-tree libc. Note: it builds against this libc, **not**
+  "unmodified on any hosted toolchain".
+- **Full console-window lifecycle in userspace** — caption drag, maximize,
+  minimize and 8-way resize, and the close button drives `sys_kill` so the
+  client process — every thread and its address space — is reclaimed. A
+  lightweight rectangle previews during resize; the heavy rounded/shadowed
+  chrome is rasterized once on release.
+- **Known gaps** — no child-exit notification (an app that returns leaves a
+  dead window), no z-order raise / focus, and minimize currently loses the
+  maximized state.
 
-Text comes from an in-tree TTF rasterizer: LRU + hash-table glyph caching, CJK
-typography rules, true typographic line height and boundary-clipped alpha
-blending onto the linear framebuffer.
+Text is drawn by an in-tree TTF rasterizer (based on **stb_truetype**, with
+LRU + hash-table glyph caching and CJK typography) and the **flanterm**
+console renderer — both third-party components.
 
 ### 🧭 Design philosophy
 
 | Principle | What it means in SkylineSystem |
 |---|---|
-| **Built from zero** | No POSIX/Linux ABI and no ported userspace — every interface is an original design, so legacy never dictates the architecture. |
-| **Depth over breadth** | One architecture (x86_64) done deeply; other-architecture ports are not yet implemented. |
+| **Original where it counts** | No POSIX/Linux ABI; the syscalls, scheduler, compositor and WM are original. Core data structures (ART, hashmap, RB tree) and filesystems are adapted or vendored — attribution kept in-source. |
+| **Depth over breadth** | One architecture (x86_64) done deeply; other-architecture ports are not implemented (Makefile flags exist only). |
 | **Mechanism vs policy** | The window manager, shell and compositing policy live in userspace; the kernel exposes only minimal mechanisms (shared frames, threads, sysinfo). |
-| **Clean by construction** | Freestanding C/C++, a traditional Makefile, `-Wall -Wextra` (kernel) / `-Wall -Wextra -Werror` (lib), and a split GPL kernel / MIT userspace license model. |
-| **Solo-built, depth-first** | Primarily designed and implemented by one developer, and benchmarked against team projects on single-architecture kernel depth. |
+| **Clean by construction** | Freestanding C/C++, a traditional Makefile, zero-warning kernel build (`-Wall -Wextra`), `-Wall -Wextra -Werror` for lib, and a split GPL kernel / MIT userspace license model. |
+| **Solo-built, depth-first** | Designed and implemented primarily by one developer. |
 
 ### 🧩 Feature status
 
 | Subsystem | Status | Notes |
 |---|:---:|---|
 | Boot — Limine (BIOS + UEFI) | ✅ | ISO / HDD images |
-| SMP multicore | ✅ | Per-CPU structures, pinned workers |
-| Scheduler — 3EVDF / Rate-aware EEVDF | ✅ / 🚧 | RIP feedback modulates time-slice length, not CPU share (EEVDF subset) |
-| Virtual memory | ✅ | 5-level paging, huge pages, CoW + split |
-| Physical & kernel heap | ✅ | Per-CPU caches, SLUB/SLAB; QSBR lives in the userspace allocator |
-| Security | ✅ | KASLR, SMAP, isolated address spaces |
-| Device drivers | ✅ / 🚧 | PS/2, framebuffer, AHCI/ATA/ATAPI, NVMe, USB |
-| Filesystems | ✅ / 🚧 | ext4 (lwext4) + SAF working; FAT glue currently stubbed |
-| GUI / window manager | ✅ | Parallel strips, rounded windows, drag/max/min/8-way resize, kill, TTF/CJK, SW cursor |
+| SMP multicore | ✅ | Per-CPU structures, AP bring-up |
+| Scheduler — 3EVDF | ✅ / 🚧 | RIP feedback modulates time-slice length, not CPU share; no benchmark |
+| Virtual memory | ✅ | 4-level paging, huge pages, CoW (2 MB granular), W^X |
+| Physical & kernel heap | ✅ | Single global PMM lock + per-CPU page cache; SLUB/SLAB; QSBR lives in the userspace allocator |
+| Security | ✅ / 🚧 | KASLR (bootloader slide), SMEP, SMAP, NX/W^X, isolated address spaces |
+| Device drivers | ✅ / 🚧 | PS/2, framebuffer, AHCI, NVMe, USB (xHCI); ATA/ATAPI unregistered |
+| Filesystems | ✅ / 🚧 | ext4 (lwext4) + SAF working; FAT glue stubbed |
+| GUI / window manager | ✅ / 🚧 | Parallel strips, rounded windows, drag/max/min/8-way resize, kill, TTF/CJK, SW cursor; WM manages the console window only |
 | Taskbar / clock | ✅ | Acrylic bar, app pill, battery icon, two-line HH:MM + YYYY/M/D |
 | Userspace | ✅ | Own libc/`printf`, ELF loader, threads + TLS, shared memory |
-| Networking | 🚧 | Early stack skeleton |
-| Other architectures | ❌ | Not implemented yet (Makefile flags exist, ports pending) |
+| Networking | ❌ | lwIP vendored but never initialized (dead code) |
+| Other architectures | ❌ | Not implemented (Makefile flags exist, ports pending) |
 
 ### ⚙️ `SkylineSystem Low-Level Stack Implementations`
-
-I have independently designed and implemented a comprehensive low-level stack from scratch:
 
 <table>
   <tr>
     <td valign="top" width="50%">
       <h3 align="center">💾 Memory Management</h3>
       <ul>
-        <li><b>VMM:</b> 5-level paging, 1GB/2MB huge pages, and copy-on-write with dynamic huge page splitting.</li>
-        <li><b>PMM:</b> 3-level physical manager with lazy bitmap initialization and per-CPU caches to eliminate spinlock contention.</li>
+        <li><b>VMM:</b> 4-level paging (5-level stubbed), 1GB/2MB huge pages, copy-on-write, W^X via p_flags.</li>
+        <li><b>PMM:</b> bitmap frame allocator guarded by one global lock, plus a per-CPU cache for single-page requests.</li>
       </ul>
     </td>
     <td valign="top" width="50%">
       <h3 align="center">⚡ Core & Concurrency</h3>
       <ul>
-        <li><b>Allocator:</b> <code>malloc</code>/<code>free</code> engine with QSBR garbage collection, TLS batching, and lock-free bitmap CAS.</li>
-        <li><b>VFS & FD:</b> Hashmap mount point resolution and bitmap-based file descriptor allocator with O(1) tail insertion.</li>
+        <li><b>Allocator:</b> userspace <code>malloc</code>/<code>free</code> with QSBR deferred reclamation; kernel SLUB/SLAB with per-CPU magazines and a double-free guard.</li>
+        <li><b>VFS & FD:</b> hashmap mount-point resolution and a sharded red-black-tree fd allocator.</li>
       </ul>
     </td>
   </tr>
@@ -195,7 +210,7 @@ I have independently designed and implemented a comprehensive low-level stack fr
     <td colspan="2" valign="top">
       <h3 align="center">🎨 Graphics & UI</h3>
       <ul>
-        <li><b>Graphics:</b> TTF rasterization engine with LRU+hashtable glyph caching, CJK typography rules, and strict boundary-clipped alpha blending for the linear framebuffer.</li>
+        <li><b>Graphics:</b> TTF rasterization (stb_truetype-based) with LRU+hashtable glyph caching, CJK typography, boundary-clipped alpha blending onto the linear framebuffer.</li>
       </ul>
     </td>
   </tr>
@@ -205,28 +220,34 @@ I have independently designed and implemented a comprehensive low-level stack fr
 ## How to build
 
 > [!IMPORTANT]
-> Make sure you have install these software in linux
+> Make sure you have installed these tools on Linux:
 > * gcc (VER > 10)
 > * clang (VER > 15)
-> * binutil
+> * binutils
 > * xorriso
 > * make
 > * e2cp (ext2/3/4 tool)
-> Run with this command in the project root dir
+> Run the commands below in the project root directory.
 
-**You can build this project(x86_64 arch) with these commands:**
+**Build (x86_64):**
 ```bash
 cd kernel && ./get-deps
 cd .. && make limine-binary/limine
-#If can't run get-deps script, you can run "chmod +x kernel/get-deps"
+# if get-deps cannot run, try "chmod +x kernel/get-deps"
 make cm
 ```
-## Build Template(Not applicable to x86_64)
+
+> [!NOTE]
+> Since this revision, `make cm` no longer reformats an existing `disk.img`
+> (it is only created when absent). Wipe it manually if you really want a
+> fresh filesystem.
+
+## Build Template (not applicable to x86_64)
 > [!CAUTION]
-> You must edit the 'BUILD_ARCH' variable in 'gdef.mk' file 
+> You must edit the 'BUILD_ARCH' variable in 'gdef.mk'
 > to set the architecture you want to build for.
 
-For example if you want to build aarch64 OS,In gdef.mk you must change:
+For example, to try aarch64, in gdef.mk change:
 ```patch
 - # BUILD_ARCH = x86_64
 + BUILD_ARCH = aarch64
@@ -234,19 +255,23 @@ For example if you want to build aarch64 OS,In gdef.mk you must change:
 ```bash
 make cm KCC=(XXX arch)-linux-gnu-gcc KCXX=(XXX arch)-linux-gnu-g++ KLD=(XXX arch)-linux-gnu-ld
 ```
-For example, to build aarch64 arch, run:
+For example, to build aarch64:
 ```bash
 make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-gnu-ld BUILD_ARCH=aarch64
 ```
 
 > [!IMPORTANT]
-> You must run 'cd kernel && make kaslr-check' first
-> This Command can check SkylineSystem kernel IS/NOT SUPPORT KASLR Feature
+> Run 'cd kernel && make kaslr-check' first.
+> This command checks whether the kernel image supports the KASLR feature.
+
+> [!NOTE]
+> Non-x86_64 ports are **not implemented** — only configuration flags
+> exist. Expect build failures outside x86_64.
 
 ## Run
 ### In Linux:
 ```bash
-# just run x86_64 qemu example command
+# x86_64 QEMU example
 qemu-system-x86_64 -machine q35 -cpu max \
 -cdrom ./SkylineSystem-x86_64.iso -m 2G -smp 4 \
 -serial stdio -net nic -device AC97 \
@@ -255,30 +280,19 @@ qemu-system-x86_64 -machine q35 -cpu max \
 -no-reboot --no-shutdown \
 -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait 
 ```
-### In WSL(Windows Subsystem for Linux):
-see ./res/scripts/ folder run the arch you need to run
+### In WSL (Windows Subsystem for Linux):
+see the ./res/scripts/ folder for the architecture you need to run.
+
 ## Debug
 ```bash
-#first run qemu
-# just run x86_64 qemu example command
-qemu-system-x86_64 -machine q35 -cpu max \
--cdrom ./SkylineSystem-x86_64.iso -m 2G -smp 4 \
--serial stdio -net nic -device AC97 \
--drive file=disk.img,if=none,id=drive0 \
--device ide-hd,drive=drive0,bus=ide.0 \
--no-reboot --no-shutdown \
--gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait -S
-#run gdb on kernel folder
+# first run qemu (as above), then in another terminal:
 cd kernel && gdb
 ```
 In GDB:
 ```bash
-#and enter these command in gdb
 target remote :26000
 file kernel
-#do like you what you want to do than
 ```
-
 
 ## Thanks to
 
@@ -289,14 +303,12 @@ file kernel
 * [HanOS](https://github.com/jjwang/HanOS/)
 * [SAF](https://github.com/chocabloc/saf)
 
-
 ## Main Contributors
 
 * [Yo-yo-ooo](https://github.com/Yo-yo-ooo/)
 * [marceldobehere](https://github.com/marceldobehere)
 * [Arty3](https://github.com/Arty3)
 * 人造人(In QQ)
-
 
 ## Connect
 

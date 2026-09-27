@@ -254,93 +254,171 @@ namespace VMM {
             BitmapClear(pm->cpus_with_tlb, this_cpu()->id);
         }
 
-        void ShootdownPage(pagemap_t *pm, uint64_t vaddr) {
-            if (unlikely(!pm)) return;
-            LocalInvlpg(pm, vaddr);
-            if (unlikely(!smp_started)) return;
-            uint32_t me = this_cpu()->id;
+        /* ---- FIFO delivery + per-CPU completion counters ----------------
+           Requests are appended to each target's FIFO and serviced in order;
+           a request that needs completion carries the initiator's CPU id in
+           ack_cpu. After servicing it the target atomically decrements the
+           initiator's shootdown_acks, so the initiator waits on explicit ACKs
+           rather than guessing from an empty queue. */
+        static inline uint32_t QMask() { return TLB_SHOOTDOWN_QMAX - 1u; }
+
+        static inline void DoAck(int8_t initiator) {
+            if (initiator < 0) return;
+            cpu_t* in = smp_cpu_list[initiator];
+            if (in) __atomic_sub_fetch(&in->shootdown_acks, 1, __ATOMIC_RELEASE);
+        }
+
+        /* Service every queued request on the local CPU (FIFO). Used by the
+           IPI handler and while this CPU waits for its own ACKs. */
+        static void DrainLocal(cpu_t* c) {
+            for (;;) {
+                spinlock_lock(&c->shootdown_lock);
+                uint32_t head = c->shootdown_head, tail = c->shootdown_tail;
+                if (head == tail) { spinlock_unlock(&c->shootdown_lock); return; }
+                cpu_t::shootdown_req r = c->shootdown_queue[head & QMask()];
+                c->shootdown_head = head + 1;
+                spinlock_unlock(&c->shootdown_lock);
+
+                if (r.type == 1) LocalInvlpg(r.pm, r.vaddr);
+                else if (r.type == 2) {
+                    LocalFullFlush(r.pm);
+                    if (r.pm) BitmapClear(r.pm->cpus_with_tlb, c->id);
+                } else if (r.type == 3) LocalGlobalFlush();
+                DoAck(r.ack_cpu);
+            }
+        }
+
+        /* Append one request to a target queue whose lock is held. Apply
+           backpressure (drop the lock, kick the target, retry) instead of
+           overflowing, so requests are never silently lost and every ACK
+           stays reachable. Returns with the target lock held. */
+        static void PutLocked(cpu_t* t, const cpu_t::shootdown_req& r) {
+            for (uint64_t tries = 0; ; tries++) {
+                uint32_t head = t->shootdown_head, tail = t->shootdown_tail;
+                if (tail - head < TLB_SHOOTDOWN_QMAX) {
+                    t->shootdown_queue[tail & QMask()] = r;
+                    t->shootdown_tail = tail + 1;
+                    return;
+                }
+                spinlock_unlock(&t->shootdown_lock);
+                LAPIC::IPI(t->lapic_id, TLB_FLUSH_VEC);
+                for (int i = 0; i < 128; i++) asm volatile("pause");
+                spinlock_lock(&t->shootdown_lock);
+                if (unlikely(tries > 200000000ULL)) {
+                    /* pathological: collapse to one global flush, keep this ACK */
+                    t->shootdown_head = 0; t->shootdown_tail = 1;
+                    t->shootdown_queue[0] = {nullptr, 0, 3, r.ack_cpu};
+                    return;
+                }
+            }
+        }
+
+        /* Send one invalidation set to a single target and raise one IPI.
+           type 1 = nr addrs, type 2 = full pm, type 3 = global.
+           want_ack increments this CPU's outstanding ACKs once and tags the
+           last item so the target ACKs after servicing the whole set. */
+        static void SendTarget(cpu_t* t, pagemap_t* pm, uint8_t type,
+                               const uint64_t* addrs, uint32_t nr, bool want_ack) {
+            cpu_t* me = this_cpu();
+            const int8_t meid = (int8_t)me->id;
+            if (want_ack)
+                __atomic_add_fetch(&me->shootdown_acks, 1, __ATOMIC_RELAXED);
+
+            uint64_t rf;
+            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rf) :: "memory");
+            spinlock_lock(&t->shootdown_lock);
+            if (type == 1) {
+                for (uint32_t k = 0; k < nr; k++) {
+                    bool last = (k == nr - 1);
+                    PutLocked(t, {pm, addrs[k], 1,
+                                  (last && want_ack) ? meid : (int8_t)-1});
+                }
+            } else {
+                PutLocked(t, {pm, 0, type, want_ack ? meid : (int8_t)-1});
+            }
+            spinlock_unlock(&t->shootdown_lock);
+            asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
+            LAPIC::IPI(t->lapic_id, TLB_FLUSH_VEC);
+        }
+
+        /* Wait for every ACK this CPU requested. Drain our own queue between
+           checks so a peer that is simultaneously sending to us cannot form
+           a cross-CPU wait cycle. Bounded spin prevents a permanent hang. */
+        static void WaitAcks(cpu_t* me) {
+            for (uint64_t spins = 0;
+                 __atomic_load_n(&me->shootdown_acks, __ATOMIC_ACQUIRE) > 0; ) {
+                DrainLocal(me);
+                if (unlikely(++spins > 400000000ULL)) {
+                    kerrorln("TLB shootdown: ACK timeout (%d left)",
+                             (int)me->shootdown_acks);
+                    __atomic_store_n(&me->shootdown_acks, 0, __ATOMIC_RELEASE);
+                    return;
+                }
+                asm volatile("pause");
+            }
+        }
+
+        /* Iterate the target mask from pm->cpus_with_tlb and invoke fn(cpu). */
+        template <typename Fn>
+        static inline void ForEachTarget(pagemap_t* pm, Fn fn) {
+            const uint32_t me = this_cpu()->id;
             uint64_t targets[TLB_MASK_WORDS];
             for (int i = 0; i < TLB_MASK_WORDS; i++)
-                targets[i] = __atomic_load_n(&pm->cpus_with_tlb[i], __ATOMIC_RELAXED);
+                targets[i] = __atomic_load_n(&pm->cpus_with_tlb[i],
+                                            __ATOMIC_RELAXED);
             targets[me / 64] &= ~(1ULL << (me % 64));
-
             for (int w = 0; w < TLB_MASK_WORDS; w++) {
                 while (targets[w]) {
                     int b = __builtin_ffsll(targets[w]) - 1;
                     targets[w] &= ~(1ULL << b);
-                    uint32_t i = w * 64 + b;
-                    if (unlikely(i >= MAX_CPU)) continue;
-                    cpu_t *target = smp_cpu_list[i];
-                    if (unlikely(!target)) continue;
-
-                    uint64_t rf;
-                    asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rf) :: "memory");
-                    spinlock_lock(&target->shootdown_lock);
-                    if (likely(target->shootdown_count < TLB_SHOOTDOWN_QMAX)) {
-                        target->shootdown_queue[target->shootdown_count++] = {pm, vaddr, 1};
-                    } else {
-                        target->shootdown_queue[0] = {nullptr, 0, 3};
-                        target->shootdown_count = 1;
-                    }
-                    spinlock_unlock(&target->shootdown_lock);
-                    asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
-                    LAPIC::IPI(target->lapic_id, TLB_FLUSH_VEC);
+                    uint32_t id = (uint32_t)w * 64u + (uint32_t)b;
+                    if (unlikely(id >= MAX_CPU)) continue;
+                    cpu_t* t = smp_cpu_list[id];
+                    if (likely(t)) fn(t);
                 }
             }
+        }
+
+        void ShootdownPage(pagemap_t *pm, uint64_t vaddr) {
+            if (unlikely(!pm)) return;
+            LocalInvlpg(pm, vaddr);
+            if (unlikely(!smp_started)) return;
+            ForEachTarget(pm, [&](cpu_t* t) {
+                SendTarget(t, pm, 1, &vaddr, 1, false);
+            });
         }
 
         void ShootdownFull(pagemap_t *pm) {
             if (unlikely(!pm)) return;
             LocalFullFlush(pm);
             if (unlikely(!smp_started)) return;
-            uint32_t me = this_cpu()->id;
-            uint64_t targets[TLB_MASK_WORDS];
-            for (int i = 0; i < TLB_MASK_WORDS; i++)
-                targets[i] = __atomic_load_n(&pm->cpus_with_tlb[i], __ATOMIC_RELAXED);
-            targets[me / 64] &= ~(1ULL << (me % 64));
-
-            for (int w = 0; w < TLB_MASK_WORDS; w++) {
-                while (targets[w]) {
-                    int b = __builtin_ffsll(targets[w]) - 1;
-                    targets[w] &= ~(1ULL << b);
-                    uint32_t i = w * 64 + b;
-                    if (unlikely(i >= MAX_CPU)) continue;
-                    cpu_t *target = smp_cpu_list[i];
-                    if (unlikely(!target)) continue;
-
-                    uint64_t rf;
-                    asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rf) :: "memory");
-                    spinlock_lock(&target->shootdown_lock);
-                    if (likely(target->shootdown_count < TLB_SHOOTDOWN_QMAX)) {
-                        target->shootdown_queue[target->shootdown_count++] = {pm, 0, 2};
-                    } else {
-                        target->shootdown_queue[0] = {nullptr, 0, 3};
-                        target->shootdown_count = 1;
-                    }
-                    spinlock_unlock(&target->shootdown_lock);
-                    asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
-                    LAPIC::IPI(target->lapic_id, TLB_FLUSH_VEC);
-                }
-            }
+            ForEachTarget(pm, [&](cpu_t* t) {
+                SendTarget(t, pm, 2, nullptr, 0, false);
+            });
             if (unlikely(!CPUFeatures::has_pcid)) {
                 BitmapClearAll(pm->cpus_with_tlb);
-                BitmapSet(pm->cpus_with_tlb, me);
+                BitmapSet(pm->cpus_with_tlb, this_cpu()->id);
             }
         }
 
-        void IPIHandler(context_t * /*ctx*/) {
-            cpu_t *c = this_cpu();
-            if (unlikely(!c)) { LAPIC::EOI(); return; }
-            while (true) {
-                spinlock_lock(&c->shootdown_lock);
-                if (c->shootdown_count == 0) { spinlock_unlock(&c->shootdown_lock); break; }
-                auto req = c->shootdown_queue[--c->shootdown_count];
-                if (likely(c->shootdown_count > 0)) PREFETCH_RH(&c->shootdown_queue[c->shootdown_count - 1]);
-                spinlock_unlock(&c->shootdown_lock);
-                if (req.type == 1) LocalInvlpg(req.pm, req.vaddr);
-                else if (req.type == 2) { LocalFullFlush(req.pm); if (req.pm) BitmapClear(req.pm->cpus_with_tlb, c->id); }
-                else if (req.type == 3) LocalGlobalFlush();
+        /* Synchronous barrier: once it returns no remote CPU may still hold
+           a stale TLB entry for pm. Used before freeing a pagemap, replacing
+           the old "spin until the queue looks empty" heuristic. */
+        void ShootdownFence(pagemap_t *pm) {
+            if (unlikely(!pm || !smp_started)) return;
+            cpu_t* me = this_cpu();
+            __atomic_store_n(&me->shootdown_acks, 0, __ATOMIC_RELAXED);
+            for (int32_t i = 0; i <= smp_last_cpu; i++) {
+                cpu_t* t = smp_cpu_list[i];
+                if (unlikely(!t || t == me)) continue;
+                SendTarget(t, pm, 2, nullptr, 0, true);
             }
+            WaitAcks(me);
+        }
+
+        void IPIHandler(context_t * /*ctx*/) {
+            cpu_t* c = this_cpu();
+            if (likely(c)) DrainLocal(c);
             LAPIC::EOI();
         }
 
@@ -398,47 +476,15 @@ namespace VMM {
             b->active = false;
 
             if (likely(smp_started && pm)) {
-                const uint32_t me = this_cpu()->id;
-                uint64_t targets[TLB_MASK_WORDS];
-                for (int i = 0; i < TLB_MASK_WORDS; i++)
-                    targets[i] = __atomic_load_n(&pm->cpus_with_tlb[i], __ATOMIC_RELAXED);
-                targets[me / 64] &= ~(1ULL << (me % 64));
-
-                for (int w = 0; w < TLB_MASK_WORDS; w++) {
-                    while (targets[w]) {
-                        int bit = __builtin_ffsll(targets[w]) - 1;
-                        targets[w] &= ~(1ULL << bit);
-                        uint32_t id = w * 64 + bit;
-                        if (unlikely(id >= MAX_CPU)) continue;
-                        cpu_t *target = smp_cpu_list[id];
-                        if (unlikely(!target)) continue;
-                        if (nr == 0 && !need_full) continue;   // nothing to send
-
-                        uint64_t trf;
-                        asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(trf) :: "memory");
-                        spinlock_lock(&target->shootdown_lock);
-                        uint32_t base = target->shootdown_count;
-                        bool enqueued = false;
-                        if (!need_full && nr <= TLB_SHOOTDOWN_QMAX - base) {
-                            for (uint32_t k = 0; k < nr; k++)
-                                target->shootdown_queue[base + k] = {pm, b->addrs[k], 1};
-                            target->shootdown_count = base + nr;
-                            enqueued = true;
-                        }
-                        if (!enqueued) {
-                            // Overflow: collapse this batch to one per-pm flush.
-                            if (base < TLB_SHOOTDOWN_QMAX) {
-                                target->shootdown_queue[base] = {pm, 0, 2};
-                                target->shootdown_count = base + 1;
-                            } else {
-                                target->shootdown_queue[0] = {nullptr, 0, 3};
-                                target->shootdown_count = 1;
-                            }
-                        }
-                        spinlock_unlock(&target->shootdown_lock);
-                        asm volatile("push %0\n\tpopfq" :: "r"(trf) : "memory");
-                        LAPIC::IPI(target->lapic_id, TLB_FLUSH_VEC); // 1 IPI/target
-                    }
+                if (likely(!need_full && nr > 0)) {
+                    ForEachTarget(pm, [&](cpu_t* target) {
+                        SendTarget(target, pm, 1, b->addrs, nr, false);
+                    });
+                } else if (unlikely(need_full)) {
+                    /* batch overflowed the local log: one per-pm full flush. */
+                    ForEachTarget(pm, [&](cpu_t* target) {
+                        SendTarget(target, pm, 2, nullptr, 0, false);
+                    });
                 }
             }
             asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
@@ -775,7 +821,6 @@ namespace VMM {
             }
             void* p = PMM::Request();
             if (unlikely(!p)) {
-                PMM::dbg_dump();
                 kerrorln("PMM: OOM in Alloc");
                 goto err_a;
             }
@@ -943,24 +988,11 @@ namespace VMM {
     void DestroyPM(pagemap_t *pm){
         if (unlikely(!pm)) return;
         VMM::CleanPM(pm);
-        /* 修复(lite): 远程 CPU 的 shootdown 队列仍可能持有本 pm 的条目,
-           IPIHandler 会在 pm 释放后解引用/写 pm->cpus_with_tlb (UAF)。
-           这里等待各远程队列排空再释放, 大幅收窄窗口; 完整修复需
-           per-CPU 完成计数(见豆包清单 B03-full)。自旋带上限防永久挂起。 */
-        if (likely(smp_started)) {
-            for (int i = 0; i <= smp_last_cpu; i++) {
-                cpu_t *c = smp_cpu_list[i];
-                if (unlikely(!c || c == this_cpu())) continue;
-                uint64_t spins = 0;
-                while (__atomic_load_n(&c->shootdown_count, __ATOMIC_ACQUIRE) != 0) {
-                    if (unlikely(++spins > 100000000ULL)) {
-                        kerrorln("DestroyPM: cpu %d shootdown queue not drained - proceeding", c->id);
-                        break;
-                    }
-                    asm volatile("pause");
-                }
-            }
-        }
+        /* B03-full: wait on explicit per-CPU ACKs so no remote CPU is still
+           servicing a request that references this pm before we free it
+           (replaces the old "spin until the queue looks empty" heuristic). */
+        if (likely(smp_started))
+            LazyTLB::ShootdownFence(pm);
         int sl = IsPM5LVL ? 5 : 4;
         FreePageTablesInternal(pm->toplvl, sl);
         FreePCID(pm->pcid);
