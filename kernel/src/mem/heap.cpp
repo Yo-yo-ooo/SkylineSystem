@@ -59,7 +59,11 @@ static spinlock_t   g_pool_lock = 0;
 
 static inline uint64_t irq_save() {
     uint64_t flags;
+#ifdef __KERNEL_TEST_HOST__   /* 宿主测试: 用户态不能执行 cli, 仅读 flags */
+    asm volatile("pushfq\n\tpop %0" : "=r"(flags) :: "memory");
+#else
     asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(flags) :: "memory");
+#endif
     return flags;
 }
 static inline void irq_restore(uint64_t flags) {
@@ -1205,12 +1209,47 @@ extern "C" void       *kmem_cache_alloc(kmem_cache *c) { return SLUB::Alloc(c); 
 extern "C" void        kmem_cache_free(kmem_cache *c, void *o) { SLUB::Free(c, o); }
 #endif // __x86_64__
 
+#ifdef __KERNEL_TEST_HOST__
+/* 宿主测试(ASAN): fc_entry_free 毒化已释放对象; 分配时解毒,
+   使 ASAN 只报告"释放后未经复用即被访问"的真实 UAF */
+extern "C" void __asan_unpoison_memory_region(const volatile void *addr, size_t size);
+
+/* 全量分配环形日志: 诊断"活地址被再次分配/覆盖" */
+struct _kalloc_rec { uintptr_t p; uint32_t size; uint32_t ra; };
+static struct _kalloc_rec g_kalloc_log[1 << 20];
+static uint32_t g_kalloc_idx = 0;
+extern "C" void kalloc_query(void *p) {
+    printf_("[KMQ] 查询 %p 的全部分配记录 (最近 2^20 次):\n", p);
+    uint32_t found = 0;
+    for (uint32_t i = 0; i < (1u << 20); i++) {
+        if (g_kalloc_log[i].p == (uintptr_t)p) {
+            printf_("[KMQ]   p=%p size=%u ra=0x%x\n", p, g_kalloc_log[i].size, g_kalloc_log[i].ra);
+            if (++found >= 8) break;
+        }
+    }
+    printf_("[KMQ] 共 %u 条\n", found);
+}
+#endif
+
 extern "C" void *kmalloc(uint64_t size) {
 #ifdef __x86_64__
     void *p = SLUB::Kmalloc((size_t)size);    // small object: lock-free SLUB path
-    if (likely(p)) return p;
+    if (likely(p)) {
+#ifdef __KERNEL_TEST_HOST__
+        __asan_unpoison_memory_region(p, (size_t)size);
+        g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)p, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
 #endif
-    return SLAB::Alloc(size);                 // >1024 B large object, or SLUB not online
+        return p;
+    }
+#endif
+    void *q = SLAB::Alloc(size);               // >1024 B large object, or SLUB not online
+#ifdef __KERNEL_TEST_HOST__
+    if (q) {
+        __asan_unpoison_memory_region(q, (size_t)size);
+        g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)q, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
+    }
+#endif
+    return q;
 }
 
 extern "C" void kfree(void *ptr) {

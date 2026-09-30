@@ -206,10 +206,115 @@ static inline void fc_lru_move_to_back(file_cache_cpu_t *s, file_cache_entry_t *
     fc_lru_push_back(s, e);
 }
 
+#ifdef __KERNEL_TEST_HOST__
+/* 宿主测试: 把 SLUB 内部的 free 暴露给 ASAN —— 对象内存不会立刻回到 libc,
+   ASAN 看不到 allocator 内部的释放; 毒化后任何复用/读取都会报出释放栈 */
+extern "C" void __asan_poison_memory_region(const volatile void *addr, size_t size);
+extern "C" void __asan_unpoison_memory_region(const volatile void *addr, size_t size);
+/* 宿主 harness 提供的全局操作计数, 供守卫打印定位 */
+extern uint64_t g_test_op;
+extern "C" int art_verify(art_tree *t);
+/* 故障注入: 强制 promote 的"插入后校验"失败一次 (回归测试用) */
+static int g_fc_fail_once = 0;
+extern "C" void fc_set_insert_fail_once(void) { g_fc_fail_once = 1; }
+
+/* 双重释放/双重分配追踪(代际, 精确地址开地址散列) */
+#define FC_TRACK_N 65536
+static uintptr_t g_tk_p[FC_TRACK_N];      // 0 = 空槽
+static uint32_t  g_tk_gen[FC_TRACK_N];
+static uint32_t  g_tk_freed[FC_TRACK_N];
+static uintptr_t g_tk_first_ra[FC_TRACK_N];
+static uintptr_t g_tk_alloc_ra[FC_TRACK_N];
+static inline uint32_t fc_slot(void *p) {
+    uint64_t h = (uintptr_t)p;
+    h ^= h >> 17; h *= 0x9E3779B97F4A7C15ULL; h ^= h >> 31;
+    return (uint32_t)(h & (FC_TRACK_N - 1));
+}
+static inline void fc_track_alloc(void *p) {
+    if (unlikely(!p)) return;
+    for (uint32_t i = 0; i < 8; i++) {
+        uint32_t s = (fc_slot(p) + i) & (FC_TRACK_N - 1);
+        if (g_tk_p[s] == 0) {
+            g_tk_p[s] = (uintptr_t)p; g_tk_gen[s] = 1; g_tk_freed[s] = 0;
+            g_tk_alloc_ra[s] = (uintptr_t)__builtin_return_address(0);
+            return;
+        }
+        if (g_tk_p[s] == (uintptr_t)p) {
+            if (g_tk_freed[s] != g_tk_gen[s]) {
+                printf_("[FCDBG] ALLOC OF LIVE ADDRESS op=%llu p=%p\n",
+                        (unsigned long long)g_test_op, p);
+            }
+            g_tk_gen[s]++;
+            g_tk_alloc_ra[s] = (uintptr_t)__builtin_return_address(0);
+            return;
+        }
+    }
+}
+static inline void fc_track_free(file_cache_entry_t *e, uintptr_t ra) {
+    if (unlikely(!e)) return;
+    for (uint32_t i = 0; i < 8; i++) {
+        uint32_t s = (fc_slot(e) + i) & (FC_TRACK_N - 1);
+        if (g_tk_p[s] == (uintptr_t)e) {
+            if (g_tk_gen[s] > 0 && g_tk_freed[s] == g_tk_gen[s]) {
+                printf_("[FCDBG] TRUE DOUBLE FREE of entry %p, first_free_ra=0x%llx\n",
+                        (void*)e, (unsigned long long)g_tk_first_ra[s]);
+            }
+            g_tk_freed[s] = g_tk_gen[s];
+            g_tk_first_ra[s] = ra;
+            return;
+        }
+    }
+}
+/* 插入 ART 前检查值是否为已释放条目 (释放后未经重新分配即被插入 = UAF) */
+static inline void fc_track_insert(file_cache_entry_t *e, const char *site) {
+    if (unlikely(!e)) return;
+    for (uint32_t i = 0; i < 8; i++) {
+        uint32_t s = (fc_slot(e) + i) & (FC_TRACK_N - 1);
+        if (g_tk_p[s] == (uintptr_t)e) {
+            if (g_tk_gen[s] > 0 && g_tk_freed[s] == g_tk_gen[s]) {
+                printf_("[FCDBG] INSERT OF FREED ENTRY op=%llu site=%s e=%p\n",
+                        (unsigned long long)g_test_op, site, (void*)e);
+            }
+            return;
+        }
+    }
+}
+/* 查询地址的追踪记录 (污染诊断用) */
+extern "C" void fc_track_query(void *p) {
+    for (uint32_t i = 0; i < 8; i++) {
+        uint32_t s = (fc_slot(p) + i) & (FC_TRACK_N - 1);
+        if (g_tk_p[s] == (uintptr_t)p) {
+            printf_("[FCTRK] p=%p gen=%u freed_gen=%u first_ra=0x%llx alloc_ra=0x%llx (allocated=%s, freed=%s)\n",
+                    p, g_tk_gen[s], g_tk_freed[s], (unsigned long long)g_tk_first_ra[s],
+                    (unsigned long long)g_tk_alloc_ra[s],
+                    g_tk_gen[s] > 0 ? "yes" : "no",
+                    (g_tk_freed[s] == g_tk_gen[s] && g_tk_gen[s] > 0) ? "yes" : "no");
+            return;
+        }
+    }
+    printf_("[FCTRK] p=%p 无记录\n", p);
+}
+#endif
+
 static inline void fc_entry_free(file_cache_entry_t *e) {
     if (unlikely(!e)) return;
+#ifdef __KERNEL_TEST_HOST__
+    if (g_test_op == 565) printf_("[P565] fc_entry_free e=%p key=%p\n", (void*)e, (void*)e->key);
+#endif
+#ifdef __KERNEL_TEST_HOST__
+    /* 释放时仍在其所属缓存的 ART 中 = 悬空指针 bug, 直接打印释放站点 */
+    if (e->cpu_id < 64 && g_fc_cpus[e->cpu_id] &&
+        art_search(&g_fc_cpus[e->cpu_id]->index, e->key, e->key_len) == e) {
+        printf_("[FCDBG] FREE WHILE STILL IN ART: entry %p (key_len=%u) ra=0x%llx\n",
+                (void*)e, e->key_len, (unsigned long long)__builtin_return_address(0));
+    }
+#endif
     if (e->data && e->data != e->inline_data) kfree(e->data);
     if (e->key) kfree(e->key);
+#ifdef __KERNEL_TEST_HOST__
+    fc_track_free(e, (uintptr_t)__builtin_return_address(0));
+    __asan_poison_memory_region(e, sizeof(*e));
+#endif
     kfree(e);
 }
 
@@ -317,6 +422,9 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
 // 容错分配：根据申请大小估算需要驱逐的页数
 static void* fc_kmalloc_with_fallback(file_cache_cpu_t *s, size_t size) {
     void *ptr = kmalloc(size);
+#ifdef __KERNEL_TEST_HOST__
+    if (ptr) fc_track_alloc(ptr);
+#endif
     if (unlikely(!ptr)) {
         spinlock_lock(&s->lock);
         uint32_t need_pages = (size + 4095) / 4096;
@@ -336,6 +444,9 @@ static void* fc_kmalloc_with_fallback(file_cache_cpu_t *s, size_t size) {
 
 static void* fc_kcalloc_with_fallback(file_cache_cpu_t *s, size_t n, size_t size) {
     void *ptr = kcalloc(n, size);
+#ifdef __KERNEL_TEST_HOST__
+    if (ptr) fc_track_alloc(ptr);
+#endif
     if (unlikely(!ptr)) {
         spinlock_lock(&s->lock);
         size_t total_size = n * size;
@@ -582,6 +693,9 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
 
         cur->cpu_id = best_dst;
         art_insert(&dst->index, cur->key, cur->key_len, (void *)cur);
+#ifdef __KERNEL_TEST_HOST__
+        fc_track_insert(cur, "check_load");
+#endif
         fc_lru_push_back(dst, cur);
 
         dst->total_entries++;
@@ -664,6 +778,13 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
 
         spinlock_lock(&rs->lock);
         file_cache_entry_t *re = (file_cache_entry_t *)art_search(&rs->index, key, key_len);
+#ifdef __KERNEL_TEST_HOST__
+        if (unlikely(re && (re->key_len > 4096 || re->cpu_id >= 64 || re->pin_count > 1000000))) {
+            printf_("[FCDBG] GET-MIGRATE GARBAGE ENTRY op=%llu rs=%u key=%.*s re=%p key_len=%u cpu_id=%u\n",
+                    (unsigned long long)g_test_op, rs->cpu_id, (int)key_len, key, (void*)re,
+                    re->key_len, re->cpu_id);
+        }
+#endif
         if (re && !re->is_dirty && re->pin_count == 0 && re->state == FC_STATE_CACHED) {
             if (s->soft_limit > 0 && s->smoothed_cache_bytes + re->data_len > s->soft_limit) {
                 spinlock_unlock(&rs->lock); continue;
@@ -683,6 +804,9 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                 spinlock_lock(&s->lock);
                 re->cpu_id = s->cpu_id;
                 art_insert(&s->index, re->key, re->key_len, (void *)re);
+#ifdef __KERNEL_TEST_HOST__
+                fc_track_insert(re, "get-migrate");
+#endif
                 fc_lru_push_back(s, re);
 
                 s->hits++;   // 优化: 迁移命中也计入命中率统计
@@ -863,6 +987,11 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
 
     e->key = (uint8_t *)fc_kmalloc_with_fallback(s, key_len);
     if (unlikely(!e->key)) { kfree(e); return FC_ERR_NO_MEMORY; }
+#ifdef __KERNEL_TEST_HOST__
+    if (g_test_op == 565) printf_("[P565] promote s=%u key='%.*s' len=%u data_len=%zu e=%p e->key=%p\n",
+        s->cpu_id, (int)key_len, key, key_len, data_len, (void*)e, (void*)e->key);
+    if (g_test_op == 565) { printf_("[P565] pre-insert verify:\n"); art_verify(&s->index); }
+#endif
 
     __memcpy(e->key, key, key_len);
     e->key_len = key_len;
@@ -920,6 +1049,22 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
 
 
         if (use_inline) {
+            /* 修复(#GP/内存越界): 旧条目按当初的 data_len 分配内联容量,
+               复用前必须校验新 data_len 是否仍放得下; 放不下则摘除旧条目
+               (走下方新条目路径, e 已在函数开头分配好)。
+               注意: 1030-1033 已扣减旧条目的字节统计, 此处只摘链与计数 */
+            size_t cap = SLUB::TryGetSize(exist);
+            if (cap == 0) cap = sizeof(file_cache_entry_t);
+            if (unlikely(data_len > cap - sizeof(file_cache_entry_t))) {
+                void *av = art_delete(&s->index, exist->key, exist->key_len);
+                if (av) {
+                    fc_lru_remove(s, exist);
+                    s->total_cache_freq -= exist->access_freq;
+                    s->total_entries--;
+                }
+                fc_entry_free(exist);   /* 含 old_data_to_free, 锁内 kfree 安全 */
+                goto insert_new;        /* 锁保持持有, 与下方新条目路径一致 */
+            }
             __memcpy(exist->inline_data, data, data_len);
             exist->data = exist->inline_data;
             /* 内联数据不参与 CRC 校验 (get 跳过), 无需设置 */
@@ -945,6 +1090,7 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
         return 0;
     }
 
+insert_new:;
     if (unlikely(is_dirty && s->total_cache_bytes > 0)) {
         uint32_t dyn_dirty_limit = 80 - (s->io_congestion / 2);
         if (dyn_dirty_limit < 20) dyn_dirty_limit = 20;
@@ -972,11 +1118,35 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
     }
 
     art_insert(&s->index, e->key, e->key_len, (void *)e);
-    if (unlikely(art_search(&s->index, e->key, e->key_len) != e)) {
-        spinlock_unlock(&s->lock);
-        kfree(e->key); kfree(e);
-        for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
-        return -4;
+#ifdef __KERNEL_TEST_HOST__
+    fc_track_insert(e, "promote");
+    if (g_test_op == 565) printf_("[P565] after insert: e=%p e->key=%p\n", (void*)e, (void*)e->key);
+#endif
+    if (unlikely(art_search(&s->index, e->key, e->key_len) != e
+#ifdef __KERNEL_TEST_HOST__
+        || __atomic_exchange_n(&g_fc_fail_once, 0, __ATOMIC_RELAXED)
+#endif
+        )) {
+        /* 修复(#GP/UAF): 插入后校验失败时的处理必须保证不留悬垂值 ——
+           1) 幂等删除: 若树中残留本键的值, 先摘除; 是他人条目则恢复;
+           2) 重试一次插入 (偶发失败不应立即放弃);
+           3) 仍失败才释放, 且此时树中已保证无本键残留 */
+        void *stale = art_delete(&s->index, e->key, e->key_len);
+        if (unlikely(stale && stale != e)) {
+            art_insert(&s->index, e->key, e->key_len, stale);
+            spinlock_unlock(&s->lock);
+            kfree(e->key); kfree(e);
+            for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
+            return -4;
+        }
+        art_insert(&s->index, e->key, e->key_len, (void *)e);
+        if (unlikely(art_search(&s->index, e->key, e->key_len) != e)) {
+            art_delete(&s->index, e->key, e->key_len);
+            spinlock_unlock(&s->lock);
+            kfree(e->key); kfree(e);
+            for (int i = 0; i < vic_cnt; i++) fc_entry_free(victims[i]);
+            return -4;
+        }
     }
 
     fc_lru_push_back(s, e);
@@ -1066,6 +1236,9 @@ int32_t file_cache_readahead(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
 
     spinlock_lock(&s->lock);
     art_insert(&s->index, e->key, e->key_len, (void *)e);
+#ifdef __KERNEL_TEST_HOST__
+    fc_track_insert(e, "readahead");
+#endif
     /* 优化: 与 promote 同款的并发插入自检 —— 构造期间(未持锁)他人可能已插入同 key,
        避免 LRU 中残留不可达的重复条目 */
     if (unlikely(art_search(&s->index, e->key, e->key_len) != e)) {

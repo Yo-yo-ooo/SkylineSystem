@@ -477,7 +477,8 @@ void* art_search(const art_tree *t, const uint8_t *key, int32_t key_len) {
         // Recursively search
         /* find_child 内部已对目标子节点行发出预取,
            与本层返回/循环回边的周期重叠 */
-        child = find_child(n, key[depth]);
+        /* 修复: 键在 depth 处耗尽时子索引为 0(终结符), 原实现越界读 key[key_len] */
+        child = find_child(n, (depth < key_len) ? key[depth] : 0);
         n = likely(child) ? *child : NULL;
         depth++;
     }
@@ -795,9 +796,16 @@ static void* art_insert_internal(art_node *n, art_node **ref, const uint8_t *key
             new_node->n.partial_len = longest_prefix;
             __memcpy(new_node->n.partial, key+depth, _min__art(MAX_PREFIX_LEN, longest_prefix));
             // Add the leafs to the new node4
+            /* 修复: 新键是既有叶子的真前缀时 depth+longest_prefix == key_len,
+               越界读 key[key_len] 使子索引取决于分配器残留字节 → 树结构损坏;
+               键耗尽一律用 0(终结符) 索引 */
             *ref = (art_node*)new_node;
-            add_child4(new_node, ref, l->key[depth+longest_prefix], SET_LEAF(l));
-            add_child4(new_node, ref, l2->key[depth+longest_prefix], SET_LEAF(l2));
+            add_child4(new_node, ref,
+                       ((uint32_t)(depth + longest_prefix) < l->key_len) ? l->key[depth+longest_prefix] : 0,
+                       SET_LEAF(l));
+            add_child4(new_node, ref,
+                       ((uint32_t)(depth + longest_prefix) < (uint32_t)key_len) ? key[depth+longest_prefix] : 0,
+                       SET_LEAF(l2));
             return NULL;
         }
 
@@ -826,20 +834,27 @@ static void* art_insert_internal(art_node *n, art_node **ref, const uint8_t *key
             } else {
                 n->partial_len -= (prefix_diff+1);
                 art_leaf *l = minimum(n);
-                add_child4(new_node, ref, l->key[depth+prefix_diff], n);
+                /* 修复: 同上, 键耗尽用终结符 0 */
+                add_child4(new_node, ref,
+                           ((uint32_t)(depth+prefix_diff) < l->key_len) ? l->key[depth+prefix_diff] : 0,
+                           n);
                 __memcpy(n->partial, l->key+depth+prefix_diff+1,
                         _min__art(MAX_PREFIX_LEN, n->partial_len));
             }
 
             // Insert the new leaf
             art_leaf *l = make_leaf(key, key_len, value);
-            add_child4(new_node, ref, key[depth+prefix_diff], SET_LEAF(l));
+            /* 修复: 新键耗尽用终结符 0 */
+            add_child4(new_node, ref,
+                       (depth+prefix_diff < key_len) ? key[depth+prefix_diff] : 0,
+                       SET_LEAF(l));
             return NULL;
         }
 
     recurse_search:;
         // Find a child to recurse to
-        art_node **child = find_child(n, key[depth]);
+        /* 修复: 键耗尽用终结符 0 */
+        art_node **child = find_child(n, (depth < key_len) ? key[depth] : 0);
         if (likely(child)) {
             n = *child;     /* [栈安全] 尾递归 → 回边 */
             ref = child;
@@ -849,7 +864,7 @@ static void* art_insert_internal(art_node *n, art_node **ref, const uint8_t *key
 
         // No child, insert directly
         art_leaf *l = make_leaf(key, key_len, value);
-        add_child(n, ref, key[depth], SET_LEAF(l));
+        add_child(n, ref, (depth < key_len) ? key[depth] : 0, SET_LEAF(l));
         return NULL;
     }
 }
@@ -863,7 +878,164 @@ static void* art_insert_internal(art_node *n, art_node **ref, const uint8_t *key
  * @return null if the item was newly inserted, otherwise
  * the old value pointer is returned.
  */
+#ifdef __KERNEL_TEST_HOST__
+/* 宿主测试: 记录每次 ART 变更, 供隔离重放定位缺陷 */
+extern uint64_t g_test_op;
+extern int32_t printf_(const char* format, ...);
+#endif
+
+#ifdef __KERNEL_TEST_HOST__
+/* 宿主测试: 结构级 dump (对比真实树与重放树, 定位分叉点) */
+static void art_dump_node(art_node *n, int depth) {
+    if (!n) return;
+    for (int i = 0; i < depth; i++) printf_("  ");
+    if (IS_LEAF(n)) {
+        art_leaf *l = LEAF_RAW(n);
+        printf_("LEAF key='%.*s' vlen=%d\n", l->key_len, (const char*)l->key, l->key_len);
+        return;
+    }
+    printf_("NODE type=%d plen=%d partial='%.*s'\n", n->type, n->partial_len, n->partial_len, (const char*)n->partial);
+    switch (n->type) {
+        case NODE4: {
+            art_node4 *n4 = (art_node4*)n;
+            for (int i = 0; i < n4->n.num_children; i++) {
+                printf_("  [%c] ", n4->keys[i]);
+                art_dump_node(n4->children[i], depth + 1);
+            }
+            break;
+        }
+        case NODE16: {
+            art_node16 *n16 = (art_node16*)n;
+            for (int i = 0; i < n16->n.num_children; i++) {
+                printf_("  [%c] ", n16->keys[i]);
+                art_dump_node(n16->children[i], depth + 1);
+            }
+            break;
+        }
+        case NODE48: {
+            art_node48 *n48 = (art_node48*)n;
+            for (int i = 0; i < 256; i++) {
+                uint8_t idx = n48->keys[i];
+                if (idx) { printf_("  [%c] ", (char)i); art_dump_node(n48->children[idx - 1], depth + 1); }
+            }
+            break;
+        }
+        case NODE256: {
+            art_node256 *n256 = (art_node256*)n;
+            for (int i = 0; i < 256; i++) {
+                if (n256->children[i]) { printf_("  [%c] ", (char)i); art_dump_node(n256->children[i], depth + 1); }
+            }
+            break;
+        }
+    }
+}
+void art_deep_dump(art_tree *t) {
+    printf_("=== ART DUMP tree=%p size=%d ===\n", (void*)t, t->size);
+    art_dump_node(t->root, 0);
+    printf_("=== END DUMP ===\n");
+}
+
+/* 递归不变量校验: 每个节点的 partial 必须等于所有子键在该深度后的公共前缀;
+   每个子键在 depth 处的字节必须等于其索引; 叶子在 depth 处必须还有剩余字节或结束 */
+static int art_verify_node(art_node *n, const uint8_t *parent_prefix, int depth, int *viol) {
+    if (!n || *viol) return 0;
+    if (IS_LEAF(n)) return 0;
+    (void)parent_prefix;
+    int32_t child_depth = depth + 1 + n->partial_len;
+    switch (n->type) {
+        case NODE4: {
+            art_node4 *nn = (art_node4*)n;
+            for (int i = 0; i < nn->n.num_children; i++) {
+                art_node *c = nn->children[i];
+                if (IS_LEAF(c)) {
+                    art_leaf *l = LEAF_RAW(c);
+                    if (depth >= l->key_len || l->key[depth] != nn->keys[i]) {
+                        printf_("[ARTVERIFY] LEAF index mismatch: depth=%d node_key=%c leaf_key='%.*s'\n",
+                                depth, nn->keys[i], l->key_len, (const char*)l->key);
+                        *viol = 1; return 0;
+                    }
+                } else {
+                    art_verify_node(c, NULL, child_depth, viol);
+                }
+            }
+            break;
+        }
+        case NODE16: {
+            art_node16 *nn = (art_node16*)n;
+            for (int i = 0; i < nn->n.num_children; i++) {
+                art_node *c = nn->children[i];
+                if (IS_LEAF(c)) {
+                    art_leaf *l = LEAF_RAW(c);
+                    if (depth >= l->key_len || l->key[depth] != nn->keys[i]) {
+                        printf_("[ARTVERIFY] LEAF index mismatch: depth=%d node_key=%c leaf_key='%.*s'\n",
+                                depth, nn->keys[i], l->key_len, (const char*)l->key);
+                        *viol = 1; return 0;
+                    }
+                } else {
+                    art_verify_node(c, NULL, child_depth, viol);
+                }
+            }
+            break;
+        }
+        case NODE48: {
+            art_node48 *nn = (art_node48*)n;
+            for (int i = 0; i < 256; i++) {
+                if (!nn->keys[i]) continue;
+                art_node *c = nn->children[nn->keys[i] - 1];
+                if (IS_LEAF(c)) {
+                    art_leaf *l = LEAF_RAW(c);
+                    if (depth >= l->key_len || l->key[depth] != (uint8_t)i) {
+                        printf_("[ARTVERIFY] LEAF index mismatch: depth=%d node_key=%c leaf_key='%.*s'\n",
+                                depth, (char)i, l->key_len, (const char*)l->key);
+                        *viol = 1; return 0;
+                    }
+                } else {
+                    art_verify_node(c, NULL, child_depth, viol);
+                }
+            }
+            break;
+        }
+        case NODE256: {
+            art_node256 *nn = (art_node256*)n;
+            for (int i = 0; i < 256; i++) {
+                if (!nn->children[i]) continue;
+                art_node *c = nn->children[i];
+                if (IS_LEAF(c)) {
+                    art_leaf *l = LEAF_RAW(c);
+                    if (depth >= l->key_len || l->key[depth] != (uint8_t)i) {
+                        printf_("[ARTVERIFY] LEAF index mismatch: depth=%d node_key=%c leaf_key='%.*s'\n",
+                                depth, (char)i, l->key_len, (const char*)l->key);
+                        *viol = 1; return 0;
+                    }
+                } else {
+                    art_verify_node(c, NULL, depth + 1, viol);
+                }
+            }
+            break;
+        }
+    }
+    return 0;
+}
+int art_verify(art_tree *t) {
+    int viol = 0;
+    if (t->root && !IS_LEAF(t->root)) {
+        /* 根从 depth=0 起, 子索引 = key[partial_len] */
+        art_verify_node(t->root, NULL, 0, &viol);
+    }
+    if (!viol) printf_("[ARTVERIFY] tree OK\n");
+    return viol;
+}
+#endif
+
 void* art_insert(art_tree *t, const uint8_t *key, int32_t key_len, void *value) {
+#ifdef __KERNEL_TEST_HOST__
+    if (g_test_op < 700 && key && key_len > 0 && key_len < 100) {
+        char kb[32]; int n = key_len < 31 ? key_len : 31;
+        for (int i = 0; i < n; i++) kb[i] = (char)key[i]; kb[n] = 0;
+        printf_("[ARTLOG] op=%llu tree=%p INS key='%s' len=%d\n",
+                (unsigned long long)g_test_op, (void*)t, kb, key_len);
+    }
+#endif
     int32_t old_val = 0;
     void *old = art_insert_internal(t->root, &t->root, key, key_len, value, 0, &old_val, 1);
     if (!old_val) t->size++;
@@ -1033,14 +1205,15 @@ static art_leaf* art_delete_internal(art_node *n, art_node **ref, const uint8_t 
         }
 
         // Find child node
-        art_node **child = find_child(n, key[depth]);
+        /* 修复: 键耗尽用终结符 0 */
+        art_node **child = find_child(n, (depth < key_len) ? key[depth] : 0);
         if (unlikely(!child)) return NULL;
 
         // If the child is leaf, delete from this node
         if (unlikely(IS_LEAF(*child))) {
             art_leaf *l = LEAF_RAW(*child);
             if (likely(!leaf_matches(l, key, key_len, depth))) {
-                remove_child(n, ref, key[depth], child);
+                remove_child(n, ref, (depth < key_len) ? key[depth] : 0, child);
                 return l;
             }
             return NULL;
@@ -1062,6 +1235,14 @@ static art_leaf* art_delete_internal(art_node *n, art_node **ref, const uint8_t 
  * the value pointer is returned.
  */
 void* art_delete(art_tree *t, const uint8_t *key, int32_t key_len) {
+#ifdef __KERNEL_TEST_HOST__
+    if (g_test_op < 700 && key && key_len > 0 && key_len < 100) {
+        char kb[32]; int n = key_len < 31 ? key_len : 31;
+        for (int i = 0; i < n; i++) kb[i] = (char)key[i]; kb[n] = 0;
+        printf_("[ARTLOG] op=%llu tree=%p DEL key='%s' len=%d\n",
+                (unsigned long long)g_test_op, (void*)t, kb, key_len);
+    }
+#endif
     art_leaf *l = art_delete_internal(t->root, &t->root, key, key_len, 0);
     if (likely(l)) {
         t->size--;
@@ -1287,7 +1468,8 @@ int32_t art_iter_prefix(art_tree *t, const uint8_t *key, int32_t key_len, art_ca
         }
 
         // Recursively search
-        child = find_child(n, key[depth]);
+        /* 修复: 键耗尽用终结符 0 */
+        child = find_child(n, (depth < key_len) ? key[depth] : 0);
         n = likely(child) ? *child : NULL;
         depth++;
     }
