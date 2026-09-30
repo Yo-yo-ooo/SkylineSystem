@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")"
 
 echo "== build =="
-make -B slub slub-poison fc fc-reg sched 2>&1 | tail -3
+make -B slub slub-poison fc fc-reg sched slub-mt fc-mt 2>&1 | tail -3
 
 echo "== run slub =="
 ./bin/slub_test > ci_slub.log 2>&1
@@ -13,7 +13,7 @@ echo "== run slub =="
 echo "== run slub-poison (红区越界负向) =="
 ./bin/slub_poison > ci_poison.log 2>&1
 
-echo "== run fc chaos+分路径 =="
+echo "== run fc chaos+分路径+混合负载 =="
 ./bin/fc_test > ci_fc.log 2>&1
 
 echo "== run fc 三缺陷回归 =="
@@ -22,6 +22,12 @@ echo "== run fc 三缺陷回归 =="
 echo "== run sched 模型 =="
 ./bin/sched_test > ci_sched.log 2>&1
 
+echo "== run slub 多线程 (4 虚拟 CPU) =="
+./bin/slub_mt > ci_slubmt.log 2>&1
+
+echo "== run fc 多线程 (4 线程 × 4 实例) =="
+./bin/fc_mt > ci_fcmt.log 2>&1
+
 echo "== 汇总 =="
-grep -hE 'RESULT|FAIL|MISSING' ci_slub.log ci_poison.log ci_fc.log ci_fcreg.log ci_sched.log || true
+grep -ahE 'RESULT|FAIL|MISSING|redzone-oob' ci_slub.log ci_poison.log ci_fc.log ci_fcreg.log ci_sched.log ci_slubmt.log ci_fcmt.log || true
 echo "CI DONE (日志: ci_*.log)"

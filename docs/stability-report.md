@@ -46,8 +46,13 @@ cd tests && bash ci.sh         # slub + slub-poison + fc + fc-reg + sched 全量
 
 | 负载 | P50 | P95 | P99 | max |
 |---|---|---|---|---|
-| 无压力 | 86 ns | 90 ns | 120 ns | 375 µs（首触页缺页） |
-| 高负载（10 万存活 256B 块） | 86 ns | — | 119 ns | 719 µs（偶发页分配） |
+| 无压力 | 91 ns | 96 ns | 131 ns | 11.7 ms（首轮：向量增长+首触缺页） |
+| 高负载（10 万存活 256B 块） | 90 ns | — | 130 ns | 157 µs |
+| **第二轮（热缓存，验 max 复现）** | 91 ns | — | 131 ns | **293 µs（复现）** |
+
+**max 复现核查（已定位）**：第二轮慢路径计数 = **0 次**（128B slab 已热）仍出现
+~160 个 >10µs 离群（max ~1.6ms）→ **根因 = 宿主线程抢占**（rdtsc 墙钟包含被
+抢占时间，测试方法学限制），**非分配器缺陷**；分配器自身 P50/P99 不受影响。
 
 ### 1.4 尺寸分档吞吐（op = kmalloc+kfree 对；批量计时、预热 50k、sink 防消除、3 run）
 
@@ -60,10 +65,28 @@ steady_clock 调用且 op 定义不同，已作废，以此表为准。
 **"与同机 glibc 同数量级/不构成瓶颈"的结论已撤回**：glibc 对比从未实测，且吞吐
 ≠瓶颈结论（需内核侧 profile，见 `docs/stability-audit.md` §5）。
 
-### 1.5 碎片化（混沌后重填 5 万块 1..2048B）
+### 1.4b 多线程并发（slub-mt：4 宿主线程 = 4 虚拟 CPU）
 
-内部碎片率（类粒度开销）= 130.7%（主要来自 >1024B 请求的大页粒度：1025B→4096B 页）；
-SLUB 类内（≤1024）粒度损耗低。此为**分配粒度特征**而非泄漏（两阶段页数相等为证）。
+| 阶段 | 结果 |
+|---|---|
+| A 无竞争（各 50 万 op 独立混沌） | 0 残留 0 失败 |
+| B 跨线程 free（环形传递，各 20 万 op） | 0 残留 0 失败（真实跨 CPU free 路径 + 锁竞争） |
+| C 同 cache 竞争（4 线程 hammer 128B，5s） | **10.70M ops/s**（单线程基线 12.4M，-14%） |
+| TSAN | 功能 failures=0；**有已知理论竞态报告**（跨 CPU free 尾部/reclaimed slab 读窗口，未在混沌中造成功能性失败，见 audit §0''） |
+
+### 1.5 碎片化
+
+内部碎片率（类粒度开销）= 130.7%（主因 >1024B 大页粒度：1025B→4096B）；
+**10 轮 × 5 万 op 混沌趋势：页数 5354 → 5354 完全持平，每轮 largest_free ≥ 4MB** ——
+稳态无增长、无碎片化退化；SLUB 类内（≤1024）粒度损耗低。此为**分配粒度特征**
+而非泄漏（页数守恒 + 大块可用为证）。
+
+### 1.5b 红区负向（slub-poison 独立 `-DSLAB_DEBUG_POISON` 构建）
+
+| 用例 | 结果 |
+|---|---|
+| oob+64 / +128 / +512 / +1024（写 p+usable 破坏尾部红区 → Free 检测 SIGABRT） | **4/4 ACTIVE** |
+| oob-8（前越界） | **N/A** —— 当前布局仅尾部红区（`obj_size = usable + 8B 红区`），头部无红区，如实记录为已知限制 |
 
 ### 1.6 结论（已降级）
 
@@ -91,26 +114,32 @@ GDB 硬件内存监视点。
 
 | 项 | 结果 |
 |---|---|
-| 混沌 **2,000,000** op（500 键，软硬限 64KB/256KB） | **failures=0, tree_broken=0**（修复前 op 565 必现树损坏、op 935 必现越界） |
-| 命中率统计 | hits=145,247 misses=1,140,875 migrations_in=25（限压下淘汰激进，evictions 计数器触达条件待查，见 audit） |
-| 双重释放追踪 | 0 真双释 |
-| destroy 清场 | 无崩溃 |
-| **三个最小回归（tests/fc/regression.cpp）** | `test_art_true_prefix_key` / `test_promote_inline_capacity_reuse` / `test_insert_fail_no_dangling`（故障注入）**全部 PASS** |
+| 混沌 **2,000,000** op（500 键 Zipf α=1.1，70% 干净/30% 脏写） | **failures=0, tree_broken=0**（修复前 op 565 必现树损坏、op 935 必现越界） |
+| 命中率（宽松限 1MB/2MB） | get 类操作 **≈87% 命中**（本地 29% + 跨核迁移 519k 次）；**限压 64KB 软限下 15.3%** —— 已查明为迁移被软限拒止(`smoothed_cache_bytes > soft_limit → continue`)的配置产物，非缺陷 |
+| evictions=0 解释 | `file_cache_should_evict` 保护"频率≥均值"条目；Zipf/均匀负载下几乎全体受保护 → 淘汰判定不成立（机制已读码确认） |
+| **混合负载整体吞吐 + 延迟（真实权重，3 秒批）** | **0.607M ops/s**；get 命中率 81.7%；get 延迟 P50=583ns P95=2.62µs P99=3.62µs max=2.67ms |
+| **多线程并发（fc-mt：4 线程 × 4 实例 × 30 万 op，30% 脏写跨实例广播 + 全程巡检）** | **failures=0**（TSAN 已知理论竞态见 audit §0''） |
+| 双重释放追踪 / destroy | 0 真双释 / 无崩溃 |
+| **三个最小回归（tests/fc/regression.cpp）** | test_art_true_prefix_key / test_promote_inline_capacity_reuse / test_insert_fail_no_dangling **全部 PASS** |
 | 分路径吞吐 | get-hit 0.31M / get-miss 7.37M / promote 0.16M / invalidate 11.96M / idle_handler 1.59M ops/s（op 定义见 tests/README） |
-| promote 吞吐（3 run） | 171,873 / 167,772 / 162,795 ops/s |
 
 **结论降级**：上述为**单线程宿主**结论。"全量通过"限定为"本表所列套件通过"；
 SMP 并发（多线程 per-CPU + 全局 LRU 交互）与 QEMU 真实负载待补（audit §2 F5）。
 
-## 3. 调度器（账本模型仿真 + Linux EEVDF 参考对照）
+## 3. 调度器（账本模型仿真 —— 与 EEVDF 核心选择逻辑的对比，教学模型）
 
 **方法（诚实声明）**：`sched.cpp` 与 LAPIC/PIT/线程上下文深度耦合，无法直接宿主编译。
 本仿真**逐行复刻 sched.cpp 的账本公式与常量**（每个常量/公式均注释对照源码行号：
 `RIPRATE_*` sched.cpp:39-69、`get_dynamic_quantum` :205-225、RIP 采样/钳位 :410-467、
 老化 :311-335、`calibrate_and_set_deadline` :588-601、vruntime/avg 记账 :1010-1031），
 运行队列用 `std::multimap` 等价替身（内核为内联红黑树）。**新增**：Linux EEVDF 参考
-模型（加权 slice、VD=vruntime+slice、eligible 集按 min-VD 选择）并排对照。
+模型（加权 slice、VD=vruntime+slice、eligible 集按 min-VD 选择、唤醒放置）并排对照。
+**定位（标题已如实降级）**：复刻模型本质是"CFS 最左 vruntime + RIP 启发式塑形"，
+**不是 EEVDF**；缺失 eligibility(lag≥0)、protect_slice、lag 动态钳制、睡眠唤醒 lag
+衰减、sched_setattr slice 接口等机制 —— 本报告只做"与 EEVDF 核心选择逻辑的对比"，
 验证的是**账本算法的稳定性、公平性与反馈行为**，不是编译 sched.cpp 本身。
+**与真实 sched.cpp 的偏差量级：未量化**（模型 6.9M tick/s、EEVDF 参考 0 tick 唤醒
+延迟均为模型行为，不构成对真实内核的性能结论）。
 
 ### 3.1 公平性（权重 1:1:2:4，20 万 tick）
 
@@ -161,7 +190,10 @@ vruntime 极差 **0.0014%**（3EVDF 复刻）/ **0.0000%**（EEVDF 参考）。
   证明的是组件的**算法正确性、内存安全与单核开销**；**SMP 并发正确性未被本套件验证**。
 - **调度器**：账本公式与常量逐行对照 `sched.cpp`（行号见 §3 引言）的**复刻模型** +
   EEVDF 参考模型，运行队列为 `std::multimap` 等价替身——不是编译 `sched.cpp` 本身。
-- **QEMU 冒烟（真实内核）**：`qemu-system-x86_64`（Windows 宿主，**TCG 无 KVM**），
-  `-m 2G -smp 4`，桌面空闲负载，最近一轮 **150 秒**无异常输出（早期 300 秒轮次早于
-  ART/内联修复）。这是**冒烟**，不是 SMP 正确性证明；QEMU 长稳/故障注入见 audit 路线图。
+- **QEMU 真实内核（升级）**：`qemu-system-x86_64`（Windows 宿主，**TCG 无 KVM**），
+  `-m 2G`，全参数（含 disk.img/网络/声卡）+ **`-debugcon` 捕获 E9 端口**（内核
+  panic 消息走 E9 而非串口——此前的串口 grep 会漏报）：
+  **核数扫描 smp 1/2/4 各 45 秒无异常；smp 4 长稳 30 分钟无异常**。
+  **此轮 QEMU 升级实抓一次真回归**：tagged 空闲链改动致 `slub_stack_pop` #GP
+  （addr2line 定位），已回退并复验全绿。这是**冒烟/长稳，不是 SMP 正确性证明**。
 - 全部测试程序位于 `tests/`，一键复现：`cd tests && bash ci.sh`。

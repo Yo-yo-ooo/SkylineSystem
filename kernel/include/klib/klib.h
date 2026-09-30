@@ -49,14 +49,14 @@ void _memset(void* dest, uint8_t value, uint64_t size);
 void _memmove(void* dest,void* src, uint64_t size);
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size);
 void *__memcpy(void * d, const void * s, uint64_t n);
+/* 修复: C 编译单元(art.c 等)也需调用自旋锁 → 统一 C 链接 */
+void spinlock_lock(int32_t* l);
+void spinlock_unlock(int32_t* l);
 }
 
 void bitmap_set(u8* bitmap, u64 bit);
 void bitmap_clear(u8* bitmap, u64 bit);
 bool bitmap_get(u8* bitmap, u64 bit);
-
-void spinlock_lock(spinlock_t* l);
-void spinlock_unlock(spinlock_t* l);
 
 //class func pointer -> func pointer
 /*template <typename T>

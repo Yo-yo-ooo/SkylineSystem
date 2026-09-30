@@ -40,7 +40,39 @@ typedef struct {
 static art_node_cache art_cache_n4  = { NULL, 0 };
 static art_node_cache art_cache_n16 = { NULL, 0 };
 
+/* 修复(SMP): 原空闲链无任何同步 —— 多核上不同 CPU 的 ART (文件缓存 per-CPU
+   实例、VMA 树等) 并发 insert/delete 时, 弹出/入链竞争会双发节点或丢链,
+   导致树结构损坏 (多线程混沌测试复现: remove_child16 段错误)。
+   用一把全局自旋锁串行化 (节点分配为冷路径, 开销可忽略)。 */
+extern void spinlock_lock(int32_t *l);
+extern void spinlock_unlock(int32_t *l);
+static int32_t art_cache_lock = 0;
+
+static art_node *art_cache_pop(art_node_cache *c) {
+    art_node *n = NULL;
+    spinlock_lock(&art_cache_lock);
+    if (c->count) {
+        n = c->head;
+        __memcpy(&c->head, n, sizeof(art_node *));
+        c->count--;
+    }
+    spinlock_unlock(&art_cache_lock);
+    return n;
+}
+static int art_cache_push(art_node_cache *c, art_node *n, uint16_t cap) {
+    int ok = 0;
+    spinlock_lock(&art_cache_lock);
+    if (c->count < cap) {
+        __memcpy(n, &c->head, sizeof(art_node *));
+        c->head = n;
+        c->count++;
+        ok = 1;
+    }
+    spinlock_unlock(&art_cache_lock);
+    return ok;
+}
 static void art_cache_drain(void) {
+    spinlock_lock(&art_cache_lock);
     while (art_cache_n4.head) {
         art_node *next;
         __memcpy(&next, art_cache_n4.head, sizeof(next));
@@ -55,6 +87,7 @@ static void art_cache_drain(void) {
         art_cache_n16.head = next;
     }
     art_cache_n16.count = 0;
+    spinlock_unlock(&art_cache_lock);
 }
 #else
 static void art_cache_drain(void) { }
@@ -69,15 +102,10 @@ static art_node* alloc_node(uint8_t type) {
     switch (type) {
         case NODE4:
 #if ART_NODE_CACHE
-            if (art_cache_n4.count) {
-                art_node *next;
-                n = art_cache_n4.head;
-                __memcpy(&next, n, sizeof(next));
-                art_cache_n4.head = next;
-                art_cache_n4.count--;
+            n = art_cache_pop(&art_cache_n4);
+            if (n) {
                 /* [分配] 仅清头部 ~16B: type/num_children/partial_len/partial。
-                   [num_children, cap) 的残留数组从不被解引用 (见文件头 A),
-                   NODE48/256 的零值哨兵语义不受影响 —— 它们不走缓存 */
+                   [num_children, cap) 的残留数组从不被解引用 (见文件头 A) */
                 _memset(n, 0, sizeof(art_node));
                 n->type = type;
                 return n;
@@ -87,12 +115,8 @@ static art_node* alloc_node(uint8_t type) {
             break;
         case NODE16:
 #if ART_NODE_CACHE
-            if (art_cache_n16.count) {
-                art_node *next;
-                n = art_cache_n16.head;
-                __memcpy(&next, n, sizeof(next));
-                art_cache_n16.head = next;
-                art_cache_n16.count--;
+            n = art_cache_pop(&art_cache_n16);
+            if (n) {
                 _memset(n, 0, sizeof(art_node));
                 n->type = type;
                 return n;
@@ -122,20 +146,12 @@ static void free_node(art_node *n) {
 #if ART_NODE_CACHE
     switch (n->type) {
         case NODE4:
-            if (art_cache_n4.count < ART_CACHE_CAP_N4) {
-                __memcpy(n, &art_cache_n4.head, sizeof(art_node*));
-                art_cache_n4.head = n;
-                art_cache_n4.count++;
+            if (art_cache_push(&art_cache_n4, n, ART_CACHE_CAP_N4))
                 return;
-            }
             break;
         case NODE16:
-            if (art_cache_n16.count < ART_CACHE_CAP_N16) {
-                __memcpy(n, &art_cache_n16.head, sizeof(art_node*));
-                art_cache_n16.head = n;
-                art_cache_n16.count++;
+            if (art_cache_push(&art_cache_n16, n, ART_CACHE_CAP_N16))
                 return;
-            }
             break;
         default:
             break;
@@ -882,6 +898,8 @@ static void* art_insert_internal(art_node *n, art_node **ref, const uint8_t *key
 /* 宿主测试: 记录每次 ART 变更, 供隔离重放定位缺陷 */
 extern uint64_t g_test_op;
 extern int32_t printf_(const char* format, ...);
+static int g_art_log_on = 0;
+void art_log_enable(int on) { g_art_log_on = on; }
 #endif
 
 #ifdef __KERNEL_TEST_HOST__
@@ -1029,11 +1047,10 @@ int art_verify(art_tree *t) {
 
 void* art_insert(art_tree *t, const uint8_t *key, int32_t key_len, void *value) {
 #ifdef __KERNEL_TEST_HOST__
-    if (g_test_op < 700 && key && key_len > 0 && key_len < 100) {
-        char kb[32]; int n = key_len < 31 ? key_len : 31;
-        for (int i = 0; i < n; i++) kb[i] = (char)key[i]; kb[n] = 0;
-        printf_("[ARTLOG] op=%llu tree=%p INS key='%s' len=%d\n",
-                (unsigned long long)g_test_op, (void*)t, kb, key_len);
+    if (g_art_log_on && g_test_op < 700 && key && key_len > 0 && key_len < 100) {
+        /* %.*s 限长打印: 键无 NUL 结尾, %s 会越界读 */
+        printf_("[ARTLOG] op=%llu tree=%p INS key='%.*s' len=%d\n",
+                (unsigned long long)g_test_op, (void*)t, key_len, (const char*)key, key_len);
     }
 #endif
     int32_t old_val = 0;
@@ -1236,11 +1253,9 @@ static art_leaf* art_delete_internal(art_node *n, art_node **ref, const uint8_t 
  */
 void* art_delete(art_tree *t, const uint8_t *key, int32_t key_len) {
 #ifdef __KERNEL_TEST_HOST__
-    if (g_test_op < 700 && key && key_len > 0 && key_len < 100) {
-        char kb[32]; int n = key_len < 31 ? key_len : 31;
-        for (int i = 0; i < n; i++) kb[i] = (char)key[i]; kb[n] = 0;
-        printf_("[ARTLOG] op=%llu tree=%p DEL key='%s' len=%d\n",
-                (unsigned long long)g_test_op, (void*)t, kb, key_len);
+    if (g_art_log_on && g_test_op < 700 && key && key_len > 0 && key_len < 100) {
+        printf_("[ARTLOG] op=%llu tree=%p DEL key='%.*s' len=%d\n",
+                (unsigned long long)g_test_op, (void*)t, key_len, (const char*)key, key_len);
     }
 #endif
     art_leaf *l = art_delete_internal(t->root, &t->root, key, key_len, 0);

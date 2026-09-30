@@ -41,7 +41,7 @@ void hcf(void) {
 }
 
 
-void spinlock_lock(spinlock_t* l) {
+extern "C" void spinlock_lock(spinlock_t* l) {
     while(atomic_test_and_set(l,1))
 #ifdef __x86_64__
         asm volatile("pause");
@@ -52,7 +52,7 @@ void spinlock_lock(spinlock_t* l) {
 #endif
 }
 
-void spinlock_unlock(spinlock_t* l) {
+extern "C" void spinlock_unlock(spinlock_t* l) {
     atomic_store_4(l,0,0);
 }
 

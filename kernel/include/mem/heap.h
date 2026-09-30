@@ -80,6 +80,11 @@ namespace SLUB {
     size_t      ObjectSize(const kmem_cache *cache);
     uint64_t    AllocCount(const kmem_cache *cache);
     uint64_t    FreeCount(const kmem_cache *cache);
+#ifdef __KERNEL_TEST_HOST__
+    uint64_t    SlowCount(const kmem_cache *cache);   // 测试期慢路径计数
+    uint64_t    RefillCount(const kmem_cache *cache); // partial 补位次数
+    kmem_cache *KmallocCacheFor(size_t size);         // 尺寸类缓存 (归因用)
+#endif
 
     // One-shot smoke test, run from VMM::Init once MM is live.
     bool SelfTest();

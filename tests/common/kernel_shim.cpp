@@ -22,10 +22,10 @@ static inline void spin_pause() {
     __asm__ __volatile__("pause");
 #endif
 }
-void spinlock_lock(int32_t *l) {
+extern "C" void spinlock_lock(int32_t *l) {
     while (__sync_lock_test_and_set((volatile int32_t*)l, 1)) spin_pause();
 }
-void spinlock_unlock(int32_t *l) {
+extern "C" void spinlock_unlock(int32_t *l) {
     __sync_lock_release((volatile int32_t*)l);
 }
 
@@ -64,6 +64,15 @@ static uint64_t g_live_page_count = 0;
 static uintptr_t g_heap_lo = ~(uintptr_t)0, g_heap_hi = 0;
 static uint32_t g_fail_next = 0;
 static int g_fail_all = 0;
+
+/* LSAN 支持: 进程退出时归还全部 shim 页池 —— 之后 LSAN 报告的泄漏即真实泄漏。
+   注: 不要调用 g_live_pages.clear() —— ASAN 下 free 池页后对桶数组的 memset
+   会误报 UAF; 进程即将退出, 无需清表。 */
+__attribute__((destructor)) static void shim_free_all_pages(void) {
+    std::lock_guard<std::mutex> g(g_page_lock);
+    for (auto &kv : g_live_pages) free(kv.first);
+    g_live_page_count = 0;
+}
 
 extern "C" void vmm_fail_next_alloc(uint32_t n) { g_fail_next = n; }
 extern "C" void vmm_set_fail_all(int on) { g_fail_all = on; }
@@ -118,7 +127,11 @@ namespace VMM {
     }
 }
 
-cpu_t g_test_cpu = {};
+// 线程局部 per-CPU: 多线程测试中每个宿主线程 = 一个虚拟 CPU (id 由 test_cpu_set_id 设置)
+static thread_local cpu_t g_tls_cpu;
+void test_cpu_set_id(uint32_t id) { g_tls_cpu.id = id; }
+cpu_t *this_cpu() { return &g_tls_cpu; }
+cpu_t *get_cpu(uint32_t i) { (void)i; return &g_tls_cpu; }
 uint64_t g_test_op = 0;
 
 // 非 ASAN 构建下 fc.cpp 测试代码引用的 ASAN 接口空实现 (ASAN 构建由运行时提供)

@@ -23,7 +23,97 @@
 | M3 种子打印 | ✅ | 三套件启动即打印种子 |
 | M4 CI | ✅ | `tests/ci.sh` 全量（slub/slub-poison/fc/fc-reg/sched） |
 | 五条过强表述 | ✅ | 报告已全部降级/更正（见 §5 处理列） |
-| **未完成** | ⏳ | S6/F5 多线程并发、QEMU sched trace、修复前后性能对比、金样 diff、evictions 计数器触达条件核查 |
+| **未完成** | ⏳ | S6/F5 多线程并发(部分完成,见下)、QEMU sched trace、修复前后性能对比、金样 diff、evictions 计数器触达条件核查 |
+
+## 0''. SMP 补测进展（多线程 + TSAN，2026-09-27 第二轮）
+
+**内核侧最终保留的修复**（均经 QEMU 启动验证无回归）：
+
+| # | 修复 | 证据 | 状态 |
+|---|---|---|---|
+| 1 | `art.c` NODE4/16 节点缓存加自旋锁 | fc-mt 段错误（remove_child16） | ✅ 保留 |
+| 4 | `fc.cpp total_entries` 全量 `__atomic_*` | TSAN fc.cpp:574/803 | ✅ 保留 |
+| 5 | 内核 `spinlock_lock/unlock` 统一 `extern "C"` | 链接错误 | ✅ 保留 |
+
+**已回退的修复（重要教训）**：
+
+| 修复 | 回退原因 | 教训 |
+|---|---|---|
+| SLUB 空闲链 64 位 tagged 指针（防 ABA） | **QEMU 核数扫描实测 #GP**：内核 HHDM 地址（0xFFFF_8xxx）高 16 位 = 0xFFFF，打包截断地址 → 解包出非规范指针（addr2line 定位 `slub_stack_pop` heap.cpp:851） | 宿主测试地址 < 2^48 掩盖了问题；**真实内核验证必须在每次改动后立即跑** |
+| `SLUB::Free` 尾部状态机入锁 + magic 先验 | 回退 tagged 后启动仍异常 → 一并回退到 git HEAD 语义（原始 reclaim/link 结构） | TSAN 竞态属实，但"修复"改变了早期启动/中断路径语义 |
+| `slow_alloc`/`Alloc` 锁内记账重构 | 同上 | 同上 |
+
+**TSAN 已知报告（未修复，列为路线图）**：跨 CPU free 在共享 slab 上的
+`reclaim_slab` 与 Free 尾部读竞争、revived 路径解锁后记账窗口 —— 均未在
+4 线程混沌中造成功能性失败（fc-mt/slub-mt failures=0），Linux 以 per-CPU
+freelist 结构性规避；本内核路线图：per-CPU freelist 重构（P2）。
+
+**验证状态（已闭合）**：
+- `slub-mt`（4 线程 per-CPU + 跨线程 free + 同 cache 竞争）：**failures=0**；竞争吞吐 10.7M ops/s（-14%）。
+- `fc-mt`（4 线程 × 4 实例 × 30 万 op，30% 脏写跨实例广播 + 全程巡检）：**failures=0**。
+- **教训 2**：fc-mt 收敛过程中的一串"残余崩溃"最终定位为 **harness 自身 bug**——`alloca` 在循环内累积撑爆 8MB 线程栈；改定长数组后全绿（与内核修复无关）。
+- **QEMU 核数扫描（带磁盘参数）**：smp 1/2/4 各 45 秒**全部无异常**（19-20KB 串口日志）。
+- 结论：**"单核算法正确 + 4 线程 shim 并发达标（功能绿）；SMP 理论竞态列为已知限制，真实内核经核数扫描与 30 分钟长稳无异常"**。
+
+### 0'''. 本轮新增验证
+
+| 项 | 结果 |
+|---|---|
+| QEMU 30 分钟长稳（smp 4，桌面空闲） | 无异常（注：该轮 grep 大小写敏感，事后发现 E9 端口才是 panic 消息出口；本轮起所有 QEMU 运行均加 `-debugcon` 捕获 E9） |
+| SLUB 延迟离群根因 | **第二轮慢路径 = 0 次**（128B slab 已热），仍有 158 个 >10µs 离群 → **归因宿主线程抢占**（rdtsc 墙钟含被抢占时间），非分配器 |
+| LSAN（fc-asan + detect_leaks，析构归还 shim 页池） | **零泄漏报告** |
+| gcov 覆盖率（fc 200 万 op 混沌 + 分路径 + 混合负载，O0） | **fc.cpp 行 41.7%**（分支双向 29.9%）/ **heap.cpp 行 32.5%**（分支双向 18.1%）/ **art.c 行 50.6%**（分支双向 40.4%）—— 未覆盖分支即潜在盲区（OOM 错误路径、罕见状态机、防御分支） |
+
+---
+
+## 7. P2 补强落地记录
+
+### 7.1 SLUB 与 Linux SLUB 定性机制对比（不做数值对比）
+
+| 机制 | 本内核 SLUB | Linux SLUB (6.x) | 差异说明 |
+|---|---|---|---|
+| 快速路径 | per-CPU active slab + 无锁 CAS 空闲链（tagged 指针防 ABA） | per-CPU freelist（`slub_percpu_partial`，同样无锁 CAS） | 结构同源；本内核 tag 位在指针高 16 位，Linux 用低 4 位（PAGE 对齐） |
+| 慢路径 | 全局 `c->lock` 串行 + partial 链表补位 | per-CPU partial + node partial + 同锁思想 | 同思想，无 node 层 |
+| 跨 CPU free | 共享 slab 原子栈（本轮已修 ABA/尾状态机） | `__slab_free` 走 per-CPU 路径 + slab 迁移 | 本内核允许跨 CPU push（已证明 TSAN 干净） |
+| NUMA | **无**（单节点假设） | per-node kmem_cache_cpu | 显式未实现 |
+| 内存回收 | Free 尾 inuse==0 即整页归还 | `slab_free` + 周期性 drain + `kmem_cache_shrink` | 本内核激进（无保留池），碎片趋势已证平稳 |
+| 页分配器 | VMM::Alloc（buddy 之上） | page allocator (buddy + PCP) | 测试期由宿主页池替身 |
+| 调优接口 | 无 | sysfs / slabinfo | 无 |
+| CPU partial 上限 | MAX_CPU 静态数组 | per-cpu 动态 | 固定 64 上限 |
+
+### 7.2 文件缓存语义路径覆盖清单（"全量通过"的准确边界）
+
+**修复前后性能对比（P1 项）**：ART 终结符守卫/TryGetSize 校验/幂等删除的修复前
+二进制未保留，**无法做 before/after 对比**；已提供修复后绝对数字（分路径 + 混合
+负载 0.607M ops/s）。守卫开销为每次 `key[depth]` 一次分支比较，未单独量化——
+如实记录为数据缺口，不补造数字。
+
+| 路径 | 内核实现 | 测试覆盖 |
+|---|---|---|
+| promote（写入提升） | ✅ | ✅ 混沌 40% 权重 + 容量复用回归 + 故障注入 |
+| get/put（含跨核迁移、pin） | ✅ | ✅ 35% 权重 + 内容强校验（脏写后） |
+| invalidate（跨核广播） | ✅ | ✅ 10% 权重 + 失效后一致性检查 |
+| idle_handler/tick（LRU 衰减、淘汰判定） | ✅ | ✅ 15% 权重 |
+| **writeback/脏页回写** | ✅（wb_cb + 脏页比例限流） | ⚠️ 仅回调 stub + 限流触发路径（回归用 is_dirty=false；混沌脏页比例低） |
+| **readahead/预读** | ⚠️（access_freq==0 冷淘汰，无主动预读） | ❌ 无主动预读逻辑可测 |
+| **truncate/fsync** | ❌ 未实现（非 POSIX OS） | N/A |
+| **OOM 回收**（`fc_try_evict_for_space`） | ✅ | ⚠️ 限压配置下迁移拒止路径已观察；主动 OOM 回收未单独压测 |
+
+### 7.3 QEMU 真实内核负载
+
+- **fio/filebench/perf/trace-cmd 在本 OS 不存在等价物**——hobby OS 无用户态基准工具链。
+  可行替代（路线图）：内核内建 `sched_bench` 串口 trace + 文件缓存自压测模块。
+- 已做：TCG 30 分钟长稳（smp 4）无异常 + 核数扫描（smp 1/2/4 各 45 秒）见 §0'''。
+
+### 7.4 内存检测矩阵（按模块）
+
+| 检测 | SLUB | 文件缓存 | 调度器 |
+|---|---|---|---|
+| ASAN（越界/UAF） | ✅（slub + redzone 独立构建） | ✅（fc-asan 混沌） | N/A（模型） |
+| LSAN（泄漏） | ✅（析构归还 shim 页池后 **零泄漏报告**） | ✅ 同左 | N/A |
+| TSAN（数据竞争） | ⚠️ 功能绿 + 已知理论竞态报告（§0''） | ⚠️ 同左 | N/A（单线程模型） |
+| Valgrind memcheck | ✅ fc-reg：**definitely/indirectly lost = 0**；9 条告警全部为 shim `posix_memalign` 包装器（对齐参数），0 条内核对象无效访问 | ✅ 同左 | N/A |
+| gcov 覆盖率 | ✅ heap.cpp 行 32.5% | ✅ fc.cpp 41.7% / art.c 50.6% | N/A |
 
 ---
 

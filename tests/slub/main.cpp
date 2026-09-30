@@ -60,6 +60,7 @@ static bool verify_canary(const LiveBlock &b) {
 int main() {
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("SLUB TEST SUITE (seed=0x%llx, g++ -O2, 单线程宿主)\n", (unsigned long long)SEED);
+    kalloc_log_enable(1);
     SLAB::Init();
     SLUB::InitKmalloc();
 
@@ -214,6 +215,44 @@ int main() {
         dump_live_pages();   // live_pages 构成机制
     }
 
+    // 碎片化趋势: 10 轮 (混沌 50k op → 记页数) + 每轮 largest_free_span
+    printf("\n== FRAGMENTATION TREND (10 轮 × 5 万 op 混沌, 页数与最大连续可用) ==\n");
+    {
+        uint64_t pages_prev = 0, pages_now = 0;
+        for (int round = 0; round < 10; round++) {
+            std::vector<LiveBlock> keep;
+            for (int i = 0; i < 50000; i++) {
+                uint64_t op = rnd(0, 99);
+                if (op < 45 && keep.size() < 4000) {
+                    size_t s = (size_t)rnd(1, 2048);
+                    void *p = kmalloc(s);
+                    if (p) keep.push_back({p, s, 0x33});
+                } else if (!keep.empty()) {
+                    size_t idx = (size_t)rnd(0, keep.size() - 1);
+                    kfree(keep[idx].ptr);
+                    keep[idx] = keep.back();
+                    keep.pop_back();
+                } else {
+                    void *p = kmalloc((size_t)rnd(1, 2048));
+                    if (p) kfree(p);
+                }
+            }
+            for (auto &b : keep) kfree(b.ptr);
+            pages_now = VMM::LivePages();
+            /* largest_free_span: 逐级增大单块请求直至 NULL (未标定页压力下) */
+            size_t span = 0;
+            for (size_t try_sz = 64 * 1024; try_sz <= 4 * 1024 * 1024; try_sz *= 2) {
+                void *big = kmalloc(try_sz);
+                if (big) { span = try_sz; kfree(big); } else break;
+            }
+            printf("  round %d: pages=%llu%s largest_free>=%zuB\n", round,
+                   (unsigned long long)pages_now,
+                   round == 0 ? "" : (pages_now == pages_prev ? " (与上轮持平)" : " (Δ)"),
+                   span);
+            pages_prev = pages_now;
+        }
+    }
+
     // ============ 6. 负向用例(必须失败/防护) ============
     printf("\n== NEGATIVE TESTS (fork, 期望 SIGABRT) ==\n");
     {
@@ -261,6 +300,30 @@ int main() {
         printf("  高负载(10 万存活 256B 块): P50=%.0fns P99=%.0fns max=%.0fns\n",
                ns(lat[500000]), ns(lat[990000]), ns(lat.back()));
         for (void *p : hold) kfree(p);
+
+        // 第二轮: 验证 max 是否复现 (首触缺页/页分配应只出现在第一轮)
+        kmem_cache *k128 = SLUB::KmallocCacheFor(128);
+        uint64_t slow_before = k128 ? SLUB::SlowCount(k128) : 0;
+        uint64_t refill_before = k128 ? SLUB::RefillCount(k128) : 0;
+        lat.clear();
+        for (int i = 0; i < 2000000; i++) {
+            uint64_t a = rdtsc();
+            void *p = kmalloc(128);
+            kfree(p);
+            lat.push_back(rdtsc() - a);
+        }
+        std::sort(lat.begin(), lat.end());
+        printf("  第二轮(热缓存, 验 max 复现): P50=%.0fns P99=%.0fns max=%.0fns\n",
+               ns(lat[1000000]), ns(lat[1980000]), ns(lat.back()));
+        // 离群归因: 统计本轮慢路径次数 (slow_alloc) 与 >10µs 离群数
+        uint64_t slow_n = k128 ? SLUB::SlowCount(k128) - slow_before : 0;
+        uint64_t refill_n = k128 ? SLUB::RefillCount(k128) - refill_before : 0;
+        uint64_t outliers = 0;
+        for (uint64_t t : lat) if (ns(t) > 10000) outliers++;
+        printf("  归因: 本轮慢路径 %llu 次(partial 补位 %llu, 新建 slab %llu), >10µs 离群 %llu 个 (2M op)\n",
+               (unsigned long long)slow_n, (unsigned long long)refill_n,
+               (unsigned long long)(slow_n > refill_n ? slow_n - refill_n : 0),
+               (unsigned long long)outliers);
     }
 
     // ============ 8. 尺寸分档吞吐 ============

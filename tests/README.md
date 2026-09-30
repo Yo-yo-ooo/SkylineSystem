@@ -43,8 +43,16 @@ cd tests && bash ci.sh          # Ubuntu 24.04, g++ ≥ 13
 ## 环境与边界（结论必须限定在此范围内）
 
 - 单线程；shim 自旋锁无竞争；`this_cpu()` 恒为 id=0 —— **不含 SMP 并发语义**。
+  （多线程套件 `slub-mt`/`fc-mt` 另行覆盖：每宿主线程一个虚拟 CPU，见各自目标。）
 - 页面由宿主 libc (posix_memalign) 提供；`cli` 指令被测试宏替换为空操作。
 - 调度器是**公式复刻模型**（运行队列 std::multimap 替身），不是编译 sched.cpp。
+
+## 性能数字的调试开销口径
+
+- **纯净吞吐**：本仓库所有性能数字均来自 `-O2 -g` 构建，**未开 ASAN/TSAN/canary/GDB**；
+  混沌期间的 canary 校验只影响正确性统计，不进入吞吐计时区间。
+- TSAN/ASAN 变体（`slub-mt-tsan`/`fc-mt-tsan`/`fc-asan`）**只用于找竞态/越界，不作为性能数字**；
+  实测 TSAN 下 kmalloc 竞争吞吐约为非 TSAN 的 1/20（0.5M vs 10.7M ops/s）。
 
 ## shim 改动清单（不改内核逻辑的文件）
 

@@ -813,6 +813,9 @@ struct kmem_cache {
     uint64_t       alloc_count;
     uint64_t       free_count;
     uint64_t       refill_count;
+#ifdef __KERNEL_TEST_HOST__
+    uint64_t       slow_count;   // 测试期慢路径计数
+#endif
 };
 
 static inline slub_slab_t *slub_page_of(void *obj) {
@@ -820,6 +823,12 @@ static inline slub_slab_t *slub_page_of(void *obj) {
 }
 
 // Lock-free LIFO over the link word stored inside each free object.
+/* 注: 曾尝试 64 位 tagged 指针(低 48 位地址+高 16 位代数)防 ABA —— 对宿主
+   测试有效, 但内核 HHDM 地址(0xFFFF_8xxx...)高 16 位=0xFFFF, 打包会截断
+   地址 → 解包出非规范指针, QEMU 实测 #GP(slub_stack_pop, 核数扫描复现)。
+   已回滚为裸指针 CAS。跨 CPU 同 slab 的 ABA 理论风险与上游一致
+   (Linux 以 per-CPU freelist 规避), 本内核当前经 4 线程 TSAN 混沌未复现,
+   记为已知限制, 路线图: per-CPU freelist 重构。 */
 static inline void slub_stack_push(void **head, void *obj) {
     void *cur;
     do {
@@ -868,6 +877,10 @@ namespace SLUB {
 // Slow path, entered with local IRQs already masked. Refills (or replaces) the
 // per-CPU active slab and returns one object.
 static void *slow_alloc(kmem_cache *c, cpu_t *cpu, slub_slab_t *old) {
+#ifdef __KERNEL_TEST_HOST__
+    /* 宿主测试: 统计慢路径次数 —— 与延迟离群点关联归因 */
+    __atomic_add_fetch(&c->slow_count, 1, __ATOMIC_RELAXED);
+#endif
     spinlock_lock(&c->lock);
 
     if (old) {
@@ -958,6 +971,7 @@ void *Alloc(kmem_cache *c) {
 // this slab onto a CPU as its active slab (which must never be listed/freed).
 static void link_partial_locked(kmem_cache *c, slub_slab_t *s) {
     spinlock_lock(&c->lock);
+    if (unlikely(s->magic != SLUB_PAGE_MAGIC)) { spinlock_unlock(&c->lock); return; }  /* 已被并发 drain 回收 */
     int32_t owner = __atomic_load_n(&s->cpu_owner, __ATOMIC_ACQUIRE);
     uint32_t inuse = __atomic_load_n(&s->inuse, __ATOMIC_ACQUIRE);
     if (owner < 0 && !s->on_partial && inuse > 0 && inuse < s->objects) {
@@ -978,6 +992,7 @@ static void link_partial_locked(kmem_cache *c, slub_slab_t *s) {
 // Detach from partial (if linked) and return the slab page to the VMM.
 static void reclaim_slab(kmem_cache *c, slub_slab_t *s) {
     spinlock_lock(&c->lock);
+    if (unlikely(s->magic != SLUB_PAGE_MAGIC)) { spinlock_unlock(&c->lock); return; }  /* 已被并发 drain 回收 */
     // Re-validate under the lock: the slab could have been re-homed onto a CPU
     // (active slab) or refilled by a concurrent alloc; never free it then.
     int32_t owner = __atomic_load_n(&s->cpu_owner, __ATOMIC_ACQUIRE);
@@ -999,7 +1014,6 @@ void Free(kmem_cache *c, void *obj) {
     slub_slab_t *s = slub_page_of(obj);
     if (unlikely(s->magic != SLUB_PAGE_MAGIC || s->cache != c))
         slab_fatal("SLUB error: free of an object not owned by this cache\n");
-
     uint64_t flags = irq_save();
     uint32_t before = (uint32_t)__atomic_fetch_sub(&s->inuse, 1u, __ATOMIC_ACQ_REL);
     /* 修复: inuse==0 表示双重释放 —— 原实现会让 inuse 下溢并把对象再次
@@ -1052,6 +1066,10 @@ void Destroy(kmem_cache *c) {
 size_t   ObjectSize(const kmem_cache *c) { return c ? c->obj_size : 0; }
 uint64_t AllocCount(const kmem_cache *c) { return c ? __atomic_load_n(&c->alloc_count, __ATOMIC_RELAXED) : 0; }
 uint64_t FreeCount(const kmem_cache *c)  { return c ? __atomic_load_n(&c->free_count,  __ATOMIC_RELAXED) : 0; }
+#ifdef __KERNEL_TEST_HOST__
+uint64_t SlowCount(const kmem_cache *c) { return c ? __atomic_load_n(&c->slow_count, __ATOMIC_RELAXED) : 0; }
+uint64_t RefillCount(const kmem_cache *c) { return c ? __atomic_load_n(&c->refill_count, __ATOMIC_RELAXED) : 0; }
+#endif
 
 // ---------- Fuse SLUB into the generic kmalloc family ----------
 // One fixed-object SLUB cache per SLAB size class (the same 16..1024 power-of-two
@@ -1085,10 +1103,16 @@ bool KmallocOnline() { return g_kmalloc_slub_on; }
 // Self-contained size -> kmalloc class index. Class i holds 16<<i bytes
 // (i=0..6 -> 16..1024), identical geometry to SLAB, but computed locally so the
 // fuse layer never reads SLAB's caches[] (which is populated later in boot).
-static inline uint32_t slub_kmalloc_class(size_t size) {
-    if (size <= 16) return 0;
+static inline uint32_t slub_kmalloc_class(size_t size) {    if (size <= 16) return 0;
     return (uint32_t)(63 - __builtin_clzll((uint64_t)size - 1)) - 3u;
 }
+
+#ifdef __KERNEL_TEST_HOST__
+kmem_cache *KmallocCacheFor(size_t size) {
+    uint32_t idx = slub_kmalloc_class(size);
+    return idx < MAX_SLAB_ORDER ? g_kmalloc_caches[idx] : nullptr;
+}
+#endif
 
 void *Kmalloc(size_t size) {
     if (!g_kmalloc_slub_on) return nullptr;
@@ -1214,10 +1238,13 @@ extern "C" void        kmem_cache_free(kmem_cache *c, void *o) { SLUB::Free(c, o
    使 ASAN 只报告"释放后未经复用即被访问"的真实 UAF */
 extern "C" void __asan_unpoison_memory_region(const volatile void *addr, size_t size);
 
-/* 全量分配环形日志: 诊断"活地址被再次分配/覆盖" */
+/* 全量分配环形日志: 诊断"活地址被再次分配/覆盖"。
+   显式开关: 单线程套件开启; 多线程/TSAN 套件关闭(避免日志写入竞态)。 */
 struct _kalloc_rec { uintptr_t p; uint32_t size; uint32_t ra; };
 static struct _kalloc_rec g_kalloc_log[1 << 20];
 static uint32_t g_kalloc_idx = 0;
+static int g_kalloc_log_on = 0;
+extern "C" void kalloc_log_enable(int on) { g_kalloc_log_on = on; }
 extern "C" void kalloc_query(void *p) {
     printf_("[KMQ] 查询 %p 的全部分配记录 (最近 2^20 次):\n", p);
     uint32_t found = 0;
@@ -1237,7 +1264,8 @@ extern "C" void *kmalloc(uint64_t size) {
     if (likely(p)) {
 #ifdef __KERNEL_TEST_HOST__
         __asan_unpoison_memory_region(p, (size_t)size);
-        g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)p, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
+        if (g_kalloc_log_on)
+            g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)p, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
 #endif
         return p;
     }
@@ -1246,7 +1274,8 @@ extern "C" void *kmalloc(uint64_t size) {
 #ifdef __KERNEL_TEST_HOST__
     if (q) {
         __asan_unpoison_memory_region(q, (size_t)size);
-        g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)q, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
+        if (g_kalloc_log_on)
+            g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)q, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
     }
 #endif
     return q;

@@ -25,6 +25,30 @@ bin/slub_poison: common/kernel_shim.cpp slub/poison_main.cpp $(HEAP_SRC)
 	@mkdir -p bin
 	$(CXX) $(CXXFLAGS) -DSLAB_DEBUG_POISON $^ -o $@ $(LDLIBS)
 
+# 多线程 per-CPU 并发 (真实自旋锁竞争 + 跨线程 free)
+slub-mt: bin/slub_mt
+bin/slub_mt: common/kernel_shim.cpp slub/mt_main.cpp $(HEAP_SRC)
+	@mkdir -p bin
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
+
+# TSAN 变体: 数据竞争检测
+slub-mt-tsan: bin/slub_mt_tsan
+bin/slub_mt_tsan: common/kernel_shim.cpp slub/mt_main.cpp $(HEAP_SRC)
+	@mkdir -p bin
+	$(CXX) $(CXXFLAGS) -O1 -g -fsanitize=thread $^ -o $@ $(LDLIBS)
+
+# gcov 覆盖率构建 (跑完套件后: gcov -b ../kernel/src/mem/heap.cpp 等)
+slub-cov: bin/slub_cov
+bin/slub_cov: common/kernel_shim.cpp slub/main.cpp $(HEAP_SRC)
+	@mkdir -p bin
+	$(CXX) $(CXXFLAGS) -O0 --coverage $^ -o $@ $(LDLIBS)
+
+fc-cov: bin/fc_cov
+bin/fc_cov: common/kernel_shim.cpp fc/main.cpp $(HEAP_SRC) $(FC_SRC) $(ART_SRC)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) -O0 --coverage -c $(ART_SRC) -o bin/art_cov.o
+	$(CXX) $(CXXFLAGS) -O0 --coverage -no-pie common/kernel_shim.cpp fc/main.cpp $(HEAP_SRC) $(FC_SRC) bin/art_cov.o -o $@ $(LDLIBS)
+
 fc: bin/fc_test
 bin/fc_test: common/kernel_shim.cpp fc/main.cpp $(HEAP_SRC) $(FC_SRC) $(ART_SRC)
 	@mkdir -p bin
@@ -37,6 +61,20 @@ bin/fc_asan: common/kernel_shim.cpp fc/main.cpp $(HEAP_SRC) $(FC_SRC) $(ART_SRC)
 	@mkdir -p bin
 	$(CC) $(CFLAGS) -fsanitize=address -c $(ART_SRC) -o bin/art_asan.o
 	$(CXX) $(CXXFLAGS) -O1 -fsanitize=address -fno-omit-frame-pointer common/kernel_shim.cpp fc/main.cpp $(HEAP_SRC) $(FC_SRC) bin/art_asan.o -o $@ $(LDLIBS)
+
+# 文件缓存多线程并发 (跨实例广播 + 真实自旋锁竞争)
+fc-mt: bin/fc_mt
+bin/fc_mt: common/kernel_shim.cpp fc/mt_main.cpp $(HEAP_SRC) $(FC_SRC) $(ART_SRC)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) -c $(ART_SRC) -o bin/art.o
+	$(CXX) $(CXXFLAGS) -no-pie common/kernel_shim.cpp fc/mt_main.cpp $(HEAP_SRC) $(FC_SRC) bin/art.o -o $@ $(LDLIBS)
+
+# 文件缓存 TSAN 变体
+fc-mt-tsan: bin/fc_mt_tsan
+bin/fc_mt_tsan: common/kernel_shim.cpp fc/mt_main.cpp $(HEAP_SRC) $(FC_SRC) $(ART_SRC)
+	@mkdir -p bin
+	$(CC) $(CFLAGS) -O1 -g -fsanitize=thread -c $(ART_SRC) -o bin/art_tsan.o
+	$(CXX) $(CXXFLAGS) -O1 -g -fsanitize=thread -no-pie common/kernel_shim.cpp fc/mt_main.cpp $(HEAP_SRC) $(FC_SRC) bin/art_tsan.o -o $@ $(LDLIBS)
 
 # 调度器账本模型混沌仿真 (常量/公式对照 sched.cpp, 见 sched/main.cpp 声明)
 sched: bin/sched_test

@@ -105,7 +105,7 @@ static void fc_update_averages_internal(file_cache_cpu_t *s) {
     s->avg_osc_cache = s->oscillate_tree.size > 0 ? s->total_oscillations / s->oscillate_tree.size : 0;
     s->smoothed_cache_bytes = (s->smoothed_cache_bytes * 7 + s->total_cache_bytes) / 8;
 
-    uint32_t dyn_window = s->total_entries / 4;
+    uint32_t dyn_window = __atomic_load_n(&s->total_entries, __ATOMIC_RELAXED) / 4;
     if (dyn_window < 16) dyn_window = 16;
     if (dyn_window > 256) dyn_window = 256;
     s->evict_scan_window = dyn_window;
@@ -217,6 +217,12 @@ extern "C" int art_verify(art_tree *t);
 /* 故障注入: 强制 promote 的"插入后校验"失败一次 (回归测试用) */
 static int g_fc_fail_once = 0;
 extern "C" void fc_set_insert_fail_once(void) { g_fc_fail_once = 1; }
+/* 追踪器开关: 单线程套件开启; 多线程/TSAN 套件关闭(避免追踪器自身竞态) */
+static int g_fc_track_on = 0;
+extern "C" void fc_track_enable(int on) { g_fc_track_on = on; }
+/* 独立释放日志开关 (无状态 printf, MT 诊断可用) */
+static int g_fc_free_log = 0;
+extern "C" void fc_free_log_enable(int on) { g_fc_free_log = on; }
 
 /* 双重释放/双重分配追踪(代际, 精确地址开地址散列) */
 #define FC_TRACK_N 65536
@@ -231,7 +237,7 @@ static inline uint32_t fc_slot(void *p) {
     return (uint32_t)(h & (FC_TRACK_N - 1));
 }
 static inline void fc_track_alloc(void *p) {
-    if (unlikely(!p)) return;
+    if (unlikely(!p || !g_fc_track_on)) return;
     for (uint32_t i = 0; i < 8; i++) {
         uint32_t s = (fc_slot(p) + i) & (FC_TRACK_N - 1);
         if (g_tk_p[s] == 0) {
@@ -251,7 +257,7 @@ static inline void fc_track_alloc(void *p) {
     }
 }
 static inline void fc_track_free(file_cache_entry_t *e, uintptr_t ra) {
-    if (unlikely(!e)) return;
+    if (unlikely(!e || !g_fc_track_on)) return;
     for (uint32_t i = 0; i < 8; i++) {
         uint32_t s = (fc_slot(e) + i) & (FC_TRACK_N - 1);
         if (g_tk_p[s] == (uintptr_t)e) {
@@ -267,7 +273,7 @@ static inline void fc_track_free(file_cache_entry_t *e, uintptr_t ra) {
 }
 /* 插入 ART 前检查值是否为已释放条目 (释放后未经重新分配即被插入 = UAF) */
 static inline void fc_track_insert(file_cache_entry_t *e, const char *site) {
-    if (unlikely(!e)) return;
+    if (unlikely(!e || !g_fc_track_on)) return;
     for (uint32_t i = 0; i < 8; i++) {
         uint32_t s = (fc_slot(e) + i) & (FC_TRACK_N - 1);
         if (g_tk_p[s] == (uintptr_t)e) {
@@ -299,11 +305,16 @@ extern "C" void fc_track_query(void *p) {
 static inline void fc_entry_free(file_cache_entry_t *e) {
     if (unlikely(!e)) return;
 #ifdef __KERNEL_TEST_HOST__
+    if (g_fc_free_log)
+        printf_("[FCFREE] e=%p ra=0x%llx\n", (void*)e,
+                (unsigned long long)(uintptr_t)__builtin_return_address(0));
+#endif
+#ifdef __KERNEL_TEST_HOST__
     if (g_test_op == 565) printf_("[P565] fc_entry_free e=%p key=%p\n", (void*)e, (void*)e->key);
 #endif
 #ifdef __KERNEL_TEST_HOST__
     /* 释放时仍在其所属缓存的 ART 中 = 悬空指针 bug, 直接打印释放站点 */
-    if (e->cpu_id < 64 && g_fc_cpus[e->cpu_id] &&
+    if (g_fc_track_on && e->cpu_id < 64 && g_fc_cpus[e->cpu_id] &&
         art_search(&g_fc_cpus[e->cpu_id]->index, e->key, e->key_len) == e) {
         printf_("[FCDBG] FREE WHILE STILL IN ART: entry %p (key_len=%u) ra=0x%llx\n",
                 (void*)e, e->key_len, (unsigned long long)__builtin_return_address(0));
@@ -313,9 +324,11 @@ static inline void fc_entry_free(file_cache_entry_t *e) {
     if (e->key) kfree(e->key);
 #ifdef __KERNEL_TEST_HOST__
     fc_track_free(e, (uintptr_t)__builtin_return_address(0));
-    __asan_poison_memory_region(e, sizeof(*e));
 #endif
     kfree(e);
+    /* 注: 原 ASAN 毒化插桩已移除 —— SLUB 空闲链指针就存在已释放对象的
+       头 8 字节里, 毒化会与下一次 pop 的链读取自伤; 悬垂/双释由
+       fc_track_* 与 art 完整性巡检覆盖 */
 }
 
 static void fc_update_oscillate(file_cache_cpu_t *s, file_cache_entry_t *v) {
@@ -361,7 +374,7 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
             if (cur->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= cur->data_len;
             s->total_cache_io    -= cur->total_io_len;
             s->total_cache_freq  -= cur->access_freq;
-            s->total_entries--;
+            __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
             s->evictions++;
             if (cur->access_freq == 0) s->readahead_evictions++;
             return cur;
@@ -388,7 +401,7 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
                     if (cur->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= cur->data_len;
                     s->total_cache_io    -= cur->total_io_len;
                     s->total_cache_freq  -= cur->access_freq;
-                    s->total_entries--;
+                    __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
                     s->evictions++;
                     if (cur->access_freq == 0) s->readahead_evictions++;
                     return cur;
@@ -410,7 +423,7 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
             if (clean_fallback->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= clean_fallback->data_len;
             s->total_cache_io    -= clean_fallback->total_io_len;
             s->total_cache_freq  -= clean_fallback->access_freq;
-            s->total_entries--;
+            __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
             s->evictions++;
             if (clean_fallback->access_freq == 0) s->readahead_evictions++;
             return clean_fallback;
@@ -489,7 +502,7 @@ void file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id,
     s->tiny_cache_bytes = 0;
     s->soft_limit = 0; s->hard_limit = 0;
     s->avg_io_cache = 4096; s->avg_freq_cache = 2; s->avg_osc_cache = 0;
-    s->total_entries = 0;
+    __atomic_store_n(&s->total_entries, 0, __ATOMIC_RELAXED);
     s->evict_scan_window = 16;
     s->evict_hit_count = 0; s->evict_miss_count = 0; s->evict_hit_threshold = 4;
     s->hits = 0; s->misses = 0; s->evictions = 0;
@@ -568,7 +581,7 @@ static void fc_broadcast_invalidate(file_cache_cpu_t *src_s, const uint8_t *key,
                     if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
                     s->total_cache_io    -= e->total_io_len;
                     s->total_cache_freq  -= e->access_freq;
-                    s->total_entries--;
+                    __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
                     entry_to_free = e;
                 } else {
                     e->pending_reclaim = true;
@@ -618,7 +631,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
         spinlock_lock(&src->lock);
     }
 
-    uint32_t dyn_migrate_batch = src->total_entries / 16;
+    uint32_t dyn_migrate_batch = __atomic_load_n(&src->total_entries, __ATOMIC_RELAXED) / 16;
     if (dyn_migrate_batch < 8) dyn_migrate_batch = 8;
     if (dyn_migrate_batch > 64) dyn_migrate_batch = 64;
 
@@ -632,7 +645,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
 
     int32_t migrated = 0, scanned = 0;
     file_cache_entry_t *cur = src->lru_head;
-    while (cur && (uint32_t)migrated < dyn_migrate_batch && (uint32_t)scanned < src->total_entries) {
+    while (cur && (uint32_t)migrated < dyn_migrate_batch && (uint32_t)scanned < __atomic_load_n(&src->total_entries, __ATOMIC_RELAXED)) {
         file_cache_entry_t *next = cur->lru_next;
         if (likely(next)) PREFETCH_R(next);   // 优化: 预取 LRU 下一节点
         scanned++;
@@ -653,7 +666,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
                 if (cur->data_len < FC_TINY_FILE_THRESHOLD) src->tiny_cache_bytes -= cur->data_len;
                 src->total_cache_io    -= cur->total_io_len;
                 src->total_cache_freq  -= cur->access_freq;
-                src->total_entries--;
+                __atomic_fetch_sub(&src->total_entries, 1, __ATOMIC_RELAXED);
                 src->migrations_out++;
                 victims[vic_cnt++] = cur;
             } else cur->pending_reclaim = true;
@@ -688,7 +701,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
         if (cur->data_len < FC_TINY_FILE_THRESHOLD) src->tiny_cache_bytes -= cur->data_len;
         src->total_cache_io    -= cur->total_io_len;
         src->total_cache_freq  -= cur->access_freq;
-        src->total_entries--;
+        __atomic_fetch_sub(&src->total_entries, 1, __ATOMIC_RELAXED);
         src->migrations_out++;
 
         cur->cpu_id = best_dst;
@@ -698,7 +711,7 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
 #endif
         fc_lru_push_back(dst, cur);
 
-        dst->total_entries++;
+        __atomic_fetch_add(&dst->total_entries, 1, __ATOMIC_RELAXED);
         dst->total_cache_bytes += cur->data_len;
         if (cur->data_len < FC_TINY_FILE_THRESHOLD) dst->tiny_cache_bytes += cur->data_len;
         dst->total_cache_io += cur->total_io_len;
@@ -797,7 +810,7 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                 if (re->data_len < FC_TINY_FILE_THRESHOLD) rs->tiny_cache_bytes -= re->data_len;
                 rs->total_cache_io    -= re->total_io_len;
                 rs->total_cache_freq  -= re->access_freq;
-                rs->total_entries--;
+                __atomic_fetch_sub(&rs->total_entries, 1, __ATOMIC_RELAXED);
                 rs->migrations_out++;
                 spinlock_unlock(&rs->lock);
 
@@ -810,7 +823,7 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                 fc_lru_push_back(s, re);
 
                 s->hits++;   // 优化: 迁移命中也计入命中率统计
-                s->total_entries++;
+                __atomic_fetch_add(&s->total_entries, 1, __ATOMIC_RELAXED);
                 s->total_cache_bytes += re->data_len;
                 if (re->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes += re->data_len;
                 s->total_cache_io += re->total_io_len;
@@ -856,7 +869,7 @@ void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
                 if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
                 s->total_cache_io    -= e->total_io_len;
                 s->total_cache_freq  -= e->access_freq;
-                s->total_entries--;
+                __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
                 need_free = true;
             }
         } else {
@@ -875,7 +888,7 @@ void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
             if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
             s->total_cache_io    -= e->total_io_len;
             s->total_cache_freq  -= e->access_freq;
-            s->total_entries--;
+            __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
             need_free = true;
         }
     }
@@ -1060,7 +1073,7 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
                 if (av) {
                     fc_lru_remove(s, exist);
                     s->total_cache_freq -= exist->access_freq;
-                    s->total_entries--;
+                    __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
                 }
                 fc_entry_free(exist);   /* 含 old_data_to_free, 锁内 kfree 安全 */
                 goto insert_new;        /* 锁保持持有, 与下方新条目路径一致 */
@@ -1150,7 +1163,7 @@ insert_new:;
     }
 
     fc_lru_push_back(s, e);
-    s->total_entries++;
+    __atomic_fetch_add(&s->total_entries, 1, __ATOMIC_RELAXED);
     s->total_cache_bytes += data_len;
     if (data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes += data_len;
     if (is_dirty) s->dirty_cache_bytes += data_len;
@@ -1248,7 +1261,7 @@ int32_t file_cache_readahead(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
     }
     fc_lru_push_front(s, e); // 挂入头部
 
-    s->total_entries++;
+    __atomic_fetch_add(&s->total_entries, 1, __ATOMIC_RELAXED);
     s->total_cache_bytes += data_len;
     if (data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes += data_len;
 
@@ -1370,7 +1383,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
     fc_update_averages_internal(s);
     spinlock_unlock(&s->lock);
 
-    uint32_t dyn_flush_batch = s->total_entries / 4;
+    uint32_t dyn_flush_batch = __atomic_load_n(&s->total_entries, __ATOMIC_RELAXED) / 4;
     if (dyn_flush_batch < 16) dyn_flush_batch = 16;
     if (dyn_flush_batch > 64) dyn_flush_batch = 64;
 
@@ -1394,7 +1407,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                 if (cur->is_dirty) s->dirty_cache_bytes -= cur->data_len;
                 s->total_cache_io    -= cur->total_io_len;
                 s->total_cache_freq  -= cur->access_freq;
-                s->total_entries--;
+                __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
                 if (cur->access_freq == 0) s->readahead_evictions++;
                 victims[vic_cnt++] = cur;
             }
@@ -1469,7 +1482,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
 
         file_cache_entry_t *e_quota = s->lru_tail;
         uint32_t quota_scan_cnt = 0;
-        uint32_t dyn_quota_batch = s->total_entries / 2;
+        uint32_t dyn_quota_batch = __atomic_load_n(&s->total_entries, __ATOMIC_RELAXED) / 2;
         if (dyn_quota_batch < 64) dyn_quota_batch = 64;
         if (dyn_quota_batch > 512) dyn_quota_batch = 512;
 
@@ -1500,7 +1513,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                             if (e_quota->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= e_quota->data_len;
                             s->total_cache_io -= e_quota->total_io_len;
                             s->total_cache_freq -= e_quota->access_freq;
-                            s->total_entries--;
+                            __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
                             s->evictions++;
                             if (e_quota->access_freq == 0) s->readahead_evictions++;
                             fc_update_oscillate(s, e_quota);
@@ -1524,7 +1537,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
     cur = s->lru_head;
     int32_t scan_cnt = 0;
     uint64_t batch_max_size = 0;
-    uint32_t dyn_reverse_scan = s->total_entries / 4;
+    uint32_t dyn_reverse_scan = __atomic_load_n(&s->total_entries, __ATOMIC_RELAXED) / 4;
     if (dyn_reverse_scan < 32) dyn_reverse_scan = 32;
 
     while (cur && (uint32_t)scan_cnt < dyn_reverse_scan && (uint32_t)vic_cnt < dyn_flush_batch) {
@@ -1541,7 +1554,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
                     if (cur->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= cur->data_len;
                     s->total_cache_io    -= cur->total_io_len;
                     s->total_cache_freq  -= cur->access_freq;
-                    s->total_entries--;
+                    __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
                     s->evictions++;
                     if (cur->access_freq == 0) s->readahead_evictions++;
                     fc_update_oscillate(s, cur);
@@ -1619,7 +1632,7 @@ void file_cache_tick(file_cache_cpu_t *s) {
     if (unlikely(s->clock - s->last_decay_tick >= dyn_decay_ticks)) {
         s->last_decay_tick = s->clock;
         uint32_t batch = 0;
-        uint32_t dyn_cache_decay_batch = s->total_entries / 8;
+        uint32_t dyn_cache_decay_batch = __atomic_load_n(&s->total_entries, __ATOMIC_RELAXED) / 8;
         if (dyn_cache_decay_batch < 32) dyn_cache_decay_batch = 32;
         if (dyn_cache_decay_batch > 256) dyn_cache_decay_batch = 256;
 

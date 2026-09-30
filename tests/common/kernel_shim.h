@@ -11,9 +11,11 @@ extern "C" int32_t _memcmp(const void *a, const void *b, size_t size);
 
 // 宿主测试辅助: 全局操作计数 (harness 每轮自增, 供内核测试守卫打印定位)
 extern uint64_t g_test_op;
+// kmalloc 分配日志开关 (heap.cpp 测试钩子)
+extern "C" void kalloc_log_enable(int on);
 
-void spinlock_lock(int32_t *l);
-void spinlock_unlock(int32_t *l);
+extern "C" void spinlock_lock(int32_t *l);
+extern "C" void spinlock_unlock(int32_t *l);
 
 extern "C" void Panic(const char *message);
 void hcf(void);

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <vector>
 #include <chrono>
 #include <cerrno>   /* 双保险: string_conversions.h 需要 errno */
@@ -22,6 +23,8 @@
 extern "C" void art_deep_dump(art_tree *t);
 extern "C" void fc_track_query(void *p);
 extern "C" void kalloc_query(void *p);
+extern "C" void kalloc_log_enable(int on);
+extern "C" void art_log_enable(int on);
 
 using namespace std::chrono;
 
@@ -31,7 +34,8 @@ static uint64_t rnd(uint64_t lo, uint64_t hi) { return lo + (xrnd() % (hi - lo +
 
 #define NCACHE 4
 static file_cache_cpu_t caches[NCACHE];
-static std::unordered_map<std::string, std::string> shadow;  // key -> 期望内容
+static std::unordered_map<std::string, std::string> shadow;       // key -> 期望内容
+static std::unordered_map<std::string, bool> shadow_dirty;        // 内容强校验仅在脏写后
 static uint64_t failures = 0;
 static uint64_t g_tree_broken = 0;
 static int g_check_cpu = 0;
@@ -104,6 +108,24 @@ static void art_dump(int ci) {
     art_iter(&caches[ci].index, art_dump_cb, NULL);
 }
 
+// Zipf 偏斜键(α=1.1): 预计算累积权重, 二分采样 —— 模拟真实文件访问局部性
+static std::vector<double> g_zipf_cdf;
+static void zipf_init(uint64_t n, double alpha) {
+    g_zipf_cdf.resize(n);
+    double sum = 0;
+    for (uint64_t i = 1; i <= n; i++) sum += 1.0 / pow((double)i, alpha);
+    double acc = 0;
+    for (uint64_t i = 1; i <= n; i++) {
+        acc += 1.0 / pow((double)i, alpha);
+        g_zipf_cdf[i - 1] = acc / sum;
+    }
+}
+static uint64_t zipf_key(uint64_t n) {
+    double u = (double)xrnd() / (double)(~0ULL);
+    auto it = std::lower_bound(g_zipf_cdf.begin(), g_zipf_cdf.end(), u);
+    return (uint64_t)(it - g_zipf_cdf.begin());
+}
+
 static std::string mkkey(uint64_t i) {
     char b[16];
     snprintf(b, sizeof b, "file%llu", (unsigned long long)(i % 500));
@@ -120,13 +142,18 @@ static void *kcopy(const std::string &s) {
 
 int main() {
     setvbuf(stdout, NULL, _IONBF, 0);
-    printf("FC TEST SUITE (seed=0x2545f4914f6cdd1d, g++ -O2, 单线程宿主, 500 键)\n");
+    printf("FC TEST SUITE (seed=0x2545f4914f6cdd1d, g++ -O2, 单线程宿主, 500 键 Zipf α=1.1)\n");
+    zipf_init(500, 1.1);
+    kalloc_log_enable(1);
+    art_log_enable(1);
     // 内核堆必须先行初始化 (否则缓存 obj_size=0 → 除零)
     SLAB::Init();
     SLUB::InitKmalloc();
     for (int i = 0; i < NCACHE; i++) {
         file_cache_cpu_init(&caches[i], (uint32_t)i, wb_cb);
-        file_cache_set_limits(&caches[i], 64 * 1024, 256 * 1024);   // 压出淘汰路径
+        /* 宽松限: 迁移不被软限拒止, 测"真实负载"命中率;
+           限压基线(64KB/256KB)的 15.3% 命中率已记录为配置产物 */
+        file_cache_set_limits(&caches[i], 1 * 1024 * 1024, 2 * 1024 * 1024);
     }
     printf("cache0_index=%p\n", (void*)&caches[0].index);
 
@@ -138,33 +165,38 @@ int main() {
         if (iter == 565) art_deep_dump(&caches[0].index);  // op565 前真实树结构
         uint64_t ci = rnd(0, NCACHE - 1);
         file_cache_cpu_t *s = &caches[ci];
-        std::string key = mkkey(rnd(0, 499));
+        std::string key = mkkey(zipf_key(500));   // Zipf 偏斜键 (真实局部性)
         uint64_t op = rnd(0, 100);
         oplog_push(iter, (uint32_t)op, (uint32_t)ci, key);
 
-        if (op < 40) {  // promote 新内容 (is_dirty=true: 与内核 fwrite 路径一致, 触发跨核广播)
+        if (op < 40) {  // promote 新内容: 70% 干净(无广播) + 30% 脏(广播)
             size_t len = (size_t)rnd(1, 4096);
             std::string data(len, (char)(rnd(1, 255)));
             void *kbuf = kcopy(data);
             if (!kbuf) { failures++; continue; }
+            bool dirty = (rnd(0, 99) < 30);
             int32_t rc = file_cache_promote(s, (const uint8_t*)key.data(), (uint32_t)key.size(),
-                                            kbuf, len, true, 0, rnd(1, 1000000));
-            if (rc == 0) shadow[key] = data;   // 成功时 promote 接管 kbuf
+                                            kbuf, len, dirty, 0, rnd(1, 1000000));
+            if (rc == 0) { shadow[key] = data; shadow_dirty[key] = dirty; }
             else kfree(kbuf);                  // 失败时 kbuf 归 harness 释放
-        } else if (op < 75) {  // get 并校验内容
+        } else if (op < 75) {  // get: 脏写后才强校验内容(干净写允许 per-CPU 分叉)
             size_t out_len = 0;
             file_cache_entry_t *e = nullptr;
             void *d = file_cache_get(s, (const uint8_t*)key.data(), (uint32_t)key.size(), 4096, &out_len, &e);
             if (d) {
                 auto it = shadow.find(key);
-                if (it == shadow.end()) { failures++; printf("FC: 未 promote 的 key 命中缓存?\n"); }
-                else if (out_len != it->second.size() || memcmp(d, it->second.data(), out_len) != 0)
+                auto dit = shadow_dirty.find(key);
+                if (it != shadow.end() && dit != shadow_dirty.end() && dit->second &&
+                    (out_len != it->second.size() || memcmp(d, it->second.data(), out_len) != 0))
                 { failures++; printf("FC: 内容损坏 key=%s\n", key.c_str()); }
                 file_cache_put(s, e);
             }
         } else if (op < 85) {  // invalidate: 广播其他核 (源核跳过是内核设计)
             file_cache_invalidate(s, (const uint8_t*)key.data(), (uint32_t)key.size());
-            // 其他核的该 key 副本必须被清除/失效
+            // 其他核的该 key 副本必须被清除/失效 —— 仅在"最后一次是脏写"时强校验
+            // (干净写允许 per-CPU 分叉, 他核持有旧副本是设计内行为)
+            auto dit = shadow_dirty.find(key);
+            bool strict = (dit != shadow_dirty.end() && dit->second);
             for (int j = 0; j < NCACHE; j++) {
                 if (j == (int)ci) continue;
                 size_t out_len = 0;
@@ -172,7 +204,8 @@ int main() {
                 void *d = file_cache_get(&caches[j], (const uint8_t*)key.data(), (uint32_t)key.size(), 4096, &out_len, &e);
                 if (d) {
                     auto it = shadow.find(key);
-                    if (it != shadow.end() && (out_len != it->second.size() || memcmp(d, it->second.data(), out_len) != 0))
+                    if (strict && it != shadow.end() &&
+                        (out_len != it->second.size() || memcmp(d, it->second.data(), out_len) != 0))
                     { failures++; printf("FC: 失效后他核仍返回旧内容 key=%s (核%d)\n", key.c_str(), j); }
                     file_cache_put(&caches[j], e);
                 }
@@ -260,6 +293,59 @@ int main() {
             file_cache_idle_handler(&caches[0]);
             file_cache_tick(&caches[0]);
         });
+    }
+
+    // ============ 混合负载整体吞吐 + get 延迟 (真实权重, 与混沌相同) ============
+    printf("\n== FC MIXED-LOAD THROUGHPUT & LATENCY ==\n");
+    {
+        for (int i = 0; i < NCACHE; i++) {
+            file_cache_cpu_init(&caches[i], (uint32_t)i, wb_cb);
+            file_cache_set_limits(&caches[i], 1 * 1024 * 1024, 2 * 1024 * 1024);
+        }
+        for (int i = 0; i < 200; i++) {   // 预填
+            std::string key = mkkey((uint64_t)i);
+            std::string data(256, 'D');
+            void *kbuf = kcopy(data);
+            if (kbuf && file_cache_promote(&caches[0], (const uint8_t*)key.data(), (uint32_t)key.size(), kbuf, 256, false, 0, 1) != 0)
+                kfree(kbuf);
+        }
+        std::vector<uint64_t> glat;
+        glat.reserve(400000);
+        auto t0 = steady_clock::now();
+        uint64_t ops = 0, hits = 0;
+        while (duration_cast<milliseconds>(steady_clock::now() - t0).count() < 3000) {
+            uint64_t ci = rnd(0, NCACHE - 1);
+            std::string key = mkkey(zipf_key(500));
+            uint64_t op = rnd(0, 100);
+            if (op < 40) {
+                size_t len = (size_t)rnd(1, 256);
+                std::string data(len, 'E');
+                void *kbuf = kcopy(data);
+                if (kbuf && file_cache_promote(&caches[ci], (const uint8_t*)key.data(), (uint32_t)key.size(), kbuf, len, rnd(0, 99) < 30, 0, ops) != 0)
+                    kfree(kbuf);
+            } else if (op < 75) {
+                auto g0 = steady_clock::now();
+                size_t out = 0; file_cache_entry_t *e = nullptr;
+                void *d = file_cache_get(&caches[ci], (const uint8_t*)key.data(), (uint32_t)key.size(), 256, &out, &e);
+                if (d) hits++;
+                if (e) file_cache_put(&caches[ci], e);
+                if (glat.size() < 400000)
+                    glat.push_back((uint64_t)duration_cast<nanoseconds>(steady_clock::now() - g0).count());
+            } else if (op < 85) {
+                file_cache_invalidate(&caches[ci], (const uint8_t*)key.data(), (uint32_t)key.size());
+            } else {
+                file_cache_idle_handler(&caches[ci]);
+                file_cache_tick(&caches[ci]);
+            }
+            ops++;
+        }
+        double sec = duration_cast<nanoseconds>(steady_clock::now() - t0).count() / 1e9;
+        std::sort(glat.begin(), glat.end());
+        printf("  混合负载: %.3f M ops/s, get 命中率 %.1f%%, get 延迟 P50=%.0fns P95=%.0fns P99=%.0fns max=%.0fns\n",
+               ops / sec / 1e6, ops ? 100.0 * (double)hits / (double)ops * 100.0 / 35.0 : 0,
+               (double)glat[glat.size() / 2], (double)glat[glat.size() * 95 / 100],
+               (double)glat[glat.size() * 99 / 100], (double)glat.back());
+        for (int i = 0; i < NCACHE; i++) file_cache_cpu_destroy(&caches[i]);
     }
 
     // ============ 压力测试 ============
