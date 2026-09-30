@@ -126,20 +126,32 @@ GDB 硬件内存监视点。
 **结论降级**：上述为**单线程宿主**结论。"全量通过"限定为"本表所列套件通过"；
 SMP 并发（多线程 per-CPU + 全局 LRU 交互）与 QEMU 真实负载待补（audit §2 F5）。
 
-## 3. 调度器（账本模型仿真 —— 与 EEVDF 核心选择逻辑的对比，教学模型）
+## 3. 调度器（账本模型仿真 —— 真实源码 EEVDF 骨架的忠实复刻）
 
 **方法（诚实声明）**：`sched.cpp` 与 LAPIC/PIT/线程上下文深度耦合，无法直接宿主编译。
 本仿真**逐行复刻 sched.cpp 的账本公式与常量**（每个常量/公式均注释对照源码行号：
 `RIPRATE_*` sched.cpp:39-69、`get_dynamic_quantum` :205-225、RIP 采样/钳位 :410-467、
-老化 :311-335、`calibrate_and_set_deadline` :588-601、vruntime/avg 记账 :1010-1031），
-运行队列用 `std::multimap` 等价替身（内核为内联红黑树）。**新增**：Linux EEVDF 参考
-模型（加权 slice、VD=vruntime+slice、eligible 集按 min-VD 选择、唤醒放置）并排对照。
-**定位（标题已如实降级）**：复刻模型本质是"CFS 最左 vruntime + RIP 启发式塑形"，
-**不是 EEVDF**；缺失 eligibility(lag≥0)、protect_slice、lag 动态钳制、睡眠唤醒 lag
-衰减、sched_setattr slice 接口等机制 —— 本报告只做"与 EEVDF 核心选择逻辑的对比"，
-验证的是**账本算法的稳定性、公平性与反馈行为**，不是编译 sched.cpp 本身。
-**与真实 sched.cpp 的偏差量级：未量化**（模型 6.9M tick/s、EEVDF 参考 0 tick 唤醒
-延迟均为模型行为，不构成对真实内核的性能结论）。
+老化 :311-335、`calibrate_and_set_deadline` :588-605、`thread_rb_cmp`/`Pick` :574-582/
+:881-919、唤醒抢占 :1220-1238、vruntime/avg 记账 :1010-1031），
+运行队列为线性扫描替身（内核为 deadline 排序红黑树 + 子树增广，O(log n)；模型 O(n)，
+选择结果等价）。另有 Linux **完整 EEVDF 参考**模型并排对照。
+
+**定性（经逐行读码修正）**：真实源码的**选择逻辑已经是 EEVDF 骨架**，不是"CFS 最左
+vruntime"——① 运行队列按 **deadline** 排序（`thread_rb_cmp` :574-582）；② **eligible
+集** = vruntime ≤ avg（子树 min_vruntime 增广使"子树含 eligible"为 O(1) 判断，:897-919
+下降搜索）；③ 选取 = **eligible 中 deadline 最小**（全树无 eligible 时最左兜底，:889-894）；
+④ **唤醒抢占**（:1220-1230）：waker eligible 且 deadline 更小 → 打断，但当前**剩余
+slice < ¼ base_quantum 时不打断**（protect_slice 变体，省上下文切换）；⑤ calibrate
+的 **lag 钳制**（vruntime ∈ [avg−slice, avg+2·slice]，:591-602）；⑥ 运行量子**按权重
+缩放**（`base_quantum×weight/1024`，:212-213）+ **per-thread `custom_quantum` 覆盖**
+（sched_setattr-slice 等价接口已存在，:209-211）。
+
+**与 Linux 完整 EEVDF 的真实差距**（仅两处实质差异）：① deadline 偏移**未按权重缩放**
+（本内核 `deadline = vruntime + slice`；Linux `ve + slice/weight`）——源码注释自认
+"eligible 集内排序近似 vruntime 序，有意简化"（:589-591）；② eligibility 用
+`vruntime ≤ avg` 近似，**无显式 lag 记账/衰减**（Linux 以 lag≥0 判定 + 唤醒 lag 放置）。
+**与真实 sched.cpp 的偏差量级：未量化**（模型吞吐、唤醒延迟均为模型行为，不构成对
+真实内核的性能结论）。
 
 ### 3.1 公平性（权重 1:1:2:4，20 万 tick）
 
@@ -150,7 +162,7 @@ SMP 并发（多线程 per-CPU + 全局 LRU 交互）与 QEMU 真实负载待补
 | 2 | 2 | 0.250 | 0.250 | 93,513,728 |
 | 3 | 4 | 0.500 | 0.500 | 93,513,984 |
 
-vruntime 极差 **0.0014%**（3EVDF 复刻）/ **0.0000%**（EEVDF 参考）。
+vruntime 极差 **0.0012%**（真实源码复刻）/ **0.0000%**（完整 EEVDF 参考）。
 **降级表述**：这是"账本模型、单队列、无睡眠唤醒"下的份额一致性，不是对真实调度器的
 "严格验证"。
 
@@ -170,26 +182,32 @@ vruntime 极差 **0.0014%**（3EVDF 复刻）/ **0.0000%**（EEVDF 参考）。
 200,000 次随机 spawn（权重 1-16、三种行为类型）/exit/tick 混合：
 **0 失败**，vruntime 有界不变量成立。
 
-### 3.4 睡眠唤醒（新增，指数睡眠均值 20 tick）
+### 3.4 睡眠唤醒（指数睡眠均值 20 tick，含真实唤醒抢占机制）
 
 | 模式 | 唤醒→运行最大延迟 |
 |---|---|
-| 3EVDF 复刻 | 104 tick（早期 avg<5M 阶段无放置补偿所致，模型假象） |
-| EEVDF 参考（eligible 含 +slice 余量） | 0 tick |
+| 真实源码复刻（唤醒抢占 + 剩余 slice ≥ ¼ 保护） | 132 tick |
+| Linux 完整 EEVDF 参考（eligible 含 +slice 余量） | 4 tick |
 
-结论：eligible 余量（+slice_i）对唤醒延迟影响显著；复刻模型缺少该余量是已知简化。
+结论：真实骨架的唤醒延迟受**剩余 slice 保护**的权衡约束（运行中线程剩余不足 ¼ 时
+不打断，延迟代价 ≤ ¼ slice，源码注释明示 :1221-1225）；完整 EEVDF 的 +slice
+eligibility 余量把该代价消掉。两者方向一致、量级差异可见。
 
 ### 3.5 压力
 
-调度核心循环（16 线程）：≈6.9M tick/s（模型；本轮含 EEVDF 分支，较上轮 9.8M 略降）。
+调度核心循环（16 线程）：≈4.1M tick/s（模型；本轮为忠实复刻——选择扫描 O(n) +
+逐单位步唤醒检查，较旧版 6.9M 更接近真实语义但模型本身更慢，数字仅表示模型实现
+成本，非真实内核吞吐）。
 
 ## 4. 方法学边界（诚实）
 
 - **SLUB/SLAB 与文件缓存**：测试的是**真实内核源码**（仅 shim 硬件依赖），但环境因素
   与内核不同：无中断抢占、单线程混沌（自旋锁退化为无竞争）、页面由 libc 提供。
   证明的是组件的**算法正确性、内存安全与单核开销**；**SMP 并发正确性未被本套件验证**。
-- **调度器**：账本公式与常量逐行对照 `sched.cpp`（行号见 §3 引言）的**复刻模型** +
-  EEVDF 参考模型，运行队列为 `std::multimap` 等价替身——不是编译 `sched.cpp` 本身。
+- **调度器**：账本公式与常量逐行对照 `sched.cpp`（行号见 §3 引言）的**忠实复刻模型**
+  （mode 0：真实源码的 EEVDF 骨架——deadline 树选择/唤醒抢占/slice 保护/lag 钳制/
+  权重缩放量子；mode 1：Linux 完整 EEVDF 参考），运行队列为线性扫描替身（内核为
+  deadline 红黑树 + 子树增广）——不是编译 `sched.cpp` 本身。
 - **QEMU 真实内核（升级）**：`qemu-system-x86_64`（Windows 宿主，**TCG 无 KVM**），
   `-m 2G`，全参数（含 disk.img/网络/声卡）+ **`-debugcon` 捕获 E9 端口**（内核
   panic 消息走 E9 而非串口——此前的串口 grep 会漏报）：

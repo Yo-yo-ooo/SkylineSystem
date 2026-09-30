@@ -214,19 +214,29 @@ freelist 结构性规避；本内核路线图：per-CPU freelist 重构（P2）�
 
 ## 3. 调度器缺口与补测方案
 
-### 3.1 与 Linux EEVDF 的机制对照（账本模型缺失项）
+### 3.1 与 Linux EEVDF 的机制对照（经逐行读码修正）
 
-| 机制 | Linux EEVDF（6.6+） | 本模型/sched.cpp 现状 | 影响 |
+**重要更正（2026-09-27）**：此前的模型复刻与报告把 sched.cpp 描述为"CFS 最左
+vruntime + RIP 启发式"——**读码后确认这是低估**。真实源码的选择骨架已经是 EEVDF：
+deadline 排序红黑树（`thread_rb_cmp` :574-582）、eligible 子树增广下降搜索（:897-919）、
+**eligible 中 min-deadline 选择**（:889-894 兜底）、唤醒抢占 + 剩余 slice 保护
+（:1220-1230）、lag 钳制（:588-605）、按权重缩放的量子 + per-thread `custom_quantum`
+覆盖（:205-214）。模型 mode 0 已按真实源码重写，报告 §3 定性已更正。
+
+| 机制 | Linux EEVDF（6.6+） | sched.cpp 真实源码 | 差距 |
 |---|---|---|---|
-| 虚拟截止时间 VD | `deadline = avg_vruntime + slice/weight`，**eligible 集合按 VD 排序**选择 | 模型：deadline = vruntime + base_quantum（未加权）；选择只按 vruntime≤avg 取最小 | 无法评估"最紧急"语义；公平性结论只覆盖 vruntime 序 |
-| slice 参数 | `sysctl_sched_base_slice`（默认 300µs），slice 按 weight 缩放、受 `min_granularity` 钳制 | 模型 base_q=5 固定；sched.cpp 有 `sched_prio_to_weight[16]` 但量子未按权重缩放（文档自认简化） | 权重只影响 vruntime 记账，不影响时间片 |
-| protect_slice | 突发交互线程受保护免被立即抢占 | **完全缺失** | 交互尾延迟评估无效 |
-| wakeup preemption | 唤醒抢占检查（wakeup_gran） | 无 sleep/wake 模型 | 场景 2 无意义（线程永不睡眠） |
-| lag 记账 | entity lag 累积、placement 补偿 | 模型只有 vruntime_rem 余数 | 长量子下份额漂移（模型已观察到的张力） |
-| 多队列均衡 | runqueue 间 push/steal | 模型单队列 | SMP 公平性完全未覆盖 |
-| 组调度/CFS 层级 | task_group 层次 | 无 | 不影响本结论，需注明 |
+| 虚拟截止时间 VD | `ve + slice/weight`，eligible 集按 VD 排序 | `deadline = vruntime + slice`（偏移**未按权重缩放**，:589-591 注释自认 → eligible 集内退化为 vruntime 序） | ⚠️ 唯一实质差距之一 |
+| eligibility | 显式 lag≥0 | `vruntime ≤ avg` 近似 + 子树增广 O(1) 判定 | ⚠️ 唯一实质差距之二（无显式 lag 记账/衰减） |
+| protect_slice | 抢占保护 | **存在**：唤醒抢占要求当前剩余 slice ≥ ¼ base_quantum（:1221-1230），否则不打断 | ✅ 已有（简化版） |
+| wakeup preemption | `wakeup_gran` 检查 | **存在**：waker eligible 且 deadline 更小 → 打断（:1220） | ✅ 已有 |
+| lag 钳制 | placement 补偿 | **存在**：vruntime ∈ [avg−slice, avg+2·slice]（:591-602） | ✅ 已有（对称钳制） |
+| slice 接口 | sched_setattr | **存在**：per-thread `custom_quantum` 覆盖（:209-211） | ✅ 已有 |
+| 量子按权重缩放 | slice ∝ weight | **存在**：`base_quantum × weight / 1024`（:212-213） | ✅ 已有 |
+| 多队列均衡 | runqueue push/steal | 模型单队列；真实源码有 TryPush/steal（:765, :859） | 模型未覆盖（真实源码有） |
 
-**"公平性严格验证" → 降级**："账本模型（单队列、无睡眠唤醒、固定权重、vruntime 序选择）下，20 万 tick 份额与权重一致、vruntime 极差 0.0014%；不含 EEVDF 的 VD 排序/protect_slice/多队列语义。"
+**降级表述（保持）**："账本模型（单队列、固定权重、忠实复刻真实选择骨架）下，
+20 万 tick 份额与权重一致、vruntime 极差 0.0012%；不含多队列均衡语义，
+模型吞吐/延迟数字不对应真实内核性能。"
 
 ### 3.2 补强方案
 

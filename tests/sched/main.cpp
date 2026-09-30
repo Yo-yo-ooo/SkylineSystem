@@ -1,8 +1,12 @@
-// tests/sched/main.cpp — 3EVDF 调度器混沌 + 压力仿真
+// tests/sched/main.cpp — 调度器混沌 + 压力仿真
 // 方法学(诚实声明): 本文件是 sched.cpp 账本公式的逐行复刻模型,
 // 常量与公式均对照 kernel/src/arch/x86_64/schedule/sched.cpp 行号;
 // 运行队列用 std::multimap 等价替身(sched.cpp 内联红黑树与硬件上下文耦合,
 // 无法直接宿主编译)。验证的是算法账本的稳定性/公平性/反馈行为。
+// mode 0 = 真实源码忠实复刻 —— sched.cpp 的选择骨架是 EEVDF 骨架
+//   (deadline 排序树 + eligible 子树增广 + min-deadline 选择 + 唤醒抢占
+//    + 剩余 slice 保护), 不是 CFS 最左 vruntime; 见 tick() 内行号注释。
+// mode 1 = Linux 完整 EEVDF 参考(加权 slice) 对照。
 #include <cstdio>
 #include <cstdint>
 #include <cstdlib>
@@ -88,15 +92,18 @@ static void rip_age(Thread &t, uint64_t now_ms) {
     t.last_sample_ms = now_ms;
 }
 
-// calibrate_and_set_deadline: sched.cpp:588-601
+// calibrate_and_set_deadline: sched.cpp:588-605
+// 真实实现: virtual_slice = base_quantum; max_lag = virtual_slice;
+// clamp vruntime ∈ [avg-max_lag, avg+2*max_lag]; deadline = vruntime + virtual_slice.
+// 模型单位 = 真实 vruntime 单位 ×1024 (每单位步长计 1024/w)。
 static void calibrate(Thread &t, uint64_t avg_vr, uint64_t base_q) {
-    uint64_t max_lag = 5ULL * 1024 * 1024;   // sched.cpp 的 avg+5M 饥饿界
-    if (avg_vr > max_lag && t.vruntime < avg_vr - max_lag) {   // 防 avg<max_lag 下溢
+    uint64_t max_lag = base_q * 1024;             // = virtual_slice (模型单位)
+    if (avg_vr > max_lag && t.vruntime < avg_vr - max_lag) {
         t.vruntime = avg_vr - max_lag; t.vruntime_rem = 0;
     } else if (t.vruntime > avg_vr + 2 * max_lag) {
         t.vruntime = avg_vr + 2 * max_lag; t.vruntime_rem = 0;
     }
-    t.deadline = t.vruntime + base_q;
+    t.deadline = t.vruntime + max_lag;            // deadline = vruntime + slice
 }
 
 struct Sim {
@@ -106,7 +113,7 @@ struct Sim {
     uint64_t now_ms = 0;
     uint64_t base_q = 5;                    // sched.cpp: base_quantum=5 tick
     uint64_t active_weight = 0;
-    int mode = 0;                           // 0=3EVDF 复刻; 1=Linux EEVDF 参考
+    int mode = 0;   // 0=真实源码复刻(EEVDF 骨架); 1=Linux EEVDF 完整参考
 
     uint64_t weight_sum() const { return active_weight; }
 
@@ -128,36 +135,65 @@ struct Sim {
         active_weight -= threads[tid].weight;
     }
 
-    // 单个调度 tick: 选 eligible 中 vruntime 最小者 (mode 0) 或最小 VD (mode 1)
+    // 单个调度 tick: mode 0 = 真实源码 Pick (sched.cpp:881-919);
+    //                 mode 1 = Linux EEVDF 完整参考
     uint32_t last_tid = 0;
     uint64_t last_quantum = 1;
-    static const uint64_t MAX_LAG = 5ULL * 1024 * 1024;
 
     void yank(uint32_t tid) {          // 从队列摘除 (睡眠用)
         for (auto it = rq.begin(); it != rq.end(); ++it)
             if (it->second == tid) { rq.erase(it); return; }
     }
 
-    bool tick() {
-        now_ms += 1;
-        // 唤醒到期线程 (放置: vruntime 拉平到 avg-max_lag, 防饥; 量唤醒→运行延迟)
-        for (auto &t : threads) {
-            if (t.sleep_until && t.sleep_until <= now_ms) {
-                t.sleep_until = 0;
-                if (avg_vruntime > MAX_LAG && t.vruntime < avg_vruntime - MAX_LAG)
-                    t.vruntime = avg_vruntime - MAX_LAG;
-                rq.emplace(t.vruntime, t.id);
-                t.wake_tick = now_ms;
+    // 唤醒放置 (sched.cpp:658-667 InsertToQueue → calibrate):
+    // clamp 到 [avg-slice, avg+2*slice], 重算 deadline, 入队
+    void wake_due() {
+        uint64_t max_lag = base_q * 1024;
+        for (auto &w : threads) {
+            if (w.sleep_until && w.sleep_until <= now_ms) {
+                w.sleep_until = 0;
+                if (avg_vruntime > max_lag && w.vruntime < avg_vruntime - max_lag)
+                    w.vruntime = avg_vruntime - max_lag;
+                else if (w.vruntime > avg_vruntime + 2 * max_lag)
+                    w.vruntime = avg_vruntime + 2 * max_lag;
+                w.deadline = w.vruntime + max_lag;
+                rq.emplace(w.vruntime, w.id);
+                w.wake_tick = now_ms;
             }
         }
+    }
+
+    bool tick() {
+        now_ms += 1;
+        wake_due();
         if (rq.empty()) { avg_vruntime += 1024; return false; }
 
         uint32_t tid;
         uint64_t run_q;
         if (mode == 0) {
-            auto it = rq.begin();
-            if (it->first > avg_vruntime) { avg_vruntime += 1024; return false; }  // 全 non-eligible
-            tid = it->second; rq.erase(it);
+            /* 真实源码 Pick (sched.cpp:881-919): 树按 deadline 排序,
+               增广子树 min_vruntime 使 "子树是否含 eligible" O(1);
+               下降搜索找 eligible(vruntime<=avg) 且 deadline 最小者;
+               全树无 eligible → 最左(deadline 最小)兜底 (sched.cpp:889-894)。
+               注: deadline = vruntime + slice, 偏移不随权重缩放
+               (sched.cpp:589-591 自认) → 排序退化为 vruntime 序。 */
+            uint64_t slice_v = base_q * 1024;
+            uint64_t best_dl = ~0ULL;
+            auto best = rq.end();
+            bool any_eligible = false;
+            for (auto it = rq.begin(); it != rq.end(); ++it) {
+                Thread &tt = threads[it->second];
+                uint64_t dl = tt.vruntime + slice_v;
+                if (tt.vruntime <= avg_vruntime) {
+                    any_eligible = true;
+                    if (dl < best_dl) { best_dl = dl; best = it; }
+                } else if (!any_eligible && dl < best_dl) {
+                    best_dl = dl; best = it;   // 兜底候选: deadline 最小
+                }
+            }
+            if (best == rq.end()) { avg_vruntime += 1024; return false; }
+            tid = best->second;
+            rq.erase(best);
             Thread &t = threads[tid];
             uint64_t obs = (t.kind == 0) ? 0 : ((t.kind == 1) ? 4096 : rnd(0, 8192));
             rip_feedback(t, now_ms, 1024, obs);
@@ -190,7 +226,11 @@ struct Sim {
             t.wake_tick = 0;
         }
 
-        // 按量子长度执行 (sched.cpp:1010-1031)
+        // 按量子长度执行 (sched.cpp:1010-1031): 记账 1024/w, avg 1024/Σw
+        // mode 0 逐单位步推进时间并检查唤醒抢占 (sched.cpp:1220-1230):
+        // waker eligible && deadline 更小 && 当前剩余 slice >= ceil((base_q+3)/4)
+        // → 打断当前量子 (剩余不足 1/4 不打断, 省一次上下文切换)
+        uint64_t steps_run = 0;
         for (uint64_t i = 0; i < run_q; i++) {
             uint64_t total = 1024 + t.vruntime_rem;
             uint64_t w = t.weight;
@@ -202,9 +242,28 @@ struct Sim {
             uint64_t aw = active_weight ? active_weight : 1;
             avg_vruntime += at / aw;
             avg_vruntime_rem = at % aw;
+            steps_run++;
+
+            if (mode == 0) {
+                now_ms++;
+                wake_due();
+                bool preempted = false;
+                for (auto &wth : threads) {
+                    if (wth.wake_tick == now_ms && wth.id != tid) {
+                        uint64_t wdl = wth.vruntime + base_q * 1024;
+                        uint64_t tdl = t.deadline;
+                        uint64_t remaining = (tdl > t.vruntime) ? (tdl - t.vruntime) : 0;
+                        uint64_t thresh = ((base_q + 3) >> 2) * 1024;
+                        if (wth.vruntime <= avg_vruntime && wdl < tdl && remaining >= thresh) {
+                            preempted = true;
+                        }
+                    }
+                }
+                if (preempted) break;
+            }
         }
 
-        calibrate(t, avg_vruntime, run_q);
+        calibrate(t, avg_vruntime, base_q);
         if (!t.sleep_until) rq.emplace(t.vruntime, tid);
         return true;
     }
@@ -298,7 +357,7 @@ int main() {
     }
 
     // ================= 场景 4: EEVDF 参考对照 (公平性) =================
-    printf("\n== SCENARIO 4: 3EVDF 复刻 vs Linux EEVDF 参考 (权重 1:1:2:4) ==\n");
+    printf("\n== SCENARIO 4: 真实源码复刻(EEVDF 骨架) vs Linux EEVDF 完整参考 (权重 1:1:2:4) ==\n");
     for (int mode = 0; mode < 2; mode++) {
         Sim s;
         s.mode = mode;
@@ -311,7 +370,7 @@ int main() {
             if (t.vruntime > max_vr) max_vr = t.vruntime;
         }
         printf("  mode %d (%s): 份额 %.3f/%.3f/%.3f/%.3f, vruntime 极差 %.4f%%\n",
-               mode, mode ? "EEVDF 参考(加权slice+VD)" : "3EVDF 复刻",
+               mode, mode ? "EEVDF 参考(加权slice+VD)" : "真实源码复刻(EEVDF 骨架)",
                (double)s.threads[0].total_ticks / sum, (double)s.threads[1].total_ticks / sum,
                (double)s.threads[2].total_ticks / sum, (double)s.threads[3].total_ticks / sum,
                100.0 * (double)(max_vr - min_vr) / (double)max_vr);
@@ -341,7 +400,7 @@ int main() {
         // (简化: 用 max + 平均采样替代 —— 直接打印 max)
         uint64_t it_ticks = s.threads[it_id].total_ticks;
         printf("  mode %d (%s): 交互线程运行 %llu tick, 唤醒→运行最大延迟 %llu tick\n",
-               mode, mode ? "EEVDF 参考" : "3EVDF 复刻",
+               mode, mode ? "EEVDF 参考" : "真实源码复刻",
                (unsigned long long)it_ticks, (unsigned long long)s.threads[it_id].max_wake_latency);
     }
 
