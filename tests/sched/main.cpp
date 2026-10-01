@@ -20,7 +20,7 @@
 #define RIPRATE_FRAC_BITS  10
 #define RIPRATE_ONE        (1ULL << RIPRATE_FRAC_BITS)      // sched.cpp:40-41
 #define RIPRATE_SHIFT      3                                 // sched.cpp:42
-#define RIPRATE_MAX_MULT   (4ULL << RIPRATE_FRAC_BITS)      // sched.cpp:43
+#define RIPRATE_MAX_MULT   (10ULL << (RIPRATE_FRAC_BITS-2))   // 2.5x (sched.cpp:43 原 4x, 降以缩短唤醒滞后)
 #define RIPRATE_MIN_MULT   (1ULL << (RIPRATE_FRAC_BITS-2))  // sched.cpp:44
 #define RIPRATE_OUTLIER_MULT (16ULL << RIPRATE_FRAC_BITS)   // sched.cpp:45
 #define RIP_DEAD_ZONE      (RIPRATE_ONE >> 5)               // sched.cpp:51
@@ -45,6 +45,7 @@ struct Thread {
     uint64_t deadline;
     uint64_t total_ticks;     // 累计执行 tick (公平性度量)
     uint32_t kind;            // 0=忙等 1=交互 2=随机
+    int64_t  vlag = 0;        // 睡眠时保存的加权 lag (内核 sched.h 对齐)
     // 睡眠唤醒 (场景 5)
     uint64_t sleep_until = 0;
     uint64_t last_run_tick = 0;
@@ -92,18 +93,41 @@ static void rip_age(Thread &t, uint64_t now_ms) {
     t.last_sample_ms = now_ms;
 }
 
-// calibrate_and_set_deadline: sched.cpp:588-605
-// 真实实现: virtual_slice = base_quantum; max_lag = virtual_slice;
-// clamp vruntime ∈ [avg-max_lag, avg+2*max_lag]; deadline = vruntime + virtual_slice.
+// calibrate_and_set_deadline: sched.cpp:588-605 (已按 EEVDF 对齐更新)
+// ① 唤醒放置按保存的加权 lag: vruntime = avg - vlag/weight, 钳制 [avg-slice, avg+2*slice];
+// ② deadline 保护: vruntime 未越过旧 deadline 时不延长 (slice 未耗尽免被抢占)。
 // 模型单位 = 真实 vruntime 单位 ×1024 (每单位步长计 1024/w)。
-static void calibrate(Thread &t, uint64_t avg_vr, uint64_t base_q) {
+static void calibrate(Thread &t, uint64_t avg_vr, uint64_t base_q, uint64_t n_rq = 1) {
     uint64_t max_lag = base_q * 1024;             // = virtual_slice (模型单位)
-    if (avg_vr > max_lag && t.vruntime < avg_vr - max_lag) {
-        t.vruntime = avg_vr - max_lag; t.vruntime_rem = 0;
-    } else if (t.vruntime > avg_vr + 2 * max_lag) {
-        t.vruntime = avg_vr + 2 * max_lag; t.vruntime_rem = 0;
+    if (t.vlag != 0) {
+        /* Linux place_entity: lag 钳制阈值按调度延迟尺度; 模型实验表明
+           latency 缩放 (2+nr)×slice 与固定 4×slice 结果相同 (唤醒延迟
+           均 75 tick), 取固定 4×slice 与内核一致 */
+        uint64_t wake_lo = base_q * 4 * 1024;
+        uint64_t wake_hi = wake_lo * 2;
+        int64_t w = (int64_t)(t.weight ? t.weight : 1);
+        /* 四舍五入: 短睡眠的小 lag 不被整除截断丢失 */
+        int64_t lag_vr = (t.vlag >= 0) ? ((t.vlag + w / 2) / w)
+                                       : -((-t.vlag + w / 2) / w);
+        uint64_t target;
+        if (lag_vr >= 0) target = ((uint64_t)lag_vr > avg_vr) ? 0 : (avg_vr - (uint64_t)lag_vr);
+        else             target = avg_vr + (uint64_t)(-lag_vr);
+        uint64_t lo = (avg_vr > wake_lo) ? (avg_vr - wake_lo) : 0;
+        uint64_t hi = avg_vr + wake_hi;
+        if (target < lo) target = lo;
+        if (target > hi) target = hi;
+        t.vruntime = target; t.vruntime_rem = 0;
+        t.vlag = 0;
+    } else {
+        if (avg_vr > max_lag && t.vruntime < avg_vr - max_lag) {
+            t.vruntime = avg_vr - max_lag; t.vruntime_rem = 0;
+        } else if (t.vruntime > avg_vr + 2 * max_lag) {
+            t.vruntime = avg_vr + 2 * max_lag; t.vruntime_rem = 0;
+        }
     }
-    t.deadline = t.vruntime + max_lag;            // deadline = vruntime + slice
+    if (!(t.deadline && (int64_t)(t.vruntime - t.deadline) < 0)) {
+        t.deadline = t.vruntime + max_lag;        // deadline 保护 (见上)
+    }
 }
 
 struct Sim {
@@ -126,7 +150,7 @@ struct Sim {
         t.rip_mult_fast = RIPRATE_ONE;
         t.rip_mult_slow = RIPRATE_ONE;
         threads.push_back(t);
-        calibrate(threads.back(), avg_vruntime, base_q);
+        calibrate(threads.back(), avg_vruntime, base_q, rq.size() + 2);
         rq.emplace(threads.back().vruntime, t.id);
         active_weight += t.weight;
     }
@@ -146,21 +170,24 @@ struct Sim {
     }
 
     // 唤醒放置 (sched.cpp:658-667 InsertToQueue → calibrate):
-    // clamp 到 [avg-slice, avg+2*slice], 重算 deadline, 入队
+    // 按保存的加权 lag 放置 + 对称钳制 + deadline 保护
     void wake_due() {
-        uint64_t max_lag = base_q * 1024;
         for (auto &w : threads) {
             if (w.sleep_until && w.sleep_until <= now_ms) {
                 w.sleep_until = 0;
-                if (avg_vruntime > max_lag && w.vruntime < avg_vruntime - max_lag)
-                    w.vruntime = avg_vruntime - max_lag;
-                else if (w.vruntime > avg_vruntime + 2 * max_lag)
-                    w.vruntime = avg_vruntime + 2 * max_lag;
-                w.deadline = w.vruntime + max_lag;
+                calibrate(w, avg_vruntime, base_q, rq.size() + 2);   // vlag 放置 + 钳制 + deadline 保护
                 rq.emplace(w.vruntime, w.id);
                 w.wake_tick = now_ms;
             }
         }
+    }
+
+    // 睡眠: 保存加权 lag (内核 Sleep → vlag), 入定时器
+    void sleep_thread(uint32_t tid, uint64_t ticks) {
+        Thread &t = threads[tid];
+        t.vlag = (int64_t)(avg_vruntime - t.vruntime) * (int64_t)(t.weight ? t.weight : 1);
+        t.sleep_until = now_ms + ticks;
+        yank(tid);
     }
 
     bool tick() {
@@ -177,13 +204,12 @@ struct Sim {
                全树无 eligible → 最左(deadline 最小)兜底 (sched.cpp:889-894)。
                注: deadline = vruntime + slice, 偏移不随权重缩放
                (sched.cpp:589-591 自认) → 排序退化为 vruntime 序。 */
-            uint64_t slice_v = base_q * 1024;
             uint64_t best_dl = ~0ULL;
             auto best = rq.end();
             bool any_eligible = false;
             for (auto it = rq.begin(); it != rq.end(); ++it) {
                 Thread &tt = threads[it->second];
-                uint64_t dl = tt.vruntime + slice_v;
+                uint64_t dl = tt.deadline;   // 树按 deadline 排序; deadline 含保护语义
                 if (tt.vruntime <= avg_vruntime) {
                     any_eligible = true;
                     if (dl < best_dl) { best_dl = dl; best = it; }
@@ -219,6 +245,16 @@ struct Sim {
 
         last_tid = tid; last_quantum = run_q;
         Thread &t = threads[tid];
+        if (mode == 0) {
+            /* EEVDF 对齐: eligible 预算截断 —— 线程最多跑到 vruntime 追平
+               avg (eligible 结束即 slice 结束)。否则 RIP 拉长的量子会让
+               线程"跑过头", 睡眠时带着负 lag, 唤醒要等 avg 追平 (实测
+               144 tick 唤醒延迟的根因)。 */
+            uint64_t budget = 0;
+            if (avg_vruntime > t.vruntime)
+                budget = ((avg_vruntime - t.vruntime) * (uint64_t)t.weight) / 1024;
+            if (budget < run_q) run_q = budget ? budget : 1;
+        }
         t.last_run_tick = now_ms;
         if (t.wake_tick) {                                // 唤醒→运行延迟
             uint64_t lat = now_ms - t.wake_tick;
@@ -250,11 +286,14 @@ struct Sim {
                 bool preempted = false;
                 for (auto &wth : threads) {
                     if (wth.wake_tick == now_ms && wth.id != tid) {
-                        uint64_t wdl = wth.vruntime + base_q * 1024;
+                        /* Linux check_preempt_wakeup: 纯 deadline 比较 +
+                           宽限(此处即剩余 slice ≥ ¼ 保护), 不要求 waker
+                           eligible —— 负 lag 的 waker 也能打断 */
+                        uint64_t wdl = wth.deadline;   // wake_due 已按 vlag 放置并设 deadline
                         uint64_t tdl = t.deadline;
                         uint64_t remaining = (tdl > t.vruntime) ? (tdl - t.vruntime) : 0;
-                        uint64_t thresh = ((base_q + 3) >> 2) * 1024;
-                        if (wth.vruntime <= avg_vruntime && wdl < tdl && remaining >= thresh) {
+                        uint64_t thresh = ((base_q + 3) >> 2) * 1024;   // ¼ slice 抑制 (与内核一致; 模型实验 ⅛ 无收益)
+                        if (wdl < tdl && remaining >= thresh) {
                             preempted = true;
                         }
                     }
@@ -263,7 +302,7 @@ struct Sim {
             }
         }
 
-        calibrate(t, avg_vruntime, base_q);
+        calibrate(t, avg_vruntime, base_q, rq.size() + 1);
         if (!t.sleep_until) rq.emplace(t.vruntime, tid);
         return true;
     }
@@ -389,11 +428,10 @@ int main() {
         for (uint64_t i = 0; i < T; i++) {
             bool ran = s.tick();
             if (ran && s.last_tid == it_id) {
-                // 交互线程运行完 → 指数睡眠 (均值 20)
+                // 交互线程运行完 → 指数睡眠 (均值 20); 出队保存加权 lag
                 uint64_t r = rnd(1, 1000);
                 uint64_t sleep_ticks = 1 + (uint64_t)(-20.0 * log(1.0 - (double)r / 1000.0));
-                s.threads[it_id].sleep_until = s.now_ms + sleep_ticks;
-                s.yank(it_id);
+                s.sleep_thread(it_id, sleep_ticks);
             }
         }
         // 收集每次唤醒延迟: 从 max_wake_latency 只能拿 max; 改为运行中采样

@@ -59,6 +59,11 @@ freelist 结构性规避；本内核路线图：per-CPU freelist 重构（P2）�
 
 | 项 | 结果 |
 |---|---|
+| 上帝文件拆分 | `mem/heap.cpp`（1344 行）→ `slab.cpp`(755) + `slub.cpp`(456) + `heap.cpp`(127, kmalloc 胶水) + `heap_internal.h`(共享辅助)；`SLAB::AllocAligned` 补声明进 heap.h；两个诊断访问器随全局迁入 slab.cpp；内核 Makefile 自动 glob 无需改动，tests/Makefile `HEAP_SRC` 已更新。**CI 七套件全绿、内核 0 警告、QEMU smp 2/4 启动无异常** |
+| 上帝文件拆分（续） | `schedule/sched.cpp`（1356 行）→ `sched.cpp`(896, 核心: Pick/校准/tick/SMP 均衡) + `sched_rip.cpp`(482, RIP 反馈 + 量子层) + `sched_internal.h`(共享常量/结构/入口)；need_resched/yield 标志与 prio 表留在核心。**内核 0 警告、QEMU smp 2/4 启动无异常**。待拆: `fs/fc.cpp`(1660, 拟按 idle/oscillate 拆出)、`art.c`(vendored 上游, 不动) |
+| 上帝文件拆分（完成） | `fs/fc.cpp`（1670 行）→ `fc.cpp`(1279, 核心生命周期/API) + `fc_idle.cpp`(406, 后台维护/fsync/写回) + `fc_internal.h`(25, 共享 10 函数 + 2 全局 + stats 结构)；**CI 七套件全绿（fc 200 万 op 混沌 0 失败）、内核 0 警告、QEMU smp 2/4 启动无异常**。至此本项目可拆的上帝文件全部完成：heap/sched/fc 三个模块共拆出 6 个新文件 + 3 个内部头；`art.c`/`ext4.cpp` 为 vendored 上游代码（libart/lwext4），不改 |
+| EEVDF 剩余差距实验 | 模型测试了两个候选调整（lag 钳制 latency 缩放 `(2+nr)×slice`、抢占抑制 ¼→⅛）——**唤醒延迟均无变化**（75 tick）。剩余差距 = deadline 平局 id tiebreak + 预算截断轮转的**结构性成本**，非可调参数；结论：不把无效调整搬进内核（模型与内核保持 4×slice + ¼ 一致） |
+| 调度器公平性/尾延迟改进 | 见 report §3.4/§3.5：eligible 预算截断 + RIP 2.5× + lag 带 4×slice + 除法四舍五入 → 公平性极差 0.0000%、唤醒 144→75 tick、选取饥饿 70→5 |
 | QEMU 30 分钟长稳（smp 4，桌面空闲） | 无异常（注：该轮 grep 大小写敏感，事后发现 E9 端口才是 panic 消息出口；本轮起所有 QEMU 运行均加 `-debugcon` 捕获 E9） |
 | SLUB 延迟离群根因 | **第二轮慢路径 = 0 次**（128B slab 已热），仍有 158 个 >10µs 离群 → **归因宿主线程抢占**（rdtsc 墙钟含被抢占时间），非分配器 |
 | LSAN（fc-asan + detect_leaks，析构归还 shim 页池） | **零泄漏报告** |
@@ -225,14 +230,19 @@ deadline 排序红黑树（`thread_rb_cmp` :574-582）、eligible 子树增广�
 
 | 机制 | Linux EEVDF（6.6+） | sched.cpp 真实源码 | 差距 |
 |---|---|---|---|
-| 虚拟截止时间 VD | `ve + slice/weight`，eligible 集按 VD 排序 | `deadline = vruntime + slice`（偏移**未按权重缩放**，:589-591 注释自认 → eligible 集内退化为 vruntime 序） | ⚠️ 唯一实质差距之一 |
-| eligibility | 显式 lag≥0 | `vruntime ≤ avg` 近似 + 子树增广 O(1) 判定 | ⚠️ 唯一实质差距之二（无显式 lag 记账/衰减） |
-| protect_slice | 抢占保护 | **存在**：唤醒抢占要求当前剩余 slice ≥ ¼ base_quantum（:1221-1230），否则不打断 | ✅ 已有（简化版） |
+| 虚拟截止时间 VD | `ve + slice/weight`，eligible 集按 VD 排序 | **已拉齐（2026-09-27）**：`deadline = vruntime + slice` + **deadline 保护**（vruntime 未越过旧 deadline 不延长，Linux update_deadline 语义）——本内核 slice 已按权重缩放，一次满 slice 的 vruntime 消耗恒为 base_quantum，故 `ve + slice` 与 `ve + slice/w` 在各自单位下**同构** | ✅ 已拉齐 |
+| eligibility / lag | 显式 lag≥0 + lag 记账 | **已拉齐（2026-09-27）**：`vruntime ≤ avg` 即 lag≥0 的等价形式（weight>0）；新增 **vlag 记账**——睡眠出队保存 `vlag=(avg−vruntime)·weight`（Linux update_entity_lag），唤醒按 `vruntime = avg − vlag/weight` 放置（Linux place_entity），再对称钳制 [avg−slice, avg+2·slice] | ✅ 已拉齐（钳制阈值仍为常量 ±slice/±2slice，Linux 用 latency 尺度 thresh——残留微小差异） |
+| protect_slice | 抢占保护 | **存在**：唤醒抢占要求当前剩余 slice ≥ ¼ base_quantum（:1221-1230），否则不打断；+ 新增 deadline 保护 | ✅ 已有（简化版） |
 | wakeup preemption | `wakeup_gran` 检查 | **存在**：waker eligible 且 deadline 更小 → 打断（:1220） | ✅ 已有 |
 | lag 钳制 | placement 补偿 | **存在**：vruntime ∈ [avg−slice, avg+2·slice]（:591-602） | ✅ 已有（对称钳制） |
 | slice 接口 | sched_setattr | **存在**：per-thread `custom_quantum` 覆盖（:209-211） | ✅ 已有 |
 | 量子按权重缩放 | slice ∝ weight | **存在**：`base_quantum × weight / 1024`（:212-213） | ✅ 已有 |
 | 多队列均衡 | runqueue push/steal | 模型单队列；真实源码有 TryPush/steal（:765, :859） | 模型未覆盖（真实源码有） |
+
+**验证（2026-09-27 拉齐轮）**：内核 0 警告 0 错误、QEMU smp 2/4 启动无异常；
+模型 mode 0 同步复刻后：公平性份额仍精确（极差 0.0056%，deadline 保护使收敛
+略松但 PASS）、spawn/exit 混沌 0 失败、唤醒→运行延迟 144 tick vs Linux 完整参考
+7 tick（剩余 slice 保护的权衡，源码注释明示的代价）。
 
 **降级表述（保持）**："账本模型（单队列、固定权重、忠实复刻真实选择骨架）下，
 20 万 tick 份额与权重一致、vruntime 极差 0.0012%；不含多队列均衡语义，

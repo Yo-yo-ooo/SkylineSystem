@@ -852,6 +852,7 @@ namespace Schedule {
         thread->ctx.rax = 0; thread->ctx.rip = ((syscall_frame_t*)frame)->rcx;
         thread->thread_stack = thread->ctx.rsp; thread->fs = rdmsr(FS_BASE);
         thread->priority = parent->priority; thread->weight = parent->weight;
+        thread->vlag = 0;   // fork 自父线程 memcpy 继承, 子线程是新实体, lag 清零
 
         uint64_t base_vruntime = cpu->avg_vruntime;
         uint64_t half_slice = cpu->base_quantum / 2;

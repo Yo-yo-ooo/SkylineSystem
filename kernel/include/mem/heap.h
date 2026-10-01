@@ -53,6 +53,7 @@ typedef struct slab_page_t{
 namespace SLAB{
     void Init();
     void *Alloc(size_t size);
+    void *AllocAligned(size_t size, size_t align);
     void *Realloc(void *ptr, size_t size);
     void Free(void *ptr);
     void *UserAlloc(size_t size);

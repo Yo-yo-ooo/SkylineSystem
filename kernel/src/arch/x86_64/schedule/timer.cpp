@@ -80,6 +80,10 @@ namespace Schedule {
             if (expires <= now) current->state = THREAD_RUNNING;
             else {
                 current->state = THREAD_SLEEPING;
+                /* EEVDF 对齐: 出队时保存加权 lag (Linux update_entity_lag),
+                   唤醒时由 calibrate_and_set_deadline 按 lag 放置 */
+                uint64_t w = likely(current->weight) ? current->weight : 1024;
+                current->vlag = (int64_t)(cpu->avg_vruntime - current->vruntime) * (int64_t)w;
                 Schedule::Internal::TimerAdd(cpu, current, expires, now);
             }
             spinlock_unlock(&cpu->sched_lock);

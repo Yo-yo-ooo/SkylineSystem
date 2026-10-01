@@ -7,9 +7,9 @@ CFLAGS   := -O2 -g -Wall -Wno-unused-parameter -Wno-unused-function -D__KERNEL_T
             -I common -I ../kernel/include
 LDLIBS   := -pthread
 
-HEAP_SRC := ../kernel/src/mem/heap.cpp
+HEAP_SRC := ../kernel/src/mem/heap.cpp ../kernel/src/mem/slab.cpp ../kernel/src/mem/slub.cpp
 ART_SRC  := ../kernel/src/klib/algorithm/art.c
-FC_SRC   := ../kernel/src/fs/fc.cpp
+FC_SRC   := ../kernel/src/fs/fc.cpp ../kernel/src/fs/fc_idle.cpp
 
 .PHONY: all slub slub-poison fc fc-asan sched clean
 all: slub slub-poison fc sched

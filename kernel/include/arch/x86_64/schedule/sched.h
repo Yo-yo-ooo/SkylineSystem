@@ -80,6 +80,8 @@ typedef struct thread_t {
     bool on_rq;               // 是否在运行队列红黑树中
     uint64_t vruntime_rem;    // 整型除法余数进位 (长跑精确)
     uint64_t min_vruntime_subtree; // 子树最小 vruntime (Pick 加速增广)
+    int64_t  vlag;                 // 睡眠时保存的加权 lag = (avg - vruntime) * weight;
+                                   // 唤醒放置用 (Linux place_entity 对齐), 用后清零
     struct thread_t *zombie_next;
 
     /* ==== RIP 速率反馈 ====

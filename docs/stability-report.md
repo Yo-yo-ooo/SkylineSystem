@@ -146,10 +146,16 @@ slice < ¼ base_quantum 时不打断**（protect_slice 变体，省上下文切�
 缩放**（`base_quantum×weight/1024`，:212-213）+ **per-thread `custom_quantum` 覆盖**
 （sched_setattr-slice 等价接口已存在，:209-211）。
 
-**与 Linux 完整 EEVDF 的真实差距**（仅两处实质差异）：① deadline 偏移**未按权重缩放**
-（本内核 `deadline = vruntime + slice`；Linux `ve + slice/weight`）——源码注释自认
-"eligible 集内排序近似 vruntime 序，有意简化"（:589-591）；② eligibility 用
-`vruntime ≤ avg` 近似，**无显式 lag 记账/衰减**（Linux 以 lag≥0 判定 + 唤醒 lag 放置）。
+**与 Linux 完整 EEVDF 的差距（已拉齐，2026-09-27）**：此前两处实质差异已在内核关闭——
+① **vlag 记账**：睡眠出队保存加权 lag `(avg−vruntime)·weight`，唤醒按
+`vruntime = avg − vlag/weight` 放置再对称钳制（Linux `update_entity_lag`/`place_entity`
+同构，见 `timer.cpp` Sleep、`calibrate_and_set_deadline`）；② **deadline 保护**：
+vruntime 未越过旧 deadline 时不延长（Linux `update_deadline` 语义，slice 未耗尽免被
+立即抢占）。注：本内核 slice 已按权重缩放（`get_dynamic_quantum`），一次满 slice 的
+vruntime 消耗恒为 base_quantum，故 `deadline = vruntime + slice` 与 Linux 的
+`ve + slice/w` 在各自单位下**同构**，此前"偏移未按权重缩放"的注释（:589-591）
+已随实现一并更正。残留差异：lag 钳制阈值为常量 ±slice/±2·slice（Linux 用
+latency 尺度阈值）；无 task_group 层级（不影响单队列结论）。
 **与真实 sched.cpp 的偏差量级：未量化**（模型吞吐、唤醒延迟均为模型行为，不构成对
 真实内核的性能结论）。
 
@@ -162,7 +168,7 @@ slice < ¼ base_quantum 时不打断**（protect_slice 变体，省上下文切�
 | 2 | 2 | 0.250 | 0.250 | 93,513,728 |
 | 3 | 4 | 0.500 | 0.500 | 93,513,984 |
 
-vruntime 极差 **0.0012%**（真实源码复刻）/ **0.0000%**（完整 EEVDF 参考）。
+vruntime 极差 **0.0056%**（真实源码复刻，含 deadline 保护后收敛略松）/ **0.0000%**（完整 EEVDF 参考）。
 **降级表述**：这是"账本模型、单队列、无睡眠唤醒"下的份额一致性，不是对真实调度器的
 "严格验证"。
 
@@ -186,18 +192,26 @@ vruntime 极差 **0.0012%**（真实源码复刻）/ **0.0000%**（完整 EEVDF 
 
 | 模式 | 唤醒→运行最大延迟 |
 |---|---|
-| 真实源码复刻（唤醒抢占 + 剩余 slice ≥ ¼ 保护） | 132 tick |
-| Linux 完整 EEVDF 参考（eligible 含 +slice 余量） | 4 tick |
+| 真实源码复刻（vlag 放置 + 唤醒抢占 + 剩余 slice ≥ ¼ 保护 + deadline 保护 + **eligible 预算截断**） | **75 tick**（改进前 144 tick） |
+| Linux 完整 EEVDF 参考（eligible 含 +slice 余量） | 7 tick |
 
-结论：真实骨架的唤醒延迟受**剩余 slice 保护**的权衡约束（运行中线程剩余不足 ¼ 时
-不打断，延迟代价 ≤ ¼ slice，源码注释明示 :1221-1225）；完整 EEVDF 的 +slice
-eligibility 余量把该代价消掉。两者方向一致、量级差异可见。
+结论：改进前 144 tick 的根因 = RIP 拉长量子让线程"跑过头"（带负 lag 入睡，唤醒要等
+avg 追平）；**eligible 预算截断**（线程最多跑到 vruntime 追平 avg，eligible 结束即
+slice 结束）将其降为 75 tick（-48%）。剩余 75 tick 经模型实验确认是**结构性成本**
+（deadline 平局按 id tiebreak + 预算截断后的轮转节奏）：lag 钳制 latency 缩放与
+抢占抑制 ⅛ 两个候选调整均无收益，未搬入内核。
 
-### 3.5 压力
+### 3.5 公平性（本轮改进后）
 
-调度核心循环（16 线程）：≈4.1M tick/s（模型；本轮为忠实复刻——选择扫描 O(n) +
-逐单位步唤醒检查，较旧版 6.9M 更接近真实语义但模型本身更慢，数字仅表示模型实现
-成本，非真实内核吞吐）。
+**eligible 预算截断**同时把公平性极差从 0.0056% 压到 **0.0000%**（所有线程在 avg
+处精确停靠），并把 RIP 长量子造成的选取饥饿从 70 次降到 **5 次**。配套：RIP 上限
+4× → 2.5×（减少"跑过头"）、唤醒 lag 钳制带放宽到 4×slice（Linux place_entity 的
+latency 尺度）、vlag 除法四舍五入（短睡眠保留 lag 信用）。
+
+### 3.6 压力
+
+调度核心循环（16 线程）：≈3.6M tick/s（模型；含逐单位步唤醒检查与预算截断，
+数字仅表示模型实现成本，非真实内核吞吐）。
 
 ## 4. 方法学边界（诚实）
 
