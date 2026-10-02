@@ -1,0 +1,7 @@
+SLUB RESULT: failures=0
+redzone-oob: 4/4 尾部红区用例 detected (前部红区为已知限制)
+RESULT: failures=0
+FC REGRESSION RESULT: failures=0
+SCHED SIM RESULT: 完成
+SLUB MT RESULT: failures=0
+FC MT RESULT: failures=0

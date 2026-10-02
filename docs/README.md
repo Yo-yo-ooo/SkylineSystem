@@ -19,13 +19,21 @@
 | 文档                                   | 内容                                                 | 对应代码                                             |
 | ------------------------------------ | -------------------------------------------------- | ------------------------------------------------ |
 | [architecture.md](./architecture.md) | 整体分层、目录布局、从 Limine 到首个 ELF 的启动时序                   | `kernel/src/arch/x86_64/init.cpp`                |
-| [scheduler.md](./scheduler.md)       | vruntime 调度 + **RIP 速率反馈**（只调节时间片长度、**不改 CPU 份额**）、负载均衡    | `kernel/src/arch/x86_64/schedule/`               |
+| [scheduler.md](./scheduler.md)       | deadline 键调度 + **RIP 速率反馈**（只调节时间片长度、**不改 CPU 份额**）、负载均衡    | `kernel/src/arch/x86_64/schedule/`               |
 | [memory.md](./memory.md)             | 4 级页表、巨页 + CoW、SLUB 内核堆、per-CPU 缓存、批量 TLB shootdown、W^X | `kernel/src/arch/x86_64/vmm/`、`kernel/src/mem/`  |
 | [smp.md](./smp.md)                   | AP bring-up、per-CPU 数据段、GS base、XSave、SMAP/SMEP    | `kernel/src/arch/x86_64/smp/smp.cpp`             |
 | [syscall.md](./syscall.md)           | 非 POSIX 系统调用 ABI 参考（0-16 基础号，内核共注册 25 个槽位）                       | `kernel/include/arch/x86_64/schedule/syscalln.h` |
 | [gui.md](./gui.md)                   | CPU 并行软件合成器（N-1 workers）、窗口层、光标层、SDF 圆角与阴影，含已知缺陷                      | `programs/desktop/`                              |
 | [filesystems.md](./filesystems.md)   | VFS / SAF /lwext4 / FAT、per-CPU 文件缓存               | `kernel/src/fs/`                                 |
+| [network.md](./network.md)           | e1000 82574L 驱动 + lwIP 移植 (DHCP/ping/多核 TX/统计), 移植修正史与已知边界 | `kernel/src/drivers/net/`, `kernel/include/lwip/` |
+| [dpdk-lite.md](./dpdk-lite.md)       | DPDK-lite 数据面设计 (轮询/零拷贝/卸载/多队列) + 零拷贝审计 | 同上 |
+| [fc-semantics.md](./fc-semantics.md) | 文件缓存完整语义审计 (writeback/脏页/fsync/OOM/权限) | `kernel/src/fs/fc*.cpp` |
+| [goal-status.md](./goal-status.md)   | 目标完成度总账 (三部分目标 + 生产级八支柱 + 六项遗留债) | — |
+| [stability-report.md](./stability-report.md) | 长稳报告 (30 分钟 soak 等实测数据) | — |
+| [stability-audit.md](./stability-audit.md) | 稳定性审计 (故障注入/恢复路径) | — |
+| [release.md](./release.md)           | 发布流程 (构建/宿主/冒烟/长稳门禁矩阵 + 版本约定) | — |
 | [commit.md](./commit.md)             | 提交信息约定（已有）                                         | —                                                |
+| [../SECURITY.md](../SECURITY.md)     | 安全现状 (架构级机制/明确边界/已知风险) 与漏洞报告流程 | — |
 
 ## 设计哲学速记
 

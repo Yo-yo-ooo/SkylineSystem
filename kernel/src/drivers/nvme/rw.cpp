@@ -12,6 +12,14 @@
 #define NVME_CHUNK_PAGES        8    // DMA bounce chunk = 8 pages (32 KiB)
 #define NVME_MAX_PRP_PAGES      511  // PRP0 + one 510-entry PRP list
 
+/* P0-15: 槽位释放的 RMW 移入 dev->lck 临界区 (原实现在锁外 &= ~,
+   与 GetSpareReq 的 |= 竞态 → 请求槽永久泄漏/双用) */
+static void ReleaseReq(NVME::NVMEDev *dev, int32_t ri) {
+    spinlock_lock(&dev->lck);
+    dev->reqBitmap &= ~(1ULL << ri);
+    spinlock_unlock(&dev->lck);
+}
+
 int32_t NVME::GetSpareReq(NVMEDev *dev){
     spinlock_lock(&dev->lck);
     for (int32_t i = 0; i < 64; i++) {
@@ -101,7 +109,7 @@ uint64_t NVME::Read(uint64_t offset, uint64_t size, void* buf){
             if (list) VMM::Free((pagemap_t*)kernel_pagemap, list);
             fail = !nvme_status_ok(req->res.Status);
         }
-        d->reqBitmap &= ~(1ULL << ri);
+        ReleaseReq(d, ri);
         if (fail) break;
 
         __memcpy(out + done, bounce, thisBytes);
@@ -155,7 +163,7 @@ uint64_t NVME::Write(uint64_t offset, uint64_t size, void* buf){
             if (list) VMM::Free((pagemap_t*)kernel_pagemap, list);
             fail = !nvme_status_ok(req->res.Status);
         }
-        d->reqBitmap &= ~(1ULL << ri);
+        ReleaseReq(d, ri);
         if (fail) break;
 
         done += thisBytes;

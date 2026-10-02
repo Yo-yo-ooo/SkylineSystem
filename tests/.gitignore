@@ -1,0 +1,6 @@
+# P4-91: 测试产物不入库
+bin/
+ci_*.log
+*.gcov
+*.gcda
+*.gcno

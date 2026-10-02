@@ -39,6 +39,11 @@ void bitmap_set(uint8_t *bmp, uint64_t bit) { bmp[bit >> 3] |= (1u << (bit & 7))
 void bitmap_clear(uint8_t *bmp, uint64_t bit) { bmp[bit >> 3] &= ~(1u << (bit & 7)); }
 bool bitmap_get(uint8_t *bmp, uint64_t bit) { return (bmp[bit >> 3] >> (bit & 7)) & 1; }
 
+/* P1-35 宿主桩: fc_idle 的冷却重试墙钟 (测试不模拟 30s 墙钟) */
+namespace PIT {
+    uint64_t TimeSinceBootMS() { return 0; }
+}
+
 // ---------------- 日志 (kprintf.h 宏的底层实现) ----------------
 extern "C" int32_t printf_(const char *fmt, ...) {
     va_list ap;

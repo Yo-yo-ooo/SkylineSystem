@@ -206,10 +206,12 @@ bool ps2_mouse_init(void) {
 void ps2_mouse_handler(registers *regs) {
     uint8_t status = io_in8(PS2_STATUS_PORT);
     if (!(status & 0x01)) {
+        LAPIC::EOI();  // P1-25: 全路径 EOI (假中断缺失 EOI 会永久饥饿同优先级)
         return; // 没有数据
     }
     if (!(status & 0x20)) {
         io_in8(PS2_DATA_PORT); // 丢弃键盘数据
+        LAPIC::EOI();  // P1-25: 同上
         return;
     }
 

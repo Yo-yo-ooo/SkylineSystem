@@ -11,10 +11,25 @@ uint8_t IdentifyMBR(VsDevType DriverType, uint32_t DriverID) {
     MBR_DPT dpt;
     VDL* d = Dev::GetSDEV(DriverType, DriverID);
     if (!d) return 2;
+
+    /* P1-42: MBR 引导签名 0x55AA 校验 (缺失时分区表不可信) */
+    uint16_t signature = 0;
+    if (Dev::ReadBytes(d, 510, 2, &signature) == Dev::RW_ERROR)
+        return 2;
+    if (signature != 0xAA55) return 2;
+
     if(Dev::ReadBytes(d, MBR_PARTITION_TABLE_OFFSET, 16, &dpt) == Dev::RW_ERROR)
         return 2;
 
-    if(IS_GPT(dpt)) return 3; // GPT
+    if(IS_GPT(dpt)) {
+        /* P1-42: GPT 头签名 "EFI PART" 校验 */
+        char magic[8];
+        if (Dev::ReadBytes(d, 512, 8, magic) == Dev::RW_ERROR) return 2;
+        static const char kEfiPart[8] = {'E','F','I',' ','P','A','R','T'};
+        for (int i = 0; i < 8; i++)
+            if (magic[i] != kEfiPart[i]) return 2;
+        return 3; // GPT
+    }
     return 0; // 传统 MBR
 }
 

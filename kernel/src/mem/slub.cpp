@@ -22,7 +22,8 @@ struct slub_slab_t {
     uint64_t       magic;
     kmem_cache    *cache;
     slub_slab_t   *partial_next;   // global partial-list link
-    void          *freelist;       // embedded lock-free free-object stack
+    void          *freelist;       // 本 CPU 的空闲对象栈 (单主人, 免锁)
+    void          *foreign_head;   // P2-55: 跨 CPU free 的隔离栈 (c->lock 保护)
     uint32_t       inuse;
     uint32_t       objects;
     int32_t        cpu_owner;      // active owner CPU id, -1 when unowned
@@ -93,6 +94,7 @@ static slub_slab_t *slub_new_slab(kmem_cache *c) {
     s->cache = c;
     s->partial_next = nullptr;
     s->freelist = head;
+    s->foreign_head = nullptr;   /* P2-55 */
     s->inuse = 0;
     s->objects = n;
     s->cpu_owner = -1;
@@ -182,6 +184,21 @@ void *Alloc(kmem_cache *c) {
     slub_slab_t *s = (cpu && cpu->id < MAX_CPU) ? c->cpu_active[cpu->id] : nullptr;
 
     void *obj = s ? slub_stack_pop(&s->freelist) : nullptr;
+    /* P2-55: 本 CPU 栈空时, 在 c->lock 下收割跨 CPU 隔离栈
+       (foreign_head → 本 CPU freelist), 再重试免锁弹出 */
+    if (unlikely(!obj && s)) {
+        spinlock_lock(&c->lock);
+        void *f = __atomic_exchange_n(&s->foreign_head, nullptr, __ATOMIC_ACQUIRE);
+        if (f) {
+            void *tail = f;
+            while (*(void **)tail) tail = *(void **)tail;
+            void *head = __atomic_load_n(&s->freelist, __ATOMIC_ACQUIRE);
+            *(void **)tail = head;
+            __atomic_store_n(&s->freelist, f, __ATOMIC_RELEASE);
+        }
+        spinlock_unlock(&c->lock);
+        obj = slub_stack_pop(&s->freelist);
+    }
     if (unlikely(!obj)) obj = slow_alloc(c, cpu, s);
 
     if (likely(obj)) {
@@ -253,9 +270,27 @@ void Free(kmem_cache *c, void *obj) {
         return;
     }
     uint32_t after  = before - 1;
-    slub_stack_push(&s->freelist, obj);
-    __atomic_add_fetch(&c->free_count, 1, __ATOMIC_RELAXED);
     int32_t owner = __atomic_load_n(&s->cpu_owner, __ATOMIC_ACQUIRE);
+    uint32_t my_id = this_cpu()->id;
+
+    /* P2-55: 跨 CPU free 隔离 —— 本 CPU 的对象压本 CPU 免锁栈
+       (单主人, 无 ABA); 其他 CPU 的对象压 foreign_head (c->lock 串行化),
+       彻底消除跨核 Treiber 栈的 ABA 窗口 */
+    if (owner >= 0 && (int32_t)my_id == owner) {
+        slub_stack_push(&s->freelist, obj);
+    } else {
+        spinlock_lock(&c->lock);
+        if (unlikely(s->magic != SLUB_PAGE_MAGIC)) {
+            spinlock_unlock(&c->lock);
+            __atomic_add_fetch(&s->inuse, 1u, __ATOMIC_ACQ_REL);
+            irq_restore(flags);
+            return;
+        }
+        *(void **)obj = __atomic_load_n(&s->foreign_head, __ATOMIC_ACQUIRE);
+        __atomic_store_n(&s->foreign_head, obj, __ATOMIC_RELEASE);
+        spinlock_unlock(&c->lock);
+    }
+    __atomic_add_fetch(&c->free_count, 1, __ATOMIC_RELAXED);
 
     if (after == 0) {
         // Fully drained. An unowned slab is reclaimed; a CPU's active slab stays

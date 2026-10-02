@@ -567,6 +567,29 @@ static void fc_broadcast_invalidate(file_cache_cpu_t *src_s, const uint8_t *key,
         if (e) {
             if (e->pin_count > 0) {
                 e->state = FC_STATE_INVALID;
+            } else if (e->is_dirty && s->writeback_cb &&
+                       e->state != FC_STATE_WRITEBACK_FAILED) {
+                /* P1-34: 脏条目先写回再摘除 (原实现直接删除 = 静默丢
+                   脏页)。writeback_cb 做磁盘 I/O, 不得持锁调用 ——
+                   借用 fsync 的 FLUSHING + pin 模式。 */
+                e->state = FC_STATE_FLUSHING; e->pin_count++;
+                spinlock_unlock(&s->lock);
+                s->writeback_cb(e->key, e->key_len, e->data, e->data_len);
+                spinlock_lock(&s->lock);
+                e->pin_count--;
+                void *art_val = art_delete(&s->index, e->key, e->key_len);
+                if (likely(art_val)) {
+                    fc_lru_remove(s, e);
+                    s->total_cache_bytes -= e->data_len;
+                    if (e->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= e->data_len;
+                    if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
+                    s->total_cache_io    -= e->total_io_len;
+                    s->total_cache_freq  -= e->access_freq;
+                    __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
+                    entry_to_free = e;
+                } else {
+                    e->pending_reclaim = true;
+                }
             } else {
                 void *art_val = art_delete(&s->index, e->key, e->key_len);
                 if (likely(art_val)) {

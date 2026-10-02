@@ -25,4 +25,14 @@
 
 #define SYSCALL_SYSINFO         16
 
+/* P5-97: 补全后段编号的命名宏 (原 syscall.cpp 用裸数字 17-26) */
+#define SYSCALL_TIME            17
+#define SYSCALL_ARCH_PRCTL      18
+#define SYSCALL_KILL            19
+#define SYSCALL_GETRANDOM       20
+#define SYSCALL_DEV_MMAP        21
+#define SYSCALL_DBGSOUT         24
+#define SYSCALL_DEV_GETINFO     25
+#define SYSCALL_DEV_IOCTL       26
+
 #endif

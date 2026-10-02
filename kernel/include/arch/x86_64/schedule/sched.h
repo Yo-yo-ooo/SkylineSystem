@@ -9,10 +9,8 @@
 
 #define user_access_begin()  asm volatile("stac" ::: "memory")
 #define user_access_end()    asm volatile("clac" ::: "memory")
-struct user_access_guard {
-    user_access_guard()  { asm volatile("stac" ::: "memory"); }
-    ~user_access_guard() { asm volatile("clac" ::: "memory"); }
-};
+/* P5-96: user_access_guard 结构 (RAII 形式) 无调用者 —— 保留宏形式的
+   stac/clac (SMAP 路径在用); 若未来要 RAII, 再恢复该结构 */
 
 extern "C++" {
 
@@ -75,6 +73,7 @@ typedef struct thread_t {
     uint64_t vruntime;        // 虚拟运行时间
     uint64_t deadline;        // 虚拟截止时间
     uint64_t last_run_time;   // 上次运行的实际时间
+    uint64_t dispatch_count;  // 诊断: 本线程被调度派发的次数
     uint32_t weight;          // 线程权重 (由 priority 转换)
     rb_node_t rb_node;        // 红黑树节点，挂入 CPU 运行队列
     bool on_rq;               // 是否在运行队列红黑树中
@@ -99,6 +98,12 @@ typedef struct thread_t {
     uint64_t rip_last_tsc;        /* 上次采样 TSC (执行期分母基准) */
     uint64_t dispatch_rip;        /* 窗口起点 RIP 快照 (逐采样重臂) */
     uint64_t rip_last_sample_ms;  /* 上次采样时刻 (老化计时) */
+    uint64_t rip_acc_progress;    /* 累加器: 窗口内 RIP 差分合计 */
+    uint64_t rip_acc_ms;          /* 累加器: 窗口内自身执行时长合计 */
+    uint32_t rip_short_windows;   /* 目标级: 该线程自身的短片样本数 */
+    uint32_t rip_stalled;         /* 目标级: 该线程自身的停滞样本数 */
+    uint32_t rip_min_slice_ms;    /* 诊断: 该线程自身采样片长最小/最大 */
+    uint32_t rip_max_slice_ms;
     int32_t  rip_quantum_adj;     /* 有符号修正项, ±4 轨道 */
     uint8_t  rip_outlier_streak;  /* 连续离群计数 (≥4 → 基线重置) */
     char     rip_pad[3];
@@ -203,6 +208,8 @@ namespace Schedule{
     proc_t *NewProcess(bool user,bool Trusted = true);
     void PrepareUserStack(thread_t *thread, int32_t argc, char *argv[], char *envp[]);
     thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry);
+    /* 指定内核栈页数 (默认 4 页=16KB; 深调用链组件如 lwIP 需 8 页) */
+    thread_t *NewKernelThreadEx(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry, uint32_t stack_pages);
     thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]);
     thread_t *ForkThread(proc_t *proc, thread_t *parent, void *frame);
     proc_t *ForkProcess();

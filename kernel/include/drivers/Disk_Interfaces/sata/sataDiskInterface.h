@@ -11,6 +11,7 @@ class SataDiskInterface
 private:
     AHCI::Port* Port;
     uint32_t SectorCount;
+    /* P0-12 注: 共享 DMA 缓冲互斥锁待 IRQ 安全方案 (round 52 回退) */
 
     u8 FRegVsDEV_R(uint64_t lba, uint32_t SectorCount, void* Buffer);
     u8 FRegVsDEV_W(uint64_t lba, uint32_t SectorCount, void* Buffer);

@@ -144,6 +144,97 @@ static int test_insert_fail_no_dangling() {
     return fail;
 }
 
+// ---------- 4. 磁盘错误注入: writeback 失败不丢脏 (故障注入支柱"磁盘错误") ----------
+static int wb_fail_remaining = 0;
+static int32_t wb_flaky(const uint8_t *k, uint32_t kl, void *d, size_t dl) {
+    (void)k; (void)kl; (void)d; (void)dl;
+    if (wb_fail_remaining > 0) { wb_fail_remaining--; return -5; }   // EIO
+    return 0;
+}
+static int test_disk_error_writeback() {
+    printf("== test_disk_error_writeback ==\n");
+    int fail = 0;
+    file_cache_cpu_t c;
+    wb_fail_remaining = 100;               // 全失败窗口
+    file_cache_cpu_init(&c, 0, wb_flaky);
+
+    const char *key = "diskerr";
+    void *kbuf = kcopy("payload", 7);
+    if (!kbuf) { printf("  FAIL: kcopy OOM\n"); fail = 1; return fail; }
+    int32_t rc = file_cache_promote(&c, (const uint8_t*)key, 7, kbuf, 7, true, 7, 42);
+    if (rc != 0) { printf("  FAIL: promote rc=%d\n", rc); fail = 1; kfree(kbuf); return fail; }
+
+    /* 连续 fsync: 前 5 次计入重试, 达上限后条目进入 WRITEBACK_FAILED,
+       不再被选入冲刷 (fc_idle 只选 retries < 5)。
+       注意: file_cache_get 拒绝脏条目 (fc.cpp), 故经 ART 索引直查。 */
+    for (int i = 0; i < 10; i++) file_cache_fsync(&c, 42);
+
+    file_cache_entry_t *e = (file_cache_entry_t *)art_search(&c.index, (const uint8_t*)key, 7);
+    if (!e) { printf("  FAIL: 条目丢失\n"); fail = 1; }
+    else {
+        check(e->is_dirty, "写回失败后脏位必须保持 (不丢脏)");
+        check(e->writeback_retries == 5, "重试计数达上限 5");
+        check(e->state == FC_STATE_WRITEBACK_FAILED, "状态 = WRITEBACK_FAILED");
+        check(c.total_writeback_failures == 5, "全局失败计数 = 5 (上限后不再尝试)");
+    }
+
+    /* 磁盘恢复: 手动重置重试 → fsync → 成功清脏 */
+    if (e) {
+        e->writeback_retries = 0;
+        e->state = FC_STATE_CACHED;
+    }
+    wb_fail_remaining = 0;                 // 磁盘恢复
+    file_cache_fsync(&c, 42);
+    e = (file_cache_entry_t *)art_search(&c.index, (const uint8_t*)key, 7);
+    if (e) {
+        check(!e->is_dirty, "恢复后 fsync 清脏");
+        check(e->state == FC_STATE_CACHED, "恢复后状态回 CACHED");
+    } else { printf("  FAIL: 恢复后条目丢失\n"); fail = 1; }
+
+    file_cache_cpu_destroy(&c);
+    check(fail == 0, "磁盘错误注入: 失败不丢脏 + 重试上限 + 恢复清脏");
+    return fail;
+}
+
+// ---------- 5. 写回内容校验 (P4-90): fsync 落盘的字节必须与缓存一致 ----------
+static uint8_t g_disk[256];
+static uint32_t g_disk_len = 0;
+static int32_t wb_capture(const uint8_t *k, uint32_t kl, void *d, size_t dl) {
+    (void)k; (void)kl;
+    g_disk_len = (dl < sizeof(g_disk)) ? (uint32_t)dl : (uint32_t)sizeof(g_disk);
+    if (g_disk_len) memcpy(g_disk, d, g_disk_len);
+    return 0;
+}
+static int test_flush_writeback_content() {
+    printf("== test_flush_writeback_content ==\n");
+    int fail = 0;
+    file_cache_cpu_t c;
+    file_cache_cpu_init(&c, 0, wb_capture);
+
+    const char *key = "content";
+    uint8_t payload[64];
+    for (int i = 0; i < 64; i++) payload[i] = (uint8_t)(i * 3 + 1);
+    void *kbuf = kcopy(payload, 64);
+    if (!kbuf) { printf("  FAIL: kcopy OOM\n"); return 1; }
+    int32_t rc = file_cache_promote(&c, (const uint8_t*)key, 7, kbuf, 64, true, 64, 7);
+    if (rc != 0) { printf("  FAIL: promote rc=%d\n", rc); kfree(kbuf); return 1; }
+
+    g_disk_len = 0;
+    file_cache_fsync(&c, 7);
+
+    check(g_disk_len == 64, "写回长度 = 64");
+    check(memcmp(g_disk, payload, 64) == 0, "写回内容逐字节一致");
+    {
+        file_cache_entry_t *e = (file_cache_entry_t *)art_search(&c.index, (const uint8_t*)key, 7);
+        if (e) check(!e->is_dirty, "成功写回后清脏");
+        else { printf("  FAIL: 条目丢失\n"); fail = 1; }
+    }
+
+    file_cache_cpu_destroy(&c);
+    check(fail == 0, "写回内容校验全通过");
+    return fail;
+}
+
 int main() {
     setvbuf(stdout, NULL, _IONBF, 0);
     SLAB::Init();
@@ -151,6 +242,8 @@ int main() {
     test_art_true_prefix_key();
     test_promote_inline_capacity_reuse();
     test_insert_fail_no_dangling();
+    test_disk_error_writeback();
+    test_flush_writeback_content();
     printf("FC REGRESSION RESULT: failures=%llu\n", (unsigned long long)failures);
     return failures == 0 ? 0 : 1;
 }

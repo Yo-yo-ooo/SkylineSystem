@@ -133,7 +133,10 @@ namespace PIT
 
 
     void Tick(){
-        TickHandle();
+        /* P2-57: 原子加载函数指针 —— 写入侧 (sched Install) 用
+           atomic_store, 读取侧必须匹配, 否则跨核初始化窗口 = 数据竞争 */
+        uint64_t fn = __atomic_load_n((uint64_t*)&TickHandle, __ATOMIC_ACQUIRE);
+        ((void(*)(void))(uintptr_t)fn)();
         cpu_t *cpu = this_cpu();
         if (cpu && cpu->file_cache) {
             file_cache_tick(cpu->file_cache);

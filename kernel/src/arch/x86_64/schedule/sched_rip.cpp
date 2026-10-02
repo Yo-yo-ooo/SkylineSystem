@@ -37,6 +37,9 @@
 #define RIP_OUTLIER_STREAK_MAX 4                /* 连续离群 → 基线重置 */
 #define RIP_FAST_W_NORM_Q10  256                /* 快通道常规融合权重 25% */
 #define RIP_FAST_W_OSC_Q10   64                 /* 振荡时 6.25% */
+/* 累加器采样窗口: 按线程自身执行时长每 4ms 出一个 obs_rate 样本
+   (round 28 根因: 逐片采样对抢占变长片的噪声敏感 → pollute 振荡) */
+#define RIP_SAMPLE_PERIOD_MS 4
 #define RIP_OSC_HI  (RIPRATE_ONE >> 2)          /* |dev| 均值 > 25% → 慢模式 */
 #define RIP_OSC_LO  (RIPRATE_ONE >> 3)          /* < 12.5% → 恢复 (迟滞) */
 
@@ -67,7 +70,6 @@ rip_stats_ctx rip_stats[MAX_CPU];
  * 在别处定义强符号 (必须是同名同签名的普通 C++ 函数, C 文件里
  * 符号对不上) 即可启用 "执行期分母" — 剔除窗口内的中断时间. */
 __attribute__((weak)) uint64_t sched_tsc_per_ms(void) { return 0; }
-
 sched_steal_throttle per_cpu_steal_throttle[MAX_CPU];
 
 extern art_tree *pid2proc_tree;
@@ -263,6 +265,8 @@ void riprate_update(cpu_t *cpu, thread_t *thread,
             thread->rip_mult_fast = RIPRATE_ONE;
             thread->rip_mult_slow = RIPRATE_ONE;
             thread->rip_quantum_adj = 0;
+            thread->rip_acc_progress = 0;   /* 陈旧窗口作废 */
+            thread->rip_acc_ms = 0;
         } else {
             for (uint64_t i = 0; i < steps; i++) {
                 /* 收缩不会越过 1.0 (减量 ≤ 差值), 无需再 clamp */
@@ -324,14 +328,38 @@ void riprate_update(cpu_t *cpu, thread_t *thread,
      * 该样本丢弃 (窗口已重臂, 不污染下一次) */
     if (unlikely(progress > (1ULL << 44))) { st->outliers++; return; }
 
-    uint64_t obs_rate = progress / elapsed;
-    if (unlikely(obs_rate == 0)) {
-        /* 停滞样本: 单独计数. dispatch_rip 已在上方重臂, 无需再写.
-         * 刻意不更新基线: 从零速率播种基线是错的, 且停滞期基线
-         * 冻结正是后续快相位触发 outlier→重置的前提. */
+    if (unlikely(progress == 0)) {
+        /* 停滞样本: 单独计数 (不累积: 零速率不参与窗口均值) */
         st->stalled++;
+        thread->rip_stalled++;
         return;
     }
+
+    /* ---- 3b) 累加器 (固定窗口采样, round 28 修复设计) ----
+     * 按线程自身执行时长累积差分, 每 RIP_SAMPLE_PERIOD_MS 出一个
+     * obs_rate 样本 —— 抢占变长片的噪声被窗口吸收 (pollute 振荡的
+     * 根因修复)。分母用 wall_ms (= 调用方 last_slice_ms, 线程自身
+     * 片长): 经 TSC 调整的 elapsed 的 tsc_dt 跨了采样 gap (含他线程
+     * 片), 不是自身执行时长 —— round 33 实测 base=[51,724] 仍摆,
+     * 改用自身片长后才语义正确。 */
+    thread->rip_acc_progress += progress;
+    thread->rip_acc_ms += wall_ms;
+    if (unlikely(elapsed < RIP_MIN_SAMPLE_MS)) {
+        st->short_windows++;
+        thread->rip_short_windows++;
+    }
+    /* 诊断: 片长分布 (shortwin 判据前提核查) */
+    {
+        uint32_t e = (uint32_t)(elapsed > 0xFFFFFFFFULL ? 0xFFFFFFFFULL : elapsed);
+        if (thread->rip_min_slice_ms == 0 || e < thread->rip_min_slice_ms)
+            thread->rip_min_slice_ms = e;
+        if (e > thread->rip_max_slice_ms) thread->rip_max_slice_ms = e;
+    }
+    if (unlikely(thread->rip_acc_ms < RIP_SAMPLE_PERIOD_MS)) return;
+
+    uint64_t obs_rate = thread->rip_acc_progress / thread->rip_acc_ms;
+    thread->rip_acc_progress = 0;
+    thread->rip_acc_ms = 0;
 
     /* ---- 4) per-thread 基线 ---- */
     if (unlikely(thread->rip_base_self == 0)) {
@@ -339,22 +367,6 @@ void riprate_update(cpu_t *cpu, thread_t *thread,
         return;
     }
     uint64_t baseline = thread->rip_base_self;
-
-    /* ---- 4b) 短窗口防御: 只走基线慢通道 ----
-     * 关闭两条路径:
-     *   a) "mult↓ → 量子↓ → 窗口↓ → 量化噪声↑" 的放大回路;
-     *   b) 亚毫秒窗口被记账强制 delta=1 → obs_rate 系统性低估.
-     * 基线 1/64 EWMA 天然吸噪, 短窗口仍可跟踪. mult 下降到窗口
-     * ≈ 门槛处自然驻留 (慢线程拿 ~3ms 短片 — 正是反馈想要的行
-     * 为结果), 恢复走边界波动 + 离 CPU 老化两条路.
-     * 碎片窗口也不递增离群 streak — 抢占噪声不驱动假基线重置. */
-    if (unlikely(elapsed < RIP_MIN_SAMPLE_MS)) {
-        if (obs_rate >= baseline) baseline += (obs_rate - baseline) >> RIP_BASE_SHIFT;
-        else                      baseline -= (baseline - obs_rate) >> RIP_BASE_SHIFT;
-        thread->rip_base_self = baseline;
-        st->short_windows++;
-        return;
-    }
 
     /* ---- 5) 观测倍率 + 离群 (对照更新前的基线) ---- */
     uint64_t obs_mult = (obs_rate << RIPRATE_FRAC_BITS) / baseline;

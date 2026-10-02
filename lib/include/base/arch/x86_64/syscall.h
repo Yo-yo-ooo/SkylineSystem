@@ -19,6 +19,11 @@ extern "C" {
 #define VMM_FLAG_CACHE_DISABLE  (1 << 4)        /* PCD */
 #define VMM_FLAG_PAT            (1 << 7)        /* PAT */
 
+/* P5-97: syscall 编号命名宏 —— 与内核 syscalln.h 保持单一权威
+   (用户态不再散落裸数字 9/24 等) */
+#define SYS_EXIT                9
+#define SYS_DBGSOUT             24
+
 typedef struct SysInfo {
 
     /* ---- 映射元信息 (静态, 用户第一个读) ---- */

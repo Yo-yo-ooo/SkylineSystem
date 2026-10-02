@@ -10,6 +10,7 @@
 #include <mem/heap.h>
 #include <klib/kio.h>
 #include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/pit/pit.h>   /* P0-2: WaitAcks 墙钟封顶 */
 
 #ifndef container_of
 #define container_of(ptr, type, member) \
@@ -96,13 +97,14 @@ static inline rc_node *rc_search(uint64_t phys) {
 
 /* 公共 API: 首次共享 0→2 (src+dst), 后续 ++
    在 sys_pmmapSHARE / Fork 的 pt_lock 临界区内调用,
-   rc_tree_lock 是 pt_lock 之后获取的全局锁, 无反向持有者, 无死锁 */
-void RefSharedPhys(uint64_t phys) {
+   rc_tree_lock 是 pt_lock 之后获取的全局锁, 无反向持有者, 无死锁.
+   P0-7: 返回 false = OOM (调用方必须拒绝共享, 不得静默降级) */
+bool RefSharedPhys(uint64_t phys) {
     /* 预分配在锁外: kmalloc 可能触发页面回收, 持锁 kmalloc 有死锁风险 */
     rc_node *rn = (rc_node*)kmalloc(sizeof(rc_node));
     if (unlikely(!rn)) {
-        kwarnln("VMM: rc_node OOM, sharing untracked (phys=%#lx)", phys);
-        return;
+        kwarnln("VMM: rc_node OOM, sharing refused (phys=%#lx)", phys);
+        return false;
     }
 
     spinlock_lock(&rc_tree_lock);
@@ -112,7 +114,7 @@ void RefSharedPhys(uint64_t phys) {
         found->count++;
         spinlock_unlock(&rc_tree_lock);
         kfree(rn);              /* 预分配未用上, 回收 */
-        return;
+        return true;
     }
 
     rn->phys  = phys;
@@ -122,6 +124,7 @@ void RefSharedPhys(uint64_t phys) {
     rc_tree.cnt++;
 
     spinlock_unlock(&rc_tree_lock);
+    return true;
 }
 
 /* 内部: 递减引用, 返回 true 表示归零应 PMM::Free
@@ -147,6 +150,11 @@ static inline bool RefDecPhys(uint64_t phys) {
 
     spinlock_unlock(&rc_tree_lock);
     return false;
+}
+
+/* P0-5: CoW 拷贝后递减旧共享页引用 (ua.cpp 与 HandlePF 共用语义) */
+void UnrefSharedPhys(uint64_t phys) {
+    if (RefDecPhys(phys)) PMM::Free((void*)phys);
 }
 
 static void RefcountTreeInit() {
@@ -262,7 +270,7 @@ namespace VMM {
            rather than guessing from an empty queue. */
         static inline uint32_t QMask() { return TLB_SHOOTDOWN_QMAX - 1u; }
 
-        static inline void DoAck(int8_t initiator) {
+        static inline void DoAck(int32_t initiator) {   /* P0-3: int8_t ≥128 核溢出 */
             if (initiator < 0) return;
             cpu_t* in = smp_cpu_list[initiator];
             if (in) __atomic_sub_fetch(&in->shootdown_acks, 1, __ATOMIC_RELEASE);
@@ -320,7 +328,7 @@ namespace VMM {
         static void SendTarget(cpu_t* t, pagemap_t* pm, uint8_t type,
                                const uint64_t* addrs, uint32_t nr, bool want_ack) {
             cpu_t* me = this_cpu();
-            const int8_t meid = (int8_t)me->id;
+            const int32_t meid = (int32_t)me->id;   /* P0-3: 全程 int32 */
             if (want_ack)
                 __atomic_add_fetch(&me->shootdown_acks, 1, __ATOMIC_RELAXED);
 
@@ -331,10 +339,10 @@ namespace VMM {
                 for (uint32_t k = 0; k < nr; k++) {
                     bool last = (k == nr - 1);
                     PutLocked(t, {pm, addrs[k], 1,
-                                  (last && want_ack) ? meid : (int8_t)-1});
+                                  (last && want_ack) ? meid : (int32_t)-1});
                 }
             } else {
-                PutLocked(t, {pm, 0, type, want_ack ? meid : (int8_t)-1});
+                PutLocked(t, {pm, 0, type, want_ack ? meid : (int32_t)-1});
             }
             spinlock_unlock(&t->shootdown_lock);
             asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
@@ -343,13 +351,17 @@ namespace VMM {
 
         /* Wait for every ACK this CPU requested. Drain our own queue between
            checks so a peer that is simultaneously sending to us cannot form
-           a cross-CPU wait cycle. Bounded spin prevents a permanent hang. */
+           a cross-CPU wait cycle. P0-2 重做 (round 81): 超时改 PIT 墙钟
+           (100ms) —— round 52 的 4 亿次 pause 自旋在 TCG 引导期每个
+           batch 耗时分钟级, 表现为挂死; 正常 ACK 在微秒内, 100ms 封顶
+           仅在 AP 失联时降级为异步语义 (记日志)。 */
         static void WaitAcks(cpu_t* me) {
-            for (uint64_t spins = 0;
-                 __atomic_load_n(&me->shootdown_acks, __ATOMIC_ACQUIRE) > 0; ) {
+            uint64_t deadline = PIT::TimeSinceBootMS() + 100;
+            while (__atomic_load_n(&me->shootdown_acks, __ATOMIC_ACQUIRE) > 0) {
                 DrainLocal(me);
-                if (unlikely(++spins > 400000000ULL)) {
-                    kerrorln("TLB shootdown: ACK timeout (%d left)",
+                if (unlikely(PIT::TimeSinceBootMS() > deadline)) {
+                    kerrorln("TLB shootdown: ACK timeout (%d left), "
+                             "degrading to async",
                              (int)me->shootdown_acks);
                     __atomic_store_n(&me->shootdown_acks, 0, __ATOMIC_RELEASE);
                     return;
@@ -477,15 +489,20 @@ namespace VMM {
 
             if (likely(smp_started && pm)) {
                 if (likely(!need_full && nr > 0)) {
+                    /* P0-2 重做: want_ack=true —— 页释放路径等远端完成
+                       invlpg 后才能复用该页; WaitAcks 已改 100ms 墙钟
+                       封顶 (round 52 挂死根因 = 4 亿 pause 自旋在 TCG
+                       引导期耗时分钟级) */
                     ForEachTarget(pm, [&](cpu_t* target) {
-                        SendTarget(target, pm, 1, b->addrs, nr, false);
+                        SendTarget(target, pm, 1, b->addrs, nr, true);
                     });
                 } else if (unlikely(need_full)) {
                     /* batch overflowed the local log: one per-pm full flush. */
                     ForEachTarget(pm, [&](cpu_t* target) {
-                        SendTarget(target, pm, 2, nullptr, 0, false);
+                        SendTarget(target, pm, 2, nullptr, 0, true);
                     });
                 }
+                WaitAcks(this_cpu());   /* P0-2: ACK fence (100ms 封顶) */
             }
             asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
         }
@@ -914,23 +931,48 @@ namespace VMM {
             do {
                 if (r->start >= (uint64_t)HIGHER_HALF(0)) { r = r->next; continue; }
                 uint64_t v = r->start, mapped = 0;
+                bool share_failed = false;   /* P0-7: OOM 时中止 fork */
                 while (mapped < r->page_count) {
                     Internal::PageInfo info = VMM::Internal::GetPageInfo(parent, v);
                     if (info.size == 0) break;
                     uint64_t nf = (info.flags & ~MM_WRITE) | VMM_COW_BIT;
                     if (info.size == PAGE_1GB) {
                         VMM::Map1G(pm, v, info.phys, nf); VMM::Map1G(parent, v, info.phys, nf);
-                        for (uint64_t k = 0; k < PAGE_1GB/PAGE_SIZE; k++) RefSharedPhys(info.phys + k*PAGE_SIZE);
-                        mapped += 262144;
+                        for (uint64_t k = 0; k < PAGE_1GB/PAGE_SIZE; k++) {
+                            if (!RefSharedPhys(info.phys + k*PAGE_SIZE)) { share_failed = true; break; }
+                        }
+                        if (share_failed) {
+                            /* 撤销该页共享: 子解除 + 父恢复原权限 */
+                            VMM::Unmap(pm, v); VMM::Unmap(parent, v);
+                            VMM::Map1G(parent, v, info.phys, info.flags);
+                        } else mapped += 262144;
                     } else if (info.size == PAGE_2MB) {
                         VMM::Map2M(pm, v, info.phys, nf); VMM::Map2M(parent, v, info.phys, nf);
-                        for (uint64_t k = 0; k < PAGE_2MB/PAGE_SIZE; k++) RefSharedPhys(info.phys + k*PAGE_SIZE);
-                        mapped += 512;
+                        bool ok = true;
+                        for (uint64_t k = 0; k < PAGE_2MB/PAGE_SIZE && ok; k++)
+                            if (!RefSharedPhys(info.phys + k*PAGE_SIZE)) ok = false;
+                        if (!ok) {
+                            VMM::Unmap(pm, v); VMM::Unmap(parent, v);
+                            VMM::Map2M(parent, v, info.phys, info.flags);
+                            share_failed = true;
+                        } else mapped += 512;
                     } else {
                         VMM::Map4K(pm, v, info.phys, nf); VMM::Map4K(parent, v, info.phys, nf);
-                        RefSharedPhys(info.phys); mapped += 1;
+                        if (!RefSharedPhys(info.phys)) {
+                            VMM::Unmap(pm, v); VMM::Unmap(parent, v);
+                            VMM::Map4K(parent, v, info.phys, info.flags);
+                            share_failed = true;
+                        } else mapped += 1;
                     }
+                    if (share_failed) break;
                     v += info.size;
+                }
+                if (unlikely(share_failed)) {
+                    /* P0-7: 共享失败 → 中止 fork (子 pm 已建的合法共享
+                       由 DestroyPM 的 RefDecPhys 逐一归还) */
+                    spinlock_unlock(&parent->pt_lock); spinlock_unlock(&parent->vma_lock);
+                    VMM::DestroyPM(pm);
+                    return nullptr;
                 }
                 /* 修复: 父进程 region 也必须打 SHARED 位, 否则父退出走
                    FreeOwnedRegion 直接 PMM::Free 而子进程仍映射 -> 物理页二次分配 */

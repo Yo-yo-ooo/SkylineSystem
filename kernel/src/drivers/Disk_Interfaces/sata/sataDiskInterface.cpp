@@ -21,17 +21,9 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
     if(port == nullptr)
         return;
     this->Port = port;
+    /* P0-12: 每请求缓冲方案后, 共享 buffer 不再用于 DMA —— 保留分配
+       仅为兼容其他引用方, 不再有并发语义 */
     this->Port->buffer = (uint8_t*)(PMM::Request()); // 4096 Bytes
-    //VMM::Map(this->Port->buffer, this->Port->buffer);
-    
-
-    
-    SectorCount = GetMaxSectorCount();
-    
-    if(port == nullptr) return;
-
-    this->Port = port;
-    this->Port->buffer = (uint8_t*)(PMM::Request()); // 分配 4KB 物理页作为 DMA 缓冲区
     
     this->SectorCount = GetMaxSectorCount();
 
@@ -100,22 +92,25 @@ u8 SataDiskInterface::FRegVsDEV_Rb(uint64_t address, uint64_t count, void* buffe
 
 bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
 {
-    debugpln("(SataDiskInterface::Read)HIT");
+    /* P0-12 重做 (round 80): 每请求独立 DMA 页 —— round 52 的 iolock
+       方案因 AHCI WaitCommand 的 sti 窗口回退; 每请求缓冲无共享状态,
+       天然并发安全 (PMM 页走 per-CPU 缓存, 分配开销可忽略) */
     uint8_t* buf = (uint8_t*)buffer;
     int32_t sectorCountDiv8 = ((sectorCount) / 8);
-    
-    // CPU 访问必须通过 HIGHER_HALF 转换为虚拟地址
-    void* hhdm_buffer = HIGHER_HALF((void*)Port->buffer);
+
+    void* dma_phys = PMM::Request();
+    if (!dma_phys) return false;
+    void* hhdm_buffer = HIGHER_HALF(dma_phys);
 
     debugpln("(SataDiskInterface::Read)HIT 2");
     for (int32_t sect = 0; sect < sectorCountDiv8; sect++)
     {
         _memset(hhdm_buffer, 0, 0x1000);
         debugpln("(SataDiskInterface::Read)HIT 3");
-        // Port->Read 底层 DMA 使用物理地址 Port->buffer
-        if (!Port->Read(sector, 8, Port->buffer))
+        if (!Port->Read(sector, 8, dma_phys))
         {
             debugpln("(SataDiskInterface::Read)HIT ERROR 1");
+            PMM::Free(dma_phys);
             return false;
         }
         __memcpy(buf, hhdm_buffer, 0x1000);
@@ -128,15 +123,17 @@ bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer
     uint32_t remaining = sectorCount % 8;
     if (remaining > 0) {
         _memset(hhdm_buffer, 0, remaining << 9);
-        if (!Port->Read(sector, remaining, Port->buffer))
+        if (!Port->Read(sector, remaining, dma_phys))
         {
             debugpln("(SataDiskInterface::Read)HIT ERROR 2");
+            PMM::Free(dma_phys);
             return false;
         }
         __memcpy(buf, hhdm_buffer, remaining << 9);
     }
 
     debugpln("(SataDiskInterface::Read)HIT OK!");
+    PMM::Free(dma_phys);
     return true;
 }
 
@@ -145,16 +142,19 @@ bool SataDiskInterface::Write(uint64_t sector, uint32_t sectorCount, void* buffe
     uint8_t* buf = (uint8_t*)buffer;
     int32_t sectorCountDiv8 = ((sectorCount) / 8);
     
-    // CPU 访问必须通过 HIGHER_HALF 转换为虚拟地址
-    void* hhdm_buffer = HIGHER_HALF((void*)Port->buffer);
+    /* P0-12: 每请求独立 DMA 页 (同 Read) */
+    void* dma_phys = PMM::Request();
+    if (!dma_phys) return false;
+    void* hhdm_buffer = HIGHER_HALF(dma_phys);
 
     for (int32_t sect = 0; sect < sectorCountDiv8; sect++)
     {
         _memset(hhdm_buffer, 0, 0x1000);
         __memcpy(hhdm_buffer, buf, 0x1000);
         
-        if (!Port->Write(sector, 8, Port->buffer))
+        if (!Port->Write(sector, 8, dma_phys))
         {
+            PMM::Free(dma_phys);
             return false;
         }
         buf += 0x1000;
@@ -167,12 +167,14 @@ bool SataDiskInterface::Write(uint64_t sector, uint32_t sectorCount, void* buffe
         
         __memcpy(hhdm_buffer, buf, remaining << 9);
         
-        if (!Port->Write(sector, remaining, Port->buffer))
+        if (!Port->Write(sector, remaining, dma_phys))
         {
+            PMM::Free(dma_phys);
             return false;
         }
     }
     
+    PMM::Free(dma_phys);
     return true;
 }
 
@@ -181,21 +183,20 @@ bool SataDiskInterface::ReadBytes(uint64_t address, uint64_t count, void* buffer
 {
     if (count == 0)
         return true;
-    if (address + count > SectorCount * 512)
+    /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+    if (address + count - 1 >= SectorCount * 512)
         return false;
     
     uint32_t tempSectorCount = ((((address + count) + 511) / 512) - (address / 512));
     uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);//"Malloc for Read Buffer"
+    if (!buffer2) return false;   /* OOM 显式失败 */
     _memset(buffer2, 0, tempSectorCount * 512);
 
+    /* P1-38: 读失败直接返回, 不得把未填充的 buffer2 拷给调用者
+       (原实现失败路径仍拷贝零页 → 调用者拿到被污染的缓冲) */
     if (!Read((address / 512), tempSectorCount, buffer2))
     {
-        uint16_t offset = address % 512;
-        for (uint64_t i = 0; i < count; i++)
-            ((uint8_t*)buffer)[i] = buffer2[i + offset];
-
         kfree(buffer2);
-        
         return false;
     }
 
@@ -214,7 +215,8 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
     
     if (count == 0)
         return true;
-    if (address + count > SectorCount * 512)
+    /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+    if (address + count - 1 >= SectorCount * 512)
         return false;
     
     uint32_t tempSectorCount = ((((address + count) + 511) / 512) - (address / 512));

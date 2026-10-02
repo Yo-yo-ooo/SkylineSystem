@@ -813,6 +813,7 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
 
       case 's' : {
         const char* p = va_arg(va, char*);
+        if (p == nullptr) p = "(null)";   // 加固: 空指针安全 (lwIP 调试流曾踩到)
         uint32_t l = _strnlen_s(p, precision ? precision : (size_t)-1);
         // pre padding
         if (flags & FLAGS_PRECISION) {

@@ -25,11 +25,6 @@ struct NVMEIrqRoute {
     bool valid;
 } nvme_irq_routes[256];
 
-static int32_t NVMEResponse(NVME::NVMERequest *req, NVME::SubQueEntry *entry){
-    __memcpy(entry, &req->res, sizeof(NVME::CmplQueEntry));
-    return 0;
-}
-
 inline void NVME::WriteCmplDB(NVME::CmplQue *cmplQue){
     this->WriteReg(0x1000 + (cmplQue->Ident << 1 | 1) * this->DBStride, cmplQue->Pos);
 }
@@ -83,7 +78,7 @@ NVME::NVME(PCI::PCIHeader0 *header){
     this->dev = nullptr;
     this->devNum = 0;
     this->flags = 0;
-    this->FialureNUM = 0;
+    this->FailureNUM = 0;
 
     // PCI config: respond to memory/IO accesses and bus-mastered DMA.
     PCI::enable_interrupt((uint64_t)this->phdr);
@@ -92,7 +87,15 @@ NVME::NVME(PCI::PCIHeader0 *header){
     PCI::enable_bus_mastering((uint64_t)this->phdr);
 
     // Map the 64-bit MMIO BAR: controller registers plus per-queue doorbells.
-    uint64_t physBase = ((uint64_t)header->BAR1 << 32) | (header->BAR0 & 0xFFFFFFF0);
+    // P1-29: 校验 BAR0 的类型 (bit0 = IO 空间, bit1-2 = 64 位标志) —— 原实现
+    // 无条件 BAR1<<32, 32 位 BAR/IO BAR 会拼出垃圾地址。
+    uint32_t bar0 = header->BAR0;
+    if ((bar0 & 1) != 0 || ((bar0 >> 1) & 3) != 2) {
+        kerror("NVME: BAR0 不是 64 位 MMIO (raw=%#x), 放弃控制器\n", bar0);
+        this->flags = 1;   /* invalid: 调用方 (probe) 据此拒绝 */
+        return;
+    }
+    uint64_t physBase = ((uint64_t)header->BAR1 << 32) | (bar0 & 0xFFFFFFF0);
     for (uint64_t off = 0; off < 0x10000; off += 0x1000)
         VMM::Map((pagemap_t*)kernel_pagemap, physBase + off, physBase + off, VMM_FLAGS_MMIO);
     this->BaseAddr = physBase + hhdm_offset;
@@ -128,12 +131,12 @@ NVME::NVME(PCI::PCIHeader0 *header){
     this->INTRNUM = (uint16_t)min(max(2UL, smp_cpu_count), (uint64_t)NVME_MAX_INTRNUM);
     if (!this->InitIntr()) {
         kerror("[NVME %p]: interrupt setup failed, skipping controller\n", (uint64_t)this);
-        this->FialureNUM = 2;
+        this->FailureNUM = 2;
         return;
     }
 
     // Allocate admin + IO queue memory and publish ASQ/ACQ/AQA.
-    if (!this->InitQue()) { this->FialureNUM = 1; return; }
+    if (!this->InitQue()) { this->FailureNUM = 1; return; }
 
     // Enable the controller and wait for CSTS.RDY to assert.
     this->WriteReg(NVME_CTRLREG_CC, this->ReadReg(NVME_CTRLREG_CC) | 1);
@@ -147,18 +150,21 @@ NVME::NVME(PCI::PCIHeader0 *header){
     if (!(this->ReadReg(NVME_CTRLREG_CSTS) & 1)) {
         kerror("[NVME %p]: failed to enable, csts=%08x cc=%08x\n", (uint64_t)this,
             this->ReadReg(NVME_CTRLREG_CSTS), this->ReadReg(NVME_CTRLREG_CC));
-        this->FialureNUM = 3;
+        this->FailureNUM = 3;
         return;
     }
     kpok("[NVME %p]: controller enabled, csts=%08x cc=%08x\n", (uint64_t)this,
         this->ReadReg(NVME_CTRLREG_CSTS), this->ReadReg(NVME_CTRLREG_CC));
 
     // Mask every vector first, then unmask the queues we actually created.
-    this->WriteReg(NVME_CTRLREG_INITMS, 0xFFFFFFFFu);
-    this->WriteReg(NVME_CTRLREG_INITMC, (1u << this->INTRNUM) - 1);
+    // (P1-30: 轮询回退时无 MSI-X 向量, 跳过掩码写入)
+    if (this->flags & NVME_FLAG_MISIX) {
+        this->WriteReg(NVME_CTRLREG_INITMS, 0xFFFFFFFFu);
+        this->WriteReg(NVME_CTRLREG_INITMC, (1u << this->INTRNUM) - 1);
+    }
 
-    if (!this->RegisterQue()) { this->FialureNUM = 4; return; }
-    if (!this->InitNsp())    { this->FialureNUM = 5; return; }
+    if (!this->RegisterQue()) { this->FailureNUM = 4; return; }
+    if (!this->InitNsp())    { this->FailureNUM = 5; return; }
 
     kpok("[NVME %p]: SUCCESSFULLY INITIALIZED\n", (uint64_t)this);
 }
@@ -188,7 +194,9 @@ bool NVME::CreateCmplQue(NVME::NVMERequest *req, NVME::CmplQue *cmplQue) {
     entry->OPCode = 0x05;
     entry->PRP[0] = VMM::GetPhysics(kernel_pagemap, (uint64_t)cmplQue->Entries);
     entry->Spec[0] = cmplQue->Ident | ((u32)(cmplQue->Size - 1) << 16);
-    entry->Spec[1] = 0b11 | ((u32)(cmplQue->Ident) << 16);
+    /* P1-30: 轮询回退时 IEN=0 (纯轮询); MSI-X 时 0b11 (PC+IEN) */
+    entry->Spec[1] = ((this->flags & NVME_FLAG_MISIX) ? 0b11 : 0b01) |
+                     ((u32)(cmplQue->Ident) << 16);
     return true;
 }
 
@@ -221,10 +229,18 @@ void NVME::Request(NVME::SubQue *subQue, NVME::NVMERequest *req){
     // Wait for completion. Polling the target CQ lets bring-up/admin commands
     // finish before interrupts are enabled; once MSI-X is live the IRQ handler
     // performs the same harvest ahead of us (PollCQ is phase-idempotent).
+    // P0-13: 有界超时 (约 5s) — 原实现无超时, 控制器失联时永久挂起
+    uint64_t spins = 0;
     while (!req->done) {
         this->PollCQ(subQue->Trg);
         if (!req->done)
             asm volatile ("pause");
+        if (unlikely(++spins > 500000000ULL)) {
+            kerror("(NVME %p): request %p TIMEOUT, aborting wait\n",
+                   (uint64_t)this, req);
+            req->res.Status = 0xFFFF;   /* 合成失败状态: 上层 fail 路径 + 槽位释放 */
+            break;
+        }
     }
 
     // Inspect the completion: SC (bits 8:1) and SCT (bits 10:9) must be zero.
@@ -305,7 +321,8 @@ bool NVME::InitNsp() {
         return false;
     }
 
-    for (this->devNum = 0; nspLst[this->devNum]; this->devNum++) ;
+    /* P0-14: 命名空间扫描限界 (nspLst 页 = 1024 项, 全非零时越页) */
+    for (this->devNum = 0; this->devNum < 1024 && nspLst[this->devNum]; this->devNum++) ;
 
     if (this->devNum == 0) {
         kinfo("[NVME %p]: no active namespace\n", (uint64_t)this);
@@ -370,7 +387,7 @@ bool NVME::InitNsp() {
         auto* self = static_cast<NVMECtrl*>(i);
         return self->dev[0].size * ((uint64_t)self->dev[0].lbaBytes / 512);
     };
-    Dev::AddStorageDevice(VsDevType::NVME, ops, (uint32_t)sectors512, this);
+    Dev::AddStorageDevice(VsDevType::NVME, ops, sectors512, this);   /* P0-14: 全程 64 位 */
     return true;
 }
 
@@ -439,8 +456,13 @@ bool NVME::InitIntr() {
     this->flags &= ~NVME_FLAG_MISIX;
     this->MSIX = PCI::GetMSIXCap(this->phdr);
     if (this->MSIX == nullptr) {
-        kerror("[NVME: %p]: no MSI-X support\n", (uint64_t)this);
-        return false;
+        /* P1-30: 无 MSI-X → 轮询回退 (Request 的等待循环本就 PollCQ,
+           中断仅是优化)。保留最小队列集 (INTRNUM=2 → nIO=1 无除零),
+           不注册路由; CQ 的 IEN 关闭 (见 CreateCmplQue)。
+           注: QEMU 的 NVMe 恒有 MSI-X, 此路径无实机验证, 属降级兜底。 */
+        kinfo("[NVME: %p]: no MSI-X, polled-completion fallback\n", (uint64_t)this);
+        this->INTRNUM = 2;
+        return true;
     }else{this->flags |= NVME_FLAG_MISIX;}
 
     this->INTRNUM = (int32_t)max(2u, min((uint32_t)NVME_MAX_INTRNUM, (uint32_t)smp_cpu_count));

@@ -168,6 +168,11 @@ namespace AHCI
     
     AHCI_NOOPT bool Port::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
     {
+        /* P0-11: PRDT 数量钳制 (命令表 1 页 ≈ 248 条目), 防越界 memset */
+        if (sectorCount > 248 * 16) {
+            kerror("AHCI Read: sectorCount %u 超 PRDT 容量\n", sectorCount);
+            return false;
+        }
         uint32_t sectorL = (uint32_t)sector;
         uint32_t sectorH = (uint32_t)(sector >> 32);
         uint32_t sectorCountCopy = sectorCount;
@@ -231,9 +236,9 @@ namespace AHCI
         if (spin == 1000000)
             return false;
 
-        hbaPort->commandIssue = 1 << slot;
-        
-        uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
+        /* P2-59: 同 Write —— 命令表写全后、门铃前释放屏障 */
+        __atomic_thread_fence(__ATOMIC_RELEASE);
+        hbaPort->commandIssue = 1 << slot;        uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
         /* The syscall path runs with IRQs masked (syscall_entry does cli).
            Spinning on device completion with IRQs off monopolises this core
            for up to the whole timeout and starves peer threads pinned to it.
@@ -256,11 +261,25 @@ namespace AHCI
             return false;
         }
 
+        /* P0-10: 超时未完成必须失败 (原实现超时后返回 true = 坏数据 +
+           slot 永不回收)。端口级 COMRESET 恢复见路线图, 先保证错误
+           语义向上传播。 */
+        if (hbaPort->commandIssue & (1 << slot)) {
+            kerror("AHCI: port %d slot %d timeout (CI=%#x, IS=%#x)\n",
+                   portNumber, slot, hbaPort->commandIssue, hbaPort->interruptStatus);
+            return false;
+        }
+
         return true;
     }
 
     AHCI_NOOPT bool Port::Write(uint64_t sector, uint32_t sectorCount, void* buffer)
     {
+        /* P0-11: PRDT 数量钳制 (命令表 1 页 ≈ 248 条目), 防越界 memset */
+        if (sectorCount > 248 * 16) {
+            kerror("AHCI Write: sectorCount %u 超 PRDT 容量\n", sectorCount);
+            return false;
+        }
         uint32_t sectorL = (uint32_t)sector;
         uint32_t sectorH = (uint32_t)(sector >> 32);
         uint32_t sectorCountCopy = sectorCount;
@@ -324,6 +343,10 @@ namespace AHCI
         if (spin == 1000000)
             return false;
 
+        /* P2-59: 命令表全部写入后、拉起 commandIssue 前加释放屏障 ——
+           x86 上编译期即可见序 (WB 内存模型), 此 fence 文档化「表先于
+           门铃」契约并保证移植到弱序架构时语义不变 */
+        __atomic_thread_fence(__ATOMIC_RELEASE);
         hbaPort->commandIssue = 1<<slot;
 
         uint64_t deadline = PIT::TimeSinceBootMS() + 5000;

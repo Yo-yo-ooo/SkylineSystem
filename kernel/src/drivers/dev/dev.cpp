@@ -39,7 +39,9 @@ uint64_t devm_hash(const void* item, uint64_t seed0, uint64_t seed1) {
 int devtim_compare(const void *a,const void*b,void* udata){
     const DevManKey* ea = (const DevManKey*)a;
     const DevManKey* eb = (const DevManKey*)b;
-    return ea->index < eb->index ? -1 : (ea->index > eb->index ? 1 : 0);
+    /* P1-39: 与 devtim_hash 同字段 (整个 key) —— 原实现只比 index,
+       不同 type 同 index 的条目在桶内被判相等 → 多盘重名覆盖首盘 */
+    return _memcmp(ea, eb, sizeof(DevManKey));
 }
 uint64_t devtim_hash(const void* item, uint64_t seed0, uint64_t seed1){
     const DevManKey* entry = (const DevManKey*)item;
@@ -62,7 +64,7 @@ static hashmap* StrMap = nullptr;
 static hashmap* DevMan_Map = nullptr;
 namespace Dev{
 
-    void AddStorageDevice(VsDevType type, DevOPS ops, uint32_t SectorCount, void* Class) {
+    void AddStorageDevice(VsDevType type, DevOPS ops, uint64_t SectorCount, void* Class) {
         if(type > MAX_TYPE_C) return;
 
         // 先分配好内存，减少在锁内部滞留的时间
@@ -71,15 +73,21 @@ namespace Dev{
 
         spinlock_lock(&dev_manager_lock); // 开启大锁，保证 Index 和 Map 的原子同步
 
-        // 1. 获取并更新索引
-        DevManKey key_lookup = {.type = type};
-        DevManKey *p = (DevManKey*)hashmap_get(TIMap, &key_lookup);
-        uint32_t TypeIndex = p ? p->index : 0;
+        // 1. 获取并更新索引 (P1-39: 原实现查 {type,0} 恒得首条 → 之后
+        //    全部撞 index 1 覆盖; 现遍历取该 type 的最大 index + 1)
+        uint32_t TypeIndex = 0;
+        {
+            size_t it = 0; void *item;
+            while (hashmap_iter(TIMap, &it, &item)) {
+                const DevManKey *k = (const DevManKey*)item;
+                if (k->type == type && k->index >= TypeIndex) TypeIndex = k->index + 1;
+            }
+        }
         
-        DevManKey next_key = {.type = type, .index = TypeIndex + 1};
+        DevManKey next_key = {.type = type, .index = TypeIndex};
         hashmap_set(TIMap, &next_key);
 
-        // 2. 初始化设备信息
+        // 2. 初始化设备信息 (idx = 本设备序号 = TypeIndex)
         DeviceInfo->idx = TypeIndex;
         DeviceInfo->type = type;
         DeviceInfo->classp = Class;
@@ -151,21 +159,19 @@ namespace Dev{
             else {
                 if (Count == 0)
                     return true;
-                if (address + Count > dev->MaxSectorCount * 512)
+                /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+                if (address + Count - 1 >= dev->MaxSectorCount * 512)
                     return false;
                 
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));
                 uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);//"Malloc for Read Buffer"
+                if (!buffer2) return false;   /* OOM 显式失败 */
                 _memset(buffer2, 0, tempSectorCount * 512);
 
+                /* P1-38: 读失败不得拷贝未填充缓冲 (原实现污染调用者) */
                 if (!dev->ops.Read(dev->classp,(address / 512), tempSectorCount, buffer2))
                 {
-                    uint16_t offset = address % 512;
-                    for (uint64_t i = 0; i < Count; i++)
-                        ((uint8_t*)Buffer)[i] = buffer2[i + offset];
-
                     kfree(buffer2);
-                    
                     return false;
                 }
 
@@ -189,7 +195,8 @@ namespace Dev{
             else{
                 if (Count == 0)
                     return true;
-                if (address + Count > dev->MaxSectorCount * 512)
+                /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+                if (address + Count - 1 >= dev->MaxSectorCount * 512)
                     return false;
                 
                 uint32_t tempSectorCount = ((((address + Count) + 511) / 512) - (address / 512));

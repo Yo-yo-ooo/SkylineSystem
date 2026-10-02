@@ -36,22 +36,25 @@ namespace PartitionManager
 #ifdef USE_VIRT_IMAGE
         return CurDevice->ops.Read(CurDevice->classp, lba, SectorCount, Buffer);
 #else
-        // 边界检查：lba 是相对于分区的偏移
-        if (lba + SectorCount > (CurPartitionEnd - CurPartitionStart + 1)) {
+        /* P1-43: 按 partitionID 解析边界 (原实现忽略参数, 用 Init 遗留的
+           全局 CurPartitionStart/End —— 多分区读写全部错位); 返回语义
+           统一为 Dev::RW_OK/RW_ERROR (原实现颠倒) */
+        uint64_t pStart = 0, pEnd = 0;
+        if (GetPartitionStart(DriverType, DriverID, partitionID, pStart) != 0 ||
+            GetPartitionEnd(DriverType, DriverID, partitionID, pEnd) != 0)
+            return Dev::RW_ERROR;
+        if (lba + SectorCount > (pEnd - pStart + 1)) {
             kerrorln("Read: LBA out of partition range");
-            return true; 
+            return Dev::RW_ERROR;
         }
 
         // 实际物理 LBA = 分区起始 LBA + 偏移 LBA
-        if (CurDevice->ops.Read(
+        return CurDevice->ops.Read(
                 CurDevice->classp,
-                CurPartitionStart + lba, 
-                SectorCount, // 修正了之前错误的 Count 变量名
+                pStart + lba,
+                SectorCount,
                 Buffer
-            ) != Dev::RW_OK)
-            return true;
-        else
-            return false;
+            );
 #endif
     }
 
@@ -62,20 +65,22 @@ namespace PartitionManager
 #ifdef USE_VIRT_IMAGE
         return CurDevice->ops.Write(CurDevice->classp, lba, SectorCount, Buffer);
 #else
-        if (lba + SectorCount > (CurPartitionEnd - CurPartitionStart + 1)) {
+        /* P1-43: 同上 —— 按 partitionID 解析 + 统一返回语义 */
+        uint64_t pStart = 0, pEnd = 0;
+        if (GetPartitionStart(DriverType, DriverID, partitionID, pStart) != 0 ||
+            GetPartitionEnd(DriverType, DriverID, partitionID, pEnd) != 0)
+            return Dev::RW_ERROR;
+        if (lba + SectorCount > (pEnd - pStart + 1)) {
             kerrorln("Write: LBA out of partition range");
-            return true;
+            return Dev::RW_ERROR;
         }
 
-        if (CurDevice->ops.Write(
+        return CurDevice->ops.Write(
                 CurDevice->classp,
-                CurPartitionStart + lba,
-                SectorCount, // 修正了之前错误的 Count 变量名
+                pStart + lba,
+                SectorCount,
                 Buffer
-            ) != Dev::RW_OK)
-            return true;
-        else
-            return false;
+            );
 #endif
     }
 

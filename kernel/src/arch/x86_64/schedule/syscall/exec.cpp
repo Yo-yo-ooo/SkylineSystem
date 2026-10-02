@@ -41,19 +41,35 @@ extern uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
 
 
 /* ============ 用户字符串带上界拷贝 ============
- * 消除对用户内存 strlen/无界遍历的失控读。
- * 注: 若字符串中途跨入未映射页仍会 #PF —— 彻底解决需要
- * copy_from_user(#PF 修复表)基建, 此为过渡方案。 */
+ * P1-20: 逐页校验 —— 字符串中途跨入未映射页时提前返回 -EFAULT,
+ * 不再触发内核 #PF → hcf。 */
 static int64_t copy_user_str(const char *src, char **out, uint64_t cap) {
     *out = nullptr;
     if (!src) return 0;
     char *dst = (char*)kmalloc(cap);
     if (unlikely(!dst)) return -ENOMEM;
+    pagemap_t *pm = nullptr;
+    {
+        proc_t *p = Schedule::this_proc();
+        if (p) pm = p->pagemap;
+    }
     SmapGuard ug;   // src lives in the caller's user pages (SMAP override)
-    for (uint64_t i = 0; i < cap - 1; i++) {
-        char c = src[i];
-        dst[i] = c;
-        if (c == '\0') { *out = dst; return (int64_t)(i + 1); }
+    uint64_t i = 0;
+    while (i < cap - 1) {
+        uint64_t addr = (uint64_t)(src + i);
+        if (pm) {
+            VMM::Internal::PageInfo pi = VMM::Internal::GetPageInfo(pm, addr & ~0xFFFULL);
+            if (pi.size == 0 || !(pi.flags & MM_USER)) { kfree(dst); return -EFAULT; }
+        }
+        uint64_t chunk = cap - 1 - i;
+        uint64_t to_page_end = 0x1000 - (addr & 0xFFF);
+        if (chunk > to_page_end) chunk = to_page_end;
+        for (uint64_t j = 0; j < chunk; j++) {
+            char c = src[i + j];
+            dst[i + j] = c;
+            if (c == '\0') { *out = dst; return (int64_t)(i + j + 1); }
+        }
+        i += chunk;
     }
     kfree(dst);
     return -ENAMETOOLONG;
@@ -180,7 +196,7 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
                     continue;
                 uint64_t page = (uint64_t)PMM::Request();
                 VMM::Map(pagemap, p, page, flags);
-                kinfoln("  Mapping vaddr=0x%lx -> page=0x%lx", p, page);
+                /* P5-94: 每页 kinfoln 为运行期噪音, 已降级移除 */
             }
             VMM::NewMapping(pagemap, start, (end - start) / PAGE_SIZE, flags);
             // 登记 VMA:否则 Fork 克隆不到镜像、进程退出时这些页无人释放
@@ -190,11 +206,13 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
               if (phdr->p_memsz > filesz)
                   _memset((void*)(eff_vaddr + filesz), 0, phdr->p_memsz - filesz);
             }
-            /* 修复(B25/W^X): 装载完成后按 ELF 段权限收紧 —— PF_X=1 可执行,
-               PF_W=2 可写; 不可执行段加 NX, 不可写段去掉 W(需 EFER.NXE 已启用) */
-            if (!(phdr->p_flags & 1) || !(phdr->p_flags & 2)) {
+            /* 修复(B25/W^X): 装载完成后按 ELF 段权限收紧 —— 必须无条件执行:
+               P1-45: 原条件 (无 X 或无 W 才收紧) 让 W+X 段保留 RWX。
+               收紧规则: 可执行段至少去 W (W 仅在 W&&!X 时保留),
+               不可执行段加 NX */
+            {
                 uint64_t prot_flags = MM_READ | MM_USER |
-                                      ((phdr->p_flags & 2) ? MM_WRITE : 0) |
+                                      ((phdr->p_flags & 2) && !(phdr->p_flags & 1) ? MM_WRITE : 0) |
                                       ((phdr->p_flags & 1) ? 0 : MM_NX);
                 for (uint64_t p = start; p < end; p += PAGE_SIZE) {
                     VMM::Internal::PageInfo pi = VMM::Internal::GetPageInfo(pagemap, p);

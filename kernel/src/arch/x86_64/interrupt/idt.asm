@@ -23,6 +23,9 @@
 [extern this_cpu]
 [global idt_int_table]
 
+; P5-97: CPU_ININTR_OFF = cpu_t.inintr 字段的偏移 (2332)。
+; 汇编无法引用 C 结构体, 偏移由 cpu_t 布局决定 —— 若 smp.h 的
+; cpu_t 增删字段, 必须同步更新此值 (编译器无告警, 属 ABI 级常量)。
 %define CPU_ININTR_OFF 2332
 
 ; 保存所有通用寄存器（顺序和原有一致，保证 context_t 结构体兼容）

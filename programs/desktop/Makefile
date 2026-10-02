@@ -21,7 +21,8 @@ CFLAGS := -nostdlib -nostdinc \
     -I./include -I. -I../../lib/include/stdc -I../../lib/include -I../../lib/include/base/arch/$(BUILD_ARCH) \
     -ffreestanding -fshort-wchar -mno-red-zone \
     -fno-omit-frame-pointer -fno-exceptions \
-    -ffunction-sections -fdata-sections -O2 -m64 -static -g3
+    -ffunction-sections -fdata-sections -O2 -m64 -static -g3 \
+    -Wall -Wextra   # P5-106: 与 lib 看齐
 
 
 CXXFLAGS := $(CFLAGS) -std=gnu++20 -fno-threadsafe-statics 

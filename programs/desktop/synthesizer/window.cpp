@@ -13,6 +13,9 @@
  * strip id cannot be handed in directly; an atomic ticket pool assigns one.
  */
 static uint32_t g_strip_ticket = 0;
+/* P1-53: 卸载窗口的退役节点列表 (LockList 保护), 由 Compose 的
+   帧屏障点统一释放 —— 防在途遍历 UAF */
+static CompWinNode* g_retire_list = nullptr;
 
 /* Freestanding 32-bit span equality (no libc memcmp declaration needed);
    -O2 lowers a word loop like this to a fast vectorised compare. Used by the
@@ -251,8 +254,13 @@ bool Compositor::UnregisterWindow(Window* w) {
     else            L->win_tail = node->prev;
     L->window_count--;
 
+    /* P1-53: 节点延迟回收 —— 立即 free(node) 若与在途 worker 的
+       列表遍历失步即 UAF; 改为退役列表, 由 Compose 的屏障点
+       (done_compose == peers) 统一释放 */
+    node->next = g_retire_list;
+    g_retire_list = node;
+
     UnlockList();
-    free(node);
     return true;
 }
 
@@ -445,15 +453,14 @@ void Compositor::blendCursorSquare(int32_t x, int32_t y) {
     }
 }
 
-/* Cursor is the LAST scanout write of a frame. Draw the NEW finished square
-   FIRST, then restore the OLD square to the plain scene. At every instant at
-   least one arrow is present (two coexist only for nanoseconds), so the
-   pointer can never vanish -> no flicker. Tracks the on-screen square in
-   committed_ so an in-flight scene blit knows which arrow to preserve. */
+/* Cursor is the LAST scanout write of a frame. P1-44: 先恢复旧方块再画新
+   箭头 —— 原顺序 (新后旧) 在 <16px 位移时旧方块恢复会擦掉新箭头的一部分
+   (自愈但每次移动可见)。Tracks the on-screen square in committed_ so an
+   in-flight scene blit knows which arrow to preserve. */
 void Compositor::overlayCursorFinal(int32_t ox,int32_t oy,int32_t nx,int32_t ny) {
-    blendCursorSquare(nx, ny);
     if ((ox != nx || oy != ny) && ox >= 0 && oy >= 0)
         paintSquareFromBack(ox, oy);
+    blendCursorSquare(nx, ny);
     cur_x_ = committed_x_ = nx;
     cur_y_ = committed_y_ = ny;
 }
@@ -468,6 +475,14 @@ void Compositor::commitScene(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
 
 void Compositor::ComposeSingleThreaded() {
     for (uint32_t i = 0; i < ncpus_; i++) ComposeStripToBack(i);
+    /* P1-53: 单线程模式无并发遍历, 退役节点可立即释放 */
+    {
+        LockList();
+        CompWinNode* r = g_retire_list;
+        g_retire_list = nullptr;
+        UnlockList();
+        while (r) { CompWinNode* n = r->next; free(r); r = n; }
+    }
     /* scene finished off-screen; single commit preserves then redraws cursor */
     commitScene(0, 0, (int32_t)screen_.Width, (int32_t)screen_.Height,
                 committed_x_, committed_y_, cur_x_, cur_y_);
@@ -483,22 +498,9 @@ void Compositor::SetCursor(int32_t x, int32_t y, bool visible) {
 }
 
 /* ---- dirty-rectangle scene API ----------------------------------------- */
-void Compositor::Invalidate(int32_t x0,int32_t y0,int32_t x1,int32_t y1) {
-    if (x0 >= x1 || y0 >= y1) return;
-    if (!dirty_) { dx0_=x0; dy0_=y0; dx1_=x1; dy1_=y1; dirty_=1; }
-    else {
-        if (x0 < dx0_) dx0_ = x0; if (y0 < dy0_) dy0_ = y0;
-        if (x1 > dx1_) dx1_ = x1; if (y1 > dy1_) dy1_ = y1;
-    }
-}
-
-/* Push only the accumulated scene dirty rectangle to the scanout, keeping
-   the cursor on top; clears the dirty union afterwards. */
-void Compositor::Present() {
-    if (!back_ || !dirty_) return;
-    commitScene(dx0_,dy0_,dx1_,dy1_, committed_x_,committed_y_,cur_x_,cur_y_);
-    dirty_ = 0;
-}
+/* P5-96: Invalidate()/Present() 为无调用者的死代码 —— Compose 已走
+   全帧 commitScene 路径; 已删除 (若未来要按脏矩形增量合成, 从
+   git 历史恢复)。 */
 
 /* Fast pointer path: the scene is untouched - only the old and new 16x16
    cursor dirty squares are refreshed straight from back_, so tracking costs
@@ -537,6 +539,9 @@ extern "C" void CompWorkerTrampoline() {
     /* id 0 is reserved for the main thread (help-the-work); workers own 1..N-1 */
     uint32_t id = 1u + __atomic_fetch_add(&g_strip_ticket, 1, __ATOMIC_SEQ_CST);
     Compositor::Get().WorkerEntry(id);
+    /* P0-18: 线程退出钩子 —— TLS 分配器队列归还 (原 cleanup 无调用点) */
+    extern void allocator_thread_exit_cleanup(void);
+    allocator_thread_exit_cleanup();
 }
 
 void Compositor::StartWorkers() {
@@ -577,14 +582,21 @@ void Compositor::StartWorkers() {
 
     /* Strip 0 is rendered by the main thread itself; launch workers ONLY
        for the other cores so each frame barrier never has to hand this core
-       to a same-core worker. */
+       to a same-core worker. P1-48: 统计实际成功的启动数 —— 原实现忽略
+       返回值, 启动失败时下面的等待循环永转。 */
     uint32_t peers = (n > 1) ? n - 1 : 0;
+    uint32_t launched_ok = 0;
     for (uint32_t i = 0; i < peers; i++) {
-        sys_thread_launch((uint64_t)CompWorkerTrampoline, i + 1);
+        if (sys_thread_launch((uint64_t)CompWorkerTrampoline, i + 1) >= 0)
+            launched_ok++;
     }
     uint32_t sw = 0;
-    while (__atomic_load_n(&started_cnt_, __ATOMIC_ACQUIRE) < peers)
+    while (__atomic_load_n(&started_cnt_, __ATOMIC_ACQUIRE) < launched_ok) {
         comp_backoff(sw);
+        /* P1-48: 有界等待 (约 2s) —— 失败的工作线程永不计数时降级
+           到单线程合成 (ncpus_=1 走 ComposeSingleThreaded), 不再永转 */
+        if (++sw > 2000) { ncpus_ = 1; launched_ = 1; return; }
+    }
     launched_ = 1;
 }
 
@@ -606,6 +618,16 @@ void Compositor::Compose() {
     uint32_t cw = 0;
     while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < peers)
         comp_backoff(cw);
+
+    /* P1-53: 屏障点 —— 所有 worker 已过当前帧的列表遍历, 退役节点
+       此刻无人引用, 统一释放 */
+    {
+        LockList();
+        CompWinNode* r = g_retire_list;
+        g_retire_list = nullptr;
+        UnlockList();
+        while (r) { CompWinNode* n = r->next; free(r); r = n; }
+    }
 
     /* phase 2 (single commit point, main thread only): push the whole scene
        to the scanout while preserving the cursor square, then draw the

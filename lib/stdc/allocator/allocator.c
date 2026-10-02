@@ -14,7 +14,11 @@ extern volatile uint64_t SizeClassTable[75][3];
 // ============================================================================
 // 常量宏定义
 // ============================================================================
-#define QSBR_SLOTS              32
+/* P2-61: 槽位 32 → 64 (桌面 4 核场景余量大)。>64 线程时槽位共享的
+   语义是安全的: 共享槽的 count = 各线程净活跃数之和, 静默判定 =
+   全体空闲 (保守, 只会延迟回收, 不会误回收); 若未来线程数超 64,
+   可再翻倍或改动态分配。 */
+#define QSBR_SLOTS              64
 /* 【OOM 修复】降到 1: 每次 push_deferred 立即 flush + try_gc
    原来是 8, SCB 积压在 TLS 队列里不够 8 个就不 flush →
    try_gc 看到的 deferred 队列为空 → goto unlock → 不回收 → OOM */
@@ -179,6 +183,11 @@ static inline int32_t qsbr_enter() {
 }
 
 static inline void qsbr_leave(int32_t slot) {
+    /* P0-17 重写: leave 也确认当前纪元 —— 线程退出临界区即静默。
+       原实现只减 count, 纪元只由 enter 更新 → 空闲线程 last 停留在
+       远古, 判定反转 (空闲=不静默 / 活跃=静默) */
+    atomic_store_n(&qsbr_counters[slot].last_epoch,
+                   atomic_load_n(&gc_generation, ATOMIC_ACQUIRE), ATOMIC_RELEASE);
     atomic_sub_fetch_n(&qsbr_counters[slot].count, 1, ATOMIC_RELEASE);
 }
 
@@ -186,26 +195,28 @@ static inline int32_t is_quiescent(uint64_t pending_depth) {
     uint64_t generation = atomic_load_n(&gc_generation, ATOMIC_ACQUIRE);
     uint64_t slots_in_use = atomic_load_n(&global_qsbr_slot_alloc, ATOMIC_RELAXED);
 
+    /* P0-17 重写: 真 epoch 判定 ——
+       ① count>0 (临界区内)      → 不静默;
+       ② count==0 且纪元久远    → 老化出局 (长期空闲, P0-18 修复);
+       ③ count==0 且近期确认过  → 静默。
+       压力自适应: 积压越深, 老化阈值越小 (回收越快)。
+       原实现的条件全反 (活跃=静默/空闲=不静默) 且纪元自举矛盾。 */
+    uint64_t aged_out = QSBR_MIN_EPOCH_GAP;
+    if (pending_depth > 0) {
+        aged_out = QSBR_DEFER_BUDGET / pending_depth;
+        if (aged_out > QSBR_MIN_EPOCH_GAP) aged_out = QSBR_MIN_EPOCH_GAP;
+    }
+    if (aged_out == 0) aged_out = 1;
+
     for (int32_t i = 0; i < QSBR_SLOTS; i++) {
         if ((uint64_t)i >= slots_in_use) break;
 
-        uint64_t before = atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE);
-        uint64_t last   = atomic_load_n(&qsbr_counters[i].last_epoch, ATOMIC_ACQUIRE);
-        uint64_t gap    = generation - last;
+        uint64_t cnt = atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE);
+        if (cnt != 0) return 0;                        /* 临界区内 = 不静默 */
 
-        if (gap >= QSBR_MIN_EPOCH_GAP && gap * pending_depth >= QSBR_DEFER_BUDGET) {
-            uint64_t recheck = atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE);
-            if (recheck != before) {
-                /* 线程刚活跃, 走经典判定 */
-            } else {
-                continue;
-            }
-        }
-
-        atomic_thread_fence(ATOMIC_SEQ_CST);
-        uint64_t after = atomic_load_n(&qsbr_counters[i].count, ATOMIC_ACQUIRE);
-        if (after <= before)
-            return 0;
+        uint64_t last = atomic_load_n(&qsbr_counters[i].last_epoch, ATOMIC_ACQUIRE);
+        if (generation - last >= aged_out) continue;   /* 老化出局 = 静默 */
+        /* 近期确认 + 空闲 = 静默, 继续检查下一槽位 */
     }
     return 1;
 }
@@ -243,13 +254,10 @@ static inline void try_gc() {
 
     uint64_t total_pending = n_small + n_large;
 
-    /* 【OOM 修复】压力强制回收 */
-    int32_t gc_success;
-    if (total_pending >= QSBR_FORCE_RECLAIM_THRESHOLD) {
-        gc_success = 1;
-    } else {
-        gc_success = is_quiescent(total_pending);
-    }
+    /* P0-17: 阈值 16 的强制回收已删除 —— 原实现绕过静默判定直接
+       munmap, 在途跨线程 free 的 UAF 窗口; 压力自适应改由
+       is_quiescent 的积压老化阈值承担 (积压越深老化越快) */
+    int32_t gc_success = is_quiescent(total_pending);
 
     if (gc_success) {
         while (small_list) {
@@ -382,7 +390,11 @@ static void* _skyline_malloc_internal(size_t size) {
         }
 
         if (!mcb) {
-            MainControlBlock_t* new_mcb = (MainControlBlock_t*)MoreCore(4);
+            /* P4-86 宿主测试实锤: MoreCore(4) = 16KB 不够 MCB
+               (list_base[2014]=16112B + bitmap 256B + 头 ≈ 16.5KB),
+               越界写入相邻页 —— 按结构体实际尺寸取整分配 */
+            MainControlBlock_t* new_mcb = (MainControlBlock_t*)MoreCore(
+                (sizeof(MainControlBlock_t) + 4095) / 4096);
             if (!new_mcb) { try_gc(); continue; }
 
             new_mcb->is_full = 0;
@@ -681,7 +693,11 @@ static void* _skyline_malloc_internal(size_t size) {
 // 释放路径
 // ============================================================================
 #define SKYLINE_MAX_LEGAL_ADDR  0x00007FFFFFFFFFFFULL
-#define ALLOCTOR_SECURITY_ASSERT(cond) do { if (!(cond)) { return; } } while(0)
+/* P1-46: 元数据校验失败 = 堆损坏, 立即终止本进程 (原静默 return 让
+   伪 header 继续驱动进程内任意写/位操作); sys_exit 不会返回 */
+#define ALLOCTOR_SECURITY_ASSERT(cond) do { \
+    if (!(cond)) { sys_exit(0xBAADF00D); __builtin_unreachable(); } \
+} while(0)
 
 static void _free_large_object_real(void* block_addr, AllocBlock_t* header) {
     uint64_t size_class  = header->AllocSizeAligned;

@@ -61,6 +61,9 @@ syscall_entry:
 
     call syscall_handler
 
+    ; P5-97: [rsp + 14*8] = syscall_frame_t.rax 槽位 (r15..rax 的
+    ; 第 15 个字段, 索引 14)。pushaq 顺序与 syscall.h 的
+    ; syscall_frame_t 布局一一对应 —— 顺序若变必须同步此偏移。
     mov [rsp + 14*8], rax 
 
     pop r15

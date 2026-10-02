@@ -14,7 +14,9 @@
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/smp/smp.h>
+#include <klib/klib.h>
 #include <pdef.h>
+extern uint64_t sched_tsc_per_ms(void);   /* tsc_cal.cpp 强符号 */
 
 namespace SchedBench {
 
@@ -47,6 +49,7 @@ struct osc_result_t {
 
 struct sched_bench_report {
     uint32_t bench_cpu;
+    uint32_t base_quantum_ms;   /* 实测: 运行期实际 base quantum (动态自整定) */
     step_result_t     step;
     pollute_result_t  pollute;
     shortwin_result_t shortwin;
@@ -62,10 +65,15 @@ static volatile uint32_t g_done;
 static step_sample    g_sring[STEP_RING];     static volatile uint64_t g_sring_n;
 static pollute_sample g_pring[POLLUTE_RING];  static volatile uint64_t g_pring_n;
 static volatile uint64_t g_sw_mf, g_sw_msl;   /* 短窗口目标线程终值 */
+static volatile uint32_t g_sw_shortwin, g_sw_stalled;   /* 目标级计数 */
+static thread_t *g_sw_target_ptr = nullptr;   /* 目标线程指针 (外部读 dispatch 计数) */
 
 /* ---- 两种速率的循环体 (volatile 防优化) ---- */
 static inline void fast_body(unsigned n) {          /* 纯 ALU: 高 RIP 速率 */
     uint64_t x = g_sink;
+    /* 圈数随机化: 固定圈数在片边界 RIP 归位 → 差分=0 (stalled 43/47 的
+       根因, round 47 定位) */
+    n += (unsigned)(x & 7);
     for (unsigned i = 0; i < n; i++) x = x * 1664525u + 1013904223u;
     g_sink = x;
 }
@@ -75,12 +83,23 @@ static inline void slow_body(unsigned n) {          /* 指针追猎: 低 RIP 速
     g_sink = idx;
 }
 
+/* TSC 毫秒 (bench 相位超时用): TCG 下 CPU 饱和会冻住 PIT 虚拟时钟
+   (相位 2 结构性挂死的根因), TSC 随执行推进不受影响 */
+static uint64_t tsc_ms(void) {
+    static uint64_t cpm = 0;
+    if (!cpm) cpm = sched_tsc_per_ms();
+    if (!cpm) return PIT::TimeSinceBootMS();   /* 未校准兜底 */
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return (((uint64_t)hi << 32) | lo) / cpm;
+}
+
 static void run_phase(bool fast, uint64_t dur_ms, bool record) {
-    uint64_t t0 = PIT::TimeSinceBootMS(), next = t0 + 4;
-    while (PIT::TimeSinceBootMS() - t0 < dur_ms) {
+    uint64_t t0 = tsc_ms(), next = t0 + 4;
+    while (tsc_ms() - t0 < dur_ms) {
         if (fast) fast_body(2000); else slow_body(64);
         if (record) {
-            uint64_t now = PIT::TimeSinceBootMS();
+            uint64_t now = tsc_ms();
             if (now >= next && g_sring_n < STEP_RING) {
                 thread_t *t = Schedule::this_thread();
                 if (likely(t)) {
@@ -101,7 +120,9 @@ static void bench_step_thread() {
     g_sring_n = 0;
     run_phase(true, STEP_B_MS, true);
     g_done = 1;
-    Schedule::Exit(0);
+    for(;;) PIT::Sleep(1000); /* UAF修复: 不退出 — Exit 击杀整个 bench proc,
+        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF (round 33 符号化);
+        定时睡眠 (真正离队, hlt 立即被唤醒会滞留运行队列拖慢后续相位) */
 }
 static void eval_step(step_result_t *r, const uint64_t pre[14], const uint64_t post[14]) {
     uint64_t n = g_sring_n;
@@ -133,12 +154,12 @@ static void eval_step(step_result_t *r, const uint64_t pre[14], const uint64_t p
  * victim 自身速率恒定; polluter 高速率. per-thread 基线下
  * victim 的 mult 应稳定在 1.0x — 共享基线会把 victim 的 mult
  * 砸到下限, 这是区分两种基线设计的直接证据. */
-static void bench_polluter() { while (g_flag_run) fast_body(2000); Schedule::Exit(0); }
+static void bench_polluter() { while (g_flag_run) fast_body(2000); for(;;) PIT::Sleep(1000); }
 static void bench_victim() {
-    uint64_t t0 = PIT::TimeSinceBootMS(), next = t0 + 100;
-    while (PIT::TimeSinceBootMS() - t0 < POLLUTE_MS) {
+    uint64_t t0 = tsc_ms(), next = t0 + 100;
+    while (tsc_ms() - t0 < POLLUTE_MS) {
         slow_body(64);                    /* victim 自身速率恒定 */
-        uint64_t now = PIT::TimeSinceBootMS();
+        uint64_t now = tsc_ms();
         if (now >= next && g_pring_n < POLLUTE_RING) {
             thread_t *t = Schedule::this_thread();
             if (likely(t)) {
@@ -150,7 +171,9 @@ static void bench_victim() {
         }
     }
     g_done = 1;
-    Schedule::Exit(0);
+    for(;;) PIT::Sleep(1000); /* UAF修复: 不退出 — Exit 击杀整个 bench proc,
+        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF (round 33 符号化);
+        定时睡眠 (真正离队, hlt 立即被唤醒会滞留运行队列拖慢后续相位) */
 }
 static void eval_pollute(pollute_result_t *r) {
     uint64_t n = g_pring_n;
@@ -174,22 +197,31 @@ static void eval_pollute(pollute_result_t *r) {
  * prio 15 (weight 288) × base 5ms → 量子 ~1.4ms < 3ms 门.
  * companion (prio 10) 保持 CPU 忙, 防止空闲自整定把 base 量子
  * 拉长导致门失效. */
-static void bench_sw_companion() { while (g_flag_run) fast_body(2000); Schedule::Exit(0); }
+static void bench_sw_companion() { while (g_flag_run) fast_body(2000); for(;;) PIT::Sleep(1000); }
 static void bench_sw_target() {
-    uint64_t t0 = PIT::TimeSinceBootMS();
-    while (PIT::TimeSinceBootMS() - t0 < SHORTWIN_MS) fast_body(2000);
+    uint64_t t0 = tsc_ms();
+    while (tsc_ms() - t0 < SHORTWIN_MS) fast_body(2000);
     /* 终值在 Exit 前自采样: 线程变僵尸后可能已被回收,
      * 外部持有的指针不可再解引用 */
     thread_t *t = Schedule::this_thread();
-    if (likely(t)) { g_sw_mf = t->rip_mult_fast; g_sw_msl = t->rip_mult_slow; }
+    if (likely(t)) {
+        g_sw_mf = t->rip_mult_fast; g_sw_msl = t->rip_mult_slow;
+        g_sw_shortwin = t->rip_short_windows; g_sw_stalled = t->rip_stalled;
+        kinfoln("[bench] 目标片长: min=%u max=%u ms\n",
+                t->rip_min_slice_ms, t->rip_max_slice_ms);
+    }
     g_done = 1;
-    Schedule::Exit(0);
+    for(;;) PIT::Sleep(1000); /* UAF修复: 不退出 — Exit 击杀整个 bench proc,
+        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF (round 33 符号化);
+        定时睡眠 (真正离队, hlt 立即被唤醒会滞留运行队列拖慢后续相位) */
 }
 static void eval_shortwin(shortwin_result_t *r, const uint64_t pre[14], const uint64_t post[14]) {
     r->short_windows = post[3] - pre[3];
     r->base_resets   = post[8] - pre[8];
     r->stalled       = post[4] - pre[4];
     r->mf = g_sw_mf; r->msl = g_sw_msl;
+    kinfoln("[bench] 短窗口目标级: shortwin=%u stalled=%u\n",
+            g_sw_shortwin, g_sw_stalled);
     r->pass = r->short_windows >= 200 && r->base_resets == 0
            && g_sw_mf >= 820 && g_sw_mf <= 1230
            && g_sw_msl >= 820 && g_sw_msl <= 1230;
@@ -202,23 +234,26 @@ static void bench_osc_thread() {
         run_phase(true,  OSC_HALF_MS, false);
     }
     g_done = 1;
-    Schedule::Exit(0);
+    for(;;) PIT::Sleep(1000); /* UAF修复: 不退出 — Exit 击杀整个 bench proc,
+        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF (round 33 符号化);
+        定时睡眠 (真正离队, hlt 立即被唤醒会滞留运行队列拖慢后续相位) */
 }
 
 /* ---- 编排 ---- */
 static void wait_done(uint64_t timeout_ms) {
-    uint64_t t0 = PIT::TimeSinceBootMS();
-    while (!g_done && PIT::TimeSinceBootMS() - t0 < timeout_ms) Schedule::Yield();
+    uint64_t t0 = tsc_ms();
+    while (!g_done && tsc_ms() - t0 < timeout_ms) Schedule::Yield();
 }
 static void settle(uint64_t ms) {   /* 等僵尸回收/伴线程退出 */
-    uint64_t t0 = PIT::TimeSinceBootMS();
-    while (PIT::TimeSinceBootMS() - t0 < ms) Schedule::Yield();
+    uint64_t t0 = tsc_ms();
+    while (tsc_ms() - t0 < ms) Schedule::Yield();
 }
 
 sched_bench_report *Report() { return &g_report; }
 
 bool Run(uint32_t bench_cpu) {
     if (unlikely(bench_cpu > (uint32_t)smp_last_cpu)) return false;
+    kinfoln("[bench] Run 开始 (cpu %u)\n", bench_cpu);
     for (int i = 0; i < 64; i++) g_chase[i] = (uint64_t)((i * 17 + 13) & 63);
     g_report = {};
     g_report.bench_cpu = bench_cpu;
@@ -228,43 +263,62 @@ bool Run(uint32_t bench_cpu) {
     uint64_t pre[14], post[14];
 
     /* 1. 阶跃 */
+    kinfoln("[bench] 相位1 阶跃\n");
     Schedule::GetRipStats(bench_cpu, pre);
     g_done = 0; g_sring_n = 0;
     Schedule::NewKernelThread(proc, bench_cpu, 8, (void*)bench_step_thread);
     wait_done(STEP_A_MS + STEP_B_MS + 3000);
+    kinfoln("[bench] 相位1 wait_done 返回 (done=%u sring=%llu)\n",
+            g_done, (unsigned long long)g_sring_n);
     Schedule::GetRipStats(bench_cpu, post);
     eval_step(&g_report.step, pre, post);
     settle(200);
+    kinfoln("[bench] 相位1 完成\n");
 
     /* 2. 抗污染 */
+    kinfoln("[bench] 相位2 抗污染\n");
     Schedule::GetRipStats(bench_cpu, pre);
     g_done = 0; g_pring_n = 0; g_flag_run = 1;
     Schedule::NewKernelThread(proc, bench_cpu, 8, (void*)bench_polluter);
     Schedule::NewKernelThread(proc, bench_cpu, 8, (void*)bench_victim);
     wait_done(POLLUTE_MS + 5000);
     g_flag_run = 0;
+    kinfoln("[bench] 相位2 wait_done 返回 (done=%u)\n", g_done);
     Schedule::GetRipStats(bench_cpu, post);
     eval_pollute(&g_report.pollute);
     settle(200);
+    kinfoln("[bench] 相位2 完成\n");
 
     /* 3. 短窗口 */
+    kinfoln("[bench] 相位3 短窗口\n");
     Schedule::GetRipStats(bench_cpu, pre);
     g_done = 0; g_flag_run = 1; g_sw_mf = g_sw_msl = 0;
-    Schedule::NewKernelThread(proc, bench_cpu, 10, (void*)bench_sw_companion);
-    Schedule::NewKernelThread(proc, bench_cpu, 15, (void*)bench_sw_target);
+    kinfoln("[bench] 相位3 spawn 前: proc=%p exiting=%d\n",
+            (void*)proc, proc ? __atomic_load_n(&proc->exiting, __ATOMIC_RELAXED) : -1);
+    thread_t *comp = Schedule::NewKernelThread(proc, bench_cpu, 10, (void*)bench_sw_companion);
+    g_sw_target_ptr = Schedule::NewKernelThread(proc, bench_cpu, 15, (void*)bench_sw_target);
+    kinfoln("[bench] 相位3 spawn: companion=%p target=%p\n",
+            (void*)comp, (void*)g_sw_target_ptr);
     wait_done(SHORTWIN_MS + 5000);
     g_flag_run = 0;
+    kinfoln("[bench] 相位3 wait_done 返回 (done=%u)\n", g_done);
+    if (g_sw_target_ptr)
+        kinfoln("[bench] 目标 dispatch=%llu (目标级 shortwin=%u stalled=%u)\n",
+                (unsigned long long)g_sw_target_ptr->dispatch_count,
+                g_sw_target_ptr->rip_short_windows, g_sw_target_ptr->rip_stalled);
     Schedule::GetRipStats(bench_cpu, post);
     eval_shortwin(&g_report.shortwin, pre, post);
     settle(200);
+    kinfoln("[bench] 相位3 完成\n");
 
     /* 4. 振荡: 运行期轮询融合权重 */
+    kinfoln("[bench] 相位4 振荡\n");
     g_done = 0;
     Schedule::NewKernelThread(proc, bench_cpu, 8, (void*)bench_osc_thread);
     uint64_t wmin = ~0ULL, wmax = 0, toggles = 0, lastw = 0;
-    uint64_t t0 = PIT::TimeSinceBootMS();
+    uint64_t t0 = tsc_ms();
     uint64_t dur = (uint64_t)OSC_CYCLES * 2 * OSC_HALF_MS;
-    while (!g_done && PIT::TimeSinceBootMS() - t0 < dur + 5000) {
+    while (!g_done && tsc_ms() - t0 < dur + 5000) {
         uint64_t o[14];
         if (Schedule::GetRipStats(bench_cpu, o)) {
             uint64_t w = o[11];
@@ -273,14 +327,18 @@ bool Run(uint32_t bench_cpu) {
             if (lastw != 0 && w != lastw) toggles++;
             lastw = w;
         }
-        uint64_t poll_t0 = PIT::TimeSinceBootMS();
-        while (PIT::TimeSinceBootMS() - poll_t0 < 50) fast_body(64);
+        uint64_t poll_t0 = tsc_ms();
+        while (tsc_ms() - poll_t0 < 50) fast_body(64);
     }
     g_report.osc.weight_min = (wmin == ~0ULL) ? 0 : wmin;
     g_report.osc.weight_max = wmax;
     g_report.osc.toggles = toggles;
     g_report.osc.entered_osc = (wmax <= 64);        /* 到过慢模式 */
     g_report.osc.hyst_ok = (toggles <= 4);          /* 迟滞有效, 无乒乓 */
+    /* 实际量子快照: shortwin 判据的前提 (round 25 动态量子失配) */
+    cpu_t *bcpu = get_cpu(bench_cpu);
+    g_report.base_quantum_ms = bcpu ? bcpu->base_quantum : 0;
+    kinfoln("[bench] 四相位全部完成\n");
     return true;
 }
 

@@ -638,10 +638,13 @@ namespace Schedule {
                    is truly no competitor. A count of 1 means one waiter is
                    ready: the timer tick MUST take the slow path so EEVDF can
                    preempt (==1 as lockless starved the sole peer ~14s). */
-                if (unlikely(cpu->thread_count == 0)) {
+                /* P2-56: 免锁读 thread_count 用原子加载 (volatile 仅防
+                   编译器重排, 跨核需 acquire 语义) */
+                if (unlikely(__atomic_load_n(&cpu->thread_count, __ATOMIC_ACQUIRE) == 0)) {
                     need_lock = false;
                 }
-            } else if (unlikely(curr_is_idle && cpu->thread_count == 0)) {
+            } else if (unlikely(curr_is_idle &&
+                       __atomic_load_n(&cpu->thread_count, __ATOMIC_ACQUIRE) == 0)) {
                 need_lock = false;
             }
 
@@ -726,6 +729,7 @@ namespace Schedule {
             __atomic_store_n(&cpu->current_thread, next_thread, __ATOMIC_RELEASE);
             cpu->sched_stats.context_switches++;
             next_thread->last_run_time = now;
+            next_thread->dispatch_count++;
 
             PREFETCH_RH(&next_thread->ctx);
             PREFETCH_RH(&next_thread->kernel_rsp);

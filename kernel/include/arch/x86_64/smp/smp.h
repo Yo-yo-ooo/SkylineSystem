@@ -129,13 +129,13 @@ typedef struct cpu_t {
         pagemap_t *pm;
         uint64_t   vaddr;
         uint8_t    type;    // 1=page, 2=full pm, 3=global
-        int8_t     ack_cpu; // initiator CPU to ACK after servicing; -1 = none
+        int32_t    ack_cpu; // P0-3: initiator CPU to ACK; -1 = none (int8 ≥128 核溢出)
     } shootdown_queue[TLB_SHOOTDOWN_QMAX];
     volatile uint32_t shootdown_head;  // FIFO consumer index (this CPU)
     volatile uint32_t shootdown_tail;  // FIFO producer index (initiators)
     volatile int32_t  shootdown_acks;  // initiator: outstanding ACK counter
-    bool ISSMEP_ENABLEED = false;
-    bool ISSMAP_ENABLEED = false;
+    bool SMEP_ENABLED = false;   /* P5-98: 原 ISSMEP_ENABLEED 拼写 */
+    bool SMAP_ENABLED = false;   /* P5-98: 原 ISSMAP_ENABLEED 拼写 */
     file_cache_cpu_t *file_cache;
     uint64_t rip_avg_rate;
 } cpu_t;

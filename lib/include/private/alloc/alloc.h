@@ -40,7 +40,7 @@ PACK(typedef struct {
     uint64_t rem_count;                    // 剩余计数 (8字节)
 }) LargeSecondControlBlock_t;
 
-const uint64_t x = sizeof(LargeSecondControlBlock_t);
+/* P5-96: 调试残留 `const uint64_t x = sizeof(...)` 已删除 */
 
 
 //主管理链表

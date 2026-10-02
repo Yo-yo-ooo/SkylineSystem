@@ -44,11 +44,14 @@ void hcf(void);
 #define ASSERT(CONDITION) \
 if (CONDITION){}else {Panic(#CONDITION);}
 extern "C" {
-void _memcpy(void* src, void* dest, uint64_t size);
+/* P2-58 口径: 两套 memcpy 语义并存 —— 全部新代码用标准序 __memcpy(d,s,n);
+   _memcpy 为【历史转置】(src, dest, size), 已弃用, 机械迁移列入路线图
+   (一次性 PR: 统一参数序 + 删转置版) */
+void _memcpy(void* src, void* dest, uint64_t size);   /* DEPRECATED: 转置序! */
 void _memset(void* dest, uint8_t value, uint64_t size);
 void _memmove(void* dest,void* src, uint64_t size);
 int32_t _memcmp(const void* buffer1,const void* buffer2,size_t  size);
-void *__memcpy(void * d, const void * s, uint64_t n);
+void *__memcpy(void * d, const void * s, uint64_t n);  /* 标准序, 新代码用此 */
 /* 修复: C 编译单元(art.c 等)也需调用自旋锁 → 统一 C 链接 */
 void spinlock_lock(int32_t* l);
 void spinlock_unlock(int32_t* l);

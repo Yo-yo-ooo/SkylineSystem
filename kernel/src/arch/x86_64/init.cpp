@@ -21,12 +21,53 @@
 #include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/ioapic/ioapic.h>
 #include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/schedule/sched_bench.h>
+#include <arch/x86_64/pit/pit.h>
+#include <drivers/net/e1000.h>
+/* 诊断门控: 1 = 启动时由专用内核线程在 cpu 1 后台跑 SchedBench。
+   进展 (round 23): init 等待是挂点根因 (bootstrap 上下文不能睡眠/忙等),
+   已改为不等待+网络延后; 报告已可完整打印 (污染环境下 step/osc 通过)。
+   剩余: 相位2 之后挂起 (疑 step 线程死亡持 stats 锁) —— 采集后置 0。 */
+/* 诊断门控: 1 = 启动时由专用内核线程在 cpu 1 后台跑 SchedBench。
+   进展 (round 24): 四相位全部跑通, 报告完整 (step t90=4ms ✓, osc 迟滞 ✓,
+   pollute/shortwin 未过 = 真内核与模型的真实差异, 见 scheduler.md);
+   init 等待挂点已解 (不等待 + wrapper 尾部起网络)。采集后置 0。 */
+#define SCHED_BENCH_AUTO 0
+#if SCHED_BENCH_AUTO   /* P5-92: 原为 #if 1 架空门控; 现与门控一致 */
+/* 调度器真实内核画像实验代码 (round 23 调试中): 相位探针定位挂点 */
+static volatile uint32_t g_bench_done = 0;
+static void bench_wrapper(void) {
+    bool ok = SchedBench::Run(1);
+    kinfoln("[sched_bench] 完成=%d (实际 base_quantum=%u ms)\n", (int)ok,
+            SchedBench::Report()->base_quantum_ms);
+    SchedBench::sched_bench_report *r = SchedBench::Report();
+    kinfoln("[sched_bench] step: t90=%llu valid=%d t90_pass=%d overshoot=%d sat=%d\n",
+            (unsigned long long)r->step.t90_ms, (int)r->step.valid,
+            (int)r->step.t90_pass, (int)r->step.overshoot_pass, (int)r->step.sat_pass);
+    kinfoln("[sched_bench] pollute: base=[%llu,%llu] mult=[%llu,%llu] pass=%d/%d\n",
+            (unsigned long long)r->pollute.base_min, (unsigned long long)r->pollute.base_max,
+            (unsigned long long)r->pollute.mult_min, (unsigned long long)r->pollute.mult_max,
+            (int)r->pollute.base_pass, (int)r->pollute.mult_pass);
+    kinfoln("[sched_bench] shortwin: windows=%llu resets=%llu stalled=%llu mf=%llu msl=%llu pass=%d\n",
+            (unsigned long long)r->shortwin.short_windows, (unsigned long long)r->shortwin.base_resets,
+            (unsigned long long)r->shortwin.stalled, (unsigned long long)r->shortwin.mf,
+            (unsigned long long)r->shortwin.msl, (int)r->shortwin.pass);
+    kinfoln("[sched_bench] osc: w=[%llu,%llu] toggles=%llu entered=%d hyst=%d\n",
+            (unsigned long long)r->osc.weight_min, (unsigned long long)r->osc.weight_max,
+            (unsigned long long)r->osc.toggles, (int)r->osc.entered_osc, (int)r->osc.hyst_ok);
+    g_bench_done = 1;
+    /* bench 完成后再起网络 (洪泛线程会污染 RIP 反馈测量) */
+    NetStackInit();
+    while (true) PIT::Sleep(1000);
+}
+#endif
 #include <atomic/atomic.h>
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/rtc/rtc.h>
 #include <drivers/mouse/x86/ps2mouse.h>
+#include <drivers/net/e1000.h>
 
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
@@ -50,6 +91,7 @@ extern void enable_smep_smap();
 static void pci_probe_ahci(PCI::PCIHeader0* h) { new AHCI::AHCIDriver(&h->Header); }
 static void pci_probe_nvme(PCI::PCIHeader0* h) { new class NVME(h); }
 static void pci_probe_xhci(PCI::PCIHeader0* h) { XHCI::InitXHCIFromPCI(h); }
+static void pci_probe_e1000(PCI::PCIHeader0* h) { E1000::Init(h); }
 
 static const PCI::PCIDriver kAhciDriver =
     {"AHCI", 0x01, 0x06, 0x01, pci_probe_ahci};
@@ -57,6 +99,8 @@ static const PCI::PCIDriver kNvmeDriver =
     {"NVMe", 0x01, 0x08, 0x02, pci_probe_nvme};
 static const PCI::PCIDriver kXhciDriver =
     {"xHCI", 0x0C, 0x03, 0x30, pci_probe_xhci};
+static const PCI::PCIDriver kE1000Driver =
+    {"e1000", 0x02, 0x00, 0x00, pci_probe_e1000};
 
 void __init x86_64_init(void){
     InitFunc("Serial(Simulater)",Serial::Init());
@@ -129,6 +173,7 @@ void __init x86_64_init(void){
     PCI::RegisterDriver(&kAhciDriver);
     PCI::RegisterDriver(&kNvmeDriver);
     PCI::RegisterDriver(&kXhciDriver);
+    PCI::RegisterDriver(&kE1000Driver);
     if(ACPI::mcfg == NULL){PCI::DoPCIWithoutMCFG();}
     else{InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));}
 
@@ -136,13 +181,44 @@ void __init x86_64_init(void){
     InitFunc("KEYBOARD(x86)",keyboard_init());
     
 
-    if(!ext4_kernel_init("sata0","/mp/",0)){hcf();}
+    /* P1-50: 根文件系统设备探测列表 (原硬编码 "sata0" —— 纯 NVMe
+       机器直接 hcf)。依次尝试常见块设备名, 全部失败才停机。 */
+    {
+        static const char *kRootCandidates[] = {"sata0", "nvme0", "usb0", "sata1", nullptr};
+        bool root_ok = false;
+        for (int i = 0; kRootCandidates[i]; i++) {
+            if (ext4_kernel_init(kRootCandidates[i], "/mp/", 0)) {
+                root_ok = true;
+                break;
+            }
+        }
+        if (!root_ok) {
+            kerrorln("init: no usable root filesystem device, halting");
+            hcf();
+        }
+    }
 
     FrameBufferDevice::Init();
 
     //ext4_fs_test_all();
 
     Schedule::Install();
+    extern void sched_calibrate_tsc(void);
+    sched_calibrate_tsc();   /* TSC 校准: RIP 采样执行期分母 (pollute 复测前提) */
+
+#if SCHED_BENCH_AUTO
+    {
+        proc_t *bproc = Schedule::NewProcess(false);
+        if (bproc) {
+            /* 不等待: init 的忙等/睡眠都会饿死或挂起 (bootstrap 上下文)。
+               bench 完成后 wrapper 自会调用 NetStackInit (网络延后 = 安静机器) */
+            Schedule::NewKernelThreadEx(bproc, 0, 8, (void *)bench_wrapper, 8);
+        }
+    }
+#else
+    /* 网络栈: e1000 已在 PCI 枚举时探测完成, 调度器就绪后上线 lwIP */
+    NetStackInit();
+#endif
 
     atomic_store_4(&PrintFSERIAL,1,0);
     sys_sysinfo_init();

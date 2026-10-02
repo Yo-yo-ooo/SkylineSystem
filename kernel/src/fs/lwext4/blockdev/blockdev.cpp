@@ -186,7 +186,7 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
 
     // 2. 分配 iface
     struct ext4_blockdev_iface *iface = (struct ext4_blockdev_iface *)kmalloc(sizeof(struct ext4_blockdev_iface));
-    if (!iface) { kfree(bdev); return nullptr; }
+    if (!iface) { kfree(raw); return nullptr; }   /* P1-40: 释放 raw 而非对齐后指针 */
 
     // 3. 初始化 iface 成员
     iface->open    = blockdev_open;
@@ -200,7 +200,7 @@ struct ext4_blockdev *ext4_blockdev_get(const char* mname, uint32_t wpart)
     iface->ph_bcnt  = 0;
     // 动态分配 buffer
     iface->ph_bbuf  = (uint8_t *)kmalloc(PAGE_SIZE); 
-    if (!iface->ph_bbuf) { kfree(iface); kfree(bdev); return nullptr; }
+    if (!iface->ph_bbuf) { kfree(iface); kfree(raw); return nullptr; }   /* P1-40 */
 
     // 4. 组装 bdev (注意：这是之前出错修复的地方，现在的赋值是正确的)
     bdev->bdif = iface; 

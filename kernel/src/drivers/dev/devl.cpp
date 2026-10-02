@@ -164,7 +164,8 @@ namespace Dev {
         } else if (dev.ops.Read == nullptr) {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
-            if (offset + nbytes > dev.MaxSectorCount * 512) return false;
+            /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+            if (offset + nbytes - 1 >= dev.MaxSectorCount * 512) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);
@@ -188,7 +189,8 @@ namespace Dev {
         } else if (dev.ops.Read_ == nullptr) {
             //VDL dev = FindDevice(DeviceType, DevIDX);
             if (nbytes == 0) return true;
-            if (offset + nbytes > dev.MaxSectorCount * 512) return false;
+            /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+            if (offset + nbytes - 1 >= dev.MaxSectorCount * 512) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);
@@ -239,7 +241,8 @@ namespace Dev {
         } else if (dev.ops.Read_ != nullptr) {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
-            if (offset + nbytes > dev.MaxSectorCount * 512) return false;
+            /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+            if (offset + nbytes - 1 >= dev.MaxSectorCount * 512) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(512);
@@ -319,7 +322,8 @@ namespace Dev {
         } else if (dev.ops.Read != nullptr) {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
-            if (offset + nbytes > dev.MaxSectorCount * 512) return false;
+            /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+            if (offset + nbytes - 1 >= dev.MaxSectorCount * 512) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(512);

@@ -372,6 +372,8 @@ int main() {
     }
     printf("  RIP 反馈对尾延迟: %.0f → %.0f 次选取\n", gaps[0], gaps[1]);
 
+    static uint64_t g_invariant_failures = 0;   // P4-84: 不变量失败计入退出码
+
     // ================= 场景 3: 随机生成/退出的混沌 (10 万次 spawn/exit/tick) =================
     printf("\n== SCENARIO 3: 随机 spawn/exit 混沌 ==\n");
     {
@@ -392,6 +394,7 @@ int main() {
             if (s.avg_vruntime > (1ULL << 62)) failures++;
         }
         printf("  chaos: 200,000 ops, 存活线程=%zu, failures=%llu\n", s.threads.size(), (unsigned long long)failures);
+        g_invariant_failures += failures;
         printf("  不变量判定: %s\n", failures == 0 ? "PASS" : "FAIL");
     }
 
@@ -457,5 +460,5 @@ int main() {
     }
 
     printf("\nSCHED SIM RESULT: 完成\n");
-    return 0;
+    return g_invariant_failures == 0 ? 0 : 1;   // P4-84: 不变量失败 → 非零退出
 }

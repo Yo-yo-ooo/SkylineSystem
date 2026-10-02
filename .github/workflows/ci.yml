@@ -1,0 +1,36 @@
+# P4-87: 回归门禁 —— 宿主测试套件 + 金样比对 (Linux runner)
+# net_smoke (QEMU 网络冒烟) 依赖 Windows PowerShell + 桌面 QEMU,
+# 保留为手动门禁 (见 tests/net_smoke.ps1, 已参数化 -Root/-Qemu)。
+name: SkylineSystem CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-suites:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y g++ gcc make
+
+      - name: Build host test suites
+        working-directory: tests
+        run: make -B slub slub-poison fc fc-reg sched slub-mt fc-mt
+
+      - name: Run suites (ci.sh)
+        working-directory: tests
+        run: bash ci.sh
+
+      - name: Golden diff gate
+        working-directory: tests
+        run: bash golden.sh
+
+      - name: Upload CI logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs
+          path: tests/ci_*.log

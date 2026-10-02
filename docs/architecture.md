@@ -17,7 +17,7 @@
 │  ├─ 中断   interrupt/  GDT/IDT/ISR、LAPIC/IOAPIC/PIC     │
 │  ├─ 文件   fs/         VFS(fd/fc)、SAF、lwext4、FAT(空壳) │
 │  ├─ 驱动   drivers/    NVMe/AHCI、USB(xHCI)、PS/2、FB     │
-│  ├─ 网络   net/        lwIP vendored 但从未初始化(死代码)  │
+│  ├─ 网络   net/        e1000 82574L + lwIP 已接线 (DHCP/ping/TCP) │
 │  └─ 数据结构 klib/algorithm/  ART、RBTree、hashmap(改编)  │
 ├─────────────────────────────────────────────────────────┤
 │  Limine 引导协议 (BIOS + UEFI) → 进入 64-bit 直接执行     │
@@ -40,7 +40,7 @@
 | `ablib/` | 手写高频 libc 原语（memcpy/memset，AVX/AVX2 分发） |
 | `res/scripts/` | QEMU 启动脚本（Linux / WSL / Windows） |
 
-> `lwext4`、`fatfs`、`lwip`、`flanterm`、`limine-protocol`、`stb_truetype` 是第三方移植/借用，不属于自研。lwIP 从未初始化（编译进镜像但无调用者）。
+> `lwext4`、`fatfs`、`lwip`、`flanterm`、`limine-protocol`、`stb_truetype` 是第三方移植/借用，不属于自研。lwIP 已接线 (e1000 驱动 + DHCP/ICMP ping/TCP, 见 docs/network.md)。
 
 ## 3. 启动时序
 
@@ -94,3 +94,4 @@ Serial 输出就位
 - 用户态/内核态地址空间隔离，`enable_smep_smap()` 打开 SMEP 与 SMAP（内核访问用户页需显式开关），并按 CPUID 启用 **EFER.NXE**。
 - 用户态 **W^X**：ELF 装载完成后按段 `p_flags` 收紧映射（不可写段去 W、不可执行段加 NX）。
 - 用户/内核拷贝（`ua.cpp`）强制 `MM_USER` 校验与 4 级用户半区上界——曾存在"用户态经 HHDM 别名读写任意物理内存"的漏洞，已修复。
+- **权限模型如实说明**：无 uid/gid、无文件权限位、无 chmod/access（单用户 OS）；敏感操作走进程级信任位 `IsTrusted`（kill/exec/跨进程 mmap 等）。详见 [fc-semantics.md](fc-semantics.md) 与 [syscall.md](syscall.md)。

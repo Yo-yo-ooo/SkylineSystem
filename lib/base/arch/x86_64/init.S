@@ -28,16 +28,19 @@
 _start:
     # ----------------------------------------------------
     # 1. 阶段一：从内核摆好的 RSP 中提取 argc 和 argv
+    #    (P5-104: 恢复显式约定 —— 原实现注释掉了提取与对齐,
+    #     但阶段三的 pop rdi/pop rsi 仍在执行, 弹走的是从未压入
+    #     的栈槽 → 垃圾参数 + 栈错位)
     # ----------------------------------------------------
-   # mov rdi, [rsp]        # RDI = argc
-   # lea rsi, [rsp + 8]    # RSI = argv
+    mov rdi, [rsp]        # RDI = argc
+    lea rsi, [rsp + 8]    # RSI = argv
 
-    # 16字节栈对齐
-   # and rsp, 0xFFFFFFFFFFFFFFF0
+    # 16字节栈对齐 (SysV 调用约定要求)
+    and rsp, 0xFFFFFFFFFFFFFFF0
 
-    # 把参数暂时保存到安全的地方（比如压入对齐后的栈），防止接下来的初始化冲爆寄存器
-    #push rsi
-    #push rdi
+    # 把参数暂时保存到对齐后的栈上，防止接下来的初始化冲爆寄存器
+    push rsi
+    push rdi
 
     # ----------------------------------------------------
     # 2. 阶段二：由 init.S 负责 Lib 库和全局变量的初始化
@@ -56,5 +59,5 @@ _start:
     # 4. 阶段四：安全退出
     # ----------------------------------------------------
     mov rdi, rax          # RAX 里是 main 的返回值
-    mov rax, 9            
+    mov rax, 9            # SYS_EXIT (P5-97: 见 syscall.h; 汇编无法用宏, 编号权威在内核 syscalln.h)
     syscall                 # 陷入内核，安乐死

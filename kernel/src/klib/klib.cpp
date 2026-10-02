@@ -7,6 +7,9 @@
 
 extern "C" void Panic(const char* message){
     kerrorln("Panic!");
+    /* 可诊断性: 消息同时进串口 (此前只走 E9 调试端口, 串口只见
+       "Panic!" 看不到原因 —— 挂载断言等曾因此漏报) */
+    if (message) kerrorln("%s", message);
     e9_printf(message);
     hcf();
 }
@@ -29,6 +32,9 @@ void Panic(const char* message,bool halt){
 
 // Halt and catch fire function.
 void hcf(void) {
+    /* P5-107: 停机前输出诊断 (原实现直接 hlt, 引导失败时串口无任何
+       可诊断信息; headless 调试场景串口即唯一现场) */
+    kerrorln("SYSTEM HALTED (hcf): no usable root filesystem or fatal init error");
     for (;;) {
 #ifdef __x86_64__
         asm volatile("hlt");
@@ -115,17 +121,14 @@ uint64_t kld_64 (const uint8_t* ptr)	/* Load an 8-byte little-endian word */
 }
 
 #if defined(__x86_64__)
-#include <arch/x86_64/rtc/rtc.h>
+#include <arch/x86_64/pit/pit.h>
 #endif
 
+/* lwIP 端口时间源: 必须为单调毫秒 (原实现是 RTC 日期编码, 跨日回绕会
+   破坏 timeouts.c 的超时数学)。 */
 extern "C" uint32_t sys_now(void){
 #if defined(__x86_64__)
-    return (uint32_t)(RTC::Year - 80) << 25 |
-           (uint32_t)(RTC::Month + 1) << 21 |
-           (uint32_t)RTC::Day << 16 |
-           (uint32_t)RTC::Hour << 11 |
-           (uint32_t)RTC::Minute << 5 |
-           (uint32_t)RTC::Second >> 1;
+    return (uint32_t)PIT::TimeSinceBootMS();
 #else
     return 0;
 #endif

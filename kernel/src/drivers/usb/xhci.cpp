@@ -84,9 +84,27 @@ static OpRegs* g_op = nullptr;
 static IntRegSet* g_intRegs = nullptr;
 static uint32_t* g_doorbells = nullptr;
 static uint8_t g_maxSlots = 0, g_maxPorts = 0;
+/* P2-60 文档化设计限制: xHCI 驱动为全局单实例 (g_* 静态), 仅支持
+   一个控制器; 多控制器需要把全部 g_* 迁入实例结构。 */
 
 static uint64_t* g_dcbaap = nullptr;
 static uint64_t* g_scratchpadBufArray = nullptr;
+/* P1-32: 端口状态变更延迟处理标志 (IRQ 置位, 工作线程消费) */
+static volatile uint32_t g_port_change_pending = 0;
+
+/* P1-32: 端口变更工作线程 —— 阻塞枚举移出 IRQ 上下文 */
+static void xhci_port_worker(void) {
+    for (;;) {
+        if (__atomic_exchange_n(&g_port_change_pending, 0, __ATOMIC_ACQUIRE)) {
+            for (uint32_t p = 1; p <= g_maxPorts; p++) {
+                volatile PortReg* portReg = &g_op->ports[p - 1];
+                uint32_t portsc = portReg->portsc;
+                if (portsc & PORTSC_CSC) HandlePortChange(p);
+            }
+        }
+        PIT::Sleep(10);
+    }
+}
 static void* g_scratchpadBuffers = nullptr;
 
 static volatile TRB* g_cmdRing = nullptr;
@@ -163,42 +181,49 @@ static inline void writeOp(uint32_t off, uint32_t v) { *((volatile uint32_t*)((u
 static inline uint32_t readOp(uint32_t off) { return *((volatile uint32_t*)((uint64_t)g_op + off)); }
 static inline void ringDoorbell(uint8_t slot, uint8_t target) { *((volatile uint32_t*)((uint64_t)g_doorbells + (slot * 4))) = target; }
 
-static bool EnqueueAndTrack(TRBRingState* ring, uint8_t slotID, uint8_t dbTarget, const TRB& trb, PendingTransfer* pt) {
+/* P1-33: 链式 TRB 入队 (多页传输的 SG) —— 末条 TRB 记账 + 单次门铃 */
+static bool EnqueueChainAndTrack(TRBRingState* ring, uint8_t slotID, uint8_t dbTarget,
+                                 const TRB* trbs, uint32_t n, PendingTransfer* pt) {
     uint64_t flags;
     usb_spin_lock_irqsave(&ring->lock, flags);
-    
-    uint32_t idx = ((uint64_t)ring->enqueue - (uint64_t)ring->base) / sizeof(TRB);
-    volatile TRB* next = (idx == TRANSFER_RING_SIZE - 1) ? ring->base : ring->enqueue + 1;
-    
-    if (next == ring->dequeue) {
-        usb_spin_unlock_irqrestore(&ring->lock, flags);
-        return false; 
+    volatile TRB* start_enqueue = ring->enqueue;
+    uint8_t start_cycle = ring->cycle;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t idx = ((uint64_t)ring->enqueue - (uint64_t)ring->base) / sizeof(TRB);
+        volatile TRB* next = (idx == TRANSFER_RING_SIZE - 1) ? ring->base : ring->enqueue + 1;
+        if (next == ring->dequeue) {
+            ring->enqueue = start_enqueue; ring->cycle = start_cycle;   /* 回滚 */
+            usb_spin_unlock_irqrestore(&ring->lock, flags);
+            return false;
+        }
+        if (i == n - 1) {
+            pt->trbPtr = (idx == TRANSFER_RING_SIZE - 1) ? virt_to_phys((void*)ring->base)
+                                                         : virt_to_phys((void*)ring->enqueue);
+            pt->slotID = slotID;
+            uint64_t pflags;
+            usb_spin_lock_irqsave(&g_pendingTransfersLock, pflags);
+            rb_insert(&g_pendingTransfers, &pt->node, pending_xfer_cmp);
+            usb_spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
+        }
+        if (idx == TRANSFER_RING_SIZE - 1) {
+            ring->enqueue->parameter = virt_to_phys((void*)ring->base);
+            ring->enqueue->status = 0;
+            ring->enqueue->control = (TRB_LINK << 10) | (ring->cycle << 0) | (1u << 1);
+            ring->cycle ^= 1;
+            ring->enqueue = ring->base;
+        }
+        ring->enqueue->parameter = trbs[i].parameter;
+        ring->enqueue->status = trbs[i].status;
+        ring->enqueue->control = (trbs[i].control & ~1u) | ring->cycle;
+        ring->enqueue++;
     }
-
-    pt->trbPtr = (idx == TRANSFER_RING_SIZE - 1) ? virt_to_phys((void*)ring->base) : virt_to_phys((void*)ring->enqueue);
-    pt->slotID = slotID;
-    
-    uint64_t pflags;
-    usb_spin_lock_irqsave(&g_pendingTransfersLock, pflags);
-    rb_insert(&g_pendingTransfers, &pt->node, pending_xfer_cmp);
-    usb_spin_unlock_irqrestore(&g_pendingTransfersLock, pflags);
-
-    if (idx == TRANSFER_RING_SIZE - 1) {
-        ring->enqueue->parameter = virt_to_phys((void*)ring->base);
-        ring->enqueue->status = 0;
-        ring->enqueue->control = (TRB_LINK << 10) | (ring->cycle << 0) | (1u << 1);
-        ring->cycle ^= 1;
-        ring->enqueue = ring->base;
-    }
-    
-    ring->enqueue->parameter = trb.parameter;
-    ring->enqueue->status = trb.status;
-    ring->enqueue->control = (trb.control & ~1u) | ring->cycle;
-    ring->enqueue++;
-    
     usb_spin_unlock_irqrestore(&ring->lock, flags);
     ringDoorbell(slotID, dbTarget);
     return true;
+}
+
+static bool EnqueueAndTrack(TRBRingState* ring, uint8_t slotID, uint8_t dbTarget, const TRB& trb, PendingTransfer* pt) {
+    return EnqueueChainAndTrack(ring, slotID, dbTarget, &trb, 1, pt);
 }
 
 static void processEvent(volatile TRB* evt) {
@@ -286,7 +311,11 @@ static void processEvent(volatile TRB* evt) {
         }
         case TRB_PORT_STATUS_CHANGE: {
             uint8_t port = (evt->parameter >> 24) & 0xFF;
-            HandlePortChange(port);
+            /* P1-32: 不在 IRQ 上下文做阻塞枚举 (HandlePortChange 内
+               SubmitCommandBlocking 最长 100s 忙等) —— 置标志由工作
+               线程延迟处理 */
+            (void)port;
+            __atomic_store_n(&g_port_change_pending, 1, __ATOMIC_RELEASE);
             break;
         }
         default: break;
@@ -500,6 +529,12 @@ void InitXHCIFromPCI(PCI::PCIHeader0* hdr) {
         uint32_t psc = portReg->portsc;
         if (psc & PORTSC_CCS) HandlePortChange(p);
     }
+
+    /* P1-32: 端口变更工作线程 —— 调度器可能尚未 Install (PCI 探测期),
+       此时线程入队待调度器启动后运行; 引导期的初始端口扫描已在上方
+       内联完成, 热插拔事件由 IRQ 置标志 → 本线程消费 */
+    Schedule::NewKernelThread(Schedule::NewProcess(false), 0, 8,
+                              (void*)xhci_port_worker);
 }
 
 // Map the xHCI Port Speed field (PORTSC bits 13:10) to the USB speed enum.
@@ -532,10 +567,10 @@ void HandlePortChange(uint8_t port) {
 
     // Acknowledge the change bits up front. If enumeration is already running
     // for this port, drop the event instead of re-entering the state machine.
+    // P1-24: W1C 用 | 写回 (整体赋值会清掉 PP/PLS/CCS → 真机端口断电)
     bool alreadyBusy = g_portBusy[port];
-    if (portsc & PORTSC_CSC) portReg->portsc = PORTSC_CSC;
-    if (portsc & PORTSC_PRC) portReg->portsc = PORTSC_PRC;
-    if (portsc & PORTSC_PEC) portReg->portsc = PORTSC_PEC;
+    if (portsc & (PORTSC_CSC | PORTSC_PRC | PORTSC_PEC))
+        portReg->portsc = portsc | (PORTSC_CSC | PORTSC_PRC | PORTSC_PEC);
     if (alreadyBusy || !(portsc & PORTSC_CSC)) return;
 
     g_portBusy[port] = true;
@@ -601,25 +636,40 @@ bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed) {
     g_slots[slot].rings[0].lock = 0;
 
     TRB addrCmd = {}; addrCmd.parameter = virt_to_phys(inputCtx); addrCmd.control = (TRB_ADDRESS_DEVICE << 10) | (slot << 24) | (1u << 5);
-    if (SubmitCommandBlocking(&addrCmd, 1000) == 0) return false;
-    freeDMA(inputCtx);
-
+    bool input_freed = false;
+    /* P1-31: 变量声明提前 —— goto enum_fail 不得跨越初始化 */
     USB::DeviceDescriptor devDesc = {};
-    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_DEVICE << 8), 0, &devDesc, 8)) return false;
-    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_DEVICE << 8), 0, &devDesc, sizeof(devDesc))) return false;
-
     uint8_t cfgBuf[1024] = {};
-    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_CONFIG << 8), 0, cfgBuf, sizeof(USB::ConfigDescriptor))) return false;
-    uint16_t totalLen = ((USB::ConfigDescriptor*)cfgBuf)->wTotalLength;
-    if (totalLen > sizeof(cfgBuf)) totalLen = sizeof(cfgBuf);
-    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_CONFIG << 8), 0, cfgBuf, totalLen)) return false;
-    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::SET_CONFIGURATION, 1, 0, nullptr, 0)) return false;
+    uint16_t totalLen = 0;
+    USB::Device* dev = nullptr;   /* 声明提前: goto 不跨越初始化 */
+    if (SubmitCommandBlocking(&addrCmd, 1000) == 0) goto enum_fail;
+    freeDMA(inputCtx); input_freed = true;
 
-    USB::Device* dev = USB::CreateDevice(slot, port, speed, devDesc, cfgBuf, totalLen);
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_DEVICE << 8), 0, &devDesc, 8)) goto enum_fail;
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_DEVICE << 8), 0, &devDesc, sizeof(devDesc))) goto enum_fail;
+
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_CONFIG << 8), 0, cfgBuf, sizeof(USB::ConfigDescriptor))) goto enum_fail;
+    totalLen = ((USB::ConfigDescriptor*)cfgBuf)->wTotalLength;
+    if (totalLen > sizeof(cfgBuf)) totalLen = sizeof(cfgBuf);
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_IN | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::GET_DESCRIPTOR, (USB::DT_CONFIG << 8), 0, cfgBuf, totalLen)) goto enum_fail;
+    if (!USB::ControlTransfer(slot, 0, USB_REQ_DIR_OUT | USB_REQ_TYPE_STD | USB_REQ_RCPT_DEV, USB::SET_CONFIGURATION, 1, 0, nullptr, 0)) goto enum_fail;
+
+    dev = USB::CreateDevice(slot, port, speed, devDesc, cfgBuf, totalLen);
     kinfo("[xHCI] dev slot%u %04x:%04x on p%u\n",
           slot, devDesc.idVendor, devDesc.idProduct, port);
     USB::RouteDeviceToClassDriver(dev);
     return true;
+
+enum_fail:
+    /* P1-31: 枚举失败路径统一清理 (原实现直接 return, 泄漏 devCtx/
+       ep0Ring/inputCtx 且 slot 残留占用) */
+    if (!input_freed) freeDMA(inputCtx);
+    freeDMA((void*)ep0Ring);
+    g_slots[slot].rings[0].base = nullptr;
+    freeDMA(devCtx);
+    g_dcbaap[slot] = 0;
+    g_slots[slot].used = false; g_slots[slot].ctx = nullptr;
+    return false;
 }
 
 void DestroyDevice(uint8_t slotID) {
@@ -769,14 +819,25 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
     }
     
     if (len > 0) {
-        TRB dataTrb = {};
-        dataTrb.parameter = virt_to_phys(dmaBuf ? dmaBuf : buf); dataTrb.status = len;
-        dataTrb.control = (TRB_DATA_STAGE << 10) | (1u << 5) | (inDir ? (1u << 16) : 0);
-        if (!try_enqueue(dataTrb)) {
-            ring->enqueue = start_enqueue; ring->cycle = start_cycle;
-            usb_spin_unlock_irqrestore(&ring->lock, flags);
-            if (dmaBuf) freeDMA(dmaBuf);
-            return false;
+        /* P1-33: 多页传输按页链式 TRB —— 原实现单 TRB 只填首頁物理
+           地址, 跨页 DMA 读错物理内存; CH 位 (bit 6) 链接 TD 链
+           (xHCI 1.0+ 忽略 TD Size, QEMU 亦然) */
+        uint32_t remaining = len;
+        uint64_t va = (uint64_t)(dmaBuf ? dmaBuf : buf);
+        while (remaining > 0) {
+            uint32_t chunk = (remaining > 0x1000u) ? 0x1000u : remaining;
+            TRB dataTrb = {};
+            dataTrb.parameter = virt_to_phys((void*)va); dataTrb.status = chunk;
+            dataTrb.control = (TRB_DATA_STAGE << 10) | (1u << 5) |
+                              (inDir ? (1u << 16) : 0) |
+                              ((remaining > chunk) ? (1u << 6) : 0);
+            if (!try_enqueue(dataTrb)) {
+                ring->enqueue = start_enqueue; ring->cycle = start_cycle;
+                usb_spin_unlock_irqrestore(&ring->lock, flags);
+                if (dmaBuf) freeDMA(dmaBuf);
+                return false;
+            }
+            va += chunk; remaining -= chunk;
         }
     }
     
@@ -846,16 +907,29 @@ bool SubmitNormalTransfer(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t le
         if (!inDir) __memcpy(dmaBuf, buf, len); // OUT: stage host->device data
     }
 
-    TRB trb = {};
-    trb.parameter = virt_to_phys(dmaBuf ? dmaBuf : buf); trb.status = len;
-    trb.control = ((isoch ? TRB_ISOCH : TRB_NORMAL) << 10) | (1u << 5);
+    /* P1-33: 多页传输按页链式 TRB (SG) —— 每页一个 TRB + CH 位链接 */
+    uint32_t nTrbs = (len + 0xFFF) >> 12;
+    if (nTrbs == 0) nTrbs = 1;
+    TRB* chain = (TRB*)kmalloc(sizeof(TRB) * nTrbs);
+    if (!chain) { if (dmaBuf) freeDMA(dmaBuf); return false; }
+    uint32_t remaining = len;
+    uint64_t va = (uint64_t)(dmaBuf ? dmaBuf : buf);
+    for (uint32_t i = 0; i < nTrbs; i++) {
+        uint32_t chunk = (remaining > 0x1000u) ? 0x1000u : remaining;
+        chain[i].parameter = virt_to_phys((void*)va); chain[i].status = chunk;
+        chain[i].control = ((isoch ? TRB_ISOCH : TRB_NORMAL) << 10) | (1u << 5) |
+                           ((i + 1 < nTrbs) ? (1u << 6) : 0);
+        va += chunk; remaining -= chunk;
+    }
 
     PendingTransfer pt = {}; rb_init_node(&pt.node); pt.completed = false; pt.async = false;
     pt.slotID = slotID;
-    if (!EnqueueAndTrack(ring, slotID, epIdx, trb, &pt)) {
+    if (!EnqueueChainAndTrack(ring, slotID, epIdx, chain, nTrbs, &pt)) {
+        kfree(chain);
         if (dmaBuf) freeDMA(dmaBuf);
         return false;
     }
+    kfree(chain);
 
     for(uint32_t i=0; i<100000; i++) {
         if (pt.completed) break;

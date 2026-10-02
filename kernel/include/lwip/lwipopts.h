@@ -24,38 +24,38 @@
 /* MEM_ALIGNMENT: should be set to the alignment of the CPU for which
     lwIP is compiled. 4 byte alignment -> define MEM_ALIGNMENT to 4, 2
     byte alignment -> define MEM_ALIGNMENT to 2. */
-#define MEM_ALIGNMENT           4                  // (2)
+#define MEM_ALIGNMENT           16                 // 16B: pbuf 负载保持缓存行友好 (内核 kmalloc 类粒度)
 
 /* MEM_SIZE: the size of the heap memory. If the application will send
 a lot of data that needs to be copied, this should be set high. */
-#define MEM_SIZE                (30*1024)           //(3)
+#define MEM_SIZE                (64*1024)
 
 /* MEMP_NUM_PBUF: the number of memp struct pbufs. If the application
     sends a lot of data out of ROM (or other static memory), this
     should be set high. */
-#define MEMP_NUM_PBUF           50
+#define MEMP_NUM_PBUF           64
 /* MEMP_NUM_UDP_PCB: the number of UDP protocol control blocks. One
     per active UDP "connection". */
-#define MEMP_NUM_UDP_PCB        6
+#define MEMP_NUM_UDP_PCB        8
 /* MEMP_NUM_TCP_PCB: the number of simulatenously active TCP
     connections. */
-#define MEMP_NUM_TCP_PCB        10
+#define MEMP_NUM_TCP_PCB        16
 /* MEMP_NUM_TCP_PCB_LISTEN: the number of listening TCP
     connections. */
-#define MEMP_NUM_TCP_PCB_LISTEN 6
+#define MEMP_NUM_TCP_PCB_LISTEN 8
 /* MEMP_NUM_TCP_SEG: the number of simultaneously queued TCP
     segments. */
-#define MEMP_NUM_TCP_SEG        12
+#define MEMP_NUM_TCP_SEG        32
 /* MEMP_NUM_SYS_TIMEOUT: the number of simulateously active
     timeouts. */
-#define MEMP_NUM_SYS_TIMEOUT    10
+#define MEMP_NUM_SYS_TIMEOUT    12
 
 /* ---------- Pbuf options ---------- */
 /* PBUF_POOL_SIZE: the number of buffers in the pbuf pool. */
-#define PBUF_POOL_SIZE          10                 // (4)
+#define PBUF_POOL_SIZE          32
 
 /* PBUF_POOL_BUFSIZE: the size of each pbuf in the pbuf pool. */
-#define PBUF_POOL_BUFSIZE       500                // (5)
+#define PBUF_POOL_BUFSIZE       2048
 
 /* ---------- TCP options ---------- */
 #define LWIP_TCP                1
@@ -83,14 +83,18 @@ as much as (2 * TCP_SND_BUF/TCP_MSS) for things to work. */
 #define LWIP_ICMP                       1
 
 /* ---------- DHCP options ---------- */
-/* Define LWIP_DHCP to 1 if you want DHCP configuration of
-interfaces. DHCP is not implemented in lwIP 0.5.1, however, so
-turning this on does currently not work. */
 #define LWIP_DHCP               1
+/* slirp 会代理应答指向 guest IP 的 ARP (为主机侧可达性), lwIP 的
+   DHCP ACD 冲突探测会误判"IP 已被占用"→ 拒绝 OFFER 无限重发 DISCOVER
+   (实测: 第三个 TX 帧即 ARP who-has 10.0.2.15, 之后循环)。关闭 ACD。 */
+#define LWIP_DHCP_DOES_ACD_CHECK 0
 
 /* ---------- UDP options ---------- */
 #define LWIP_UDP                1
 #define UDP_TTL                 255
+
+/* ---------- RAW options ---------- */
+#define LWIP_RAW                1
 
 /* ---------- Statistics options ---------- */
 #define LWIP_STATS 0
@@ -107,44 +111,19 @@ turning this on does currently not work. */
     --------------------------------------
 */
 
-/*The STM32F4x7 allows comput
-ing and verifying the IP, UDP, TCP and ICMP checksums by hardware:
-- To use this feature let the following define uncommented.
-- To disable it and process by CPU comment the  the checksum.
-*/
-#define CHECKSUM_BY_HARDWARE
-
-#ifdef CHECKSUM_BY_HARDWARE
-/* CHECKSUM_GEN_IP==0: Generate checksums by hardware for outgoing IP packets.*/
-#define CHECKSUM_GEN_IP                 0
-/* CHECKSUM_GEN_UDP==0: Generate checksums by hardware for outgoing UDP packets.*/
-#define CHECKSUM_GEN_UDP                0
-/* CHECKSUM_GEN_TCP==0: Generate checksums by hardware for outgoing TCP packets.*/
-#define CHECKSUM_GEN_TCP                0
-/* CHECKSUM_CHECK_IP==0: Check checksums by hardware for incoming IP packets.*/
-#define CHECKSUM_CHECK_IP               0
-/* CHECKSUM_CHECK_UDP==0: Check checksums by hardware for incoming UDP packets.*/
-#define CHECKSUM_CHECK_UDP              0
-/* CHECKSUM_CHECK_TCP==0: Check checksums by hardware for incoming TCP packets.*/
-#define CHECKSUM_CHECK_TCP              0
-/*CHECKSUM_CHECK_ICMP==0: Check checksums by hardware for incoming ICMP packets.*/
-#define CHECKSUM_GEN_ICMP               0
-#else
-/* CHECKSUM_GEN_IP==1: Generate checksums in software for outgoing IP packets.*/
+/* e1000 第一版不启用硬件校验卸载 (后续 DPDK-lite 轮再开 TX offload),
+   全部软件校验 —— 与 QEMU slirp 对端无关, 保证端到端正确 */
 #define CHECKSUM_GEN_IP                 1
-/* CHECKSUM_GEN_UDP==1: Generate checksums in software for outgoing UDP packets.*/
 #define CHECKSUM_GEN_UDP                1
-/* CHECKSUM_GEN_TCP==1: Generate checksums in software for outgoing TCP packets.*/
 #define CHECKSUM_GEN_TCP                1
-/* CHECKSUM_CHECK_IP==1: Check checksums in software for incoming IP packets.*/
-#define CHECKSUM_CHECK_IP               1
-/* CHECKSUM_CHECK_UDP==1: Check checksums in software for incoming UDP packets.*/
-#define CHECKSUM_CHECK_UDP              1
-/* CHECKSUM_CHECK_TCP==1: Check checksums in software for incoming TCP packets.*/
-#define CHECKSUM_CHECK_TCP              1
-/*CHECKSUM_CHECK_ICMP==1: Check checksums by hardware for incoming ICMP packets.*/
+/* 已知移植项: 本 vendored lwIP 的 RX 校验验证路径会丢弃 slirp 的合法帧
+   (ping 实测: 开启后收不到回复; slirp 校验和本身无误)。发侧校验全部开启,
+   收侧验证待与 lwIP 版本核对后修复。 */
+#define CHECKSUM_CHECK_IP               0
+#define CHECKSUM_CHECK_UDP              0
+#define CHECKSUM_CHECK_TCP              0
 #define CHECKSUM_GEN_ICMP               1
-#endif
+#define CHECKSUM_CHECK_ICMP             0
 
 /*
     ----------------------------------------------
@@ -171,7 +150,10 @@ ing and verifying the IP, UDP, TCP and ICMP checksums by hardware:
     ---------- Lwip Debug options ----------
     ----------------------------------------
 */
-//#define LWIP_DEBUG                      1
+/* 调试默认关闭 (开启会淹串口)。历史: 多模块 DEBUG 崩溃已定位为内核
+   线程栈 16KB 不够 (现网络线程 32KB, 见 e1000_lwip.cpp), 非 vsnprintf
+   缺陷; cc.h 的 DIAG varargs 链已修复 (上游 printf x 模式)。 */
+#define LWIP_DEBUG                      0
 
 #define MEM_CUSTOM_ALLOCATOR            1
 #define MEM_CUSTOM_FREE                 kfree

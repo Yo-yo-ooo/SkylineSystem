@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <graphic/devtype.h>   /* P5-97 */
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,8 +20,9 @@ extern "C" {
 #define KBD_MAX_READERS 8u  /* concurrent GUI consumers of the event page */
 
 /* dev_mmap (syscall 21) first argument that maps the keyboard event page;
-   mirrors the kernel X86_KEYBOARD device type (userspace has no dev.h). */
-#define KBD_DEV_TYPE 9u
+   P5-97: 权威在 graphic/devtype.h (DEV_TYPE_KEYBOARD), 此处别名保持
+   兼容 —— 两个定义若漂移即 ABI 错位, 用户态引用一律走 devtype.h。 */
+#define KBD_DEV_TYPE DEV_TYPE_KEYBOARD
 
 #define KBD_ACTION_UP    0u
 #define KBD_ACTION_DOWN  1u

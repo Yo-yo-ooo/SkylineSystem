@@ -123,20 +123,23 @@ void fd_manager_init(fd_manager_t* manager) {
 int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
     if (!manager) return -1;
 
-    // 寻找最小的可用 FD
+    // 寻找最小的可用 FD (P0-16: 分片写锁跨越 search+insert, 消除 TOCTOU 双插入)
     int32_t new_fd = manager->next_fd_hint;
     fd_t search_key;
     search_key.fd = new_fd;
-    
-    // 如果当前 hint 被占用，则递增查找
-    while (rb_sharded_search(&manager->fd_tree, &search_key.node)) {
+    rb_root_t *shard = rb_get_shard(&manager->fd_tree, &search_key.node);
+    if (!shard) return -1;
+    RB_WLOCK(shard);
+
+    // 如果当前 hint 被占用，则递增查找 (锁内版本)
+    while (rb_search_locked_only(shard, &search_key.node, manager->fd_tree.ops.cmp)) {
         new_fd++;
         search_key.fd = new_fd;
     }
 
     // 分配新的 fd_t 结构体
     fd_t* new_entry = (fd_t*)kmalloc(sizeof(fd_t));
-    if (!new_entry) return -1;
+    if (!new_entry) { RB_WUNLOCK(shard); return -1; }
     
     rb_init_node(&new_entry->node);
     new_entry->fd = new_fd;
@@ -144,8 +147,10 @@ int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
     new_entry->FSOPS = nullptr;
     new_entry->MP = nullptr;
 
-    // 插入红黑树
-    rb_sharded_insert(&manager->fd_tree, &new_entry->node);
+    // 插入红黑树 (锁内原始版本)
+    rb_insert_raw(shard, &new_entry->node, manager->fd_tree.ops.cmp);
+    shard->cnt++;
+    RB_WUNLOCK(shard);
 
     // 更新下一次的探测起点
     manager->next_fd_hint = new_fd + 1;
@@ -211,6 +216,59 @@ void fd_manager_destroy(fd_manager_t* manager) {
     manager->next_fd_hint = 0;
 }
 
+/* P0-6 路线图 #7: fork 时 FD 继承 —— 快照式深拷贝。
+   filedesc 按 FSOPS->SIZEOF_FILE_DESC 逐字节复制 (ext4_file 为纯句柄,
+   复制后父子各持独立快照, 关闭互不干扰); 文件偏移 = fork 时刻快照,
+   后续父子各自独立推进 (与 POSIX 共享偏移的偏差已文档化)。
+   path 深拷贝; FSOPS/MP 为全局表指针, 直接共享。
+   调用前提: 源进程 = fork 的调用者自身, 单线程上下文, 无需加锁。 */
+int32_t fd_manager_dup(fd_manager_t* dst, fd_manager_t* src) {
+    if (!dst || !src) return -1;
+    int32_t count = 0;
+    for (uint32_t i = 0; i < src->fd_tree.shard_num; i++) {
+        rb_root_t* shard = &src->fd_tree.shards[i];
+        for (rb_node_t* n = rb_first(shard->node); n; n = rb_next(n)) {
+            fd_t* se = container_of(n, fd_t, node);
+
+            fd_t* ne = (fd_t*)kmalloc(sizeof(fd_t));
+            if (!ne) continue;
+            rb_init_node(&ne->node);
+            ne->fd = se->fd;
+            ne->path = nullptr;
+            ne->path_len = se->path_len;
+            ne->file_size = se->file_size;
+            ne->FSOPS = se->FSOPS;
+            ne->MP = se->MP;
+            ne->filedesc = nullptr;
+
+            if (se->path) {
+                ne->path = (char*)kmalloc(se->path_len + 1);
+                if (ne->path) {
+                    __memcpy(ne->path, se->path, se->path_len);
+                    ne->path[se->path_len] = '\0';
+                }
+            }
+            if (se->filedesc && se->FSOPS && se->FSOPS->SIZEOF_FILE_DESC) {
+                ne->filedesc = kmalloc(se->FSOPS->SIZEOF_FILE_DESC);
+                if (ne->filedesc)
+                    __memcpy(ne->filedesc, se->filedesc,
+                             se->FSOPS->SIZEOF_FILE_DESC);
+            }
+
+            /* 目标树按同编号插入 (分片由 key 决定) */
+            rb_root_t* dshard = rb_get_shard(&dst->fd_tree, &ne->node);
+            if (!dshard) { kfree(ne); continue; }
+            RB_WLOCK(dshard);
+            rb_insert_raw(dshard, &ne->node, dst->fd_tree.ops.cmp);
+            dshard->cnt++;
+            RB_WUNLOCK(dshard);
+            if (ne->fd >= dst->next_fd_hint) dst->next_fd_hint = ne->fd + 1;
+            count++;
+        }
+    }
+    return count;
+}
+
 
 int32_t file_cache_writeback_callback(
     const uint8_t *key, 
@@ -239,13 +297,16 @@ int32_t file_cache_writeback_callback(
     }
     _memset(filedesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
 
-    // 4. 以只写模式打开文件
-    // 假设您的内核定义了 O_WRONLY (通常为 0x1)
-    int32_t err = MP->FSOPS->open(filedesc, kpath, 0x1); 
+    // 4. 以只写 + 截断模式打开文件
+    // P1-36a: 补 O_TRUNC —— 原实现只 O_WRONLY, 写回比旧文件短的数据
+    // 时尾部残留旧内容 (脏页写回的语义 = 覆写整个缓存页)
+    int32_t err = MP->FSOPS->open(filedesc, kpath, 0x1 | O_TRUNC); 
     if (err < 0) {
         kfree(filedesc);
         kfree(kpath);
-        return EIO; // 文件可能已被删除，无法打开则丢弃脏页
+        /* P1-36b: 删除文件的静默丢脏页 → 显式失败计入重试/FAILED
+           (数据保留在缓存条目中, 由 P1-35 的冷却重试尝试恢复) */
+        return EIO;
     }
 
     // 5. 将文件指针定位到开头 (SEEK_SET = 0)

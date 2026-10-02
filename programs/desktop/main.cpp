@@ -13,7 +13,9 @@
 #include <base/font/ttf/ttf.h>
 #include <mouse/ps2.h>
 #include <synthesizer/window.h>
-static char intTo_stringOutput[128];
+/* P5-105: __thread 消除全局缓冲的非重入问题 (合成器 worker 线程
+   并行调用 to_string 时互不踩踏) */
+static __thread char intTo_stringOutput[128];
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place);
 
@@ -70,7 +72,7 @@ const char *to_string(int64_t value)
     return to_string((uint64_t)value);
 }
 
-extern void DrawMousePointer(int32_t mousex,int32_t mousey, FrameBuffer* framebuffer);
+/* P5-96: DrawMousePointer extern 已随 bd.cpp 死函数一并删除 */
 
 /* ---- monotonic TSC frame-pacing helpers -----------------------------------
  * The kernel's uptime_ms is only refreshed by the idle thread, which does
@@ -473,7 +475,7 @@ int main(){
     const uint64_t scene_gap  = 33u  * tsc_per_ms;   /* recompose scene ~30Hz */
     const uint64_t idle_gap   = 50u  * tsc_per_ms;   /* scene refresh, still  */
     const uint64_t chrome_gap = 16u  * tsc_per_ms;   /* live-resize repaint  */
-    const uint64_t clock_gap  = 500u * tsc_per_ms;   /* poll RTC twice / min */
+    const uint64_t clock_gap  = 500u * tsc_per_ms;   /* poll RTC at 2 Hz (P5-110: 原注释 "twice/min" 错误) */
 
     int32_t prev_x = -100;
     int32_t prev_y = -100;
@@ -737,6 +739,29 @@ int main(){
                 wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tstate,
                                 &ndt, true);
                 wmDirty = true;
+            }
+        }
+
+        /* P1-47: 死窗口轮询 —— 客户端进程退出后移除窗口 (hw2 打印完
+           即 exit, WM 原无感知; sys_kill(pid,0) = 存活探测) */
+        {
+            static uint64_t dead_check_at = 0;
+            if (now - dead_check_at > tsc_per_ms * 500) {
+                dead_check_at = now;
+                if (place.client_pid &&
+                    (int64_t)sys_kill(place.client_pid, 0) < 0) {
+                    comp.UnregisterWindow(&consoleWin);
+                    place.client_pid = 0;
+                    wmDirty = true;
+                }
+#if 1
+                if (notePlace.client_pid &&
+                    (int64_t)sys_kill(notePlace.client_pid, 0) < 0) {
+                    comp.UnregisterWindow(&noteWin);
+                    notePlace.client_pid = 0;
+                    wmDirty = true;
+                }
+#endif
             }
         }
 

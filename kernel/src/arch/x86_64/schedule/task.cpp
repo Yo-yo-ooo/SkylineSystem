@@ -54,6 +54,7 @@ static inline void detach_thread_from_proc(thread_t *thread) {
 }
 
 static inline void wait_for_transfer(thread_t *t) {
+    uint64_t t0 = PIT::TimeSinceBootMS();
     uint64_t last_log = 0;
     while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == THREAD_TRANSFER) {
         /* 修复: 用户态可达的 kill 路径超时不再整机 Panic; 保持等待语义
@@ -64,13 +65,22 @@ static inline void wait_for_transfer(thread_t *t) {
                      (uint64_t)t->id);
             last_log = now;
         }
+        /* P1-22: 超时升级 —— 对端卡死时不再永转; 5 个周期后强制清除
+           (本核继续推进; UAF 风险由调用方的回收语义兜底) */
+        if (now - t0 > WAIT_THREAD_TIMEOUT_MS * 5) {
+            kerrorln("Thread %lu stuck in TRANSFER for %lums, force-clearing",
+                     (uint64_t)t->id, now - t0);
+            __atomic_store_n(&t->state, THREAD_RUNNING, __ATOMIC_RELEASE);
+            return;
+        }
         asm volatile("pause");
     }
 }
 
 static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait) {
-    /* 修复: 重试循环加超时 —— THREAD_ZOMBIE==0 语义下, 构造中的线程
-       (memset 后未赋 state) 会让 state==ZOMBIE 的 continue 分支无限自旋 */
+    /* 修复: 重试循环加超时 —— THREAD_ZOMBIE==5 (sched.h), 构造中的线程
+       (memset 后 state==0) 不属于任何分支, 若对端恰在构造窗口会让
+       等待无限自旋, 故加墙钟超时兜底 (P3-83: 原注释 "ZOMBIE==0" 过时) */
     uint64_t batch_start = PIT::TimeSinceBootMS();
 
     while (true) {
@@ -646,9 +656,12 @@ namespace Schedule {
         restore = VMM::SwitchPageMap(thread->pagemap);
         {
         SmapGuard stack_ug;   // below we write argv/envp into the live user stack
+        /* P1-21: 参数串总量上限 —— 无上限时 argv/envp 可写穿 32KB 用户栈 */
+        const int32_t ARG_STACK_LIMIT = 16 * 1024;
         for (int32_t i = 0; i < argc; i++) {
             int32_t size = strlen(kernel_argv[i]) + 1;
             offset += ALIGN_UP(size, 16);
+            if (offset > ARG_STACK_LIMIT) { VMM::SwitchPageMap(restore); goto cleanup; }
             thread_argv[i] = stack_top - offset;
             __memcpy((void*)(stack_top - offset), kernel_argv[i], size);
         }
@@ -659,6 +672,7 @@ namespace Schedule {
             for (int32_t i = 0; i < envc; i++) {
                 int32_t size = strlen(kernel_envp[i]) + 1;
                 offset += ALIGN_UP(size, 16);
+                if (offset > ARG_STACK_LIMIT) { VMM::SwitchPageMap(restore); goto cleanup; }
                 thread_envp[i] = stack_top - offset;
                 __memcpy((void*)(stack_top - offset), kernel_envp[i], size);
             }
@@ -681,6 +695,15 @@ namespace Schedule {
     }
 
     thread_t *NewKernelThread(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry) {
+        return NewKernelThreadEx(parent, cpu_num, priority, entry, 4);
+    }
+
+    thread_t *NewKernelThreadEx(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry, uint32_t stack_pages) {
+        if (stack_pages < 2 || stack_pages > 64) stack_pages = 4;
+        /* 防御纵深 (round 40 根因): 向退出中的 proc spawn 线程必须显式失败
+           —— 并发终结的 proc 结构 (FDMan 等) 可能已被回收, 曾致自旋锁 UAF */
+        if (unlikely(!parent || __atomic_load_n(&parent->exiting, __ATOMIC_ACQUIRE) != 0))
+            return nullptr;
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
@@ -691,7 +714,8 @@ namespace Schedule {
         thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
         thread->cpu_num = cpu_num; thread->parent = parent;
         thread->pagemap = parent->pagemap;
-        thread->priority = priority > 15 ? 15 : priority;
+        /* P0-8: 钳到 [0,15] (负值会越界读 sched_prio_to_weight[]) */
+        thread->priority = (priority < 0) ? 0 : (priority > 15 ? 15 : priority);
         thread->weight = sched_prio_to_weight[thread->priority];
         thread->state = THREAD_RUNNING;   // 修复: 提前 —— 不依赖后续路径补设
         cpu_t *cpu = get_cpu(cpu_num);
@@ -702,10 +726,10 @@ namespace Schedule {
         if (!thread->fx_area) { kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
-        uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
+        uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, stack_pages, false);
         if (!kernel_stack) { VMM::Free(kernel_pagemap, (void*)thread->fx_area); kfree(thread); return nullptr; }
-        _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
-        thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
+        _memset((void*)kernel_stack, 0, stack_pages * PAGE_SIZE);
+        thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * stack_pages);
         thread->stack = kernel_stack; thread->ctx.rip = (uint64_t)entry;
         thread->ctx.cs = 0x08; thread->ctx.ss = 0x10; thread->ctx.rflags = 0x202;
         thread->ctx.rsp = thread->kernel_rsp; thread->thread_stack = thread->ctx.rsp;
@@ -719,6 +743,8 @@ namespace Schedule {
     }
 
     thread_t *NewThread(proc_t *parent, uint32_t cpu_num, int32_t priority, const char *Path, int32_t argc, char *argv[], char *envp[]) {
+        if (unlikely(!parent || __atomic_load_n(&parent->exiting, __ATOMIC_ACQUIRE) != 0))
+            return nullptr;
         thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
         if (!thread) return nullptr;
         _memset(thread, 0, sizeof(thread_t));
@@ -728,7 +754,8 @@ namespace Schedule {
         thread->timer_cpu = cpu_num;
         thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
         thread->cpu_num = cpu_num; thread->parent = parent; thread->pagemap = parent->pagemap;
-        thread->priority = priority > 15 ? 15 : priority;
+        /* P0-8: 钳到 [0,15] (负值会越界读 sched_prio_to_weight[]) */
+        thread->priority = (priority < 0) ? 0 : (priority > 15 ? 15 : priority);
         thread->weight = sched_prio_to_weight[thread->priority];
         thread->state = THREAD_RUNNING;   // 修复: 提前
         cpu_t *cpu = get_cpu(cpu_num);
@@ -819,9 +846,9 @@ namespace Schedule {
            会一次性把 vruntime/avg_vruntime 抬到开机时长。初始化为当前时间。 */
         thread->last_run_time = PIT::TimeSinceBootMS();
         /* 修复: state 必须在 ProcessAddThread 之前设置 ——
-           THREAD_ZOMBIE==0 语义下, 挂链后再补设存在 ZOMBIE 窗口,
-           并发 SyncKillProcThreads 命中窗口会让 kill_thread_batch
-           在 state==ZOMBIE 的 continue 上无限自旋 (重试循环原本无超时) */
+           构造窗口的 state==0 不属于任何分支, 挂链后再补设会让并发
+           SyncKillProcThreads 命中窗口 (P3-83: 原注释 "ZOMBIE==0"
+           过时, 实际 THREAD_ZOMBIE==5) */
         thread->state = THREAD_RUNNING;
         cpu_t *parent_cpu = get_cpu(parent->cpu_num);
         cpu_t *cpu = get_lw_cpu(parent_cpu);
@@ -879,11 +906,14 @@ namespace Schedule {
         if (!proc->FDMan) { VMM::DestroyPM(proc->pagemap); kfree(proc); return nullptr; }
 
         uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
-        /* ⚠️ 已知问题: FDMan 整结构 memcpy 是浅拷贝 —— 内部指针
-           (缓冲区/文件表项)被父子共享, 双方退出时 fd_manager_destroy
-           双重释放。需要 fd_manager_dup() 深拷贝接口才能修, 本轮仅标注。 */
-        __memcpy(proc->FDMan, parent->FDMan, sizeof(fd_manager_t));
-        proc->fd_count = parent->fd_count;
+        /* P0-6 路线图 #7 (round 90): 原整结构 memcpy = 浅拷贝 → 父子
+           双释放; 曾改为深拷贝空表 (不自继承)。现实施 fd_manager_dup:
+           快照式深拷贝 (filedesc 逐字节复制 + path 深拷贝), 子进程
+           继承父的全部打开 FD, 关闭互不干扰。 */
+        fd_manager_init(proc->FDMan);
+        int32_t inherited = fd_manager_dup(proc->FDMan, parent->FDMan);
+        proc->fd_count = inherited;
+        (void)inherited;
         if (!parent->children) parent->children = proc;
         else {
             proc_t *last = parent->children;

@@ -9,6 +9,9 @@
 
 extern void FT_Clear();
 
+/* P5-95 注释: 整文件 O0 —— 中断/异常路径对编译器优化敏感
+   (尾调用合并会破坏 frame 回溯、循环合并影响 EOI 时序),
+   关优化保证语义可审计; 代价是中断路径的指令级开销, 可接受。 */
 #pragma GCC push_options
 #pragma GCC optimize ("O0")
 

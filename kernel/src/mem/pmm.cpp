@@ -169,19 +169,9 @@ uint64_t Free2MBlocks() {
 // ---------------------------------------------------------------------------
 // Locking: also block interrupts on x86_64 so an interrupt handler that
 // allocates cannot deadlock against a lock holder on this CPU.
+// (P5-96: pmm_lock_acquire/release 为无调用者的死代码, 已删除;
+//  当前调用点直接 spinlock_lock + 显式中断屏蔽。)
 // ---------------------------------------------------------------------------
-static inline void pmm_lock_acquire() {
-#ifdef PMM_HAS_PCP
-    Interrupt::Mask();
-#endif
-    spinlock_lock(&pmm_lock);
-}
-static inline void pmm_lock_release() {
-    spinlock_unlock(&pmm_lock);
-#ifdef PMM_HAS_PCP
-    Interrupt::Unmask();
-#endif
-}
 
 
 

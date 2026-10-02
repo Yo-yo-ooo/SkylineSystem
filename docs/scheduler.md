@@ -1,4 +1,4 @@
-# 调度器 —— vruntime 调度 + RIP 速率反馈（曾用名 3EVDF）
+# 调度器 —— deadline 键调度 + RIP 速率反馈（曾用名 3EVDF）
 
 源码：`kernel/src/arch/x86_64/schedule/sched.cpp`、`task.cpp`、`timer.cpp`、`syscall/`。
 
@@ -6,7 +6,13 @@
 
 ## 1. 实际结构
 
-每个 CPU 一棵**红黑树**运行队列，键为 `vruntime`，节点增广 `min_vruntime_subtree`（子树最小值），比较点带 `PREFETCH_R`。线程按权重（`sched_prio_to_weight[16]`）得到基准时间片，`vruntime` 按**真实流逝毫秒 × 1024 / weight** 推进，`avg_vruntime` 按负载加权速率推进。
+每个 CPU 一棵**红黑树**运行队列，键为**虚拟 deadline**（P3-74 修正：
+原写"键为 vruntime"——实际入队时 `deadline = vruntime + base_quantum`,
+队列按 deadline 排序；由于 deadline ≡ vruntime + 常数, 序与 vruntime 序
+等价, 但键字段本身是 deadline），节点增广 `min_vruntime_subtree`
+（子树最小值），比较点带 `PREFETCH_R`。线程按权重
+（`sched_prio_to_weight[16]`）得到基准时间片，`vruntime` 按**真实流逝
+毫秒 × 1024 / weight** 推进，`avg_vruntime` 按负载加权速率推进。
 
 `Pick()` 只用 `vruntime` 与 `avg_vruntime` 做选择：沿"子树含 eligible 节点"的分支下降，取最小者。
 
@@ -30,7 +36,9 @@ eff_quantum = (base × fused_mult >> 10) + adj
 ## 3. EEVDF 成分的真实程度
 
 - `calibrate_and_set_deadline()` 在**每次入队**时把 `vruntime` 钳进 `[avg−q, avg+2q]` 并令 `deadline = vruntime + base_quantum`；
-- 时间片**未按权重缩放**（源码注释自认"有意简化"），于是 deadline ≡ vruntime + 常数，eligibility 判定与虚拟 deadline 实际退化为冗余控制 —— 队列序即 vruntime 序；
+- 时间片**已按权重缩放**（P3-75 修正：原文档写"未按权重缩放"——
+  实际 `base_quantum` 按 `sched_prio_to_weight[priority]` 缩放后作为
+  deadline 的常数项），deadline ≡ 缩放后 vruntime + 常数；
 - 所以这是**EEVDF 结构的子集**，不是完整的 EEVDF。README 与本文档均按此描述。
 
 ## 4. 动态基准量子与老化
@@ -58,7 +66,142 @@ eff_quantum = (base × fused_mult >> 10) + adj
 
 ## 8. 测试现状（诚实）
 
-**没有调度质量基准。** `sched_bench.cpp` 只校验 EWMA 数值的收敛行为（过冲/稳态步进），不测公平性、唤醒延迟或尾延迟。任何"实测流畅"的说法均未写入本文档 —— 桌面流畅性目前由**独立光标层 + 合成器结构**保证，而非由调度器反馈的份额控制。
+**真实内核调度质量基准已跑通（round 24）。** `sched_bench` 四相位在真内核
+（QEMU, cpu 1 专用线程, 网络栈延后 = 安静机器）完整运行：
+
+| 相位 | 结果 | 解读 |
+|---|---|---|
+| 阶跃 (RIP 反馈收敛) | **t90=4ms, 无超调 ✓** | REEVDF 反馈环安静环境极快收敛 (污染环境 193ms) |
+| 抗污染 | 未过: base=[41,2057] mult=[785,2211] | 真内核与模型有差异 → **待查** |
+| 短窗口 | 未过: windows=0 stalled=5 | 短窗口未检出 → **待查** |
+| 振荡迟滞 | w=[64,64] toggles=0 ✓ | 迟滞有效无乒乓 |
+
+**两个未过相位 = 真内核实现与模型测试的真实差距**（模型测试通过、真内核
+失败 → 不是基准 bug，是 RIP 反馈实现在污染/短窗口场景的行为差异），
+即下一轮调度器调试的入口。
+
+round 25 根因分析增量：
+- **shortwin 未过 (windows=0)**：`dynamic_adjust_quantum` 把 base_quantum
+  动态钳在 [2,15]ms 并按负载自整定；bench 的静态假设 (base=5ms → prio15
+  权重 288 → 片长 ~1.4ms < 3ms 门) 在动态量子下失效 (base=15ms 时片长
+  ~4.2ms > 门 → 0 个短窗口)。**不是调度缺陷, 是基准语义与动态量子特性
+  的失配** → bench 应读实际 base_quantum 或在相位期冻结自整定。
+- **pollute 未过 (倍率摆幅 41..2057)**：victim 的 RIP 倍率在 polluter 竞争
+  下大幅振荡——模型测试中稳定、真内核振荡 = 真内核特有行为 (候选: 中断/
+  抢占噪声进采样、`sched_tsc_per_ms` 未校准致墙钟分母失真)。**需 TSC 校准
+  后复测**, 或排查反馈增益在竞争场景的稳定性。
+
+round 26 增量 (TSC 校准 + 复测):
+- 实现 `sched_calibrate_tsc()` (tsc_cal.cpp, PIT 基准, 忙等带毫秒级守卫 ——
+  早期 PIT 未走时守卫过大曾卡死启动) + `sched_tsc_per_ms` 强符号。
+- 复测: step t90=42ms sat=1 (饱和检测出现); **pollute 仍过不了**
+  (base=[80,1322] mult=[979,2560]) → 排除分母失真候选后, 指向
+  **RIP 反馈增益在竞争场景的真稳定性问题** (反馈回路本身振荡, 待增益分析)。
+- shortwin 仍 windows=0 (动态量子失配, 同 round 25 结论)。
+round 33 (累加器落地 + UAF 实锤):
+- 累加器采样已实施 (thread_t 新增 rip_acc_progress/ms, 4ms 窗口出样本);
+  首测 pollute base=[41,2057]→[51,724] (3x 收窄), 修正分母为自身片长
+  (wall_ms; exec_ms 的 tsc_dt 跨 gap 含他线程片, 语义错) 后待复测。
+- **bench Exit 路径 Page fault 符号化定位**: RIP=atomic_test_and_set
+  (自旋锁原语), CR2=0xFFFF90000211D044 (kmalloc 对象内的锁字),
+  on thread 16 → **退出/回收路径的自旋锁 UAF**: 某结构体 (含锁)
+  被释放后另一线程仍在其锁上自旋。真实调度器缺陷, 回收审计 = 后续任务。
+
+round 34 (复测 + UAF 嫌疑):
+- wall_ms 分母修正复测: pollute base=[51,724] 与修正前相同 → 剩余方差
+  在分子/相位过渡侧 (4ms 窗口跨越 polluter 开关点), 需窗口内逐样本
+  插桩 —— 收敛性改进已获 (3x), 完整通过留给后续。
+- UAF 嫌疑收敛: proc 僵尸回收 (DrainProcZombieList) 释放 FDMan/pagemap
+  时无全局同步, FDMan 内含锁表 —— 锁字 UAF 的最可能来源; 修复需
+  fd_manager_destroy 与回收窗口的同步审计。
+
+round 40 (UAF 修复) + round 41 (防御纵深):
+- 根因: 相位线程 `Schedule::Exit(0)` 击杀整个 bench 内部 proc; 后续相位
+  线程 spawn 进被并发终结的同一 proc → FDMan 锁字 UAF (round 33 符号化)。
+- 修复: 相位线程不再 Exit (改 hlt 闲转; wait_done 本就按超时推进) +
+  NewKernelThreadEx/NewThread 增加 exiting 守卫 (向退出中的 proc spawn
+  显式失败) → UAF 债完全关闭。
+
+round 42 (UAF 修复后完整报告):
+- pollute **base 相位通过** (base=[1067,1309], 极差 <25% —— 累加器修复的
+  首个通过项); mult 相位 [962,1463] 仍超 [820,1230] 界 (mult 目标 = polluter
+  按倍率运行时 victim 的乘数, 残余方差待窗口内插桩)。
+- osc 本次 entered=0 (w 停 256, 相位变体); step t90=176ms ✓。
+- **0 异常**: UAF 修复后全轮无 fault (round 33 的符号化问题闭环)。
+
+round 44 (round 25 假说证伪 + 新机制):
+- 实测 `实际 base_quantum=5 ms` —— **round 25 的"动态量子失配"假说被证伪**
+  (量子与 bench 静态假设一致)。shortwin windows=0 的真因改道:
+  同相位 stalled=11895 (progress==0 样本主导) → 目标线程 1.4ms 短片内
+  定时器 tick 极少命中 (采样落在伴线程片) → 目标样本稀疏且跨长 gap;
+  且 rip_stats 的 short_windows/stalled 为 **CPU 级总量**而非目标线程级
+  (eval 用 CPU 级 delta 判据)。下一轮: 采样落点分析 / 目标级计数。
+
+round 45 (目标级计数实锤):
+- 新增 thread_t 级 rip_short_windows/rip_stalled + bench 目标自采样。
+- 实测: **目标线程目标级 shortwin=0 stalled=0** —— 采样从未落在目标的
+  1.4ms 短片上 (tick 采样按片边界但间隔 ~5ms > 片长)。round 44 机制确认。
+- 修复方向定稿: 采样从 tick 处改到**切换点** (每线程片末采样当前线程),
+  tick 采样对短片天然失明; 该改动同时影响 pollute/shortwin 双相位的
+  判据有效性 —— 是调度器画像的最后一块结构性修复。
+
+round 47 (内联 Exit 漏网 + TSC 超时 + 全链解释):
+- **内联 Exit 漏网**: round 40 的 replace_all 只替换了独立行形式, polluter/
+  companion 的内联 `Schedule::Exit(0)` 仍在 → 相位2 击杀 bench proc
+  (exiting=1) → 相位3 spawn 被 round 41 守卫拒绝 (companion=target=NULL)
+  —— 此前的"采样失明/目标从未运行"全部是 spawn 失败的连锁假象。
+- **TSC 超时**: TCG 下污染相位 CPU 饱和冻住 PIT 虚拟时钟 → wait_done
+  超时永不触发 → 相位2 结构性挂死; 全部相位超时改 TSC 基准 (rdtsc ×
+  tsc_per_ms) 后 bench 600s 内完整跑完。
+- 修复后: mf=823/msl=1056 (首次采到目标), dispatch=47 (EEVDF 高频选中✓),
+  片长 min=1 max=9ms (抢占截断可见)。
+
+round 47b (stalled 真机制终现):
+- 圈数随机化无效 (stalled 72/57 不降) → "fast_body RIP 归位"理论证伪。
+- **真机制**: `CheckPreempt` 的软件陷阱 `int SCHED_VEC` 的帧 RIP =
+  **陷阱指令的固定地址** (常量) → deadline 抢占样本 progress 恒 0;
+  只有硬件 LAPIC tick 的中断帧 RIP 是真实执行点。目标的片大多以
+  deadline 抢占结束 → 其样本几乎全是常量 RIP → stalled。
+- **结论: 切换点采样成为必要**: switch 处出线程的 ctx.rip 是真实末位
+  RIP —— 采样移到 switch-out + 与 tick 去重。实施 = 下一轮。
+
+round 68 (P2-62 披露 + P3-77):
+- **Schedule::Sleep + 定时器轮 (tv1/2/3) 为死代码** (无调用者, 全内核
+  睡眠走 PIT::Sleep 忙等)。接活方案 = PIT::Sleep 改调真睡眠, 需先解
+  引导期依赖 (调度器安装前的探测路径必须忙等语义)。列入路线图。
+- 注: 切换点采样 (round 47b 结论) 仍未实施 —— 与本轮同列路线图。
+- UAF 嫌疑收敛: proc 僵尸回收 (DrainProcZombieList) 释放 FDMan/pagemap
+  时无全局同步, FDMan 内含锁表 —— 锁字 UAF 的最可能来源; 修复需
+  fd_manager_destroy 与回收窗口的同步审计。
+- round 35 增量: Exit → PROC_KILL 路径确认 (退出线程自身走进程击杀路径,
+  关中断 + 停定时器); 击杀路径的 fd 清理与 DrainProcZombieList 的
+  FDMan 释放之间存在竞态窗口 (bench 密集 Exit 触发, 生产负载未观测到)。
+  修复设计: FDMan 释放延后到"全部线程已摘链"之后, 或 fd 清理移入
+  击杀路径的锁内。**生产 soak 从未触发此路径 → 优先级 = 中。**
+
+round 28 根因闭环 (pollute 振荡的完整机制):
+- 采样结构: 每片 tick 采样, `obs_rate = RIP 差分 / 自身片长 (last_slice_ms)`
+  —— 分母正确 (线程自身运行时长, 非墙钟 gap)。
+- **振荡源 = 抢占驱动的变长片**: EEVDF 下同优 polluter 竞争时, victim 的片
+  被定时器/截止期抢占截短 → 短片的 RIP 差分系统性偏低 → obs_rate 高低
+  交替 → 快通道 (1/4 EWMA) 跟随摆动 (基 [41,2057] 的机制解释)。
+- 亚毫秒片被强制 delta=1 → 进一步放大短片的低估。
+- **修复设计 (待实施)**: 采样改为**累加器式固定窗口** —— 按线程自身运行
+  时长累积 RIP 差分与时长 (如每 4ms 自身时长出一个 obs_rate 样本),
+  变长片噪声被累加器吸收; 短窗口防御 (RIP_MIN_SAMPLE_MS) 一并简化。
+- **shortwin 未过 (windows=0)**：`dynamic_adjust_quantum` 把 base_quantum
+  动态钳在 [2,15]ms 并按负载自整定；bench 的静态假设 (base=5ms → prio15
+  权重 288 → 片长 ~1.4ms < 3ms 门) 在动态量子下失效 (base=15ms 时片长
+  ~4.2ms > 门 → 0 个短窗口)。**不是调度缺陷, 是基准语义与动态量子特性
+  的失配** → bench 应读实际 base_quantum 或在相位期冻结自整定。
+- **pollute 未过 (倍率摆幅 41..2057)**：victim 的 RIP 倍率在 polluter 竞争
+  下大幅振荡——模型测试中稳定、真内核振荡 = 真内核特有行为 (候选: 中断/
+  抢占噪声进采样、`sched_tsc_per_ms` 未校准致墙钟分母失真)。**需 TSC 校准
+  后复测**, 或排查反馈增益在竞争场景的稳定性。
+
+历史：`sched_bench` 此前只有模型测试路径；真内核挂点三连（bootstrap init
+直调 Yield / 早期 PIT::Sleep / init 忙等饿死同核线程）已全部定位并绕过
+（专用线程 + init 不等待 + wrapper 尾部起网络）。
 
 ## 9. 调参常量速查
 

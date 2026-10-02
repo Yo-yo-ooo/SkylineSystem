@@ -4,6 +4,28 @@
 #include <klib/klib.h>
 #ifdef __x86_64__
 #include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/smp/smp.h>
+#endif
+
+#ifdef __x86_64__
+/* P0-1 修复: 唤醒阻塞线程必须重新入队 + 触发抢占。
+   原实现只改 state=RUNNING —— 线程已不在任何运行队列 (Acquire 的
+   BLOCKED 让 switch 路径不重插), 被唤醒后永久丢失 → 并发下挂死。 */
+static void wake_thread(thread_t *t)
+{
+    if (!t) return;
+    uint32_t c = __atomic_load_n(&t->cpu_num, __ATOMIC_ACQUIRE);
+    if (c >= MAX_CPU) return;
+    cpu_t *cpu = smp_cpu_list[c];
+    if (!cpu) return;
+    uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
+    if (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == THREAD_BLOCKED) {
+        t->state = THREAD_RUNNING;
+        Schedule::Internal::InsertToQueue(cpu, t);
+    }
+    spin_unlock_irqrestore(&cpu->sched_lock, rflags);
+    Schedule::TriggerPreempt(t);
+}
 #endif
 
 
@@ -38,7 +60,7 @@ void MutexDestroy(mutex_t *mutex)
 
     thread_t *thread;
     while ((thread = (thread_t*)Queue::Dequeue(mutex->queue)) != NULL) {
-        thread->state = THREAD_RUNNING;
+        wake_thread(thread);
     }
 
     // 销毁队列 + 释放自身内存
@@ -77,10 +99,8 @@ void MutexRelease(mutex_t *mutex)
     mutex->owner = NULL;
     __sync_lock_release(&mutex->lock);
 
-    // 唤醒队首第一个等待线程
+    // 唤醒队首第一个等待线程 (重新入队 + 抢占, P0-1)
     thread_t *wait_thread = (thread_t*)Queue::Dequeue(mutex->queue);
-    if (wait_thread) {
-        wait_thread->state = THREAD_RUNNING;
-    }
+    wake_thread(wait_thread);
 #endif
 }

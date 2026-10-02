@@ -143,7 +143,7 @@ void Init(USB::Device* dev, Interface* ifce) {
                 ops.GetMaxSectorCount = [](void* i) -> uint64_t {
                     return ((Device*)i)->numBlocks;
                 };
-                Dev::AddStorageDevice(VsDevType::USBSTORAGE, ops, (uint32_t)msc->numBlocks, msc);
+                Dev::AddStorageDevice(VsDevType::USBSTORAGE, ops, msc->numBlocks, msc);
             }
         }
     }

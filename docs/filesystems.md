@@ -94,7 +94,7 @@ int32\\\_t file\\\_cache\\\_writeback\\\_callback(const uint8\\\_t \\\*key, uint
 
 * 每个核缓存自己近期访问的文件块，减少重复 NVMe/AHCI 读；
 
-* 脏页回写通过注册的回调（`file_cache_writeback_callback`，返回值契约已修复为 0=成功/负=失败）执行——但**当前 `is_dirty` 恒假，写回机制尚未被真正激活**（写入走 write-through 直接落盘 + 跨核失效广播）；
+* 脏页回写通过注册的回调（`file_cache_writeback_callback`，返回值契约已修复为 0=成功/负=失败）执行——**机制存在但生产未激活**（写入走 write-through 直接落盘 + 跨核失效广播；与 fc-semantics.md 口径统一：file_cache_fsync 无调用者）；
 
 * 命中路径已检查条目状态（INVALID 条目不再命中）、写后跨核失效已补上（陈旧读已修）；CRC 只覆盖前 256 字节；
 
@@ -122,7 +122,7 @@ int32\\\_t file\\\_cache\\\_writeback\\\_callback(const uint8\\\_t \\\*key, uint
 
 * ext4/SAF 已通，能挂载并加载 `desktop.elf` / `hw.elf`；**FAT 未接入**；
 
-* lwIP vendored 但**从未初始化**（编译进镜像、无调用者），见 README 特性表；
+* lwIP 已接线（e1000 82574L 驱动 + DHCP/ICMP ping/TCP，经网络栈延迟上线），见 network.md；
 
 * **分区层休眠**：`USE_VIRT_IMAGE` 使分区管理器旁路偏移计算，ext4 实际按裸 LBA 访问（MBR/GPT 解析存在但未生效）。
 

@@ -51,10 +51,11 @@
 #endif
 
 
-#define LWIP_PLATFORM_ASSERT(x) do {kprintf(x);}while(0)
-#define LWIP_PLATFORM_DIAG(x) LWIP_PLATFORM_ASSERT(x)
 #define LWIP_PLATFORM_ASSERT(x) do {kprintf("Assertion \"%s\" failed at line %d in %s\n", \
                                      x, __LINE__, __FILE__);} while(0)
+/* 修复: DIAG 必须直传格式串+varargs (上游 `printf x` 模式)。
+   原实现经 ASSERT 的 %s 转发 → lwIP 调试打印的参数全部丢失/乱码 */
+#define LWIP_PLATFORM_DIAG(x) do {kprintf x;} while(0)
 
 extern uint32_t sys_now(void);
 

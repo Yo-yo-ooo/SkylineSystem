@@ -50,6 +50,13 @@ namespace VMM {
 
                                 Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr);
                 if (info.size == 0) {
+                    /* P0-4: 按需映射前校验 VMA —— 任意地址不得被映射
+                       (原实现无 FindRegion: 任意用户地址即分配物理页 +
+                       页泄漏 + 竞态) */
+                    if (!VMM::VMA::FindRegion(pagemap, curr_u_vaddr)) {
+                        spinlock_unlock(&pagemap->vma_lock);
+                        return false;
+                    }
                     // 主动按需分页：用户堆内存可能只有虚拟地址没有物理页
                     uint64_t page_start = curr_u_vaddr & ~(PAGE_SIZE - 1);
                     void* new_phys = PMM::Request();
@@ -86,6 +93,7 @@ namespace VMM {
 
                     // 必须对齐到页边界
                     uint64_t page_start = curr_u_vaddr & ~(info.size - 1);
+                    uint64_t old_phys = info.phys;   // P0-5: 拷贝后递减旧引用
 
                     if (info.size == PAGE_1GB) {
                         VMM::Unmap(pagemap, page_start);
@@ -98,16 +106,19 @@ namespace VMM {
                             VMM::Map2M(pagemap, v, new_phys, new_flags);
                         }
                         info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr); // 重新获取信息
+                        UnrefSharedPhys(old_phys);   /* P0-5: 1GB 共享页引用递减 */
                     } else if (info.size == PAGE_2MB) {
                         uint64_t new_phys = (uint64_t)PMM::Request2MB();
                         __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)info.phys), PAGE_2MB);
                         VMM::Map2M(pagemap, page_start, new_phys, new_flags);
                         info.phys = new_phys;
+                        UnrefSharedPhys(old_phys);   /* P0-5: 2MB 共享页引用递减 */
                     } else {
                         uint64_t new_phys = (uint64_t)PMM::Request();
                         __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)info.phys), PAGE_SIZE);
                         VMM::Map4K(pagemap, page_start, new_phys, new_flags);
                         info.phys = new_phys;
+                        UnrefSharedPhys(old_phys);   /* P0-5: 4K 共享页引用递减 */
                     }
 
                     __asm__ volatile ("invlpg (%0)" : : "r"(curr_u_vaddr) : "memory");

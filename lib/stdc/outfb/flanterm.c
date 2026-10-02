@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2022-2023 mintsuki and flanterm contributors
+// SPDX-License-Identifier: BSD-2-Clause
+// 上游: https://github.com/mintsuki/flanterm (BSD-2, 见上游 LICENSE)
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>

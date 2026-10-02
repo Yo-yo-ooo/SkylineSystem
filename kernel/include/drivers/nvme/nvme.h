@@ -199,7 +199,7 @@ public:
 
     typedef struct NVMERequest {
         //task_Request req;
-        bool done;
+        volatile bool done;      /* P0-13: 跨核可见 (IRQ 与轮询并发收割) */
         int32_t inputSz;
         NVME::CmplQueEntry res;
         NVME::SubQueEntry input[0];
@@ -294,7 +294,7 @@ protected:
     uint64_t flags;
     /*
     */
-   uint8_t FialureNUM;
+   uint8_t FailureNUM;   /* P5-98: 原 FialureNUM 拼写 */
 
    
 

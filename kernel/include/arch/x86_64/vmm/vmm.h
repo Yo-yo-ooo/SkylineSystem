@@ -63,7 +63,11 @@
 #define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
 
 static inline bool is_user_address(uint64_t addr){
-    return __builtin_expect(addr < 0xFFFF800000000000, 1);
+    /* P1-19: 收紧到用户半区上界 (原 0xFFFF800000000000 放行非规范
+       地址 0x800000000000..0xFFFF7FFFFFFFFFFF → iretq #GP → hcf,
+       非特权 DoS)。注意宏 USER_SPACE_END_* 定义在本文件下方,
+       此处用字面量。 */
+    return __builtin_expect(addr <= 0x00007FFFFFFFFFFFULL, 1);
 }
 
 static inline bool is_user_buffer_valid(uint64_t addr, size_t count) {
@@ -109,7 +113,8 @@ extern pagemap_t *kernel_pagemap;
 #define USER_SPACE_END_4LVL 0x00007FFFFFFFFFFF
 #define USER_SPACE_END_5LVL 0x00FEFFFFFFFFFFFF
 #define PAGE_MASK      0xFFFULL
-void RefSharedPhys(uint64_t phys); 
+bool RefSharedPhys(uint64_t phys);   /* false = OOM, 调用方须拒绝共享 */
+void UnrefSharedPhys(uint64_t phys);   /* CoW 拷贝后递减旧共享页引用 */
 namespace VMM{
     
     namespace UserAccess {

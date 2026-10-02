@@ -31,8 +31,9 @@ REUSE compliance); see LICENSES/ and the per-file SPDX tags.
 
 > [!NOTE]
 > The kernel vendors third-party code (lwIP, FatFs, lwext4, flanterm, SAF,
-> and adapted libart / tidwall hashmap). Their licenses are BSD-3 / BSD-2 /
-> FatFs-license / MIT respectively and are preserved in the source files.
+> adapted libart / tidwall hashmap, **mpaland/printf** and the **x86mem**
+> memops). Their licenses are BSD-3 / BSD-2 / FatFs-license / MIT / MIT /
+> MIT respectively and are preserved in the source files.
 
 * **`/ablib/freestndchdrs/`**: This directory is licensed under the **GNU General Public License v3.0 (GPLv3)**, supplemented with the **GCC Runtime Library Exception 3.1**. 
     *   *What this means:* You may link this library into your proprietary/closed-source application without being required to release your own source code. 
@@ -66,11 +67,11 @@ been tested in QEMU only, with 512 MB – 2 GB of guest RAM; the earlier
 
 ### 🚀 Highlights
 
-- **🧠 3EVDF scheduler** — a vruntime-based scheduler with an EEVDF-inspired
-  structure plus a **RIP-progress-rate** feedback term (Q10 fixed point,
-  dual-channel EWMA). The feedback modulates each thread's **time-slice
-  length** (the LAPIC oneshot quantum); it does **not** change CPU share —
-  see the honest description in `docs/scheduler.md`.
+- **🧠 EEVDF scheduler** ("3EVDF" 为早期曾用名, 见 `docs/scheduler.md`) —
+  a deadline-based scheduler with a **RIP-progress-rate** feedback term
+  (Q10 fixed point, dual-channel EWMA). The feedback modulates each thread's
+  **time-slice length** (the LAPIC oneshot quantum); it does **not** change
+  CPU share — see the honest description in `docs/scheduler.md`.
 - **⚡ CPU-parallel software compositor** — the main thread renders strip 0
   and **N−1 workers** render the remaining horizontal strips into an
   off-screen back buffer; the main thread alone commits the frame to the
@@ -81,8 +82,8 @@ been tested in QEMU only, with 512 MB – 2 GB of guest RAM; the earlier
   edge/corner resizing** for the console window; the close button really
   **terminates the client process** through `sys_kill`. (Notepad is
   registered but not yet managed by the WM — see `docs/gui.md`.)
-- **📊 Acrylic taskbar with a live calendar** — a Win11/macOS-style
-  translucent taskbar with an app pill, a battery indicator and a two-line
+- **📊 Acrylic taskbar with a two-line date/time clock** — a Win11/macOS-style
+  translucent taskbar with an app pill and a two-line
   clock showing **HH:MM over YYYY/M/D**.
 - **🖱️ A decoupled cursor layer** — the cursor is its own layer written
   straight to the scanout in O(16²), independent of scene composition;
@@ -104,21 +105,23 @@ been tested in QEMU only, with 512 MB – 2 GB of guest RAM; the earlier
   (`-Wall -Wextra`, 0 warnings as of this revision) with
   `-Wall -Wextra -Werror` for the userspace lib.
 
-### 🧠 3EVDF — an honest description
+### 🧠 EEVDF scheduler — an honest description
 
-The scheduler keeps a per-CPU red-black tree keyed by `vruntime`, augmented
-with `min_vruntime_subtree` and prefetch hints, plus weighted time-slices,
-dynamic base-quantum adjustment and SMP push/steal load balancing.
+The scheduler keeps a per-CPU red-black tree keyed by the **virtual
+deadline**, augmented with `min_vruntime_subtree` and prefetch hints, plus
+weighted time-slices, dynamic base-quantum adjustment and SMP push/steal
+load balancing.
 
-On top of that, **3EVDF** samples each thread's RIP progress between timer
-ticks, derives fast/slow multipliers (Q10 fixed point, dual-channel EWMA
-with dead-zone and hysteresis) and uses them to lengthen or shorten the
-thread's **preemption quantum** — busy-spinners are interrupted more often
-and progressing threads get longer uninterrupted runs.
+On top of that, the **RIP feedback** samples each thread's RIP progress
+between timer ticks, derives fast/slow multipliers (Q10 fixed point,
+dual-channel EWMA with dead-zone and hysteresis) and uses them to lengthen
+or shorten the thread's **preemption quantum** — busy-spinners are
+interrupted more often and progressing threads get longer uninterrupted
+runs.
 
 **What it is not:** the feedback does not enter `Pick()` — selection is
-vruntime-based, vruntime is charged from real elapsed time, and the virtual
-deadline is `vruntime + const` (not weight-scaled). So 3EVDF shapes
+deadline-based, vruntime is charged from real elapsed time, and the virtual
+deadline is `vruntime + const` (not weight-scaled). So the feedback shapes
 **interrupt latency**, not CPU share. There is **no quantitative benchmark**
 yet: `sched_bench.cpp` only validates that the EWMA values converge.
 Details: `docs/scheduler.md`.
@@ -133,8 +136,8 @@ The desktop is a data-parallel renderer with **zero per-pixel locking**:
 - **Double-buffered, single commit point** — every worker renders its strip
   into an invisible back buffer; only the main thread blits the finished
   frame to the scanout. The completion barrier is a simple counter (not a
-  generation-checked barrier), so the "no tearing" guarantee has a residual
-  race window that has not been fully closed — see `docs/gui.md`.
+  generation-checked barrier): the current protocol makes the race window
+  **unreachable, but the structure is fragile** — see `docs/gui.md`.
 - **Layer + window linked lists** — each window gets one clip test per
   strip and is blitted a scanline at a time; no per-pixel top-most search.
   Per-frame traversal is O(strips × windows).
@@ -151,9 +154,9 @@ The desktop is a data-parallel renderer with **zero per-pixel locking**:
   client process — every thread and its address space — is reclaimed. A
   lightweight rectangle previews during resize; the heavy rounded/shadowed
   chrome is rasterized once on release.
-- **Known gaps** — no child-exit notification (an app that returns leaves a
-  dead window), no z-order raise / focus, and minimize currently loses the
-  maximized state.
+- **Known gaps** — child-exit notification works via periodic liveness
+  polling (`sys_kill(pid, 0)` probe + window removal); no z-order raise /
+  focus, and minimize currently loses the maximized state.
 
 Text is drawn by an in-tree TTF rasterizer (based on **stb_truetype**, with
 LRU + hash-table glyph caching and CJK typography) and the **flanterm**
@@ -175,16 +178,16 @@ console renderer — both third-party components.
 |---|:---:|---|
 | Boot — Limine (BIOS + UEFI) | ✅ | ISO / HDD images |
 | SMP multicore | ✅ | Per-CPU structures, AP bring-up |
-| Scheduler — 3EVDF | ✅ / 🚧 | RIP feedback modulates time-slice length, not CPU share; no benchmark |
+| Scheduler — EEVDF + RIP feedback | ✅ / 🚧 | RIP feedback modulates time-slice length, not CPU share; no benchmark |
 | Virtual memory | ✅ | 4-level paging, huge pages, CoW (2 MB granular), W^X |
-| Physical & kernel heap | ✅ | Single global PMM lock + per-CPU page cache; SLUB/SLAB; QSBR lives in the userspace allocator |
+| Physical & kernel heap | ✅ | Single global PMM lock + per-CPU page cache; SLUB/SLAB; userspace allocator uses epoch QSBR deferred reclamation |
 | Security | ✅ / 🚧 | KASLR (bootloader slide), SMEP, SMAP, NX/W^X, isolated address spaces |
 | Device drivers | ✅ / 🚧 | PS/2, framebuffer, AHCI, NVMe, USB (xHCI); ATA/ATAPI unregistered |
 | Filesystems | ✅ / 🚧 | ext4 (lwext4) + SAF working; FAT glue stubbed |
 | GUI / window manager | ✅ / 🚧 | Parallel strips, rounded windows, drag/max/min/8-way resize, kill, TTF/CJK, SW cursor; WM manages the console window only |
-| Taskbar / clock | ✅ | Acrylic bar, app pill, battery icon, two-line HH:MM + YYYY/M/D |
+| Taskbar / clock | ✅ | Acrylic bar, app pill, two-line HH:MM + YYYY/M/D |
 | Userspace | ✅ | Own libc/`printf`, ELF loader, threads + TLS, shared memory |
-| Networking | ❌ | lwIP vendored but never initialized (dead code) |
+| Networking | ✅ / 🚧 | e1000 (82574L) driver + lwIP wired: DHCP, ICMP ping, UDP/TCP TX+RX in QEMU slirp; see `docs/network.md` |
 | Other architectures | ❌ | Not implemented (Makefile flags exist, ports pending) |
 
 ### ⚙️ `SkylineSystem Low-Level Stack Implementations`
@@ -201,7 +204,7 @@ console renderer — both third-party components.
     <td valign="top" width="50%">
       <h3 align="center">⚡ Core & Concurrency</h3>
       <ul>
-        <li><b>Allocator:</b> userspace <code>malloc</code>/<code>free</code> with QSBR deferred reclamation; kernel SLUB/SLAB with per-CPU magazines and a double-free guard.</li>
+        <li><b>Allocator:</b> userspace <code>malloc</code>/<code>free</code> with epoch-QSBR deferred reclamation; kernel SLUB/SLAB with per-CPU magazines and a double-free guard.</li>
         <li><b>VFS & FD:</b> hashmap mount-point resolution and a sharded red-black-tree fd allocator.</li>
       </ul>
     </td>
@@ -271,10 +274,10 @@ make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-g
 ## Run
 ### In Linux:
 ```bash
-# x86_64 QEMU example
+# x86_64 QEMU example (网络验证需要 -net nic -net user = slirp DHCP)
 qemu-system-x86_64 -machine q35 -cpu max \
 -cdrom ./SkylineSystem-x86_64.iso -m 2G -smp 4 \
--serial stdio -net nic -device AC97 \
+-serial stdio -net nic -net user -device AC97 \
 -drive file=disk.img,if=none,id=drive0 \
 -device ide-hd,drive=drive0,bus=ide.0 \
 -no-reboot --no-shutdown \

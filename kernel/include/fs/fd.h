@@ -92,6 +92,7 @@ extern "C" {
     void fd_manager_init(fd_manager_t* manager);
     int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr);
     void fd_free(fd_manager_t* manager, int32_t fd);
+    int32_t fd_manager_dup(fd_manager_t* dst, fd_manager_t* src);   /* P0-6 路线图 #7: fork 继承 */
     fd_t* fd_get(fd_manager_t* manager, int32_t fd);
     void fd_manager_destroy(fd_manager_t* manager);
 }

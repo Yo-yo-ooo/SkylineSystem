@@ -73,7 +73,7 @@ namespace Dev{
     void Init();
 
     const char* TypeToString(VsDevType type);
-    void AddStorageDevice(VsDevType type,DevOPS ops,uint32_t SectorCount = 0,void* Class = nullptr);
+    void AddStorageDevice(VsDevType type,DevOPS ops,uint64_t SectorCount = 0,void* Class = nullptr);
     /*获取存储器的相关信息*/
     VDL* GetSDEV(const char *Name);
     VDL* GetSDEV(VsDevType Type, uint32_t idx);

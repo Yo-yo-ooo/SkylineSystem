@@ -22,7 +22,10 @@
  *    phase 1  COMPOSE : each worker renders its strip into an invisible
  *                       back buffer (clear + layer stack happens off-screen);
  *    barrier          : main thread waits until the WHOLE back frame is done;
- *    phase 2  PRESENT : each worker memcpy's its finished strip back->front.
+ *    phase 2  COMMIT  : the MAIN THREAD ONLY pushes the whole scene to the
+ *                       scanout in one commitScene (P3-83: 原"每个 worker
+ *                       memcpy 自己的 strip 回前台"为旧设计, 已废弃 ——
+ *                       worker 从不接触 fb, 指针因此永不被擦除).
  *
  *  Because the front buffer is only ever overwritten with rows from a
  *  complete frame, it never shows the transient "cleared to black" state, so
@@ -133,12 +136,8 @@ public:
        present, so pointer tracking stays fluid independent of scene cost. */
     void            CursorMoveTo(int32_t x, int32_t y);
 
-    /* Dirty-rectangle scene presentation: Invalidate() unions a scene region
-       that changed in the off-screen buffer; Present() pushes only the union
-       of those rectangles to the scanout (cursor kept on top). Compose() is
-       the conservative full-screen rebuild + present path. */
-    void            Invalidate(int32_t x0, int32_t y0, int32_t x1, int32_t y1);
-    void            Present();
+    /* P5-96: Invalidate()/Present() 死代码已删除 —— Compose() 为
+       全帧重建 + 提交路径 (见 window.cpp 注释) */
 
     void            Shutdown();
 

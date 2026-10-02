@@ -97,6 +97,11 @@ ifeq ($(KARCH),x86_64)
 endif
 
 # Internal C flags that should not be changed by the user.
+# P5-93 注: "零警告" 由下方 -Wno-* 支撑。回收路线图:
+#   阶段 1: unused-value / unused-function (低风险, 死代码清理后)
+#   阶段 2: unused-parameter (需 -Wextra 语义审计)
+#   阶段 3: null-* / writable-strings 等 (需 API 语义变更)
+#   每阶段独立 PR + 金样门禁, 不做一次性大爆炸。
 override KCFLAGS += \
     -Wall -Wextra \
     -Wno-implicit-function-declaration \

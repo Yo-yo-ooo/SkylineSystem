@@ -6,6 +6,15 @@
 #include <mem/heap.h>
 #include <klib/algorithm/art.h>
 #include <pdef.h>
+#ifdef __x86_64__
+#include <arch/x86_64/pit/pit.h>
+/* 冷却重试的墙钟来源: 内核 = PIT 毫秒 */
+static inline uint64_t fc_wall_ms(void) { return PIT::TimeSinceBootMS(); }
+#else
+/* 宿主单元测试 (tests/fc 直接链 fc 源码) 无 PIT: 时间冻结,
+   冷却重试在测试中不触发 (测试不模拟 30s 墙钟) */
+static inline uint64_t fc_wall_ms(void) { return 0; }
+#endif
 
 #include <fs/fc_internal.h>
 
@@ -169,10 +178,19 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
 
         spinlock_lock(&s->lock);
         cur = s->lru_head;
+        uint64_t now_tick = fc_wall_ms();   /* P1-35: 冷却重试时间戳 */
         while (cur && flush_cnt < max_flush) {
             file_cache_entry_t *next = cur->lru_next;
             if (likely(next)) PREFETCH_R(next);   // 优化
-            if (cur->is_dirty && cur->pin_count == 0 && cur->state == FC_STATE_CACHED && cur->writeback_retries < 5) {
+            /* P1-35: WRITEBACK_FAILED 条目按冷却期重试 —— 原过滤条件
+               writeback_retries<5 让 FAILED 条目永久不再尝试 (条目滞留
+               且脏数据永远写不回)。30s 冷却后重试, 成功即清零重试计数。 */
+            bool failed_retry = (cur->state == FC_STATE_WRITEBACK_FAILED &&
+                                 cur->is_dirty && cur->pin_count == 0 &&
+                                 now_tick - cur->last_access_tick > 30000);
+            if (cur->is_dirty && cur->pin_count == 0 &&
+                ((cur->state == FC_STATE_CACHED && cur->writeback_retries < 5) ||
+                 failed_retry)) {
                 cur->state = FC_STATE_FLUSHING;
                 cur->pin_count++;
                 flush_list[flush_cnt++] = cur;

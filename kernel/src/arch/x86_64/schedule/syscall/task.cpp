@@ -38,7 +38,6 @@ uint64_t sched_yield(GENERATE_IGN6()){
 extern spinlock_t PID2PROC_TREE_LOCK;
 uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
     IGNV_4();
-    (void)sig;   /* no signal facility: terminate semantics only */
 
     proc_t *me = Schedule::this_proc();
     if (!me || !me->IsTrusted) return -EPERM;
@@ -47,8 +46,13 @@ uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
     proc_t *proc = (proc_t*)art_search(pid2proc_tree,(const uint8_t*)&pid,8);
     spinlock_unlock(&PID2PROC_TREE_LOCK);
     if (!proc || proc->exiting) return -ESRCH;
-    if (proc == me) return -EPERM;                       /* use sys_exit for self */
     if (proc->pagemap == kernel_pagemap) return -EPERM;  /* never kill a kernel proc */
+
+    /* P1-47: sig==0 = 存活探测 (POSIX kill(pid,0)) —— WM 用于死窗口
+       回收轮询, 不击杀 */
+    if (sig == 0) return 0;
+
+    if (proc == me) return -EPERM;                       /* use sys_exit for self */
 
     /* Safe teardown of an unrelated process: mark it exiting, synchronously
        pull every thread off all CPUs, close its FDs, and queue the body for
@@ -247,19 +251,23 @@ uint64_t sys_pmmapSHARE(
             size - off >= PAGE_1GB) {
             chunk = PAGE_1GB; phys = si.phys;
             VMM::Map1G(dst_pm, dv, phys, map_flags);
-            for (uint64_t k = 0; k < PAGE_1GB / PAGE_SIZE; k++)
-                RefSharedPhys(phys + k * PAGE_SIZE);
+            ok = true;
+            for (uint64_t k = 0; k < PAGE_1GB / PAGE_SIZE && ok; k++)
+                if (!RefSharedPhys(phys + k * PAGE_SIZE)) ok = false;   /* P0-7 */
+            if (!ok) { VMM::Unmap(dst_pm, dv); goto unlock; }
         } else if (si.size >= PAGE_2MB &&
                    (sv & (PAGE_2MB - 1)) == 0 && (dv & (PAGE_2MB - 1)) == 0 &&
                    size - off >= PAGE_2MB) {
             chunk = PAGE_2MB; phys = si.phys + (sv & (si.size - 1));
             VMM::Map2M(dst_pm, dv, phys, map_flags);
-            for (uint64_t k = 0; k < PMM_2M_PAGES; k++)
-                RefSharedPhys(phys + k * PAGE_SIZE);
+            ok = true;
+            for (uint64_t k = 0; k < PMM_2M_PAGES && ok; k++)
+                if (!RefSharedPhys(phys + k * PAGE_SIZE)) ok = false;   /* P0-7 */
+            if (!ok) { VMM::Unmap(dst_pm, dv); goto unlock; }
         } else {
             chunk = PAGE_SIZE; phys = si.phys + (sv & (si.size - 1));
             VMM::Map4K(dst_pm, dv, phys, map_flags);
-            RefSharedPhys(phys);
+            if (!RefSharedPhys(phys)) { VMM::Unmap(dst_pm, dv); ok = false; goto unlock; }   /* P0-7 */
         }
         off += chunk;
     }

@@ -27,8 +27,10 @@ DSTATUS disk_status (
 	BYTE pdrv		/* Physical drive nmuber to identify the drive */
 )
 {
-	
-	return 0x0;
+	/* P1-41: 本 glue 为空壳 (read/write 恒 RES_ERROR), 却返回 0x0
+	   (ready) 自相矛盾 → 诚实返回 STA_NOINIT */
+	(void)pdrv;
+	return STA_NOINIT;
 }
 
 
@@ -67,7 +69,7 @@ DSTATUS disk_initialize (
 	}
 	return STA_NOINIT;
     */
-   return 0x0;
+	return STA_NOINIT;   /* P1-41: 空壳诚实语义 (原 0x0 = 假成功) */
 }
 
 

@@ -7,8 +7,6 @@
 //
 //   share 1 (window surface)   src = hw2 (fresh zero pages, SKYWIN_W x H),
 //                              dst = desktop (alias VA used to present it)
-//   share 1 (window surface)   src = hw2 (fresh zero pages, SKYWIN_W x H),
-//                              dst = desktop (alias VA used to present it)
 //     the DESKTOP rasterizes the window chrome (soft shadow, rounded body,
 //     on its alias before launching the client; hw2 then ONLY runs its libc
 //     flanterm printf into the inner content area. The desktop mounts the
@@ -218,7 +216,11 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
                                  (uint64_t)pid, 0);
     uint64_t client_whole = 0, desk_whole = 0;
     read_sideband(&client_whole, &desk_whole);
-    if ((int64_t)r1 < 0 || client_whole == 0 || desk_whole == 0) return 0;
+    if ((int64_t)r1 < 0 || client_whole == 0 || desk_whole == 0) {
+        /* P1-49: 失败回滚 —— 击杀已加载的客户端进程 */
+        sys_kill(pid, 9);
+        return 0;
+    }
 
     /* share 2: client fixed protocol page -> desktop alias for writing. */
     uint64_t r2 = sys_pmmapSHARE(self, 0, PAGE_SIZE, SHARE_FLAGS,
@@ -226,7 +228,12 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     uint64_t proto_src = 0, proto = 0;
     read_sideband(&proto_src, &proto);
     (void)proto_src;
-    if ((int64_t)r2 < 0 || proto == 0) return 0;
+    if ((int64_t)r2 < 0 || proto == 0) {
+        /* P1-49: 失败回滚 —— share 1 桌面别名归还 + 进程击杀兜底 */
+        sys_munmap(desk_whole, winBytes);
+        sys_kill(pid, 9);
+        return 0;
+    }
 
     /* Inner content-area origin inside the ARGB surface. */
     const uint32_t contentX = SKYWIN_SHADOW;
@@ -257,7 +264,12 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     SkyPaintChromeSized(&wb, (int32_t)surfW, (int32_t)surfH,
                         (int32_t)bodyW, (int32_t)bodyH, 0, title);
 
-    if ((int64_t)sys_launch(pid) < 0) return 0;
+    if ((int64_t)sys_launch(pid) < 0) {
+        /* P1-49: 启动失败回滚 —— 归还 share 1 桌面别名 + 击杀进程 */
+        sys_munmap(desk_whole, winBytes);
+        sys_kill(pid, 9);
+        return 0;
+    }
 
     /* Let the fresh client load its font / finish startup before mounting. */
     for (uint32_t s = 0; s < SKYWIN_STARTUP_YIELDS; s++) sys_yield();

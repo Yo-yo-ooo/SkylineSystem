@@ -158,8 +158,10 @@ int32_t strncmp(const char* a, const char* b, size_t n) {
 
 char *strncpy(char *dest, const char *src, size_t n) {
     char *tmp = dest;
-    while (n-- > 0 && (*dest++ = *src++) != '\0')
-        ;
+    /* P5-102: C 标准语义 —— src 短于 n 时余下字节必须补零
+       (原实现不补零, 调用方读未初始化字节) */
+    while (n > 0 && (*dest++ = *src++) != '\0') n--;
+    while (n-- > 0) *dest++ = '\0';
     return tmp;
 }
 

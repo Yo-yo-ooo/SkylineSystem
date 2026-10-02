@@ -19,12 +19,12 @@ void enable_smep_smap() {
     if (ebx & (1 << 7)) { // SMEP
         asm volatile("mov %%cr4, %0" :"=r"(cr4) : : "memory");
         asm volatile("mov %0, %%cr4" : : "r"(cr4 | (1 << 20)) : "memory");
-        cpu->ISSMEP_ENABLEED = true;
+        cpu->SMEP_ENABLED = true;
     }
     if (ebx & (1 << 20)) { // SMAP
         asm volatile("mov %%cr4, %0" :"=r"(cr4) : : "memory");
         asm volatile("mov %0, %%cr4" : : "r"(cr4 | (1 << 21)) : "memory");
-        cpu->ISSMAP_ENABLEED = true;
+        cpu->SMAP_ENABLED = true;
         g_smap_enabled = true;
         /* Clear any stale RFLAGS.AC left by firmware/bootloader. */
         asm volatile("clac" ::: "memory");

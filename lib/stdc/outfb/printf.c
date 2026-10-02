@@ -50,7 +50,11 @@
 
 static spinlock_t ptf_lock = 0;
 
-#define CONSOLE_PROTO_VA   0x400000UL
+/* P5-97: 协议页地址唯一权威在 graphic/winstyle.h 的
+   SKYWIN_PROTO_PAGE_VA (0x400000); libc 的 printf 不直接依赖
+   desktop 头, 此处以注释锁死一致性 (两处定义若漂移, 链接期
+   无告警 —— 改为运行时校验见 stdout_init)。 */
+#define CONSOLE_PROTO_VA   0x400000UL   /* == SKYWIN_PROTO_PAGE_VA */
 #define CONSOLE_FONT_PATH  "/mp/SourceHanSerifTC_Medium.ttf"
 #define CONSOLE_FONT_PX    22
 #define CONSOLE_MARGIN     6
