@@ -167,11 +167,9 @@ private:
     CompLayer*      layer_tail_;
     int32_t         list_lock_;          /* registry mutation spinlock */
 
-    /* ---- two-phase frame barrier (GCC __atomic builtins) ----
-       compose phase: frame_seq_ publishes a frame, done_compose_ counts
-                      workers that finished rendering into back_;
-       present phase: present_seq_ releases workers to copy back_->front,
-                      done_present_ counts workers that finished presenting.  */
+    /* ---- frame barrier (P3-83/审计卫生, round 15 修正陈旧注释) ----
+       compose 阶段: frame_seq_ 发布帧, done_compose_ 计数渲染完 back_ 的
+       worker; commit 阶段: 主线程单点 commitScene (worker 从不接触 fb) */
     uint64_t        frame_seq_;
     uint32_t        started_cnt_;
     uint32_t        done_compose_;

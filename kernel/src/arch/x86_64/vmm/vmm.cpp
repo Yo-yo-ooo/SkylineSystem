@@ -938,20 +938,31 @@ namespace VMM {
                     uint64_t nf = (info.flags & ~MM_WRITE) | VMM_COW_BIT;
                     if (info.size == PAGE_1GB) {
                         VMM::Map1G(pm, v, info.phys, nf); VMM::Map1G(parent, v, info.phys, nf);
+                        uint64_t ok_count = 0;
                         for (uint64_t k = 0; k < PAGE_1GB/PAGE_SIZE; k++) {
                             if (!RefSharedPhys(info.phys + k*PAGE_SIZE)) { share_failed = true; break; }
+                            ok_count++;
                         }
                         if (share_failed) {
-                            /* 撤销该页共享: 子解除 + 父恢复原权限 */
+                            /* 审计 #6 (round 3 修复): 撤销共享时归还已成功
+                               递增的 [0, ok_count) 页的引用, 否则 refcount
+                               悬挂 (原实现只解除映射, 计数泄漏) */
+                            for (uint64_t k = 0; k < ok_count; k++)
+                                UnrefSharedPhys(info.phys + k*PAGE_SIZE);
                             VMM::Unmap(pm, v); VMM::Unmap(parent, v);
                             VMM::Map1G(parent, v, info.phys, info.flags);
                         } else mapped += 262144;
                     } else if (info.size == PAGE_2MB) {
                         VMM::Map2M(pm, v, info.phys, nf); VMM::Map2M(parent, v, info.phys, nf);
-                        bool ok = true;
-                        for (uint64_t k = 0; k < PAGE_2MB/PAGE_SIZE && ok; k++)
+                        bool ok = true; uint64_t ok_count = 0;
+                        for (uint64_t k = 0; k < PAGE_2MB/PAGE_SIZE && ok; k++) {
                             if (!RefSharedPhys(info.phys + k*PAGE_SIZE)) ok = false;
+                            else ok_count++;
+                        }
                         if (!ok) {
+                            /* 审计 #6: 同 1GB 路径 —— 归还已递增的引用 */
+                            for (uint64_t k = 0; k < ok_count; k++)
+                                UnrefSharedPhys(info.phys + k*PAGE_SIZE);
                             VMM::Unmap(pm, v); VMM::Unmap(parent, v);
                             VMM::Map2M(parent, v, info.phys, info.flags);
                             share_failed = true;
@@ -982,7 +993,11 @@ namespace VMM {
                 r = r->next;
             } while (r != parent->vma_head);
         }
-        LazyTLB::ShootdownFull(parent);
+        /* 审计 #12 (round 4 修复): 原 ShootdownFull (无 ACK) —— fork 标记
+           COW 后远端 CPU 的陈旧写 TLB 尚未刷新即可直写共享页, 绕过 COW
+           隔离。改 ShootdownFence (同步 ACK 屏障): 返回时保证无远端仍
+           持有 pm 的陈旧 TLB 条目 */
+        LazyTLB::ShootdownFence(parent);
         spinlock_unlock(&parent->pt_lock); spinlock_unlock(&parent->vma_lock);
         return pm;
     }

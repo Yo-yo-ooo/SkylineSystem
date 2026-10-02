@@ -160,6 +160,10 @@ namespace AHCI
         PortType portType;
         uint8_t* buffer;
         uint8_t portNumber;
+        /* 审计 #15 (round 9): slot 分配/签发串行化 —— 只跨「选槽 →
+           commandIssue 置位」的短临界区 (无 sti/无等待, 与 round 52
+           回退的跨 WaitCommand 锁不同, 无抢占下自旋危险) */
+        spinlock_t slot_lock;
 
         bool     ident_cached = false;
         uint64_t cached_max_sector = 0;

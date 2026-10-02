@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-import struct, sys
-path = "/mnt/c/ZSY/SkylineSystem/net.pcap"
+import struct, sys, os
+# 审计卫生 (round 17): 路径参数化 (原硬编码 /mnt/c/ZSY/SkylineSystem/net.pcap)
+path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
+    "SKYLINE_PCAP", "/mnt/c/ZSY/SkylineSystem/net.pcap")
 data = open(path, "rb").read()
 off = 24
 n = 0

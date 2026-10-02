@@ -85,6 +85,12 @@ func_optimize(3) void NEON_MEMSET(void* dst, uint8_t value, size_t size);
 
 extern "C" {
 
+/* P2-58 (round 14 记录): 参数名为 (src, dest) 的"转置序"实为命名误导 —
+   调用方一律按 (src, dest, n) 传参, 函数体按参数名配对, 语义与
+   __memcpy(d,s,n) 一致。round 14 尝试改名为 (dest, src) 导致 boot
+   挂起 (SIMD 路径的 this_cpu/this_thread 依赖在 SMP 早期被破坏,
+   具体机制未再深挖), 已回退。迁移方案 = 纯调用点机械改写 + 全量
+   boot 验证, 非参数改名, 列入路线图 */
 void _memcpy(void* src, void* dest, uint64_t size){
 #if defined(__x86_64__)
 #if (defined(COMPILER_SUPPORT_AVX512) || \

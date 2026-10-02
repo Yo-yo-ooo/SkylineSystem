@@ -50,6 +50,38 @@ GENERATE_IGN3()) {
         }
         // 读取范围超出缓存范围，放弃缓存，回退到硬件读取
         file_cache_put(cpu->file_cache, cache_entry);
+    } else {
+        /* Step 2 (round 27): path 键整文件未命中时, 尝试逐块命中 ——
+           任意 offset 的读都能命中已 promote 的块 (非零 offset 的
+           promote 见下方 miss 分支) */
+        const uint64_t BLOCK_SZ = 4096;
+        uint64_t blocks = (count + BLOCK_SZ - 1) / BLOCK_SZ;
+        uint64_t first_block = cur_offset / BLOCK_SZ;
+        bool all_hit = (count > 0);
+        for (uint64_t b = 0; b < blocks; b++) {
+            file_cache_entry_t *be = NULL;
+            size_t blen = 0;
+            void *bdata = file_cache_get_block(cpu->file_cache,
+                (uint64_t)FD->filedesc, first_block + b,
+                count, &blen, &be);
+            if (!bdata) { all_hit = false; break; }
+            size_t from = (size_t)((cur_offset + b * BLOCK_SZ) % BLOCK_SZ);
+            size_t chunk = count - b * BLOCK_SZ;
+            if (from >= blen) { all_hit = false; file_cache_put(cpu->file_cache, be); break; }
+            if (chunk > blen - from) { all_hit = false; file_cache_put(cpu->file_cache, be); break; }
+            if (!VMM::UserAccess::CopyToUser(proc->pagemap,
+                    buf + b * BLOCK_SZ,
+                    (void*)((uint64_t)bdata + from), chunk)) {
+                file_cache_put(cpu->file_cache, be);
+                return -EFAULT;
+            }
+            file_cache_put(cpu->file_cache, be);
+        }
+        if (all_hit) {
+            FD->FSOPS->lseek(FD->filedesc, cur_offset + count, SEEK_SET);
+            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, count, NULL, FD->file_size, (uint64_t)FD->filedesc);
+            return count;
+        }
     }
 
     // Cache Miss: Hardware
@@ -77,7 +109,27 @@ GENERATE_IGN3()) {
                 file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, cache_buf, FD->file_size, (uint64_t)FD->filedesc);
             }
         } else {
-            // 非零偏移读取，不进行 promote，但仍记录 IO 统计以供启发式策略使用
+            /* Step 2 (round 27): 非零偏移读取改为逐块 promote ——
+               原实现直接放弃缓存, 任意 offset 的读都无法建立缓存。
+               按 4KB 块切分读到的数据, 每块以 (file_id, block#) 键
+               promote (块级缓存, fc-block-cache-design.md) */
+            const uint64_t BLOCK_SZ = 4096;
+            uint64_t off = 0;
+            while (off < total_read) {
+                uint64_t block_no = (cur_offset + off) / BLOCK_SZ;
+                size_t in_block = (size_t)(BLOCK_SZ -
+                    ((cur_offset + off) % BLOCK_SZ));
+                size_t chunk = (total_read - off < in_block) ?
+                    (total_read - off) : in_block;
+                void *block_buf = kmalloc(chunk);
+                if (!block_buf) break;   /* OOM: 放弃剩余块, 已 promote 的保留 */
+                __memcpy(block_buf, (uint8_t*)kbuf + off, chunk);
+                file_cache_promote_block(cpu->file_cache,
+                    (uint64_t)FD->filedesc, block_no,
+                    block_buf, chunk, false, FD->file_size);
+                off += chunk;
+            }
+            // 仍记录整次 IO 统计以供启发式策略使用
             file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, NULL, FD->file_size, (uint64_t)FD->filedesc);
         }
     }
@@ -138,6 +190,15 @@ GENERATE_IGN3()) {
                 /* 修复: 原地更新后必须跨 CPU 失效, 否则其他核的缓存条目
                    仍持有旧字节(陈旧读) */
                 file_cache_invalidate(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len);
+                /* Step 3 (round 28): 同时失效写入范围覆盖的块条目 ——
+                   块级条目与 path 条目并存, 只失效 path 会让块条目
+                   保持陈旧字节 */
+                const uint64_t BLOCK_SZ = 4096;
+                uint64_t wb0 = cur_offset / BLOCK_SZ;
+                uint64_t wb1 = (cur_offset + wcnt - 1) / BLOCK_SZ;
+                for (uint64_t wb = wb0; wb <= wb1; wb++)
+                    file_cache_invalidate_block(cpu->file_cache,
+                        (uint64_t)FD->filedesc, wb);
             } else {
                 // 写入超出了缓存范围，现有缓存不再能代表文件前缀，使其失效
                 file_cache_put(cpu->file_cache, cache_entry);
@@ -159,6 +220,24 @@ GENERATE_IGN3()) {
                     if (r != 0) kfree(cache_buf); 
                 }
             } else {
+                /* Step 3 (round 28): 非零偏移写同样逐块 promote (与读
+                   路径对称) —— 写已同步落盘, is_dirty=false */
+                const uint64_t BLOCK_SZ = 4096;
+                uint64_t off = 0;
+                while (off < wcnt) {
+                    uint64_t block_no = (cur_offset + off) / BLOCK_SZ;
+                    size_t in_block = (size_t)(BLOCK_SZ -
+                        ((cur_offset + off) % BLOCK_SZ));
+                    size_t chunk = (wcnt - off < in_block) ?
+                        (wcnt - off) : in_block;
+                    void *block_buf = kmalloc(chunk);
+                    if (!block_buf) break;
+                    __memcpy(block_buf, (uint8_t*)kbuf + off, chunk);
+                    file_cache_promote_block(cpu->file_cache,
+                        (uint64_t)FD->filedesc, block_no,
+                        block_buf, chunk, false, FD->file_size);
+                    off += chunk;
+                }
                 file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
             }
         }

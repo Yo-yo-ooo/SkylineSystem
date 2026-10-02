@@ -61,7 +61,7 @@ static int test_art_true_prefix_key() {
 }
 
 // ---------- 2. promote 内联容量复用溢出 ----------
-static int32_t wb_ok(const uint8_t *k, uint32_t kl, void *d, size_t dl) {
+static int32_t wb_ok(uint64_t fid, const uint8_t *k, uint32_t kl, void *d, size_t dl) {
     (void)k; (void)kl; (void)d; (void)dl;
     return 0;
 }
@@ -146,7 +146,7 @@ static int test_insert_fail_no_dangling() {
 
 // ---------- 4. 磁盘错误注入: writeback 失败不丢脏 (故障注入支柱"磁盘错误") ----------
 static int wb_fail_remaining = 0;
-static int32_t wb_flaky(const uint8_t *k, uint32_t kl, void *d, size_t dl) {
+static int32_t wb_flaky(uint64_t fid, const uint8_t *k, uint32_t kl, void *d, size_t dl) {
     (void)k; (void)kl; (void)d; (void)dl;
     if (wb_fail_remaining > 0) { wb_fail_remaining--; return -5; }   // EIO
     return 0;
@@ -199,7 +199,7 @@ static int test_disk_error_writeback() {
 // ---------- 5. 写回内容校验 (P4-90): fsync 落盘的字节必须与缓存一致 ----------
 static uint8_t g_disk[256];
 static uint32_t g_disk_len = 0;
-static int32_t wb_capture(const uint8_t *k, uint32_t kl, void *d, size_t dl) {
+static int32_t wb_capture(uint64_t fid, const uint8_t *k, uint32_t kl, void *d, size_t dl) {
     (void)k; (void)kl;
     g_disk_len = (dl < sizeof(g_disk)) ? (uint32_t)dl : (uint32_t)sizeof(g_disk);
     if (g_disk_len) memcpy(g_disk, d, g_disk_len);
@@ -235,6 +235,48 @@ static int test_flush_writeback_content() {
     return fail;
 }
 
+// ---------- 6. 块级缓存回归 (fc-block-cache-design §6, round 30) ----------
+static int test_block_cache_basics() {
+    printf("== test_block_cache_basics ==\n");
+    int fail = 0;
+    file_cache_cpu_t c;
+    file_cache_cpu_init(&c, 0, wb_capture);
+
+    const uint64_t fid = 0x1234;
+    const uint64_t blk = 5;   /* 非零块号 */
+
+    /* promote_block → get_block 命中, 内容一致 */
+    uint8_t payload[128];
+    for (int i = 0; i < 128; i++) payload[i] = (uint8_t)(i * 7 + 3);
+    void *kbuf = kcopy(payload, 128);
+    if (!kbuf) { printf("  FAIL: kcopy OOM\n"); return 1; }
+    int32_t rc = file_cache_promote_block(&c, fid, blk, kbuf, 128, false, 4096);
+    if (rc != 0) { printf("  FAIL: promote_block rc=%d\n", rc); kfree(kbuf); return 1; }
+
+    size_t out_len = 0;
+    file_cache_entry_t *e = NULL;
+    void *got = file_cache_get_block(&c, fid, blk, 128, &out_len, &e);
+    check(got != NULL, "get_block 命中");
+    check(out_len == 128, "块条目长度 = 128");
+    if (got) check(memcmp(got, payload, 128) == 0, "块内容一致");
+    if (e) file_cache_put(&c, e);
+
+    /* 不同块号互相隔离 */
+    void *other = file_cache_get_block(&c, fid, blk + 1, 128, &out_len, &e);
+    check(other == NULL, "相邻块号不串扰");
+    if (e) file_cache_put(&c, e);
+
+    /* invalidate_file 整文件失效 (file_size = 32KB → 8 块, 覆盖 blk=5) */
+    file_cache_invalidate_file(&c, fid, 32768);
+    void *gone = file_cache_get_block(&c, fid, blk, 128, &out_len, &e);
+    check(gone == NULL, "invalidate_file 后块条目消失");
+    if (e) file_cache_put(&c, e);
+
+    file_cache_cpu_destroy(&c);
+    check(fail == 0, "块级缓存基础回归全通过");
+    return fail;
+}
+
 int main() {
     setvbuf(stdout, NULL, _IONBF, 0);
     SLAB::Init();
@@ -244,6 +286,7 @@ int main() {
     test_insert_fail_no_dangling();
     test_disk_error_writeback();
     test_flush_writeback_content();
+    test_block_cache_basics();
     printf("FC REGRESSION RESULT: failures=%llu\n", (unsigned long long)failures);
     return failures == 0 ? 0 : 1;
 }

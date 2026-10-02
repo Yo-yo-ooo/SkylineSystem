@@ -77,6 +77,7 @@ uint32_t PrintFSERIAL = 0;
 
 extern cpu_t *bsp_cpu;
 extern "C" int32_t file_cache_writeback_callback(
+    uint64_t file_id,
     const uint8_t *key, 
     uint32_t key_len, void *data, size_t data_len
 );
@@ -226,8 +227,8 @@ void __init x86_64_init(void){
     proc_t *proc = Schedule::NewProcess(true);
 
     kinfoln("Creating desktop process...");
-    void *R = VMM::Alloc(kernel_pagemap,1000,false);
-    VMM::Free(kernel_pagemap,R);
+    /* 审计卫生 (round 19): 原 VMM::Alloc(1000)+Free 为无消费者的
+       疑似调试遗留 (4MB 引导开销), 删除 */
     char *argv[] = {(char*)"Test Main Thread"};
     char *envp[] = {nullptr};
     thread_t *desktop = Schedule::NewThread(proc, 0, 0, 

@@ -111,6 +111,14 @@ NVME::NVME(PCI::PCIHeader0 *header){
 
     // Re-read CAP after quiesce. CAP.NSSRS (bit 36) gates the subsystem reset.
     this->CAPREG = this->ReadReg(NVME_CTRLREG_CAP);
+    /* 审计 #22 (round 7 修复): MQES (CAP[15:0]) = 最大队列深度-1, 0 = 非法
+       (深度 1 都不到) —— 无校验时后续按 0 深度建队必失败且难诊断 */
+    if ((this->CAPREG & 0xFFFF) == 0) {
+        kerror("[NVME %p]: CAP.MQES == 0 (invalid controller), skipping\n",
+               (uint64_t)this);
+        this->FailureNUM = 2;
+        return;
+    }
     if (this->CAPREG & (1ULL << 36))
         this->WriteReg(NVME_CTRLREG_NSSR, 0x4E564D65u); // 'NVMe'
 
@@ -209,6 +217,7 @@ bool NVME::TryInsertRequest(NVME::SubQue *subQue, NVME::NVMERequest *req) {
     subQue->Load += req->inputSz;
     for (int32_t i = 0; i < req->inputSz; i++) {
         req->input[i].CommandIdent = subQue->Tail;
+        req->cid = subQue->Tail;             /* 审计 #10: 记录 CID 供超时隔离 */
         subQue->Req[subQue->Tail] = req;
         // __memcpy 参数顺序是 dest, src
         __memcpy(subQue->Entries + subQue->Tail, &req->input[i], sizeof(NVME::SubQueEntry));
@@ -239,6 +248,11 @@ void NVME::Request(NVME::SubQue *subQue, NVME::NVMERequest *req){
             kerror("(NVME %p): request %p TIMEOUT, aborting wait\n",
                    (uint64_t)this, req);
             req->res.Status = 0xFFFF;   /* 合成失败状态: 上层 fail 路径 + 槽位释放 */
+            /* 审计 #10 (round 6 修复): 超时的 CID 进入退役位图 ——
+               迟到的完成收割时被丢弃, 不再写进复用槽的新请求 (原实现
+               迟到完成会污染复用槽的 req->res) */
+            if (req->cid < 64)
+                subQue->retired_cids |= (1ULL << req->cid);
             break;
         }
     }
@@ -540,6 +554,12 @@ void NVME::PollCQ(NVME::CmplQue *cmpq){
         SQ->Load -= consumed;
 
         NVME::NVMERequest *req = SQ->Req[entry->CmdIden];
+        /* 审计 #10: 退役 CID 的迟到完成 —— 丢弃, 不得写进复用槽 */
+        if (entry->CmdIden < 64 &&
+            (SQ->retired_cids & (1ULL << entry->CmdIden))) {
+            SQ->retired_cids &= ~(1ULL << entry->CmdIden);
+            continue;
+        }
         spinlock_unlock(&SQ->Lock);
 
         // Copy the completion back and release the waiting thread.

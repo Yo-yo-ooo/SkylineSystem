@@ -478,7 +478,7 @@ static void* fc_kcalloc_with_fallback(file_cache_cpu_t *s, size_t n, size_t size
 #pragma region Init & Destroy
 
 void file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id,
-                        int32_t (*writeback_cb)(const uint8_t*, uint32_t, void*, size_t)) {
+                        int32_t (*writeback_cb)(uint64_t, const uint8_t*, uint32_t, void*, size_t)) {
     if (unlikely(!s)) return;
     art_tree_init(&s->index);
     art_tree_init(&s->oscillate_tree);
@@ -574,9 +574,19 @@ static void fc_broadcast_invalidate(file_cache_cpu_t *src_s, const uint8_t *key,
                    借用 fsync 的 FLUSHING + pin 模式。 */
                 e->state = FC_STATE_FLUSHING; e->pin_count++;
                 spinlock_unlock(&s->lock);
-                s->writeback_cb(e->key, e->key_len, e->data, e->data_len);
+                int32_t wb_rc = s->writeback_cb(e->file_id, e->key, e->key_len, e->data, e->data_len);
                 spinlock_lock(&s->lock);
                 e->pin_count--;
+                /* 审计 #3 (round 1 修复): 原实现丢弃写回返回值, 失败也删
+                   条目 = 静默丢脏数据。失败 → 转 WRITEBACK_FAILED
+                   (30s 冷却重试机制接管), 不删脏页 */
+                if (unlikely(wb_rc != 0)) {
+                    e->state = FC_STATE_WRITEBACK_FAILED;
+                    e->writeback_retries = 5;
+                    s->total_writeback_failures++;
+                    spinlock_unlock(&s->lock);
+                    continue;
+                }
                 void *art_val = art_delete(&s->index, e->key, e->key_len);
                 if (likely(art_val)) {
                     fc_lru_remove(s, e);
@@ -1291,6 +1301,82 @@ int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t 
     if (unlikely(!s || !key || key_len == 0)) return -1;
     fc_broadcast_invalidate(s, key, key_len);
     return 0;
+}
+
+/* ---- 块级缓存实现 (Step 1, round 26): 键 = (file_id, block#) ----
+   本阶段为整条目语义的键构造层 (fc-block-cache-design.md); fops 尚未
+   逐块调用, 行为与 path 版等价, 后续 Step 2/3 切换调用点后获得块粒度 */
+static inline void fc_block_key(uint64_t file_id, uint64_t block,
+                                uint8_t out[16]) {
+    __memcpy(out, &file_id, 8);
+    __memcpy(out + 8, &block, 8);
+}
+
+void* file_cache_get_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block,
+                           size_t io_len, size_t *out_len,
+                           file_cache_entry_t **out_entry) {
+    if (unlikely(!s || file_id == 0)) return nullptr;
+    uint8_t key[16];
+    fc_block_key(file_id, block, key);
+    return file_cache_get(s, key, 16, io_len, out_len, out_entry);
+}
+
+int32_t file_cache_promote_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block,
+                                 void *data, size_t data_len, bool is_dirty,
+                                 uint64_t file_size) {
+    if (unlikely(!s || file_id == 0)) return -1;
+    uint8_t key[16];
+    fc_block_key(file_id, block, key);
+    return file_cache_promote(s, key, 16, data, data_len, is_dirty,
+                              file_size, file_id);
+}
+
+void file_cache_invalidate_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block) {
+    if (unlikely(!s || file_id == 0)) return;
+    uint8_t key[16];
+    fc_block_key(file_id, block, key);
+    fc_broadcast_invalidate(s, key, 16);
+}
+
+/* Step 4 (round 29/30): 按 file_id 失效整个文件的块级条目 ——
+   O_TRUNC/文件删除时调用 (设计 §4: 区间前缀删除; 本实现按已知
+   文件块数逐块失效, 块数 = ceil(file_size/4096), 有界)。
+   fc_broadcast_invalidate 跳过 src (调用方语义为"其他核"), 本机
+   条目在此显式删除 —— round 30 宿主回归实锤该缺口 */
+void file_cache_invalidate_file(file_cache_cpu_t *s, uint64_t file_id,
+                                uint64_t file_size) {
+    if (unlikely(!s || file_id == 0)) return;
+    uint64_t blocks = (file_size + 4095) / 4096;
+    if (blocks == 0) blocks = 1;
+    for (uint64_t b = 0; b < blocks; b++) {
+        uint8_t key[16];
+        fc_block_key(file_id, b, key);
+        fc_broadcast_invalidate(s, key, 16);
+        /* 本机条目显式摘除 (广播只覆盖其他核) */
+        spinlock_lock(&s->lock);
+        file_cache_entry_t *e = (file_cache_entry_t *)art_search(
+            &s->index, key, 16);
+        if (e && e->pin_count == 0) {
+            void *art_val = art_delete(&s->index, key, 16);
+            if (likely(art_val)) {
+                fc_lru_remove(s, e);
+                s->total_cache_bytes -= e->data_len;
+                if (e->data_len < FC_TINY_FILE_THRESHOLD)
+                    s->tiny_cache_bytes -= e->data_len;
+                if (e->is_dirty) s->dirty_cache_bytes -= e->data_len;
+                s->total_cache_io -= e->total_io_len;
+                s->total_cache_freq -= e->access_freq;
+                __atomic_fetch_sub(&s->total_entries, 1, __ATOMIC_RELAXED);
+                spinlock_unlock(&s->lock);
+                kfree(e->data);
+                kfree(e);
+                continue;
+            }
+        } else if (e) {
+            e->state = FC_STATE_INVALID;   /* pin 中: 标记, 借完删除 */
+        }
+        spinlock_unlock(&s->lock);
+    }
 }
 
 #pragma endregion

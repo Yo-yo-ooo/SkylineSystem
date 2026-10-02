@@ -1,3 +1,7 @@
+# gdef.mk — 全局构建配置 (审计卫生 round 21: 补说明)
+# 由各子 Makefile include; 提供: 目标架构 (BUILD_ARCH)、镜像名、
+# 宿主 CPU 扩展检测 (SSE4.2/AVX/AVX2/AVX512) 与 x86mem 库的
+# 编译开关 (NOT_COMPILE_X86MEM)。改架构只需改 BUILD_ARCH。
 # Architecture to build for SkylineSystem
 # You must set in thest architecture: x86_64, aarch64, riscv64, loongarch64
 

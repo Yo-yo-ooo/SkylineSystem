@@ -684,7 +684,9 @@ int main(){
                     wmDirty = true;
                 } else if (pressHit == 4) {                 /* close: kill + unregister */
                     wmMode = WM_CLOSED;
-                    if (place.client_pid) sys_kill(place.client_pid, 0);
+                    /* 审计 #11 (round 2 修复): 原 sys_kill(pid, 0) 只是
+                       存活探测, 客户端进程从不终止 —— 关闭按钮形同虚设 */
+                    if (place.client_pid) sys_kill(place.client_pid, 9);
                     comp.UnregisterWindow(&consoleWin);
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 2, &fireDT, haveDT);
                     wmDirty = true;
@@ -730,7 +732,8 @@ int main(){
                               (int32_t)normW, (int32_t)normH,
                               (const uint32_t*)place.desk_surf);
 
-        /* Poll the wall clock twice a minute; repaint the tray each tick. */
+        /* 审计卫生 (round 15): 实际为 2 Hz (clock_gap = 500ms), 原
+           "twice a minute" 注释错误 */
         if (cleanBar && now - last_clock >= clock_gap) {
             last_clock = now;
             WmDateTime ndt;

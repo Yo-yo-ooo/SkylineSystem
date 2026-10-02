@@ -102,19 +102,36 @@ namespace VMM {
                             uint64_t v = page_start + j * PAGE_2MB;
                             uint64_t p = info.phys + j * PAGE_2MB;
                             uint64_t new_phys = (uint64_t)PMM::Request2MB();
+                            /* 审计 #7 (round 3 修复): OOM 检查 —— 原实现
+                               Request2MB 失败即对 NULL 做 2MB memcpy (崩溃) */
+                            if (!new_phys) {
+                                /* 已拆分的部分页映射保留 (权限已恢复可写,
+                                   共享页引用由下方整体递减 —— 语义为
+                                   "拆分到一半 OOM", 当前页写失败, 调用方
+                                   重试时从已拆分处继续) */
+                                spinlock_unlock(&pagemap->vma_lock);
+                                return false;
+                            }
                             __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)p), PAGE_2MB);
                             VMM::Map2M(pagemap, v, new_phys, new_flags);
                         }
                         info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr); // 重新获取信息
-                        UnrefSharedPhys(old_phys);   /* P0-5: 1GB 共享页引用递减 */
+                        /* 审计 #7: 粒度修正 —— fork 按 4K 粒度递增了
+                           262144 次 (vmm.cpp), 这里必须同样按 4K 递减,
+                           原实现只递减 1 次 → 262143 页引用泄漏 */
+                        for (uint64_t k = 0; k < PAGE_1GB/PAGE_SIZE; k++)
+                            UnrefSharedPhys(old_phys + k * PAGE_SIZE);
                     } else if (info.size == PAGE_2MB) {
                         uint64_t new_phys = (uint64_t)PMM::Request2MB();
+                        if (!new_phys) { spinlock_unlock(&pagemap->vma_lock); return false; }
                         __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)info.phys), PAGE_2MB);
                         VMM::Map2M(pagemap, page_start, new_phys, new_flags);
                         info.phys = new_phys;
-                        UnrefSharedPhys(old_phys);   /* P0-5: 2MB 共享页引用递减 */
+                        for (uint64_t k = 0; k < PAGE_2MB/PAGE_SIZE; k++)
+                            UnrefSharedPhys(old_phys + k * PAGE_SIZE);   /* 审计 #7: 同粒度 */
                     } else {
                         uint64_t new_phys = (uint64_t)PMM::Request();
+                        if (!new_phys) { spinlock_unlock(&pagemap->vma_lock); return false; }
                         __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)info.phys), PAGE_SIZE);
                         VMM::Map4K(pagemap, page_start, new_phys, new_flags);
                         info.phys = new_phys;

@@ -81,8 +81,25 @@ static int64_t copy_user_strarray(char **src, char ***out_arr, int *out_cnt, int
     if (!src) return 0;                       // POSIX 允许 NULL (空参数表)
 
     SmapGuard ug;   // src[] is a user pointer array; nested copy_user_str is re-entrant
+    /* 审计 #24 (round 8 修复): 原 while 循环裸读 src[n] —— 指针数组跨页
+       到未映射区域即内核 #PF (hcf)。逐元素经 GetPageInfo 校验页存在
+       且为用户页后再读 (每页 512 个 8B 槽, 页边界处重验) */
+    proc_t *me = Schedule::this_proc();
+    pagemap_t *pm = me ? me->pagemap : nullptr;
+    if (!pm) return -EFAULT;
     int n = 0;
-    while (n < max_n && src[n]) n++;
+    uint64_t last_page = ~0ULL;
+    while (n < max_n) {
+        uint64_t elem_va = (uint64_t)(&src[n]);
+        uint64_t pg = elem_va & ~(PAGE_SIZE - 1);
+        if (pg != last_page) {
+            VMM::Internal::PageInfo info = VMM::Internal::GetPageInfo(pm, pg);
+            if (info.size == 0 || !(info.flags & MM_USER)) return -EFAULT;
+            last_page = pg;
+        }
+        if (!src[n]) break;
+        n++;
+    }
     if (unlikely(n == max_n)) return -E2BIG;  // 无结尾或超限, 保守拒绝
 
     char **arr = (char**)kmalloc((uint64_t)(n + 1) * sizeof(char*));

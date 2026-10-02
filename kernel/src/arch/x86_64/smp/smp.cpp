@@ -14,6 +14,7 @@
 #include <arch/x86_64/lapic/lapic.h>
 
 extern "C" int32_t file_cache_writeback_callback(
+    uint64_t file_id,
     const uint8_t *key, 
     uint32_t key_len, void *data, size_t data_len
 );

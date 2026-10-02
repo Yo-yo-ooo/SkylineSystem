@@ -82,12 +82,21 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
        (memset 后 state==0) 不属于任何分支, 若对端恰在构造窗口会让
        等待无限自旋, 故加墙钟超时兜底 (P3-83: 原注释 "ZOMBIE==0" 过时) */
     uint64_t batch_start = PIT::TimeSinceBootMS();
+    /* 审计 #14 (round 4 修复): 原超时仅重置计时器无限重试 —— 对端
+       永久卡死时本核永转。改有界: 3 个超时窗口后放弃 (target 的
+       CPU 不配合 = 该线程的资源由其对端 CPU 的收割兜底, 本核不再
+       永转), 记错误返回 */
+    int32_t timeouts = 0;
 
     while (true) {
         if (unlikely(PIT::TimeSinceBootMS() - batch_start > KILL_RETRY_TIMEOUT_MS)) {
-            /* 修复: 不再整机 Panic —— 记录并继续重试(控制流语义不变) */
-            kerrorln("kill_thread_batch: target %lu still stuck - keep retrying",
-                     (uint64_t)target->id);
+            if (++timeouts >= 3) {
+                kerrorln("kill_thread_batch: target %lu stuck beyond %d windows - giving up",
+                         (uint64_t)target->id, timeouts);
+                return;
+            }
+            kerrorln("kill_thread_batch: target %lu still stuck - retry %d/3",
+                     (uint64_t)target->id, timeouts);
             batch_start = PIT::TimeSinceBootMS();
         }
 
@@ -940,8 +949,17 @@ namespace Schedule {
            继承父的全部打开 FD, 关闭互不干扰。 */
         fd_manager_init(proc->FDMan);
         int32_t inherited = fd_manager_dup(proc->FDMan, parent->FDMan);
+        /* 审计 #16: dup 的 OOM 中止 → fork 整体回滚 (释放子 FDMan +
+           地址空间), 不再产出带空 filedesc 的半成品进程 */
+        if (unlikely(inherited < 0)) {
+            spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+            fd_manager_destroy(proc->FDMan);
+            kfree(proc->FDMan);
+            VMM::DestroyPM(proc->pagemap);
+            kfree(proc);
+            return nullptr;
+        }
         proc->fd_count = inherited;
-        (void)inherited;
         if (!parent->children) parent->children = proc;
         else {
             proc_t *last = parent->children;

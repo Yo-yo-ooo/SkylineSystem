@@ -125,16 +125,21 @@ int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
     if (!manager) return -1;
 
     // 寻找最小的可用 FD (P0-16: 分片写锁跨越 search+insert, 消除 TOCTOU 双插入)
+    // 审计 #1 (round 1 修复): 原实现只对初始 hint 计算一次分片, new_fd 递增后
+    // 不重算 —— 锁/搜索/插入都在陈旧分片上, 条目插入与 fd_get 的分片计算
+    // 错位 → FD 重复或不可见。修复: 每次递增后重取分片并重锁。
     int32_t new_fd = manager->next_fd_hint;
     fd_t search_key;
     search_key.fd = new_fd;
-    rb_root_t *shard = rb_get_shard(&manager->fd_tree, &search_key.node);
-    if (!shard) return -1;
-    RB_WLOCK(shard);
-
-    // 如果当前 hint 被占用，则递增查找 (锁内版本)
-    while (rb_search_locked_only(shard, &search_key.node, manager->fd_tree.ops.cmp)) {
-        new_fd++;
+    rb_root_t *shard;
+    for (;;) {
+        shard = rb_get_shard(&manager->fd_tree, &search_key.node);
+        if (!shard) return -1;
+        RB_WLOCK(shard);
+        if (!rb_search_locked_only(shard, &search_key.node, manager->fd_tree.ops.cmp))
+            break;                       /* 该分片内此 fd 空闲 */
+        RB_WUNLOCK(shard);
+        new_fd++;                        /* 被占 → 递增并重算分片 */
         search_key.fd = new_fd;
     }
 
@@ -245,17 +250,20 @@ void fd_manager_destroy(fd_manager_t* manager) {
    复制后父子各持独立快照, 关闭互不干扰); 文件偏移 = fork 时刻快照,
    后续父子各自独立推进 (与 POSIX 共享偏移的偏差已文档化)。
    path 深拷贝; FSOPS/MP 为全局表指针, 直接共享。
-   调用前提: 源进程 = fork 的调用者自身, 单线程上下文, 无需加锁。 */
+   审计 #16 (round 7 修复): 同进程的其他线程可并发 fopen/fclose ——
+   遍历持源分片读锁; OOM 不再静默跳过 (空 filedesc 会让子进程的
+   close 崩溃), 中止并返回 -1, 调用方 (Fork) 整体回滚 */
 int32_t fd_manager_dup(fd_manager_t* dst, fd_manager_t* src) {
     if (!dst || !src) return -1;
     int32_t count = 0;
     for (uint32_t i = 0; i < src->fd_tree.shard_num; i++) {
         rb_root_t* shard = &src->fd_tree.shards[i];
+        RB_RDLOCK(shard);
         for (rb_node_t* n = rb_first(shard->node); n; n = rb_next(n)) {
             fd_t* se = container_of(n, fd_t, node);
 
             fd_t* ne = (fd_t*)kmalloc(sizeof(fd_t));
-            if (!ne) continue;
+            if (!ne) { RB_RDUNLOCK(shard); return -1; }
             rb_init_node(&ne->node);
             ne->fd = se->fd;
             ne->path = nullptr;
@@ -267,21 +275,20 @@ int32_t fd_manager_dup(fd_manager_t* dst, fd_manager_t* src) {
 
             if (se->path) {
                 ne->path = (char*)kmalloc(se->path_len + 1);
-                if (ne->path) {
-                    __memcpy(ne->path, se->path, se->path_len);
-                    ne->path[se->path_len] = '\0';
-                }
+                if (!ne->path) { kfree(ne); RB_RDUNLOCK(shard); return -1; }
+                __memcpy(ne->path, se->path, se->path_len);
+                ne->path[se->path_len] = '\0';
             }
             if (se->filedesc && se->FSOPS && se->FSOPS->SIZEOF_FILE_DESC) {
                 ne->filedesc = kmalloc(se->FSOPS->SIZEOF_FILE_DESC);
-                if (ne->filedesc)
-                    __memcpy(ne->filedesc, se->filedesc,
-                             se->FSOPS->SIZEOF_FILE_DESC);
+                if (!ne->filedesc) { kfree(ne->path); kfree(ne); RB_RDUNLOCK(shard); return -1; }
+                __memcpy(ne->filedesc, se->filedesc,
+                         se->FSOPS->SIZEOF_FILE_DESC);
             }
 
             /* 目标树按同编号插入 (分片由 key 决定) */
             rb_root_t* dshard = rb_get_shard(&dst->fd_tree, &ne->node);
-            if (!dshard) { kfree(ne); continue; }
+            if (!dshard) { kfree(ne->filedesc); kfree(ne->path); kfree(ne); RB_RDUNLOCK(shard); return -1; }
             RB_WLOCK(dshard);
             rb_insert_raw(dshard, &ne->node, dst->fd_tree.ops.cmp);
             dshard->cnt++;
@@ -289,71 +296,39 @@ int32_t fd_manager_dup(fd_manager_t* dst, fd_manager_t* src) {
             if (ne->fd >= dst->next_fd_hint) dst->next_fd_hint = ne->fd + 1;
             count++;
         }
+        RB_RDUNLOCK(shard);
     }
     return count;
 }
 
 
 int32_t file_cache_writeback_callback(
+    uint64_t file_id,
     const uint8_t *key, 
     uint32_t key_len, void *data, size_t data_len
 ) {
     if (!key || key_len == 0 || !data || data_len == 0) return -1; /* 修复: 原为无值 return(UB) */
 
-    // 1. 分配内存并拷贝路径，确保以 '\0' 结尾
-    char *kpath = (char *)kmalloc(key_len + 1);
-    if (!kpath) return -1; /* 修复: 同上 */
-    __memcpy(kpath, key, key_len);
-    kpath[key_len] = '\0';
+    /* 审计 #5 (round 5 修复): 原实现按 key(路径) 重新 open + O_TRUNC ——
+       文件被删除后同名新文件会被截断 (数据写到错误文件)。现经
+       file_id (= (uint64_t)filedesc, promote 时的原始句柄) 直写:
+       同一 inode, 不重开路径 */
+    if (file_id == 0) return -1;
+    fd_t *orig = (fd_t *)file_id;
+    if (!orig->FSOPS || !orig->filedesc) return -1;
 
-    // 2. 获取挂载点和文件系统操作表
-    __hmap_s_mp *MP = GetMount(kpath);
-    if (!MP) {
-        kfree(kpath);
-        return ENODATA; // 文件系统未挂载或路径无效，丢弃此脏页
-    }
+    // 定位到开头后直写 (与路径重开版的 SEEK_SET 语义一致)
+    orig->FSOPS->lseek(orig->filedesc, 0, 0);
 
-    // 3. 分配底层文件描述符结构
-    void *filedesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
-    if (!filedesc) {
-        kfree(kpath);
-        return ENOMEM;
-    }
-    _memset(filedesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
-
-    // 4. 以只写 + 截断模式打开文件
-    // P1-36a: 补 O_TRUNC —— 原实现只 O_WRONLY, 写回比旧文件短的数据
-    // 时尾部残留旧内容 (脏页写回的语义 = 覆写整个缓存页)
-    int32_t err = MP->FSOPS->open(filedesc, kpath, 0x1 | O_TRUNC); 
-    if (err < 0) {
-        kfree(filedesc);
-        kfree(kpath);
-        /* P1-36b: 删除文件的静默丢脏页 → 显式失败计入重试/FAILED
-           (数据保留在缓存条目中, 由 P1-35 的冷却重试尝试恢复) */
-        return EIO;
-    }
-
-    // 5. 将文件指针定位到开头 (SEEK_SET = 0)
-    MP->FSOPS->lseek(filedesc, 0, 0);
-
-    // 6. 将脏数据写回磁盘
     size_t wcnt = 0;
-    err = MP->FSOPS->write(filedesc, data, data_len, &wcnt);
-    
+    int32_t err = orig->FSOPS->write(orig->filedesc, data, data_len, &wcnt);
+
     if (err != 0 || wcnt != data_len) {
-        kinfo("[FC_WRITEBACK] Incomplete writeback for %s (wrote %zu/%zu)\n", kpath, wcnt, data_len);
+        kinfo("[FC_WRITEBACK] Incomplete writeback (wrote %zu/%zu)\n", wcnt, data_len);
         /* 修复: 写入不完整必须报失败, 否则脏页被误判为已落盘 */
-        MP->FSOPS->close(filedesc);
-        kfree(filedesc);
-        kfree(kpath);
         return -1;
     }
-
-    // 7. 关闭文件并释放资源
-    MP->FSOPS->close(filedesc);
-    kfree(filedesc);
-    kfree(kpath);
-    return 0; /* 修复: 原函数无最终 return(UB, 调用方拿垃圾 eax 判成败) */
+    return 0;
 }
 
 } // extern "C"

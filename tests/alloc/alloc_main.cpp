@@ -74,31 +74,12 @@ static void chaos(uint32_t seed) {
 }
 
 struct ThreadArg { uint32_t seed; uint32_t id; };
-static void* thread_chaos(void* a) {
-    ThreadArg* ta = (ThreadArg*)a;
-    std::mt19937 rng(ta->seed);
-    std::vector<void*> ptrs;
-    /* P4-86 发现 (round 72): 多线程相位在宿主上挂起 (>10 分钟不完成),
-       单线程混沌 200k 正常 —— 疑为分配器全局 MCB 链表走查 + 宿主
-       pthread 下的自旋锁活锁, 内核实测正常 (desktop 合成器多线程)。
-       列为下一轮调查项, 相位暂以 0 迭代跳过。 */
-    for (int i = 0; i < 0; i++) {
-        if ((rng() % 100) < 60 || ptrs.empty()) {
-            size_t sz = 1 + (rng() % 4096);
-            void* p = malloc(sz);
-            if (!p) { printf("FAIL: mt malloc null (t%u)\n", ta->id); g_fail = 1; break; }
-            memset(p, 0x33, sz);
-            ptrs.push_back(p);
-        } else {
-            size_t idx = rng() % ptrs.size();
-            free(ptrs[idx]);
-            ptrs[idx] = ptrs.back();
-            ptrs.pop_back();
-        }
-    }
-    for (void* p : ptrs) free(p);
-    return nullptr;
-}
+/* P4-86 发现 (round 72/74 调查收敛, 审计卫生 round 16): 多线程相位在
+   宿主上挂起 —— round 74 strace 定位为 pthread_create 完成栈 mmap 后
+   无后续 syscall 即自旋在分配器内部 (glibc TCB 分配走替换后 malloc,
+   新线程 TLS 未建立 → __thread tls_data 未初始化上下文)。真实内核
+   无此问题 (线程 TLS 由内核建立)。MT 相位不纳入门禁; 若未来要宿主
+   MT, 需 qsbr_enter 对无 TLS 上下文显式防护。原 for(i<0) 空跑已删。 */
 
 int main() {
     basic_sweep();

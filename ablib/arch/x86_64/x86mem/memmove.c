@@ -1,3 +1,5 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 // Compile with GCC -O3 for best performance
 // It pretty much entirely negates the need to write these by hand in asm.
 #include "./x86mem.h"

@@ -60,7 +60,7 @@ int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id) {
             if (likely(target_s->writeback_cb)) {
                 for (uint32_t j = 0; j < flush_cnt; j++) {
                     file_cache_entry_t *e = flush_list[j];
-                    int32_t rc = target_s->writeback_cb(e->key, e->key_len, e->data, e->data_len);
+                    int32_t rc = target_s->writeback_cb(e->file_id, e->key, e->key_len, e->data, e->data_len);
                     if (likely(rc == 0)) {
                         e->writeback_retries = 0;
                         if (target_s->io_congestion > 0) target_s->io_congestion--;
@@ -202,7 +202,7 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
         if (likely(s->writeback_cb && flush_cnt > 0)) {
             for (uint32_t i = 0; i < flush_cnt; i++) {
                 file_cache_entry_t *e = flush_list[i];
-                int32_t rc = s->writeback_cb(e->key, e->key_len, e->data, e->data_len);
+                int32_t rc = s->writeback_cb(e->file_id, e->key, e->key_len, e->data, e->data_len);
                 if (likely(rc == 0)) {
                     e->writeback_retries = 0;
                     if (s->io_congestion > 0) s->io_congestion--;

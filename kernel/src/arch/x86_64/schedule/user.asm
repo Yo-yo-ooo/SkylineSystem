@@ -32,6 +32,8 @@ syscall_entry:
     mov rsp, [gs:8]                   ; 切换到内核栈
 
     ; 构建标准中断栈帧 (严格匹配 context_t)
+    ; 审计卫生 round 21: 0x1B/0x23 为 GDT ring-3 用户数据/代码段选择子
+    ; (权威定义见 gdt 初始化表; 汇编无法用 C 宏, 裸值+注释)
     push qword 0x1B                   ; 用户态 SS
     push qword [gs:16]                ; 用户态 RSP
     push r11                          ; RFLAGS

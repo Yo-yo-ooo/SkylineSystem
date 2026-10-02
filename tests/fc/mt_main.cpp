@@ -41,7 +41,7 @@ static thread_local uint64_t g_rng = 0xFC00D11 + 0x1000;
 static uint64_t xrnd() { uint64_t x = g_rng; x ^= x << 13; x ^= x >> 7; x ^= x << 17; return g_rng = x; }
 static uint64_t rnd(uint64_t lo, uint64_t hi) { return lo + (xrnd() % (hi - lo + 1)); }
 
-static int32_t wb_ok(const uint8_t *k, uint32_t kl, void *d, size_t dl) {
+static int32_t wb_ok(uint64_t fid, const uint8_t *k, uint32_t kl, void *d, size_t dl) {
     (void)k; (void)kl; (void)d; (void)dl;
     return 0;
 }

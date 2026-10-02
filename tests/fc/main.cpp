@@ -60,7 +60,7 @@ static void oplog_dump() {
     }
 }
 
-static int32_t wb_cb(const uint8_t *key, uint32_t key_len, void *data, size_t data_len) {
+static int32_t wb_cb(uint64_t fid, const uint8_t *key, uint32_t key_len, void *data, size_t data_len) {
     (void)key; (void)key_len; (void)data; (void)data_len;
     return 0;  // 写回成功
 }

@@ -27,9 +27,10 @@ static volatile uint32_t *g_regs = nullptr;      // MMIO 基址 (HHDM)
 static rx_desc *g_rx_ring = nullptr;
 static tx_desc *g_tx_ring = nullptr;
 static uint8_t *g_rx_bufs[E1000_RX_RING_LEN];   // 每缓冲独立一页 (GetPhysics 可靠)
-static uint8_t *g_tx_dma = nullptr;              // 发送 DMA 缓冲 (VMM::Alloc 页,
-                                                 // GetPhysics 只对分配器页有效,
-                                                 // 静态 BSS 地址会解析失败 → 发出全零帧)
+/* 审计 #2 (round 1 修复): 单共享 TX bounce → 每描述符独立缓冲。
+   在飞帧由硬件异步 DMA 读取, 下一发送覆写同一 bounce 会撕坏在飞帧;
+   现每槽位独立页 (256×2KB=512KB), 环满才复用该槽 (硬件必已完成) */
+static uint8_t *g_tx_bufs[E1000_TX_RING_LEN];
 /* 零拷贝描述符状态: 0=硬件拥有, 1=DD已消费待重新武装, 2=被消费方借出 */
 static uint8_t g_rx_desc_state[E1000_RX_RING_LEN];
 static uint32_t g_rx_armed = E1000_RX_RING_LEN - 1;  // 已交给硬件的最后位置 (RDT)
@@ -225,10 +226,14 @@ void Init(PCI::PCIHeader0 *header) {
     for (uint32_t i = 0; i < E1000_RX_RING_LEN; i++)
         g_rx_bufs[i] = (uint8_t *)VMM::Alloc((pagemap_t *)kernel_pagemap, 1, false);
     g_tx_ring = (tx_desc *)VMM::Alloc((pagemap_t *)kernel_pagemap, 1, false);
-    g_tx_dma  = (uint8_t *)VMM::Alloc((pagemap_t *)kernel_pagemap, 1, false);
-    bool ok = g_rx_ring && g_tx_ring && g_tx_dma;
+    /* 审计 #2: 每槽位独立 TX 缓冲页 (256×2KB) */
+    for (uint32_t i = 0; i < E1000_TX_RING_LEN; i++)
+        g_tx_bufs[i] = (uint8_t *)VMM::Alloc((pagemap_t *)kernel_pagemap, 1, false);
+    bool ok = g_rx_ring && g_tx_ring;
     for (uint32_t i = 0; i < E1000_RX_RING_LEN && ok; i++)
         if (!g_rx_bufs[i]) ok = false;
+    for (uint32_t i = 0; i < E1000_TX_RING_LEN && ok; i++)
+        if (!g_tx_bufs[i]) ok = false;
     if (!ok) { kinfoln("[e1000] 环内存分配失败\n"); return; }
 
     uint64_t rx_phys = VMM::GetPhysics((pagemap_t *)kernel_pagemap, (uint64_t)g_rx_ring);
@@ -276,9 +281,11 @@ void Init(PCI::PCIHeader0 *header) {
     wr(IMS, E1000_ICR_RXT0 | E1000_ICR_RXO | E1000_ICR_RXDMT0 | E1000_ICR_LSC | E1000_ICR_TXQE);
 
     /* 传统 INTx: PCI 中断线给出 ISA IRQ。
-       P1-28: 魔法数回退显式告警 (回退向量可能冲突 —— 后续集中
-       分配校验; 现按驱动加载顺序, e1000 在 xHCI/NVMe 之后探测,
-       向量 43 (11+32) 为 QEMU slirp 的稳定配置) */
+       P1-28: 魔法数回退显式告警。
+       #19 (round 12 复核): 曾改走 RequestFreeIRQPerCPU —— 但 e1000 的
+       PCI 探测早于 PIT/键盘等固定向量注册, 分配器返回的 32 与 PIT
+       冲突 (boot 实测 ping=0), 回退固定 irq+32。接入分配器需先把
+       固定向量 (32-47) 在启动早期预留进位图, 列为路线图 */
     uint8_t irq = header->InterruptLine;
     if (irq == 0 || irq == 0xFF) {
         irq = 11;   // 保守回退 (QEMU 常见 NIC 中断线)
@@ -308,13 +315,13 @@ int32_t Send(const uint8_t *data, uint16_t len) {
     uint32_t next = (g_tx_tail + 1) % E1000_TX_RING_LEN;
     if (next == rd(TDH)) { __atomic_add_fetch(&g_stat_tx_full, 1, __ATOMIC_RELAXED); spinlock_unlock(&g_tx_lock); return -1; }   // 环满
 
-    /* 拷贝进驱动自有 DMA 缓冲 (调用方的内存可能是任意虚拟地址,
+    /* 拷贝进本槽位独立 DMA 缓冲 (调用方的内存可能是任意虚拟地址,
        GetPhysics 无法解析)。注意 _memcpy 参数为转置序 (src, dest, n) */
-    _memcpy((void *)data, g_tx_dma, len);
+    _memcpy((void *)data, g_tx_bufs[g_tx_tail], len);
 
     tx_desc *d = &g_tx_ring[g_tx_tail];
-    d->addr   = VMM::GetPhysics((pagemap_t *)kernel_pagemap, (uint64_t)g_tx_dma)
-              + ((uint64_t)g_tx_dma & 0xFFF);
+    d->addr   = VMM::GetPhysics((pagemap_t *)kernel_pagemap, (uint64_t)g_tx_bufs[g_tx_tail])
+              + ((uint64_t)g_tx_bufs[g_tx_tail] & 0xFFF);
     d->length = len;
     d->cmd    = 0x01 | 0x02 | 0x08;   // EOP | IFCS | RS
     d->status = 0;

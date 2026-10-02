@@ -119,7 +119,9 @@ typedef struct file_cache_cpu {
     uint32_t io_congestion;
     uint64_t total_writeback_failures;
 
-    int32_t (*writeback_cb)(const uint8_t *key, uint32_t key_len, void *data, size_t data_len);
+    /* 审计 #5 (round 5): 回调签名补 file_id —— 写回必须经原始 filedesc
+       直写 (消除路径重开 + O_TRUNC 截断同名新文件的风险) */
+    int32_t (*writeback_cb)(uint64_t file_id, const uint8_t *key, uint32_t key_len, void *data, size_t data_len);
 } file_cache_cpu_t;
 
 #pragma endregion
@@ -129,7 +131,7 @@ typedef struct file_cache_cpu {
 int32_t file_cache_fsync(file_cache_cpu_t *s, uint64_t file_id);
 
 void    file_cache_cpu_init(file_cache_cpu_t *s, uint32_t cpu_id, 
-                            int32_t (*writeback_cb)(const uint8_t*, uint32_t, void*, size_t));
+                            int32_t (*writeback_cb)(uint64_t, const uint8_t*, uint32_t, void*, size_t));
 void    file_cache_cpu_destroy(file_cache_cpu_t *s); 
 
 void    file_cache_set_limits(file_cache_cpu_t *s, uint64_t soft_limit, uint64_t hard_limit);
@@ -148,6 +150,19 @@ int32_t file_cache_readahead(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
                              void *data, size_t data_len, uint64_t file_size, uint64_t file_id);
 
 int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len);
+
+/* ---- 块级缓存 API (fc-block-cache-design.md Step 1, round 26) ----
+   键 = (file_id, block#) 16 字节; 与 path 版并存, 语义相同 (本阶段
+   仍为整条目语义, 键构造先行 —— 后续 Step 2/3 由 fops 逐块调用后
+   自然获得块粒度) */
+void*   file_cache_get_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block,
+                             size_t io_len, size_t *out_len, file_cache_entry_t **out_entry);
+int32_t file_cache_promote_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block,
+                                 void *data, size_t data_len, bool is_dirty,
+                                 uint64_t file_size);
+void    file_cache_invalidate_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block);
+void    file_cache_invalidate_file(file_cache_cpu_t *s, uint64_t file_id,
+                                   uint64_t file_size);
 
 void    file_cache_check_load(file_cache_cpu_t *s, uint32_t load_factor);
 void    file_cache_idle_handler(file_cache_cpu_t *s);

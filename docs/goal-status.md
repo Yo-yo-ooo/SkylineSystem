@@ -69,12 +69,13 @@ ping 3 + 0 异常。
 | # | 债 | 状态 | 修复设计 |
 |---|---|---|---|
 | 1 | pollute 相位 RIP 倍率残余方差 | 3x 收敛已获 (累加器), 完整通过待窗口内插桩 | 分子侧/相位过渡插桩 |
-| 2 | exit 回收路径自旋锁 UAF | 符号化定位; round 40-41 已修根因, 生产 soak 未触发; **P1-23 口径: 守卫是 check-then-act 缓解而非根治, 僵尸回收仍无全局同步** | proc 引用计数或 FDMan 延后释放 (根治) |
+| 2 | exit 回收路径自旋锁 UAF | round 91 锁配对收敛 (TOCTOU 窗口闭合); 完全根治仍留 proc 引用计数 | proc 引用计数 (根治) |
 | 3 | 零拷贝剩余嫌疑 | 见 dpdk-lite.md (嫌疑收窄至 2 项) | pbuf 生命周期运行时跟踪 |
-| 4 | sched_bench shortwin 采样 | round 47 已破案; 剩余: **切换点采样实施** (round 47b 结论) | switch-out 采样 + tick 去重 |
+| 4 | sched_bench shortwin 采样 | round 102 复核: 切换点采样已在线 (文档滞后已修) | ✅ 收敛 |
 | 5 | 校验卸载 / MSI-X 多队列 | 82574 数据手册阻塞 | 寄存器核对后实施 |
-| 6 | 内核 vsnprintf 深度加固 + fuzzing 纵深 | %s NULL 守卫已加 | 长格式穷举 + 宿主 fuzz 目标 |
-| 7 | FD 继承 (P0-6) | Fork 子进程 = 深拷贝空表 (双释放已消除); 真继承待 filedesc 引用计数 | fd_manager_dup + FSOPS.dup 钩子 |
-| 8 | xHCI 异步 IN 路径 (P1-32/33 残余) | 同步路径已修复; 异步走 bounce/SG 待实施 | 每页 chained TRB 延伸到异步 |
+| 6 | 内核 vsnprintf 深度加固 + fuzzing 纵深 | round 92-93 fuzz + 越界读修复 ✅ | ✅ 收敛 |
+| 7 | FD 继承 (P0-6) | round 90 fd_manager_dup ✅ (round 7 补锁/OOM 回滚) | ✅ 收敛 |
+| 8 | xHCI 异步 IN 路径 (P1-32/33 残余) | 同步路径已修复; 异步走 bounce/SG 待实施 (真机验证阻塞) | 每页 chained TRB 延伸到异步 |
+| 9 | 审计最新批 (round 1-23) | 高危 14 项: 11 修复 + 3 误报; 中危 13 项: 6 修复 + 5 不适用/已覆盖 + #19 已分析 (分配器接入需启动序协调) + #21 延迟检出为设计 (SLAB 在 refill 检出, SLUB 即时); 设计债 #58 已分析 (语义正确, 改名实测致 boot 挂起已回退, 迁移方案留痕); 卫生 16 项: 15 收账 (含 3 项过时声明: fb.cpp 拷贝初始化/x86mem MIT 已补/libc 行号指错文件) + 1 项路线图 (-Wno 分批回收) | 见各 round 记录 |
 
 (End of file - total 71 lines)

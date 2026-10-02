@@ -178,9 +178,15 @@ namespace AHCI
         uint32_t sectorCountCopy = sectorCount;
         
         hbaPort->interruptStatus = (uint32_t)-1;
+        /* 审计 #15 (round 9): 选槽 + 表填 + 签发在同一短临界区 ——
+           两个线程并发写同一端口时不会再选到同一 slot (原实现
+           FindCommandSlot 的扫描无锁) */
+        spinlock_lock(&slot_lock);
         int32_t slot = FindCommandSlot();
-        if (slot == -1)
+        if (slot == -1) {
+            spinlock_unlock(&slot_lock);
             return false;
+        }
 
         uint64_t cmd_list_phys = (uint64_t)hbaPort->commandListBase | ((uint64_t)hbaPort->commandListBaseUpper << 32);
         HBACommandHeader* cmdHeader = (HBACommandHeader*)HIGHER_HALF((void*)cmd_list_phys);
@@ -238,7 +244,8 @@ namespace AHCI
 
         /* P2-59: 同 Write —— 命令表写全后、门铃前释放屏障 */
         __atomic_thread_fence(__ATOMIC_RELEASE);
-        hbaPort->commandIssue = 1 << slot;        uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
+        hbaPort->commandIssue = 1 << slot;
+        spinlock_unlock(&slot_lock);   /* 审计 #15: 签发后释放 (短临界区) */        uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
         /* The syscall path runs with IRQs masked (syscall_entry does cli).
            Spinning on device completion with IRQs off monopolises this core
            for up to the whole timeout and starves peer threads pinned to it.
@@ -285,9 +292,15 @@ namespace AHCI
         uint32_t sectorCountCopy = sectorCount;
         
         hbaPort->interruptStatus = (uint32_t)-1;
+        /* 审计 #15 (round 9): 选槽 + 表填 + 签发在同一短临界区 ——
+           两个线程并发写同一端口时不会再选到同一 slot (原实现
+           FindCommandSlot 的扫描无锁) */
+        spinlock_lock(&slot_lock);
         int32_t slot = FindCommandSlot();
-        if (slot == -1)
+        if (slot == -1) {
+            spinlock_unlock(&slot_lock);
             return false;
+        }
 
         uint64_t cmd_list_phys = (uint64_t)hbaPort->commandListBase | ((uint64_t)hbaPort->commandListBaseUpper << 32);
         HBACommandHeader* cmdHeader = (HBACommandHeader*)HIGHER_HALF((void*)cmd_list_phys);
@@ -348,6 +361,7 @@ namespace AHCI
            门铃」契约并保证移植到弱序架构时语义不变 */
         __atomic_thread_fence(__ATOMIC_RELEASE);
         hbaPort->commandIssue = 1<<slot;
+        spinlock_unlock(&slot_lock);   /* 审计 #15: 签发后释放 (短临界区) */
 
         uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
         /* The syscall path runs with IRQs masked (syscall_entry does cli).
@@ -368,6 +382,14 @@ namespace AHCI
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
                 return false;
+
+        /* 审计 #9 (round 1 修复): 原实现超时后直接 return true ——
+           丢写报成功。补 CI 检查 (与 Read 对称): 超时未完成 = 失败 */
+        if (hbaPort->commandIssue & (1 << slot)) {
+            kerror("AHCI: port %d slot %d WRITE timeout (CI=%#x, IS=%#x)\n",
+                   portNumber, slot, hbaPort->commandIssue, hbaPort->interruptStatus);
+            return false;
+        }
 
         return true;
     }
