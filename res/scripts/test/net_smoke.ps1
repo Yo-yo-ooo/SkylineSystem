@@ -1,9 +1,10 @@
-# tests/net_smoke.ps1 — 网络栈 QEMU 冒烟门禁 (回归门)
+# res/scripts/test/net_smoke.ps1 — 网络栈 QEMU 冒烟门禁 (回归门)
 # 前置: 内核已构建 (wsl bash _tmp_build.sh)
-# 用法: pwsh -File tests/net_smoke.ps1 [-Root <路径>] [-Qemu <路径>] [-WaitSeconds 60]
+# 用法: pwsh -File res/scripts/test/net_smoke.ps1 [-Root <路径>] [-Qemu <路径>] [-WaitSeconds 60]
 #   (退出码 0 = 通过)
 # 断言: ① 无异常字样; ② 至少 1 次 ping 回复; ③ 统计节拍出现
 # P4-88: 参数化 (原硬编码 C:\ZSY\SkylineSystem 与 QEMU 路径)
+# 迁移 (用户清理): 原 tests/net_smoke.ps1 → 此处, 默认 Root 上溯到仓库根
 param(
     [string]$Root = "",
     [string]$Qemu = "",
@@ -11,7 +12,7 @@ param(
 )
 
 $root = if ($Root) { $Root } elseif ($env:SKYLINE_ROOT) { $env:SKYLINE_ROOT }
-        else { Split-Path -Parent $PSScriptRoot }
+        else { Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) }
 $qemu = if ($Qemu) { $Qemu }
         elseif ($env:SKYLINE_QEMU) { $env:SKYLINE_QEMU }
         else { "C:\Program Files\qemu\qemu-system-x86_64.exe" }

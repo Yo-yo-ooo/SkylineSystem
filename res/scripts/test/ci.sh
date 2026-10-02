@@ -1,8 +1,9 @@
 #!/bin/bash
-# tests/ci.sh — 一键复现: 全新 Ubuntu 24.04 应可运行
-# 用法: bash ci.sh   (退出码 0 = 全部通过; 金样比对见 ci_golden/)
+# res/scripts/test/ci.sh — 一键复现: 全新 Ubuntu 24.04 应可运行
+# 用法: bash res/scripts/test/ci.sh   (退出码 0 = 全部通过; 金样比对见 golden.sh)
+# 迁移 (用户清理): 原 tests/ci.sh → res/scripts/test/, 工作目录解析到 tests/
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/../../../tests"
 
 echo "== build =="
 make -B slub slub-poison fc fc-reg sched slub-mt fc-mt 2>&1 | tail -3

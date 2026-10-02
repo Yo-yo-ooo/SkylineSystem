@@ -30,15 +30,15 @@ jobs:
 
       - name: Static analysis gate (round 98-99)
         working-directory: tests
-        run: bash ../_tmp_analyze.sh && ! grep -q "warning:" /tmp/static_analysis.txt
+        run: bash ../res/scripts/test/analyze.sh && ! grep -q "warning:" /tmp/static_analysis.txt
 
       - name: Run suites (ci.sh)
         working-directory: tests
-        run: bash ci.sh
+        run: bash ../res/scripts/test/ci.sh
 
       - name: Golden diff gate
         working-directory: tests
-        run: bash golden.sh
+        run: bash ../res/scripts/test/golden.sh
 
       - name: Upload CI logs on failure
         if: failure()
