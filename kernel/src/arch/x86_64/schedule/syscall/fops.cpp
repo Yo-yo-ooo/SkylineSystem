@@ -284,6 +284,13 @@ uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5()){
     proc_t *proc = Schedule::this_proc();
     fd_t *FD = fd_get(proc->FDMan,fd);
     if(!FD){return -EBADF;}
+    /* round 94 (完整语义支柱): 关闭前冲刷该文件的脏缓存页 ——
+       file_id = (uint64_t)filedesc 与 fops 的 promote/record_io 键一致;
+       fsync 的写回回调按路径重开文件落盘, 失败不丢脏 (fc 的重试机制)。
+       这才把 P3-73 的 "fsync 机制存在但生产未激活" 激活 */
+    cpu_t *cpu = this_cpu();
+    if (cpu->file_cache && FD->filedesc)
+        file_cache_fsync(cpu->file_cache, (uint64_t)FD->filedesc);
     int32_t res = FD->FSOPS->close(FD->filedesc);
     
     if (FD->path) {

@@ -128,6 +128,7 @@ struct Stats {
     uint32_t rx_err;       // 描述符错误
     uint32_t tx_full;      // 发送环满次数
     uint32_t irq_count;
+    uint32_t rx_burst_avg; // round 97: 平均每轮 PollRX 的帧数 (DPDK rx_burst 口径)
 };
 Stats GetStats(void);
 

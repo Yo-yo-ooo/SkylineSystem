@@ -180,7 +180,7 @@ namespace Schedule{
         void Switch(context_t *ctx);
         void Preempt(context_t *ctx);
 
-        void ProcessAddThread(proc_t *parent, thread_t *thread);
+        bool ProcessAddThread(proc_t *parent, thread_t *thread);   /* round 91: 锁内重检 exiting, 失败返 false */
         
         void RemoveFromQueue(cpu_t *cpu, thread_t *thread);
         void InsertToQueue(cpu_t *cpu, thread_t *thread);
@@ -220,6 +220,7 @@ namespace Schedule{
     void PAUSE();
     void Tick();
     void Resume();
+    void Sleep(uint64_t ms);   /* P2-62 接活 (round 96): 定时器轮真睡眠 */
 
     void DeleteThread(cpu_t *cpu, thread_t *thread);
     void DeleteProc(proc_t *proc);

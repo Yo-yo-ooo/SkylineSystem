@@ -48,6 +48,8 @@ static volatile uint64_t g_stat_tx_bytes = 0;
 static volatile uint32_t g_stat_rx_dropped = 0;  // 环满/分配失败
 static volatile uint32_t g_stat_rx_err = 0;      // 描述符错误
 static volatile uint32_t g_stat_tx_full = 0;     // 发送环满次数
+static volatile uint64_t g_stat_rx_burst_sum = 0;     // round 97: Σ 每轮轮询帧数
+static volatile uint64_t g_stat_rx_burst_calls = 0;  // round 97: 轮询次数
 static spinlock_t g_tx_lock = 0;                 // 多核 TX 串行化 (共享 bounce + TDT)
 
 uint32_t DiagIRQCount() { return g_irq_count; }
@@ -67,6 +69,10 @@ Stats GetStats(void) {
     s.rx_err     = __atomic_load_n(&g_stat_rx_err, __ATOMIC_RELAXED);
     s.tx_full    = __atomic_load_n(&g_stat_tx_full, __ATOMIC_RELAXED);
     s.irq_count  = g_irq_count;
+    s.rx_burst_avg = __atomic_load_n(&g_stat_rx_burst_calls, __ATOMIC_RELAXED)
+        ? (uint32_t)(__atomic_load_n(&g_stat_rx_burst_sum, __ATOMIC_RELAXED)
+                     / __atomic_load_n(&g_stat_rx_burst_calls, __ATOMIC_RELAXED))
+        : 0;
     return s;
 }
 uint32_t DiagRCTL() { return dreg(RCTL); }
@@ -132,6 +138,7 @@ void PollRX(void) {
     if (!g_inited) return;
     IrqSave guard_irq;
     uint32_t guard = 0;
+    uint32_t burst = 0;   /* round 97: 单次轮询的帧数 (DPDK rx_burst 口径) */
     while ((g_rx_ring[g_rx_tail].status & 1) && guard < E1000_RX_RING_LEN) {
         rx_desc *d = &g_rx_ring[g_rx_tail];
         uint16_t len = d->length;
@@ -153,7 +160,10 @@ void PollRX(void) {
         d->status = 0;
         g_rx_tail = (g_rx_tail + 1) % E1000_RX_RING_LEN;
         guard++;
+        burst++;
     }
+    __atomic_add_fetch(&g_stat_rx_burst_sum, burst, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_stat_rx_burst_calls, 1, __ATOMIC_RELAXED);
     rx_arm_advance();
 }
 

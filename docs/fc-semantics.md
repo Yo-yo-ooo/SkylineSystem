@@ -8,18 +8,18 @@
 | 语义 | 状态 | 证据 |
 |---|---|---|
 | 脏页追踪 | ✅ | `fc.cpp` 每条目 `is_dirty` + `dirty_cache_bytes` 全局计数 (L576/1048/1086) |
-| 后台写回 (idle) | 🟡 | `fc_idle.cpp` idle_handler 批量冲刷, 批大小动态 (总条目/4, 16..64) —— **机制存在但生产未激活** (见下方结论) |
-| 写回回调 | 🟡 | `writeback_cb(key, key_len, data, data_len)` → `fd.cpp:215 file_cache_writeback_callback` —— 回调完整, 但依赖 idle 线程被激活 |
-| fsync | 🟡 | `file_cache_fsync` (fc_idle.cpp:18): 按 file_id 收集脏条目 → 回调 → 成功后清脏 —— **当前无调用者** (生产未激活) |
+| 后台写回 (idle) | 🟡 | `fc_idle.cpp` idle_handler 批量冲刷, 批大小动态 (总条目/4, 16..64) —— **机制存在但生产未激活** (idle 冲刷依赖 tick 接线) |
+| 写回回调 | ✅ | `writeback_cb(key, key_len, data, data_len)` → `fd.cpp file_cache_writeback_callback` —— 回调完整; round 75 补写回内容校验测试 (test_flush_writeback_content) |
+| fsync | ✅ | `file_cache_fsync` 按 file_id 收集脏条目 → 回调 → 成功后清脏 —— **round 94 生产激活**: sys_fclose 与进程退出 (fd_manager_destroy) 均先冲刷脏页再关闭 (file_id = filedesc 指针, 与 promote 键一致) |
 | 写回重试/失败状态 | ✅ | `writeback_retries` 计数, ≥5 → `FC_STATE_WRITEBACK_FAILED`; 失败条目 30s 冷却重试 (round 61 P1-35) |
 | I/O 拥塞自适应 | ✅ | io_congestion ≥90 停冲刷 / ≥70 批=1 / ≥30 批/4 (fc_idle.cpp:159-161); 脏比例动态上限 80-拥塞/2, 下限 20 (fc.cpp:1103-1105) |
 | 淘汰不丢脏 | ✅ | 淘汰只选 `!is_dirty` (fc_idle.cpp:175/229/284); 写回失败条目不淘汰; 广播失效先写回再摘除 (round 61 P1-34) |
 | ext4 层脏块 | ✅ | `ext4_blockdev` dirty_list + `ext4_block_cache_flush` (ext4_blockdev.cpp:469); jbd 脏超块写回 (ext4_journal.cpp:442) |
 | FatFs 脏扇区 | ✅ | `FA_DIRTY` 窗口写回 (ff.cpp:4025 等) |
 
-结论: writeback/脏页/fsync **机制存在但生产未激活** (file_cache_fsync 无调用者,
-idle 冲刷依赖 tick 接线) —— 审计口径修正, 与 filesystems.md 统一。🟡 未专项
-验证项: 断电场景的脏数据一致性 (依赖 ext4 journal 的崩溃恢复路径未测)、
+结论: 脏页/写回回调/fsync **已生产激活** (round 94: fclose + 进程退出隐式冲刷);
+后台 idle 冲刷仍依赖 tick 接线 (🟡)。审计口径修正, 与 filesystems.md 统一。
+未专项验证项: 断电场景的脏数据一致性 (依赖 ext4 journal 的崩溃恢复路径未测)、
 fsync 的并发正确性 (多线程同文件 fsync)。
 
 ## 2. OOM 回收

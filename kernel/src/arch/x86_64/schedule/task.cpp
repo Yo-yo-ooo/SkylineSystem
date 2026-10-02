@@ -315,17 +315,20 @@ namespace Schedule {
                 child = next_child;
             }
             p->children = nullptr;
+            /* round 91 (P1-23 收敛): FDMan 回收移入 PROC_LIST_LOCK 临界区
+               —— 与 ProcessAddThread 的锁内 exiting 重检配对, 闭合
+               "spawn 检查通过 → FDMan 回收 → 线程挂链" 的窗口。
+               fd_manager_destroy 的 rb 锁/close 均为无睡眠路径, 锁内安全 */
+            if (p->FDMan) {
+                fd_manager_destroy(p->FDMan);
+                kfree(p->FDMan);
+                p->FDMan = nullptr;
+            }
             spin_unlock_irqrestore(&PROC_LIST_LOCK, flags);
 
             if (p->pagemap && p->pagemap != kernel_pagemap) {
                 VMM::DestroyPM(p->pagemap);
                 p->pagemap = nullptr;
-            }
-
-            if (p->FDMan) {
-                fd_manager_destroy(p->FDMan);
-                kfree(p->FDMan);
-                p->FDMan = nullptr;
             }
 
             kfree(p);
@@ -563,8 +566,15 @@ namespace Schedule {
 
     /* ================= 进程与线程创建接口 ================= */
     namespace Internal {
-        void ProcessAddThread(proc_t *parent, thread_t *thread) {
+        /* round 91 (P1-23 收敛): 锁内重检 exiting —— 关闭"顶层检查 →
+           进程退出 → FDMan 回收 → 线程挂链"的 TOCTOU 窗口 (round 33/40
+           的 UAF 根因的根治性收敛; 失败返回 false, 调用方清理 thread) */
+        bool ProcessAddThread(proc_t *parent, thread_t *thread) {
             uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
+            if (unlikely(__atomic_load_n(&parent->exiting, __ATOMIC_ACQUIRE) != 0)) {
+                spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+                return false;
+            }
             if (!parent->threads) {
                 parent->threads = thread;
                 thread->next = thread;
@@ -576,6 +586,7 @@ namespace Schedule {
                 parent->threads->prev = thread;
             }
             spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+            return true;
         }
     }
 
@@ -733,7 +744,12 @@ namespace Schedule {
         thread->stack = kernel_stack; thread->ctx.rip = (uint64_t)entry;
         thread->ctx.cs = 0x08; thread->ctx.ss = 0x10; thread->ctx.rflags = 0x202;
         thread->ctx.rsp = thread->kernel_rsp; thread->thread_stack = thread->ctx.rsp;
-        Schedule::Internal::ProcessAddThread(parent, thread);
+        if (!Schedule::Internal::ProcessAddThread(parent, thread)) {
+            VMM::Free(kernel_pagemap, (void*)thread->fx_area);
+            VMM::Free(kernel_pagemap, (void*)kernel_stack);
+            kfree(thread);
+            return nullptr;
+        }
 
         uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
@@ -829,7 +845,13 @@ namespace Schedule {
         }
 
         kfree(buffer);
-        Schedule::Internal::ProcessAddThread(parent, thread);
+        if (!Schedule::Internal::ProcessAddThread(parent, thread)) {
+            /* round 91: 锁内重检失败 —— 进程已退出, 归还已分配资源 */
+            VMM::Free(kernel_pagemap, (void*)thread->fx_area);
+            VMM::Free(kernel_pagemap, (void*)kernel_stack);
+            kfree(thread);
+            return nullptr;
+        }
 
         uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
         cpu->has_runnable_thread = true;
@@ -872,7 +894,13 @@ namespace Schedule {
         thread->stack = parent->stack; thread->sig_stack = parent->sig_stack;
         thread->tls_base = parent->tls_base; thread->tls_pages = parent->tls_pages;
         thread->timer_cpu = cpu->id;
-        Schedule::Internal::ProcessAddThread(proc, thread);   // 此时 state 已是 RUNNING
+        if (!Schedule::Internal::ProcessAddThread(proc, thread)) {
+            /* round 91: fork 自身的 proc 不可能 exiting (调用者即其线程),
+               但保持防御 —— 失败归还资源 */
+            VMM::Free(kernel_pagemap, (void*)kernel_stack);
+            kfree(thread);
+            return nullptr;
+        }   // 此时 state 已是 RUNNING
         __memcpy(&thread->ctx, frame, sizeof(context_t));
         thread->ctx.rsp = ((context_t*)frame)->rsp;
         thread->ctx.cs = 0x23; thread->ctx.ss = 0x1b; thread->ctx.rflags = ((syscall_frame_t*)frame)->r11;

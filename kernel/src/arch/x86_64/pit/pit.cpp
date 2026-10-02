@@ -107,6 +107,14 @@ namespace PIT
     {
         if (!Inited)
             return;
+        /* P2-62 接活 (round 96): 调度器就绪 (有线程上下文) 时走真睡眠
+           (Schedule::Sleep 的定时器轮 + THREAD_SLEEPING + Yield), 释放
+           本核给其他线程; 引导早期 (驱动探测, 无线程上下文) 保持忙等
+           —— 忙等语义在无调度器时必需 */
+        if (smp_started && Schedule::this_thread()) {
+            Schedule::Sleep(milliseconds);
+            return;
+        }
         uint64_t endTime = TimeSinceBootMS() + milliseconds;
         while (TimeSinceBootMS() < endTime)
             asm("pause");

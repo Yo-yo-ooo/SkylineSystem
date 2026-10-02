@@ -31,7 +31,16 @@ bin/alloc_test: alloc/alloc_main.cpp ../lib/stdc/allocator/allocator.c ../lib/st
 	$(CXX) $(CXXFLAGS) -I ../lib/include -I ../ablib \
 	  alloc/alloc_main.cpp bin/allocator_host.o bin/sct_host.o -o $@ $(LDLIBS)
 
-.PHONY: all slub slub-poison fc fc-asan sched clean art-mini art-replay alloc
+# 债务 #6: 内核 vsnprintf 宿主模糊测试 (ASAN+UBSAN)
+fuzz: bin/kprintf_fuzz
+bin/kprintf_fuzz: fuzz/kprintf_fuzz.cpp fuzz/fuzz_shim.cpp ../kernel/src/klib/kprintf.cpp
+	@mkdir -p bin
+	$(CXX) -std=gnu++17 -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+	  -D__KERNEL_TEST_HOST__ -I common -I ../kernel/include -I ../ablib \
+	  fuzz/kprintf_fuzz.cpp fuzz/fuzz_shim.cpp ../kernel/src/klib/kprintf.cpp \
+	  -o $@ -pthread
+
+.PHONY: all slub slub-poison fc fc-asan sched clean art-mini art-replay alloc fuzz
 all: slub slub-poison fc sched
 
 slub: bin/slub_test

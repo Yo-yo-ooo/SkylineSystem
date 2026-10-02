@@ -402,7 +402,12 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
     }
 
     /* ---- 一切就绪, 最后一刻发射 (此后 t 不可再碰) ---- */
-    Schedule::Internal::ProcessAddThread(me, t);
+    if (!Schedule::Internal::ProcessAddThread(me, t)) {
+        /* round 91: 锁内重检失败 —— me 已退出, 归还已分配资源 */
+        if (t->kernel_stack) VMM::Free(kernel_pagemap, (void*)t->kernel_stack);
+        kfree(t);
+        return (uint64_t)-1;
+    }
 
     uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
     cpu->has_runnable_thread = true;

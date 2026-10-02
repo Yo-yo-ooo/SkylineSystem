@@ -166,10 +166,16 @@ round 47b (stalled 真机制终现):
   RIP —— 采样移到 switch-out + 与 tick 去重。实施 = 下一轮。
 
 round 68 (P2-62 披露 + P3-77):
-- **Schedule::Sleep + 定时器轮 (tv1/2/3) 为死代码** (无调用者, 全内核
-  睡眠走 PIT::Sleep 忙等)。接活方案 = PIT::Sleep 改调真睡眠, 需先解
-  引导期依赖 (调度器安装前的探测路径必须忙等语义)。列入路线图。
-- 注: 切换点采样 (round 47b 结论) 仍未实施 —— 与本轮同列路线图。
+- ~~Schedule::Sleep + 定时器轮 (tv1/2/3) 为死代码~~ **round 96 已接活**:
+  PIT::Sleep 在调度器就绪 (smp_started + 有线程上下文) 时改调
+  Schedule::Sleep (定时器轮 + THREAD_SLEEPING + Yield, 释放本核),
+  引导早期的探测路径保持忙等。验证: BUILD_EXIT=0 + golden PASS +
+  QEMU ping 3 + 0 异常。
+- ~~切换点采样 (round 47b 结论) 仍未实施~~ **round 102 复核确认已实施**:
+  sched.cpp Switch 路径每切换点调 riprate_update (626-628), shortwin
+  判据 (elapsed < RIP_MIN_SAMPLE_MS → rip_short_windows++) 与片长分布
+  (rip_min/max_slice_ms) 全部在线 —— round 47b 的结论在后续轮次落地,
+  文档滞后已修正。
 - UAF 嫌疑收敛: proc 僵尸回收 (DrainProcZombieList) 释放 FDMan/pagemap
   时无全局同步, FDMan 内含锁表 —— 锁字 UAF 的最可能来源; 修复需
   fd_manager_destroy 与回收窗口的同步审计。

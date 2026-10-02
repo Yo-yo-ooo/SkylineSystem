@@ -6,6 +6,7 @@
 
 #include <klib/klib.h>
 #include <mem/heap.h>
+#include <arch/x86_64/smp/smp.h>   /* round 94: this_cpu + cpu_t (fsync 激活) */
 
 extern "C" char* GetMountPointName(const char* path) {
     if (!path || path[0] != '/' || path[1] == '/') 
@@ -200,6 +201,11 @@ void fd_free(fd_manager_t* manager, int32_t fd) {
 // 红黑树节点释放回调，用于 fd_manager_destroy
 static void fd_destroy_cb(rb_node_t* node, void* arg) {
     fd_t* entry = container_of(node, fd_t, node);
+    /* round 94: 进程退出 = 隐式关闭全部 FD —— 同样先冲刷脏缓存页
+       (与 sys_fclose 对称; file_id = filedesc 指针, 键一致) */
+    cpu_t *cpu = this_cpu();
+    if (cpu->file_cache && entry->filedesc)
+        file_cache_fsync(cpu->file_cache, (uint64_t)entry->filedesc);
     // 如果有底层文件描述符，调用其 close 方法
     if (entry->FSOPS && entry->FSOPS->close) {
         entry->FSOPS->close(entry->filedesc);
@@ -210,9 +216,27 @@ static void fd_destroy_cb(rb_node_t* node, void* arg) {
 void fd_manager_destroy(fd_manager_t* manager) {
     if (!manager) return;
     
-    // 遍历所有分片树，释放节点内存并关闭文件
-    rb_sharded_clear(&manager->fd_tree, fd_destroy_cb, nullptr, fd_rb_free_lock);
-    
+    /* round 90: 原 rb_sharded_clear 走 rb_postorder_iter —— 回调后读
+       tmp->right, fd_destroy_cb 若释放节点即 UAF (0xFFFFFFFF80024D18)。
+       此前 FD 树恒空, 缺陷潜伏; fd_manager_dup 引入继承后引爆。
+       改为 rb_erase_range 的"先取 next 再回调"模式 (全范围擦除) */
+    for (uint32_t i = 0; i < manager->fd_tree.shard_num; i++) {
+        rb_root_t* shard = &manager->fd_tree.shards[i];
+        rb_erase_range(shard, nullptr, nullptr,
+                       manager->fd_tree.ops.cmp, fd_destroy_cb, nullptr);
+        fd_rb_free_lock(shard->lock_ctx);
+        shard->lock_ctx = NULL;
+    }
+    manager->fd_tree.mem_free(manager->fd_tree.shards);
+    manager->fd_tree.shards = NULL;
+    manager->fd_tree.shard_num = 0;
+    manager->fd_tree.shard_mask = 0;
+    manager->fd_tree.ops.hash_fn = NULL;
+    manager->fd_tree.ops.key_of  = NULL;
+    manager->fd_tree.ops.cmp     = NULL;
+    manager->fd_tree.mem_alloc   = NULL;
+    manager->fd_tree.mem_free    = NULL;
+
     manager->next_fd_hint = 0;
 }
 

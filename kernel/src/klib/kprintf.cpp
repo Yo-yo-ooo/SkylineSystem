@@ -862,6 +862,11 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
         break;
 
       default :
+        /* round 93 fuzz 实锤: 格式串以 "%0"/"%<flag>" 结尾时, spec 解析
+           落在 NUL 上 —— 原实现 out(0) 后 format++ 越过终结符, 外层
+           while (*format) 越界读 (ASAN heap-buffer-overflow, kprintf.cpp:605)。
+           修复: NUL 不前进, 循环条件自然终止 */
+        if (*format == 0) break;
         out(*format, buffer, idx++, maxlen);
         format++;
         break;

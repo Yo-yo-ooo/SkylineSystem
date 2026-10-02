@@ -287,6 +287,10 @@ static void sys_load_fail(proc_t *proc, thread_t *thread,
         if (proc->FDMan) {                       // 修复: 原来 kfree(parent) 漏掉的
             fd_manager_destroy(proc->FDMan);
             kfree(proc->FDMan);
+            proc->FDMan = nullptr;               /* round 90: 所有权交接 ——
+               原实现释放后不置空, 退出收割器二次 destroy; 此前 FD 树恒空
+               (浅拷贝已除), 二次清空无害; fd_manager_dup 引入继承后树非空,
+               二次 destroy 遍历已释放分片 → 页错误 (0xFFFFFFFF80024D18) */
         }
         if (pid2proc_tree) {
             uint64_t fl = spin_lock_irqsave(&PID2PROC_TREE_LOCK);
@@ -501,7 +505,13 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     }
 
     // 线程账本: 先挂链再发布(launch 侧看到的 proc->threads 必然有效)
-    Schedule::Internal::ProcessAddThread(parent, thread);
+    if (!Schedule::Internal::ProcessAddThread(parent, thread)) {
+        /* round 91: 锁内重检失败 —— 顶层检查与挂链之间进程已退出 */
+        if (thread->fx_area)      VMM::Free(kernel_pagemap, (void*)thread->fx_area);
+        if (thread->kernel_stack) VMM::Free(kernel_pagemap, (void*)thread->kernel_stack);
+        kfree(thread);
+        return -ESRCH;
+    }
 
     spinlock_lock(&NOT_RUNQ_LOCK);
     art_insert(NOT_RUNQ_P, (const uint8_t*)&parent->id, 8, parent);

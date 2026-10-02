@@ -14,6 +14,18 @@ foreign_head、P2-59 AHCI 释放屏障、P2-61 QSBR 64 槽）、**P3 ×21**、
 内容校验）、**P5 ×19**。每轮验证：BUILD_EXIT=0 + GOLDEN PASS + QEMU
 ping 3 + 0 异常。
 
+## 🏁 路线图收敛（round 90–100）
+
+| # | 路线图项 | 状态 |
+|---|---|---|
+| #7 | FD 继承 (filedesc 快照式深拷贝) | ✅ round 90 —— 顺带实锤两个潜伏缺陷 (rb_postorder_iter 回调契约 + exec FDMan 释放不置空) |
+| #2 | proc 生命周期 TOCTOU | ✅ round 91 —— ProcessAddThread 锁内重检 + 收割器 FDMan 回收入锁 (5 调用点闭环) |
+| #6 | vsnprintf fuzz | ✅ round 92-93 —— ASAN 宿主 fuzz + 真越界读修复 (NUL 终结格式串) |
+| — | fsync 生产激活 | ✅ round 94 —— fclose + 进程退出隐式冲刷脏页 |
+| P2-62 | Sleep/timer 轮接活 | ✅ round 96 —— PIT::Sleep 双模 (调度器就绪→真睡眠) |
+| — | RX burst 可观测 | ✅ round 97 —— rx_burst_avg (DPDK 口径) |
+| — | 静态分析 | ✅ round 98-99 —— clang --analyze 9 文件 + 2 防御修复 (fc LRU 双步进 + rbtree sibling 守卫) |
+
 ## A. e1000 驱动 —— ✅ 完成
 
 - 82574L (QEMU e1000e) 完整驱动：探测/复位/EEPROM MAC/双环 256/中断+轮询双模

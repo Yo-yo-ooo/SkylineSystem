@@ -363,7 +363,7 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
             /* 原实现不做 art_delete —— CRC 校验失败的条目仍挂在 ART 中,
                此处释放后 ART 残留悬垂指针。补上 art_delete (幂等, 不在树中返回 NULL) */
             void *av = art_delete(&s->index, cur->key, cur->key_len);
-            if (unlikely(av == NULL)) { cur = cur->lru_next; continue; } /* 修复(#GP): 已摘除, 勿双删 */
+            if (unlikely(av == NULL)) { continue; } /* 修复(#GP): 已摘除, 勿双删 —— round 98 静态分析: 原 cur=cur->lru_next 与循环步进重复前进, 跳过一节点且尾端可 NULL 解引用 */
             fc_lru_remove(s, cur);
             s->total_cache_bytes -= cur->data_len;
             if (cur->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= cur->data_len;
