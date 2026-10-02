@@ -1,30 +1,30 @@
-# xHCI 枚举深度路线图（C12）
+# xHCI Enumeration Depth Roadmap (C12)
 
-> 审计 C12：xHCI 枚举深度（hub/HID 描述符/EP0 mps）为功能路线图，
-> 连文档都未写。本文件建档（round 13）。
+> Audit C12: the xHCI enumeration depth (hub/HID descriptors/EP0 mps) is a feature roadmap
+> that had no documentation at all. This file archives it (round 13).
 
-## 现状（已实现）
+## Current State (Implemented)
 
-- 控制器初始化、MSI-X、命令环、事件环
-- EP0 控制传输（同步路径，P1-32 的 IRQ 上下文阻塞问题已修）
-- 端口复位/使能、设备地址分配（PORTSC W1C 已修 P1-24）
-- 单设备枚举（QEMU xHCI 已验证）
+- Controller initialization, MSI-X, command ring, event ring
+- EP0 control transfers (synchronous path; the P1-32 IRQ-context blocking issue is fixed)
+- Port reset/enable, device address assignment (PORTSC W1C fixed in P1-24)
+- Single-device enumeration (verified on QEMU xHCI)
 
-## 缺口（按优先级）
+## Gaps (by Priority)
 
-| # | 缺口 | 影响 | 备注 |
+| # | Gap | Impact | Notes |
 |---|---|---|---|
-| 1 | **hub 遍历**（外部 hub 下游端口未扫描） | 真机多级 USB 拓扑无法使用 | 需要 hub class 请求 + 下游端口枚举 |
-| 2 | **HID Report Descriptor 读取** | hid.cpp 的报告 ID 剥离只能靠启发式（B7 已按 bInterfaceProtocol 收窄） | 读取 descriptor 后可精确解析 |
-| 3 | **EP0 mps 协商**（max packet size 未按设备描述符调整） | 低/全速设备 EP0 用 8/64 而非 512 时传输错误 | Get Device Descriptor 后按 bMaxPacketSize0 更新 |
-| 4 | 同步/异步 TRB 链式 SG（B5 异步路径） | 跨页 DMA 错误 | 异步走 bounce 或链式 TRB |
-| 5 | 批量传输重试/流控、等时传输 | 音频/大容量设备 | 功能扩展 |
+| 1 | **hub traversal** (downstream ports of external hubs are not scanned) | multi-level USB topologies on real hardware are unusable | needs hub class requests + downstream port enumeration |
+| 2 | **HID Report Descriptor read** | hid.cpp's report-ID stripping can only rely on heuristics (B7 already narrowed it by bInterfaceProtocol) | reading the descriptor enables exact parsing |
+| 3 | **EP0 mps negotiation** (max packet size is not adjusted per the device descriptor) | transfer errors when low/full-speed devices use 8/64 instead of 512 on EP0 | update per bMaxPacketSize0 after Get Device Descriptor |
+| 4 | sync/async chained-SG TRBs (B5 async path) | cross-page DMA errors | async goes through bounce buffers or chained TRBs |
+| 5 | bulk transfer retry/flow control, isochronous transfers | audio / mass-storage devices | feature extension |
 
-## 实施前提
+## Implementation Prerequisites
 
-- 真机 xHCI 控制器（QEMU 仅覆盖单设备路径）
-- USB 2.0/3.x 规范中的 hub class 与 descriptor 章节
+- A real-hardware xHCI controller (QEMU only covers the single-device path)
+- The hub class and descriptor chapters of the USB 2.0/3.x specifications
 
-## 验证计划
+## Verification Plan
 
-真机可用后：多级 hub + 键盘/鼠标混合拓扑的枚举与热插拔回归。
+Once real hardware is available: enumeration and hot-plug regression over multi-level hub + keyboard/mouse mixed topologies.

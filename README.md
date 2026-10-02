@@ -67,7 +67,7 @@ been tested in QEMU only, with 512 MB – 2 GB of guest RAM; the earlier
 
 ### 🚀 Highlights
 
-- **🧠 EEVDF scheduler** ("3EVDF" 为早期曾用名, 见 `docs/scheduler.md`) —
+- **🧠 EEVDF scheduler** ("3EVDF" was an earlier name, see `docs/scheduler.md`) —
   a deadline-based scheduler with a **RIP-progress-rate** feedback term
   (Q10 fixed point, dual-channel EWMA). The feedback modulates each thread's
   **time-slice length** (the LAPIC oneshot quantum); it does **not** change
@@ -274,7 +274,7 @@ make cm KCC=aarch64-linux-gnu-gcc KCXX=aarch64-linux-gnu-g++ KLD=aarch64-linux-g
 ## Run
 ### In Linux:
 ```bash
-# x86_64 QEMU example (网络验证需要 -net nic -net user = slirp DHCP)
+# x86_64 QEMU example (network verification needs -net nic -net user = slirp DHCP)
 qemu-system-x86_64 -machine q35 -cpu max \
 -cdrom ./SkylineSystem-x86_64.iso -m 2G -smp 4 \
 -serial stdio -net nic -net user -device AC97 \
@@ -286,27 +286,27 @@ qemu-system-x86_64 -machine q35 -cpu max \
 ### In WSL (Windows Subsystem for Linux):
 see the ./res/scripts/ folder for the architecture you need to run.
 
-### Windows → WSL 构建指引 (D4, round 11):
+### Windows → WSL build guide (D4, round 11):
 
-1. 安装 WSL Ubuntu-24.04: PowerShell 管理员运行
-   `wsl --install -d Ubuntu-24.04`, 重启后进入 Ubuntu 完成初始化。
-2. 仓库放到 WSL 可访问路径 (推荐 `/mnt/c/...`, 或 WSL 家目录):
+1. Install WSL Ubuntu-24.04: run in an elevated PowerShell
+   `wsl --install -d Ubuntu-24.04`, then reboot and enter Ubuntu to finish the initialization.
+2. Put the repository in a WSL-accessible path (recommended: `/mnt/c/...`, or the WSL home directory):
    ```bash
    cd /mnt/c/ && git clone <repo-url> SkylineSystem
    cd SkylineSystem
    ```
-3. 安装工具链 (Ubuntu 内):
+3. Install the toolchain (inside Ubuntu):
    ```bash
    sudo apt-get update && sudo apt-get install -y g++ gcc make clang xorriso
    ```
-4. 构建 (与 Linux 相同):
+4. Build (same as on Linux):
    ```bash
    cd kernel && ./get-deps && cd ..
    make limine-binary/limine && make cm
    ```
-5. 运行: 用 Windows 侧 QEMU (`qemu-system-x86_64.exe`) 直接加载
-   `SkylineSystem-x86_64.iso`; 或 WSL 内装 `qemu-system-x86`。
-6. 宿主测试门禁 (可选):
+5. Run: use the Windows-side QEMU (`qemu-system-x86_64.exe`) to load
+   `SkylineSystem-x86_64.iso` directly; or install `qemu-system-x86` inside WSL.
+6. Host-side test gate (optional):
    ```bash
    cd tests && bash ../res/scripts/test/golden.sh
    ```
@@ -336,7 +336,7 @@ file kernel
 * [Yo-yo-ooo](https://github.com/Yo-yo-ooo/)
 * [marceldobehere](https://github.com/marceldobehere)
 * [Arty3](https://github.com/Arty3)
-* 人造人(In QQ)
+* Renzaoren (In QQ)
 
 ## Connect
 

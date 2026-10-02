@@ -1,55 +1,55 @@
-# 安全现状与漏洞流程（SECURITY）
+# Security Status and Vulnerability Process (SECURITY)
 
-> 如实声明：本 OS 是学习型单用户内核，安全机制覆盖"架构级"而非"策略级"。
-> 报告问题请见文末流程。
+> Stated truthfully: this OS is an educational single-user kernel; its security mechanisms cover the
+> "architecture level" rather than the "policy level". To report issues, see the process at the end.
 
-## 已实现（架构级）
+## Implemented (Architecture Level)
 
-| 机制 | 位置 | 状态 |
+| Mechanism | Location | Status |
 |---|---|---|
-| 内核/用户地址空间隔离 | VMM | ✅ |
+| Kernel/user address-space isolation | VMM | ✅ |
 | SMEP / SMAP | `enable_smep_smap()` | ✅ |
-| NX (EFER.NXE) | 按 CPUID 启用 | ✅ |
-| 用户态 W^X | ELF 装载按 p_flags 收紧 | ✅ |
-| KASLR | 引导器装载随机化 (`make kaslr-check` 门禁) | ✅ |
-| 用户指针校验 | `ua.cpp` MM_USER 校验 + 半区上界 (曾修复 HHDM 别名漏洞) | ✅ |
-| syscall 入口校验 | 越界/未注册 → -ENOSYS | ✅ (round 9 审计) |
-| 敏感操作信任位 | kill/exec/跨进程 mmap 需 `IsTrusted` | ✅ |
-| 内核栈 | 16KB 默认, 深调用链组件可 32KB | ✅ (round 14) |
+| NX (EFER.NXE) | enabled per CPUID | ✅ |
+| User-space W^X | ELF loading tightened by p_flags | ✅ |
+| KASLR | bootloader load randomization (`make kaslr-check` gate) | ✅ |
+| User pointer validation | `ua.cpp` MM_USER check + half-range upper bound (a previous HHDM alias hole was fixed) | ✅ |
+| syscall entry validation | out-of-range / unregistered → -ENOSYS | ✅ (round 9 audit) |
+| Sensitive-operation trust bit | kill/exec/cross-process mmap require `IsTrusted` | ✅ |
+| Kernel stack | 16KB default, deep-call-chain components may use 32KB | ✅ (round 14) |
 
-## 明确边界（非缺陷，是设计现状）
+## Explicit Boundaries (not defects, the current design state)
 
-- **无 uid/gid、无文件权限位、无 chmod/access**：单用户 OS，敏感操作走进程信任位。
-- **用户态 ASLR 内核侧已实现**：ELD 装载器支持 ET_DYN load bias（随机基址）；
-  树内程序当前按静态基址编译未启用（P3-79 口径修正：原写"无用户态 ASLR"）。
-- **无安全模块/CVE 编号体系**：本 OS 不分配 CVE；上游 lwIP/lwext4/FatFs 的 CVE
-  需跟踪（见下）。
+- **No uid/gid, no file permission bits, no chmod/access**: single-user OS; sensitive operations go through the process trust bit.
+- **User-space ASLR is implemented on the kernel side**: the ELD loader supports ET_DYN load bias (randomized base);
+  in-tree programs are currently compiled at a static base and do not enable it (P3-79 wording correction: previously written as "no user-space ASLR").
+- **No security-module / CVE numbering system**: this OS does not assign CVEs; CVEs for upstream lwIP/lwext4/FatFs
+  need to be tracked (see below).
 
-## 已知风险（技术债清单）
+## Known Risks (Technical Debt List)
 
-1. **内核 `_vsnprintf` 加固待办**：`%s` NULL 守卫已加；lwIP 多模块调试流下的
-   崩溃已归因于线程栈（round 14 修复），但 vsnprintf 的长格式/嵌套场景未做穷举。
-2. **零拷贝 RX = 实验态**（`NET_ZEROCOPY=0` 默认关闭），见 docs/dpdk-lite.md。
-3. **sched_bench 真内核未验证**（模型测试通过）。
-4. 上游组件版本跟踪：lwIP / lwext4 / FatFs 的 CVE 公告需定期比对
-   `kernel/src/net` 与 `kernel/src/fs` 的 vendored 版本。
+1. **Kernel `_vsnprintf` hardening TODO**: the `%s` NULL guard is in place; the crashes under
+   lwIP multi-module debug output were attributed to the thread stack (fixed in round 14), but vsnprintf's long-format/nested scenarios are not exhaustively covered.
+2. **Zero-copy RX = experimental state** (`NET_ZEROCOPY=0` off by default), see docs/dpdk-lite.md.
+3. **sched_bench not verified on the real kernel** (model tests pass).
+4. Upstream component version tracking: CVE advisories for lwIP / lwext4 / FatFs must be periodically
+   compared against the vendored versions in `kernel/src/net` and `kernel/src/fs`.
 
-## 漏洞报告流程
+## Vulnerability Reporting Process
 
-1. 在项目仓库开 Issue，标题带 `[SECURITY]`，附复现步骤（QEMU 参数 + 日志）。
-2. 涉及上游（lwIP/lwext4/FatFs）的问题会转报上游并记录转报编号。
-3. 修复合入后更新本文档的"已知风险"与 docs/stability-audit.md。
+1. Open an issue in the project repository with `[SECURITY]` in the title, including reproduction steps (QEMU flags + logs).
+2. Issues involving upstream (lwIP/lwext4/FatFs) are forwarded upstream with the forwarding reference recorded.
+3. After the fix is merged, update the "Known Risks" section of this document and docs/stability-audit.md.
 
-## 上游 CVE 跟踪清单（C6, round 15）
+## Upstream CVE Tracking List (C6, round 15)
 
-> 无自动化时的最低开销人工跟踪：每季度逐行核对以下版本与 NVD 公告。
-> 自动化方向（可选）：GitHub Action 定时拉取 NVD 的 cpeMatch，匹配
-> 本表 pin 的版本，命中则开 Issue。
+> Minimum-cost manual tracking while automation is absent: each quarter, check the versions below
+> line by line against NVD advisories. Automation direction (optional): a GitHub Action periodically
+> pulls NVD's cpeMatch, matches the versions pinned in this table, and opens an issue on a hit.
 
-| 组件 | vendored 位置 | pin 版本 | 最近核对 | 待办 |
+| Component | vendored location | pinned version | last checked | TODO |
 |---|---|---|---|---|
-| lwIP | kernel/src/net | 仓库内置（未记录上游 tag） | round 15 起 | 记录上游 tag |
-| lwext4 | kernel/src/fs/lwext4 | 仓库内置 | round 15 起 | 记录上游 tag |
-| FatFs | kernel/src/fs/fatfs | 仓库内置 | round 15 起 | 记录上游 tag |
-| mpaland/printf | lib/stdc/outfb/printf.c | 上游 MIT 版 | round 15 起 | 跟踪上游修复 |
-| x86mem | ablib/arch/x86_64/x86mem | 本仓库自研（MIT） | — | 无 |
+| lwIP | kernel/src/net | bundled in repo (upstream tag not recorded) | from round 15 | record the upstream tag |
+| lwext4 | kernel/src/fs/lwext4 | bundled in repo | from round 15 | record the upstream tag |
+| FatFs | kernel/src/fs/fatfs | bundled in repo | from round 15 | record the upstream tag |
+| mpaland/printf | lib/stdc/outfb/printf.c | upstream MIT version | from round 15 | track upstream fixes |
+| x86mem | ablib/arch/x86_64/x86mem | developed in this repo (MIT) | — | none |

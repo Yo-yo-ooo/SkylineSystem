@@ -1,56 +1,56 @@
-# GUI 栈与并行合成器
+# GUI Stack and Parallel Compositor
 
-源码：`programs/desktop/`（`main.cpp`、`loader.cpp`、`synthesizer/window.cpp`）、`lib/graphic/`、`kernel/src/drivers/framebuffer/`。
+Source: `programs/desktop/` (`main.cpp`, `loader.cpp`, `synthesizer/window.cpp`), `lib/graphic/`, `kernel/src/drivers/framebuffer/`.
 
-> 整个桌面跑在用户态：内核只给 framebuffer、共享内存和 sysinfo。本文档描述代码实际行为，含已知缺陷。
+> The entire desktop runs in user space: the kernel only provides the framebuffer, shared memory, and sysinfo. This document describes the code's actual behavior, including known defects.
 
-## 1. 数据并行渲染（实际形态）
+## 1. Data-Parallel Rendering (Actual Form)
 
 ```
-在线 CPU 数 N  ← sys_sysinfo(0)
+online CPU count N  ← sys_sysinfo(0)
 
-屏幕水平切成 N 条带（disjoint Y range）
+the screen is cut horizontally into N strips (disjoint Y ranges)
 
-主线程渲染条带 0；其余 N-1 条带各起一个 worker 线程（sys_thread_launch）
+the main thread renders strip 0; each of the remaining N-1 strips starts one worker thread (sys_thread_launch)
 ```
 
-- **零逐像素锁**：每个 worker 写自己的 Y 区间，永不重叠；
-- **双缓冲 + 单一提交点**：worker 只写不可见 back buffer，整帧结束后**只有主线程**把它推到 scanout；
-- **barrier 是计数式的**（`done_compose_` 计数 + 自旋等待），**不是**带序列号校验的生成屏障：迟到的 worker 为上一帧自增可能提前满足本帧等待——"绝无撕裂"存在**残余竞态窗口，未完全关闭**（旧文档宣称的 `present_seq_/done_present_` 两阶段提交并不存在）；
-- 已修复：提交方二次 `rb_erase` 导致红黑树双删的问题（先搜索确认再摘除）。
+- **Zero per-pixel locks**: each worker writes its own Y range; they never overlap;
+- **Double buffering + single commit point**: workers write only the invisible back buffer; once the whole frame is done, **only the main thread** pushes it to scanout;
+- **the barrier is a counting one** (`done_compose_` count + spin wait), **not** a generation barrier with sequence-number validation: a late worker incrementing for the previous frame may satisfy this frame's wait early — "absolutely no tearing" has a **residual race window that is not fully closed** (the two-phase `present_seq_/done_present_` commit claimed in the old docs does not exist);
+- Fixed: the issue where the committer's second `rb_erase` caused a double delete in the red-black tree (search to confirm before removing).
 
-## 2. 场景遍历复杂度（实际）
+## 2. Scene Traversal Complexity (Actual)
 
-- 两层动态链表：layer 列表 + 每层窗口列表；
-- 每个窗口在**每个条带**做一次 clip 测试，命中则按整根 scanline blit；
-- 单帧代价是 **O(strips × windows)**，并非旧文档宣称的 O(窗口数)。
+- Two levels of dynamic linked lists: the layer list + the per-layer window list;
+- Each window takes one clip test in **each strip**; on a hit it blits whole scanlines;
+- The per-frame cost is **O(strips × windows)**, not the O(window count) claimed in the old docs.
 
-## 3. 视觉效果（全软件渲染）
+## 3. Visual Effects (All-Software Rendering)
 
-- SDF 抗锯齿圆角（8px）；
-- 软方向投影阴影（二次衰减）；
-- 逐像素 ARGB source-over，连续不透明段退化为 `memcpy`；
-- Win11/Fluent 风格：扁平深色标题栏、1px 发光描边；
-- 脏矩形比较 blit：场景静止时除光标方块外零 scanout 写（该机制真实存在）。
+- SDF anti-aliased rounded corners (8px);
+- soft directional drop shadows (quadratic falloff);
+- per-pixel ARGB source-over, degrading to `memcpy` over consecutive opaque spans;
+- Win11/Fluent style: flat dark title bars, 1px glowing outlines;
+- dirty-rectangle compare-and-blit: zero scanout writes except the cursor square when the scene is static (this mechanism really exists).
 
-## 4. 独立光标层
+## 4. Independent Cursor Layer
 
-- 光标是独立一层，直接写 scanout，O(16²)；
-- 与场景合成解耦：移动鼠标不触发重合成；
-- 已知缺陷：光标重绘顺序先画新方块再恢复旧方块，位移 <16px 时会把箭头抹掉一部分。
+- The cursor is an independent layer that writes directly to scanout, O(16²);
+- Decoupled from scene composition: moving the mouse does not trigger recomposition;
+- Known defect: the cursor redraw order paints the new square first and then restores the old square, so a displacement < 16px wipes part of the arrow.
 
-## 5. 文本
+## 5. Text
 
-- `lib/base/font/ttf.c`：基于 **stb_truetype**（第三方），LRU + 哈希表字形缓存、CJK 排版、边界裁剪 alpha 混合；
-- 控制台输出由 **flanterm**（第三方）渲染。
+- `lib/base/font/ttf.c`: based on **stb_truetype** (third-party), LRU + hash-table glyph cache, CJK layout, boundary-clipped alpha blending;
+- Console output is rendered by **flanterm** (third-party).
 
-## 6. WM 与应用的边界（实际状态）
+## 6. The WM / Application Boundary (Actual State)
 
-- 窗口装饰由 WM 画，应用只管客户区；
-- **控制台窗口**具备完整交互：拖拽、最大化、最小化（任务栏恢复）、8 向缩放、关闭按钮走 `sys_kill` 回收整个客户进程；
-- **notepad 的窗口只注册未管理**：不参与命中测试/拖拽/缩放/最大化/关闭；
-- **无子进程退出通知**（无 waitpid/SIGCHLD）：客户端 `return 0` 后屏幕留下死窗口；
-- 无 z-order raise / 焦点管理；最小化会丢失最大化状态；
-- "控制台客户端是纯标准 C、可在任意宿主工具链原样编译"——**不准确**：它依赖树内 libc（`-nostdlib`、树内 `_start`、钉在 0x400000 的协议页），只能在随本项目构建的 libc 上编译；
-- 客户端与合成器共用单个 surface，无 flip/fence：合成器可能采样到客户端半重绘的画面；
-- `programs/desktop/loader.cpp` 负责把 ELF 装进新进程并接入窗口。
+- Window decorations are drawn by the WM; applications only handle the client area;
+- The **console window** has full interaction: dragging, maximizing, minimizing (restore from the taskbar), 8-direction resizing, and the close button reclaims the entire client process via `sys_kill`;
+- **notepad's window is registered but not managed**: it takes part in no hit testing / dragging / resizing / maximizing / closing;
+- **No child-process exit notification** (no waitpid/SIGCHLD): after a client `return 0`, a dead window is left on screen;
+- No z-order raise / focus management; minimizing loses the maximized state;
+- "The console client is pure standard C and compiles unchanged with any host toolchain" — **inaccurate**: it depends on the in-tree libc (`-nostdlib`, the in-tree `_start`, the protocol page pinned at 0x400000) and can only be built against the libc that ships with this project;
+- The client and the compositor share a single surface with no flip/fence: the compositor may sample a frame the client is still halfway through redrawing;
+- `programs/desktop/loader.cpp` is responsible for loading the ELF into a new process and attaching it to a window.

@@ -1,215 +1,266 @@
-# 调度器 —— deadline 键调度 + RIP 速率反馈（曾用名 3EVDF）
+# Scheduler — deadline-keyed scheduling + RIP rate feedback (formerly named 3EVDF)
 
-源码：`kernel/src/arch/x86_64/schedule/sched.cpp`、`task.cpp`、`timer.cpp`、`syscall/`。
+Source: `kernel/src/arch/x86_64/schedule/sched.cpp`, `task.cpp`, `timer.cpp`, `syscall/`.
 
-> 本文档只描述代码**实际做到**的事，并明确列出**没有做到**的事。
+> This document only describes what the code **actually does**, and explicitly lists what it
+> **does not do**.
 
-## 1. 实际结构
+## 1. Actual Structure
 
-每个 CPU 一棵**红黑树**运行队列，键为**虚拟 deadline**（P3-74 修正：
-原写"键为 vruntime"——实际入队时 `deadline = vruntime + base_quantum`,
-队列按 deadline 排序；由于 deadline ≡ vruntime + 常数, 序与 vruntime 序
-等价, 但键字段本身是 deadline），节点增广 `min_vruntime_subtree`
-（子树最小值），比较点带 `PREFETCH_R`。线程按权重
-（`sched_prio_to_weight[16]`）得到基准时间片，`vruntime` 按**真实流逝
-毫秒 × 1024 / weight** 推进，`avg_vruntime` 按负载加权速率推进。
+Each CPU has a **red-black tree** run queue keyed by **virtual deadline** (P3-74 correction:
+originally written "keyed by vruntime" — actually on enqueue `deadline = vruntime +
+base_quantum`, the queue is sorted by deadline; since deadline ≡ vruntime + constant, the order
+is equivalent to vruntime order, but the key field itself is deadline), nodes augmented with
+`min_vruntime_subtree` (subtree minimum), comparison points carry `PREFETCH_R`. Threads get a
+base time slice by weight (`sched_prio_to_weight[16]`), `vruntime` advances by **real elapsed
+milliseconds × 1024 / weight**, `avg_vruntime` advances at the load-weighted rate.
 
-`Pick()` 只用 `vruntime` 与 `avg_vruntime` 做选择：沿"子树含 eligible 节点"的分支下降，取最小者。
+`Pick()` selects using only `vruntime` and `avg_vruntime`: descends along the branch whose
+"subtree contains an eligible node", taking the minimum.
 
-## 2. RIP-progress-rate 反馈（3EVDF 部分）—— 它改什么、不改什么
+## 2. RIP-progress-rate Feedback (the 3EVDF part) — what it changes, what it does not
 
-每个 tick 对当前线程采样 RIP 推进量，经 Q10 定点双通道 EWMA 得到快/慢倍率 `mult`（钳制 [0.25x, 4x]），加一个 ±4 tick 的有符号修正项 `adj`，叠加出**每个线程的时间片长度**：
+Each tick samples the current thread's RIP progress, runs it through Q10 fixed-point dual-
+channel EWMA to get a fast/slow multiplier `mult` (clamped to [0.25x, 4x]), plus a signed
+correction term `adj` of ±4 ticks, combining into **each thread's time-slice length**:
 
 ```text
 eff_quantum = (base × fused_mult >> 10) + adj
 ```
 
-该结果只用于 **LAPIC oneshot 定时器的时长**（`sched.cpp` 中 `get_dynamic_quantum()` 的调用点）。
+This result is used only for **the LAPIC oneshot timer duration** (the call site of
+`get_dynamic_quantum()` in `sched.cpp`).
 
-**它不改的事（重要）**：
+**What it does not change (important)**:
 
-- `Pick()` 中**不出现** `mult` / `adj` —— 选择仍由 `vruntime` 决定；
-- `vruntime` 按真实时间记账，**不被倍率缩放**；
-- 因此反馈影响的是**抢占节奏/中断延迟**（忙等线程更频繁被打断、推进快的线程获得更长的不间断运行），**不改变 CPU 份额**；
-- 公平性由 vruntime 机制承担，与速率反馈正交。
+- `Pick()` does **not** see `mult` / `adj` — selection is still decided by `vruntime`;
+- `vruntime` is accounted by real time, **not scaled by the multiplier**;
+- therefore the feedback affects the **preemption rhythm/interrupt latency** (busy-wait threads
+  get interrupted more often, fast-progressing threads get longer uninterrupted runs), and
+  **does not change CPU shares**;
+- fairness is carried by the vruntime mechanism, orthogonal to the rate feedback.
 
-## 3. EEVDF 成分的真实程度
+## 3. How Real the EEVDF Components Are
 
-- `calibrate_and_set_deadline()` 在**每次入队**时把 `vruntime` 钳进 `[avg−q, avg+2q]` 并令 `deadline = vruntime + base_quantum`；
-- 时间片**已按权重缩放**（P3-75 修正：原文档写"未按权重缩放"——
-  实际 `base_quantum` 按 `sched_prio_to_weight[priority]` 缩放后作为
-  deadline 的常数项），deadline ≡ 缩放后 vruntime + 常数；
-- 所以这是**EEVDF 结构的子集**，不是完整的 EEVDF。README 与本文档均按此描述。
+- `calibrate_and_set_deadline()` clamps `vruntime` into `[avg−q, avg+2q]` on **every enqueue**
+  and sets `deadline = vruntime + base_quantum`;
+- the time slice is **already weight-scaled** (P3-75 correction: the original document wrote
+  "not weight-scaled" — actually `base_quantum` is scaled by `sched_prio_to_weight[priority]`
+  and used as the deadline's constant term), deadline ≡ scaled vruntime + constant;
+- so this is a **subset of the EEVDF structure**, not the complete EEVDF. Both README and this
+  document describe it as such.
 
-## 4. 动态基准量子与老化
+## 4. Dynamic Base Quantum and Aging
 
-`dynamic_adjust_quantum()` 每 100ms 按空闲占比/上下文切换数调整 `base_quantum`（钳制 [2,15] tick）。速率反馈侧：
+`dynamic_adjust_quantum()` adjusts `base_quantum` (clamped to [2,15] ticks) every 100ms based
+on the idle ratio / context-switch count. On the rate-feedback side:
 
-- 50ms 未采样 → `mult` 按 1/16 步长向 1.0 收缩、`adj` 向 0 收缩（源码注释记录过 `(x+7)>>4` 在 |adj|≤8 时恒 0 的老 bug）；
-- 离群观测（>16x）钳位到 16x；
-- 新线程 `mult==0` 按 1.0 处理。
+- no sample for 50ms → `mult` shrinks toward 1.0 in 1/16 steps, `adj` shrinks toward 0 (source
+  comments record the old bug where `(x+7)>>4` is always 0 for |adj|≤8);
+- outlier observations (>16x) clamped to 16x;
+- new threads with `mult==0` treated as 1.0.
 
-## 5. SMP 负载均衡
+## 5. SMP Load Balancing
 
-- **Active push（`TryPush`）**：本核盈余且线程 ≥2 时，按总权重找最轻目标，优先**同 SIMD 特性掩码**（注意：`cpu_simd_mask()` 是 SIMD 指令集位图，**不是 SMT 拓扑**；内核里没有 APIC-ID/核兄弟数据），双锁按 `cpu.id` 排序防 ABBA，批量 `SCHED_STEAL_BATCH=8`，推完若目标 hlt 立即发 IPI 唤醒。
-- **Lazy steal（`StealThread`）**：每 8 次节流扫一次；先同掩码后任意核；`spin_trylock` 上限 100 次；偷到先标 `THREAD_TRANSFER` 再换锁入队。
+- **Active push (`TryPush`)**: when this core has surplus and ≥2 threads, find the lightest
+  target by total weight, preferring the **same SIMD feature mask** (note: `cpu_simd_mask()` is
+  an SIMD instruction-set bitmap, **not SMT topology**; the kernel has no APIC-ID/core-sibling
+  data), double lock ordered by `cpu.id` to prevent ABBA, batch `SCHED_STEAL_BATCH=8`, after
+  pushing if the target is hlt send an IPI wakeup immediately.
+- **Lazy steal (`StealThread`)**: sweep once every 8 throttles; same mask first, then any core;
+  `spin_trylock` cap 100 attempts; after stealing, first mark `THREAD_TRANSFER` then swap locks
+  and enqueue.
 
-## 6. 抢占与上下文切换
+## 6. Preemption and Context Switch
 
-`Schedule::Switch()`（SCHED_VEC ISR）：先停 LAPIC 定时器 → `this_cpu==nullptr` 也 EOI → AP 早期窗口重 arm 返回 → `preempt_count > 1` 不清标志只重排 oneshot → 自愿 `yield()` 走独立 `yield_request_flags`。
+`Schedule::Switch()` (SCHED_VEC ISR): stop the LAPIC timer first → `this_cpu==nullptr` still
+EOI → AP early-window re-arm and return → `preempt_count > 1` does not clear flags, only
+rearranges oneshot → voluntary `yield()` goes through a separate `yield_request_flags`.
 
-**已知缺陷（未修）**：`CheckPreempt()` 在代码树中没有调用者，`preempt_count` 归零后的重新触发依赖下一次定时器 tick。
+**Known defect (unfixed)**: `CheckPreempt()` has no callers anywhere in the code tree; the
+re-trigger after `preempt_count` reaches zero depends on the next timer tick.
 
-## 7. 已知修复与新线程记账
+## 7. Known Fixes and New-Thread Accounting
 
-新线程的 `last_run_time` 曾在所有创建点未初始化（首片 `delta = uptime`，抬飞 vruntime）；现已**在创建点初始化**并在记账处对 `==0` 做防御。线程创建点均 `memset` 后赋值，行为确定。
+New threads' `last_run_time` was previously uninitialized at all creation sites (first slice
+`delta = uptime`, launching vruntime upward); it is now **initialized at creation sites** with a
+defensive check for `==0` at the accounting point. All thread creation sites assign after
+`memset`, behavior is deterministic.
 
-## 8. 测试现状（诚实）
+## 8. Test Status (Honest)
 
-**真实内核调度质量基准已跑通（round 24）。** `sched_bench` 四相位在真内核
-（QEMU, cpu 1 专用线程, 网络栈延后 = 安静机器）完整运行：
+**The real-kernel scheduling quality benchmark has run through (round 24).** `sched_bench`'s
+four phases run completely on the real kernel (QEMU, cpu 1 dedicated thread, network stack
+delayed = quiet machine):
 
-| 相位 | 结果 | 解读 |
+| Phase | Result | Interpretation |
 |---|---|---|
-| 阶跃 (RIP 反馈收敛) | **t90=4ms, 无超调 ✓** | REEVDF 反馈环安静环境极快收敛 (污染环境 193ms) |
-| 抗污染 | 未过: base=[41,2057] mult=[785,2211] | 真内核与模型有差异 → **待查** |
-| 短窗口 | 未过: windows=0 stalled=5 | 短窗口未检出 → **待查** |
-| 振荡迟滞 | w=[64,64] toggles=0 ✓ | 迟滞有效无乒乓 |
+| Step (RIP feedback convergence) | **t90=4ms, no overshoot ✓** | REEVDF feedback loop converges very fast in a quiet environment (193ms in a polluted environment) |
+| Pollution resistance | failed: base=[41,2057] mult=[785,2211] | real kernel differs from the model → **to investigate** |
+| Short window | failed: windows=0 stalled=5 | short windows not detected → **to investigate** |
+| Oscillation hysteresis | w=[64,64] toggles=0 ✓ | hysteresis effective, no ping-pong |
 
-**两个未过相位 = 真内核实现与模型测试的真实差距**（模型测试通过、真内核
-失败 → 不是基准 bug，是 RIP 反馈实现在污染/短窗口场景的行为差异），
-即下一轮调度器调试的入口。
+**The two failed phases = the real gap between the real-kernel implementation and the model
+tests** (model tests pass, real kernel fails → not a benchmark bug, but the RIP feedback
+implementation's behavioral difference in pollution/short-window scenarios), i.e. the entry
+point for the next round of scheduler debugging.
 
-round 25 根因分析增量：
-- **shortwin 未过 (windows=0)**：`dynamic_adjust_quantum` 把 base_quantum
-  动态钳在 [2,15]ms 并按负载自整定；bench 的静态假设 (base=5ms → prio15
-  权重 288 → 片长 ~1.4ms < 3ms 门) 在动态量子下失效 (base=15ms 时片长
-  ~4.2ms > 门 → 0 个短窗口)。**不是调度缺陷, 是基准语义与动态量子特性
-  的失配** → bench 应读实际 base_quantum 或在相位期冻结自整定。
-- **pollute 未过 (倍率摆幅 41..2057)**：victim 的 RIP 倍率在 polluter 竞争
-  下大幅振荡——模型测试中稳定、真内核振荡 = 真内核特有行为 (候选: 中断/
-  抢占噪声进采样、`sched_tsc_per_ms` 未校准致墙钟分母失真)。**需 TSC 校准
-  后复测**, 或排查反馈增益在竞争场景的稳定性。
+Round 25 root-cause-analysis increments:
+- **shortwin failed (windows=0)**: `dynamic_adjust_quantum` dynamically clamps base_quantum
+  to [2,15]ms and self-tunes by load; the bench's static assumption (base=5ms → prio15 weight
+  288 → slice ~1.4ms < 3ms gate) breaks under the dynamic quantum (at base=15ms the slice is
+  ~4.2ms > gate → 0 short windows). **Not a scheduling defect; a mismatch between the benchmark
+  semantics and the dynamic-quantum characteristic** → the bench should read the actual
+  base_quantum or freeze self-tuning during the phase.
+- **pollute failed (multiplier swing 41..2057)**: the victim's RIP multiplier oscillates
+  heavily under polluter contention — stable in model tests, oscillating in the real kernel =
+  real-kernel-specific behavior (candidates: interrupt/preemption noise entering samples,
+  `sched_tsc_per_ms` uncalibrated distorting the wall-clock denominator). **Needs retest after
+  TSC calibration**, or investigate the feedback gain's stability under contention.
 
-round 26 增量 (TSC 校准 + 复测):
-- 实现 `sched_calibrate_tsc()` (tsc_cal.cpp, PIT 基准, 忙等带毫秒级守卫 ——
-  早期 PIT 未走时守卫过大曾卡死启动) + `sched_tsc_per_ms` 强符号。
-- 复测: step t90=42ms sat=1 (饱和检测出现); **pollute 仍过不了**
-  (base=[80,1322] mult=[979,2560]) → 排除分母失真候选后, 指向
-  **RIP 反馈增益在竞争场景的真稳定性问题** (反馈回路本身振荡, 待增益分析)。
-- shortwin 仍 windows=0 (动态量子失配, 同 round 25 结论)。
-round 28 根因闭环 (pollute 振荡的完整机制, D1 round 23 归位):
-- 采样结构: 每片 tick 采样, `obs_rate = RIP 差分 / 自身片长 (last_slice_ms)`
-  —— 分母正确 (线程自身运行时长, 非墙钟 gap)。
-- **振荡源 = 抢占驱动的变长片**: EEVDF 下同优 polluter 竞争时, victim 的片
-  被定时器/截止期抢占截短 → 短片的 RIP 差分系统性偏低 → obs_rate 高低
-  交替 → 快通道 (1/4 EWMA) 跟随摆动 (基 [41,2057] 的机制解释)。
-- 亚毫秒片被强制 delta=1 → 进一步放大短片的低估。
-- **修复设计 (待实施)**: 采样改为**累加器式固定窗口** —— 按线程自身运行
-  时长累积 RIP 差分与时长 (如每 4ms 自身时长出一个 obs_rate 样本),
-  变长片噪声被累加器吸收; 短窗口防御 (RIP_MIN_SAMPLE_MS) 一并简化。
-round 33 (累加器落地 + UAF 实锤):
-- 累加器采样已实施 (thread_t 新增 rip_acc_progress/ms, 4ms 窗口出样本);
-  首测 pollute base=[41,2057]→[51,724] (3x 收窄), 修正分母为自身片长
-  (wall_ms; exec_ms 的 tsc_dt 跨 gap 含他线程片, 语义错) 后待复测。
-- **bench Exit 路径 Page fault 符号化定位**: RIP=atomic_test_and_set
-  (自旋锁原语), CR2=0xFFFF90000211D044 (kmalloc 对象内的锁字),
-  on thread 16 → **退出/回收路径的自旋锁 UAF**: 某结构体 (含锁)
-  被释放后另一线程仍在其锁上自旋。真实调度器缺陷, 回收审计 = 后续任务。
+Round 26 increments (TSC calibration + retest):
+- Implemented `sched_calibrate_tsc()` (tsc_cal.cpp, PIT baseline, busy-wait with millisecond-
+  scale guard — the early version hung at boot when the guard was too large while the PIT
+  wasn't running yet) + `sched_tsc_per_ms` strong symbol.
+- Retest: step t90=42ms sat=1 (saturation detection appears); **pollute still fails**
+  (base=[80,1322] mult=[979,2560]) → after eliminating the denominator-distortion candidate,
+  points to **a real stability problem of the RIP feedback gain under contention** (the
+  feedback loop itself oscillates, gain analysis pending).
+- shortwin still windows=0 (dynamic quantum mismatch, same conclusion as round 25).
+Round 28 root-cause closure (the complete mechanism of pollute oscillation, D1 round 23
+refiled):
+- Sampling structure: sample per slice tick, `obs_rate = RIP delta / own slice length
+  (last_slice_ms)` — the denominator is correct (the thread's own run duration, not the
+  wall-clock gap).
+- **Oscillation source = preemption-driven variable-length slices**: under EEVDF, when
+  equally-favored polluters compete, the victim's slice gets truncated by timer/deadline
+  preemption → short slices' RIP deltas are systematically low → obs_rate alternates high/low →
+  the fast channel (1/4 EWMA) follows the swing (the mechanism behind base [41,2057]).
+- Sub-millisecond slices forced to delta=1 → further amplifies short-slice underestimation.
+- **Fix design (to implement)**: change sampling to **accumulator-style fixed windows** — 
+  accumulate RIP delta and duration by the thread's own run time (e.g. one obs_rate sample per
+  4ms of own run time), variable-slice noise absorbed by the accumulator; the short-window
+  defense (RIP_MIN_SAMPLE_MS) simplified along with it.
+Round 33 (accumulator landed + UAF confirmed):
+- Accumulator sampling implemented (thread_t gains rip_acc_progress/ms, 4ms window per
+  sample); first test pollute base=[41,2057]→[51,724] (3x narrowing), after correcting the
+  denominator to own slice length (wall_ms; exec_ms's tsc_dt spans gaps including other
+  threads' slices, semantically wrong) awaiting retest.
+- **bench Exit-path page fault symbolically located**: RIP=atomic_test_and_set (spinlock
+  primitive), CR2=0xFFFF90000211D044 (a lock word inside a kmalloc object), on thread 16 →
+  **spinlock UAF on the exit/reclaim path**: some struct (containing a lock) was freed while
+  another thread still spins on its lock. A real scheduler defect; reclaim audit = follow-up
+  task.
 
-round 34 (复测 + UAF 嫌疑):
-- wall_ms 分母修正复测: pollute base=[51,724] 与修正前相同 → 剩余方差
-  在分子/相位过渡侧 (4ms 窗口跨越 polluter 开关点), 需窗口内逐样本
-  插桩 —— 收敛性改进已获 (3x), 完整通过留给后续。
-- UAF 嫌疑收敛: proc 僵尸回收 (DrainProcZombieList) 释放 FDMan/pagemap
-  时无全局同步, FDMan 内含锁表 —— 锁字 UAF 的最可能来源; 修复需
-  fd_manager_destroy 与回收窗口的同步审计。
+Round 34 (retest + UAF suspicion):
+- wall_ms denominator-correction retest: pollute base=[51,724] same as before correction →
+  remaining variance is on the numerator/phase-transition side (the 4ms window straddles the
+  polluter switch point), needs per-sample instrumentation within the window — convergence
+  improvement achieved (3x), full pass left for later.
+- UAF suspicion narrowed: proc zombie reclamation (DrainProcZombieList) frees FDMan/pagemap
+  without global synchronization, and FDMan contains a lock table — the most likely source of
+  the lock-word UAF; the fix needs a synchronization audit of fd_manager_destroy and the
+  reclamation window.
 
-round 40 (UAF 修复) + round 41 (防御纵深):
-- 根因: 相位线程 `Schedule::Exit(0)` 击杀整个 bench 内部 proc; 后续相位
-  线程 spawn 进被并发终结的同一 proc → FDMan 锁字 UAF (round 33 符号化)。
-- 修复: 相位线程不再 Exit (改 hlt 闲转; wait_done 本就按超时推进) +
-  NewKernelThreadEx/NewThread 增加 exiting 守卫 (向退出中的 proc spawn
-  显式失败) → UAF 债完全关闭。
+Round 40 (UAF fix) + round 41 (defense in depth):
+- Root cause: phase threads' `Schedule::Exit(0)` kills the entire bench-internal proc;
+  subsequent phase threads spawn into the same concurrently-terminated proc → FDMan lock-word
+  UAF (symbolized in round 33).
+- Fix: phase threads no longer Exit (changed to hlt idle-spin; wait_done already advances by
+  timeout) + NewKernelThreadEx/NewThread gain an exiting guard (spawning into an exiting proc
+  fails explicitly) → the UAF debt fully closed.
 
-round 42 (UAF 修复后完整报告):
-- pollute **base 相位通过** (base=[1067,1309], 极差 <25% —— 累加器修复的
-  首个通过项); mult 相位 [962,1463] 仍超 [820,1230] 界 (mult 目标 = polluter
-  按倍率运行时 victim 的乘数, 残余方差待窗口内插桩)。
-- osc 本次 entered=0 (w 停 256, 相位变体); step t90=176ms ✓。
-- **0 异常**: UAF 修复后全轮无 fault (round 33 的符号化问题闭环)。
+Round 42 (full report after the UAF fix):
+- pollute **base phase passes** (base=[1067,1309], max deviation <25% — the first passing item
+  from the accumulator fix); mult phase [962,1463] still exceeds the [820,1230] bound (mult
+  target = the victim's multiplier when the polluter runs at multiplier, residual variance
+  awaiting in-window instrumentation).
+- osc this run entered=0 (w stopped at 256, phase variant); step t90=176ms ✓.
+- **0 anomalies**: after the UAF fix the whole round had no faults (round 33's symbolized
+  problem closed).
 
-round 44 (round 25 假说证伪 + 新机制):
-- 实测 `实际 base_quantum=5 ms` —— **round 25 的"动态量子失配"假说被证伪**
-  (量子与 bench 静态假设一致)。shortwin windows=0 的真因改道:
-  同相位 stalled=11895 (progress==0 样本主导) → 目标线程 1.4ms 短片内
-  定时器 tick 极少命中 (采样落在伴线程片) → 目标样本稀疏且跨长 gap;
-  且 rip_stats 的 short_windows/stalled 为 **CPU 级总量**而非目标线程级
-  (eval 用 CPU 级 delta 判据)。下一轮: 采样落点分析 / 目标级计数。
+Round 44 (round 25 hypothesis falsified + new mechanism):
+- Measured `actual base_quantum=5 ms` — **round 25's "dynamic quantum mismatch" hypothesis is
+  falsified** (the quantum matches the bench's static assumption). The true cause of shortwin
+  windows=0 is rerouted: same-phase stalled=11895 (progress==0 samples dominate) → the target
+  thread's 1.4ms short slice rarely catches timer ticks (samples land on companion-thread
+  slices) → target samples sparse and spanning long gaps; moreover rip_stats's
+  short_windows/stalled are **CPU-level totals**, not target-thread-level (eval uses CPU-level
+  delta criteria). Next round: sample-landing analysis / target-level counters.
 
-round 45 (目标级计数实锤):
-- 新增 thread_t 级 rip_short_windows/rip_stalled + bench 目标自采样。
-- 实测: **目标线程目标级 shortwin=0 stalled=0** —— 采样从未落在目标的
-  1.4ms 短片上 (tick 采样按片边界但间隔 ~5ms > 片长)。round 44 机制确认。
-- 修复方向定稿: 采样从 tick 处改到**切换点** (每线程片末采样当前线程),
-  tick 采样对短片天然失明; 该改动同时影响 pollute/shortwin 双相位的
-  判据有效性 —— 是调度器画像的最后一块结构性修复。
+Round 45 (target-level counters confirm):
+- Added thread_t-level rip_short_windows/rip_stalled + bench target self-sampling.
+- Measured: **target-thread target-level shortwin=0 stalled=0** — samples never land on the
+  target's 1.4ms short slices (tick sampling is per slice boundary but the interval ~5ms >
+  slice length). Round 44's mechanism confirmed.
+- Fix direction finalized: move sampling from ticks to **switch points** (sample the current
+  thread at each slice end), tick sampling is inherently blind to short slices; this change
+  simultaneously affects the criteria validity of both pollute and shortwin phases — the last
+  structural fix in the scheduler's profile.
 
-round 47 (内联 Exit 漏网 + TSC 超时 + 全链解释):
-- **内联 Exit 漏网**: round 40 的 replace_all 只替换了独立行形式, polluter/
-  companion 的内联 `Schedule::Exit(0)` 仍在 → 相位2 击杀 bench proc
-  (exiting=1) → 相位3 spawn 被 round 41 守卫拒绝 (companion=target=NULL)
-  —— 此前的"采样失明/目标从未运行"全部是 spawn 失败的连锁假象。
-- **TSC 超时**: TCG 下污染相位 CPU 饱和冻住 PIT 虚拟时钟 → wait_done
-  超时永不触发 → 相位2 结构性挂死; 全部相位超时改 TSC 基准 (rdtsc ×
-  tsc_per_ms) 后 bench 600s 内完整跑完。
-- 修复后: mf=823/msl=1056 (首次采到目标), dispatch=47 (EEVDF 高频选中✓),
-  片长 min=1 max=9ms (抢占截断可见)。
+Round 47 (inline Exit slip-through + TSC timeout + full-chain explanation):
+- **Inline Exit slip-through**: round 40's replace_all only replaced the standalone-line form;
+  polluter/companion inline `Schedule::Exit(0)` remained → phase 2 kills the bench proc
+  (exiting=1) → phase 3 spawns rejected by the round 41 guard (companion=target=NULL) — all
+  the earlier "sampling blindness / target never ran" was a chain illusion caused by the spawn
+  failure.
+- **TSC timeout**: under TCG the polluted phase's CPU saturation freezes the PIT virtual clock
+  → wait_done timeout never fires → phase 2 structurally hangs; after switching all phase
+  timeouts to TSC baseline (rdtsc × tsc_per_ms) the bench completes within 600s.
+- After the fix: mf=823/msl=1056 (target sampled for the first time), dispatch=47 (EEVDF
+  high-frequency selection ✓), slice length min=1 max=9ms (preemption truncation visible).
 
-round 47b (stalled 真机制终现):
-- 圈数随机化无效 (stalled 72/57 不降) → "fast_body RIP 归位"理论证伪。
-- **真机制**: `CheckPreempt` 的软件陷阱 `int SCHED_VEC` 的帧 RIP =
-  **陷阱指令的固定地址** (常量) → deadline 抢占样本 progress 恒 0;
-  只有硬件 LAPIC tick 的中断帧 RIP 是真实执行点。目标的片大多以
-  deadline 抢占结束 → 其样本几乎全是常量 RIP → stalled。
-- **结论: 切换点采样成为必要**: switch 处出线程的 ctx.rip 是真实末位
-  RIP —— 采样移到 switch-out + 与 tick 去重。实施 = 下一轮。
+Round 47b (the true stalled mechanism finally appears):
+- Loop-count randomization ineffective (stalled 72/57 didn't drop) → the "fast_body RIP
+  rehoming" theory falsified.
+- **True mechanism**: `CheckPreempt`'s software trap `int SCHED_VEC` has the frame RIP = **the
+  fixed address of the trap instruction** (a constant) → deadline-preemption samples always
+  have progress 0; only hardware LAPIC tick interrupt frames' RIP is the real execution point.
+  The target's slices mostly end via deadline preemption → its samples are almost all
+  constant RIP → stalled.
+- **Conclusion: switch-point sampling becomes necessary**: the outgoing thread's ctx.rip at
+  switch is the real final RIP — move sampling to switch-out + deduplicate with ticks.
+  Implementation = next round.
 
-round 68 (P2-62 披露 + P3-77):
-- D1 (round 10 记录): 本节内嵌的 round 34/35 条目为跨轮引用 (非重复
-  段落); round 28 条目按时间应位于 round 26 之后, 当前位于本文档
-  第 9 段末 —— 历史记录顺序瑕疵, 内容无丢失, 下轮整理时归位。
-- ~~Schedule::Sleep + 定时器轮 (tv1/2/3) 为死代码~~ **round 96 已接活**:
-  PIT::Sleep 在调度器就绪 (smp_started + 有线程上下文) 时改调
-  Schedule::Sleep (定时器轮 + THREAD_SLEEPING + Yield, 释放本核),
-  引导早期的探测路径保持忙等。验证: BUILD_EXIT=0 + golden PASS +
-  QEMU ping 3 + 0 异常。
-- ~~切换点采样 (round 47b 结论) 仍未实施~~ **round 102 复核确认已实施**:
-  sched.cpp Switch 路径每切换点调 riprate_update (626-628), shortwin
-  判据 (elapsed < RIP_MIN_SAMPLE_MS → rip_short_windows++) 与片长分布
-  (rip_min/max_slice_ms) 全部在线 —— round 47b 的结论在后续轮次落地,
-  文档滞后已修正。
-- UAF 嫌疑收敛: proc 僵尸回收 (DrainProcZombieList) 释放 FDMan/pagemap
-  时无全局同步, FDMan 内含锁表 —— 锁字 UAF 的最可能来源; 修复需
-  fd_manager_destroy 与回收窗口的同步审计。
-- round 35 增量: Exit → PROC_KILL 路径确认 (退出线程自身走进程击杀路径,
-  关中断 + 停定时器); 击杀路径的 fd 清理与 DrainProcZombieList 的
-  FDMan 释放之间存在竞态窗口 (bench 密集 Exit 触发, 生产负载未观测到)。
-  修复设计: FDMan 释放延后到"全部线程已摘链"之后, 或 fd 清理移入
-  击杀路径的锁内。**生产 soak 从未触发此路径 → 优先级 = 中。**
+Round 68 (P2-62 disclosure + P3-77):
+- D1 (round 10 record): the round 34/35 entries embedded in this section are cross-round
+  references (not duplicated paragraphs); the round 28 entry chronologically belongs after
+  round 26, currently located at the end of section 9's paragraph — a historical ordering
+  blemish, no content lost, to be refiled when tidying up next round.
+- ~~Schedule::Sleep + timer wheels (tv1/2/3) are dead code~~ **activated in round 96**:
+  PIT::Sleep now calls Schedule::Sleep (timer wheel + THREAD_SLEEPING + Yield, releasing this
+  core) once the scheduler is ready (smp_started + thread context available), while the early
+  boot probing path keeps busy-waiting. Verification: BUILD_EXIT=0 + golden PASS + QEMU ping 3
+  + 0 anomalies.
+- ~~Switch-point sampling (round 47b conclusion) still not implemented~~ **round 102 review
+  confirms it is implemented**: the sched.cpp Switch path calls riprate_update at every switch
+  point (626-628), the shortwin criterion (elapsed < RIP_MIN_SAMPLE_MS → rip_short_windows++)
+  and slice-length distribution (rip_min/max_slice_ms) are all live — round 47b's conclusion
+  landed in later rounds, documentation lag corrected.
+- UAF suspicion narrowed: proc zombie reclamation (DrainProcZombieList) frees FDMan/pagemap
+  without global synchronization, and FDMan contains a lock table — the most likely source of
+  the lock-word UAF; the fix needs a synchronization audit of fd_manager_destroy and the
+  reclamation window.
+- Round 35 increment: Exit → PROC_KILL path confirmed (the exiting thread itself goes through
+  the process-kill path, disabling interrupts + stopping the timer); there is a race window
+  between the kill path's fd cleanup and DrainProcZombieList's FDMan release (triggered by
+  dense bench Exits, not observed in production loads). Fix design: defer FDMan release until
+  after "all threads unlinked", or move fd cleanup inside the kill path's lock. **Production
+  soak never triggered this path → priority = medium.**
 
 
-历史：`sched_bench` 此前只有模型测试路径；真内核挂点三连（bootstrap init
-直调 Yield / 早期 PIT::Sleep / init 忙等饿死同核线程）已全部定位并绕过
-（专用线程 + init 不等待 + wrapper 尾部起网络）。
+History: `sched_bench` previously only had the model-test path; the real-kernel hang trilogy
+(bootstrap init calling Yield directly / early PIT::Sleep / init busy-wait starving the
+same-core thread) has all been located and bypassed (dedicated thread + init doesn't wait +
+wrapper starts the network at the end).
 
-## 9. 调参常量速查
+## 9. Tuning Constants Quick Reference
 
-| 常量 | 值 | 含义 |
+| Constant | Value | Meaning |
 |---|---|---|
-| `SCHED_STEAL_BATCH` | 8 | 单次 push/steal 批量 |
-| `SCHED_STEAL_THROTTLE` | 8 | steal 扫描节流 |
-| `ZOMBIE_RECLAIM_THRESHOLD/BATCH` | 8 / 16 | 僵尸线程回收触发点与批量 |
-| `RIPRATE_AGING_MS` | 50 | 速率老化窗口 |
-| `RIPADJ_MIN/MAX` | -4 / +4 | 直接修正项范围 |
-| `base_quantum` 初始 | 5 tick | 约 5 ms |
+| `SCHED_STEAL_BATCH` | 8 | push/steal batch size per operation |
+| `SCHED_STEAL_THROTTLE` | 8 | steal scan throttle |
+| `ZOMBIE_RECLAIM_THRESHOLD/BATCH` | 8 / 16 | zombie-thread reclamation trigger point and batch |
+| `RIPRATE_AGING_MS` | 50 | rate aging window |
+| `RIPADJ_MIN/MAX` | -4 / +4 | direct correction term range |
+| `base_quantum` initial | 5 tick | about 5 ms |

@@ -1,61 +1,61 @@
-# 网络栈（e1000 82574L + lwIP 移植）
+# Network stack (e1000 82574L + lwIP porting)
 
-> 目标交付文档。功能、验证证据与已知边界均如实记录。
+> Goal deliverable document. Features, verification evidence, and known boundaries are all recorded truthfully.
 
-## 组成
+## Components
 
-| 组件 | 位置 | 说明 |
+| Component | Location | Description |
 |---|---|---|
-| e1000 驱动 | `kernel/src/drivers/net/e1000.cpp` + `kernel/include/drivers/net/e1000.h` | 82574L/82540EM 兼容子集: 探测/复位/EEPROM MAC/256 RX + 256 TX 环/中断+轮询双模 |
-| lwIP 胶水 | `kernel/src/drivers/net/e1000_lwip.cpp` | 零拷贝实验开关 + 拷贝生产路径、DHCP、ping 画像、多核 TX 洪泛 |
-| lwIP 本体 | `kernel/src/net/**` (vendored) | NO_SYS=1 轮询模式 |
-| 端口配置 | `kernel/include/lwip/lwipopts.h` + `cc.h` | 见下"移植修正" |
-| 启动接线 | `init.cpp` NetStackInit (调度器安装后) | e1000 探测在 PCI 枚举 |
+| e1000 driver | `kernel/src/drivers/net/e1000.cpp` + `kernel/include/drivers/net/e1000.h` | 82574L/82540EM compatible subset: probe/reset/EEPROM MAC/256 RX + 256 TX rings/IRQ+polling dual mode |
+| lwIP glue | `kernel/src/drivers/net/e1000_lwip.cpp` | zero-copy experimental switch + copy production path, DHCP, ping profiling, multi-core TX flood |
+| lwIP proper | `kernel/src/net/**` (vendored) | NO_SYS=1 polling mode |
+| Port config | `kernel/include/lwip/lwipopts.h` + `cc.h` | see "porting fixes" below |
+| Boot wiring | `init.cpp` NetStackInit (after scheduler installed) | e1000 probe at PCI enumeration |
 
-## 验证证据（全部在 serial.log 留有记录）
+## Verification evidence (all recorded in serial.log)
 
-- **DHCP**: `[lwip] DHCP 成功: 10.0.2.15` + 掩码/网关
-- **ping 全链路**: `[lwip][ping] reply from 10.0.2.2` 连续回复 (累计数百次)
-- **多核 TX**: 3 核洪泛 2.2-2.7k 帧/s, tx满=0 丢=0 错=0
-- **RTT 百分位**: 每 5 分钟 min/P50/P90/P99/max + 丢包 (专用 ping 画像模式)
-- **长稳**: 多段 10-55min 清洁 soak (0 断言 0 异常), 2h 收官 soak 见 goal-status.md
-- **故障注入**: RX 前 5 帧 OOM 注入 → 丢包计数 + 自愈
+- **DHCP**: `[lwip] DHCP success: 10.0.2.15` + mask/gateway
+- **ping full path**: `[lwip][ping] reply from 10.0.2.2` consecutive replies (hundreds cumulative)
+- **Multi-core TX**: 3-core flood 2.2-2.7k frames/s, tx_full=0 loss=0 errors=0
+- **RTT percentiles**: every 5 minutes min/P50/P90/P99/max + packet loss (dedicated ping profiling mode)
+- **Long stability**: multi-segment 10-55min clean soak (0 assertions 0 exceptions), 2h closing soak see goal-status.md
+- **Fault injection**: OOM injection into first 5 RX frames → loss counter + self-healing
 
-## 性能画像快照（QEMU TCG，墙钟 ~3x 膨胀——见下方边界）
+## Performance profile snapshots (QEMU TCG, wall clock ~3x inflation —— see boundaries below)
 
-| 轮次 | 场景 | 结果 |
+| Round | Scenario | Result |
 |---|---|---|
-| round 89 | 30min soak (里程碑后) | tx=1,169,054 帧 / 74.8MB，2815/s 持续；丢=0 错=0 满=0；ping 144 连续 |
-| round 95 | 5min 采集 | tx=199,935 帧 / 12.8MB，2441→2510/s 爬升后稳定；丢=0 错=0 满=0 |
+| round 89 | 30min soak (post-milestone) | tx=1,169,054 frames / 74.8MB, sustained 2815/s; loss=0 errors=0 full=0; ping 144 consecutive |
+| round 95 | 5min collection | tx=199,935 frames / 12.8MB, climbs 2441→2510/s then stable; loss=0 errors=0 full=0 |
 
-多轮趋势：速率在 2400-2800 帧/s 带内稳定（TCG 抖动范围），零丢包/零环满跨轮一致。
-更细的 RTT min/P50/P90/P99 见专用 ping 画像模式（每 5 分钟分位输出）。
+Multi-round trend: rate stable in the 2400-2800 frames/s band (TCG jitter range), zero loss / zero ring-full consistent across rounds.
+Finer RTT min/P50/P90/P99 see the dedicated ping profiling mode (percentile output every 5 minutes).
 
-## 移植修正（全部有 bug→fix 记录）
+## Porting fixes (all have bug→fix records)
 
-1. lwipopts: 软件校验和 (STM32 CHECKSUM_BY_HARDWARE 移除)、16B 对齐、pbuf 池、
-   `LWIP_DHCP_DOES_ACD_CHECK=0` (slirp ARP 代理误判冲突)
-2. cc.h: `LWIP_PLATFORM_DIAG` varargs 直传 (原实现经 assert 的 %s 转发丢失全部参数)
-3. `sys_now`: RTC 日期编码 → PIT 单调毫秒 (跨日回绕会破坏超时数学)
-4. 网络线程栈 32KB (`NewKernelThreadEx`): 默认 16KB 在 lwIP 深路径 + DHCP 处理
-   下栈溢出 → 线程静默死亡 (曾被误判为多种竞态)
-5. 驱动内 DMA 缓冲: 静态 BSS 的 GetPhysics 不可解析 → VMM::Alloc 页 + 页内偏移
-6. 零拷贝历史: 索引地址差反推 (独立页不连续) + pbuf 双释放 + 探测期 PIT::Sleep
-   挂死 —— 均已修复; 剩余嫌疑见 docs/dpdk-lite.md
+1. lwipopts: software checksum (STM32 CHECKSUM_BY_HARDWARE removed), 16B alignment, pbuf pool,
+   `LWIP_DHCP_DOES_ACD_CHECK=0` (slirp ARP proxy misjudges conflicts)
+2. cc.h: `LWIP_PLATFORM_DIAG` varargs passed through directly (original implementation lost all arguments via assert's %s forwarding)
+3. `sys_now`: RTC date encoding → PIT monotonic milliseconds (cross-day wraparound would break timeout math)
+4. Network thread stack 32KB (`NewKernelThreadEx`): default 16KB overflows under lwIP deep paths + DHCP handling
+   → thread dies silently (once misdiagnosed as various races)
+5. In-driver DMA buffer: static BSS GetPhysics unresolvable → VMM::Alloc page + in-page offset
+6. Zero-copy history: index back-derivation from address difference (independent pages non-contiguous) + pbuf double free + PIT::Sleep hang during probe
+   —— all fixed; remaining suspects see docs/dpdk-lite.md
 
-## 已知边界（如实）
+## Known boundaries (as-is)
 
-- **RX 收侧校验验证关闭** (lwipopts.h 注释): 发侧校验全开, 收侧验证路径
-  丢弃 slirp 合法帧, 待与 lwIP 版本核对
-- **零拷贝 = 实验态** (NET_ZEROCOPY=0): 生产路径为拷贝式, 已稳定验证
-- **IRQ 模式已启用**（P3-80 修正：e1000.cpp 的 INTx 中断线 + IOAPIC 重映射
-  已接线，IRQ 驱动收包；原"未启用/轮询模式"口径过时）; MSI-X 多队列 =
-  82574 数据手册核对阻塞项
-- **无 IPv6/TCP 实测**: 端口默认配置含 TCP/IPv6 编译, 未经真实流量验证
-- 全部速率/时延数字 = QEMU TCG 客户机虚拟时间 (墙钟 ~3x 膨胀, 见 round 16 记录)
+- **RX receive-side checksum verification disabled** (lwipopts.h comment): transmit-side checksums fully on, receive-side verification path
+  drops slirp's legal frames, pending verification against the lwIP version
+- **Zero-copy = experimental** (NET_ZEROCOPY=0): production path is copy-based, stably verified
+- **IRQ mode now enabled** (P3-80 fix: e1000.cpp's INTx interrupt line + IOAPIC remapping
+  wired up, IRQ drives packet reception; the old "not enabled / polling mode" account is outdated); MSI-X multi-queue =
+  blocked on 82574 datasheet verification
+- **No IPv6/TCP real-traffic test**: default port config compiles in TCP/IPv6, not verified with real traffic
+- All rate/latency numbers = QEMU TCG guest virtual time (wall clock ~3x inflation, see round 16 records)
 
-## 相关文档
+## Related docs
 
-- DPDK-lite 设计与零拷贝审计: `docs/dpdk-lite.md`
-- 目标总账与遗留债: `docs/goal-status.md`
-- 回归门禁: `tests/net_smoke.ps1` (QEMU 冒烟)
+- DPDK-lite design and zero-copy audit: `docs/dpdk-lite.md`
+- Goal ledger and remaining debt: `docs/goal-status.md`
+- Regression gating: `tests/net_smoke.ps1` (QEMU smoke)

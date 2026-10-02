@@ -1,81 +1,81 @@
-# 目标完成度总账（round 27 汇总，round 88 里程碑更新）
+# Goal completion ledger (round 27 summary, round 88 milestone update)
 
-> 目标三部分：(A) e1000 驱动 + (B) lwIP 移植完善 + (C) DPDK 式高性能改造，
-> 外加生产级大清单（SMP 并发/长期稳定/故障注入/安全/完整语义/性能画像/
-> 回归门禁/可观测性）。逐项对照，如实标注。
+> The goal has three parts: (A) e1000 driver + (B) lwIP porting completion + (C) DPDK-style high-performance rework,
+> plus the production-grade checklist (SMP concurrency / long-term stability / fault injection / security / full semantics / performance profiling /
+> regression gating / observability). Checked item by item, annotated truthfully.
 
-## 🏁 里程碑：四源审查 110 项修复清单 —— ✅ 全部清账（round 48–88）
+## 🏁 Milestone: four-source audit 110-item fix list —— ✅ all cleared (round 48–88)
 
-六档全清：**P0 ×18**（含两项回退重做收敛：P0-2 TLB ACK fence——TCG 下
-4 亿 pause 自旋根因→100ms 墙钟封顶，实测 0 超时；P0-12 AHCI 每请求
-DMA 缓冲替代跨 sti 窗口锁）、**P1 ×36**、**P2 ×8**（P2-55 跨核 ABA 隔离栈
-foreign_head、P2-59 AHCI 释放屏障、P2-61 QSBR 64 槽）、**P3 ×21**、
-**P4 ×8**（allocator 宿主混沌测试——还抓到 MCB 分配粒度真 bug；fc 写回
-内容校验）、**P5 ×19**。每轮验证：BUILD_EXIT=0 + GOLDEN PASS + QEMU
-ping 3 + 0 异常。
+All six tiers cleared: **P0 ×18** (including two revert-and-redo convergence items: P0-2 TLB ACK fence —— root cause of the
+400M pause spins under TCG → capped at 100ms wall clock, measured 0 timeouts; P0-12 AHCI per-request
+DMA buffer replacing the lock spanning the sti window), **P1 ×36**, **P2 ×8** (P2-55 cross-core ABA isolation stack
+foreign_head, P2-59 AHCI release barrier, P2-61 QSBR 64 slots), **P3 ×21**,
+**P4 ×8** (allocator host chaos test —— also caught a real MCB allocation-granularity bug; fc writeback
+content verification), **P5 ×19**. Per-round verification: BUILD_EXIT=0 + GOLDEN PASS + QEMU
+ping 3 + 0 exceptions.
 
-## 🏁 路线图收敛（round 90–100）
+## 🏁 Roadmap convergence (round 90–100)
 
-| # | 路线图项 | 状态 |
+| # | Roadmap item | Status |
 |---|---|---|
-| #7 | FD 继承 (filedesc 快照式深拷贝) | ✅ round 90 —— 顺带实锤两个潜伏缺陷 (rb_postorder_iter 回调契约 + exec FDMan 释放不置空) |
-| #2 | proc 生命周期 TOCTOU | ✅ round 91 —— ProcessAddThread 锁内重检 + 收割器 FDMan 回收入锁 (5 调用点闭环) |
-| #6 | vsnprintf fuzz | ✅ round 92-93 —— ASAN 宿主 fuzz + 真越界读修复 (NUL 终结格式串) |
-| — | fsync 生产激活 | ✅ round 94 —— fclose + 进程退出隐式冲刷脏页 |
-| P2-62 | Sleep/timer 轮接活 | ✅ round 96 —— PIT::Sleep 双模 (调度器就绪→真睡眠) |
-| — | RX burst 可观测 | ✅ round 97 —— rx_burst_avg (DPDK 口径) |
-| — | 静态分析 | ✅ round 98-99 —— clang --analyze 9 文件 + 2 防御修复 (fc LRU 双步进 + rbtree sibling 守卫) |
+| #7 | FD inheritance (filedesc snapshot-style deep copy) | ✅ round 90 —— also confirmed two latent defects (rb_postorder_iter callback contract + exec FDMan release not nulling) |
+| #2 | proc lifecycle TOCTOU | ✅ round 91 —— ProcessAddThread re-check inside lock + reaper FDMan reclamation into lock (5 call sites closed) |
+| #6 | vsnprintf fuzz | ✅ round 92-93 —— ASAN host fuzz + real out-of-bounds read fix (NUL-terminated format string) |
+| — | fsync production activation | ✅ round 94 —— fclose + implicit dirty-page flush at process exit |
+| P2-62 | Sleep/timer wheel revived | ✅ round 96 —— PIT::Sleep dual mode (scheduler ready → real sleep) |
+| — | RX burst observability | ✅ round 97 —— rx_burst_avg (DPDK metric) |
+| — | Static analysis | ✅ round 98-99 —— clang --analyze 9 files + 2 defensive fixes (fc LRU double-advance + rbtree sibling guard) |
 
-## A. e1000 驱动 —— ✅ 完成
+## A. e1000 driver —— ✅ done
 
-- 82574L (QEMU e1000e) 完整驱动：探测/复位/EEPROM MAC/双环 256/中断+轮询双模
-- 五轮真 bug 修复史：RDT 所有权、_memcpy 转置序、GetPhysics 页内偏移、
-  pbuf 双释放、探测期 PIT::Sleep 挂死、早期 PIT 忙等守卫
-- 多核 TX 自旋锁串行化 + 环满退避
+- 82574L (QEMU e1000e) complete driver: probe/reset/EEPROM MAC/dual ring 256/IRQ+polling dual mode
+- Five rounds of real bug-fix history: RDT ownership, _memcpy transposed order, GetPhysics in-page offset,
+  pbuf double free, PIT::Sleep hang during probe, early PIT busy-wait guard
+- Multi-core TX spinlock serialization + ring-full backoff
 
-## B. lwIP 移植 —— ✅ 完成（生产默认：轮询+拷贝路径）
+## B. lwIP porting —— ✅ done (production default: polling + copy path)
 
-- 端到端验证：DHCP 租约 (10.0.2.15)、ICMP ping 连续回复、多核 TX 洪泛 2.2-2.7k 帧/s
-- 移植修正：lwipopts（软件校验/对齐/池）、cc.h DIAG varargs 链修复、
-  sys_now 单调毫秒、ACD 关闭（slirp ARP 代理）、ip4addr_ntoa 静态缓冲坑
-- 网络线程栈 32KB（16KB 栈溢出 = 全部间歇性崩溃的深层根因之一）
+- End-to-end verification: DHCP lease (10.0.2.15), ICMP ping consecutive replies, multi-core TX flood 2.2-2.7k frames/s
+- Porting fixes: lwipopts (software checksum/alignment/pool), cc.h DIAG varargs chain fix,
+  sys_now monotonic milliseconds, ACD disabled (slirp ARP proxy), ip4addr_ntoa static-buffer pitfall
+- Network thread stack 32KB (16KB stack overflow = one of the deep root causes of all intermittent crashes)
 
-## C. DPDK-lite —— 🟡 基座完成，两实验项文档化
+## C. DPDK-lite —— 🟡 base complete, two experimental items documented
 
-| DPDK 概念 | 状态 |
+| DPDK concept | Status |
 |---|---|
-| PMD 轮询 | ✅ 生产路径 |
-| 多核 TX 并发 | ✅ 自旋锁 + 3 核洪泛验证 |
-| 每核私有/无锁 | 🟡 单 RX 队列（双队列 = MSI-X 阻塞项） |
-| 零拷贝 RX | 🟡 实验态（NET_ZEROCOPY=0）：已修索引反推+双释放，仍存首 stat 后静默（嫌疑收窄至 2 项，见 dpdk-lite.md） |
-| 校验卸载 / MSI-X | ❌ 寄存器手册核对阻塞 |
-| 统计/可观测 | ✅ 计数器 + RTT P50/P90/P99 + 停滞自诊断 |
+| PMD polling | ✅ production path |
+| Multi-core TX concurrency | ✅ spinlock + 3-core flood verification |
+| Per-core private / lock-free | 🟡 single RX queue (dual queue = MSI-X blocking item) |
+| Zero-copy RX | 🟡 experimental (NET_ZEROCOPY=0): index back-derivation + double free fixed, still silent after first stat (suspects narrowed to 2 items, see dpdk-lite.md) |
+| Checksum offload / MSI-X | ❌ blocked on register-manual verification |
+| Stats/observability | ✅ counters + RTT P50/P90/P99 + stall self-diagnosis |
 
-## 生产级大清单逐项
+## Production-grade checklist item by item
 
-| 支柱 | 状态 | 证据 |
+| Pillar | Status | Evidence |
 |---|---|---|
-| SMP 并发正确性 | ✅ 既有（SLUB/FC/sched 多线程套件）+ 网络多核压力 + **110 项 P0/P2 并发修复全清** | tests/ + soak |
-| 长期稳定性 | ✅(证据) 收官 soak 链: 10/15/30min + 40min 多段全部 0 断言 0 异常 0 stall; 最终 30min: tx=129 万帧(82.7MB) 2429/s 持续, ping=185 连续, 丢=0 (round 37 收割); **round 89 起按里程碑复测** | serial.log |
-| 故障注入 | ✅ OOM/页分配/磁盘错误(round 22 新测)/RX OOM 注入全闭环 | fc_reg + net 注入 |
-| 安全审计 | 🟡 syscall 入口审计 ✅、SECURITY.md ✅、信任位模型文档化；fuzzing/纵深 ❌ | SECURITY.md |
-| 完整语义 | ✅ writeback/脏页/fsync/OOM 语义审计（fc-semantics.md）；权限=信任位（如实） | fc-semantics.md |
-| 性能画像 | ✅ RTT 百分位 + sched_bench 真内核报告（step/osc 过；pollute=真发现、shortwin=语义失配） | scheduler.md |
-| 回归门禁 | ✅ 三级门禁：宿主 CI + 金样 diff + QEMU 网络冒烟 | tests/ |
-| 可观测性 | ✅ 计数器/速率/RTT/panic 进串口/停滞自诊断 | 各 round 验证 |
+| SMP concurrency correctness | ✅ existing (SLUB/FC/sched multithreaded suites) + network multi-core stress + **110-item P0/P2 concurrency fixes all cleared** | tests/ + soak |
+| Long-term stability | ✅(evidence) closing soak chain: 10/15/30min + 40min multi-segment all 0 assertions 0 exceptions 0 stalls; final 30min: tx=1.29M frames (82.7MB) sustained at 2429/s, ping=185 consecutive, loss=0 (round 37 harvest); **re-tested per milestone since round 89** | serial.log |
+| Fault injection | ✅ OOM/page allocation/disk errors (newly tested round 22)/RX OOM injection all closed-loop | fc_reg + net injection |
+| Security audit | 🟡 syscall entry audit ✅, SECURITY.md ✅, trust-bit model documented; fuzzing/defense-in-depth ❌ | SECURITY.md |
+| Full semantics | ✅ writeback/dirty-page/fsync/OOM semantics audit (fc-semantics.md); permissions = trust bits (as-is) | fc-semantics.md |
+| Performance profiling | ✅ RTT percentiles + sched_bench real-kernel report (step/osc pass; pollute=real finding, shortwin=semantic mismatch) | scheduler.md |
+| Regression gating | ✅ three-tier gating: host CI + golden diff + QEMU network smoke | tests/ |
+| Observability | ✅ counters/rates/RTT/panic to serial/stall self-diagnosis | per-round verification |
 
-## 遗留技术债（按优先级）
+## Remaining technical debt (by priority)
 
-| # | 债 | 状态 | 修复设计 |
+| # | Debt | Status | Fix design |
 |---|---|---|---|
-| 1 | pollute 相位 RIP 倍率残余方差 | 3x 收敛已获 (累加器), 完整通过待窗口内插桩 | 分子侧/相位过渡插桩 |
-| 2 | exit 回收路径自旋锁 UAF | round 91 锁配对收敛 (TOCTOU 窗口闭合); 完全根治仍留 proc 引用计数 | proc 引用计数 (根治) |
-| 3 | 零拷贝剩余嫌疑 | 见 dpdk-lite.md (嫌疑收窄至 2 项) | pbuf 生命周期运行时跟踪 |
-| 4 | sched_bench shortwin 采样 | round 102 复核: 切换点采样已在线 (文档滞后已修) | ✅ 收敛 |
-| 5 | 校验卸载 / MSI-X 多队列 | 82574 数据手册阻塞 | 寄存器核对后实施 |
-| 6 | 内核 vsnprintf 深度加固 + fuzzing 纵深 | round 92-93 fuzz + 越界读修复 ✅ | ✅ 收敛 |
-| 7 | FD 继承 (P0-6) | round 90 fd_manager_dup ✅ (round 7 补锁/OOM 回滚) | ✅ 收敛 |
-| 8 | xHCI 异步 IN 路径 (P1-32/33 残余) | 同步路径已修复; 异步走 bounce/SG 待实施 (真机验证阻塞) | 每页 chained TRB 延伸到异步 |
-| 9 | 审计最新批 (round 1-23) | 高危 14 项: 11 修复 + 3 误报; 中危 13 项: 6 修复 + 5 不适用/已覆盖 + #19 已分析 (分配器接入需启动序协调) + #21 延迟检出为设计 (SLAB 在 refill 检出, SLUB 即时); 设计债 #58 已分析 (语义正确, 改名实测致 boot 挂起已回退, 迁移方案留痕); 卫生 16 项: 15 收账 (含 3 项过时声明: fb.cpp 拷贝初始化/x86mem MIT 已补/libc 行号指错文件) + 1 项路线图 (-Wno 分批回收) | 见各 round 记录 |
+| 1 | pollute phase RIP multiplier residual variance | 3x convergence achieved (accumulator), full pass awaiting in-window instrumentation | numerator-side / phase-transition instrumentation |
+| 2 | exit reclamation path spinlock UAF | round 91 lock pairing converged (TOCTOU window closed); full cure still leaves proc refcounting | proc refcounting (cure) |
+| 3 | Zero-copy remaining suspects | see dpdk-lite.md (suspects narrowed to 2 items) | pbuf lifetime runtime tracking |
+| 4 | sched_bench shortwin sampling | round 102 re-check: switch-point sampling already online (stale docs fixed) | ✅ converged |
+| 5 | Checksum offload / MSI-X multi-queue | blocked on 82574 datasheet | implement after register verification |
+| 6 | Kernel vsnprintf deep hardening + fuzzing in depth | round 92-93 fuzz + out-of-bounds read fix ✅ | ✅ converged |
+| 7 | FD inheritance (P0-6) | round 90 fd_manager_dup ✅ (round 7 added lock/OOM rollback) | ✅ converged |
+| 8 | xHCI async IN path (P1-32/33 residual) | sync path fixed; async via bounce/SG to be implemented (blocked on real-hardware verification) | per-page chained TRB extended to async |
+| 9 | Audit latest batch (round 1-23) | High-risk 14 items: 11 fixed + 3 false positives; medium-risk 13 items: 6 fixed + 5 not applicable/already covered + #19 analyzed (allocator integration needs boot-order coordination) + #21 delayed detection is by design (SLAB detects at refill, SLUB immediate); design debt #58 analyzed (semantics correct, rename caused boot hang in testing and was reverted, migration plan on record); hygiene 16 items: 15 closed (incl. 3 outdated claims: fb.cpp copy init/x86mem MIT added/libc line numbers pointed at wrong file) + 1 roadmap item (-Wno batched removal) | see per-round records |
 
 (End of file - total 71 lines)

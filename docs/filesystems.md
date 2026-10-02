@@ -1,8 +1,8 @@
-# 文件系统栈
+# Filesystem stack
 
-源码：`kernel/src/fs/`（`fc.cpp` 文件缓存、`fd.cpp` 描述符、`saf/`、`fatfs/`、`lwext4/`）、`kernel/src/drivers/`（块设备）。
+Source: `kernel/src/fs/` (`fc.cpp` file cache, `fd.cpp` descriptors, `saf/`, `fatfs/`, `lwext4/`), `kernel/src/drivers/` (block devices).
 
-## 1. 整体栈
+## 1. Overall stack
 
 
 
@@ -11,76 +11,76 @@ syscall FOPEN/FREAD/FWRITE/... (0..5)
 
 \&#x20;       ↓
 
-fd.cpp        分片红黑树 fd 分配器(线性探测)
+fd.cpp        sharded red-black-tree fd allocator (linear probing)
 
 \&#x20;       ↓
 
-VFS / mount    hashmap 挂载点解析
+VFS / mount    hashmap mount-point resolution
 
 \&#x20;       ↓
 
-┌───────┬──────────────┬───────────┐
+┌─────────────┬────────────────────────────┬────────────────┐
 
-│ SAF   │ lwext4 (ext4) │ fatfs     │
+│ SAF         │ lwext4 (ext4)              │ fatfs          │
 
-│ 只读  │  磁盘上的真实文件系统 │ FAT(空壳) │
+│ read-only   │ real on-disk filesystem    │ FAT (stub)     │
 
-│ 归档  │  (可读写日志) │ 未接入     │
+│ archive     │ (journaled read/write)     │ not wired up   │
 
-└───────┴──────────────┴───────────┘
-
-\&#x20;       ↓
-
-块设备抽象 (blockdev / Disk\\\_Interfaces)
+└─────────────┴────────────────────────────┴────────────────┘
 
 \&#x20;       ↓
 
-NVMe / AHCI / USB MSC（ATA/ATAPI/RAM disk 未注册）
+block-device abstraction (blockdev / Disk\\\_Interfaces)
+
+\&#x20;       ↓
+
+NVMe / AHCI / USB MSC (ATA/ATAPI/RAM disk unregistered)
 ```
 
-## 2. 支持的文件系统
+## 2. Supported filesystems
 
 
 
-| 文件系统     | 角色                      | 实现                                                                                                       |
-| -------- | ----------------------- | -------------------------------------------------------------------------------------------------------- |
-| **ext4** | 根文件系统 `/mp/`，挂在 `sata0` | 移植 [lwext4](https://github.com/gkostka/lwext4)，自带 journal/extent/bitmap                                  |
-| **FAT**  | 可移动介质 / 互操作（**当前不可用**） | 移植 fatfs，但 `diskio.cpp` 胶水层为空壳（显式返回 RES_ERROR，见 README 特性表） |
-| **SAF**  | 启动期 / 资源打包格式（只读归档）      | 移植自 [chocabloc/SAF](https://github.com/chocabloc/saf)，见 `fs/saf/`；镜像见 `programs/programs.saf`、`res/saf/` |
+| Filesystem | Role                                                           | Implementation                                                                                                              |
+| ---------- | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **ext4**   | root filesystem `/mp/`, mounted on `sata0`                     | ported from [lwext4](https://github.com/gkostka/lwext4), with its own journal/extent/bitmap                                 |
+| **FAT**    | removable media / interoperability (**currently unavailable**) | ported fatfs, but the `diskio.cpp` glue layer is a stub (explicitly returns RES_ERROR; see the README feature table)        |
+| **SAF**    | boot-time / resource packaging format (read-only archive)      | ported from [chocabloc/SAF](https://github.com/chocabloc/saf), see `fs/saf/`; images at `programs/programs.saf`, `res/saf/` |
 
-启动时 `ext4_kernel_init("sata0", "/mp/", 0)` 失败直接 `hcf()`—— 根文件系统挂不上就不继续。
+At boot, if `ext4_kernel_init("sata0", "/mp/", 0)` fails it goes straight to `hcf()` — if the root filesystem cannot be mounted, boot does not continue.
 
-### SAF 归档格式
+### The SAF archive format
 
-SAF（Simple Archive Format）是一个 **read-only 的树形归档**，性质接近 initramfs：整个镜像就是一棵带 `offset` 的目录树，内核不需要块设备就能直接按路径读文件。它**不是 Skyline 自研格式**，而是移植自 [chocabloc/SAF](https://github.com/chocabloc/saf)（见根 README Thanks 列表）。
+SAF (Simple Archive Format) is a **read-only tree archive**, similar in nature to initramfs: the whole image is a directory tree with `offset` values, and the kernel can read files by path directly without a block device. It is **not a Skyline-original format** but a port of [chocabloc/SAF](https://github.com/chocabloc/saf) (see the Thanks list in the root README).
 
-镜像布局（`fs/saf/saf.h`）：
+Image layout (`fs/saf/saf.h`):
 
 
 
 ```
-\#define MAGIC\_NUMBER 0x766863726c706d73   // 每个节点头校验
+\#define MAGIC\_NUMBER 0x766863726c706d73   // per-node header check
 
-// 节点头：magic | len | name\[256] | flags(bit0=IS\_FOLDER)
+// node header: magic | len | name\[256] | flags(bit0=IS\_FOLDER)
 
-// 文件节点：hdr + size + addr(内容在镜像内的偏移)
+// file node: hdr + size + addr(content offset within the image)
 
-// 目录节点：hdr + num\_children + children\[]\(子节点偏移数组)
+// directory node: hdr + num\_children + children\[]\(array of child-node offsets)
 ```
 
 
 
-* `initrd_mount(image)` 把整段镜像包成一个 VFS `initrdMount`，挂到 VFS 上；
+* `initrd_mount(image)` wraps the whole image into a VFS `initrdMount` and mounts it on the VFS;
 
-* `initrd_find(path, base, cur)` 递归沿 `children[]` 偏移树查路径；
+* `initrd_find(path, base, cur)` walks the `children[]` offset tree recursively to resolve paths;
 
-* `open/read/dir_at` 等回调全部走 VFS 接口，和 ext4/FAT 在同一层被统一调度；
+* the `open/read/dir_at` callbacks all go through the VFS interface and are dispatched at the same layer as ext4/FAT;
 
-* 用途：把启动早期还没挂磁盘前就要用的 ELF、字体、资源打包进 ISO/HDD 镜像。
+* purpose: pack the ELFs, fonts and resources needed before the disk is mounted early in boot into the ISO/HDD image.
 
-## 3. per-CPU 文件缓存（fc.cpp）
+## 3. per-CPU file cache (fc.cpp)
 
-`file_cache_cpu_t` 在每个 CPU 启动时分配（`smp.cpp` 里 BSP 与 AP 都做），带一个写回回调：
+`file_cache_cpu_t` is allocated when each CPU starts (done for both the BSP and the APs in `smp.cpp`), with a writeback callback:
 
 
 
@@ -92,38 +92,38 @@ int32\\\_t file\\\_cache\\\_writeback\\\_callback(const uint8\\\_t \\\*key, uint
 
 
 
-* 每个核缓存自己近期访问的文件块，减少重复 NVMe/AHCI 读；
+* each core caches the file blocks it accessed recently, cutting repeated NVMe/AHCI reads;
 
-* 脏页回写通过注册的回调（`file_cache_writeback_callback`，返回值契约已修复为 0=成功/负=失败）执行——**机制存在但生产未激活**（写入走 write-through 直接落盘 + 跨核失效广播；与 fc-semantics.md 口径统一：file_cache_fsync 无调用者）；
+* dirty-page writeback runs through the registered callback (`file_cache_writeback_callback`, whose return contract has been fixed to 0=success/negative=failure) — **the mechanism exists but is not activated in production** (writes go write-through straight to disk + cross-core invalidation broadcast; consistent with fc-semantics.md: file_cache_fsync has no callers);
 
-* 命中路径已检查条目状态（INVALID 条目不再命中）、写后跨核失效已补上（陈旧读已修）；CRC 只覆盖前 256 字节；
+* the hit path already checks entry state (INVALID entries no longer hit), cross-core invalidation after write has been added (stale reads fixed); CRC covers only the first 256 bytes;
 
-* 与 per-CPU 物理页缓存、per-CPU SLAB 空闲链一致 ——**争用下沉到核本地，跨核只在批对账时相遇**。
+* consistent with the per-CPU physical-page cache and the per-CPU SLAB free lists — **contention is pushed down to the local core; cores only meet during batched reconciliation**.
 
-## 4. 块设备接口
+## 4. Block-device interface
 
-`drivers/Disk_Interfaces/` 把 "一块可随机读写的盘" 抽象成统一接口，上层文件系统不关心底下是哪种总线：
-
-
-
-* `sata/`：SATA 磁盘接口；
-
-* `ram/`：内存盘（实现存在但**从未注册**，勿按"无盘启动用"理解）；
-
-* 真实总线驱动：`ahci/`、`nvme/`、USB `msc`（`ata/`、`atapi/` 为未注册死代码）。
-
-## 5. 分区
-
-`kernel/src/partition/`：`mbrgpt.cpp`（MBR/GPT 识别）、`identfstype.cpp`（探测每个分区上的文件系统类型）、`mgr.cpp`（分区管理器）。
-
-## 6. 当前状态
+`drivers/Disk_Interfaces/` abstracts "a disk that can be read/written randomly" into one uniform interface, so upper-layer filesystems don't care which bus sits underneath:
 
 
 
-* ext4/SAF 已通，能挂载并加载 `desktop.elf` / `hw.elf`；**FAT 未接入**；
+* `sata/`: SATA disk interface;
 
-* lwIP 已接线（e1000 82574L 驱动 + DHCP/ICMP ping/TCP，经网络栈延迟上线），见 network.md；
+* `ram/`: RAM disk (the implementation exists but is **never registered**; do not read it as "for diskless boot");
 
-* **分区层休眠**：`USE_VIRT_IMAGE` 使分区管理器旁路偏移计算，ext4 实际按裸 LBA 访问（MBR/GPT 解析存在但未生效）。
+* real bus drivers: `ahci/`, `nvme/`, USB `msc` (`ata/`, `atapi/` are unregistered dead code).
 
-* 真机磁盘兼容性在快速迭代中 ——README 明确警告**暂勿在真机上跑**。
+## 5. Partitioning
+
+`kernel/src/partition/`: `mbrgpt.cpp` (MBR/GPT identification), `identfstype.cpp` (probes the filesystem type on each partition), `mgr.cpp` (partition manager).
+
+## 6. Current status
+
+
+
+* ext4/SAF work and can mount and load `desktop.elf` / `hw.elf`; **FAT is not wired up**;
+
+* lwIP is wired up (e1000 82574L driver + DHCP/ICMP ping/TCP, brought online late via the network stack), see network.md;
+
+* **the partition layer is dormant**: `USE_VIRT_IMAGE` makes the partition manager bypass offset computation, and ext4 actually accesses raw LBAs (MBR/GPT parsing exists but is not in effect).
+
+* real-machine disk compatibility is under rapid iteration — the README explicitly warns **not to run on real hardware for now**.

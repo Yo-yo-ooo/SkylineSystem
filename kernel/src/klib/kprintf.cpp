@@ -591,7 +591,7 @@ static size_t __ffunc _etoa(out_fct_type out, char* buffer, size_t idx, size_t m
 #endif  // PRINTF_SUPPORT_EXPONENTIAL
 #endif  // PRINTF_SUPPORT_FLOAT
 // internal vsnprintf
-// 增加 maxlen == 0 的安全防御
+// Safety guard for maxlen == 0
 static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t maxlen, const char* format, va_list va)
 {
   uint32_t flags, width, precision, n;
@@ -813,7 +813,7 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
 
       case 's' : {
         const char* p = va_arg(va, char*);
-        if (p == nullptr) p = "(null)";   // 加固: 空指针安全 (lwIP 调试流曾踩到)
+        if (p == nullptr) p = "(null)";   // Hardening: NULL-safe (hit by lwIP debug streams)
         uint32_t l = _strnlen_s(p, precision ? precision : (size_t)-1);
         // pre padding
         if (flags & FLAGS_PRECISION) {
@@ -862,10 +862,12 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
         break;
 
       default :
-        /* round 93 fuzz 实锤: 格式串以 "%0"/"%<flag>" 结尾时, spec 解析
-           落在 NUL 上 —— 原实现 out(0) 后 format++ 越过终结符, 外层
-           while (*format) 越界读 (ASAN heap-buffer-overflow, kprintf.cpp:605)。
-           修复: NUL 不前进, 循环条件自然终止 */
+        /* Proven by round 93 fuzzing: when a format string ends in "%0"/
+           "%<flag>", spec parsing lands on the NUL -- the old code called
+           out(0) then format++ stepping past the terminator, and the outer
+           while (*format) read out of bounds (ASAN heap-buffer-overflow,
+           kprintf.cpp:605). Fix: do not advance past NUL; the loop condition
+           terminates naturally */
         if (*format == 0) break;
         out(*format, buffer, idx++, maxlen);
         format++;
@@ -873,7 +875,7 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
     }
   }
 
-  // 修复：maxlen == 0 时的防下溢保护
+  // Fix: underflow guard when maxlen == 0
   if (maxlen > 0) {
     // termination
     out((char)0, buffer, idx < maxlen ? idx : maxlen - 1U, maxlen);
@@ -886,19 +888,20 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
 
 ///////////////////////////////////////////////////////////////////////////////
 
-// [优化]：格式化在锁外执行，写入硬件在锁内执行，大幅降低锁持有时间
+// [Optimization]: format outside the lock, write hardware inside the lock,
+// greatly reducing lock hold time
 int32_t printf_(const char* format, ...) {
     va_list va;
     va_start(va, format);
     
-    char buffer[512]; // 局部栈缓冲区，格式化过程无需加锁
+    char buffer[512]; // local stack buffer; formatting needs no lock
     int32_t ret = _vsnprintf(_out_buffer, buffer, sizeof(buffer), format, va);
     va_end(va);
     
-    // _vsnprintf 返回值 ret 可能大于 sizeof(buffer)，必须截断防止越界读
+    // _vsnprintf return value ret may exceed sizeof(buffer); must truncate to avoid out-of-bounds reads
     int32_t write_len = (ret >= (int32_t)sizeof(buffer)) ? (sizeof(buffer) - 1) : ret;
 
-    // 仅在将缓冲区刷入底层设备时加锁，防止多核输出交错
+    // Lock only while flushing the buffer to the underlying device to avoid interleaved multi-core output
     spinlock_lock(&ptf_lock);
     for (int32_t i = 0; i < write_len; i++) {
         _putchar(buffer[i]);

@@ -1,120 +1,120 @@
-# 系统调用 ABI（非 POSIX）
+# System Call ABI (Non-POSIX)
 
-源码：`kernel/include/arch/x86_64/schedule/syscalln.h`、`kernel/src/arch/x86_64/schedule/syscall.cpp`、`syscall/*.cpp`。
+Source: `kernel/include/arch/x86_64/schedule/syscalln.h`, `kernel/src/arch/x86_64/schedule/syscall.cpp`, `syscall/*.cpp`.
 
 > *SkylineSystem&#x20;*
 >
-> *不兼容 Linux/POSABI*
+> *is not compatible with Linux/POSABI*
 >
-> *。下表列出 0-16 号共 17 个基础系统调用，按号排列；内核另注册 17/18/19/20/21/24/25/26 号（共 25 个槽位，见 `syscall.cpp`）。具体参数寄存器约定见&#x20;*
+> *. The table below lists the 17 base system calls numbered 0-16 in numeric order; the kernel additionally registers numbers 17/18/19/20/21/24/25/26 (25 slots in total, see `syscall.cpp`). For the specific parameter register conventions, see&#x20;*
 >
 > `lib/base/arch/x86_64/syscall.c`
 >
-> *&#x20;与各&#x20;*
+> *&#x20;and the individual&#x20;*
 >
 > `syscall/*.cpp`
 >
-> *&#x20;实现；本文档只固定*
+> *&#x20;implementations; this document only pins down the*
 >
-> *号与语义*
+> *numbers and semantics*
 >
-> *。*
+> *. *
 
-## 1. 调用约定
-
-
-
-* 入口走 MSR `LSTAR`（`syscall_init()` 安装）；
-
-* 调用号在 `rax`，参数按 System V 风格依次通过寄存器传递；
-
-* 返回值在 `rax`，负数为错误码；
-
-* 内核态处理在关中断 / 自旋锁保护下完成，返回时 `swapgs` 切回用户 GS。
-
-## 2. 全量表
-
-### 文件 I/O（0–5）
+## 1. Calling Convention
 
 
 
-| 号 | 名称       | 语义           |
+* Entry goes through MSR `LSTAR` (installed by `syscall_init()`);
+
+* the call number is in `rax`; arguments are passed in order through registers, System V style;
+
+* the return value is in `rax`; a negative value is an error code;
+
+* kernel-side handling completes with interrupts disabled / under spinlock protection; on return, `swapgs` switches back to the user GS.
+
+## 2. Full Table
+
+### File I/O (0–5)
+
+
+
+| # | Name | Semantics |
 | - | -------- | ------------ |
-| 0 | `FOPEN`  | 打开路径，返回文件描述符 |
-| 1 | `FWRITE` | 按 fd 写       |
-| 2 | `FREAD`  | 按 fd 读       |
-| 3 | `FCLOSE` | 关闭 fd        |
-| 4 | `FLSEEK` | 移动文件偏移       |
-| 5 | `FSIZE`  | 查询文件大小       |
+| 0 | `FOPEN` | open a path, return a file descriptor |
+| 1 | `FWRITE` | write by fd |
+| 2 | `FREAD` | read by fd |
+| 3 | `FCLOSE` | close the fd |
+| 4 | `FLSEEK` | move the file offset |
+| 5 | `FSIZE` | query the file size |
 
-> VFS 层：hashmap 挂载点解析 + 分片红黑树 fd 分配器。见 
+> VFS layer: hashmap mount-point resolution + sharded red-black tree fd allocator. See 
 >
 > filesystems.md
 >
-> 。
+> .
 
-### 进程 / 线程（6–13）
+### Process / Thread (6–13)
 
 
 
-| 号  | 名称              | 语义                                     |
+| # | Name | Semantics |
 | -- | --------------- | -------------------------------------- |
-| 6  | `THREAD_LAUNCH` | 在当前进程内起一个新线程                           |
-| 7  | `GETTID`        | 当前线程 id                                |
-| 8  | `GETPID`        | 当前进程 id                                |
-| 9  | `EXIT`          | 线程 / 进程退出                              |
-| 10 | `PMMAP`         | 映射一段物理 / 设备内存到用户地址空间                   |
-| 11 | `YIELD`         | 自愿让出 CPU（3EVDF 下一般不再需要，但保留）            |
-| 12 | `LOAD`          | 加载 ELF 镜像                              |
-| 13 | `LAUNCH`        | 创建新进程并启动 ELF（`/mp/desktop.elf` 就是这么起的） |
+| 6 | `THREAD_LAUNCH` | start a new thread in the current process |
+| 7 | `GETTID` | current thread id |
+| 8 | `GETPID` | current process id |
+| 9 | `EXIT` | thread / process exit |
+| 10 | `PMMAP` | map a range of physical / device memory into the user address space |
+| 11 | `YIELD` | voluntarily yield the CPU (generally unneeded under 3EVDF, but kept) |
+| 12 | `LOAD` | load an ELF image |
+| 13 | `LAUNCH` | create a new process and start an ELF (this is how `/mp/desktop.elf` is started) |
 
-> 进程 / 线程描述符挂在 
+> Process / thread descriptors hang on 
 >
 > `pid2proc_tree`
 >
-> （一棵 ART 基数树）上，由 
+> (an ART radix tree), protected by 
 >
 > `PID2PROC_TREE_LOCK`
 >
->  保护；
+> ;
 >
 > `NOT_RUNQ_P`
 >
->  是不在运行队列里的线程集合。
+> is the set of threads that are not on a run queue.
 
-### 内存（14–15）
+### Memory (14–15)
 
 
 
-| 号  | 名称       | 语义                        |
+| # | Name | Semantics |
 | -- | -------- | ------------------------- |
-| 14 | `MMAP`   | 用户态 mmap（匿名 / 文件映射 / 共享帧） |
-| 15 | `MUNMAP` | 解除映射                      |
+| 14 | `MMAP` | user-space mmap (anonymous / file mapping / shared frames) |
+| 15 | `MUNMAP` | unmap |
 
-> 背后是 VMA 层（
+> Behind it are the VMA layer (
 >
 > `vma.cpp`
 >
-> ）+ 五级页表 + CoW，见 
+> ) + five-level page tables + CoW, see 
 >
 > memory.md
 >
-> 。
+> .
 
-### 系统信息（16）
+### System Info (16)
 
 
 
-| 号  | 名称        | 语义                                             |
+| # | Name | Semantics |
 | -- | --------- | ---------------------------------------------- |
-| 16 | `SYSINFO` | 向用户态暴露在线 CPU 数、内存布局、特性位等 —— 合成器靠它知道该起几个 worker |
+| 16 | `SYSINFO` | expose to user space the online CPU count, memory layout, feature bits, etc. — the compositor relies on it to know how many workers to start |
 
-## 3. 设计取舍
+## 3. Design Trade-offs
 
 
 
-* **故意薄**：没有 signal  delivery（`syscall/signal.cpp` 目前是空壳）、没有 socket 全家桶、没有 futex—— 策略都往用户态推。
+* **Deliberately thin**: no signal delivery (`syscall/signal.cpp` is currently a stub), no full socket family, no futex — policy is pushed to user space.
 
-* **机制最小化**：内核给 "线程 + 内存映射 + 文件 + sysinfo" 四样，窗口系统、合成器、shell 全在用户态拼。
+* **Minimal mechanism**: the kernel provides four things — "threads + memory mapping + files + sysinfo"; the window system, compositor, and shell are all assembled in user space.
 
-* **号段稳定**：新调用往 26 往后加（0-16 之外已占用 17/18/19/20/21/24/25/26），不重排已有号，避免用户态 ELF 重编后跑飞。
+* **Stable number ranges**: new calls are appended after 26 (17/18/19/20/21/24/25/26 are already taken beyond 0-16); existing numbers are never reshuffled, to avoid user-space ELFs running wild after a rebuild.

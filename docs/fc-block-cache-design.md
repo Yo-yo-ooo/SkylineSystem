@@ -1,70 +1,70 @@
-# fc 块级缓存设计（审计设计债 #5）
+# fc block-level cache design (audit design debt #5)
 
-> 状态：**实施完成（round 26-30）**。Step 1-4 落地，Step 5 决策为
-> 保留 path 整文件 API 作为小文件快路径（双轨并存，块级为主）。
+> Status: **implementation complete (round 26-30)**. Steps 1-4 landed; Step 5 decided as
+> keeping the path whole-file API as the small-file fast path (dual-track coexistence, block-level primary).
 
-## 实施记录
+## Implementation log
 
-| Step | 内容 | round |
+| Step | Content | round |
 |---|---|---|
-| 1 | 键 API 骨架（get/promote/invalidate_block，16B 复合键） | 26 |
-| 2 | fops 读路径：非零 offset 逐块命中 + 逐块 promote | 27 |
-| 3 | fops 写路径：逐块 promote + 命中后块区间失效（防块条目陈旧） | 28 |
-| 4 | invalidate_file（整文件块失效，本机显式删除 + 跨核广播；宿主回归实锤广播跳过本机的缺口） | 29-30 |
-| 5 | whole-file path API 保留为小文件快路径（双轨） | 30 |
-| 测试 | fc-reg 新增 test_block_cache_basics（promote/get/隔离/invalidate_file） | 30 |
+| 1 | Key API skeleton (get/promote/invalidate_block, 16B composite key) | 26 |
+| 2 | fops read path: per-block hit for non-zero offset + per-block promote | 27 |
+| 3 | fops write path: per-block promote + block-range invalidation after hit (prevent stale block entries) | 28 |
+| 4 | invalidate_file (whole-file block invalidation, local explicit delete + cross-core broadcast; host regression proved the broadcast-skips-local gap) | 29-30 |
+| 5 | whole-file path API kept as small-file fast path (dual-track) | 30 |
+| Tests | fc-reg added test_block_cache_basics (promote/get/isolation/invalidate_file) | 30 |
 
-## 1. 目标语义
+## 1. Target semantics
 
-| 现状 | 目标 |
+| Current | Target |
 |---|---|
-| 键 = path（整文件一个条目） | 键 = (file_id, block#)（每 4KB 一块独立条目） |
-| promote 限 offset==0 的整文件读 | 任意 offset/length 的读都可 promote |
-| 大文件一次读入全部 | 只缓存被访问的块（稀疏缓存） |
-| 写命中要求 `offset+wcnt <= out_len` | 写命中按块对齐，跨块自动拆条 |
+| Key = path (one entry per whole file) | Key = (file_id, block#) (independent entry per 4KB block) |
+| promote limited to whole-file reads with offset==0 | reads at any offset/length can promote |
+| Large file read entirely in one go | only accessed blocks are cached (sparse cache) |
+| Write hit requires `offset+wcnt <= out_len` | write hits aligned per block, auto-split across blocks |
 
-## 2. 键设计
+## 2. Key design
 
 ```
-key = file_id(8B) + block_no(8B, 4KB 对齐的扇区偏移 >> 3)
+key = file_id(8B) + block_no(8B, 4KB-aligned sector offset >> 3)
 key_len = 16
 ```
 
-- file_id 沿用 `(uint64_t)filedesc`（round 5 写回已按此直写）
-- ART 索引无需改（变长键已支持）；path 保留为辅助（诊断/失效广播用）
-- 与 fc 现有 API 的兼容：`file_cache_get/put/promote/fsync` 增加
-  `offset/block` 参数的重载，旧 path 签名保留为 whole-file 的别名
-  （内部展开为 file_id + block 0 的特殊条目或兼容 shim）
+- file_id keeps using `(uint64_t)filedesc` (round 5 writeback already wrote through this way)
+- ART index needs no change (variable-length keys already supported); path kept as auxiliary (for diagnostics/invalidation broadcast)
+- Compatibility with fc's existing API: `file_cache_get/put/promote/fsync` gain
+  `offset/block` parameter overloads; old path signatures kept as whole-file aliases
+  (internally expanded to a special file_id + block 0 entry or a compatibility shim)
 
-## 3. 读写路径
+## 3. Read/write paths
 
-- **读**：`sys_read` 先算 [offset, offset+count) 覆盖的块列表 →
-  逐块 get → 命中者内存拷贝，未命中者逐块磁盘读 + promote
-  （小块读 ≤ 2KB 仍走直读避免 cache 抖动，阈值沿用 FC_TINY_FILE_THRESHOLD）
-- **写**：write-through 保持现状语义（round 24 复核的
-  fops.cpp:110-144 流程不变），仅把命中判定的键从 path 换成
+- **Read**: `sys_read` first computes the block list covered by [offset, offset+count) →
+  per-block get → memory-copy hits, per-block disk read + promote misses
+  (small reads ≤ 2KB still go direct-read to avoid cache thrash, threshold reuses FC_TINY_FILE_THRESHOLD)
+- **Write**: write-through keeps current semantics (re-verified in round 24,
+  fops.cpp:110-144 flow unchanged), only the hit-decision key changes from path to
   (file_id, block)
-- **fsync/写回**：round 5 的 file_id 直写不变；条目级的
-  dirty 位从整文件粒度降为块粒度
+- **fsync/writeback**: round 5's file_id write-through unchanged; the entry-level
+  dirty bit drops from whole-file granularity to block granularity
 
-## 4. 一致性
+## 4. Consistency
 
-- 跨 CPU 失效：`file_cache_invalidate` 从 path 广播改为
-  (file_id, block 区间) 广播（ART 前缀删除）
-- O_TRUNC/文件删除：invalidate 全 file_id 区间（前缀删除天然支持）
-- 并发：每条目 pin/refcount 与 FC_STATE 机沿用；块条目更小，
-  LRU 淘汰粒度更细（淘汰不再丢弃整文件的前缀）
+- Cross-CPU invalidation: `file_cache_invalidate` changes from path broadcast to
+  (file_id, block range) broadcast (ART prefix delete)
+- O_TRUNC/file deletion: invalidate the whole file_id range (prefix delete supports this naturally)
+- Concurrency: per-entry pin/refcount and the FC_STATE machine carried over; block entries are smaller,
+  LRU eviction granularity is finer (eviction no longer drops the whole file's prefix)
 
-## 5. 迁移步骤（建议顺序）
+## 5. Migration steps (suggested order)
 
-1. fc.h/fc.cpp 增加块键重载 + file_id 解析（兼容层，golden 不破）
-2. fops 读路径逐块 promote（fc-reg 宿主回归新增跨块读用例）
-3. fops 写路径块命中（fc-reg 新增跨块写回用例）
-4. 失效广播改区间前缀删除（fc-mt 并发用例扩展）
-5. whole-file 路径降级为兼容 shim 或删除
+1. fc.h/fc.cpp add block-key overloads + file_id parsing (compatibility layer, golden unbroken)
+2. fops read path per-block promote (fc-reg host regression adds cross-block read cases)
+3. fops write path block hit (fc-reg adds cross-block writeback cases)
+4. Invalidation broadcast switches to range prefix delete (fc-mt concurrency cases extended)
+5. whole-file path demoted to a compatibility shim or removed
 
-## 6. 验证门禁
+## 6. Verification gating
 
-- tests/fc/regression.cpp 新增：跨块读命中/未命中、跨块写回、
-  块级失效广播、大文件稀疏缓存（内存占用断言）
-- 全量 golden + 30 分钟 soak（ping 169 基线）
+- tests/fc/regression.cpp adds: cross-block read hit/miss, cross-block writeback,
+  block-level invalidation broadcast, large-file sparse cache (memory-usage assertion)
+- Full golden + 30-minute soak (ping 169 baseline)

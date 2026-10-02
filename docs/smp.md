@@ -1,77 +1,77 @@
-# SMP：多核启动与 per-CPU
+# SMP: Multi-Core Boot and per-CPU
 
-源码：`kernel/src/arch/x86_64/smp/smp.cpp`（约 9 KB）。
+Source: `kernel/src/arch/x86_64/smp/smp.cpp` (about 9 KB).
 
-## 1. 启动流程
+## 1. Boot Sequence
 
-通过 **Limine multiprocessor 协议**枚举 CPU，BSP 引导 AP：
+CPUs are enumerated via the **Limine multiprocessor protocol**, and the BSP boots the APs:
 
 ```text
-smp_init()  (BSP 上)
-  ├─ 记录 bsp_cpu->lapic_id，建立 apic_id_to_logical[] 映射
-  ├─ smp_setup_thread_queue(bsp)   // 每 CPU 一棵 RBTree runqueue
-  ├─ smp_setup_kstack(bsp)         // 内核栈 + TSS IST/RSP0
+smp_init()  (on the BSP)
+  ├─ record bsp_cpu->lapic_id, build the apic_id_to_logical[] mapping
+  ├─ smp_setup_thread_queue(bsp)   // one RBTree runqueue per CPU
+  ├─ smp_setup_kstack(bsp)         // kernel stack + TSS IST/RSP0
   ├─ EnableFSGSBASE(bsp)
   ├─ simd_cpu_init(bsp)
-  └─ 遍历 mp_response->cpus[]：
-        给每个 AP 分配 cpu_t，填 lapic_id/logical_id，
-        设 mp_info->goto_address = smp_cpu_init，
-        BSP 在 pause 循环里等 started_count == 其余核数
+  └─ iterate over mp_response->cpus[]:
+        allocate a cpu_t for each AP, fill in lapic_id/logical_id,
+        set mp_info->goto_address = smp_cpu_init,
+        the BSP waits in a pause loop until started_count == the number of remaining cores
 ```
 
-每个 AP 落到 `smp_cpu_init(mp_info)`：
+Each AP lands in `smp_cpu_init(mp_info)`:
 
 ```text
-切到 kernel_pagemap
+switch to kernel_pagemap
   → GDT::Init(logical_id) + idt_reinit(logical_id)
-  → 拿 smp_lock，填 cpu_t：self/id/lapic_id，初始化 cslab 空闲链表
-  → wrmsr KERNEL_GS_BASE / IA32_GS_MSR = cpu_t*   ← this_cpu() 的根基
+  → take smp_lock, fill in cpu_t: self/id/lapic_id, initialize the cslab free list
+  → wrmsr KERNEL_GS_BASE / IA32_GS_MSR = cpu_t*   ← the foundation of this_cpu()
   → LAPIC::Init + InitTimer
-  → EnableFSGSBASE(cpu)（不支持则 WRFSBASE 回退到普通版）
+  → EnableFSGSBASE(cpu) (if unsupported, WRFSBASE falls back to the plain version)
   → smp_setup_kstack
   → idt_install_irq_cpu(SCHED_VEC, Schedule::Internal::Switch)
   → syscall_init()
   → smp_setup_thread_queue()
   → sse_enable / fpu_init / simd_cpu_init / cpu_simd_mask
   → enable_smep_smap()
-  → 清零 tv1/tv2/tv3 定时器桶
-  → 分配 per-CPU file_cache 并注册写回回调
-  → started_count++，更新 smp_last_cpu
-  → LAPIC::Oneshot(SCHED_VEC, base_quantum*ticks)   // 关键：开第一个 tick
+  → zero the tv1/tv2/tv3 timer buckets
+  → allocate the per-CPU file_cache and register the write-back callback
+  → started_count++, update smp_last_cpu
+  → LAPIC::Oneshot(SCHED_VEC, base_quantum*ticks)   // key: arm the first tick
   → sti
-  → sched_idle()   ← 不返回；第一次 Switch 把这里的上下文快照成 idle 线程
+  → sched_idle()   ← does not return; the first Switch snapshots this context as the idle thread
 ```
 
-## 2. per-CPU 指针怎么拿
+## 2. How the per-CPU Pointer Is Obtained
 
-- `this_cpu()` 在 `smp_started` 后直接 `movq %%gs:0, %0`——GS 基址在 AP 启动时写入 `IA32_GS_MSR`，每个核读到自己的 `cpu_t*`，无锁、无数组索引。
-- `smp_started` 之前（极早期）一律返回 `bsp_cpu`。
-- per-CPU 数据：`dyn_ctx[]`（调度反馈统计）、`per_cpu_steal_throttle[]`、`per_cpu_steal_cursor[]`、`g_tlb_batch[]`、`cslab`（SLAB 空闲链）、`file_cache`。
+- After `smp_started`, `this_cpu()` is simply `movq %%gs:0, %0` — the GS base was written to `IA32_GS_MSR` at AP startup, so each core reads its own `cpu_t*` with no lock and no array index.
+- Before `smp_started` (very early boot), it always returns `bsp_cpu`.
+- per-CPU data: `dyn_ctx[]` (scheduling feedback statistics), `per_cpu_steal_throttle[]`, `per_cpu_steal_cursor[]`, `g_tlb_batch[]`, `cslab` (SLAB free chain), `file_cache`.
 
-## 3. 硬件能力探测与降级
+## 3. Hardware Capability Detection and Fallback
 
-| 特性 | 探测 | 不支持时 |
+| Feature | Detection | When Unsupported |
 |---|---|---|
-| FSGSBASE | `cpuid.(7,0).ebx & (1<<5)` | `WRFSBASE` 回退到普通版本，不崩 |
+| FSGSBASE | `cpuid.(7,0).ebx & (1<<5)` | `WRFSBASE` falls back to the plain version, no crash |
 | SMEP/SMAP | `enable_smep_smap()` | — |
-| XSave / AVX | `simd_cpu_init`，存 `XsaveSize/MaskLo/MaskHi` | 线程 fx_area 按实际尺寸分配 |
-| SSE/FPU | `fpu_init()` | 不支持直接 `hcf()` |
+| XSave / AVX | `simd_cpu_init`, stores `XsaveSize/MaskLo/MaskHi` | the thread fx_area is allocated at its actual size |
+| SSE/FPU | `fpu_init()` | unsupported → `hcf()` immediately |
 
-## 4. 两个关键的启动期死锁/卡顿修复
+## 4. Two Key Boot-Time Deadlock/Stall Fixes
 
-源码注释里记录：
+Recorded in the source comments:
 
-1. **AP 必须在 idle 前 arm 第一个 periodic tick**。如果 AP 在 LAPIC 定时器关闭状态下就 `hlt`，而远端唤醒 IPI 又恰好丢失，它会一直睡到下一次无关 IPI——实测约 14 秒卡顿。先 arm oneshot 再 hlt，保证每个 base slice 至少被调度器拉回来一次。
-2. **IPI 唤醒**：push 任务到一个正 hlt 的核后，立刻 `LAPIC::IPI(target->lapic_id, SCHED_VEC)`，不等它自己醒来。
+1. **The AP must arm its first periodic tick before going idle.** If the AP executes `hlt` while its LAPIC timer is off and a remote wake-up IPI happens to get lost, it will sleep until the next unrelated IPI — an observed stall of about 14 seconds. Arm the oneshot first and only then `hlt`, so every base slice gets pulled back by the scheduler at least once.
+2. **IPI wake-up**: after pushing a task onto a core that is currently in `hlt`, immediately issue `LAPIC::IPI(target->lapic_id, SCHED_VEC)` instead of waiting for it to wake up on its own.
 
-## 5. 中断与定时器桶
+## 5. Interrupts and Timer Buckets
 
-- 每个 CPU 有 `tv1/tv2/tv3` 三级时间轮（典型内核定时器分级），`timer_cpu` 字段记录线程定时器归哪个核管；线程被 steal/push 时会同步改 `timer_cpu`，避免定时器在旧核到期。
-- SCHED_VEC 是调度器 IPI 向量；`LAPIC::IPI` / `IPIOthers` 用于跨核调度。
-- IOAPIC 负责把 GSI 路由到指定 LAPIC；PIT GSI0 在 BSP 上被显式重定向到向量 32（见 architecture.md）。
+- Each CPU has a three-level timer wheel `tv1/tv2/tv3` (the typical kernel timer tiering); the `timer_cpu` field records which core owns a thread's timer. When a thread is stolen/pushed, `timer_cpu` is updated in sync so the timer never expires on the old core.
+- SCHED_VEC is the scheduler IPI vector; `LAPIC::IPI` / `IPIOthers` are used for cross-core scheduling.
+- The IOAPIC routes GSIs to a designated LAPIC; PIT GSI0 is explicitly redirected to vector 32 on the BSP (see architecture.md).
 
-## 6. 亲和性
+## 6. Affinity
 
-- `cpu_simd_mask(cpu)` 给出该核的 **SIMD 指令集位图**——注意它不是 SMT/拓扑掩码（内核中没有任何 APIC-ID/核兄弟拓扑数据），旧文档的 "SMT" 说法不实；
-- 负载均衡（见 scheduler.md）优先在同掩码内 push/steal；
-- GUI 合成器的 worker 按在线 CPU 数 pin，一核一条水平条带（见 gui.md）。
+- `cpu_simd_mask(cpu)` returns the core's **SIMD instruction-set bitmap** — note it is not an SMT/topology mask (the kernel holds no APIC-ID/core-sibling topology data at all), so the old docs' "SMT" claim is inaccurate;
+- load balancing (see scheduler.md) prefers to push/steal within the same mask;
+- the GUI compositor's workers are pinned by the online CPU count, one horizontal strip per core (see gui.md).

@@ -1,231 +1,263 @@
-# 内核核心组件稳定性/性能测试报告
+# Kernel Core Components Stability/Performance Test Report
 
-> 测试方法：把内核**真实源码**（`kernel/src/mem/heap.cpp` 等）搬到 WSL/Linux 宿主，
-> 仅替换硬件相关依赖（页面分配、自旋锁、日志、CLI 指令）为等价 shim
-> （见 `tests/common/`，清单见 `tests/README.md`），再进行**随机参数混沌测试**、
-> **定时压力测试**与**最小确定性回归**。
-> 所有数字由 `tests/` 下的程序在 Ubuntu-24.04 / g++14 / -O2 / **单线程**下产出，
-> `cd tests && bash ci.sh` 一键复现；种子硬编码（slub `0x9e3779b97f4a7c15`、
-> fc `0x2545f4914f6cdd1d`、sched `0xdeadbeefcafebabe`），失败可重放。
-> **结论边界**：单线程、无中断抢占、libc 页面 —— 不含 SMP 并发语义（见 §4）。
+> Test methodology: move the kernel's **real source** (`kernel/src/mem/heap.cpp` etc.) to a
+> WSL/Linux host, replacing only hardware-related dependencies (page allocation, spinlock,
+> logging, CLI instructions) with equivalent shims (see `tests/common/`, checklist in
+> `tests/README.md`), then run **randomized-parameter chaos tests**, **timed stress tests**,
+> and **minimal deterministic regressions**.
+> All numbers are produced by the programs under `tests/` on Ubuntu-24.04 / g++14 / -O2 /
+> **single-threaded**; `cd tests && bash ci.sh` reproduces everything in one command; seeds are
+> hardcoded (slub `0x9e3779b97f4a7c15`, fc `0x2545f4914f6cdd1d`, sched `0xdeadbeefcafebabe`),
+> failures are replayable.
+> **Conclusion boundary**: single-threaded, no interrupt preemption, libc pages — excludes SMP
+> concurrency semantics (see §4).
 
-## 复现方式
+## Reproduction
 
 ```bash
-cd tests && bash ci.sh         # slub + slub-poison + fc + fc-reg + sched 全量
+cd tests && bash ci.sh         # slub + slub-poison + fc + fc-reg + sched full suite
 ```
 
-## 1. SLUB / SLAB 内核堆（真实源码：kernel/src/mem/heap.cpp）
+## 1. SLUB / SLAB Kernel Heap (real source: kernel/src/mem/heap.cpp)
 
-### 1.1 混沌测试（随机参数模拟）
+### 1.1 Chaos Test (Randomized Parameters)
 
-- 模式：200 万次随机操作/阶段 × 2 阶段；45% `kmalloc`（1..4096 B canary 填充）、
-  35% 随机释放、10% `krealloc`（1..8192 B，校验旧内容保留）、10% canary 抽查。
-- **结果（2026-09-27）**：
+- Mode: 2 million random operations per phase × 2 phases; 45% `kmalloc` (1..4096 B canary
+  filled), 35% random free, 10% `krealloc` (1..8192 B, verify old content preserved), 10%
+  canary spot checks.
+- **Results (2026-09-27)**:
 
-| 阶段 | 操作数 | canary 抽查 | 失败 | 存活页数 |
+| Phase | Operations | Canary spot checks | Failures | Live pages |
 |---|---|---|---|---|
 | phase 1 | 2,000,000 | 217,075 | **0** | 17 |
 | phase 2 | 2,000,000 | 434,781 | **0** | 17 |
 
-- **零失败、两阶段页数相等**（17 页 = 分配器稳态页池：SLUB 各尺寸类活动 slab +
-  SLAB 页池保留，`dump_live_pages()` 可列出每个页的分配站点；两阶段差值=0 即无泄漏）。
+- **Zero failures, equal page counts across phases** (17 pages = allocator steady-state page
+  pool: SLUB per-size-class active slabs + SLAB page pool retention, `dump_live_pages()` can
+  list each page's allocation site; two-phase delta = 0 means no leak).
 
-### 1.2 边界/语义/负向用例（本轮新增）
+### 1.2 Boundary/Semantics/Negative Tests (new this round)
 
-| 用例 | 结果 |
+| Test | Result |
 |---|---|
-| 25 种尺寸（0..65536B）×32：全非空、无重复地址、**全部 16 对齐** | PASS |
-| krealloc 缩容/扩容/大幅缩容/同尺寸：内容保留；krealloc(ptr,0)=NULL；krealloc(NULL,n) | PASS |
-| kcalloc 乘法回绕（1<<40 × 1<<12 等） | 全部拒绝（NULL） |
-| OOM 故障注入（页分配失败）：kmalloc(8192)→NULL、krealloc OOM 保旧块、冷缓存 SLUB::Alloc→NULL、解除后恢复 | PASS |
-| 双重释放 → SIGABRT（fork 子进程验证） | ACTIVE |
-| **红区越界写**（`-DSLAB_DEBUG_POISON` 构建，SLAB::Alloc(512) 写 p+512 破坏 magic → Free 检测） | **ACTIVE** |
+| 25 sizes (0..65536B) ×32: all non-null, no duplicate addresses, **all 16-aligned** | PASS |
+| krealloc shrink/grow/large shrink/same size: content preserved; krealloc(ptr,0)=NULL; krealloc(NULL,n) | PASS |
+| kcalloc multiplication wraparound (1<<40 × 1<<12 etc.) | all rejected (NULL) |
+| OOM fault injection (page allocation failure): kmalloc(8192)→NULL, krealloc OOM keeps old block, cold-cache SLUB::Alloc→NULL, recovers after removal | PASS |
+| Double free → SIGABRT (verified in forked child process) | ACTIVE |
+| **Redzone out-of-bounds write** (`-DSLAB_DEBUG_POISON` build, SLAB::Alloc(512) writes p+512 destroying magic → Free detects) | **ACTIVE** |
 
-### 1.3 延迟分布（128B 类，rdtsc 逐 op，TSC 频率标定）
+### 1.3 Latency Distribution (128B class, rdtsc per op, TSC frequency calibrated)
 
-| 负载 | P50 | P95 | P99 | max |
+| Load | P50 | P95 | P99 | max |
 |---|---|---|---|---|
-| 无压力 | 91 ns | 96 ns | 131 ns | 11.7 ms（首轮：向量增长+首触缺页） |
-| 高负载（10 万存活 256B 块） | 90 ns | — | 130 ns | 157 µs |
-| **第二轮（热缓存，验 max 复现）** | 91 ns | — | 131 ns | **293 µs（复现）** |
+| No pressure | 91 ns | 96 ns | 131 ns | 11.7 ms (first round: vector growth + first-touch page faults) |
+| High load (100k live 256B blocks) | 90 ns | — | 130 ns | 157 µs |
+| **Second round (hot cache, verifying max reproduction)** | 91 ns | — | 131 ns | **293 µs (reproduced)** |
 
-**max 复现核查（已定位）**：第二轮慢路径计数 = **0 次**（128B slab 已热）仍出现
-~160 个 >10µs 离群（max ~1.6ms）→ **根因 = 宿主线程抢占**（rdtsc 墙钟包含被
-抢占时间，测试方法学限制），**非分配器缺陷**；分配器自身 P50/P99 不受影响。
+**max reproduction check (located)**: second-round slow-path count = **0 times** (128B slab
+already hot) yet ~160 outliers >10µs (max ~1.6ms) still appeared → **root cause = host thread
+preemption** (rdtsc wall clock includes preempted time, a test-methodology limitation), **not
+an allocator defect**; the allocator's own P50/P99 are unaffected.
 
-### 1.4 尺寸分档吞吐（op = kmalloc+kfree 对；批量计时、预热 50k、sink 防消除、3 run）
+### 1.4 Per-Size-Class Throughput (op = kmalloc+kfree pair; batch timing, 50k warmup, sink anti-elimination, 3 runs)
 
-| 类 | 16B | 32B | 64B | 128B | 256B | 512B | 1024B | krealloc 64→128 |
+| Class | 16B | 32B | 64B | 128B | 256B | 512B | 1024B | krealloc 64→128 |
 |---|---|---|---|---|---|---|---|---|
 | M ops/s | 12.44 | 12.50 | 12.42 | 12.47 | 12.30 | 12.52 | 12.47 | 5.98 |
 
-3-run 区间 11.45-12.52 M ops/s。**注**：早前报告的 8.8M ops/s 每迭代含一次
-steady_clock 调用且 op 定义不同，已作废，以此表为准。
-**"与同机 glibc 同数量级/不构成瓶颈"的结论已撤回**：glibc 对比从未实测，且吞吐
-≠瓶颈结论（需内核侧 profile，见 `docs/stability-audit.md` §5）。
+3-run range 11.45-12.52 M ops/s. **Note**: the previously reported 8.8M ops/s included one
+steady_clock call per iteration with a different op definition; deprecated, this table prevails.
+**The "same order of magnitude as same-machine glibc / not a bottleneck" conclusion has been
+withdrawn**: the glibc comparison was never measured, and throughput ≠ bottleneck conclusion
+(needs kernel-side profile, see `docs/stability-audit.md` §5).
 
-### 1.4b 多线程并发（slub-mt：4 宿主线程 = 4 虚拟 CPU）
+### 1.4b Multithreaded Concurrency (slub-mt: 4 host threads = 4 virtual CPUs)
 
-| 阶段 | 结果 |
+| Phase | Result |
 |---|---|
-| A 无竞争（各 50 万 op 独立混沌） | 0 残留 0 失败 |
-| B 跨线程 free（环形传递，各 20 万 op） | 0 残留 0 失败（真实跨 CPU free 路径 + 锁竞争） |
-| C 同 cache 竞争（4 线程 hammer 128B，5s） | **10.70M ops/s**（单线程基线 12.4M，-14%） |
-| TSAN | 功能 failures=0；**有已知理论竞态报告**（跨 CPU free 尾部/reclaimed slab 读窗口，未在混沌中造成功能性失败，见 audit §0''） |
+| A no contention (independent chaos, 500k ops each) | 0 residual 0 failures |
+| B cross-thread free (ring passing, 200k ops each) | 0 residual 0 failures (real cross-CPU free path + lock contention) |
+| C same-cache contention (4 threads hammer 128B, 5s) | **10.70M ops/s** (single-threaded baseline 12.4M, -14%) |
+| TSAN | functional failures=0; **known theoretical race reports exist** (cross-CPU free tail / reclaimed slab read windows, caused no functional failure in chaos, see audit §0'') |
 
-### 1.5 碎片化
+### 1.5 Fragmentation
 
-内部碎片率（类粒度开销）= 130.7%（主因 >1024B 大页粒度：1025B→4096B）；
-**10 轮 × 5 万 op 混沌趋势：页数 5354 → 5354 完全持平，每轮 largest_free ≥ 4MB** ——
-稳态无增长、无碎片化退化；SLUB 类内（≤1024）粒度损耗低。此为**分配粒度特征**
-而非泄漏（页数守恒 + 大块可用为证）。
+Internal fragmentation rate (class-granularity overhead) = 130.7% (mainly from >1024B
+large-page granularity: 1025B→4096B); **10 rounds × 50k-op chaos trend: page count 5354 →
+5354 completely flat, each round largest_free ≥ 4MB** — steady state without growth, no
+fragmentation degradation; SLUB intra-class (≤1024) granularity loss is low. This is an
+**allocation-granularity characteristic**, not a leak (proven by page-count conservation +
+large-block availability).
 
-### 1.5b 红区负向（slub-poison 独立 `-DSLAB_DEBUG_POISON` 构建）
+### 1.5b Redzone Negative Tests (slub-poison standalone `-DSLAB_DEBUG_POISON` build)
 
-| 用例 | 结果 |
+| Test | Result |
 |---|---|
-| oob+64 / +128 / +512 / +1024（写 p+usable 破坏尾部红区 → Free 检测 SIGABRT） | **4/4 ACTIVE** |
-| oob-8（前越界） | **N/A** —— 当前布局仅尾部红区（`obj_size = usable + 8B 红区`），头部无红区，如实记录为已知限制 |
+| oob+64 / +128 / +512 / +1024 (write p+usable destroying the tail redzone → Free detects SIGABRT) | **4/4 ACTIVE** |
+| oob-8 (front out-of-bounds) | **N/A** — current layout has only a tail redzone (`obj_size = usable + 8B redzone`), no head redzone, truthfully recorded as a known limitation |
 
-### 1.6 结论（已降级）
+### 1.6 Conclusion (downgraded)
 
-> 在**单线程、无中断抢占、libc 页面 shim**环境下，SLUB/SLAB 在覆盖范围内的算法正确性、
-> 内存安全（含负向检测）、边界语义与 OOM 行为表现良好；SMP 并发、真实中断抢占、
-> 长期碎片化趋势尚未验证。**不表述为"SMP 安全"或无条件"稳定"。**
+> Under a **single-threaded, no-interrupt-preemption, libc-page shim** environment, SLUB/SLAB's
+> algorithmic correctness within the covered scope, memory safety (incl. negative detection),
+> boundary semantics, and OOM behavior perform well; SMP concurrency, real interrupt
+> preemption, and long-term fragmentation trends are not yet verified. **Not stated as
+> "SMP safe" or unconditionally "stable".**
 
-## 2. 文件缓存（fc.cpp + art.c）— 3 个内存安全缺陷已定位并修复，全量通过
+## 2. File Cache (fc.cpp + art.c) — 3 memory-safety defects located and fixed, all pass
 
-**方法**：真实编译 `kernel/src/fs/fc.cpp` + `kernel/src/klib/algorithm/art.c` +
-`heap.cpp`（仅换 shim 层），4 个 per-CPU 缓存实例、200 个逻辑文件键、
-40 万次随机操作（promote/get/put/invalidate/idle_handler 加权），
-带 canary 内容校验、逐操作 ART 键值一致性巡检、代际双重释放追踪、ASAN 毒化、
-GDB 硬件内存监视点。
+**Method**: actually compile `kernel/src/fs/fc.cpp` + `kernel/src/klib/algorithm/art.c` +
+`heap.cpp` (only the shim layer replaced), 4 per-CPU cache instances, 200 logical file keys,
+400k random operations (promote/get/put/invalidate/idle_handler weighted), with canary content
+verification, per-operation ART key-value consistency inspection, generational double-free
+tracking, ASAN poisoning, GDB hardware memory watchpoints.
 
-### 2.1 发现的缺陷（全部为"静态 review 看不见、只有混沌测试能逼出"）
+### 2.1 Defects Found (all "invisible to static review, only chaos testing can force out")
 
-| # | 位置 | 缺陷 | 后果 | 修复 |
+| # | Location | Defect | Consequence | Fix |
 |---|---|---|---|---|
-| 1 | `art.c` 7 处 `key[depth]` | vendored libart 在递归→迭代重构时**丢失 0 终结符约定**；新键是既有叶子的真前缀时 `depth==key_len` 越界读，子索引取决于分配器残留字节 | 树结构损坏（遍历可见/搜索不可达）→ 缓存全 miss | 全部 `key[depth]` 读取加终结符守卫（搜索/插入分裂/递归插入/删除/迭代） |
-| 2 | `fc.cpp` promote exist 分支 | 旧条目按**当初的 data_len** 分配内联容量；复用更大 data 时 `__memcpy(exist->inline_data, data, data_len)` 直接溢出 | 越界写砸进相邻条目 → 内存损坏（GDB 监视点抓现行，fc.cpp:1049） | 复用前校验 `SLUB::TryGetSize(exist)` 容量，不足则摘除旧条目改走新条目路径 |
-| 3 | promote -4 路径 / put / pick_and_unlink | 插入后校验失败时 `kfree` **仍在 ART 中的条目**；pending 分支对已摘除条目二次摘链释放 | ART 悬垂值、双重释放写坏 LRU → **QEMU 实测 #GP 的根因** | 幂等 `art_delete` + 插入重试；`art_delete`==NULL 即跳过；`fc_lru_remove` 幂等化 |
+| 1 | `art.c` 7 sites of `key[depth]` | vendored libart **lost the 0-terminator convention** during the recursion→iteration refactor; when a new key is a true prefix of an existing leaf, `depth==key_len` out-of-bounds read, child index depends on allocator residual bytes | tree structure corruption (visible in traversal / unreachable in search) → cache all-miss | added terminator guard to all `key[depth]` reads (search/insert split/recursive insert/delete/iterate) |
+| 2 | `fc.cpp` promote exists branch | old entry's inline capacity allocated per the **original data_len**; reusing larger data makes `__memcpy(exist->inline_data, data, data_len)` overflow directly | out-of-bounds write smashes adjacent entries → memory corruption (GDB watchpoint caught in the act, fc.cpp:1049) | verify `SLUB::TryGetSize(exist)` capacity before reuse, if insufficient detach the old entry and take the new-entry path |
+| 3 | promote -4 path / put / pick_and_unlink | on post-insert validation failure `kfree` **the entry still in ART**; pending branch re-unlinks and frees the already-detached entry | ART dangling value, double free corrupts LRU → **the root cause of the actually measured QEMU #GP** | idempotent `art_delete` + insert retry; `art_delete`==NULL means skip; `fc_lru_remove` made idempotent |
 
-### 2.2 修复后全量结果（2026-09-27, g++14, -O2）
+### 2.2 Post-Fix Full Results (2026-09-27, g++14, -O2)
 
-| 项 | 结果 |
+| Item | Result |
 |---|---|
-| 混沌 **2,000,000** op（500 键 Zipf α=1.1，70% 干净/30% 脏写） | **failures=0, tree_broken=0**（修复前 op 565 必现树损坏、op 935 必现越界） |
-| 命中率（宽松限 1MB/2MB） | get 类操作 **≈87% 命中**（本地 29% + 跨核迁移 519k 次）；**限压 64KB 软限下 15.3%** —— 已查明为迁移被软限拒止(`smoothed_cache_bytes > soft_limit → continue`)的配置产物，非缺陷 |
-| evictions=0 解释 | `file_cache_should_evict` 保护"频率≥均值"条目；Zipf/均匀负载下几乎全体受保护 → 淘汰判定不成立（机制已读码确认） |
-| **混合负载整体吞吐 + 延迟（真实权重，3 秒批）** | **0.607M ops/s**；get 命中率 81.7%；get 延迟 P50=583ns P95=2.62µs P99=3.62µs max=2.67ms |
-| **多线程并发（fc-mt：4 线程 × 4 实例 × 30 万 op，30% 脏写跨实例广播 + 全程巡检）** | **failures=0**（TSAN 已知理论竞态见 audit §0''） |
-| 双重释放追踪 / destroy | 0 真双释 / 无崩溃 |
-| **三个最小回归（tests/fc/regression.cpp）** | test_art_true_prefix_key / test_promote_inline_capacity_reuse / test_insert_fail_no_dangling **全部 PASS** |
-| 分路径吞吐 | get-hit 0.31M / get-miss 7.37M / promote 0.16M / invalidate 11.96M / idle_handler 1.59M ops/s（op 定义见 tests/README） |
+| Chaos **2,000,000** ops (500 keys Zipf α=1.1, 70% clean / 30% dirty writes) | **failures=0, tree_broken=0** (before the fix tree corruption at op 565 always, OOB at op 935 always) |
+| Hit rate (relaxed limits 1MB/2MB) | get-class ops **≈87% hit** (local 29% + cross-core migration 519k times); **15.3% under the 64KB pressure soft limit** — confirmed as a config artifact of migrations rejected by the soft limit (`smoothed_cache_bytes > soft_limit → continue`), not a defect |
+| evictions=0 explanation | `file_cache_should_evict` protects entries with "frequency ≥ mean"; under Zipf/uniform loads almost everything is protected → eviction decision never triggers (mechanism confirmed by source reading) |
+| **Mixed-load overall throughput + latency (real weights, 3-second batches)** | **0.607M ops/s**; get hit rate 81.7%; get latency P50=583ns P95=2.62µs P99=3.62µs max=2.67ms |
+| **Multithreaded concurrency (fc-mt: 4 threads × 4 instances × 300k ops, 30% dirty-write cross-instance broadcast + full-time inspection)** | **failures=0** (TSAN known theoretical races see audit §0'') |
+| Double-free tracking / destroy | 0 true double frees / no crash |
+| **Three minimal regressions (tests/fc/regression.cpp)** | test_art_true_prefix_key / test_promote_inline_capacity_reuse / test_insert_fail_no_dangling **all PASS** |
+| Per-path throughput | get-hit 0.31M / get-miss 7.37M / promote 0.16M / invalidate 11.96M / idle_handler 1.59M ops/s (op definition in tests/README) |
 
-**结论降级**：上述为**单线程宿主**结论。"全量通过"限定为"本表所列套件通过"；
-SMP 并发（多线程 per-CPU + 全局 LRU 交互）与 QEMU 真实负载待补（audit §2 F5）。
+**Conclusion downgrade**: the above are **single-threaded host** conclusions. "All pass" is
+restricted to "the suites listed in this table pass"; SMP concurrency (multithreaded per-CPU +
+global LRU interaction) and QEMU real load remain to be filled (audit §2 F5).
 
-## 3. 调度器（账本模型仿真 —— 真实源码 EEVDF 骨架的忠实复刻）
+## 3. Scheduler (Ledger-Model Simulation — a faithful replica of the real source's EEVDF skeleton)
 
-**方法（诚实声明）**：`sched.cpp` 与 LAPIC/PIT/线程上下文深度耦合，无法直接宿主编译。
-本仿真**逐行复刻 sched.cpp 的账本公式与常量**（每个常量/公式均注释对照源码行号：
-`RIPRATE_*` sched.cpp:39-69、`get_dynamic_quantum` :205-225、RIP 采样/钳位 :410-467、
-老化 :311-335、`calibrate_and_set_deadline` :588-605、`thread_rb_cmp`/`Pick` :574-582/
-:881-919、唤醒抢占 :1220-1238、vruntime/avg 记账 :1010-1031），
-运行队列为线性扫描替身（内核为 deadline 排序红黑树 + 子树增广，O(log n)；模型 O(n)，
-选择结果等价）。另有 Linux **完整 EEVDF 参考**模型并排对照。
+**Method (honest declaration)**: `sched.cpp` is deeply coupled with LAPIC/PIT/thread context
+and cannot be compiled directly on the host. This simulation **replicates sched.cpp's ledger
+formulas and constants line by line** (every constant/formula is commented against source line
+numbers: `RIPRATE_*` sched.cpp:39-69, `get_dynamic_quantum` :205-225, RIP sampling/clamping
+:410-467, aging :311-335, `calibrate_and_set_deadline` :588-605, `thread_rb_cmp`/`Pick`
+:574-582/:881-919, wakeup preemption :1220-1238, vruntime/avg accounting :1010-1031), the run
+queue is a linear-scan substitute (the kernel uses a deadline-sorted red-black tree + subtree
+augmentation, O(log n); model O(n), selection result equivalent). Additionally there is a Linux
+**full EEVDF reference** model compared side by side.
 
-**定性（经逐行读码修正）**：真实源码的**选择逻辑已经是 EEVDF 骨架**，不是"CFS 最左
-vruntime"——① 运行队列按 **deadline** 排序（`thread_rb_cmp` :574-582）；② **eligible
-集** = vruntime ≤ avg（子树 min_vruntime 增广使"子树含 eligible"为 O(1) 判断，:897-919
-下降搜索）；③ 选取 = **eligible 中 deadline 最小**（全树无 eligible 时最左兜底，:889-894）；
-④ **唤醒抢占**（:1220-1230）：waker eligible 且 deadline 更小 → 打断，但当前**剩余
-slice < ¼ base_quantum 时不打断**（protect_slice 变体，省上下文切换）；⑤ calibrate
-的 **lag 钳制**（vruntime ∈ [avg−slice, avg+2·slice]，:591-602）；⑥ 运行量子**按权重
-缩放**（`base_quantum×weight/1024`，:212-213）+ **per-thread `custom_quantum` 覆盖**
-（sched_setattr-slice 等价接口已存在，:209-211）。
+**Qualitative (corrected via line-by-line source reading)**: the real source's **selection
+logic is already an EEVDF skeleton**, not "CFS leftmost vruntime" — ① the run queue is sorted
+by **deadline** (`thread_rb_cmp` :574-582); ② the **eligible set** = vruntime ≤ avg (subtree
+min_vruntime augmentation makes "subtree contains eligible" an O(1) check, :897-919 descent
+search); ③ selection = **min deadline among eligible** (leftmost fallback when the whole tree
+has no eligible, :889-894); ④ **wakeup preemption** (:1220-1230): waker eligible and smaller
+deadline → interrupt, but **no interruption when the current remaining slice < ¼
+base_quantum** (protect_slice variant, saving context switches); ⑤ calibrate's **lag clamping**
+(vruntime ∈ [avg−slice, avg+2·slice], :591-602); ⑥ run quantum **scaled by weight**
+(`base_quantum×weight/1024`, :212-213) + **per-thread `custom_quantum` override** (the
+sched_setattr-slice equivalent interface already exists, :209-211).
 
-**与 Linux 完整 EEVDF 的差距（已拉齐，2026-09-27）**：此前两处实质差异已在内核关闭——
-① **vlag 记账**：睡眠出队保存加权 lag `(avg−vruntime)·weight`，唤醒按
-`vruntime = avg − vlag/weight` 放置再对称钳制（Linux `update_entity_lag`/`place_entity`
-同构，见 `timer.cpp` Sleep、`calibrate_and_set_deadline`）；② **deadline 保护**：
-vruntime 未越过旧 deadline 时不延长（Linux `update_deadline` 语义，slice 未耗尽免被
-立即抢占）。注：本内核 slice 已按权重缩放（`get_dynamic_quantum`），一次满 slice 的
-vruntime 消耗恒为 base_quantum，故 `deadline = vruntime + slice` 与 Linux 的
-`ve + slice/w` 在各自单位下**同构**，此前"偏移未按权重缩放"的注释（:589-591）
-已随实现一并更正。残留差异：lag 钳制阈值为常量 ±slice/±2·slice（Linux 用
-latency 尺度阈值）；无 task_group 层级（不影响单队列结论）。
-**与真实 sched.cpp 的偏差量级：未量化**（模型吞吐、唤醒延迟均为模型行为，不构成对
-真实内核的性能结论）。
+**Gaps vs Linux full EEVDF (closed, 2026-09-27)**: the two former substantive differences are
+closed in the kernel — ① **vlag accounting**: sleep dequeue saves weighted lag
+`(avg−vruntime)·weight`, wakeup places at `vruntime = avg − vlag/weight` then symmetric
+clamping (isomorphic to Linux `update_entity_lag`/`place_entity`, see `timer.cpp` Sleep,
+`calibrate_and_set_deadline`); ② **deadline protection**: not extended until vruntime passes
+the old deadline (Linux `update_deadline` semantics, an unexhausted slice avoids immediate
+preemption). Note: this kernel's slice is already weight-scaled (`get_dynamic_quantum`), one
+full slice's vruntime consumption is always base_quantum, so `deadline = vruntime + slice` and
+Linux's `ve + slice/w` are **isomorphic** in their respective units; the earlier comment about
+"offset not weight-scaled" (:589-591) has been corrected along with the implementation.
+Residual differences: lag clamp thresholds are constants ±slice/±2·slice (Linux uses
+latency-scale thresholds); no task_group hierarchy (does not affect the single-queue
+conclusion).
+**Deviation magnitude vs real sched.cpp: not quantified** (model throughput and wakeup latency
+are model behaviors, and do not constitute performance conclusions about the real kernel).
 
-### 3.1 公平性（权重 1:1:2:4，20 万 tick）
+### 3.1 Fairness (weights 1:1:2:4, 200k ticks)
 
-| 线程 | 权重 | 实测份额 | 期望 | vruntime |
+| Thread | Weight | Measured share | Expected | vruntime |
 |---|---|---|---|---|
 | 0 | 1 | 0.125 | 0.125 | 93,513,728 |
 | 1 | 1 | 0.125 | 0.125 | 93,512,704 |
 | 2 | 2 | 0.250 | 0.250 | 93,513,728 |
 | 3 | 4 | 0.500 | 0.500 | 93,513,984 |
 
-vruntime 极差 **0.0056%**（真实源码复刻，含 deadline 保护后收敛略松）/ **0.0000%**（完整 EEVDF 参考）。
-**降级表述**：这是"账本模型、单队列、无睡眠唤醒"下的份额一致性，不是对真实调度器的
-"严格验证"。
+vruntime max deviation **0.0056%** (real-source replica, slightly looser convergence with
+deadline protection) / **0.0000%** (full EEVDF reference).
+**Downgraded statement**: this is share consistency under "ledger model, single queue, no
+sleep/wakeup", not a "strict verification" of the real scheduler.
 
-### 3.2 RIP 速率反馈（4 忙等 + 1 交互，开/关对照）
+### 3.2 RIP Rate Feedback (4 busy-wait + 1 interactive, on/off comparison)
 
-| 模式 | 忙等平均量子 | 交互平均量子 |
+| Mode | Busy-wait avg quantum | Interactive avg quantum |
 |---|---|---|
-| 反馈关 | 3.00 tick | 6.00 tick |
-| 反馈开 | **1.06 tick**（压至 0.25x 下限附近） | **19.45 tick**（拉长至 ~4x） |
+| Feedback off | 3.00 tick | 6.00 tick |
+| Feedback on | **1.06 tick** (pressed near the 0.25x lower bound) | **19.45 tick** (stretched to ~4x) |
 
-时间片塑形机制清晰可见。**注意**：RIP 只塑形时间片长度、不改变份额（与 scheduler.md
-一致）；长量子使交互线程 vruntime 短期冲高、被选取频率下降——真实内核的校准钳制与
-时钟推进会兜底，此张力已如实记录（模型行为，非真实内核结论）。
+The time-slice shaping mechanism is clearly visible. **Note**: RIP only shapes slice length and
+does not change shares (consistent with scheduler.md); long quanta make interactive threads'
+vruntime spike short-term and reduce pick frequency — the real kernel's calibration clamping
+and clock advance provide the fallback; this tension has been truthfully recorded (model
+behavior, not a real-kernel conclusion).
 
-### 3.3 随机 spawn/exit 混沌
+### 3.3 Random spawn/exit Chaos
 
-200,000 次随机 spawn（权重 1-16、三种行为类型）/exit/tick 混合：
-**0 失败**，vruntime 有界不变量成立。
+200,000 random spawn (weights 1-16, three behavior types)/exit/tick mixes:
+**0 failures**, bounded-vruntime invariant holds.
 
-### 3.4 睡眠唤醒（指数睡眠均值 20 tick，含真实唤醒抢占机制）
+### 3.4 Sleep/Wakeup (exponential sleep mean 20 ticks, incl. real wakeup preemption mechanism)
 
-| 模式 | 唤醒→运行最大延迟 |
+| Mode | Wakeup→run max latency |
 |---|---|
-| 真实源码复刻（vlag 放置 + 唤醒抢占 + 剩余 slice ≥ ¼ 保护 + deadline 保护 + **eligible 预算截断**） | **75 tick**（改进前 144 tick） |
-| Linux 完整 EEVDF 参考（eligible 含 +slice 余量） | 7 tick |
+| Real-source replica (vlag placement + wakeup preemption + remaining slice ≥ ¼ protection + deadline protection + **eligible budget truncation**) | **75 ticks** (144 ticks before improvement) |
+| Linux full EEVDF reference (eligible includes +slice slack) | 7 ticks |
 
-结论：改进前 144 tick 的根因 = RIP 拉长量子让线程"跑过头"（带负 lag 入睡，唤醒要等
-avg 追平）；**eligible 预算截断**（线程最多跑到 vruntime 追平 avg，eligible 结束即
-slice 结束）将其降为 75 tick（-48%）。剩余 75 tick 经模型实验确认是**结构性成本**
-（deadline 平局按 id tiebreak + 预算截断后的轮转节奏）：lag 钳制 latency 缩放与
-抢占抑制 ⅛ 两个候选调整均无收益，未搬入内核。
+Conclusion: the pre-improvement 144-tick root cause = RIP-stretched quanta make threads
+"overshoot" (fall asleep with negative lag, wakeup waits for avg to catch up); **eligible
+budget truncation** (a thread runs at most until vruntime catches avg, eligible ends → slice
+ends) brought it down to 75 ticks (-48%). The remaining 75 ticks were confirmed by model
+experiments to be a **structural cost** (deadline ties broken by id tiebreak + post-budget-
+truncation rotation rhythm): the two candidate adjustments of lag-clamp latency scaling and
+preemption suppression ⅛ both yielded nothing, not ported into the kernel.
 
-### 3.5 公平性（本轮改进后）
+### 3.5 Fairness (after this round's improvements)
 
-**eligible 预算截断**同时把公平性极差从 0.0056% 压到 **0.0000%**（所有线程在 avg
-处精确停靠），并把 RIP 长量子造成的选取饥饿从 70 次降到 **5 次**。配套：RIP 上限
-4× → 2.5×（减少"跑过头"）、唤醒 lag 钳制带放宽到 4×slice（Linux place_entity 的
-latency 尺度）、vlag 除法四舍五入（短睡眠保留 lag 信用）。
+**Eligible budget truncation** simultaneously pressed the fairness max deviation from 0.0056%
+to **0.0000%** (all threads park precisely at avg), and reduced RIP-long-quantum pick
+starvation from 70 to **5**. Accompanying changes: RIP cap 4× → 2.5× (less "overshoot"),
+wakeup lag-clamp band widened to 4×slice (Linux place_entity's latency scale), vlag division
+rounded (short sleeps keep lag credit).
 
-### 3.6 压力
+### 3.6 Stress
 
-调度核心循环（16 线程）：≈3.6M tick/s（模型；含逐单位步唤醒检查与预算截断，
-数字仅表示模型实现成本，非真实内核吞吐）。
+Scheduler core loop (16 threads): ≈3.6M ticks/s (model; incl. per-unit-step wakeup checks and
+budget truncation, the number only represents model implementation cost, not real-kernel
+throughput).
 
-## 4. 方法学边界（诚实）
+## 4. Methodology Boundaries (Honest)
 
-- **SLUB/SLAB 与文件缓存**：测试的是**真实内核源码**（仅 shim 硬件依赖），但环境因素
-  与内核不同：无中断抢占、单线程混沌（自旋锁退化为无竞争）、页面由 libc 提供。
-  证明的是组件的**算法正确性、内存安全与单核开销**；**SMP 并发正确性未被本套件验证**。
-- **调度器**：账本公式与常量逐行对照 `sched.cpp`（行号见 §3 引言）的**忠实复刻模型**
-  （mode 0：真实源码的 EEVDF 骨架——deadline 树选择/唤醒抢占/slice 保护/lag 钳制/
-  权重缩放量子；mode 1：Linux 完整 EEVDF 参考），运行队列为线性扫描替身（内核为
-  deadline 红黑树 + 子树增广）——不是编译 `sched.cpp` 本身。
-- **QEMU 真实内核（升级）**：`qemu-system-x86_64`（Windows 宿主，**TCG 无 KVM**），
-  `-m 2G`，全参数（含 disk.img/网络/声卡）+ **`-debugcon` 捕获 E9 端口**（内核
-  panic 消息走 E9 而非串口——此前的串口 grep 会漏报）：
-  **核数扫描 smp 1/2/4 各 45 秒无异常；smp 4 长稳 30 分钟无异常**。
-  **此轮 QEMU 升级实抓一次真回归**：tagged 空闲链改动致 `slub_stack_pop` #GP
-  （addr2line 定位），已回退并复验全绿。这是**冒烟/长稳，不是 SMP 正确性证明**。
-- 全部测试程序位于 `tests/`，一键复现：`cd tests && bash ci.sh`。
+- **SLUB/SLAB and file cache**: what is tested is the **real kernel source** (only hardware
+  dependencies shimmed), but environmental factors differ from the kernel: no interrupt
+  preemption, single-threaded chaos (spinlock degenerates to no contention), pages provided by
+  libc. What is proven is the components' **algorithmic correctness, memory safety, and
+  single-core overhead**; **SMP concurrency correctness is not verified by this suite**.
+- **Scheduler**: a **faithful replica model** of `sched.cpp`'s ledger formulas and constants
+  checked line by line (line numbers in the §3 intro) (mode 0: the real source's EEVDF skeleton
+  — deadline-tree selection / wakeup preemption / slice protection / lag clamping /
+  weight-scaled quantum; mode 1: Linux full EEVDF reference), with the run queue as a
+  linear-scan substitute (the kernel uses a deadline red-black tree + subtree augmentation) —
+  not compiling `sched.cpp` itself.
+- **QEMU real kernel (upgraded)**: `qemu-system-x86_64` (Windows host, **TCG without KVM**),
+  `-m 2G`, full parameters (incl. disk.img/network/sound) + **`-debugcon` capturing the E9
+  port** (kernel panic messages go out via E9, not serial — the previous serial grep would miss
+  them): **core-count sweep smp 1/2/4 × 45s each without anomalies; smp 4 long stability 30
+  minutes without anomalies**. **This round's QEMU upgrade actually caught one real
+  regression**: the tagged free-chain change caused `slub_stack_pop` #GP (located via
+  addr2line), reverted and re-verified all green. This is **smoke/long stability, not a proof
+  of SMP correctness**.
+- All test programs live under `tests/`, one-command reproduction: `cd tests && bash ci.sh`.
