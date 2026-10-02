@@ -125,7 +125,8 @@ bool Compositor::Init(FrameBuffer* screen) {
     layer_head_ = layer_tail_ = nullptr;
     list_lock_  = 0;
     frame_seq_  = 0;
-    started_cnt_ = done_compose_ = 0;
+    started_cnt_ = 0;
+    for (uint32_t i = 0; i < COMP_CPUS_SANITY; i++) worker_done_seq_[i] = 0;
     cur_x_ = cur_y_ = 0;
     cur_visible_ = 0;
     committed_x_ = committed_y_ = -1;
@@ -530,7 +531,9 @@ void Compositor::WorkerEntry(uint32_t id) {
         last_seq = seq;
 
         ComposeStripToBack(id);                 /* scene -> back_ only */
-        __atomic_add_fetch(&done_compose_, 1, __ATOMIC_RELEASE);
+        /* B1 (round 4): 帧号发布 —— 归入本 worker 实际完成的帧, 迟到
+           完成不再计入主线程刚 reset 的下一帧 */
+        __atomic_store_n(&worker_done_seq_[id], seq, __ATOMIC_RELEASE);
     }
 }
 
@@ -576,7 +579,8 @@ void Compositor::StartWorkers() {
     /* reset render barrier; workers render to off-screen back_ only */
     g_strip_ticket = 0;
     __atomic_store_n(&started_cnt_,  0, __ATOMIC_SEQ_CST);
-    __atomic_store_n(&done_compose_, 0, __ATOMIC_SEQ_CST);
+    for (uint32_t i = 0; i < COMP_CPUS_SANITY; i++)
+        __atomic_store_n(&worker_done_seq_[i], 0, __ATOMIC_SEQ_CST);
     __atomic_store_n(&frame_seq_,    0, __ATOMIC_SEQ_CST);
     __atomic_store_n(&shutdown_,     0, __ATOMIC_SEQ_CST);
 
@@ -612,12 +616,14 @@ void Compositor::Compose() {
     const uint32_t peers = ncpus_ - 1;
 
     /* phase 1 (off-screen): peers render strips 1..N-1 to back_, main strip 0 */
-    __atomic_store_n(&done_compose_, 0, __ATOMIC_RELEASE);
-    __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
+    const uint64_t seq = __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
     ComposeStripToBack(0);
     uint32_t cw = 0;
-    while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < peers)
-        comp_backoff(cw);
+    /* B1 (round 4): 帧号屏障 —— 等每个 worker 的 done-seq ≥ 本帧号。
+       迟到 worker 的旧帧完成不改写本帧判定 */
+    for (uint32_t i = 1; i <= peers; i++)
+        while (__atomic_load_n(&worker_done_seq_[i], __ATOMIC_ACQUIRE) < seq)
+            comp_backoff(cw);
 
     /* P1-53: 屏障点 —— 所有 worker 已过当前帧的列表遍历, 退役节点
        此刻无人引用, 统一释放 */

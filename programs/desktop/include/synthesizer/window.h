@@ -167,12 +167,14 @@ private:
     CompLayer*      layer_tail_;
     int32_t         list_lock_;          /* registry mutation spinlock */
 
-    /* ---- frame barrier (P3-83/审计卫生, round 15 修正陈旧注释) ----
-       compose 阶段: frame_seq_ 发布帧, done_compose_ 计数渲染完 back_ 的
-       worker; commit 阶段: 主线程单点 commitScene (worker 从不接触 fb) */
+    /* ---- frame barrier (B1, round 4 修复) ----
+       帧号屏障: 每 worker 发布它已完成的最新 frame_seq_ (worker_done_seq_
+       [id] = seq)。主线程等所有 worker 的 done-seq ≥ 当前帧号才过屏障
+       —— 迟到 worker 的完成归入旧帧, 不再满足本帧 (原计数器 reset 后
+       迟到 done++ 会提前放行 + 退役节点 UAF 窗口) */
     uint64_t        frame_seq_;
     uint32_t        started_cnt_;
-    uint32_t        done_compose_;
+    uint64_t        worker_done_seq_[COMP_CPUS_SANITY];
 
     CompWinNode*    FindNode(Window* w);
     void            ComposeStripToBack(uint32_t id); /* scene -> offscreen back_ */

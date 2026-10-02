@@ -6,6 +6,11 @@
 #include <x86mem.h>
 #endif
 
+/* D7 (round 20 终局): 曾尝试 const 只读化 —— 但分派指针由
+   init.c 的 _init_runtime_and_global_variables 在运行时写入
+   (CPU 特性探测后选择 AVX/SSE 实现), const 使其落入 .rodata,
+   运行时写 → 用户态 #PF (round 18-19 隔离实锤: RIP 0x41D334
+   落在 init 函数内)。保留可写 + 注释风险 */
 void *(*memcpyC)(void *str1, const void *str2, size_t n);
 void *(*memsetC)(void *str, int c, size_t n);
 void *(*memmoveC)(void *str1, const void *str2, size_t n);

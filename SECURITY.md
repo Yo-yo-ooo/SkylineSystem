@@ -39,3 +39,17 @@
 1. 在项目仓库开 Issue，标题带 `[SECURITY]`，附复现步骤（QEMU 参数 + 日志）。
 2. 涉及上游（lwIP/lwext4/FatFs）的问题会转报上游并记录转报编号。
 3. 修复合入后更新本文档的"已知风险"与 docs/stability-audit.md。
+
+## 上游 CVE 跟踪清单（C6, round 15）
+
+> 无自动化时的最低开销人工跟踪：每季度逐行核对以下版本与 NVD 公告。
+> 自动化方向（可选）：GitHub Action 定时拉取 NVD 的 cpeMatch，匹配
+> 本表 pin 的版本，命中则开 Issue。
+
+| 组件 | vendored 位置 | pin 版本 | 最近核对 | 待办 |
+|---|---|---|---|---|
+| lwIP | kernel/src/net | 仓库内置（未记录上游 tag） | round 15 起 | 记录上游 tag |
+| lwext4 | kernel/src/fs/lwext4 | 仓库内置 | round 15 起 | 记录上游 tag |
+| FatFs | kernel/src/fs/fatfs | 仓库内置 | round 15 起 | 记录上游 tag |
+| mpaland/printf | lib/stdc/outfb/printf.c | 上游 MIT 版 | round 15 起 | 跟踪上游修复 |
+| x86mem | ablib/arch/x86_64/x86mem | 本仓库自研（MIT） | — | 无 |

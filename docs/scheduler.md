@@ -98,6 +98,16 @@ round 26 增量 (TSC 校准 + 复测):
   (base=[80,1322] mult=[979,2560]) → 排除分母失真候选后, 指向
   **RIP 反馈增益在竞争场景的真稳定性问题** (反馈回路本身振荡, 待增益分析)。
 - shortwin 仍 windows=0 (动态量子失配, 同 round 25 结论)。
+round 28 根因闭环 (pollute 振荡的完整机制, D1 round 23 归位):
+- 采样结构: 每片 tick 采样, `obs_rate = RIP 差分 / 自身片长 (last_slice_ms)`
+  —— 分母正确 (线程自身运行时长, 非墙钟 gap)。
+- **振荡源 = 抢占驱动的变长片**: EEVDF 下同优 polluter 竞争时, victim 的片
+  被定时器/截止期抢占截短 → 短片的 RIP 差分系统性偏低 → obs_rate 高低
+  交替 → 快通道 (1/4 EWMA) 跟随摆动 (基 [41,2057] 的机制解释)。
+- 亚毫秒片被强制 delta=1 → 进一步放大短片的低估。
+- **修复设计 (待实施)**: 采样改为**累加器式固定窗口** —— 按线程自身运行
+  时长累积 RIP 差分与时长 (如每 4ms 自身时长出一个 obs_rate 样本),
+  变长片噪声被累加器吸收; 短窗口防御 (RIP_MIN_SAMPLE_MS) 一并简化。
 round 33 (累加器落地 + UAF 实锤):
 - 累加器采样已实施 (thread_t 新增 rip_acc_progress/ms, 4ms 窗口出样本);
   首测 pollute base=[41,2057]→[51,724] (3x 收窄), 修正分母为自身片长
@@ -166,6 +176,9 @@ round 47b (stalled 真机制终现):
   RIP —— 采样移到 switch-out + 与 tick 去重。实施 = 下一轮。
 
 round 68 (P2-62 披露 + P3-77):
+- D1 (round 10 记录): 本节内嵌的 round 34/35 条目为跨轮引用 (非重复
+  段落); round 28 条目按时间应位于 round 26 之后, 当前位于本文档
+  第 9 段末 —— 历史记录顺序瑕疵, 内容无丢失, 下轮整理时归位。
 - ~~Schedule::Sleep + 定时器轮 (tv1/2/3) 为死代码~~ **round 96 已接活**:
   PIT::Sleep 在调度器就绪 (smp_started + 有线程上下文) 时改调
   Schedule::Sleep (定时器轮 + THREAD_SLEEPING + Yield, 释放本核),
@@ -185,25 +198,6 @@ round 68 (P2-62 披露 + P3-77):
   修复设计: FDMan 释放延后到"全部线程已摘链"之后, 或 fd 清理移入
   击杀路径的锁内。**生产 soak 从未触发此路径 → 优先级 = 中。**
 
-round 28 根因闭环 (pollute 振荡的完整机制):
-- 采样结构: 每片 tick 采样, `obs_rate = RIP 差分 / 自身片长 (last_slice_ms)`
-  —— 分母正确 (线程自身运行时长, 非墙钟 gap)。
-- **振荡源 = 抢占驱动的变长片**: EEVDF 下同优 polluter 竞争时, victim 的片
-  被定时器/截止期抢占截短 → 短片的 RIP 差分系统性偏低 → obs_rate 高低
-  交替 → 快通道 (1/4 EWMA) 跟随摆动 (基 [41,2057] 的机制解释)。
-- 亚毫秒片被强制 delta=1 → 进一步放大短片的低估。
-- **修复设计 (待实施)**: 采样改为**累加器式固定窗口** —— 按线程自身运行
-  时长累积 RIP 差分与时长 (如每 4ms 自身时长出一个 obs_rate 样本),
-  变长片噪声被累加器吸收; 短窗口防御 (RIP_MIN_SAMPLE_MS) 一并简化。
-- **shortwin 未过 (windows=0)**：`dynamic_adjust_quantum` 把 base_quantum
-  动态钳在 [2,15]ms 并按负载自整定；bench 的静态假设 (base=5ms → prio15
-  权重 288 → 片长 ~1.4ms < 3ms 门) 在动态量子下失效 (base=15ms 时片长
-  ~4.2ms > 门 → 0 个短窗口)。**不是调度缺陷, 是基准语义与动态量子特性
-  的失配** → bench 应读实际 base_quantum 或在相位期冻结自整定。
-- **pollute 未过 (倍率摆幅 41..2057)**：victim 的 RIP 倍率在 polluter 竞争
-  下大幅振荡——模型测试中稳定、真内核振荡 = 真内核特有行为 (候选: 中断/
-  抢占噪声进采样、`sched_tsc_per_ms` 未校准致墙钟分母失真)。**需 TSC 校准
-  后复测**, 或排查反馈增益在竞争场景的稳定性。
 
 历史：`sched_bench` 此前只有模型测试路径；真内核挂点三连（bootstrap init
 直调 Yield / 早期 PIT::Sleep / init 忙等饿死同核线程）已全部定位并绕过

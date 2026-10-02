@@ -50,11 +50,10 @@
 
 static spinlock_t ptf_lock = 0;
 
-/* P5-97: 协议页地址唯一权威在 graphic/winstyle.h 的
-   SKYWIN_PROTO_PAGE_VA (0x400000); libc 的 printf 不直接依赖
-   desktop 头, 此处以注释锁死一致性 (两处定义若漂移, 链接期
-   无告警 —— 改为运行时校验见 stdout_init)。 */
-#define CONSOLE_PROTO_VA   0x400000UL   /* == SKYWIN_PROTO_PAGE_VA */
+/* D8 (round 12): 0x400000 双定义收敛 —— 唯一权威在
+   graphic/winstyle.h 的 SKYWIN_PROTO_PAGE_VA, 此处不再重复定义 */
+#include <graphic/winstyle.h>
+#define CONSOLE_PROTO_VA   SKYWIN_PROTO_PAGE_VA
 #define CONSOLE_FONT_PATH  "/mp/SourceHanSerifTC_Medium.ttf"
 #define CONSOLE_FONT_PX    22
 #define CONSOLE_MARGIN     6
@@ -797,7 +796,9 @@ static int32_t  _vsnprintf(out_fct_type out, char* buffer, const size_t maxlen, 
           if (flags & FLAGS_LONG_LONG) {
 #if defined(PRINTF_SUPPORT_LONG_LONG)
             const long long value = va_arg(va, long long);
-            idx = _ntoa_long_long(out, buffer, idx, maxlen, (unsigned long long)(value > 0 ? value : 0 - value), value < 0, base, precision, width, flags);
+            /* D6 (round 11): INT64_MIN 取负 UB 修复 —— 0-value 在
+               INT64_MIN 时溢出; 改为无符号减 (回绕 = 二进制补码正确值) */
+            idx = _ntoa_long_long(out, buffer, idx, maxlen, (unsigned long long)(value > 0 ? value : 0ULL - (unsigned long long)value), value < 0, base, precision, width, flags);
 #endif
           }
           else if (flags & FLAGS_LONG) {

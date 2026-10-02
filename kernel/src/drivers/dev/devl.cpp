@@ -165,7 +165,9 @@ namespace Dev {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
             /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-            if (offset + nbytes - 1 >= dev.MaxSectorCount * 512) return false;
+            /* A4 (round 1): 溢出安全边界 + 扇区级双保险 (4 处统一) */
+            if (offset > dev.MaxSectorCount * 512 ||
+                nbytes > dev.MaxSectorCount * 512 - offset) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);
@@ -190,7 +192,9 @@ namespace Dev {
             //VDL dev = FindDevice(DeviceType, DevIDX);
             if (nbytes == 0) return true;
             /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-            if (offset + nbytes - 1 >= dev.MaxSectorCount * 512) return false;
+            /* A4 (round 1): 溢出安全边界 + 扇区级双保险 (4 处统一) */
+            if (offset > dev.MaxSectorCount * 512 ||
+                nbytes > dev.MaxSectorCount * 512 - offset) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);
@@ -242,7 +246,9 @@ namespace Dev {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
             /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-            if (offset + nbytes - 1 >= dev.MaxSectorCount * 512) return false;
+            /* A4 (round 1): 溢出安全边界 + 扇区级双保险 (4 处统一) */
+            if (offset > dev.MaxSectorCount * 512 ||
+                nbytes > dev.MaxSectorCount * 512 - offset) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(512);
@@ -323,7 +329,9 @@ namespace Dev {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
             /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-            if (offset + nbytes - 1 >= dev.MaxSectorCount * 512) return false;
+            /* A4 (round 1): 溢出安全边界 + 扇区级双保险 (4 处统一) */
+            if (offset > dev.MaxSectorCount * 512 ||
+                nbytes > dev.MaxSectorCount * 512 - offset) return false;
             
             uint32_t tempSectorCount = ((((offset + nbytes) + 511) / 512) - (offset / 512));
             uint8_t* buffer2 = (uint8_t*)kmalloc(512);

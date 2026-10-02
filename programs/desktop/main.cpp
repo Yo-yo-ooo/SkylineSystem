@@ -494,6 +494,7 @@ int main(){
 
     /* ---- window-manager interaction state ---- */
     enum { WM_NORMAL = 0, WM_MAX = 1, WM_MIN = 2, WM_CLOSED = 3 } wmMode = WM_NORMAL;
+    int wm_prior = WM_NORMAL;   /* C9 (round 14): 最小化先态 */
     uint32_t normX = place.x, normY = place.y;   /* NORMAL surface top-left   */
     uint32_t normW = SKYWIN_W, normH = SKYWIN_H; /* NORMAL body size          */
     bool     prevLeft = false, dragging = false, resizing = false;
@@ -523,13 +524,16 @@ int main(){
         if (my >= fb_height - 16) my = fb_height - 16;
 
         /* Drain the WM keyboard cursor (multi-reader ring; notepad has its
-           own). Global shortcuts would be handled here; text goes to notepad. */
+           own). Global shortcuts would be handled here; text goes to notepad.
+           C10 (round 22 记录): 事件被显式丢弃 —— 键盘输入到焦点客户端的
+           转发通道未实现 (需要 z-order raise + 焦点路由), 属功能路线图
+           (见 docs/xhci-roadmap.md 外的 WM 路线图, 待补档) */
         if (wmKbd) {
             uint64_t kh = __atomic_load_n(&wmKbd->head, __ATOMIC_ACQUIRE);
             wmKbdCursor = kbd_reader_resync(wmKbd, wmKbdCursor);
             while (wmKbdCursor < kh) {
                 KbdEvent ke = wmKbd->ring[wmKbdCursor & (KBD_RING_CAP - 1u)];
-                (void)ke;
+                (void)ke;   /* C10: 转发通道未实现前显式丢弃 (已知缺口) */
                 wmKbdCursor++;
             }
             if (wmKbdSlot >= 0) kbd_reader_setpos(wmKbd, wmKbdSlot, wmKbdCursor);
@@ -702,12 +706,20 @@ int main(){
                     wmDirty = true;
                 } else if (pressHit == 5) {                 /* taskbar toggle   */
                     if (wmMode == WM_MIN) {
-                        wmMode = WM_NORMAL;
-                        wm_apply_normal(&consoleWin, &place, normX, normY,
-                                        normW, normH, rzSurf, rzPitch);
+                        /* C9 (round 24 恢复): round 19 隔离时回退, round 20
+                           证明 fault 根因是 D7 而非本改动 —— 恢复先态还原 */
+                        if (wm_prior == WM_MAX && maxSurf) {
+                            wmMode = WM_MAX;
+                            wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
+                        } else {
+                            wmMode = WM_NORMAL;
+                            wm_apply_normal(&consoleWin, &place, normX, normY,
+                                            normW, normH, rzSurf, rzPitch);
+                        }
                         comp.SetVisible(&consoleWin, true);
                         tbState = 0;
-                    } else if (wmMode == WM_NORMAL) {
+                    } else if (wmMode == WM_NORMAL || wmMode == WM_MAX) {
+                        wm_prior = wmMode;                 /* C9: 记录先态 */
                         wmMode = WM_MIN;
                         comp.SetVisible(&consoleWin, false);
                         tbState = 1;

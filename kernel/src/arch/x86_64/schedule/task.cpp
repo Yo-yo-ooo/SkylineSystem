@@ -340,7 +340,14 @@ namespace Schedule {
                 p->pagemap = nullptr;
             }
 
-            kfree(p);
+            /* B4 (round 17/21): 引用计数归零才释放结构体 —— 跨锁/跨上下文
+               的持引用方 (children 遍历、kill 对端) 通过 proc_get/proc_put
+               配对; 此处递减进程表引用, 归零即最终释放。
+               round 19 隔离回退过; round 20 证明 Page fault 根因是 D7
+               (const 分派指针), 与本门控无关, 现恢复 */
+            if (__atomic_sub_fetch(&p->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
+                kfree(p);
+            }
             p = next;
         }
     }
@@ -603,6 +610,7 @@ namespace Schedule {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
+        proc->refcount = 1;                     /* B4 (round 16): 进程表引用 */
         proc->id = atomic_add_fetch_8(&sched_pid, 1, ATOMIC_RELAXED);
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         if (user && !proc->pagemap) { kfree(proc); return nullptr; }
@@ -935,6 +943,7 @@ namespace Schedule {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
+        proc->refcount = 1;                     /* B4 (round 16): 子进程表引用 */
         proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED); proc->parent = parent;
         proc->IsTrusted = parent->IsTrusted;   // 修复: 原实现漏设, memset 后恒为 false
         proc->pagemap = VMM::Fork(parent->pagemap);

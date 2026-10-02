@@ -41,6 +41,10 @@ namespace VMM {
             if (user_space_end - u_dest + 1 < len)             return false;
 
             spinlock_lock(&pagemap->vma_lock);
+            /* A2 (round 1 修复): 页表操作段补持 pt_lock —— 原仅 vma_lock,
+               Map4K/GetPageInfo 与 HandlePF/Fork/Free 的页表修改竞态。
+               锁序与 Fork 一致 (vma_lock → pt_lock) */
+            spinlock_lock(&pagemap->pt_lock);
 
             size_t offset = 0;
             const uint8_t* src_ptr = (const uint8_t*)k_src;
@@ -54,6 +58,7 @@ namespace VMM {
                        (原实现无 FindRegion: 任意用户地址即分配物理页 +
                        页泄漏 + 竞态) */
                     if (!VMM::VMA::FindRegion(pagemap, curr_u_vaddr)) {
+                        spinlock_unlock(&pagemap->pt_lock);
                         spinlock_unlock(&pagemap->vma_lock);
                         return false;
                     }
@@ -61,6 +66,7 @@ namespace VMM {
                     uint64_t page_start = curr_u_vaddr & ~(PAGE_SIZE - 1);
                     void* new_phys = PMM::Request();
                     if (!new_phys) {
+                        spinlock_unlock(&pagemap->pt_lock);
                         spinlock_unlock(&pagemap->vma_lock);
                         return false; // OOM
                     }
@@ -71,6 +77,7 @@ namespace VMM {
                     // 重新获取映射信息，拿到物理地址
                     info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr);
                     if (info.size == 0) {
+                        spinlock_unlock(&pagemap->pt_lock);
                         spinlock_unlock(&pagemap->vma_lock);
                         return false; // 映射失败
                     }
@@ -81,6 +88,7 @@ namespace VMM {
 
                 // 既不可写、又不是 CoW ——> 拒绝写入（避免污染只读映射）
                 if (!is_writable && !is_cow) {
+                    spinlock_unlock(&pagemap->pt_lock);
                     spinlock_unlock(&pagemap->vma_lock);
                     return false;
                 }
@@ -109,6 +117,7 @@ namespace VMM {
                                    共享页引用由下方整体递减 —— 语义为
                                    "拆分到一半 OOM", 当前页写失败, 调用方
                                    重试时从已拆分处继续) */
+                                spinlock_unlock(&pagemap->pt_lock);
                                 spinlock_unlock(&pagemap->vma_lock);
                                 return false;
                             }
@@ -123,7 +132,7 @@ namespace VMM {
                             UnrefSharedPhys(old_phys + k * PAGE_SIZE);
                     } else if (info.size == PAGE_2MB) {
                         uint64_t new_phys = (uint64_t)PMM::Request2MB();
-                        if (!new_phys) { spinlock_unlock(&pagemap->vma_lock); return false; }
+                        if (!new_phys) { spinlock_unlock(&pagemap->pt_lock); spinlock_unlock(&pagemap->vma_lock); return false; }
                         __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)info.phys), PAGE_2MB);
                         VMM::Map2M(pagemap, page_start, new_phys, new_flags);
                         info.phys = new_phys;
@@ -131,7 +140,7 @@ namespace VMM {
                             UnrefSharedPhys(old_phys + k * PAGE_SIZE);   /* 审计 #7: 同粒度 */
                     } else {
                         uint64_t new_phys = (uint64_t)PMM::Request();
-                        if (!new_phys) { spinlock_unlock(&pagemap->vma_lock); return false; }
+                        if (!new_phys) { spinlock_unlock(&pagemap->pt_lock); spinlock_unlock(&pagemap->vma_lock); return false; }
                         __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)info.phys), PAGE_SIZE);
                         VMM::Map4K(pagemap, page_start, new_phys, new_flags);
                         info.phys = new_phys;
@@ -145,6 +154,7 @@ namespace VMM {
                    用户页表里拷贝有内核/HHDM 条目(PML4E 256..511), 只有带
                    MM_USER 的页才允许作为用户缓冲区, 否则即任意物理读写 */
                 if (unlikely(!(info.flags & MM_USER))) {
+                    spinlock_unlock(&pagemap->pt_lock);
                     spinlock_unlock(&pagemap->vma_lock);
                     return false;
                 }
@@ -161,6 +171,7 @@ namespace VMM {
                 offset += to_copy;
             }
 
+            spinlock_unlock(&pagemap->pt_lock);
             spinlock_unlock(&pagemap->vma_lock);
             return true;
         }

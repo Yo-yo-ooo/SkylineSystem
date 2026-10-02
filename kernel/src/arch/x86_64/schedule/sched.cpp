@@ -115,6 +115,10 @@ cpu_t *get_lw_cpu(cpu_t *ref_cpu) {
     cpu_t *lw_cpu = nullptr;
     uint32_t ref_mask = ref_cpu ? cpu_simd_mask(ref_cpu) : 0;
     const int32_t last = smp_last_cpu;
+    /* C7 (round 15): 跨核 total_weight 为咨询式裸读 —— x86_64 对齐
+       64 位读无撕裂; 读到的可能是瞬间旧值, 只用于负载均衡启发式
+       (选最轻核), 陈旧偏差在下次再平衡自愈, 不加原子/锁 (热路径
+       成本不划算, 语义上也不需要精确快照) */
     for (int32_t i = 0; i <= last; i++) {
         cpu_t *cpu = smp_cpu_list[i];
         if (likely(i < last)) PREFETCH_R(smp_cpu_list[i + 1]);
@@ -441,6 +445,9 @@ namespace Schedule {
                 if (unlikely(to_push == my_curr)) { node = prev_node; continue; }
                 if (unlikely(to_push == my_idle)) { node = prev_node; continue; }
                 if (unlikely(to_push->timer_bucket != nullptr)) { node = prev_node; continue; }
+                /* B2 (round 5): pinned 线程不参与跨核推送 —— 依赖
+                   同核前提的驱动状态机 (lwIP RX FIFO) 不被迁核 */
+                if (unlikely(to_push->pinned)) { node = prev_node; continue; }
 
                 __atomic_store_n(&to_push->state, THREAD_TRANSFER, __ATOMIC_RELEASE);
                 RemoveFromQueue(cpu, to_push);

@@ -66,7 +66,12 @@ static void interruptInCallback(uint8_t* data, uint32_t len, void* ctx) {
     Interface* ifce = hidCtx->ifce;
     
     uint8_t* reportData = data;
-    if (len > sizeof(HIDReport) && data[0] != 0) {
+    /* B7 (round 7 修复): 报告 ID 剥离仅适用于报告描述符声明过
+       Report ID 的设备 —— boot 协议 (bInterfaceProtocol 1/2) 报告
+       固定 8 字节无 ID, 原 len>8 && data[0]!=0 的启发式会把修饰键
+       非零的 9 字节报告误剥 (首字节是修饰键位图而非 ID) */
+    bool has_report_id = (ifce->desc.bInterfaceProtocol == 0);
+    if (has_report_id && len > sizeof(HIDReport) && data[0] != 0) {
         reportData = data + 1;
         len--;
     }

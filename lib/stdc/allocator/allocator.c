@@ -195,12 +195,13 @@ static inline int32_t is_quiescent(uint64_t pending_depth) {
     uint64_t generation = atomic_load_n(&gc_generation, ATOMIC_ACQUIRE);
     uint64_t slots_in_use = atomic_load_n(&global_qsbr_slot_alloc, ATOMIC_RELAXED);
 
-    /* P0-17 重写: 真 epoch 判定 ——
-       ① count>0 (临界区内)      → 不静默;
-       ② count==0 且纪元久远    → 老化出局 (长期空闲, P0-18 修复);
-       ③ count==0 且近期确认过  → 静默。
-       压力自适应: 积压越深, 老化阈值越小 (回收越快)。
-       原实现的条件全反 (活跃=静默/空闲=不静默) 且纪元自举矛盾。 */
+    /* B8 (round 7 口径修正): 老化判定已并入静默判定 ——
+       ① count>0 (临界区内)      → 不静默, return 0;
+       ② count==0                → 静默 (无论纪元久远与否, 循环
+         检查下一槽位)。aged_out 分支的 continue 与自然落空等价,
+       保留为文档化的语义标记而非独立行为分支 (保守正确: 空闲即
+       静默, 不回收即推迟到下一纪元, 无 UAF)。
+       压力自适应: 积压越深, 老化阈值越小 (回收越快)。 */
     uint64_t aged_out = QSBR_MIN_EPOCH_GAP;
     if (pending_depth > 0) {
         aged_out = QSBR_DEFER_BUDGET / pending_depth;

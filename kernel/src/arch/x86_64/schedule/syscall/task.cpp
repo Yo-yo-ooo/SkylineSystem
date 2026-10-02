@@ -44,20 +44,25 @@ uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
 
     spinlock_lock(&PID2PROC_TREE_LOCK);
     proc_t *proc = (proc_t*)art_search(pid2proc_tree,(const uint8_t*)&pid,8);
+    /* B4 (round 18/21): 树锁内取引用 —— 解锁后 zombie 回收器可能已
+       摘除该 proc, 引用保证 DeleteProc 前的使用安全。round 19 曾
+       隔离回退; round 20 证明 fault 根因是 D7, 本接线恢复 */
+    if (proc) proc_get(proc);
     spinlock_unlock(&PID2PROC_TREE_LOCK);
-    if (!proc || proc->exiting) return -ESRCH;
-    if (proc->pagemap == kernel_pagemap) return -EPERM;  /* never kill a kernel proc */
+    if (!proc || proc->exiting) { if (proc) proc_put(proc); return -ESRCH; }
+    if (proc->pagemap == kernel_pagemap) { proc_put(proc); return -EPERM; }  /* never kill a kernel proc */
 
     /* P1-47: sig==0 = 存活探测 (POSIX kill(pid,0)) —— WM 用于死窗口
        回收轮询, 不击杀 */
-    if (sig == 0) return 0;
+    if (sig == 0) { proc_put(proc); return 0; }
 
-    if (proc == me) return -EPERM;                       /* use sys_exit for self */
+    if (proc == me) { proc_put(proc); return -EPERM; }    /* use sys_exit for self */
 
     /* Safe teardown of an unrelated process: mark it exiting, synchronously
        pull every thread off all CPUs, close its FDs, and queue the body for
        asynchronous reclaim. The caller keeps running (PROC_KILL is self-kill). */
     Schedule::DeleteProc(proc);
+    proc_put(proc);                    /* B4: 释放 kill 路径引用 */
     return 0;
 }
 

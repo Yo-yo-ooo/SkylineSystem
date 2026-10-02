@@ -84,13 +84,15 @@ int strcmp(const char *cs, const char *ct)
     }
 }
 
-char *strtok(char *str, const char *delim)
+/* D5 (round 9): strtok 线程安全 —— 原 static 状态跨线程串扰
+   (desktop 合成器多线程); 状态移入线程局部, 并提供 strtok_r */
+static __thread char *strtok_save = 0;
+
+char *strtok_r(char *str, const char *delim, char **saveptr)
 {
-    static char *p = 0;
-    if (str != 0)
-        p = str;
-    else if (p == 0)
-        return 0;
+    char *p = str ? str : *saveptr;
+    if (!p) return 0;
+    *saveptr = 0;
 
     char *start = p;
     while (*p != '\0')
@@ -103,6 +105,7 @@ char *strtok(char *str, const char *delim)
                 *p = '\0';
                 p++;
                 if (start == p){start = p;continue;}
+                *saveptr = p;
                 return start;
             }
             d++;
@@ -112,6 +115,11 @@ char *strtok(char *str, const char *delim)
     if (start == p)
         return 0;
     return start;
+}
+
+char *strtok(char *str, const char *delim)
+{
+    return strtok_r(str, delim, &strtok_save);
 }
 
 
@@ -240,7 +248,9 @@ size_t	strlen(const char *__restrict__  s)
 }
 
 int32_t atoi(char *str) {
-    int32_t result = 0;
+    /* D5 (round 9): 溢出防护 —— 原无界累加在超 int32 时回绕为 UB;
+       按 C 标准 atoi 溢出行为未定义, 此处钳制饱和返回 */
+    int64_t result = 0;
     int32_t neg_multiplier = 1;
 
     // Scrub leading whitespace
@@ -253,12 +263,17 @@ int32_t atoi(char *str) {
     if (*str && *str == '-') {
         neg_multiplier = -1;
         str++;
+    } else if (*str && *str == '+') {
+        str++;
     }
 
-    // Do number
+    // Do number (64 位中间量, 饱和钳制到 int32 范围)
     for (; *str && isdigit(*str); str++) {
         result = (result * 10) + (*str - '0');
+        if (result > 0x7FFFFFFFLL) {
+            return (neg_multiplier < 0) ? -2147483647 - 1 : 0x7FFFFFFF;
+        }
     }
 
-    return result * neg_multiplier;
+    return (int32_t)(result * neg_multiplier);
 }

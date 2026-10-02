@@ -60,6 +60,9 @@ typedef struct thread_t {
     thread_t** timer_bucket;
 
     bool IsForkThread;
+    /* B2 (round 5): CPU 钉扎 —— TryPush 负载均衡跳过 pinned 线程
+       (lwIP RX FIFO 依赖线程与 IRQ 同核, 迁核即双生产者竞态) */
+    bool pinned;
 
     uint64_t wait_ticks;
     uint64_t tls_base;
@@ -120,6 +123,11 @@ typedef struct proc_t {
     fd_manager_t *FDMan;
     volatile int32_t exiting;
     bool IsTrusted;
+    /* B4 (round 16): 引用计数 —— 根治 exiting 的 check-then-act。
+       计数语义: 1 = 进程表引用; 每持指针跨锁/跨上下文的路径
+       proc_get/proc_put 配对 (children 遍历、kill 对端、waitpid)。
+       refcount 归零才允许释放 FDMan/pagemap/结构体 */
+    volatile int32_t refcount;
 } proc_t;
 
 typedef struct procl{
@@ -147,6 +155,16 @@ static inline uint64_t irq_save() {
 
 static inline void irq_restore(uint64_t flags) {
     asm volatile("push %0\n\tpopfq" :: "r"(flags) : "memory");
+}
+
+/* B4 (round 18): proc 引用计数配对 —— 持指针跨锁/跨上下文的路径
+   (kill 对端、children 遍历) 以 proc_get/proc_put 配对; 计数归零
+   时僵尸回收器才释放结构体 */
+static inline void proc_get(proc_t *p) {
+    if (p) __atomic_add_fetch(&p->refcount, 1, __ATOMIC_RELAXED);
+}
+static inline void proc_put(proc_t *p) {
+    if (p) __atomic_sub_fetch(&p->refcount, 1, __ATOMIC_ACQ_REL);
 }
 
 static inline uint64_t spin_lock_irqsave(spinlock_t *lock) {

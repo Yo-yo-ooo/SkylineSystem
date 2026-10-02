@@ -31,10 +31,12 @@ clone_repo_commit() {
 }
 
 download_by_hash() {
+    # D9 (round 8 修复): command -v "curl -Lo" 把整串当命令名恒假,
+    # curl 存在也永远落入 wget 分支 —— 改为探测裸命令名
     DOWNLOAD_COMMAND="curl -Lo"
-    if ! command -v $DOWNLOAD_COMMAND >/dev/null 2>&1; then
+    if ! command -v curl >/dev/null 2>&1; then
         DOWNLOAD_COMMAND="wget -O"
-        if ! command -v $DOWNLOAD_COMMAND >/dev/null 2>&1; then
+        if ! command -v wget >/dev/null 2>&1; then
             set +x
             echo "error: Neither curl nor wget found"
             exit 1

@@ -391,7 +391,10 @@ void NetStackInit(void) {
     if (proc) {
         /* 网络线程深调用链 (lwIP 输入路径 + DHCP), 用 8 页=32KB 栈
            (默认 4 页在 DHCP 帧处理 + 调试打印下栈溢出, 实测线程静默死亡) */
-        Schedule::NewKernelThreadEx(proc, 0, 12, (void *)lwip_thread, 8);
+        thread_t *nw = Schedule::NewKernelThreadEx(proc, 0, 12, (void *)lwip_thread, 8);
+        /* B2 (round 5): 钉扎在 CPU0 —— RX FIFO 依赖线程与 IRQ 同核
+           (P1-51 前提), 负载均衡不得迁核 */
+        if (nw) nw->pinned = true;
         /* 多核 TX 洪泛: 每核一个线程 (cpus 1..3), 压力数据面 */
         for (uint32_t c = 1; c < 4 && c <= (uint32_t)smp_last_cpu; c++)
             Schedule::NewKernelThreadEx(proc, c, 12, (void *)flood_thread, 8);

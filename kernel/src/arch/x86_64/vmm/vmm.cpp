@@ -789,31 +789,47 @@ namespace VMM {
         }
     }
 
-    /* ---- 非共享: 高效大页释放, 不碰引用计数树 ---- */
+    /* ---- 非共享: 高效大页释放, 不碰引用计数树 ----
+       A3 (round 2 修复): 释放顺序收敛 —— 原实现先 PMM::Free 再 Unmap,
+       页可被立即复用而远端陈旧 TLB 仍在 (写穿已复用页)。改为两阶段:
+       ① 全区间先 Unmap + DeferredPage (登记 flush); ② 墙钟封顶的
+       同步 fence (ShootdownFence 语义, 复用 BatchCommit 的 ACK 路径)
+       完成后才真正归还物理页。物理页指针先收进局部数组, fence 后
+       统一 PMM::Free */
     static void FreeOwnedRegion(pagemap_t *pm, uint64_t start, uint64_t end) {
+        static const uint32_t MAX_DEFERRED = 4096;
+        void *phys_list[MAX_DEFERRED];
+        uint32_t phys_n = 0;
         uint64_t v = start;
-        while (v < end) {
+        while (v < end && phys_n < MAX_DEFERRED) {
             Internal::PageInfo info = VMM::Internal::GetPageInfo(pm, v);
             if (info.size == 0) { v += PAGE_SIZE; continue; }
             if (info.size == PAGE_1GB) {
                 Internal::PageInfo next = VMM::Internal::GetPageInfo(pm, v + PAGE_1GB);
                 if (next.size == PAGE_1GB && next.phys == info.phys + PAGE_1GB) {
-                    PMM::Free2GB((void*)info.phys);
+                    phys_list[phys_n++] = (void*)info.phys;
                     VMM::UnmapNoFlush(pm, v); VMM::UnmapNoFlush(pm, v + PAGE_1GB);
                     LazyTLB::DeferredPage(pm, v); LazyTLB::DeferredPage(pm, v + PAGE_1GB);
                     v += PAGE_2GB;
                 } else {
-                    for (uint32_t j = 0; j < 512; j++) PMM::Free2MB((void*)(info.phys + j * PAGE_2MB));
+                    for (uint32_t j = 0; j < 512 && phys_n < MAX_DEFERRED; j++)
+                        phys_list[phys_n++] = (void*)(info.phys + j * PAGE_2MB);
                     VMM::UnmapNoFlush(pm, v); LazyTLB::DeferredPage(pm, v); v += PAGE_1GB;
                 }
             } else if (info.size == PAGE_2MB) {
-                PMM::Free2MB((void*)info.phys);
+                phys_list[phys_n++] = (void*)info.phys;
                 VMM::UnmapNoFlush(pm, v); LazyTLB::DeferredPage(pm, v); v += PAGE_2MB;
             } else {
-                PMM::Free((void*)info.phys);
+                phys_list[phys_n++] = (void*)info.phys;
                 VMM::UnmapNoFlush(pm, v); LazyTLB::DeferredPage(pm, v); v += PAGE_SIZE;
             }
         }
+        /* ② fence 后归还 (同步 ACK 屏障; 若此处不可用 SMP 上下文
+           则退化为本地 flush —— FreeOwnedRegion 仅从进程销毁路径
+           调用, smp_started 已成立) */
+        LazyTLB::ShootdownFence(pm);
+        for (uint32_t i = 0; i < phys_n; i++)
+            PMM::Free(phys_list[i]);
     }
 
     void *Alloc(pagemap_t *pm, uint64_t pc, bool user) {

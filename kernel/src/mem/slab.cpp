@@ -664,6 +664,22 @@ namespace SLAB {
 #endif
 
         if (cpu) {
+            /* A6 (round 3 修复): magazine push 前即时双释检出 ——
+               原仅 drain 时的下溢检测 (延迟, 已产生链表环)。此处
+               遍历本 CPU magazine (长度 ≤ SLAB_BATCH*2+1 ≈ 33, 开销
+               可忽略) 检出重复指针 */
+            {
+                void *walk = cpu->cslab.freelist[idx];
+                uint32_t steps = 0;
+                while (walk && steps <= SLAB_BATCH * 2 + 1) {
+                    if (walk == ptr) {
+                        irq_restore(flags);
+                        slab_fatal("SLAB error: double free detected in magazine.\n");
+                    }
+                    walk = *(void **)walk;
+                    steps++;
+                }
+            }
             *(void **)ptr = cpu->cslab.freelist[idx];
             cpu->cslab.freelist[idx] = ptr;
             cpu->cslab.count[idx]++;

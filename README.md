@@ -286,6 +286,31 @@ qemu-system-x86_64 -machine q35 -cpu max \
 ### In WSL (Windows Subsystem for Linux):
 see the ./res/scripts/ folder for the architecture you need to run.
 
+### Windows → WSL 构建指引 (D4, round 11):
+
+1. 安装 WSL Ubuntu-24.04: PowerShell 管理员运行
+   `wsl --install -d Ubuntu-24.04`, 重启后进入 Ubuntu 完成初始化。
+2. 仓库放到 WSL 可访问路径 (推荐 `/mnt/c/...`, 或 WSL 家目录):
+   ```bash
+   cd /mnt/c/ && git clone <repo-url> SkylineSystem
+   cd SkylineSystem
+   ```
+3. 安装工具链 (Ubuntu 内):
+   ```bash
+   sudo apt-get update && sudo apt-get install -y g++ gcc make clang xorriso
+   ```
+4. 构建 (与 Linux 相同):
+   ```bash
+   cd kernel && ./get-deps && cd ..
+   make limine-binary/limine && make cm
+   ```
+5. 运行: 用 Windows 侧 QEMU (`qemu-system-x86_64.exe`) 直接加载
+   `SkylineSystem-x86_64.iso`; 或 WSL 内装 `qemu-system-x86`。
+6. 宿主测试门禁 (可选):
+   ```bash
+   cd tests && bash ../res/scripts/test/golden.sh
+   ```
+
 ## Debug
 ```bash
 # first run qemu (as above), then in another terminal:

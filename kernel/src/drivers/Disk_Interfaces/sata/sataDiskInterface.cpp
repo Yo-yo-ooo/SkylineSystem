@@ -183,11 +183,15 @@ bool SataDiskInterface::ReadBytes(uint64_t address, uint64_t count, void* buffer
 {
     if (count == 0)
         return true;
-    /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-    if (address + count - 1 >= SectorCount * 512)
+    /* A4 (round 1 修复): 溢出安全边界 —— 原 address+count-1 >= C*512
+       在 address+count 回绕时失效。改为减法形式 (无回绕) + 扇区级
+       双保险: 起始扇区 + 需读扇区数不得超过容量 */
+    if (address > SectorCount * 512 || count > SectorCount * 512 - address)
         return false;
     
     uint32_t tempSectorCount = ((((address + count) + 511) / 512) - (address / 512));
+    if ((address / 512) + tempSectorCount > SectorCount)
+        return false;   /* 尾扇区越界 (A4: 扇区级判据) */
     uint8_t* buffer2 = (uint8_t*)kmalloc(tempSectorCount * 512);//"Malloc for Read Buffer"
     if (!buffer2) return false;   /* OOM 显式失败 */
     _memset(buffer2, 0, tempSectorCount * 512);
@@ -215,11 +219,13 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
     
     if (count == 0)
         return true;
-    /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-    if (address + count - 1 >= SectorCount * 512)
+    /* A4 (round 1 修复): 溢出安全边界 + 扇区级双保险 (同 ReadBytes) */
+    if (address > SectorCount * 512 || count > SectorCount * 512 - address)
         return false;
     
     uint32_t tempSectorCount = ((((address + count) + 511) / 512) - (address / 512));
+    if ((address / 512) + tempSectorCount > SectorCount)
+        return false;   /* 尾扇区越界 */
     uint8_t* buffer2 = (uint8_t*)kmalloc(512); //Malloc for Write Buffer
     //window->Log("Writing Bytes...");
     
