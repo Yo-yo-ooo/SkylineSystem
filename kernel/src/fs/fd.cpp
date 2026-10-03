@@ -133,7 +133,11 @@ int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
     search_key.fd = new_fd;
     rb_root_t *shard;
     for (;;) {
-        shard = rb_get_shard(&manager->fd_tree, &search_key.node);
+        /* Hash the KEY (&fd), not the node bytes. Passing &search_key.node
+           hashed uninitialized stack memory, so the fd was inserted into a
+           random shard that fd_get (which correctly hashes &fd) usually could
+           not see -> intermittent -EBADF right after a successful open. */
+        shard = rb_get_shard(&manager->fd_tree, &search_key.fd);
         if (!shard) return -1;
         RB_WLOCK(shard);
         if (!rb_search_locked_only(shard, &search_key.node, manager->fd_tree.ops.cmp))

@@ -93,6 +93,12 @@ static struct flanterm_context* get_current_stdout(void) {
         return NULL;                /* font unavailable: printf degrades */
 
     g_stdout_ctx = flanterm_ttf_init(&g_stdout_fb, g_stdout_font, CONSOLE_MARGIN);
+    if (g_stdout_ctx) {
+        /* Signal the WM that the console is live (font loaded, flanterm up).
+           OUT_SEQ then advances per character so the WM can wait for the full
+           initial output burst before mounting. */
+        proto[SKYWIN_PROTO_CLIENT_READY] = SKYWIN_READY_MAGIC;
+    }
     return g_stdout_ctx;
 }
 
@@ -105,6 +111,9 @@ void _putchar(char character) {
     struct flanterm_context *term = get_current_stdout();
     if (likely(term != NULL)) {
         flanterm_write(term, &character, 1);
+        /* Console progress heartbeat: lets the WM detect the end of the
+           initial printf burst by waiting for this counter to go quiet. */
+        ((volatile uint64_t *)CONSOLE_PROTO_VA)[SKYWIN_PROTO_OUT_SEQ]++;
     }
 }
 

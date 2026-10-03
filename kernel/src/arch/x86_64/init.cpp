@@ -217,8 +217,16 @@ void __init x86_64_init(void){
         }
     }
 #else
-    /* 网络栈: e1000 已在 PCI 枚举时探测完成, 调度器就绪后上线 lwIP */
-    NetStackInit();
+    /* 网络栈延后上线: e1000 已在 PCI 枚举时探测完成。不在 pre-sti bootstrap
+       上下文直接起网络线程 (会与 AP/桌面竞态), 而是 spawn 一个正规内核
+       线程; 待 bootstrap 执行 sti、kick 调度后, 由它在 live 线程上下文拉起
+       lwIP (仅诊断构建 NET_FLOOD_AUTO 才含 TX flood)。不等待。 */
+    {
+        proc_t *nproc = Schedule::NewProcess(false);
+        if (nproc)
+            Schedule::NewKernelThreadEx(nproc, 0, 8,
+                                        (void *)NetStackInitDeferred, 8);
+    }
 #endif
 
     atomic_store_4(&PrintFSERIAL,1,0);

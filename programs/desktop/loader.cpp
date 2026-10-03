@@ -271,8 +271,35 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
         return 0;
     }
 
-    /* Let the fresh client load its font / finish startup before mounting. */
-    for (uint32_t s = 0; s < SKYWIN_STARTUP_YIELDS; s++) sys_yield();
+    /* Bounded readiness handshake (replaces the old fixed blind yield count).
+       Wait for CLIENT_READY; console clients additionally wait until OUT_SEQ
+       has gone quiet, i.e. the initial printf burst is fully rendered. The
+       hard iteration cap guarantees a client that never signals cannot hang
+       the desktop during boot. */
+    {
+        uint64_t last_seq = 0;
+        uint32_t quiet = 0, hold = 0;
+        for (uint32_t i = 0; i < SKYWIN_STARTUP_WAIT_MAX; i++) {
+            uint64_t ready = q[SKYWIN_PROTO_CLIENT_READY];
+            uint64_t seq   = q[SKYWIN_PROTO_OUT_SEQ];
+            if (ready != SKYWIN_READY_MAGIC) {
+                quiet = 0; hold = 0; last_seq = seq;
+            } else if (seq != 0) {
+                /* Console client: require the output counter to settle. */
+                hold = 0;
+                if (seq == last_seq) {
+                    if (++quiet >= SKYWIN_STARTUP_QUIET) break;
+                } else {
+                    quiet = 0;
+                    last_seq = seq;
+                }
+            } else {
+                /* Non-console client: READY is sufficient; tiny settle. */
+                if (++hold >= SKYWIN_READY_SETTLE) break;
+            }
+            sys_yield();
+        }
+    }
 
     if (place) {
         place->desk_surf  = desk_whole;

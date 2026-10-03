@@ -353,6 +353,14 @@ int main(){
     Compositor& comp = Compositor::Get();
     if (!comp.Init((FrameBuffer*)&fb)) return 1;
 
+    /* Start compositor workers BEFORE spawning any client app: the other
+       cores are idle now, so the pinned workers execute their entry ack
+       immediately. Starting them later, after the clients occupy those
+       cores, races the bounded startup wait and can wrongly degrade to
+       single-thread, leaving the lower screen unrendered. The workers just
+       spin until the first frame once windows are registered. */
+    comp.StartWorkers();
+
     WmDateTime bootDT;
     bool haveClock = wm_read_datetime(&bootDT);
     if (cleanBar)
@@ -445,8 +453,6 @@ int main(){
     const int32_t rzPitch = (int32_t)maxW + 2 * M;
     const int32_t rzCapRows = (int32_t)maxH + 2 * M;
     uint32_t* rzSurf = nullptr;
-
-    comp.StartWorkers();
 
     for (int warm = 0; warm < 8; warm++) {
         comp.Compose();

@@ -15,9 +15,11 @@ if not exist %SourceFile% (
 
 
 qemu-system-x86_64 -machine q35 -cpu max ^
--cdrom %~dp0/../../SkylineSystem-x86_64.iso -m 512M -smp 4 ^
--serial stdio -net nic -device AC97 ^
--drive file=%SourceFile%,if=none,id=drive0 ^
--device ide-hd,drive=drive0,bus=ide.0 ^
+-cdrom %~dp0/../../SkylineSystem-x86_64.iso -m 2G -smp 4 ^
+-serial stdio ^
+-netdev user,id=n0 -device e1000,netdev=n0 -device AC97 ^
+-drive file=%SourceFile%,if=none,id=drive0,format=raw ^
+-device ich9-ahci,id=sata ^
+-device ide-hd,drive=drive0,bus=sata.0 ^
 -no-reboot --no-shutdown ^
 -gdb tcp::26000 -monitor telnet:127.0.0.1:4444,server,nowait

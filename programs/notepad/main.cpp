@@ -180,6 +180,10 @@ int main() {
 
     g_lines[0][0] = '\0';
     render();
+    /* Universal readiness barrier: tell the WM our initial surface is
+       painted. Notepad does not use the libc console, so OUT_SEQ stays 0 and
+       READY alone lets the WM mount immediately. */
+    q[SKYWIN_PROTO_CLIENT_READY] = SKYWIN_READY_MAGIC;
 
     for (;;) {
         uint64_t h = __atomic_load_n(&kbd->head, __ATOMIC_ACQUIRE);

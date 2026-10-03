@@ -15,5 +15,6 @@ int main(void) {
     printf("Hello World\n");
     printf("Skyline userspace console\n");
     printf("shared framebuffer OK\n");
-    return 0;
+    while(true);
+    //return 0;
 }

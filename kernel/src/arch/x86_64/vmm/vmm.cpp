@@ -848,7 +848,9 @@ namespace VMM {
         uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
         spinlock_lock(&pm->vma_lock);
         uint64_t addr = VMM::VMA::InternalAlloc(pm, pc, flags, 0);
-        if (unlikely(!addr)) { spinlock_unlock(&pm->vma_lock); return nullptr; }
+        if (unlikely(!addr)) {
+            spinlock_unlock(&pm->vma_lock); return nullptr;
+        }
         if (unlikely(!VMM::VMA::FindRegion(pm,addr)))
             VMM::VMA::AddRegion(pm,addr,pc,flags);
         spinlock_lock(&pm->pt_lock);

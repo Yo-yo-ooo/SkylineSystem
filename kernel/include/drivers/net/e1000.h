@@ -154,3 +154,6 @@ uint8_t  DiagDescState(uint32_t i);
 /* 网络栈整体上线 (lwIP 移植胶水: e1000 + netif + DHCP 线程)。
    需在 PCI 枚举 (e1000 探测) 与调度器就绪之后调用。 */
 void NetStackInit(void);
+/* Deferred bring-up: spawned as a kernel thread by the bootstrap after sti +
+   scheduler kick; runs NetStackInit in a live thread context, never pre-sti. */
+void NetStackInitDeferred(void);

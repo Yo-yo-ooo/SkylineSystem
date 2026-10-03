@@ -594,12 +594,26 @@ void Compositor::StartWorkers() {
         if (sys_thread_launch((uint64_t)CompWorkerTrampoline, i + 1) >= 0)
             launched_ok++;
     }
-    uint32_t sw = 0;
+    /* Wait for every launched worker to run its entry ack. They were inserted
+       RUNNING with a wake IPI, so they will execute; yield generously so a
+       worker that shares a pinned core with a booting client still gets
+       scheduled. The high safety bound only guards a wedged system and, if it
+       is ever hit, shuts the workers down BEFORE degrading so no thread is
+       left spinning on a frame_seq that single-thread mode would never bump. */
+    uint32_t spin = 0, yields = 0;
     while (__atomic_load_n(&started_cnt_, __ATOMIC_ACQUIRE) < launched_ok) {
-        comp_backoff(sw);
-        /* P1-48: 有界等待 (约 2s) —— 失败的工作线程永不计数时降级
-           到单线程合成 (ncpus_=1 走 ComposeSingleThreaded), 不再永转 */
-        if (++sw > 2000) { ncpus_ = 1; launched_ = 1; return; }
+        if (spin < 512u) { cpu_relax(); ++spin; }
+        else {
+            sys_yield();
+            spin = 0;
+            if (++yields > 2000u) {
+                __atomic_store_n(&shutdown_, 1, __ATOMIC_RELEASE);
+                __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
+                ncpus_ = 1;
+                launched_ = 1;
+                return;
+            }
+        }
     }
     launched_ = 1;
 }

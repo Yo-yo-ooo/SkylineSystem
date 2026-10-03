@@ -27,6 +27,13 @@
 /* sys_now 的 C 链接定义在 lwip_port.c; 这里只提供时间源 */
 extern "C" uint64_t net_time_ms(void) { return PIT::TimeSinceBootMS(); }
 
+/* NET_FLOOD_AUTO: diagnostic multi-core TX flood. Default OFF. When enabled,
+   NetStackInit also spawns one infinite flood_thread per CPU 1..3 as a data-
+   plane stress test. It must never run on the normal boot path: the flood
+   starts inside the boot window, saturates cores and contends global locks,
+   which caused the intermittent failure to reach the desktop. */
+#define NET_FLOOD_AUTO 0
+
 static struct netif g_netif;
 static bool g_started = false;
 static struct raw_pcb *g_ping_pcb = nullptr;
@@ -395,12 +402,30 @@ void NetStackInit(void) {
         /* B2 (round 5): 钉扎在 CPU0 —— RX FIFO 依赖线程与 IRQ 同核
            (P1-51 前提), 负载均衡不得迁核 */
         if (nw) nw->pinned = true;
-        /* 多核 TX 洪泛: 每核一个线程 (cpus 1..3), 压力数据面 */
+        /* 多核 TX 洪泛: 仅诊断构建 (NET_FLOOD_AUTO) 才在 CPU1..3 起无限
+           数据面压力线程; 正常启动绝不运行 (启动窗口争锁/占核, 曾致间歇
+           性进不了桌面)。 */
+#if NET_FLOOD_AUTO
         for (uint32_t c = 1; c < 4 && c <= (uint32_t)smp_last_cpu; c++)
             Schedule::NewKernelThreadEx(proc, c, 12, (void *)flood_thread, 8);
         g_started = true;
         kinfoln("[lwip] netif e0 up: 10.0.2.15/24 gw 10.0.2.2, ping + multi-core TX flood\n");
+#else
+        g_started = true;
+        kinfoln("[lwip] netif e0 up: 10.0.2.15/24 gw 10.0.2.2, ping\n");
+#endif
     } else {
         kinfoln("[lwip] cannot create process\n");
     }
+}
+
+/* Deferred bring-up entry. The bootstrap spawns this as a normal kernel thread
+   AFTER it executes sti and kicks scheduling; NetStackInit then runs in a live
+   thread context instead of the pre-sti bootstrap (which cannot block and
+   races the APs/desktop). The short settle lets the desktop finish its early
+   startup before the lwIP thread is created. */
+void NetStackInitDeferred(void) {
+    PIT::Sleep(300);
+    NetStackInit();
+    while (true) PIT::Sleep(1000);
 }

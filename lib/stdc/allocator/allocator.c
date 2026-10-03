@@ -604,7 +604,7 @@ static void* _skyline_malloc_internal(size_t size) {
                             break;
                         }
                     }
-                    if (!l_scb || l_scb == (void*)1) continue;
+                    if (!l_scb || l_scb == (void*)1) { continue; }
                 }
             }
 

@@ -76,8 +76,8 @@ extern "C" {
 #define SKYWIN_CONTENT_H   (SKYWIN_H - SKYWIN_TITLE_H - SKYWIN_RADIUS)
 
 /* ---- fixed protocol page (client VA 0x400000), one uint64 per slot ------
- * The client is a plain, portable Hello World: it never reads this page and
- * never signals any handshake. The desktop fills every slot before launch.
+ * The desktop fills the geometry slots before launch and polls the handshake
+ * slots after launch.
  * [0..4] is EXACTLY what the libc flanterm console reads on first printf:
  *   [0] content-area VA in client     [1] content bytes
  *   [2] content width                [3] content height   [4] pitch
@@ -85,7 +85,13 @@ extern "C" {
  * a window-body-wide run strided across the wider shadow-bearing surface.
  * [5..7] describe the whole window SURFACE (the desktop WM paints the chrome;
  *        kept for protocol completeness):
- *   [5] whole-surface VA in client   [6] SKYWIN_SURF_W    [7] SKYWIN_SURF_H */
+ *   [5] whole-surface VA in client   [6] SKYWIN_SURF_W    [7] SKYWIN_SURF_H
+ * [8..9] are the client -> WM readiness handshake (written by the client):
+ *   [8] CLIENT_READY = SKYWIN_READY_MAGIC once the client has finished its
+ *       initial surface setup (console context up, or first self-paint done);
+ *   [9] OUT_SEQ, console-only: incremented after every rendered character so
+ *       the WM can wait until the initial output burst has gone quiet.
+ *       Non-console apps (notepad) leave it at 0; READY alone is sufficient. */
 #define SKYWIN_PROTO_CONTENT_VA   0u
 #define SKYWIN_PROTO_CONTENT_SZ   1u
 #define SKYWIN_PROTO_CONTENT_W    2u
@@ -94,14 +100,29 @@ extern "C" {
 #define SKYWIN_PROTO_WHOLE_VA     5u
 #define SKYWIN_PROTO_WIN_W        6u
 #define SKYWIN_PROTO_WIN_H        7u
+#define SKYWIN_PROTO_CLIENT_READY 8u
+#define SKYWIN_PROTO_OUT_SEQ      9u
 #define SKYWIN_PROTO_SLOTS        16u
 #define SKYWIN_PROTO_PAGE_VA  0x400000UL  /* client fixed .prepad protocol page */
 
-/* After launch the WM yields this many times so the fresh client can load its
-   font and emit its initial printf text before the window is mounted; the
-   client itself does no synchronization. Remaining output is picked up by the
-   compositor's periodic Compose. */
-#define SKYWIN_STARTUP_YIELDS     256u
+/* Readiness handshake magic: stored little-endian, so in memory it reads as
+   the ASCII word "READY" with 'R' at the lowest byte. */
+#define SKYWIN_READY_MAGIC ( \
+    (uint64_t)'R'         | ((uint64_t)'E' << 8)  | \
+    ((uint64_t)'A' << 16) | ((uint64_t)'D' << 24) | \
+    ((uint64_t)'Y' << 32))
+
+/* Bounded readiness wait used by the WM after launch; it replaces the old
+ * fixed blind yield count. The WM polls the handshake once per sys_yield():
+ *   - up to SKYWIN_STARTUP_WAIT_MAX iterations total (a hard cap, so a client
+ *     that never signals can never hang the desktop during boot);
+ *   - console clients (OUT_SEQ becomes non-zero) mount once OUT_SEQ has stayed
+ *     unchanged for SKYWIN_STARTUP_QUIET consecutive samples (burst landed);
+ *   - non-console clients (OUT_SEQ stays 0) mount SKYWIN_READY_SETTLE samples
+ *     after CLIENT_READY is observed. */
+#define SKYWIN_STARTUP_WAIT_MAX  2000u
+#define SKYWIN_STARTUP_QUIET       32u
+#define SKYWIN_READY_SETTLE         8u
 
 /* Placement returned by TLoad to the desktop compositor. w/h describe the
    whole ARGB SURFACE (body + shadow margin); x/y is its top-left on scanout. */
