@@ -531,9 +531,9 @@ void Compositor::WorkerEntry(uint32_t id) {
         last_seq = seq;
 
         ComposeStripToBack(id);                 /* scene -> back_ only */
-        /* B1 (round 4): 帧号发布 —— 归入本 worker 实际完成的帧, 迟到
-           完成不再计入主线程刚 reset 的下一帧 */
-        __atomic_store_n(&worker_done_seq_[id], seq, __ATOMIC_RELEASE);
+        /* TEMP (诊断): 回退为计数器 (对照 B1) */
+        __atomic_add_fetch(&done_compose_, 1, __ATOMIC_RELEASE);
+        (void)worker_done_seq_;
     }
 }
 
@@ -616,14 +616,13 @@ void Compositor::Compose() {
     const uint32_t peers = ncpus_ - 1;
 
     /* phase 1 (off-screen): peers render strips 1..N-1 to back_, main strip 0 */
-    const uint64_t seq = __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
+    /* TEMP (round 2 诊断): 回退 B1 帧号屏障为原计数器屏障, 对照桌面挂点 */
+    __atomic_store_n(&done_compose_, 0, __ATOMIC_RELEASE);
+    __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
     ComposeStripToBack(0);
     uint32_t cw = 0;
-    /* B1 (round 4): 帧号屏障 —— 等每个 worker 的 done-seq ≥ 本帧号。
-       迟到 worker 的旧帧完成不改写本帧判定 */
-    for (uint32_t i = 1; i <= peers; i++)
-        while (__atomic_load_n(&worker_done_seq_[i], __ATOMIC_ACQUIRE) < seq)
-            comp_backoff(cw);
+    while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < peers)
+        comp_backoff(cw);
 
     /* P1-53: 屏障点 —— 所有 worker 已过当前帧的列表遍历, 退役节点
        此刻无人引用, 统一释放 */

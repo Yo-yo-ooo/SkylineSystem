@@ -92,7 +92,7 @@ static inline void wr(uint32_t off, uint32_t v) { *(volatile uint32_t *)((uintpt
 static uint16_t eeprom_read(uint8_t addr) {
     // EERD: bit0=START, bit4=DONE, bits16-31=DATA
     wr(EERD, (uint32_t)1 | ((uint32_t)addr << 2));
-    /* 纯忙等: 早期启动 (调度器/PIT 定时器未就绪) 时 PIT::Sleep(1)
+    /* 纯忙等: 早期启动 (调度器/PIT 定时器未ready) 时 PIT::Sleep(1)
        间歇性不返回, 曾致探测挂死 (soak 实锤: 卡在 "probing e1000") */
     for (int i = 0; i < 100000; i++) {
         if (rd(EERD) & (1u << 4)) break;
@@ -179,7 +179,7 @@ void Init(PCI::PCIHeader0 *header) {
     if (g_inited) return;
     uint16_t device = header->Header.Device_ID;
     if (device != 0x100E && device != 0x10D3) {   // 82540EM / 82574L
-        kinfoln("[e1000] 不支持的设备 ID 0x%X, 跳过\n", device);
+        kinfoln("[e1000] unsupported device ID 0x%X, skipping\n", device);
         return;
     }
 
@@ -189,7 +189,7 @@ void Init(PCI::PCIHeader0 *header) {
     PCI::enable_bus_mastering((uint64_t)header);
 
     uint64_t phys = header->BAR0 & ~0xFu;
-    if (!phys) { kinfoln("[e1000] BAR0 无效\n"); return; }
+    if (!phys) { kinfoln("[e1000] BAR0 invalid\n"); return; }
     for (uint64_t off = 0; off < 0x20000; off += 0x1000)
         VMM::Map((pagemap_t *)kernel_pagemap, phys + off, phys + off, VMM_FLAGS_MMIO);
     g_regs = (volatile uint32_t *)(phys + hhdm_offset);
@@ -200,7 +200,7 @@ void Init(PCI::PCIHeader0 *header) {
     for (int i = 0; i < 100000; i++) {
         if (!(rd(CTRL) & E1000_CTRL_RST)) break;
     }
-    if (rd(CTRL) & E1000_CTRL_RST) { kinfoln("[e1000] 复位超时\n"); return; }
+    if (rd(CTRL) & E1000_CTRL_RST) { kinfoln("[e1000] reset timeout\n"); return; }
 
     /* 关全部中断 → 配置环 → 再开 */
     wr(IMC, 0xFFFFFFFFu);
@@ -234,7 +234,7 @@ void Init(PCI::PCIHeader0 *header) {
         if (!g_rx_bufs[i]) ok = false;
     for (uint32_t i = 0; i < E1000_TX_RING_LEN && ok; i++)
         if (!g_tx_bufs[i]) ok = false;
-    if (!ok) { kinfoln("[e1000] 环内存分配失败\n"); return; }
+    if (!ok) { kinfoln("[e1000] ring memory allocation failed\n"); return; }
 
     uint64_t rx_phys = VMM::GetPhysics((pagemap_t *)kernel_pagemap, (uint64_t)g_rx_ring);
     uint64_t tx_phys = VMM::GetPhysics((pagemap_t *)kernel_pagemap, (uint64_t)g_tx_ring);
@@ -289,14 +289,14 @@ void Init(PCI::PCIHeader0 *header) {
     uint8_t irq = header->InterruptLine;
     if (irq == 0 || irq == 0xFF) {
         irq = 11;   // 保守回退 (QEMU 常见 NIC 中断线)
-        kinfoln("[e1000] IRQ 中断线缺失 (0x%02x), 回退 %u\n", header->InterruptLine, irq);
+        kinfoln("[e1000] IRQ line missing (0x%02x), fallback %u\n", header->InterruptLine, irq);
     }
     uint32_t vector = (uint32_t)irq + 32;
     idt_install_irq((uint8_t)vector, (void *)irq_handler);
     IOAPIC::RemapIRQ(smp_bsp_cpu, irq, vector, false);
 
     g_inited = true;
-    kinfoln("[e1000] 就绪: MAC %02X:%02X:%02X:%02X:%02X:%02X, IRQ %u → vector %u\n",
+    kinfoln("[e1000] ready: MAC %02X:%02X:%02X:%02X:%02X:%02X, IRQ %u → vector %u\n",
             g_mac[0], g_mac[1], g_mac[2], g_mac[3], g_mac[4], g_mac[5], irq, vector);
     kinfoln("[e1000][dbg] ring_va=%p ring_phys=%llx buf0_va=%p buf0_phys=%llx buf1_phys=%llx\n",
             (void *)g_rx_ring, (unsigned long long)rx_phys,

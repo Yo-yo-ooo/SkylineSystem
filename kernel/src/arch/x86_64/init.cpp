@@ -38,7 +38,7 @@
 static volatile uint32_t g_bench_done = 0;
 static void bench_wrapper(void) {
     bool ok = SchedBench::Run(1);
-    kinfoln("[sched_bench] 完成=%d (实际 base_quantum=%u ms)\n", (int)ok,
+    kinfoln("[sched_bench] done=%d (actual base_quantum=%u ms)\n", (int)ok,
             SchedBench::Report()->base_quantum_ms);
     SchedBench::sched_bench_report *r = SchedBench::Report();
     kinfoln("[sched_bench] step: t90=%llu valid=%d t90_pass=%d overshoot=%d sat=%d\n",

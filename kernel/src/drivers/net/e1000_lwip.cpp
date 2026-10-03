@@ -55,7 +55,7 @@ static void rtt_report(void) {
     uint64_t p50 = sorted[n * 50 / 100];
     uint64_t p90 = sorted[n * 90 / 100];
     uint64_t p99 = sorted[n * 99 / 100];
-    kinfoln("[lwip][rtt] n=%u min=%llu P50=%llu P90=%llu P99=%llu max=%llu ms 丢=%u\n",
+    kinfoln("[lwip][rtt] n=%u min=%llu P50=%llu P90=%llu P99=%llu max=%llu ms drop=%u\n",
             n, (unsigned long long)sorted[0],
             (unsigned long long)p50, (unsigned long long)p90, (unsigned long long)p99,
             (unsigned long long)sorted[n - 1], g_rtt_lost);
@@ -251,7 +251,7 @@ static err_t ethernetif_init(struct netif *netif) {
 static void lwip_thread(void) {
     uint64_t last_coarse = 0, last_fine = 0;
     bool logged_ip = false;
-    kinfoln("[lwip] 线程启动, 等待 DHCP...\n");
+    kinfoln("[lwip] thread started, waiting for DHCP...\n");
 
     for (;;) {
         /* 轮询收包 */
@@ -293,9 +293,9 @@ static void lwip_thread(void) {
 
         if (!logged_ip && dhcp_supplied_address(&g_netif)) {
             /* ip4addr_ntoa 是静态缓冲: 一次打印只能安全调用一次 */
-            kinfoln("[lwip] DHCP 成功: %s\n", ip4addr_ntoa(netif_ip4_addr(&g_netif)));
-            kinfoln("[lwip] 掩码=%s\n", ip4addr_ntoa(netif_ip4_netmask(&g_netif)));
-            kinfoln("[lwip] 网关=%s\n", ip4addr_ntoa(netif_ip4_gw(&g_netif)));
+            kinfoln("[lwip] DHCP success: %s\n", ip4addr_ntoa(netif_ip4_addr(&g_netif)));
+            kinfoln("[lwip] netmask=%s\n", ip4addr_ntoa(netif_ip4_netmask(&g_netif)));
+            kinfoln("[lwip] gateway=%s\n", ip4addr_ntoa(netif_ip4_gw(&g_netif)));
             logged_ip = true;
         }
 
@@ -319,7 +319,7 @@ static void lwip_thread(void) {
         }
 
         if (g_rx_dropped && (now & 0x3FF) == 0) {
-            kinfoln("[lwip] RX 丢帧累计 %u\n", g_rx_dropped);
+            kinfoln("[lwip] RX dropped frames cumulative %u\n", g_rx_dropped);
             g_rx_dropped = 0;
         }
 
@@ -330,7 +330,7 @@ static void lwip_thread(void) {
             E1000::Stats s = E1000::GetStats();
             uint64_t rxp_s = (s.rx_pkts - prev_rx) * 1000 / (now - last_diag);
             uint64_t txp_s = (s.tx_pkts - prev_tx) * 1000 / (now - last_diag);
-            kinfoln("[lwip][stat] rx=%llu(%lluB) tx=%llu(%lluB) 速率 rx=%llu/s tx=%llu/s 丢=%u 错=%u tx满=%u irq=%u ping=%u\n",
+            kinfoln("[lwip][stat] rx=%llu(%lluB) tx=%llu(%lluB) rate rx=%llu/s tx=%llu/s drop=%u err=%u txfull=%u irq=%u ping=%u\n",
                     (unsigned long long)s.rx_pkts, (unsigned long long)s.rx_bytes,
                     (unsigned long long)s.tx_pkts, (unsigned long long)s.tx_bytes,
                     (unsigned long long)rxp_s, (unsigned long long)txp_s,
@@ -372,7 +372,7 @@ void NetStackInit(void) {
     ip4addr_aton("255.255.255.0", &mask);
     ip4addr_aton("10.0.2.2", &gw);
     if (netif_add(&g_netif, &ip, &mask, &gw, NULL, ethernetif_init, ethernet_input) == NULL) {
-        kinfoln("[lwip] netif_add 失败\n");
+        kinfoln("[lwip] netif_add failed\n");
         return;
     }
     netif_set_default(&g_netif);
@@ -399,8 +399,8 @@ void NetStackInit(void) {
         for (uint32_t c = 1; c < 4 && c <= (uint32_t)smp_last_cpu; c++)
             Schedule::NewKernelThreadEx(proc, c, 12, (void *)flood_thread, 8);
         g_started = true;
-        kinfoln("[lwip] netif e0 上线: 10.0.2.15/24 gw 10.0.2.2, ping + 多核 TX 洪泛\n");
+        kinfoln("[lwip] netif e0 up: 10.0.2.15/24 gw 10.0.2.2, ping + multi-core TX flood\n");
     } else {
-        kinfoln("[lwip] 无法创建进程\n");
+        kinfoln("[lwip] cannot create process\n");
     }
 }

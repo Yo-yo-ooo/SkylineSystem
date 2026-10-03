@@ -84,15 +84,14 @@ int strcmp(const char *cs, const char *ct)
     }
 }
 
-/* D5 (round 9): strtok 线程安全 —— 原 static 状态跨线程串扰
-   (desktop 合成器多线程); 状态移入线程局部, 并提供 strtok_r */
-static __thread char *strtok_save = 0;
-
-char *strtok_r(char *str, const char *delim, char **saveptr)
+/* D5 (round 2 诊断): 临时回退为 static 状态 (对照桌面挂点) */
+char *strtok(char *str, const char *delim)
 {
-    char *p = str ? str : *saveptr;
-    if (!p) return 0;
-    *saveptr = 0;
+    static char *p = 0;
+    if (str != 0)
+        p = str;
+    else if (p == 0)
+        return 0;
 
     char *start = p;
     while (*p != '\0')
@@ -105,7 +104,6 @@ char *strtok_r(char *str, const char *delim, char **saveptr)
                 *p = '\0';
                 p++;
                 if (start == p){start = p;continue;}
-                *saveptr = p;
                 return start;
             }
             d++;
@@ -115,11 +113,6 @@ char *strtok_r(char *str, const char *delim, char **saveptr)
     if (start == p)
         return 0;
     return start;
-}
-
-char *strtok(char *str, const char *delim)
-{
-    return strtok_r(str, delim, &strtok_save);
 }
 
 

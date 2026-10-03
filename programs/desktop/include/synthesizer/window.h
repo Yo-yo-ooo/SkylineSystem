@@ -175,6 +175,7 @@ private:
     uint64_t        frame_seq_;
     uint32_t        started_cnt_;
     uint64_t        worker_done_seq_[COMP_CPUS_SANITY];
+    uint32_t        done_compose_;   /* TEMP (诊断): B1 回退对照 */
 
     CompWinNode*    FindNode(Window* w);
     void            ComposeStripToBack(uint32_t id); /* scene -> offscreen back_ */

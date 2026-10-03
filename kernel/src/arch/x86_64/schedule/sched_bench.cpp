@@ -207,7 +207,7 @@ static void bench_sw_target() {
     if (likely(t)) {
         g_sw_mf = t->rip_mult_fast; g_sw_msl = t->rip_mult_slow;
         g_sw_shortwin = t->rip_short_windows; g_sw_stalled = t->rip_stalled;
-        kinfoln("[bench] 目标片长: min=%u max=%u ms\n",
+        kinfoln("[bench] target slice: min=%u max=%u ms\n",
                 t->rip_min_slice_ms, t->rip_max_slice_ms);
     }
     g_done = 1;
@@ -220,7 +220,7 @@ static void eval_shortwin(shortwin_result_t *r, const uint64_t pre[14], const ui
     r->base_resets   = post[8] - pre[8];
     r->stalled       = post[4] - pre[4];
     r->mf = g_sw_mf; r->msl = g_sw_msl;
-    kinfoln("[bench] 短窗口目标级: shortwin=%u stalled=%u\n",
+    kinfoln("[bench] short-window target level: shortwin=%u stalled=%u\n",
             g_sw_shortwin, g_sw_stalled);
     r->pass = r->short_windows >= 200 && r->base_resets == 0
            && g_sw_mf >= 820 && g_sw_mf <= 1230
@@ -253,7 +253,7 @@ sched_bench_report *Report() { return &g_report; }
 
 bool Run(uint32_t bench_cpu) {
     if (unlikely(bench_cpu > (uint32_t)smp_last_cpu)) return false;
-    kinfoln("[bench] Run 开始 (cpu %u)\n", bench_cpu);
+    kinfoln("[bench] Run start (cpu %u)\n", bench_cpu);
     for (int i = 0; i < 64; i++) g_chase[i] = (uint64_t)((i * 17 + 13) & 63);
     g_report = {};
     g_report.bench_cpu = bench_cpu;
@@ -263,56 +263,56 @@ bool Run(uint32_t bench_cpu) {
     uint64_t pre[14], post[14];
 
     /* 1. 阶跃 */
-    kinfoln("[bench] 相位1 阶跃\n");
+    kinfoln("[bench] phase 1 step\n");
     Schedule::GetRipStats(bench_cpu, pre);
     g_done = 0; g_sring_n = 0;
     Schedule::NewKernelThread(proc, bench_cpu, 8, (void*)bench_step_thread);
     wait_done(STEP_A_MS + STEP_B_MS + 3000);
-    kinfoln("[bench] 相位1 wait_done 返回 (done=%u sring=%llu)\n",
+    kinfoln("[bench] phase 1 wait_done return (done=%u sring=%llu)\n",
             g_done, (unsigned long long)g_sring_n);
     Schedule::GetRipStats(bench_cpu, post);
     eval_step(&g_report.step, pre, post);
     settle(200);
-    kinfoln("[bench] 相位1 完成\n");
+    kinfoln("[bench] phase 1 done\n");
 
     /* 2. 抗污染 */
-    kinfoln("[bench] 相位2 抗污染\n");
+    kinfoln("[bench] phase 2 anti-pollution\n");
     Schedule::GetRipStats(bench_cpu, pre);
     g_done = 0; g_pring_n = 0; g_flag_run = 1;
     Schedule::NewKernelThread(proc, bench_cpu, 8, (void*)bench_polluter);
     Schedule::NewKernelThread(proc, bench_cpu, 8, (void*)bench_victim);
     wait_done(POLLUTE_MS + 5000);
     g_flag_run = 0;
-    kinfoln("[bench] 相位2 wait_done 返回 (done=%u)\n", g_done);
+    kinfoln("[bench] phase 2 wait_done return (done=%u)\n", g_done);
     Schedule::GetRipStats(bench_cpu, post);
     eval_pollute(&g_report.pollute);
     settle(200);
-    kinfoln("[bench] 相位2 完成\n");
+    kinfoln("[bench] phase 2 done\n");
 
     /* 3. 短窗口 */
-    kinfoln("[bench] 相位3 短窗口\n");
+    kinfoln("[bench] phase 3 short window\n");
     Schedule::GetRipStats(bench_cpu, pre);
     g_done = 0; g_flag_run = 1; g_sw_mf = g_sw_msl = 0;
-    kinfoln("[bench] 相位3 spawn 前: proc=%p exiting=%d\n",
+    kinfoln("[bench] phase 3 before spawn: proc=%p exiting=%d\n",
             (void*)proc, proc ? __atomic_load_n(&proc->exiting, __ATOMIC_RELAXED) : -1);
     thread_t *comp = Schedule::NewKernelThread(proc, bench_cpu, 10, (void*)bench_sw_companion);
     g_sw_target_ptr = Schedule::NewKernelThread(proc, bench_cpu, 15, (void*)bench_sw_target);
-    kinfoln("[bench] 相位3 spawn: companion=%p target=%p\n",
+    kinfoln("[bench] phase 3 spawn: companion=%p target=%p\n",
             (void*)comp, (void*)g_sw_target_ptr);
     wait_done(SHORTWIN_MS + 5000);
     g_flag_run = 0;
-    kinfoln("[bench] 相位3 wait_done 返回 (done=%u)\n", g_done);
+    kinfoln("[bench] phase 3 wait_done return (done=%u)\n", g_done);
     if (g_sw_target_ptr)
-        kinfoln("[bench] 目标 dispatch=%llu (目标级 shortwin=%u stalled=%u)\n",
+        kinfoln("[bench] target dispatch=%llu (target shortwin=%u stalled=%u)\n",
                 (unsigned long long)g_sw_target_ptr->dispatch_count,
                 g_sw_target_ptr->rip_short_windows, g_sw_target_ptr->rip_stalled);
     Schedule::GetRipStats(bench_cpu, post);
     eval_shortwin(&g_report.shortwin, pre, post);
     settle(200);
-    kinfoln("[bench] 相位3 完成\n");
+    kinfoln("[bench] phase 3 done\n");
 
     /* 4. 振荡: 运行期轮询融合权重 */
-    kinfoln("[bench] 相位4 振荡\n");
+    kinfoln("[bench] phase 4 oscillation\n");
     g_done = 0;
     Schedule::NewKernelThread(proc, bench_cpu, 8, (void*)bench_osc_thread);
     uint64_t wmin = ~0ULL, wmax = 0, toggles = 0, lastw = 0;
@@ -338,7 +338,7 @@ bool Run(uint32_t bench_cpu) {
     /* 实际量子快照: shortwin 判据的前提 (round 25 动态量子失配) */
     cpu_t *bcpu = get_cpu(bench_cpu);
     g_report.base_quantum_ms = bcpu ? bcpu->base_quantum : 0;
-    kinfoln("[bench] 四相位全部完成\n");
+    kinfoln("[bench] all four phases complete\n");
     return true;
 }
 

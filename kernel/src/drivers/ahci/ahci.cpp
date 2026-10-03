@@ -170,7 +170,7 @@ namespace AHCI
     {
         /* P0-11: PRDT 数量钳制 (命令表 1 页 ≈ 248 条目), 防越界 memset */
         if (sectorCount > 248 * 16) {
-            kerror("AHCI Read: sectorCount %u 超 PRDT 容量\n", sectorCount);
+            kerror("AHCI Read: sectorCount %u exceeds PRDT capacity\n", sectorCount);
             return false;
         }
         uint32_t sectorL = (uint32_t)sector;
@@ -284,7 +284,7 @@ namespace AHCI
     {
         /* P0-11: PRDT 数量钳制 (命令表 1 页 ≈ 248 条目), 防越界 memset */
         if (sectorCount > 248 * 16) {
-            kerror("AHCI Write: sectorCount %u 超 PRDT 容量\n", sectorCount);
+            kerror("AHCI Write: sectorCount %u exceeds PRDT capacity\n", sectorCount);
             return false;
         }
         uint32_t sectorL = (uint32_t)sector;

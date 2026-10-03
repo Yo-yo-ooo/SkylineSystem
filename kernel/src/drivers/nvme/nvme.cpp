@@ -91,7 +91,7 @@ NVME::NVME(PCI::PCIHeader0 *header){
     // 无条件 BAR1<<32, 32 位 BAR/IO BAR 会拼出垃圾地址。
     uint32_t bar0 = header->BAR0;
     if ((bar0 & 1) != 0 || ((bar0 >> 1) & 3) != 2) {
-        kerror("NVME: BAR0 不是 64 位 MMIO (raw=%#x), 放弃控制器\n", bar0);
+        kerror("NVME: BAR0 is not 64-bit MMIO (raw=%#x), abandoning controller\n", bar0);
         this->flags = 1;   /* invalid: 调用方 (probe) 据此拒绝 */
         return;
     }
