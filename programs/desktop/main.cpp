@@ -22,14 +22,14 @@ uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place);
 /* Generic windowed-app spawn (defined in loader.cpp); notepad uses it. */
 uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
                           uint32_t bodyW, uint32_t bodyH,
-                          SkyWinPlacement *place);
+                          SkyWinPlacement *place, uint32_t paperRGB);
 
 /* Caption glyph painter + sized chrome rasterizer, both defined in loader.cpp */
 void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
                           int32_t bodyW, int32_t titleH, int maximized);
 void SkyPaintChromeSized(FrameBuffer* s, int32_t surfW, int32_t surfH,
                          int32_t bodyW, int32_t bodyH, int restoreGlyph,
-                         const char* title);
+                         const char* title, uint32_t paperRGB);
 
 // 处理无符号 64 位整数
 const char *to_string(uint64_t value)
@@ -292,7 +292,8 @@ static void wm_rebuild_resize(uint32_t* rzSurf, int32_t rzPitch,
     rb.BufferSize        = (uint64_t)rzPitch * rows * sizeof(uint32_t);
     rb.Width = rb.PixelsPerScanLine = rzPitch;
     rb.Height            = rows;
-    SkyPaintChromeSized(&rb, rzPitch, rows, nw, nh, 0, "Skyline Console");
+    SkyPaintChromeSized(&rb, rzPitch, rows, nw, nh, 0, "Skyline Console",
+                        SKYRGB_PAPER);
     wm_mirror_content(rzSurf, rzPitch, M, M + (int32_t)SKYWIN_TITLE_H,
                       nw, nh, normSurf);
 }
@@ -405,8 +406,9 @@ int main(){
     static SkyWinPlacement notePlace;
     static Window noteWin;
     const uint32_t NOTE_W = 560u, NOTE_H = 420u;
+    const uint32_t NOTE_PAPER = 0xFF0F0F12u;  /* matches notepad content bg */
     if (SpawnWindowedApp(&fb, "/mp/notepad.elf", "Notepad",
-                         NOTE_W, NOTE_H, &notePlace)) {
+                         NOTE_W, NOTE_H, &notePlace, NOTE_PAPER)) {
         noteWin.PosX = notePlace.x + 90u;
         noteWin.PosY = notePlace.y + 70u;
         noteWin.SizeX = notePlace.w;
@@ -507,8 +509,13 @@ int main(){
     int32_t  grabDX = 0, grabDY = 0;
     uint8_t  rzDir = 0;   /* edge resize directions: bit0 L,1 R,2 T,3 B       */
     int32_t  rsX = 0, rsY = 0, rsW = 0, rsH = 0, rsMX = 0, rsMY = 0;
-    int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz */
+    int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz,7 note */
     uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
+
+    /* Notepad is the topmost layer and independent of the console WM state;
+       these track a caption drag of that window. */
+    bool     noteDrag = false;
+    int32_t  noteGrabX = 0, noteGrabY = 0;
 
     comp.SetCursor(0, 0, true);
 
@@ -569,7 +576,29 @@ int main(){
 
         if (leftDown && !prevLeft) {                 /* press edge: classify  */
             pressHit = 0; rzDir = 0;
-            if (wmMode == WM_NORMAL || wmMode == WM_MAX) {
+
+            /* Notepad is the TOPMOST layer, so it is hit-tested before the
+               console. A press on its caption (outside the caption buttons)
+               starts a window move; ANY press inside its body is claimed, so
+               it can never fall through to the console caption/resize logic
+               and move the window hidden underneath. */
+            {
+                int32_t nbx = (int32_t)noteWin.PosX + M;
+                int32_t nby = (int32_t)noteWin.PosY + M;
+                int32_t nbw = (int32_t)noteWin.SizeX - 2 * M;
+                int32_t nbh = (int32_t)noteWin.SizeY - 2 * M;
+                if (mx >= nbx && mx < nbx + nbw && my >= nby && my < nby + nbh) {
+                    pressHit = 7;
+                    int32_t btnStart = nbx + nbw - 3 * (int32_t)SKYWIN_BTN_W;
+                    if (my < nby + th && mx < btnStart) {
+                        noteDrag = true;
+                        noteGrabX = mx - (int32_t)noteWin.PosX;
+                        noteGrabY = my - (int32_t)noteWin.PosY;
+                    }
+                }
+            }
+
+            if (pressHit == 0 && (wmMode == WM_NORMAL || wmMode == WM_MAX)) {
                 int32_t minL   = bx + bw - 3 * (int32_t)SKYWIN_BTN_W;
                 int32_t maxL   = bx + bw - 2 * (int32_t)SKYWIN_BTN_W;
                 int32_t closeL = bx + bw - 1 * (int32_t)SKYWIN_BTN_W;
@@ -620,10 +649,28 @@ int main(){
             const int32_t xHi = fb_width  - 120;
             const int32_t yLo = -M;
             const int32_t yHi = fb_height - (int32_t)barH - th - M;
-            if (nx < xLo) nx = xLo; if (nx > xHi) nx = xHi;
-            if (ny < yLo) ny = yLo; if (ny > yHi) ny = yHi;
+            if (nx < xLo) { nx = xLo; }
+            if (nx > xHi) { nx = xHi; }
+            if (ny < yLo) { ny = yLo; }
+            if (ny > yHi) { ny = yHi; }
             normX = (uint32_t)nx; normY = (uint32_t)ny;
             comp.MoveWindow(&consoleWin, normX, normY);
+        }
+
+        if (leftDown && noteDrag) {                          /* notepad move  */
+            int32_t nx = mx - noteGrabX, ny = my - noteGrabY;
+            const int32_t bodyW = (int32_t)noteWin.SizeX - 2 * M;
+            /* Keep at least 120 px of the body on screen and above taskbar. */
+            const int32_t xLo = -(bodyW + 2 * M - 120);
+            const int32_t xHi = fb_width  - 120;
+            const int32_t yLo = -M;
+            const int32_t yHi = fb_height - (int32_t)barH - th - M;
+            if (nx < xLo) { nx = xLo; }
+            if (nx > xHi) { nx = xHi; }
+            if (ny < yLo) { ny = yLo; }
+            if (ny > yHi) { ny = yHi; }
+            noteWin.PosX = (uint32_t)nx; noteWin.PosY = (uint32_t)ny;
+            comp.MoveWindow(&noteWin, noteWin.PosX, noteWin.PosY);
         }
 
         if (leftDown && resizing && wmMode == WM_NORMAL) {      /* edge resize */
@@ -682,6 +729,7 @@ int main(){
             }
             dragging = false;
             resizing = false;
+            noteDrag = false;
 
             if (fire) {
                 WmDateTime fireDT;
@@ -802,7 +850,7 @@ int main(){
 
             /* Drag/resize tracks the hand; otherwise recompose the slow scene
                at ~30Hz so console output still advances while moving. */
-            if (dragging || resizing || now - last_scene >= scene_gap) {
+            if (dragging || resizing || noteDrag || now - last_scene >= scene_gap) {
                 comp.Compose();
                 last_scene = now;
             }

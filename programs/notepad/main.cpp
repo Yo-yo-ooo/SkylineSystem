@@ -130,6 +130,7 @@ int main() {
     volatile uint64_t* q = (volatile uint64_t*)SKYWIN_PROTO_PAGE_VA;
     uint64_t contentVA = q[SKYWIN_PROTO_CONTENT_VA];
     uint32_t pitch    = (uint32_t)q[SKYWIN_PROTO_PITCH];
+    uint32_t contentW = (uint32_t)q[SKYWIN_PROTO_CONTENT_W];
     uint32_t contentH = (uint32_t)q[SKYWIN_PROTO_CONTENT_H];
     if (!contentVA) return 1;
 
@@ -149,8 +150,12 @@ int main() {
 
     FrameBuffer cb;
     cb.BaseAddress       = (void*)contentVA;
-    cb.BufferSize        = (uint64_t)pitch * contentH * sizeof(uint32_t);
-    cb.Width = cb.PixelsPerScanLine = pitch;
+    cb.BufferSize        = q[SKYWIN_PROTO_CONTENT_SZ];
+    /* PixelsPerScanLine is the wider shadow-bearing surface stride, while
+       Width is the body-wide run so every fill/clip stops at the content edge
+       and never paints the shadow margin (which squared off the right edge). */
+    cb.PixelsPerScanLine = pitch;
+    cb.Width             = contentW;
     cb.Height            = contentH;
 
     const int PAD_X = 8, PAD_Y = 6;
@@ -159,7 +164,7 @@ int main() {
     const uint32_t CARET = 0xFF8FD3FFu;
 
     auto render = [&]() {
-        DrawFillRect(&cb, 0, 0, pitch, contentH, PAPER);
+        DrawFillRect(&cb, 0, 0, contentW, contentH, PAPER);
         for (int i = 0; i < g_nLines; i++) {
             int y = PAD_Y + i * lineH;
             if (y + lineH > (int)contentH) break;

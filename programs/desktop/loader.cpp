@@ -111,7 +111,7 @@ void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
    the compositor). restoreGlyph selects the two-box "restore" caption icon. */
 void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
                          int32_t bodyW, int32_t bodyH, int restoreGlyph,
-                         const char* title) {
+                         const char* title, uint32_t paperRGB) {
     const int32_t SW = surfW;
     const int32_t SH = surfH;
     const int32_t M  = (int32_t)SKYWIN_SHADOW;
@@ -148,8 +148,7 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
                 if (d > -1.0f)                fill = SKYRGB_BORDER;   /* hairline */
                 else if ((int32_t)by == TH-1) fill = SKYRGB_SEP;      /* separator*/
                 else if (by < (float)TH)      fill = SKYRGB_TITLE;
-                else                          fill = SKYRGB_PAPER;
-                out[idx] = 0xFF000000u | (fill & 0x00FFFFFFu);
+                else                          fill = paperRGB;       /* client paper */                out[idx] = 0xFF000000u | (fill & 0x00FFFFFFu);
                 continue;
             }
 
@@ -165,7 +164,7 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
             float aOut = cov + sh * (1.f - cov);
             if (aOut <= 0.003f) { out[idx] = 0; continue; }
 
-            uint32_t fill = (by < (float)TH) ? SKYRGB_TITLE : SKYRGB_PAPER;
+            uint32_t fill = (by < (float)TH) ? SKYRGB_TITLE : paperRGB;
             uint32_t fr = (fill >> 16) & 0xFF, fg = (fill >> 8) & 0xFF, fb = fill & 0xFF;
             /* shadow is pure black, so out_rgb = fill*cov / aOut */
             uint32_t oa = (uint32_t)(aOut * 255.f + 0.5f);
@@ -187,19 +186,12 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
     SkyPaintCaptionIcons(wb, M, M, bodyW, TH, restoreGlyph);
 }
 
-/* The one-shot fixed normal surface is the sized painter at SKYWIN_W x H. */
-static void paint_console_chrome(FrameBuffer *wb) {
-    SkyPaintChromeSized(wb, (int32_t)SKYWIN_SURF_W, (int32_t)SKYWIN_SURF_H,
-                        (int32_t)SKYWIN_W, (int32_t)SKYWIN_H, 0,
-                        "Skyline Console");
-}
-
 /* Spawn a windowed userspace app and hand it an ARGB surface (chrome painted
    by the WM before launch) plus the fixed protocol page. Generic over the elf
    path, title and body size; TLoad and the notepad launch both use this. */
 uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
                           uint32_t bodyW, uint32_t bodyH,
-                          SkyWinPlacement *place) {
+                          SkyWinPlacement *place, uint32_t paperRGB) {
     if (!Fb || !Fb->BaseAddress) return 0;
 
     uint64_t pid = sys_load((uint64_t)elf, 0, 0);
@@ -262,7 +254,7 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     wb.Height            = surfH;
     wb.PixelsPerScanLine = surfW;
     SkyPaintChromeSized(&wb, (int32_t)surfW, (int32_t)surfH,
-                        (int32_t)bodyW, (int32_t)bodyH, 0, title);
+                        (int32_t)bodyW, (int32_t)bodyH, 0, title, paperRGB);
 
     if ((int64_t)sys_launch(pid) < 0) {
         /* P1-49: 启动失败回滚 —— 归还 share 1 桌面别名 + 击杀进程 */
@@ -314,5 +306,5 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place) {
     return SpawnWindowedApp(Fb, "/mp/hw2.elf", "Skyline Console",
-                            SKYWIN_W, SKYWIN_H, place);
+                            SKYWIN_W, SKYWIN_H, place, SKYRGB_PAPER);
 }
