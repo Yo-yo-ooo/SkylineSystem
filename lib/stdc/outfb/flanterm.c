@@ -294,9 +294,25 @@ static void term_double_buffer_flush(struct flanterm_context *ctx) {
     
     // 3. 绘制光标
     if (likely(ctx->cursor_enabled)) {
-        int cx = ctx->margin + ctx->cursor_x * ctx->char_width;
+        /* The TTF backend draws proportional text from the margin using real
+           glyph advances (a whole single-colour line is one TTF_DrawText run),
+           not on a fixed char_width grid. Position the caret at the true width
+           of the prefix before it, otherwise the block lands far to the right
+           of the last glyph (char_width is the wide "M" advance). */
+        char prefix[208];
+        size_t pn = ctx->cursor_x;
+        if (pn > 200) pn = 200;
+        for (size_t i = 0; i < pn; i++)
+            prefix[i] = ctx->grid[ctx->cursor_y * ctx->cols + i].c;
+        prefix[pn] = '\0';
+        int pw = 0, ph = 0;
+        TTF_GetTextSize(ctx->font, prefix, &pw, &ph);
+        int cx = ctx->margin + pw;
+        int bar_w = 0, bar_h = 0;
+        TTF_GetTextSize(ctx->font, "0", &bar_w, &bar_h);
+        if (bar_w < 2) bar_w = ctx->char_width;
         int cy = ctx->margin + ctx->cursor_y * ctx->char_height + ctx->char_height - 4;
-        draw_rect(ctx->fb, cx, cy, ctx->char_width, 3, ctx->text_fg);
+        draw_rect(ctx->fb, cx, cy, bar_w, 3, ctx->text_fg);
     }
     
     ctx->old_cursor_x = ctx->cursor_x;

@@ -25,6 +25,8 @@ extern "C" {
 
 #define DEFAULT_BUF_SIZE 4096
 
+#define EOF (-1)   /* end-of-file / input-failure sentinel */
+
 typedef struct {
     int32_t fd;            // 内核文件句柄
     uint64_t file_size;    // 文件总大小
@@ -58,6 +60,25 @@ long ftell(FILE * __restrict__ stream);
 #define printf printf_
 int32_t printf_(const char* format, ...);
 #define _printf printf_
+
+/**
+ * scanf / sscanf — share one full-featured core parser.
+ * scanf reads the shared keyboard event ring through a canonical line
+ * discipline (typed input is echoed into the console, Backspace edits, Enter
+ * submits the line); sscanf parses a NUL-terminated string.
+ *
+ * Conversions: %d %i %u %x %X %o %f %e %g %a %F %E %G %A %c %s %p %n %[ %%
+ * with field width, assignment-suppression (*) and length modifiers
+ * hh h l ll L j z t.
+ * \return number of input items successfully assigned, or EOF.
+ */
+#define scanf  scanf_
+#define sscanf sscanf_
+int32_t scanf_(const char* format, ...);
+int32_t sscanf_(const char* str, const char* format, ...);
+
+/* internal: raw write into the shared console terminal (input echo) */
+void console_stdout_write(const char* s, size_t n);
 
 /**
  * Tiny sprintf implementation

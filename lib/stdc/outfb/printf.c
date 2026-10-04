@@ -117,6 +117,14 @@ void _putchar(char character) {
     }
 }
 
+/* Raw write into the shared console, used by the canonical stdin reader in
+   scanf.c to echo keystrokes (and backspace edits) into the same terminal. */
+void console_stdout_write(const char *s, size_t n) {
+    struct flanterm_context *term = get_current_stdout();
+    if (likely(term != NULL && s != NULL && n != 0))
+        flanterm_write(term, s, n);
+}
+
 
 // define this globally (e.g. gcc -DPRINTF_INCLUDE_CONFIG_H ...) to include the
 // printf_config.h header file

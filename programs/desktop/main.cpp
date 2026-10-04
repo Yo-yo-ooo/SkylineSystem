@@ -31,7 +31,6 @@ void SkyPaintChromeSized(FrameBuffer* s, int32_t surfW, int32_t surfH,
                          int32_t bodyW, int32_t bodyH, int restoreGlyph,
                          const char* title, uint32_t paperRGB);
 
-// 处理无符号 64 位整数
 const char *to_string(uint64_t value)
 {
     uint8_t i = 0;
@@ -514,7 +513,7 @@ int main(){
     int32_t  grabDX = 0, grabDY = 0;
     uint8_t  rzDir = 0;   /* edge resize directions: bit0 L,1 R,2 T,3 B       */
     int32_t  rsX = 0, rsY = 0, rsW = 0, rsH = 0, rsMX = 0, rsMY = 0;
-    int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz,7 note */
+    int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz,7 note,8 content,9 note-close */
     uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
 
     /* Notepad is the topmost layer and independent of the console WM state;
@@ -598,7 +597,10 @@ int main(){
                 pressHit = 7;
                 comp.RaiseWindow(&noteWin);   /* click-to-front (Win11) */
                 int32_t btnStart = nbx + nbw - 3 * (int32_t)SKYWIN_BTN_W;
-                if (my < nby + th && mx < btnStart) {
+                int32_t noteCloseL = nbx + nbw - (int32_t)SKYWIN_BTN_W;
+                if (inBox(noteCloseL, nby, (int32_t)SKYWIN_BTN_W, th)) {
+                    pressHit = 9;             /* notepad close button */
+                } else if (my < nby + th && mx < btnStart) {
                     noteDrag = true;
                     noteGrabX = mx - (int32_t)noteWin.PosX;
                     noteGrabY = my - (int32_t)noteWin.PosY;
@@ -665,7 +667,10 @@ int main(){
                 pressHit = 7;
                 comp.RaiseWindow(&noteWin);
                 int32_t btnStart = nbx + nbw - 3 * (int32_t)SKYWIN_BTN_W;
-                if (my < nby + th && mx < btnStart) {
+                int32_t noteCloseL = nbx + nbw - (int32_t)SKYWIN_BTN_W;
+                if (inBox(noteCloseL, nby, (int32_t)SKYWIN_BTN_W, th)) {
+                    pressHit = 9;             /* notepad close button */
+                } else if (my < nby + th && mx < btnStart) {
                     noteDrag = true;
                     noteGrabX = mx - (int32_t)noteWin.PosX;
                     noteGrabY = my - (int32_t)noteWin.PosY;
@@ -745,6 +750,12 @@ int main(){
                 fire = inBox(lx, by, (int32_t)SKYWIN_BTN_W, th);
             } else if (pressHit == 5) {
                 fire = inBox(tbX0, tbY0, tbW, tbH);
+            } else if (pressHit == 9) {
+                int32_t nbx2 = (int32_t)noteWin.PosX + M;
+                int32_t nby2 = (int32_t)noteWin.PosY + M;
+                int32_t nbw2 = (int32_t)noteWin.SizeX - 2 * M;
+                int32_t noteCloseL = nbx2 + nbw2 - (int32_t)SKYWIN_BTN_W;
+                fire = inBox(noteCloseL, nby2, (int32_t)SKYWIN_BTN_W, th);
             }
 
             /* Finish a live resize at the exact release geometry. */
@@ -774,8 +785,8 @@ int main(){
                     wmDirty = true;
                 } else if (pressHit == 4) {                 /* close: kill + unregister */
                     wmMode = WM_CLOSED;
-                    /* 审计 #11 (round 2 修复): 原 sys_kill(pid, 0) 只是
-                       存活探测, 客户端进程从不终止 —— 关闭按钮形同虚设 */
+                    /* Audit: signal 9 actually terminates the client; signal 0
+                       is only a liveness probe and left the button dead. */
                     if (place.client_pid) sys_kill(place.client_pid, 9);
                     comp.UnregisterWindow(&consoleWin);
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 2, &fireDT, haveDT);
@@ -813,6 +824,11 @@ int main(){
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tbState,
                                     &fireDT, haveDT);
                     wmDirty = true;
+                } else if (pressHit == 9) {                 /* notepad close    */
+                    if (notePlace.client_pid) sys_kill(notePlace.client_pid, 9);
+                    comp.UnregisterWindow(&noteWin);
+                    notePlace.client_pid = 0;
+                    wmDirty = true;
                 }
             }
             pressHit = 0;
@@ -849,15 +865,15 @@ int main(){
             static uint64_t dead_check_at = 0;
             if (now - dead_check_at > tsc_per_ms * 500) {
                 dead_check_at = now;
-                if (place.client_pid &&
-                    (int64_t)sys_kill(place.client_pid, 0) < 0) {
+                int64_t rConsole = place.client_pid ? sys_kill(place.client_pid, 0) : 1;
+                int64_t rNote    = notePlace.client_pid ? sys_kill(notePlace.client_pid, 0) : 1;
+                if (place.client_pid && rConsole < 0) {
                     comp.UnregisterWindow(&consoleWin);
                     place.client_pid = 0;
                     wmDirty = true;
                 }
 #if 1
-                if (notePlace.client_pid &&
-                    (int64_t)sys_kill(notePlace.client_pid, 0) < 0) {
+                if (notePlace.client_pid && rNote < 0) {
                     comp.UnregisterWindow(&noteWin);
                     notePlace.client_pid = 0;
                     wmDirty = true;

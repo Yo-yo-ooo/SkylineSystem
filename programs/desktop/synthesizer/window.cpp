@@ -6,6 +6,8 @@
 #include <syscall.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 /*
  * Worker threads are pinned 1:1 to CPUs through sys_thread_launch's hint.
@@ -556,7 +558,7 @@ void Compositor::WorkerEntry(uint32_t id) {
         last_seq = seq;
 
         ComposeStripToBack(id);                 /* scene -> back_ only */
-        /* TEMP (诊断): 回退为计数器 (对照 B1) */
+        /* Signal this worker finished its strip for the current frame. */
         __atomic_add_fetch(&done_compose_, 1, __ATOMIC_RELEASE);
         (void)worker_done_seq_;
     }
@@ -654,8 +656,8 @@ void Compositor::Compose() {
        frame gaps jittered by whole scheduling quanta (stuttery pointer). */
     const uint32_t peers = ncpus_ - 1;
 
-    /* phase 1 (off-screen): peers render strips 1..N-1 to back_, main strip 0 */
-    /* TEMP (round 2 诊断): 回退 B1 帧号屏障为原计数器屏障, 对照桌面挂点 */
+    /* phase 1 (off-screen): peers render strips 1..N-1 to back_, main strip 0.
+       Bump the frame sequence, then wait on the per-frame completion counter. */
     __atomic_store_n(&done_compose_, 0, __ATOMIC_RELEASE);
     __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
     ComposeStripToBack(0);
@@ -663,8 +665,8 @@ void Compositor::Compose() {
     while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < peers)
         comp_backoff(cw);
 
-    /* P1-53: 屏障点 —— 所有 worker 已过当前帧的列表遍历, 退役节点
-       此刻无人引用, 统一释放 */
+    /* P1-53: barrier point -- every worker has finished this frame's list
+       walk, so retired nodes are referenced by nobody and can be freed. */
     {
         LockList();
         CompWinNode* r = g_retire_list;

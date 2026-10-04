@@ -45,20 +45,51 @@
     #define TTF_ATOMIC_LOAD(ptr) (*(ptr))
 #endif
 
+// ==================== 字形图集几何 ====================
+// 页大小 256x256 (64KB, 8bpp alpha)。细粒度页保证 LRU 重建后留有
+// >=20% 预算余量, 不会出现 "重建后仍放不下 -> 再重建" 的抖动。
+#define TTF_ATLAS_PAGE_W 256
+#define TTF_ATLAS_PAGE_H 256
+
+/* Glyph geometry, computed WITHOUT rasterizing. render_glyph() produces
+   bitmaps whose width/height/off_x/off_y match these values exactly, so
+   every measure pass is allocation-free, raster-free AND atlas-free
+   (measuring never evicts hot glyphs). */
+typedef struct {
+    int32_t advance;       /* horizontal advance, px */
+    int32_t off_x, off_y;  /* final placement offsets (post italic / downsample) */
+    int32_t width, height; /* final bitmap dims (== render_glyph result) */
+    int32_t ras_w, ras_h;  /* raster dims (oversampled, pre-italic) */
+    bool    has_ink;
+} TTF_GlyphGeo;
+
+/* One cached glyph. page semantics:
+     page >= 0 : packed in pages[page] at (x, y), row stride = page width
+     page == -1 : no ink (space etc.), metrics only
+     page == -2 : oversized transient (bigger than the whole byte budget),
+                  pixels live in font->transient, NOT indexed in the hash */
 typedef struct {
     int32_t codepoint;
-    int32_t advanceWidth;
-    int32_t off_x;
-    int32_t off_y;
-    TTF_Bitmap bmp;
-    int32_t next;
-    int32_t lru_prev;
-    int32_t lru_next;
-} TTF_CacheNode;
+    int32_t advance;
+    int32_t off_x, off_y;
+    int32_t page;
+    int32_t x, y;
+    int32_t w, h;
+    uint64_t lru;          /* monotonic use stamp */
+} TTF_AtlasGlyph;
+
+/* Shelf packer page: glyphs are placed left-to-right; when a row is full
+   the cursor wraps to a new row of the tallest glyph height seen. */
+typedef struct {
+    unsigned char* pixels;
+    int32_t w, h;
+    int32_t cursor_x, cursor_y;
+    int32_t row_h;
+} TTF_AtlasPage;
 
 struct TTF_Font_Internal {
     stbtt_fontinfo info;
-    unsigned char *data; 
+    unsigned char *data;
     float scale;
     int32_t pixel_height;
     int32_t ascent;
@@ -67,25 +98,29 @@ struct TTF_Font_Internal {
     int32_t line_height; /* ascent - descent + line_gap (+1 px guard) */
     bool is_initialized;
 
-    int32_t cache_capacity;
-    int32_t hash_size;
-    TTF_CacheNode *cache_nodes;
-    int32_t *hash_table;
-    int32_t lru_head;
-    int32_t lru_tail;
-    int32_t free_list;
+    /* ---- glyph atlas ---- */
+    TTF_AtlasPage*  pages;                        int32_t page_count, page_cap;
+    uint64_t        atlas_bytes, atlas_max_bytes;
+    TTF_AtlasGlyph* glyphs;                       int32_t glyph_count, glyph_cap, glyph_max;
+    int32_t*        hash;                         int32_t hash_size, hash_used;
+    uint64_t        lru_stamp;
+    TTF_Bitmap      transient;        /* owned pixels of the oversized glyph */
+    TTF_AtlasGlyph  transient_glyph;
+    unsigned char*  scratch;          /* TTF_GetGlyphBitmap copy-out buffer */
+    size_t          scratch_cap;
+    TTF_Bitmap      scratch_view;
 
     TTF_MUTEX_TYPE lock;
-    
+
     int32_t oversampling;
     int32_t bold_strength;
     float italic_skew;
 
     unsigned long hit_count;
     unsigned long miss_count;
+    unsigned long evict_count;
 };
 
-// 确保 TTF_Font 类型定义存在
 typedef struct TTF_Font_Internal TTF_Font;
 
 typedef struct {
@@ -102,10 +137,10 @@ static bool is_cjk_char(int32_t codepoint) {
 }
 
 static bool is_punct_no_start(int32_t codepoint) {
-    return codepoint == 0x3001 || codepoint == 0x3002 || 
-           codepoint == 0xFF0C || codepoint == 0xFF1A || codepoint == 0xFF1B || 
-           codepoint == 0xFF01 || codepoint == 0xFF1F || 
-           codepoint == 0xFF09 || codepoint == 0x300D || codepoint == 0xFF5D || 
+    return codepoint == 0x3001 || codepoint == 0x3002 ||
+           codepoint == 0xFF0C || codepoint == 0xFF1A || codepoint == 0xFF1B ||
+           codepoint == 0xFF01 || codepoint == 0xFF1F ||
+           codepoint == 0xFF09 || codepoint == 0x300D || codepoint == 0xFF5D ||
            codepoint == 0x300F || codepoint == 0x201D || codepoint == 0x2019;
 }
 
@@ -127,84 +162,24 @@ static int32_t utf8_to_codepoint(const char *str, int32_t str_len, int32_t *adva
         if (str_len < 3 || ((unsigned char)str[1] & 0xC0) != 0x80 || ((unsigned char)str[2] & 0xC0) != 0x80) goto invalid;
         *advance = 3; return ((c & 0x0F) << 12) | (((unsigned char)str[1] & 0x3F) << 6) | ((unsigned char)str[2] & 0x3F);
     } else if ((c >> 3) == 0x1E) {
-        if (str_len < 4 || ((unsigned char)str[1] & 0xC0) != 0x80 || 
+        if (str_len < 4 || ((unsigned char)str[1] & 0xC0) != 0x80 ||
             ((unsigned char)str[2] & 0xC0) != 0x80 || ((unsigned char)str[3] & 0xC0) != 0x80) goto invalid;
         *advance = 4;
         return ((c & 0x07) << 18) | (((unsigned char)str[1] & 0x3F) << 12) |
                (((unsigned char)str[2] & 0x3F) << 6) | ((unsigned char)str[3] & 0x3F);
     }
 invalid:
-    *advance = 1; return 0xFFFD; 
+    *advance = 1; return 0xFFFD;
 }
 
-static void cache_init(TTF_Font* font) {
-    font->lru_head = -1; font->lru_tail = -1; font->free_list = 0;
-    for (int32_t i = 0; i < font->hash_size; i++) font->hash_table[i] = -1;
-    for (int32_t i = 0; i < font->cache_capacity; i++) {
-        font->cache_nodes[i].lru_prev = -1;
-        font->cache_nodes[i].lru_next = i + 1;
-        font->cache_nodes[i].next = -1;
-        font->cache_nodes[i].codepoint = -1;
-        font->cache_nodes[i].bmp.pixels = NULL;
-    }
-    font->cache_nodes[font->cache_capacity - 1].lru_next = -1;
-}
-
-static void cache_unlink_lru(TTF_Font* font, int32_t idx) {
-    TTF_CacheNode* node = &font->cache_nodes[idx];
-    if (node->lru_prev != -1) font->cache_nodes[node->lru_prev].lru_next = node->lru_next;
-    else font->lru_head = node->lru_next;
-    if (node->lru_next != -1) font->cache_nodes[node->lru_next].lru_prev = node->lru_prev;
-    else font->lru_tail = node->lru_prev;
-    node->lru_prev = -1; node->lru_next = -1;
-}
-
-static void cache_push_front_lru(TTF_Font* font, int32_t idx) {
-    TTF_CacheNode* node = &font->cache_nodes[idx];
-    node->lru_prev = -1; node->lru_next = font->lru_head;
-    if (font->lru_head != -1) font->cache_nodes[font->lru_head].lru_prev = idx;
-    else font->lru_tail = idx;
-    font->lru_head = idx;
-}
-
-static uint32_t get_hash(int32_t cp, int32_t hash_size) { return ((uint32_t)cp) & (hash_size - 1); }
-
-static void hash_insert(TTF_Font* font, int32_t cp, int32_t idx) {
-    uint32_t hash = get_hash(cp, font->hash_size);
-    font->cache_nodes[idx].codepoint = cp;
-    font->cache_nodes[idx].next = font->hash_table[hash];
-    font->hash_table[hash] = idx;
-}
-
-static int32_t hash_find(TTF_Font* font, int32_t cp) {
-    uint32_t hash = get_hash(cp, font->hash_size);
-    int32_t idx = font->hash_table[hash];
-    while (idx != -1) {
-        if (font->cache_nodes[idx].codepoint == cp) return idx;
-        idx = font->cache_nodes[idx].next;
-    }
-    return -1;
-}
-
-static void hash_remove(TTF_Font* font, int32_t cp) {
-    uint32_t hash = get_hash(cp, font->hash_size);
-    int32_t* p_idx = &font->hash_table[hash];
-    while (*p_idx != -1) {
-        if (font->cache_nodes[*p_idx].codepoint == cp) {
-            int32_t target_idx = *p_idx;
-            *p_idx = font->cache_nodes[target_idx].next;
-            font->cache_nodes[target_idx].next = -1; 
-            return;
-        }
-        p_idx = &font->cache_nodes[*p_idx].next;
-    }
-}
-
-static void apply_italic_skew(TTF_Bitmap *bmp, float skew) {
-    if (skew <= 0.0f || !bmp->pixels) return;
+/* Skew failure is now FATAL for the render: the atlas trusts glyph_geo dims
+   for placement/copy, so a silently unskewed bitmap with skewed metrics
+   (legacy behavior) would smear neighboring rows. */
+static bool apply_italic_skew(TTF_Bitmap *bmp, float skew) {
+    if (skew <= 0.0f || !bmp->pixels) return true;
     int32_t new_w = bmp->width + (int32_t)(bmp->height * skew) + 1;
     unsigned char *new_pixels = (unsigned char*)TTF_MALLOC((size_t)new_w * bmp->height);
-    if (!new_pixels) return;
+    if (!new_pixels) return false;
     TTF_MEMSET(new_pixels, 0, (size_t)new_w * bmp->height);
 
     for (int32_t y = 0; y < bmp->height; y++) {
@@ -216,6 +191,7 @@ static void apply_italic_skew(TTF_Bitmap *bmp, float skew) {
     TTF_FREE(bmp->pixels);
     bmp->pixels = new_pixels;
     bmp->width = new_w;
+    return true;
 }
 
 static void downsample_bilinear(TTF_Bitmap *bmp, int32_t target_w, int32_t target_h) {
@@ -223,12 +199,12 @@ static void downsample_bilinear(TTF_Bitmap *bmp, int32_t target_w, int32_t targe
     if (target_w <= 0 || target_h <= 0) return;
 
     unsigned char *dst = (unsigned char*)TTF_MALLOC((size_t)target_w * target_h);
-    if (!dst) return;
+    if (!dst) return;   /* caller detects the dimension mismatch and bails */
     TTF_MEMSET(dst, 0, (size_t)target_w * target_h);
-    
+
     float scale_x = (float)bmp->width / target_w;
     float scale_y = (float)bmp->height / target_h;
-    
+
     for (int32_t y = 0; y < target_h; y++) {
         float fy = y * scale_y;
         int32_t y0 = (int32_t)fy;
@@ -239,12 +215,12 @@ static void downsample_bilinear(TTF_Bitmap *bmp, int32_t target_w, int32_t targe
             int32_t x0 = (int32_t)fx;
             int32_t x1 = x0 + 1;
             float dx = fx - x0;
-            
+
             unsigned char c00 = bmp->pixels[y0 * bmp->width + x0];
             unsigned char c01 = (x1 < bmp->width) ? bmp->pixels[y0 * bmp->width + x1] : 0;
             unsigned char c10 = (y1 < bmp->height) ? bmp->pixels[y1 * bmp->width + x0] : 0;
             unsigned char c11 = (x1 < bmp->width && y1 < bmp->height) ? bmp->pixels[y1 * bmp->width + x1] : 0;
-            
+
             float val = c00*(1-dx)*(1-dy) + c01*dx*(1-dy) + c10*(1-dx)*dy + c11*dx*dy;
             dst[y * target_w + x] = (unsigned char)(val + 0.5f);
         }
@@ -255,166 +231,483 @@ static void downsample_bilinear(TTF_Bitmap *bmp, int32_t target_w, int32_t targe
     bmp->height = target_h;
 }
 
-static TTF_CacheNode* get_glyph(TTF_Font* font, int32_t codepoint) {
-    if (!font->is_initialized) return NULL;
-    TTF_MUTEX_LOCK(font->lock);
-
-    int32_t idx = hash_find(font, codepoint);
-    if (idx != -1 && idx >= 0 && idx < font->cache_capacity) {
-        cache_unlink_lru(font, idx);
-        cache_push_front_lru(font, idx);
-        TTF_ATOMIC_FETCH_ADD(&font->hit_count, 1);
-        TTF_CacheNode* node = &font->cache_nodes[idx];
-        TTF_MUTEX_UNLOCK(font->lock);
-        return node;
-    }
-    
-    TTF_ATOMIC_FETCH_ADD(&font->miss_count, 1);
-
-    if (font->free_list != -1) {
-        idx = font->free_list;
-        /* Defensive: a corrupted free-list index must never be dereferenced. */
-        if (idx < 0 || idx >= font->cache_capacity) {
-            font->free_list = -1;
-            TTF_MUTEX_UNLOCK(font->lock);
-            return NULL;
-        }
-        int32_t nxt = font->cache_nodes[idx].lru_next;
-        if (nxt != -1 && (nxt < 0 || nxt >= font->cache_capacity)) nxt = -1;
-        font->free_list = nxt;
-    } else {
-        idx = font->lru_tail;
-        /* Defensive: a corrupted LRU tail must never be dereferenced. */
-        if (idx < 0 || idx >= font->cache_capacity) {
-            TTF_MUTEX_UNLOCK(font->lock);
-            return NULL;
-        }
-        cache_unlink_lru(font, idx);
-        hash_remove(font, font->cache_nodes[idx].codepoint);
-        if (font->cache_nodes[idx].bmp.pixels) {
-            TTF_FREE(font->cache_nodes[idx].bmp.pixels);
-            font->cache_nodes[idx].bmp.pixels = NULL;
-        }
-    }
-    
-    TTF_CacheNode* node = &font->cache_nodes[idx];
-    node->next = -1; 
-    node->codepoint = codepoint;
-    
+/* Caller holds font->lock. Pure metrics: no rasterization, no allocation,
+   no atlas interaction. Mirrors the transform chain of render_glyph exactly
+   (bold smears inside the existing box; italic widens and shifts;
+   oversampling divides dims and offsets). */
+static void glyph_geo(TTF_Font* font, int32_t codepoint, TTF_GlyphGeo* g) {
     int32_t advanceWidth, leftSideBearing;
     stbtt_GetCodepointHMetrics(&font->info, codepoint, &advanceWidth, &leftSideBearing);
-    node->advanceWidth = (int32_t)(advanceWidth * font->scale);
-    
+    g->advance = (int32_t)(advanceWidth * font->scale);
+
     int32_t x0, y0, x1, y1;
-    float subpix_shift = 0.0f;
-    stbtt_GetCodepointBitmapBoxSubpixel(&font->info, codepoint, font->scale * font->oversampling, 
-                                        font->scale * font->oversampling, subpix_shift, subpix_shift, &x0, &y0, &x1, &y1);
-    node->off_x = x0; node->off_y = y0;
-    
-    int32_t w = x1 - x0; int32_t h = y1 - y0;
-    node->bmp.width = w; node->bmp.height = h;
-    
-    if (w > 0 && h > 0) {
-        size_t mem_size = (size_t)w * (size_t)h;
-        if (mem_size / (size_t)w != (size_t)h) goto fail;
-        
-        node->bmp.pixels = (unsigned char*)TTF_MALLOC(mem_size);
-        if (!node->bmp.pixels) goto fail;
-        
-        TTF_MEMSET(node->bmp.pixels, 0, mem_size);
-        
-        stbtt_MakeCodepointBitmapSubpixel(&font->info, node->bmp.pixels, w, h, w, 
-                                          font->scale * font->oversampling, font->scale * font->oversampling, 
-                                          subpix_shift, subpix_shift, codepoint);
+    stbtt_GetCodepointBitmapBoxSubpixel(&font->info, codepoint,
+                                        font->scale * font->oversampling,
+                                        font->scale * font->oversampling,
+                                        0.0f, 0.0f, &x0, &y0, &x1, &y1);
 
-        if (font->bold_strength > 0) {
-            for (int32_t b = 1; b <= font->bold_strength; b++) {
-                for (int32_t y = 0; y < h; y++) {
-                    for (int32_t x = b; x < w; x++) {
-                        unsigned char val = node->bmp.pixels[y * w + x - b];
-                        if (val > node->bmp.pixels[y * w + x]) node->bmp.pixels[y * w + x] = val;
-                    }
-                }
-            }
-            for (int32_t b = 1; b <= font->bold_strength; b++) {
-                for (int32_t y = b; y < h; y++) {
-                    for (int32_t x = 0; x < w; x++) {
-                        unsigned char val = node->bmp.pixels[(y - b) * w + x];
-                        if (val > node->bmp.pixels[y * w + x]) node->bmp.pixels[y * w + x] = val;
-                    }
-                }
-            }
-        }
+    int32_t w = x1 - x0, h = y1 - y0;
+    g->ras_w = w; g->ras_h = h;
+    g->has_ink = (w > 0 && h > 0);
 
+    int32_t ox = x0, oy = y0;
+    if (g->has_ink) {
         if (font->italic_skew > 0.0f) {
-            apply_italic_skew(&node->bmp, font->italic_skew);
-            node->off_x -= (int32_t)(node->bmp.height * font->italic_skew);
+            int32_t shift = (int32_t)(h * font->italic_skew);
+            w += shift + 1;
+            ox = x0 - shift;
         }
-
         if (font->oversampling > 1) {
-            int32_t target_w = node->bmp.width / font->oversampling;
-            int32_t target_h = node->bmp.height / font->oversampling;
-            downsample_bilinear(&node->bmp, target_w, target_h);
-            node->off_x /= font->oversampling;
-            node->off_y /= font->oversampling;
+            w /= font->oversampling; h /= font->oversampling;
+            ox /= font->oversampling; oy /= font->oversampling;
         }
-    } else {
-        node->bmp.pixels = NULL;
     }
-    
-    hash_insert(font, codepoint, idx);
-    cache_push_front_lru(font, idx);
-    TTF_MUTEX_UNLOCK(font->lock);
-    return node;
+    g->width = w; g->height = h;
+    g->off_x = ox; g->off_y = oy;
+}
 
-fail:
-    node->bmp.pixels = NULL; node->bmp.width = 0; node->bmp.height = 0;
-    node->next = -1; node->lru_prev = -1;
-    node->lru_next = font->free_list;
-    font->free_list = idx;
-    TTF_MUTEX_UNLOCK(font->lock);
+/* Caller holds font->lock. Rasterizes on demand. out->pixels is freshly
+   allocated and OWNED BY THE CALLER. The returned bitmap's dims ALWAYS match
+   g->width/g->height on success (post-processing failures bail out cleanly
+   instead of storing a metrics/bitmap mismatch). */
+static bool render_glyph(TTF_Font* font, int32_t codepoint, TTF_GlyphGeo* g, TTF_Bitmap* out) {
+    glyph_geo(font, codepoint, g);
+
+    out->pixels = NULL;
+    out->width  = g->width;
+    out->height = g->height;
+    if (!g->has_ink) return true;          /* e.g. space: metrics only */
+
+    int32_t w = g->ras_w, h = g->ras_h;
+    size_t mem_size = (size_t)w * (size_t)h;
+    if (mem_size / (size_t)w != (size_t)h) return false;
+
+    unsigned char* px = (unsigned char*)TTF_MALLOC(mem_size);
+    if (!px) return false;
+    TTF_MEMSET(px, 0, mem_size);
+
+    stbtt_MakeCodepointBitmapSubpixel(&font->info, px, w, h, w,
+                                      font->scale * font->oversampling,
+                                      font->scale * font->oversampling,
+                                      0.0f, 0.0f, codepoint);
+
+    TTF_Bitmap tmp;
+    tmp.pixels = px; tmp.width = w; tmp.height = h;
+
+    if (font->bold_strength > 0) {
+        for (int32_t b = 1; b <= font->bold_strength; b++) {
+            for (int32_t y = 0; y < h; y++) {
+                for (int32_t x = b; x < w; x++) {
+                    unsigned char val = tmp.pixels[y * w + x - b];
+                    if (val > tmp.pixels[y * w + x]) tmp.pixels[y * w + x] = val;
+                }
+            }
+        }
+        for (int32_t b = 1; b <= font->bold_strength; b++) {
+            for (int32_t y = b; y < h; y++) {
+                for (int32_t x = 0; x < w; x++) {
+                    unsigned char val = tmp.pixels[(y - b) * w + x];
+                    if (val > tmp.pixels[y * w + x]) tmp.pixels[y * w + x] = val;
+                }
+            }
+        }
+    }
+
+    if (font->italic_skew > 0.0f) {
+        if (!apply_italic_skew(&tmp, font->italic_skew)) { TTF_FREE(tmp.pixels); return false; }
+    }
+
+    if (font->oversampling > 1) {
+        int32_t tw = tmp.width / font->oversampling;
+        int32_t th = tmp.height / font->oversampling;
+        if (tw > 0 && th > 0) {
+            downsample_bilinear(&tmp, tw, th);
+            if (tmp.width != tw || tmp.height != th) {   /* downsample OOM */
+                TTF_FREE(tmp.pixels);
+                return false;
+            }
+        }
+        /* tw/th == 0: glyph smaller than the oversampling factor. The bitmap
+           stays full-resolution, but geo divides to 0 so the caller discards
+           it (metrics-only entry) - legacy-compatible measurement. */
+    }
+
+    out->pixels = tmp.pixels;
+    out->width  = tmp.width;
+    out->height = tmp.height;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Atlas: open-addressing hash over glyph indices
+// ---------------------------------------------------------------------------
+static uint32_t atlas_hash_mix(int32_t cp, int32_t mask) {
+    uint32_t h = (uint32_t)cp;
+    h ^= h >> 16;
+    h *= 2654435761u;
+    h ^= h >> 16;
+    return h & (uint32_t)mask;
+}
+
+static int32_t atlas_hash_find(const TTF_Font* f, int32_t cp) {
+    if (!f->hash) return -1;
+    int32_t mask = f->hash_size - 1;
+    uint32_t h = atlas_hash_mix(cp, mask);
+    while (f->hash[h] != -1) {
+        if (f->glyphs[f->hash[h]].codepoint == cp) return f->hash[h];
+        h = (h + 1) & (uint32_t)mask;
+    }
+    return -1;
+}
+
+/* cp must be handled by the caller (absent or overwrite-able). Returns false
+   only on OOM, in which case the entry stays unindexed until the next LRU
+   rebuild re-inserts every array entry (self-healing). */
+static bool atlas_hash_insert(TTF_Font* f, int32_t cp, int32_t gi) {
+    if ((uint64_t)(f->hash_used + 1) * 10 >= (uint64_t)f->hash_size * 7) {
+        int32_t ns = f->hash_size * 2;
+        int32_t* nt = (int32_t*)TTF_MALLOC(sizeof(int32_t) * ns);
+        if (!nt) return false;
+        for (int32_t i = 0; i < ns; i++) nt[i] = -1;
+        int32_t* old = f->hash;
+        int32_t old_size = f->hash_size;
+        f->hash = nt; f->hash_size = ns; f->hash_used = 0;
+        for (int32_t i = 0; i < old_size; i++) {
+            int32_t e = old[i];
+            if (e == -1) continue;
+            uint32_t h = atlas_hash_mix(f->glyphs[e].codepoint, ns - 1);
+            while (nt[h] != -1) h = (h + 1) & (uint32_t)(ns - 1);
+            nt[h] = e;
+            f->hash_used++;
+        }
+        TTF_FREE(old);
+    }
+    int32_t mask = f->hash_size - 1;
+    uint32_t h = atlas_hash_mix(cp, mask);
+    while (f->hash[h] != -1) {
+        if (f->glyphs[f->hash[h]].codepoint == cp) { f->hash[h] = gi; return true; }
+        h = (h + 1) & (uint32_t)mask;
+    }
+    f->hash[h] = gi;
+    f->hash_used++;
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Atlas: shelf-packed pages
+// ---------------------------------------------------------------------------
+static int32_t atlas_page_new(TTF_Font* f, int32_t w, int32_t h) {
+    if (f->page_count == f->page_cap) {
+        int32_t nc = f->page_cap ? f->page_cap * 2 : 4;
+        TTF_AtlasPage* np = (TTF_AtlasPage*)TTF_REALLOC(f->pages, sizeof(TTF_AtlasPage) * nc);
+        if (!np) return -1;
+        f->pages = np;
+        f->page_cap = nc;
+    }
+    unsigned char* px = (unsigned char*)TTF_MALLOC((size_t)w * (size_t)h);
+    if (!px) return -1;
+    TTF_MEMSET(px, 0, (size_t)w * (size_t)h);
+    TTF_AtlasPage* p = &f->pages[f->page_count];
+    p->pixels = px; p->w = w; p->h = h;
+    p->cursor_x = 0; p->cursor_y = 0; p->row_h = 0;
+    f->atlas_bytes += (uint64_t)w * (uint64_t)h;
+    return f->page_count++;
+}
+
+/* Shelf placement with 1px gutters (gutter pixels stay 0: no bleed if the
+   page is ever uploaded as a GPU texture). Writes the output x and y only
+   on success. */
+static bool atlas_page_place(TTF_AtlasPage* p, int32_t w, int32_t h, int32_t* ox, int32_t* oy) {
+    if (w > p->w || h > p->h) return false;
+    if (p->cursor_x + w > p->w) {              /* wrap to a new row */
+        p->cursor_y += p->row_h + 1;
+        p->cursor_x = 0;
+        p->row_h = 0;
+    }
+    if (p->cursor_y + h > p->h) return false;
+    *ox = p->cursor_x;
+    *oy = p->cursor_y;
+    p->cursor_x = *ox + w + 1;
+    if (h > p->row_h) p->row_h = h;
+    return true;
+}
+
+/* Try existing pages (newest first), then one new page within `budget`.
+   Returns the page index (and writes g->x/g->y), or -1. */
+static int32_t atlas_place_budget(TTF_Font* f, TTF_AtlasGlyph* g, uint64_t budget) {
+    for (int32_t p = f->page_count - 1; p >= 0; p--) {
+        if (atlas_page_place(&f->pages[p], g->w, g->h, &g->x, &g->y)) return p;
+    }
+    int32_t pw = TTF_ATLAS_PAGE_W, ph = TTF_ATLAS_PAGE_H;
+    if (g->w > pw) pw = next_power_of_two(g->w);   /* oversized glyph: dedicated page */
+    if (g->h > ph) ph = next_power_of_two(g->h);
+    if (f->atlas_bytes + (uint64_t)pw * (uint64_t)ph > budget) return -1;
+    int32_t np = atlas_page_new(f, pw, ph);
+    if (np < 0) return -1;
+    if (!atlas_page_place(&f->pages[np], g->w, g->h, &g->x, &g->y)) return -1;
+    return np;
+}
+
+static void atlas_drop_all(TTF_Font* f) {
+    for (int32_t i = 0; i < f->page_count; i++) TTF_FREE(f->pages[i].pixels);
+    f->page_count = 0;
+    f->atlas_bytes = 0;
+    f->glyph_count = 0;
+    if (f->hash) {
+        for (int32_t i = 0; i < f->hash_size; i++) f->hash[i] = -1;
+        f->hash_used = 0;
+    }
+}
+
+/* --- tiny dependency-free heapsort (ascending) for LRU ordering --- */
+static void sift_down_u64(uint64_t* a, int32_t root, int32_t n) {
+    for (;;) {
+        int32_t l = 2 * root + 1, r = l + 1, m = root;
+        if (l < n && a[l] > a[m]) m = l;
+        if (r < n && a[r] > a[m]) m = r;
+        if (m == root) return;
+        uint64_t t = a[root]; a[root] = a[m]; a[m] = t;
+        root = m;
+    }
+}
+
+/* LRU rebuild: keep the hottest entries (<= ~66% of the entry cap, page
+   allocations capped at 80% of the byte budget so the triggering insert
+   always finds room afterwards), re-pack them into fresh pages by direct
+   pixel copy - NO re-rasterization - rebuild the hash, free the rest.
+   Rare, bounded stall; keeps memory under atlas_max_bytes. */
+static void atlas_evict_rebuild(TTF_Font* f) {
+    TTF_ATOMIC_FETCH_ADD(&f->evict_count, 1);
+    int32_t n = f->glyph_count;
+    if (n <= 0) { atlas_drop_all(f); return; }
+
+    uint64_t* keys = (uint64_t*)TTF_MALLOC((size_t)n * sizeof(uint64_t));
+    if (!keys) { atlas_drop_all(f); return; }   /* OOM: drop everything */
+
+    for (int32_t i = 0; i < n; i++)
+        keys[i] = (f->glyphs[i].lru << 20) | (uint64_t)(uint32_t)i;  /* idx < 2^20 */
+
+    for (int32_t i = n / 2 - 1; i >= 0; i--) sift_down_u64(keys, i, n);
+    for (int32_t end = n - 1; end > 0; end--) {
+        uint64_t t = keys[0]; keys[0] = keys[end]; keys[end] = t;
+        sift_down_u64(keys, 0, end);
+    }
+
+    const int32_t  keep_entries = f->glyph_max - f->glyph_max / 3;              /* ~66% */
+    const uint64_t page_budget  = f->atlas_max_bytes - f->atlas_max_bytes / 5;  /* 80% */
+
+    TTF_AtlasPage*  old_pages = f->pages;    int32_t old_page_count = f->page_count, old_page_cap = f->page_cap;
+    TTF_AtlasGlyph* old_glyphs = f->glyphs;  int32_t old_glyph_cap = f->glyph_cap;
+    const uint64_t  old_bytes = f->atlas_bytes;
+
+    f->pages = NULL; f->page_count = 0; f->page_cap = 0; f->atlas_bytes = 0;
+
+    int32_t new_cap = old_glyph_cap > 64 ? old_glyph_cap : 64;
+    TTF_AtlasGlyph* ng = (TTF_AtlasGlyph*)TTF_MALLOC((size_t)new_cap * sizeof(TTF_AtlasGlyph));
+    if (!ng) {   /* OOM mid-rebuild: restore, then hard reset */
+        f->pages = old_pages; f->page_count = old_page_count; f->page_cap = old_page_cap;
+        f->glyphs = old_glyphs; f->glyph_cap = old_glyph_cap; f->atlas_bytes = old_bytes;
+        TTF_FREE(keys);
+        atlas_drop_all(f);
+        return;
+    }
+
+    int32_t kept = 0;
+    for (int32_t k = n - 1; k >= 0; k--) {     /* hottest first */
+        if (kept >= keep_entries) break;
+        int32_t idx = (int32_t)(keys[k] & 0xFFFFFu);
+        TTF_AtlasGlyph g = old_glyphs[idx];
+        if (g.w > 0 && g.h > 0 && g.page >= 0) {
+            const TTF_AtlasPage* src_page = &old_pages[g.page];
+            int32_t sx = g.x, sy = g.y;
+            int32_t p = atlas_place_budget(f, &g, page_budget);
+            if (p < 0) break;                  /* budget out: drop this + all colder */
+            TTF_AtlasPage* dp = &f->pages[p];
+            for (int32_t row = 0; row < g.h; row++)
+                TTF_MEMCPY(dp->pixels + (size_t)(g.y + row) * (size_t)dp->w + (size_t)g.x,
+                           src_page->pixels + (size_t)(sy + row) * (size_t)src_page->w + (size_t)sx,
+                           (size_t)g.w);
+            g.page = p;
+        }
+        ng[kept++] = g;
+    }
+
+    TTF_FREE(old_glyphs);
+    f->glyphs = ng; f->glyph_cap = new_cap; f->glyph_count = kept;
+
+    for (int32_t i = 0; i < f->hash_size; i++) f->hash[i] = -1;
+    f->hash_used = 0;
+    for (int32_t i = 0; i < kept; i++)
+        atlas_hash_insert(f, ng[i].codepoint, i);
+
+    for (int32_t i = 0; i < old_page_count; i++) TTF_FREE(old_pages[i].pixels);
+    TTF_FREE(old_pages);
+    TTF_FREE(keys);
+}
+
+/* Resolve a glyph's pixels. Returns NULL for ink-less glyphs. */
+static const unsigned char* glyph_pixels(TTF_Font* f, const TTF_AtlasGlyph* g, int32_t* stride) {
+    if (g->page >= 0) {
+        const TTF_AtlasPage* p = &f->pages[g->page];
+        *stride = p->w;
+        return p->pixels + (size_t)g->y * (size_t)p->w + (size_t)g->x;
+    }
+    if (g->page == -2 && f->transient.pixels) {
+        *stride = f->transient.width;
+        return f->transient.pixels;
+    }
+    *stride = 0;
     return NULL;
 }
 
+/* The hot lookup. Caller holds font->lock and guarantees is_initialized.
+   Returned pointer is valid until the next atlas_fetch on this font. */
+static const TTF_AtlasGlyph* atlas_fetch(TTF_Font* f, int32_t cp) {
+    int32_t gi = atlas_hash_find(f, cp);
+    if (gi >= 0) {
+        TTF_ATOMIC_FETCH_ADD(&f->hit_count, 1);
+        f->glyphs[gi].lru = ++f->lru_stamp;
+        return &f->glyphs[gi];
+    }
+    TTF_ATOMIC_FETCH_ADD(&f->miss_count, 1);
+
+    if (f->glyph_count >= f->glyph_max)
+        atlas_evict_rebuild(f);               /* keeps <= ~66% of entries */
+
+    TTF_GlyphGeo geo;
+    TTF_Bitmap ras;
+    if (!render_glyph(f, cp, &geo, &ras)) return NULL;
+
+    TTF_AtlasGlyph g;
+    g.codepoint = cp;
+    g.advance   = geo.advance;
+    g.off_x = geo.off_x;  g.off_y = geo.off_y;
+    g.w = geo.width;      g.h = geo.height;
+    g.page = -1; g.x = 0; g.y = 0;
+    g.lru = ++f->lru_stamp;
+
+    if (g.w > 0 && g.h > 0 && ras.pixels) {
+        int32_t p = atlas_place_budget(f, &g, f->atlas_max_bytes);
+        if (p < 0) {
+            atlas_evict_rebuild(f);
+            p = atlas_place_budget(f, &g, f->atlas_max_bytes);
+        }
+        if (p >= 0) {
+            TTF_AtlasPage* pg = &f->pages[p];
+            for (int32_t row = 0; row < g.h; row++)
+                TTF_MEMCPY(pg->pixels + (size_t)(g.y + row) * (size_t)pg->w + (size_t)g.x,
+                           ras.pixels + (size_t)row * (size_t)ras.width,
+                           (size_t)g.w);
+            g.page = p;
+            TTF_FREE(ras.pixels);
+            ras.pixels = NULL;
+        } else {
+            /* Won't fit even after eviction (single glyph vs whole budget):
+               serve from the transient slot, do NOT index it. */
+            if (f->transient.pixels) TTF_FREE(f->transient.pixels);
+            f->transient.pixels = ras.pixels;
+            f->transient.width  = ras.width;
+            f->transient.height = ras.height;
+            g.page = -2;
+            f->transient_glyph = g;
+            return &f->transient_glyph;
+        }
+    } else if (ras.pixels) {
+        /* ink rounded to zero at this size (tiny glyph + oversampling):
+           metrics-only entry, discard the raster */
+        TTF_FREE(ras.pixels);
+        ras.pixels = NULL;
+    }
+
+    if (f->glyph_count == f->glyph_cap) {
+        int32_t nc = f->glyph_cap ? f->glyph_cap * 2 : 64;
+        TTF_AtlasGlyph* ng = (TTF_AtlasGlyph*)TTF_REALLOC(f->glyphs, sizeof(TTF_AtlasGlyph) * nc);
+        if (!ng) return NULL;                 /* rendered but not retained */
+        f->glyphs = ng;
+        f->glyph_cap = nc;
+    }
+    f->glyphs[f->glyph_count] = g;
+    atlas_hash_insert(f, cp, f->glyph_count); /* OOM: unindexed until next rebuild heals it */
+    f->glyph_count++;
+    return &f->glyphs[f->glyph_count - 1];
+}
+
+/* Max-composite blit from an atlas view (arbitrary stride) into a packed
+   8bpp text bitmap. */
+static void blit_glyph_max(const unsigned char* src, int32_t src_stride,
+                           unsigned char* dst, int32_t dst_w, int32_t dst_h,
+                           int32_t dx, int32_t dy, int32_t w, int32_t h) {
+    for (int32_t yy = 0; yy < h; yy++) {
+        int32_t py = dy + yy;
+        if (py < 0 || py >= dst_h) continue;
+        const unsigned char* srow = src + (size_t)yy * (size_t)src_stride;
+        unsigned char* drow = dst + (size_t)py * (size_t)dst_w;
+        for (int32_t xx = 0; xx < w; xx++) {
+            int32_t px = dx + xx;
+            if (px < 0 || px >= dst_w) continue;
+            if (srow[xx] > drow[px]) drow[px] = srow[xx];
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
 TTF_Font* TTF_CreateFont(int32_t cache_capacity) {
-    if (cache_capacity <= 0) cache_capacity = 256;
+    /* cache_capacity = max retained glyphs. Atlas eviction is coarser than
+       the old per-node LRU, so the default is raised 256 -> 2048. */
+    if (cache_capacity <= 0) cache_capacity = 2048;
+    if (cache_capacity < 256) cache_capacity = 256;
+    if (cache_capacity > 65536) cache_capacity = 65536;
+
     TTF_Font* font = (TTF_Font*)TTF_MALLOC(sizeof(TTF_Font));
     if (!font) return NULL;
     TTF_MEMSET(font, 0, sizeof(TTF_Font));
-    
-    font->cache_capacity = cache_capacity;
+
+    font->glyph_max = cache_capacity;
+
+    /* Pixel budget: ~1KB per retained glyph, clamped to [512KB, 16MB].
+       16px CJK glyphs (~300B ink) are entry-bound; large sizes become
+       byte-bound earlier. Raise the capacity for big CJK sets. */
+    uint64_t bytes = (uint64_t)cache_capacity * 1024ull;
+    if (bytes < 512ull * 1024) bytes = 512ull * 1024;
+    if (bytes > 16ull * 1024 * 1024) bytes = 16ull * 1024 * 1024;
+    font->atlas_max_bytes = bytes;
+
     font->hash_size = next_power_of_two(cache_capacity * 2);
-    font->cache_nodes = (TTF_CacheNode*)TTF_MALLOC(sizeof(TTF_CacheNode) * font->cache_capacity);
-    font->hash_table = (int32_t*)TTF_MALLOC(sizeof(int32_t) * font->hash_size);
-    
-    if (!font->cache_nodes || !font->hash_table) {
-        if (font->cache_nodes) TTF_FREE(font->cache_nodes);
-        if (font->hash_table) TTF_FREE(font->hash_table);
-        TTF_FREE(font);
-        return NULL;
-    }
-    
+    font->hash = (int32_t*)TTF_MALLOC(sizeof(int32_t) * font->hash_size);
+    if (!font->hash) { TTF_FREE(font); return NULL; }
+    for (int32_t i = 0; i < font->hash_size; i++) font->hash[i] = -1;
+
     font->is_initialized = false;
     font->oversampling = 1;
     font->bold_strength = 0;
     font->italic_skew = 0.0f;
-    cache_init(font);
     TTF_MUTEX_INIT(font->lock);
     return font;
 }
 
+/* Drops every cached glyph (pages, entries, stats). Called on font reload and
+   on parameter changes (pixel height / oversampling / style), because cached
+   bitmaps are only valid for one parameter set. */
 void TTF_ClearGlyphCache(TTF_Font *font) {
     if (!font) return;
     TTF_MUTEX_LOCK(font->lock);
-    for (int32_t i = 0; i < font->cache_capacity; i++) {
-        if (font->cache_nodes[i].bmp.pixels) {
-            TTF_FREE(font->cache_nodes[i].bmp.pixels);
-            font->cache_nodes[i].bmp.pixels = NULL;
-        }
+    for (int32_t i = 0; i < font->page_count; i++) TTF_FREE(font->pages[i].pixels);
+    font->page_count = 0;
+    font->atlas_bytes = 0;
+    font->glyph_count = 0;
+    for (int32_t i = 0; i < font->hash_size; i++) font->hash[i] = -1;
+    font->hash_used = 0;
+    if (font->transient.pixels) {
+        TTF_FREE(font->transient.pixels);
+        font->transient.pixels = NULL;
+        font->transient.width = 0;
+        font->transient.height = 0;
     }
-    cache_init(font);
     font->hit_count = 0;
     font->miss_count = 0;
+    font->evict_count = 0;
     TTF_MUTEX_UNLOCK(font->lock);
 }
 
@@ -423,8 +716,10 @@ void TTF_DestroyFont(TTF_Font* font) {
     TTF_ClearGlyphCache(font);
     TTF_MUTEX_DESTROY(font->lock);
     if (font->data) TTF_FREE(font->data);
-    if (font->cache_nodes) TTF_FREE(font->cache_nodes);
-    if (font->hash_table) TTF_FREE(font->hash_table);
+    if (font->pages) TTF_FREE(font->pages);      /* page structs; pixels freed above */
+    if (font->glyphs) TTF_FREE(font->glyphs);
+    if (font->hash) TTF_FREE(font->hash);
+    if (font->scratch) TTF_FREE(font->scratch);
     TTF_FREE(font);
 }
 
@@ -433,6 +728,20 @@ void TTF_GetCacheStats(TTF_Font *font, TTF_CacheStats *out_stats) {
     TTF_MUTEX_LOCK(font->lock);
     out_stats->hit_count = TTF_ATOMIC_LOAD(&font->hit_count);
     out_stats->miss_count = TTF_ATOMIC_LOAD(&font->miss_count);
+    TTF_MUTEX_UNLOCK(font->lock);
+}
+
+void TTF_GetAtlasStats(TTF_Font *font, TTF_AtlasStats *out_stats) {
+    if (!font || !out_stats) return;
+    TTF_MUTEX_LOCK(font->lock);
+    out_stats->hit_count = TTF_ATOMIC_LOAD(&font->hit_count);
+    out_stats->miss_count = TTF_ATOMIC_LOAD(&font->miss_count);
+    out_stats->evict_count = TTF_ATOMIC_LOAD(&font->evict_count);
+    out_stats->page_count = font->page_count;
+    out_stats->atlas_bytes = font->atlas_bytes;
+    out_stats->atlas_max_bytes = font->atlas_max_bytes;
+    out_stats->glyph_count = font->glyph_count;
+    out_stats->glyph_max = font->glyph_max;
     TTF_MUTEX_UNLOCK(font->lock);
 }
 
@@ -482,7 +791,7 @@ void TTF_SetFontStyle(TTF_Font *font, int32_t bold_strength, float italic_skew) 
     if (!font) return;
     bold_strength = bold_strength > 3 ? 3 : (bold_strength < 0 ? 0 : bold_strength);
     italic_skew = italic_skew > 0.5f ? 0.5f : (italic_skew < 0.0f ? 0.0f : italic_skew);
-    
+
     if (font->bold_strength != bold_strength || font->italic_skew != italic_skew) {
         TTF_ClearGlyphCache(font);
         font->bold_strength = bold_strength;
@@ -490,24 +799,27 @@ void TTF_SetFontStyle(TTF_Font *font, int32_t bold_strength, float italic_skew) 
     }
 }
 
+// ---------------------------------------------------------------------------
+// Measurement (pure metrics: no raster, no atlas)
+// ---------------------------------------------------------------------------
 void TTF_GetTextSize(TTF_Font *font, const char *text, int32_t *out_width, int32_t *out_height) {
     if (!font || !text || !font->is_initialized) return;
     int32_t len = (int32_t)TTF_STRLEN(text);
     int32_t x_pos = 0, max_x = 0, min_y = 0, max_y = 0, i = 0;
 
+    TTF_MUTEX_LOCK(font->lock);
     while (i < len) {
         int32_t advance = 0;
         int32_t codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
-        TTF_CacheNode* node = get_glyph(font, codepoint);
-        if (node) {
-            int32_t top = font->ascent + node->off_y;
-            int32_t bot = top + node->bmp.height;
-            if (top < min_y) min_y = top;
-            if (bot > max_y) max_y = bot;
-            int32_t right = x_pos + node->off_x + node->bmp.width;
-            if (right > max_x) max_x = right;
-            x_pos += node->advanceWidth;
-        }
+        TTF_GlyphGeo g;
+        glyph_geo(font, codepoint, &g);
+        int32_t top = font->ascent + g.off_y;
+        int32_t bot = top + g.height;
+        if (top < min_y) min_y = top;
+        if (bot > max_y) max_y = bot;
+        int32_t right = x_pos + g.off_x + g.width;
+        if (right > max_x) max_x = right;
+        x_pos += g.advance;
         if (i + advance < len) {
             int32_t next_advance = 0;
             int32_t next_cp = utf8_to_codepoint(&text[i + advance], len - (i + advance), &next_advance);
@@ -516,6 +828,7 @@ void TTF_GetTextSize(TTF_Font *font, const char *text, int32_t *out_width, int32
         }
         i += advance;
     }
+    TTF_MUTEX_UNLOCK(font->lock);
     if (out_width) *out_width = max_x;
     if (out_height) *out_height = max_y - min_y;
 }
@@ -528,58 +841,116 @@ int32_t TTF_GetLineHeight(TTF_Font *font) {
     return font->line_height;
 }
 
+// ---------------------------------------------------------------------------
+// Per-glyph access
+// ---------------------------------------------------------------------------
+/* NOTE (lifetime): the returned pointer is valid only until the next TTF_*
+   call on this font (atlas entries can be evicted by an LRU rebuild).
+   Use TTF_RenderChar for an owned copy. */
 const TTF_Bitmap* TTF_GetGlyphBitmap(TTF_Font *font, int32_t codepoint, int32_t *out_advance, int32_t *out_off_x, int32_t *out_off_y) {
-    TTF_CacheNode* node = get_glyph(font, codepoint);
-    if (!node) return NULL;
-    if (out_advance) *out_advance = node->advanceWidth;
-    if (out_off_x) *out_off_x = node->off_x;
-    if (out_off_y) *out_off_y = node->off_y;
-    return &node->bmp;
+    static TTF_Bitmap empty = {0};
+    if (!font || !font->is_initialized) return NULL;
+
+    TTF_MUTEX_LOCK(font->lock);
+    const TTF_AtlasGlyph* g = atlas_fetch(font, codepoint);
+    if (!g) { TTF_MUTEX_UNLOCK(font->lock); return NULL; }
+
+    if (out_advance) *out_advance = g->advance;
+    if (out_off_x) *out_off_x = g->off_x;
+    if (out_off_y) *out_off_y = g->off_y;
+
+    const TTF_Bitmap* result = &empty;
+    if (g->page == -2) {
+        result = &font->transient;              /* already packed, font-owned */
+    } else if (g->w > 0 && g->h > 0) {
+        int32_t stride = 0;
+        const unsigned char* src = glyph_pixels(font, g, &stride);
+        if (src) {
+            size_t need = (size_t)g->w * (size_t)g->h;
+            if (font->scratch_cap < need) {
+                size_t nc = font->scratch_cap ? font->scratch_cap : 256;
+                while (nc < need) nc *= 2;
+                unsigned char* np = (unsigned char*)TTF_MALLOC(nc);
+                if (np) {
+                    TTF_FREE(font->scratch);
+                    font->scratch = np;
+                    font->scratch_cap = nc;
+                }
+            }
+            if (font->scratch_cap >= need) {
+                for (int32_t row = 0; row < g->h; row++)
+                    TTF_MEMCPY(font->scratch + (size_t)row * (size_t)g->w,
+                               src + (size_t)row * (size_t)stride, (size_t)g->w);
+                font->scratch_view.pixels = font->scratch;
+                font->scratch_view.width  = g->w;
+                font->scratch_view.height = g->h;
+                result = &font->scratch_view;
+            }
+        }
+    }
+    TTF_MUTEX_UNLOCK(font->lock);
+    return result;
 }
 
+/* Returns an OWNED bitmap: release with TTF_FreeBitmap. */
 TTF_Bitmap TTF_RenderChar(TTF_Font *font, int32_t codepoint, int32_t *out_x_offset, int32_t *out_y_offset) {
     TTF_Bitmap bmp = {0};
-    int32_t off_x, off_y, advance;
-    const TTF_Bitmap* ref = TTF_GetGlyphBitmap(font, codepoint, &advance, &off_x, &off_y);
-    if (!ref) return bmp;
-    if (out_x_offset) *out_x_offset = off_x;
-    if (out_y_offset) *out_y_offset = off_y;
+    if (!font || !font->is_initialized) return bmp;
 
-    bmp.width = ref->width; bmp.height = ref->height;
-    if (bmp.width > 0 && bmp.height > 0 && ref->pixels) {
-        size_t mem_size = (size_t)bmp.width * (size_t)bmp.height;
-        bmp.pixels = (unsigned char*)TTF_MALLOC(mem_size);
-        if (bmp.pixels) TTF_MEMCPY(bmp.pixels, ref->pixels, mem_size);
-        else { bmp.width = 0; bmp.height = 0; }
+    TTF_MUTEX_LOCK(font->lock);
+    const TTF_AtlasGlyph* g = atlas_fetch(font, codepoint);
+    if (g) {
+        if (out_x_offset) *out_x_offset = g->off_x;
+        if (out_y_offset) *out_y_offset = g->off_y;
+        if (g->w > 0 && g->h > 0) {
+            int32_t stride = 0;
+            const unsigned char* src = glyph_pixels(font, g, &stride);
+            if (src) {
+                size_t mem = (size_t)g->w * (size_t)g->h;
+                bmp.pixels = (unsigned char*)TTF_MALLOC(mem);
+                if (bmp.pixels) {
+                    for (int32_t row = 0; row < g->h; row++)
+                        TTF_MEMCPY(bmp.pixels + (size_t)row * (size_t)g->w,
+                                   src + (size_t)row * (size_t)stride, (size_t)g->w);
+                    bmp.width = g->w;
+                    bmp.height = g->h;
+                }
+            }
+        }
     }
+    TTF_MUTEX_UNLOCK(font->lock);
     return bmp;
 }
 
-static void draw_line_to_buffer(TTF_Font *font, const char *text, int32_t len, 
-                                unsigned char *dst_pixels, int32_t dst_w, int32_t dst_h, 
+// ---------------------------------------------------------------------------
+// Text rendering (atlas -> packed 8bpp bitmap)
+// ---------------------------------------------------------------------------
+static void draw_line_to_buffer(TTF_Font *font, const char *text, int32_t len,
+                                unsigned char *dst_pixels, int32_t dst_w, int32_t dst_h,
                                 int32_t start_x, int32_t start_y, int32_t line_min_y) {
     int32_t x_pos = start_x;
     int32_t i = 0;
+    TTF_MUTEX_LOCK(font->lock);
     while (i < len) {
         int32_t advance = 0;
         int32_t codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
-        TTF_CacheNode* node = get_glyph(font, codepoint);
-        if (node && node->bmp.pixels) {
-            int32_t draw_x = x_pos + node->off_x;
-            int32_t draw_y = start_y + font->ascent + node->off_y - line_min_y;
-            for (int32_t y = 0; y < node->bmp.height; y++) {
-                for (int32_t x = 0; x < node->bmp.width; x++) {
-                    int32_t px = draw_x + x; int32_t py = draw_y + y;
-                    if (px >= 0 && px < dst_w && py >= 0 && py < dst_h) {
-                        int32_t idx = py * dst_w + px;
-                        int32_t c_idx = y * node->bmp.width + x;
-                        if (node->bmp.pixels[c_idx] > dst_pixels[idx]) {
-                            dst_pixels[idx] = node->bmp.pixels[c_idx];
-                        }
-                    }
+        const TTF_AtlasGlyph* g = atlas_fetch(font, codepoint);
+        if (g) {
+            if (g->w > 0 && g->h > 0) {
+                int32_t stride = 0;
+                const unsigned char* src = glyph_pixels(font, g, &stride);
+                if (src) {
+                    /* NOTE: x advances for ALL glyphs now, including spaces
+                       (the legacy draw path skipped the advance when a glyph
+                       had no pixels, collapsing spaces against the measured
+                       line width). */
+                    blit_glyph_max(src, stride, dst_pixels, dst_w, dst_h,
+                                   x_pos + g->off_x,
+                                   start_y + font->ascent + g->off_y - line_min_y,
+                                   g->w, g->h);
                 }
             }
-            x_pos += node->advanceWidth;
+            x_pos += g->advance;
         }
         if (i + advance < len) {
             int32_t next_advance = 0;
@@ -589,6 +960,7 @@ static void draw_line_to_buffer(TTF_Font *font, const char *text, int32_t len,
         }
         i += advance;
     }
+    TTF_MUTEX_UNLOCK(font->lock);
 }
 
 bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bmp) {
@@ -604,11 +976,13 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
     int32_t x_pos = 0, max_x = 0, min_y = 0, max_y = 0;
     int32_t i = 0;
 
+    /* Pass 1 (measure): pure metrics - no rasterization, no atlas traffic. */
+    TTF_MUTEX_LOCK(font->lock);
     while (i < len) {
         if (cmd_count >= cmd_capacity) {
             cmd_capacity *= 2;
             TTF_RenderCmd* new_cmds = (TTF_RenderCmd*)TTF_REALLOC(cmds, sizeof(TTF_RenderCmd) * cmd_capacity);
-            if (!new_cmds) { TTF_FREE(cmds); return false; }
+            if (!new_cmds) { TTF_MUTEX_UNLOCK(font->lock); TTF_FREE(cmds); return false; }
             cmds = new_cmds;
         }
 
@@ -618,16 +992,15 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
         cmd->codepoint = codepoint;
         cmd->x_advance = 0;
 
-        TTF_CacheNode* node = get_glyph(font, codepoint);
-        if (node) {
-            int32_t top = font->ascent + node->off_y;
-            int32_t bot = top + node->bmp.height;
-            if (top < min_y) min_y = top;
-            if (bot > max_y) max_y = bot;
-            int32_t right = x_pos + node->off_x + node->bmp.width;
-            if (right > max_x) max_x = right;
-            cmd->x_advance = node->advanceWidth;
-        }
+        TTF_GlyphGeo g;
+        glyph_geo(font, codepoint, &g);
+        int32_t top = font->ascent + g.off_y;
+        int32_t bot = top + g.height;
+        if (top < min_y) min_y = top;
+        if (bot > max_y) max_y = bot;
+        int32_t right = x_pos + g.off_x + g.width;
+        if (right > max_x) max_x = right;
+        cmd->x_advance = g.advance;
 
         if (i + advance < len) {
             int32_t next_advance = 0;
@@ -638,6 +1011,7 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
         x_pos += cmd->x_advance;
         i += advance;
     }
+    TTF_MUTEX_UNLOCK(font->lock);
 
     int32_t text_width = max_x;
     int32_t text_height = max_y - min_y;
@@ -651,33 +1025,30 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
         out_bmp->pixels = (unsigned char*)TTF_MALLOC(mem_size);
         if (!out_bmp->pixels) { TTF_FREE(cmds); return false; }
     }
-    
-    // 更新 width 和 height，防止越界
+
     out_bmp->width = text_width;
     out_bmp->height = text_height;
     TTF_MEMSET(out_bmp->pixels, 0, (size_t)text_width * text_height);
 
+    /* Pass 2 (draw): one atlas fetch per glyph. Repeat characters inside
+       the string hit the atlas after their first appearance. */
+    TTF_MUTEX_LOCK(font->lock);
     int32_t x_pos2 = 0;
     for (int32_t k = 0; k < cmd_count; k++) {
-        TTF_CacheNode* node = get_glyph(font, cmds[k].codepoint);
-        if (node && node->bmp.pixels) {
-            int32_t draw_x = x_pos2 + node->off_x;
-            int32_t draw_y = font->ascent + node->off_y - min_y;
-            for (int32_t y = 0; y < node->bmp.height; y++) {
-                for (int32_t x = 0; x < node->bmp.width; x++) {
-                    int32_t px = draw_x + x; int32_t py = draw_y + y;
-                    if (px >= 0 && px < text_width && py >= 0 && py < text_height) {
-                        int32_t idx = py * text_width + px;
-                        int32_t c_idx = y * node->bmp.width + x;
-                        if (node->bmp.pixels[c_idx] > out_bmp->pixels[idx]) {
-                            out_bmp->pixels[idx] = node->bmp.pixels[c_idx];
-                        }
-                    }
-                }
+        const TTF_AtlasGlyph* g = atlas_fetch(font, cmds[k].codepoint);
+        if (g && g->w > 0 && g->h > 0) {
+            int32_t stride = 0;
+            const unsigned char* src = glyph_pixels(font, g, &stride);
+            if (src) {
+                blit_glyph_max(src, stride, out_bmp->pixels, text_width, text_height,
+                               x_pos2 + g->off_x,
+                               font->ascent + g->off_y - min_y,
+                               g->w, g->h);
             }
         }
         x_pos2 += cmds[k].x_advance;
     }
+    TTF_MUTEX_UNLOCK(font->lock);
 
     TTF_FREE(cmds);
     return true;
@@ -713,6 +1084,8 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
     int32_t total_height = 0;
     int32_t max_line_width = 0;
 
+    /* Measure phase: pure metrics via glyph_geo (no rasterization). */
+    TTF_MUTEX_LOCK(font->lock);
     while (i < len) {
         int32_t line_start = i;
         int32_t line_end = i;
@@ -723,15 +1096,16 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
         while (i < len) {
             int32_t advance = 0;
             int32_t codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
-            
+
             if (codepoint == '\n') {
                 line_end = i;
                 i += advance;
                 break;
             }
 
-            TTF_CacheNode* node = get_glyph(font, codepoint);
-            int32_t char_w = node ? node->advanceWidth : 0;
+            TTF_GlyphGeo g;
+            glyph_geo(font, codepoint, &g);
+            int32_t char_w = g.advance;
 
             if (max_width > 0 && x_pos + char_w > max_width) {
                 if (is_punct_no_start(codepoint) && i > line_start) {
@@ -749,12 +1123,10 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
                 }
             }
 
-            if (node) {
-                int32_t top = font->ascent + node->off_y;
-                int32_t bot = top + node->bmp.height;
-                if (top < min_y) min_y = top;
-                if (bot > max_y) max_y = bot;
-            }
+            int32_t top = font->ascent + g.off_y;
+            int32_t bot = top + g.height;
+            if (top < min_y) min_y = top;
+            if (bot > max_y) max_y = bot;
             x_pos += char_w;
             if (codepoint == ' ') last_space = i;
             i += advance;
@@ -765,7 +1137,7 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
             if (line_count >= lines_capacity) {
                 lines_capacity *= 2;
                 LineInfo *new_lines = (LineInfo*)TTF_REALLOC(lines, sizeof(LineInfo) * lines_capacity);
-                if (!new_lines) { TTF_FREE(lines); return final_bmp; }
+                if (!new_lines) { TTF_MUTEX_UNLOCK(font->lock); TTF_FREE(lines); return final_bmp; }
                 lines = new_lines;
             }
             lines[line_count].start = line_start;
@@ -778,15 +1150,16 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
             line_count++;
         }
     }
+    TTF_MUTEX_UNLOCK(font->lock);
 
     if (line_count == 0) { TTF_FREE(lines); return final_bmp; }
     total_height -= line_gap;
 
     final_bmp.width = max_width > 0 ? max_width : max_line_width;
     final_bmp.height = total_height;
-    size_t mem_size = (size_t)final_bmp.width * final_bmp.height;
-    if (mem_size / (size_t)final_bmp.width != (size_t)final_bmp.height) { TTF_FREE(lines); final_bmp.width=0; return final_bmp; }
-    
+    size_t mem_size = (size_t)final_bmp.width * (size_t)final_bmp.height;
+    if (mem_size / (size_t)final_bmp.width != (size_t)final_bmp.height) { TTF_FREE(lines); final_bmp.width = 0; return final_bmp; }
+
     final_bmp.pixels = (unsigned char*)TTF_MALLOC(mem_size);
     if (!final_bmp.pixels) { TTF_FREE(lines); final_bmp.width = 0; final_bmp.height = 0; return final_bmp; }
     TTF_MEMSET(final_bmp.pixels, 0, mem_size);
@@ -798,10 +1171,10 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
         if (align == TTF_ALIGN_CENTER) x_offset = (final_bmp.width - lines[l].width) / 2;
         else if (align == TTF_ALIGN_RIGHT) x_offset = final_bmp.width - lines[l].width;
 
-        draw_line_to_buffer(font, text + lines[l].start, line_len, 
-                            final_bmp.pixels, final_bmp.width, final_bmp.height, 
+        draw_line_to_buffer(font, text + lines[l].start, line_len,
+                            final_bmp.pixels, final_bmp.width, final_bmp.height,
                             x_offset, y_cursor, lines[l].min_y);
-        
+
         y_cursor += lines[l].height + line_gap;
     }
 
@@ -812,10 +1185,12 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
 #include <stdio.h>
 
 uint8_t TTF_ReadFont(
-    TTF_Font **out_font, const char* path, 
+    TTF_Font **out_font, const char* path,
     int32_t pixel_height, int32_t CacheCap
 ) {
     if (!out_font) return 254;
+    /* CacheCap = max retained glyphs (atlas entries); pixel memory budget
+       is derived from it (~1KB/glyph, clamped [512KB, 16MB]). */
     *out_font = TTF_CreateFont(CacheCap);
     if (!(*out_font)) return 1;
 
@@ -834,11 +1209,8 @@ uint8_t TTF_ReadFont(
         return 3;
     }
 
-    /* Read the file straight into the font's persistent data buffer. The old
-       path malloc'd a temporary ~30 MB block, then TTF_LoadFontFromMemory
-       malloc'd + memcpy'd a second ~30 MB; that temporary was only returned to
-       the per-thread large cache (not to the PMM), so every font load pinned
-       ~64 MB. Read directly into the final buffer: one allocation, no copy. */
+    /* Read the file straight into the font's persistent data buffer: one
+       allocation, no copy. */
     TTF_Font* rf = *out_font;
     rf->data = (unsigned char*)malloc(file_size);
     if (!rf->data) {
@@ -848,7 +1220,6 @@ uint8_t TTF_ReadFont(
         return 4;
     }
 
-    /* fread argument order is (ptr, size, nmemb, stream). */
     size_t read_bytes = fread(rf->data, 1, file_size, fd);
     fclose(fd);
 
@@ -876,80 +1247,85 @@ void TTF_DrawText(
 FrameBuffer *FB, TTF_Font *TTFFont,
 int32_t x, int32_t y, const char* text, uint32_t color
 ) {
-    if (!TTFFont || !FB || !FB->BaseAddress) return;
+    if (!TTFFont || !FB || !FB->BaseAddress || !text || !TTFFont->is_initialized) return;
 
-    /* Persistent scratch with geometric (doubling) capacity. The backing is
-       only reallocated when the text exceeds the current capacity, so small
-       per-frame size jitter (clock glyphs differing by a single pixel in
-       width/height) does not churn whole allocator regions (mmap/munmap storm).
-       GUI text drawing is single-threaded, so function-static state is safe. */
-    static unsigned char* s_px = NULL;
-    static int32_t s_cw = 0, s_ch = 0;
+    /* Direct atlas -> framebuffer path: no intermediate text bitmap, no
+       scratch allocation, no full-rect memset. Per-pixel work is done only
+       where glyphs actually have ink; steady-state cost per character is one
+       hash probe plus the ink-pixel blends. GUI text drawing is
+       single-threaded; the font lock is held across both passes. */
+    uint32_t* fb_ptr = (uint32_t*)FB->BaseAddress;
+    int32_t fb_w = (int32_t)FB->Width;
+    int32_t fb_h = (int32_t)FB->Height;
+    int32_t fb_pitch = (int32_t)FB->PixelsPerScanLine;
 
-    int32_t need_w = 0, need_h = 0;
-    TTF_GetTextSize(TTFFont, text, &need_w, &need_h);
-    if (need_w <= 0 || need_h <= 0) return;
+    uint8_t cr = (color >> 16) & 0xFF;
+    uint8_t cg = (color >> 8) & 0xFF;
+    uint8_t cb = color & 0xFF;
+    uint32_t opaque = 0xFF000000u | ((uint32_t)cr << 16) | ((uint32_t)cg << 8) | cb;
 
-    if (need_w > s_cw || need_h > s_ch) {
-        int32_t nw = s_cw ? s_cw : 64;
-        int32_t nh = s_ch ? s_ch : 16;
-        while (nw < need_w) nw *= 2;
-        while (nh < need_h) nh *= 2;
-        unsigned char* np = (unsigned char*)TTF_MALLOC((size_t)nw * (size_t)nh);
-        if (!np) return;
-        if (s_px) TTF_FREE(s_px);
-        s_px = np; s_cw = nw; s_ch = nh;
+    TTF_MUTEX_LOCK(TTFFont->lock);
+
+    int32_t len = (int32_t)TTF_STRLEN(text);
+
+    /* Pass 1 (metrics only): min_y for pixel-exact vertical parity with the
+       previous scratch-bitmap implementation (ink-top anchoring). */
+    int32_t min_y = 0;
+    for (int32_t i = 0; i < len; ) {
+        int32_t advance = 0;
+        int32_t cp = utf8_to_codepoint(&text[i], len - i, &advance);
+        TTF_GlyphGeo g;
+        glyph_geo(TTFFont, cp, &g);
+        int32_t top = TTFFont->ascent + g.off_y;
+        if (top < min_y) min_y = top;
+        i += advance;
     }
 
-    TTF_Bitmap bmp;
-    bmp.pixels = s_px;
-    bmp.width  = s_cw;
-    bmp.height = s_ch;
-    if (!TTF_RenderTextToBuffer(TTFFont, text, &bmp)) return;
+    /* Pass 2: blit glyphs straight from the atlas into the framebuffer. */
+    int32_t x_pos = 0;
+    for (int32_t i = 0; i < len; ) {
+        int32_t advance = 0;
+        int32_t cp = utf8_to_codepoint(&text[i], len - i, &advance);
+        const TTF_AtlasGlyph* gl = atlas_fetch(TTFFont, cp);
+        if (gl && gl->w > 0 && gl->h > 0) {
+            int32_t stride = 0;
+            const unsigned char* src = glyph_pixels(TTFFont, gl, &stride);
+            if (src) {
+                int32_t draw_x = x + x_pos + gl->off_x;
+                int32_t draw_y = y + TTFFont->ascent + gl->off_y - min_y;
 
-    {
-        uint32_t* fb_ptr = (uint32_t*)FB->BaseAddress;
-        int32_t fb_w = (int32_t)FB->Width;
-        int32_t fb_h = (int32_t)FB->Height;
-        int32_t fb_pitch = (int32_t)FB->PixelsPerScanLine; 
+                int32_t y0 = draw_y < 0 ? -draw_y : 0;
+                int32_t y1 = gl->h; if (draw_y + y1 > fb_h) y1 = fb_h - draw_y;
+                int32_t x0 = draw_x < 0 ? -draw_x : 0;
+                int32_t x1 = gl->w; if (draw_x + x1 > fb_w) x1 = fb_w - draw_x;
 
-        uint8_t src_r = (color >> 16) & 0xFF;
-        uint8_t src_g = (color >> 8) & 0xFF;
-        uint8_t src_b = color & 0xFF;
-
-        for (int32_t y2 = 0; y2 < bmp.height; y2++) {
-            for (int32_t x2 = 0; x2 < bmp.width; x2++) {
-                
-                int32_t px = x + x2;
-                int32_t py = y + y2;
-
-                if (px < 0 || px >= fb_w || py < 0 || py >= fb_h) continue;
-
-                uint8_t alpha = bmp.pixels[y2 * bmp.width + x2];
-                if (alpha == 0) continue;
-
-                uint32_t* dst_pixel = &fb_ptr[py * fb_pitch + px];
-
-                if (alpha == 255) {
-                    // 按分量重组，避免原有 color 残留的 Alpha 干扰
-                    *dst_pixel = 0xFF000000 | (src_r << 16) | (src_g << 8) | src_b;
-                    continue;
+                for (int32_t yy = y0; yy < y1; yy++) {
+                    const unsigned char* srow = src + (size_t)yy * (size_t)stride;
+                    uint32_t* drow = fb_ptr + (size_t)(draw_y + yy) * (size_t)fb_pitch;
+                    for (int32_t xx = x0; xx < x1; xx++) {
+                        uint8_t a = srow[xx];
+                        if (a == 0) continue;
+                        uint32_t* dp = &drow[draw_x + xx];
+                        if (a == 255) { *dp = opaque; continue; }
+                        uint32_t bg = *dp;
+                        uint8_t inv = (uint8_t)(255 - a);
+                        uint8_t mr = (uint8_t)(((uint32_t)cr * a + ((bg >> 16) & 0xFF) * inv + 128) >> 8);
+                        uint8_t mg = (uint8_t)(((uint32_t)cg * a + ((bg >> 8) & 0xFF) * inv + 128) >> 8);
+                        uint8_t mb = (uint8_t)(((uint32_t)cb * a + (bg & 0xFF) * inv + 128) >> 8);
+                        *dp = 0xFF000000u | ((uint32_t)mr << 16) | ((uint32_t)mg << 8) | mb;
+                    }
                 }
-
-                uint32_t bg = *dst_pixel;
-                uint8_t bg_r = (bg >> 16) & 0xFF;
-                uint8_t bg_g = (bg >> 8) & 0xFF;
-                uint8_t bg_b = bg & 0xFF;
-
-                // 优化：提取公共反透明度
-                uint8_t inv_alpha = 255 - alpha;
-                uint8_t mix_r = (src_r * alpha + bg_r * inv_alpha + 128) >> 8;
-                uint8_t mix_g = (src_g * alpha + bg_g * inv_alpha + 128) >> 8;
-                uint8_t mix_b = (src_b * alpha + bg_b * inv_alpha + 128) >> 8;
-
-                *dst_pixel = 0xFF000000 | (mix_r << 16) | (mix_g << 8) | mix_b;
             }
         }
-        /* scratch bitmap retained and reused by the next call; do not free */
+        if (gl) x_pos += gl->advance;
+        if (i + advance < len) {
+            int32_t next_advance = 0;
+            int32_t next_cp = utf8_to_codepoint(&text[i + advance], len - (i + advance), &next_advance);
+            int32_t kern = stbtt_GetCodepointKernAdvance(&TTFFont->info, cp, next_cp);
+            x_pos += (int32_t)(kern * TTFFont->scale);
+        }
+        i += advance;
     }
+
+    TTF_MUTEX_UNLOCK(TTFFont->lock);
 }

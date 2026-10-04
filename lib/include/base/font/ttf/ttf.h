@@ -32,8 +32,19 @@ typedef struct {
     unsigned long hit_count;
     unsigned long miss_count;
 } TTF_CacheStats;
+typedef struct {
+    unsigned long hit_count;      /* 图集命中(免光栅) */
+    unsigned long miss_count;     /* 首次见到的字形(光栅化+入集) */
+    unsigned long evict_count;    /* LRU 重建次数 */
+    int32_t       page_count;     /* 图集页数 */
+    unsigned long atlas_bytes;    /* 当前图集像素内存 */
+    unsigned long atlas_max_bytes;
+    int32_t       glyph_count;    /* 已缓存字形条目 */
+    int32_t       glyph_max;
+} TTF_AtlasStats;
 
 // ==================== API ====================
+void TTF_GetAtlasStats(TTF_Font *font, TTF_AtlasStats *out_stats);
 
 TTF_Font* TTF_CreateFont(int32_t cache_capacity);
 void TTF_DestroyFont(TTF_Font* font);

@@ -137,13 +137,12 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
 
             target->state = THREAD_ZOMBIE;
 
-            if (t_cpu->current_thread != target) {
-                if (!target->IsForkThread && target->pagemap != kernel_pagemap) {
-                    if (target->stack && target->stack != target->kernel_stack) { VMM::Free(target->pagemap, (void*)target->stack); target->stack = 0; }
-                    if (target->sig_stack) { VMM::Free(target->pagemap, (void*)target->sig_stack); target->sig_stack = 0; }
-                    if (target->tls_base) { VMM::Free(target->pagemap, (void*)target->tls_base); target->tls_base = 0; }
-                }
-            }
+            /* User-space stack/sig/TLS pages are NOT freed here: doing a
+               VMM::Free (-> synchronous TLB shootdown fence) while holding a
+               remote CPU's sched_lock deadlocks when that CPU needs its own
+               sched_lock to service the IPI. This is a process teardown, so
+               VMM::DestroyPM() at process-zombie reclaim frees the whole
+               address space (every user page) after all threads are stopped. */
 
             if (target->timer_bucket != nullptr && cur_timer_cpu == timer_cpu->id) {
                 Schedule::Internal::TimerRemove(target);
@@ -178,13 +177,8 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
 
             target->state = THREAD_ZOMBIE;
 
-            if (t_cpu->current_thread != target) {
-                if (!target->IsForkThread && target->pagemap != kernel_pagemap) {
-                    if (target->stack && target->stack != target->kernel_stack) { VMM::Free(target->pagemap, (void*)target->stack); target->stack = 0; }
-                    if (target->sig_stack) { VMM::Free(target->pagemap, (void*)target->sig_stack); target->sig_stack = 0; }
-                    if (target->tls_base) { VMM::Free(target->pagemap, (void*)target->tls_base); target->tls_base = 0; }
-                }
-            }
+            /* See branch A: user pages are freed wholesale by DestroyPM() at
+               process-zombie reclaim, never under a remote sched_lock. */
 
             if (target->on_rq) {
                 Schedule::Internal::RemoveFromQueue(t_cpu, target);
@@ -235,13 +229,11 @@ static void SyncKillProcThreads(proc_t *proc, thread_t *except_thread) {
         if (count == 0) break;
 
         bool need_wait[64] = {false};
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < count; i++)
             kill_thread_batch(batch[i], self_cpu, need_wait[i]);
-        }
         for (int i = 0; i < count; i++) {
-            if (need_wait[i]) {
+            if (need_wait[i])
                 Schedule::WaitForThreadOffCpu(batch[i]);
-            }
         }
     }
 }
@@ -446,7 +438,9 @@ namespace Schedule {
 
     void DeleteProc(proc_t *proc) {
         if (!proc) return;
-        if (__sync_lock_test_and_set(&proc->exiting, 1) != 0) return;
+        if (__sync_lock_test_and_set(&proc->exiting, 1) != 0) {
+            return;
+        }
 
         uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
         if (proc->parent) {

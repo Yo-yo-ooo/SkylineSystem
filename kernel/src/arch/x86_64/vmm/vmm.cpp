@@ -924,15 +924,14 @@ namespace VMM {
         if (((uint64_t)ptr & 0xfff) != 0) return;
         spinlock_lock(&pm->vma_lock);
         vma_region_t *region = VMM::VMA::FindRegion(pm, (uint64_t)ptr);
-        if (unlikely(!region || region->start != (uint64_t)ptr)) { 
+        if (unlikely(!region || region->start != (uint64_t)ptr)) {
             kerrorln("VMM::Free: region not found for %p (pm=%p)", ptr, pm);
-            spinlock_unlock(&pm->vma_lock); 
-            return; 
+            spinlock_unlock(&pm->vma_lock);
+            return;
         }
         pm->vma_cursor = region->prev;
         spinlock_lock(&pm->pt_lock);
         uint64_t v = region->start, end = v + region->page_count * PAGE_SIZE;
-        //kinfoln("REGION OK,FREEING %lu pages",region->page_count);
         // Collect every invalidation, then flush remote TLBs with one IPI/CPU.
         LazyTLB::BatchBegin(pm);
         if (region->flags & VMM_SHARED_BIT) FreeSharedRegion(pm, v, end);
