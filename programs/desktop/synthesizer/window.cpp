@@ -280,6 +280,31 @@ void Compositor::MoveWindow(Window* w, uint32_t x, uint32_t y) {
     __atomic_store_n(&w->PosY, y, __ATOMIC_RELEASE);
 }
 
+/* ---- click-to-front: raise a window's layer above every other layer ------ */
+void Compositor::RaiseWindow(Window* w) {
+    if (!w) return;
+    LockList();
+
+    CompWinNode* node = FindNode(w);
+    if (!node || !node->layer) { UnlockList(); return; }
+    CompLayer* L = node->layer;
+
+    /* Already the topmost layer: nothing to reorder. */
+    if (L == layer_tail_) { UnlockList(); return; }
+
+    /* Detach L from the layer list at its current position. */
+    if (L->l_prev) L->l_prev->l_next = L->l_next;
+    else           layer_head_ = L->l_next;       /* L was the bottom */
+    if (L->l_next) L->l_next->l_prev = L->l_prev;
+    else           layer_tail_ = L->l_prev;       /* L was the top (handled above) */
+
+    /* Give it a z strictly above the current top, then reinsert -> new tail. */
+    L->z = layer_tail_->z + 1;
+    InsertLayerOrdered(L);
+
+    UnlockList();
+}
+
 /* ========================================================================== */
 /*  Phase 1: render one strip into the INVISIBLE back buffer.                 */
 /*  Traversal = layer list -> in-layer window list = O(window count).         */

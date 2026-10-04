@@ -381,6 +381,10 @@ int main(){
 
     CompLayer* layer0 = comp.CreateLayer(0);
     comp.RegisterWindow(&wallpaperWin, layer0);
+    /* Function-scoped layer handles so the input loop can compare their
+       current stacking order (z) to hit-test the topmost window first. */
+    CompLayer* layer1 = nullptr;   /* console */
+    CompLayer* layer2 = nullptr;   /* notepad */
 
     static Window consoleWin;
     if (consoleSurf && place.desk_surf) {
@@ -394,8 +398,9 @@ int main(){
         consoleWin.FrameEndY   = SKYWIN_CONTENT_Y + SKYWIN_CONTENT_H;
         consoleWin.FbAddr = place.desk_surf;
         consoleWin.HasAlpha = 1;   /* rounded corners + soft drop shadow      */
-        CompLayer* layer1 = comp.CreateLayer(1);
-        comp.RegisterWindow(&consoleWin, layer1);
+        CompLayer* layer1b = comp.CreateLayer(1);
+        layer1 = layer1b;
+        comp.RegisterWindow(&consoleWin, layer1b);
     }
 
     /* ---- Notepad: a second, interactive windowed app (layer 2) ----------
@@ -419,7 +424,7 @@ int main(){
         noteWin.FrameEndY   = SKYWIN_SHADOW + NOTE_H - SKYWIN_RADIUS;
         noteWin.FbAddr   = notePlace.desk_surf;
         noteWin.HasAlpha = 1;
-        CompLayer* layer2 = comp.CreateLayer(2);
+        layer2 = comp.CreateLayer(2);
         comp.RegisterWindow(&noteWin, layer2);
     }
 #endif
@@ -577,28 +582,38 @@ int main(){
         if (leftDown && !prevLeft) {                 /* press edge: classify  */
             pressHit = 0; rzDir = 0;
 
-            /* Notepad is the TOPMOST layer, so it is hit-tested before the
-               console. A press on its caption (outside the caption buttons)
-               starts a window move; ANY press inside its body is claimed, so
-               it can never fall through to the console caption/resize logic
-               and move the window hidden underneath. */
-            {
-                int32_t nbx = (int32_t)noteWin.PosX + M;
-                int32_t nby = (int32_t)noteWin.PosY + M;
-                int32_t nbw = (int32_t)noteWin.SizeX - 2 * M;
-                int32_t nbh = (int32_t)noteWin.SizeY - 2 * M;
-                if (mx >= nbx && mx < nbx + nbw && my >= nby && my < nby + nbh) {
-                    pressHit = 7;
-                    int32_t btnStart = nbx + nbw - 3 * (int32_t)SKYWIN_BTN_W;
-                    if (my < nby + th && mx < btnStart) {
-                        noteDrag = true;
-                        noteGrabX = mx - (int32_t)noteWin.PosX;
-                        noteGrabY = my - (int32_t)noteWin.PosY;
-                    }
+            /* Hit-test windows in CURRENT z-order: whichever window's layer is
+               on top is tested first, so a press on the visible top window is
+               never stolen by a window stacked underneath. Notepad geometry is
+               computed once and reused by the lower-priority stage below. */
+            bool noteTop = layer1 ? (layer2 && layer2->z >= layer1->z)
+                                  : (layer2 != nullptr);
+            int32_t nbx = (int32_t)noteWin.PosX + M;
+            int32_t nby = (int32_t)noteWin.PosY + M;
+            int32_t nbw = (int32_t)noteWin.SizeX - 2 * M;
+            int32_t nbh = (int32_t)noteWin.SizeY - 2 * M;
+            bool inNote = (mx >= nbx && mx < nbx + nbw &&
+                           my >= nby && my < nby + nbh);
+            if (noteTop && inNote) {
+                pressHit = 7;
+                comp.RaiseWindow(&noteWin);   /* click-to-front (Win11) */
+                int32_t btnStart = nbx + nbw - 3 * (int32_t)SKYWIN_BTN_W;
+                if (my < nby + th && mx < btnStart) {
+                    noteDrag = true;
+                    noteGrabX = mx - (int32_t)noteWin.PosX;
+                    noteGrabY = my - (int32_t)noteWin.PosY;
                 }
             }
 
             if (pressHit == 0 && (wmMode == WM_NORMAL || wmMode == WM_MAX)) {
+                /* Win11 click-to-front: a press anywhere on the window body
+                   (caption, border band or content) raises it above every
+                   other window. The resize band straddles a few px outside
+                   the body, so that branch raises explicitly as well. */
+                bool inConsole = (mx >= bx && mx < bx + bw &&
+                                  my >= by && my < by + bh);
+                if (inConsole) comp.RaiseWindow(&consoleWin);
+
                 int32_t minL   = bx + bw - 3 * (int32_t)SKYWIN_BTN_W;
                 int32_t maxL   = bx + bw - 2 * (int32_t)SKYWIN_BTN_W;
                 int32_t closeL = bx + bw - 1 * (int32_t)SKYWIN_BTN_W;
@@ -626,6 +641,7 @@ int main(){
                     if (onL || onR || onT || onB) {
                         rzDir = (uint8_t)((onL?1:0)|(onR?2:0)|(onT?4:0)|(onB?8:0));
                         pressHit = 6;
+                        comp.RaiseWindow(&consoleWin);   /* grab on frame edge */
                         resizing = true;
                         rsX = (int32_t)normX; rsY = (int32_t)normY;
                         rsW = (int32_t)normW; rsH = (int32_t)normH;
@@ -637,6 +653,22 @@ int main(){
                         grabDX = mx - (int32_t)normX;
                         grabDY = my - (int32_t)normY;
                     }
+                }
+                /* A plain press on the content area only raises/focuses the
+                   window; claim it so it cannot fall through to the taskbar. */
+                if (pressHit == 0 && inConsole) pressHit = 8;
+            }
+
+            /* Notepad stacked UNDER the console: reachable only when the
+               console missed the press. A click here raises it back on top. */
+            if (pressHit == 0 && !noteTop && inNote) {
+                pressHit = 7;
+                comp.RaiseWindow(&noteWin);
+                int32_t btnStart = nbx + nbw - 3 * (int32_t)SKYWIN_BTN_W;
+                if (my < nby + th && mx < btnStart) {
+                    noteDrag = true;
+                    noteGrabX = mx - (int32_t)noteWin.PosX;
+                    noteGrabY = my - (int32_t)noteWin.PosY;
                 }
             }
             if (pressHit == 0 && wmMode != WM_CLOSED &&

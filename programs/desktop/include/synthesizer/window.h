@@ -120,6 +120,11 @@ public:
     void            SetVisible(Window* w, bool visible);
     void            MoveWindow(Window* w, uint32_t x, uint32_t y);
 
+    /* Bring a window's layer straight to the top of the stack (Win11 click-to
+       front / raise-on-press). Reorders the layer list and bumps its z above
+       the current topmost layer; a window already on top is left untouched. */
+    void            RaiseWindow(Window* w);
+
     /* Run one double-buffered parallel frame; returns after every strip has
        been presented to the scanout. Single-threaded fallback if workers
        are not running or the back buffer could not be allocated. */
