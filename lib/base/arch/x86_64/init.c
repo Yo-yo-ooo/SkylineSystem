@@ -123,6 +123,10 @@ void _init_runtime_and_global_variables(){
     int avx,avx2,avx512;
     check_avx_extensions(&avx,&avx2,&avx512);
 #if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
+    /* NT (streaming store) 阈值按本机 L3 容量设定 —— 必须在挂上 mem* 分派
+     * 指针之前, 否则大块搬运会用错路径 (只影响性能, 但影响很明显)。
+     * 探测失败时 x86mem_init_cache_limit 会保留 X86MEM_CACHE_LIMIT_DEFAULT。 */
+    x86mem_init_cache_limit();
     if(avx512 && MEMOPS_SupportV3){
         memcmpC = memcmpCAV3;
         memcpyC = AVX_memcpyV3;

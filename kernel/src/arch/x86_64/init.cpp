@@ -69,6 +69,13 @@ static void bench_wrapper(void) {
 #include <drivers/mouse/x86/ps2mouse.h>
 #include <drivers/net/e1000.h>
 
+/* x86mem 运行时参数 (NT 存储阈值)。必须走 __KERNEL_INC__ 分支: 内核用
+   -mno-sse 编译, 而这个宏会让 x86mem.h 跳过 nmmintrin.h / avx*intrin.h。 */
+#if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
+#define __KERNEL_INC__
+#include "../../../../ablib/arch/x86_64/x86mem/x86mem.h"
+#endif
+
 #define PIC1_COMMAND 0x20
 #define PIC1_DATA 0x21
 #define PIC2_DATA 0xA1
@@ -108,6 +115,15 @@ void __init x86_64_init(void){
     WELCOME_X86_64
     kinfo("INIT x86_64 ARCH\n");
     InitFunc("SSE",sse_enable());
+#if defined(__x86_64__) && NOT_COMPILE_X86MEM == 0
+    /* NT (streaming store) 阈值 = CPUID 探测到的 L3 容量。
+       必须早于 PMM/VMM/SLAB —— 它们上来就是大块 memset/memcpy, 阈值不对
+       会让这些搬运过早或过晚切到 streaming store (只影响性能, 但很明显)。
+       探测失败时 x86mem_init_cache_limit 会保留 X86MEM_CACHE_LIMIT_DEFAULT。 */
+    x86mem_init_cache_limit();
+    kinfoln("x86mem: NT threshold = %llu KB (L3)",
+            (unsigned long long)(x86mem_cache_limit / 1024));
+#endif
     kinfoln("HHDM OFFSET:0x%X",hhdm_offset);
 
     InitFunc("GDT",GDT::Init(0));

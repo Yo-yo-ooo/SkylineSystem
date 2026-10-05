@@ -41,7 +41,9 @@ ifeq ($(COMPILER_SUPPORT_AVX512),yes)
 endif
 endif
 
-SRCS = memcpy.c memmove.c memset.c memcmp.c
+# x86mem_init.c: 运行时参数 (NT 阈值的 CPUID 探测)。它只在 base tier 出符号,
+# 见该文件头部注释 —— 其余 tier 编译它只是为了满足依赖关系。
+SRCS = memcpy.c memmove.c memset.c memcmp.c x86mem_init.c
 OBJS_TO_LINK = $(foreach arch,$(TARGET_ARCHS),memops_$(arch).o)
 
 .PHONY: all clean
@@ -56,8 +58,9 @@ memops_$(1).o: $(SRCS)
 	$(CC_x86mem) $(CFLAGS_x86mem) $(FLAGS_$(1)) -c memmove.c -o memmove_$(1).o
 	$(CC_x86mem) $(CFLAGS_x86mem) $(FLAGS_$(1)) -c memset.c -o memset_$(1).o
 	$(CC_x86mem) $(CFLAGS_x86mem) $(FLAGS_$(1)) -c memcmp.c -o memcmp_$(1).o
-	ld -r memcpy_$(1).o memmove_$(1).o memset_$(1).o memcmp_$(1).o -o $$@
-	@rm -f memcpy_$(1).o memmove_$(1).o memset_$(1).o memcmp_$(1).o
+	$(CC_x86mem) $(CFLAGS_x86mem) $(FLAGS_$(1)) -c x86mem_init.c -o x86mem_init_$(1).o
+	ld -r memcpy_$(1).o memmove_$(1).o memset_$(1).o memcmp_$(1).o x86mem_init_$(1).o -o $$@
+	@rm -f memcpy_$(1).o memmove_$(1).o memset_$(1).o memcmp_$(1).o x86mem_init_$(1).o
 endef
 
 # 动态展开生成 base, avx, avx2, avx512 (根据系统支持度) 的具体规则

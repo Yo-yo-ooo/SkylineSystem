@@ -131,6 +131,9 @@ typedef struct SkyWinPlacement {
     uint64_t client_pid;  /* spawned console process (hw2) pid, for kill   */
     uint32_t w, h;        /* surface size (SKYWIN_SURF_W x SKYWIN_SURF_H)  */
     uint32_t x, y;        /* top-left position on the scanout (centered)   */
+    uint64_t proto;       /* desktop-side alias of the client protocol
+                             page; WM watches OUT_SEQ here to mark the
+                             window dirty on client output (round 19)     */
 } SkyWinPlacement;
 
 /* ---- modern dark (Win11/Fluent) palette, 0xAARRGGBB, matches RGB() ------ *

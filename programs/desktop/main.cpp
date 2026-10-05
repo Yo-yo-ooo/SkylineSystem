@@ -503,6 +503,7 @@ int main(){
     uint64_t last_scene = rdtsc64();
     uint64_t last_chrome = 0;
     uint64_t last_clock = 0;
+    uint64_t last_client_seq = 0;   /* round 19: 控制台 OUT_SEQ 监视 (dirty 标记) */
 
     /* ---- window-manager interaction state ---- */
     enum { WM_NORMAL = 0, WM_MAX = 1, WM_MIN = 2, WM_CLOSED = 3 } wmMode = WM_NORMAL;
@@ -879,6 +880,18 @@ int main(){
                     wmDirty = true;
                 }
 #endif
+            }
+        }
+
+        /* round 19: 客户端输出立即标记 dirty —— 监视协议页 OUT_SEQ,
+           任何新字符触发重合成 (不再依赖 2Hz 时钟, 迟到输出秒上屏);
+           任务栏时钟的 2Hz 重合成仍作为空闲兜底 */
+        if (place.proto) {
+            uint64_t seq = *(volatile uint64_t *)(place.proto +
+                                                  SKYWIN_PROTO_OUT_SEQ * 8u);
+            if (seq != last_client_seq) {
+                last_client_seq = seq;
+                wmDirty = true;
             }
         }
 

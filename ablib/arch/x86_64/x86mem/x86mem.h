@@ -30,13 +30,38 @@
 #endif
 #endif
 
-// Size limit (in bytes) before switching to non-temporal/streaming loads & stores
-// Applies to: AVX_memmove, AVX_memset, and AVX_memcpy
-#define CACHESIZELIMIT 3*1024*1024 // 3 MB
+/* ---------------------------------------------------------------------------
+ * 非时序 (NT/streaming) 存储阈值
+ *
+ * 搬运尺寸超过这个值时改用 streaming store, 避免把工作集从 cache 里冲掉。
+ * 原本是编译期常量 3MB; 现改为运行时变量, 由启动代码用 CPUID 探测到的
+ * L3 容量填进去:
+ *   - 用户态: lib/base/arch/x86_64/init.c      _init_runtime_and_global_variables()
+ *   - 内核态: kernel/src/arch/x86_64/init.cpp  x86_64_init()
+ *
+ * mem* 只拿它挑路径: 取错值只影响性能, 不影响正确性。探测不到 (返回 0) 或
+ * 启动代码没跑到之前, 都保持 X86MEM_CACHE_LIMIT_DEFAULT。
+ * GLIBC ~ LIMIT
+ * ------------------------------------------------------------------------ */
+#define X86MEM_CACHE_LIMIT_DEFAULT ((size_t)3  * 1024 * 1024)   /*  3 MB */
+#define X86MEM_CACHE_LIMIT_MIN     ((size_t)1 * 1024 * 1024)    /* 1 MB */
+#define X86MEM_CACHE_LIMIT_MAX     ((size_t)32 * 1024 * 1024)  /* 32 MB */
+#ifndef X86MEM_CACHE_LIMIT_L3_DIV
+#define X86MEM_CACHE_LIMIT_L3_DIV  8u
+#endif
 
 #ifdef __cplusplus
 extern "C"{
 #endif
+
+/* 这三个符号必须在 extern "C" 里: kernel 是 C++, 否则会被 mangling 掉。 */
+
+/* NT 阈值, 单位字节。只被 mem* 读, 用来挑"普通存储 / streaming 存储"。 */
+extern size_t x86mem_cache_limit;
+/* CPUID 探测 L3 容量; 探测不到返回 0 (调用方应保持默认值) */
+size_t x86mem_detect_l3_size(void);
+/* 探测并把结果写进 x86mem_cache_limit (内部会夹到 [MIN, MAX]) */
+void   x86mem_init_cache_limit(void);
 
 
 //-----------------------------------------------------------------------------

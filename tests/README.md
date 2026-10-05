@@ -19,6 +19,8 @@ cd tests && bash ci.sh          # Ubuntu 24.04, g++ ≥ 13
 | `fc` | fc.cpp+art.c 真实源码：200 万 op 混沌 + 分路径吞吐 + 命中率 | ✅ 真实源码 |
 | `fc-reg` | 三个已修缺陷的最小确定性回归 | ✅ 真实源码 |
 | `sched` | sched.cpp 账本公式逐行复刻模型 + Linux EEVDF 参考对照 | ⚠️ 公式复刻模型 |
+| `memops` | ablib x86mem 四 tier：小尺寸穷举 + 重叠 + 越界哨兵 + 跨 NT 阈值大块 | ✅ 真实源码 |
+| `memops-bench` | 与 libc 及各 tier 对照的 GB/s 吞吐基准（见 `memops/README.md`） | ✅ 真实源码 |
 
 ## 随机种子（全部硬编码，失败可重放）
 

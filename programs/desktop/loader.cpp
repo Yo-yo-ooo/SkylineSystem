@@ -300,6 +300,7 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
         place->h = surfH;
         place->x = (Fb->Width  > surfW) ? (uint32_t)((Fb->Width  - surfW) / 2u) : 0u;
         place->y = (Fb->Height > surfH) ? (uint32_t)((Fb->Height - surfH) / 2u) : 0u;
+        place->proto = proto;   /* WM 据此监视 OUT_SEQ 标记窗口 dirty */
     }
     return desk_whole;
 }
