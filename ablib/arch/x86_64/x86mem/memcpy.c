@@ -137,18 +137,25 @@ static void xm_copy_fwd(uint8_t *d, const uint8_t *s, size_t n, int nt)
     /* 此后 d 恒按 XM_VEC 对齐 */
 
     if (nt) {
-        while (n >= 4u * XM_VEC) {
-            XM_BLK(XM_STORENT);
+        while (n >= 4u*XM_VEC) { 
+            XM_BLK(XM_STORENT); 
             d += 4u * XM_VEC;
             s += 4u * XM_VEC;
             n -= 4u * XM_VEC;
         }
+        while (n >= XM_VEC) {
+            XM_STORENT(d, XM_LOADU(s));
+            d += XM_VEC; s += XM_VEC; n -= XM_VEC;
+        }
     } else {
-        while (n >= 4u * XM_VEC) {          /* d 已对齐: 用对齐存储 */
-            XM_BLK(XM_STOREA);
+        while (n >= 4u*XM_VEC) { XM_BLK(XM_STOREA); 
             d += 4u * XM_VEC;
             s += 4u * XM_VEC;
-            n -= 4u * XM_VEC;
+            n -= 4u * XM_VEC; 
+        }
+        while (n >= XM_VEC) {
+            XM_STOREA(d, XM_LOADU(s));
+            d += XM_VEC; s += XM_VEC; n -= XM_VEC;
         }
     }
 

@@ -22,19 +22,7 @@ static inline void xm_cpuid(uint32_t leaf, uint32_t sub,
                  : "a"(leaf), "c"(sub));
     *a = ea; *b = eb; *c = ec; *d = ed;
 }
-/* ============================================================================
- * 在 cache-topology 子叶里定位 L3。
- *   Intel: leaf 4 (Deterministic Cache Parameters)
- *   AMD:   0x8000001D (Cache Topology Information), 布局与 leaf 4 相同
- *
- * !! AMD 不实现 leaf 4 !! 真机 CPUID(4,0) 返回全 0, 必须先试 0x8000001D。
- *    其存在性以 TOPOEXT (Fn8000_0001 ECX[22]) 为准, 这里用 max-ext-leaf
- *    检查 + type==0 兜底; Intel 的 max ext 恒为 0x80000008, 进不了该分支。
- *    (QEMU 的 AMD 型号例外地实现了 leaf 4 —— VM 里测过 != 真机可行。)
- *
- * 找到: *ea/*eb/*ec ← L3 子叶的原始 EAX/EBX/ECX, 返回所用 leaf;
- * 没找到: 返回 0 (无 L3 的 CPU, 或 VIA/老古董两头都没有)。
- * ==========================================================================*/
+///
 static uint32_t xm_find_l3_subleaf(uint32_t *ea, uint32_t *eb, uint32_t *ec)
 {
     uint32_t a, b, c, d, i;
