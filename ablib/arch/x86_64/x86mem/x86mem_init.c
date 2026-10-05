@@ -1,25 +1,7 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
-/* ============================================================================
- * x86mem 运行时参数 —— NT (非时序) 存储阈值的 CPUID 探测
- *
- * 背景: 阈值原来是 x86mem.h 里的编译期常量 3MB。不同机器的 L3 从 1MB 到
- * 上百 MB 不等, 固定值必然两头不讨好: L3 大的机器过早改用 streaming store
- * (数据本来还装得下), L3 小的机器又太晚才切换。改成启动时用 CPUID 探测
- * 真实 L3 容量填进去。
- *
- * 初始化入口 (二选一, 各管各的链接单元):
- *   - 用户态: lib/base/arch/x86_64/init.c      _init_runtime_and_global_variables()
- *   - 内核态: kernel/src/arch/x86_64/init.cpp  x86_64_init()
- *
- * !! 符号唯一性 !!
- * 本目录下的每个 .c 都会被 4 个指令集 tier (base/avx/avx2/avx512) 各编译一遍,
- * 再 ld -r 合成一个 memops.o。所以这里任何全局符号都会出 4 份 —— 强定义会在
- * 链接期撞车 (重复的 weak 定义则会被 PE-COFF 的 ld -r 改名为
- * .weak.<sym>.<file> 而失去全局定义)。
- * 因此全局符号一律用 X86MEM_NOT_COMPILE_AVX 圈起来: 这个宏只有 base tier
- * 才有, 而 base tier 恒被编译 (Makefile: TARGET_ARCHS := base)。
- * ==========================================================================*/
+// It may cause fault to build this if X86MEM_NOT_COMPILE_AVX not use
+// (alias)
 #include "./x86mem.h"
 #include <stdint.h>
 #include <stddef.h>
@@ -40,40 +22,66 @@ static inline void xm_cpuid(uint32_t leaf, uint32_t sub,
                  : "a"(leaf), "c"(sub));
     *a = ea; *b = eb; *c = ec; *d = ed;
 }
-
 /* ============================================================================
- * 探测 L3 容量 (字节)。探测不到返回 0 —— 由调用方决定回退策略。
+ * 在 cache-topology 子叶里定位 L3。
+ *   Intel: leaf 4 (Deterministic Cache Parameters)
+ *   AMD:   0x8000001D (Cache Topology Information), 布局与 leaf 4 相同
  *
- * 两条路:
- *  1) CPUID leaf 4 (确定性 cache 参数): Intel 与 AMD 现代 CPU 都支持。
- *     容量 = (ways+1) * (partitions+1) * (line+1) * (sets+1)
- *     leaf 4 报的是该级 cache 的**整块**容量 (L3 通常是整个 package 共享),
- *     正是"超过它就别指望 cache 装下"想要的那个数, 不需要再乘共享线程数。
- *  2) AMD Fn8000_0006_EDX[31:18]: L3 容量, 单位 512KB。
- *     用在没有 leaf 4 的老 CPU 上。
+ * !! AMD 不实现 leaf 4 !! 真机 CPUID(4,0) 返回全 0, 必须先试 0x8000001D。
+ *    其存在性以 TOPOEXT (Fn8000_0001 ECX[22]) 为准, 这里用 max-ext-leaf
+ *    检查 + type==0 兜底; Intel 的 max ext 恒为 0x80000008, 进不了该分支。
+ *    (QEMU 的 AMD 型号例外地实现了 leaf 4 —— VM 里测过 != 真机可行。)
+ *
+ * 找到: *ea/*eb/*ec ← L3 子叶的原始 EAX/EBX/ECX, 返回所用 leaf;
+ * 没找到: 返回 0 (无 L3 的 CPU, 或 VIA/老古董两头都没有)。
  * ==========================================================================*/
-size_t x86mem_detect_l3_size(void)
+static uint32_t xm_find_l3_subleaf(uint32_t *ea, uint32_t *eb, uint32_t *ec)
 {
-    uint32_t a, b, c, d;
-    uint32_t i;
+    uint32_t a, b, c, d, i;
 
-    xm_cpuid(0, 0, &a, &b, &c, &d);
-    if (a >= 4u) {
+    xm_cpuid(0x80000000u, 0, &a, &b, &c, &d);
+    if (a >= 0x8000001Du) {                         /* AMD / 海光 */
         for (i = 0; i < 64u; i++) {
-            xm_cpuid(4, i, &a, &b, &c, &d);
-            if ((a & 0x1Fu) == 0u) break;              /* cache type 0 = 结束 */
-            if (((a >> 5) & 0x7u) != 3u) continue;     /* 只要 level 3 */
-
-            size_t line = (size_t)((b & 0xFFFu) + 1u);
-            size_t part = (size_t)(((b >> 12) & 0x3FFu) + 1u);
-            size_t ways = (size_t)(((b >> 22) & 0x3FFu) + 1u);
-            size_t sets = (size_t)(c + 1u);
-            size_t sz   = ways * part * line * sets;
-            if (sz != 0) return sz;
+            xm_cpuid(0x8000001Du, i, &a, &b, &c, &d);
+            if ((a & 0x1Fu) == 0u) break;           /* type 0 = 枚举结束 */
+            if (((a >> 5) & 0x7u) == 3u) {          /* level == 3 */
+                *ea = a; *eb = b; *ec = c;
+                return 0x8000001Du;
+            }
         }
     }
 
-    /* AMD / 老 CPU 回退 */
+    xm_cpuid(0u, 0, &a, &b, &c, &d);
+    if (a >= 4u) {                                  /* Intel */
+        for (i = 0; i < 64u; i++) {
+            xm_cpuid(4u, i, &a, &b, &c, &d);
+            if ((a & 0x1Fu) == 0u) break;
+            if (((a >> 5) & 0x7u) == 3u) {
+                *ea = a; *eb = b; *ec = c;
+                return 4u;
+            }
+        }
+    }
+
+    return 0u;
+}
+
+/* size 改为走 helper —— 对 Intel 行为不变, 对 AMD 从"必失败"变可用 */
+size_t x86mem_detect_l3_size(void)
+{
+    uint32_t a, b, c, d;
+
+    if (xm_find_l3_subleaf(&a, &b, &c) != 0u) {
+        size_t line = (size_t)((b & 0xFFFu) + 1u);
+        size_t part = (size_t)(((b >> 12) & 0x3FFu) + 1u);
+        size_t ways = (size_t)(((b >> 22) & 0x3FFu) + 1u);
+        size_t sets = (size_t)(c + 1u);
+        size_t sz   = ways * part * line * sets;
+        if (sz != 0) return sz;
+    }
+
+    /* AMD 老 CPU 回退: Fn8000_0006 EDX[31:18], 单位 512KB (K10~Bulldozer;
+     * Zen 必命中 0x8000001D, 走不到这)。 */
     xm_cpuid(0x80000000u, 0, &a, &b, &c, &d);
     if (a >= 0x80000006u) {
         xm_cpuid(0x80000006u, 0, &a, &b, &c, &d);
@@ -84,13 +92,63 @@ size_t x86mem_detect_l3_size(void)
     return 0;    /* 探测失败 */
 }
 
+/* ============================================================================
+ * 共享当前核心所在 L3 的**逻辑处理器数** (含 SMT 兄弟线程)。0 = 探测不到。
+ *   L3 子叶 EAX[25:14] + 1 = 共享该 L3 实例的逻辑处理器数
+ *   - Intel: L3 整 package 共享 → package 内逻辑 CPU 数
+ *   - AMD:   L3 归属 CCX     → 本 CCX 内逻辑 CPU 数
+ * ==========================================================================*/
+unsigned x86mem_detect_l3_shared_threads(void)
+{
+    uint32_t a, b, c;
+
+    if (xm_find_l3_subleaf(&a, &b, &c) == 0u)
+        return 0u;
+
+    return (unsigned)(((a >> 14) & 0xFFFu) + 1u);
+}
+
+/* ============================================================================
+ * 共享当前核心所在 L3 的**物理核心数** (SMT 已折算)。0 = 探测不到。
+ * 老 K8/K10 的 Fn8000_0006 只有容量没有拓扑信息, 只能返回 0。
+ * ==========================================================================*/
+unsigned x86mem_detect_l3_shared_cores(void)
+{
+    uint32_t a, b, c, d;
+    uint32_t threads, tpc, cores;
+
+    threads = x86mem_detect_l3_shared_threads();
+    if (threads == 0u)
+        return 0u;
+
+    /* SMT 折算: 每 core 线程数 */
+    tpc = 1u;
+    xm_cpuid(1u, 0u, &a, &b, &c, &d);
+    if ((d & (1u << 28)) != 0u) {                   /* HTT=0 必无 SMT */
+        xm_cpuid(0u, 0u, &a, &b, &c, &d);
+        if (a >= 0xBu) {                            /* leaf 0xB: 扩展拓扑 */
+            xm_cpuid(0xBu, 0u, &a, &b, &c, &d);
+            if ((((c >> 8) & 0xFFu) == 1u) &&       /* level type == SMT */
+                ((b & 0xFFFFu) != 0u))
+                tpc = (b & 0xFFFFu);
+        }
+    }
+
+    if (tpc <= 1u)
+        return threads;                             /* 无 SMT: 逻辑数即核数 */
+
+    cores = threads / tpc;
+    return (cores != 0u) ? (unsigned)cores : 1u;
+}
+
 void x86mem_init_cache_limit(void)
 {
     size_t v = x86mem_detect_l3_size();
-
+    size_t c = x86mem_detect_l3_shared_cores();
     if (v == 0) return;                                  /* 保持默认值 */
+    if (c == 0) c = 1;
 
-    v = v * 3 / 4;
+    v = v * 3 / 4 / c;
 
     if (v < X86MEM_CACHE_LIMIT_MIN) v = X86MEM_CACHE_LIMIT_MIN;
     if (v > X86MEM_CACHE_LIMIT_MAX) v = X86MEM_CACHE_LIMIT_MAX;

@@ -490,23 +490,23 @@ int main(int argc, char **argv)
     Pool p;
     if (!p.init()) { std::printf("alloc failed\n"); return 2; }
 
-    std::printf("== x86mem 宿主正确性测试 ==\n");
+    std::printf("== x86mem HOST POSIBILITY TEST ==\n");
     std::printf("CPU: sse4.2=%d avx=%d avx2=%d avx512f=%d\n",
                 (int)cpu_sse42(), (int)cpu_avx(), (int)cpu_avx2(), (int)cpu_avx512f());
 
     /* NT 阈值: 默认常量 -> CPUID 探测的 L3 容量。必须落在 [MIN, MAX] 内,
      * 且探测失败时保持默认值。 */
     const size_t dflt = x86mem_cache_limit;
-    CHECK(dflt == X86MEM_CACHE_LIMIT_DEFAULT, "默认 NT 阈值应为 %zu, 实为 %zu",
+    CHECK(dflt == X86MEM_CACHE_LIMIT_DEFAULT, "Defalut NT LIMIT: %zu, TURE IS: %zu",
           (size_t)X86MEM_CACHE_LIMIT_DEFAULT, dflt);
     const size_t l3 = x86mem_detect_l3_size();
     x86mem_init_cache_limit();
-    std::printf("NT 阈值: 默认 %zu KB -> CPUID L3 %zu KB (/%u) -> 采用 %zu KB\n",
+    std::printf("NT Limit: Default %zu KB -> CPUID L3 %zu KB (/%u) -> Use %zu KB\n",
                 dflt / 1024, l3 / 1024,
                 (unsigned)X86MEM_CACHE_LIMIT_L3_DIV, x86mem_cache_limit / 1024);
     CHECK(x86mem_cache_limit >= X86MEM_CACHE_LIMIT_MIN &&
           x86mem_cache_limit <= X86MEM_CACHE_LIMIT_MAX,
-          "NT 阈值 %zu 越界 [%zu, %zu]", x86mem_cache_limit,
+          "NT LIMIT %zu OUT OF [%zu, %zu]", x86mem_cache_limit,
           (size_t)X86MEM_CACHE_LIMIT_MIN, (size_t)X86MEM_CACHE_LIMIT_MAX);
     if (l3 != 0) {
         /* 探测成功: 采用值必须是 clamp(l3 / DIV) */
