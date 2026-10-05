@@ -1,213 +1,126 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
 
-#pragma once
+// synthesizer/window.h — double-buffered horizontal-strip compositor
+#ifndef SYNTHESIZER_WINDOW_H
+#define SYNTHESIZER_WINDOW_H
 
 #include <stdint.h>
 #include <graphic/fb.h>
 
-/*
- * ============================================================================
- *  Desktop Parallel Compositor  (double-buffered)
- * ----------------------------------------------------------------------------
- *  The screen is split horizontally into N equal-height strips where
- *  N == online CPU count obtained dynamically from sys_sysinfo(). One pinned
- *  worker thread owns one strip, so every frame is rendered with N-way data
- *  parallelism (disjoint Y ranges, zero write sharing -> no per-pixel lock).
- *
- *  Tearing fix (black horizontal bands):
- *  Workers NEVER paint the visible scanout directly. Every frame runs in two
- *  barrier-separated phases:
- *
- *    phase 1  COMPOSE : each worker renders its strip into an invisible
- *                       back buffer (clear + layer stack happens off-screen);
- *    barrier          : main thread waits until the WHOLE back frame is done;
- *    phase 2  COMMIT  : the MAIN THREAD ONLY pushes the whole scene to the
- *                       scanout in one commitScene (P3-83: 原"每个 worker
- *                       memcpy 自己的 strip 回前台"为旧设计, 已废弃 ——
- *                       worker 从不接触 fb, 指针因此永不被擦除).
- *
- *  Because the front buffer is only ever overwritten with rows from a
- *  complete frame, it never shows the transient "cleared to black" state, so
- *  no black band can flash even if a worker is preempted mid-compose.
- *
- *  Everything is DYNAMIC: layers are malloc'd nodes on a standalone linked
- *  list, the strip table and the back buffer are malloc'd at start. The
- *  application Window struct is left UNTOUCHED — each registered window is
- *  wrapped by a standalone CompWinNode.
- *
- *  Scene graph (two INDEPENDENT linked lists):
- *
- *    [Layer list]  bottom -> top  (dynamically allocated CompLayer nodes)
- *        +-- layer 0: [window-node list] -> Window* -> Window* -> ...
- *        +-- layer 1: [window-node list] -> Window* -> ...
- *
- *  Traversal per strip: walk the Layer list (bottom -> top), then each
- *  layer's window-node list. Every window is visited once per strip with an
- *  O(1) clip test and blitted with whole-scanline memcpy (never a per-pixel
- *  topmost search). Scene *traversal* is O(total window count); the only
- *  other cost is the unavoidable O(screen pixels) block copy.
- * ============================================================================
- */
+/* bytes per compositor pixel (ARGB8888) */
+#define COMP_BPP 4u
+/* hard sanity bound on strip/CPU count (defensive clamp in StartWorkers) */
+#define COMP_CPUS_SANITY 64u
 
-#define COMP_BPP            4    /* 32-bit ARGB, uint32 / pixel              */
-#define COMP_CPUS_SANITY  256    /* defensive cap only; storage is dynamic   */
-
-/* ---------------------------------------------------------------------------
- *  Application window — kept exactly as originally defined, ZERO changes.
- * ------------------------------------------------------------------------- */
-typedef struct Window {
-    uint32_t SizeX, SizeY;
-    uint32_t PosX, PosY;
-    // Must in Window Size
-    // Frame means (Title bar: Close/Maximize/Minimize)
-    uint32_t FrameStartX, FrameStartY;
+/* Application-side window description. The compositor treats it read-only
+   (except PosX/PosY via MoveWindow's release stores). */
+struct Window {
+    uint32_t PosX, PosY;               /* surface top-left on screen       */
+    uint32_t SizeX, SizeY;             /* surface pitch / height (pixels)  */
+    uint32_t FrameStartX, FrameStartY; /* client-content frame inside it   */
     uint32_t FrameEndX, FrameEndY;
-    // Frame Buffer Base Address (window-local ARGB surface, pitch == SizeX)
-    uint64_t FbAddr;
-    /* 0 = fully opaque surface, whole rows are blitted with memcpy (fast path
-       for the wallpaper and ordinary windows). 1 = the surface carries
-       per-pixel alpha (anti-aliased rounded corners / soft drop shadow) and
-       is source-over blended onto whatever is stacked below during compose. */
-    uint8_t  HasAlpha;
-} Window;
+    uint64_t FbAddr;                   /* ARGB8888 surface base address    */
+    int      HasAlpha;                 /* 1 = blend per-pixel alpha        */
+};
 
-/* ---------------------------------------------------------------------------
- *  In-layer window node — compositor-owned wrapper, does not modify Window.
- * ------------------------------------------------------------------------- */
-typedef struct CompWinNode {
-    Window            *win;         /* borrowed application window          */
-    CompWinNode       *next, *prev; /* in-layer window list                  */
-    struct CompLayer  *layer;       /* back pointer to owning layer          */
-    uint8_t            visible;     /* 0 = skipped during compose            */
-} CompWinNode;
+/* One horizontal band of the screen, rendered by one worker. */
+struct Strip { uint32_t y0, y1; };
 
-/* ---------------------------------------------------------------------------
- *  Layer — a DYNAMICALLY ALLOCATED standalone linked-list node; each layer
- *  owns its own window-node list.
- * ------------------------------------------------------------------------- */
-typedef struct CompLayer {
-    CompLayer   *l_next, *l_prev;       /* standalone layer list (bottom->top) */
-    CompWinNode *win_head, *win_tail;   /* this layer's window-node list       */
+struct CompLayer;
+
+/* Window-node wrapper inside a layer's list (registry bookkeeping). */
+struct CompWinNode {
+    Window*      win;
+    CompLayer*   layer;
+    int          visible;
+    CompWinNode* next;
+    CompWinNode* prev;
+};
+
+/* Standalone layer: an ordered stack slot holding any number of windows. */
+struct CompLayer {
+    CompWinNode* win_head;
+    CompWinNode* win_tail;
     uint32_t     window_count;
-    uint32_t     z;                     /* stacking order, smaller = further   */
-} CompLayer;
+    uint32_t     z;                    /* insert key; list order rules     */
+    CompLayer*   l_next;
+    CompLayer*   l_prev;
+};
 
 class Compositor {
 public:
     static Compositor& Get();
 
-    /* Bind the target scanout framebuffer and allocate the off-screen back
-       buffer. Safe to call once before StartWorkers(). The fb is copied. */
-    bool            Init(FrameBuffer* screen);
+    bool Init(FrameBuffer* screen);
+    void SetBackground(const uint32_t* bg);
 
-    /* Optional static backdrop (ARGB, screen-sized). Borrowed pointer. */
-    void            SetBackground(const uint32_t* bg);
+    void StartWorkers();
+    void Compose();
+    void Shutdown();
 
-    /* Dynamically query ncpus via sys_sysinfo(), malloc the strip table,
-       and launch one pinned worker per CPU (hint == cpu id). Blocks until
-       every worker reports ready. */
-    void            StartWorkers();
+    /* ---- layer/window registry ---- */
+    CompLayer* CreateLayer(uint32_t z);
+    bool       DestroyLayer(CompLayer* layer);
+    bool       RegisterWindow(Window* w, CompLayer* layer);
 
-    /* Dynamic layer list management (sorted bottom -> top by z). */
-    CompLayer*      CreateLayer(uint32_t z);
-    bool            DestroyLayer(CompLayer* layer);
+    /* AUTO layer management: register w on a freshly created layer stacked
+       ABOVE every existing one (first registration = z 0 = bottom). Returns
+       the owning layer, or nullptr on failure/duplicate. The layer is
+       compositor-owned: UnregisterWindow retires and frees it automatically
+       once its last window is gone — null your handle then. Stacking order
+       == registration order; reorder with RaiseWindow. */
+    CompLayer* RegisterWindowAuto(Window* w);
 
-    /* Window registry: wraps `w` in a standalone CompWinNode, does NOT write
-       into the Window struct. */
-    bool            RegisterWindow(Window* w, CompLayer* layer);
-    bool            UnregisterWindow(Window* w);
-    void            SetVisible(Window* w, bool visible);
-    void            MoveWindow(Window* w, uint32_t x, uint32_t y);
+    bool       UnregisterWindow(Window* w);
+    void       SetVisible(Window* w, bool visible);
+    void       MoveWindow(Window* w, uint32_t x, uint32_t y);
+    void       RaiseWindow(Window* w);
 
-    /* Bring a window's layer straight to the top of the stack (Win11 click-to
-       front / raise-on-press). Reorders the layer list and bumps its z above
-       the current topmost layer; a window already on top is left untouched. */
-    void            RaiseWindow(Window* w);
+    /* ---- cursor ---- */
+    void SetCursor(int32_t x, int32_t y, bool visible);
+    void CursorMoveTo(int32_t x, int32_t y);
 
-    /* Run one double-buffered parallel frame; returns after every strip has
-       been presented to the scanout. Single-threaded fallback if workers
-       are not running or the back buffer could not be allocated. */
-    void            Compose();
-
-    /* The software cursor is an INDEPENDENT LAYER written directly onto the
-       scanout; it is never baked into the compose back buffer. SetCursor
-       updates its target and Compose() re-stamps it after presenting. */
-    void            SetCursor(int32_t x, int32_t y, bool visible);
-
-    /* Fast pointer path: restore the saved 16x16 backdrop under the old
-       square and stamp the new one straight on the framebuffer. Cost is
-       O(16^2) with no back-buffer recompose, worker wakeup or full-screen
-       present, so pointer tracking stays fluid independent of scene cost. */
-    void            CursorMoveTo(int32_t x, int32_t y);
-
-    /* P5-96: Invalidate()/Present() 死代码已删除 —— Compose() 为
-       全帧重建 + 提交路径 (见 window.cpp 注释) */
-
-    void            Shutdown();
-
-    uint32_t             WorkerCount() const { return ncpus_; }
-    const CompLayer*     LayerHead()  const { return layer_head_; }
-
-    /* Bare C entry for sys_thread_launch (the kernel forces rdi = 0, so the
-       strip id is handed out through an atomic ticket pool). */
-    void            WorkerEntry(uint32_t id);
+    /* ---- worker entry (called from the C trampoline) ---- */
+    void WorkerEntry(uint32_t id);
 
 private:
-    struct Strip {
-        uint32_t y0, y1;           /* half-open row range [y0, y1) */
-    };
+    void LockList();
+    void UnlockList();
+    void InsertLayerOrdered(CompLayer* layer);
+    CompWinNode* FindNode(Window* w);
 
-    FrameBuffer     screen_;
-    const uint32_t* background_;
-    uint32_t*       back_;             /* off-screen compose target, scanout-sized */
-    uint64_t        back_bytes_;       /* total byte size of back_ / scanout        */
-    uint32_t        ncpus_;
-    uint32_t        launched_;
-    uint32_t        shutdown_;
-    Strip*          strips_;             /* malloc'd [ncpus_], dynamic */
+    void ComposeStripToBack(uint32_t id);
+    void ComposeRangeToBack(uint32_t ry0, uint32_t ry1);
+    void ComposeSingleThreaded();
+    void blitSceneAvoidCursor(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                              int32_t ox, int32_t oy, int32_t nx, int32_t ny);
+    void paintSquareFromBack(int32_t x, int32_t y);
+    void blendCursorSquare(int32_t x, int32_t y);
+    void overlayCursorFinal(int32_t ox, int32_t oy, int32_t nx, int32_t ny);
+    void commitScene(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                     int32_t ox, int32_t oy, int32_t nx, int32_t ny);
 
-    /* standalone dynamic layer list */
-    CompLayer*      layer_head_;
-    CompLayer*      layer_tail_;
-    int32_t         list_lock_;          /* registry mutation spinlock */
-
-    /* ---- frame barrier (B1, round 4 修复) ----
-       帧号屏障: 每 worker 发布它已完成的最新 frame_seq_ (worker_done_seq_
-       [id] = seq)。主线程等所有 worker 的 done-seq ≥ 当前帧号才过屏障
-       —— 迟到 worker 的完成归入旧帧, 不再满足本帧 (原计数器 reset 后
-       迟到 done++ 会提前放行 + 退役节点 UAF 窗口) */
-    uint64_t        frame_seq_;
-    uint32_t        started_cnt_;
-    uint64_t        worker_done_seq_[COMP_CPUS_SANITY];
-    uint32_t        done_compose_;   /* TEMP (诊断): B1 回退对照 */
-
-    CompWinNode*    FindNode(Window* w);
-    void            ComposeStripToBack(uint32_t id); /* scene -> offscreen back_ */
-    void            ComposeSingleThreaded();
-    /* single-point scanout commit; the main thread is the ONLY fb writer */
-    void            blitSceneAvoidCursor(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
-                                         int32_t ox,int32_t oy,int32_t nx,int32_t ny);
-    void            paintSquareFromBack(int32_t x, int32_t y);
-    void            blendCursorSquare(int32_t x, int32_t y);
-    void            overlayCursorFinal(int32_t ox,int32_t oy,int32_t nx,int32_t ny);
-    void            commitScene(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
-                                int32_t ox,int32_t oy,int32_t nx,int32_t ny);
-    void            InsertLayerOrdered(CompLayer* layer);
-    void            LockList();
-    void            UnlockList();
-
-    /* independent cursor overlay; always the LAST thing drawn on scanout */
-    int32_t         cur_x_;
-    int32_t         cur_y_;
-    uint8_t         cur_visible_;
-    /* square where the arrow is CURRENTLY painted on the scanout; it can lag
-       cur_ while a full-screen scene blit is in flight, so the blit knows
-       which on-screen arrow square to preserve. -1 = no arrow committed. */
-    int32_t         committed_x_;
-    int32_t         committed_y_;
-
-    /* accumulated scene dirty rectangle (union), flushed by Present() */
-    int32_t         dx0_, dy0_, dx1_, dy1_;
-    uint8_t         dirty_;
+    FrameBuffer      screen_;
+    const uint32_t*  background_;
+    uint32_t         ncpus_;
+    uint32_t         launched_;
+    int              shutdown_;
+    Strip*           strips_;
+    CompLayer*       layer_head_;
+    CompLayer*       layer_tail_;
+    unsigned char    list_lock_;
+    uint64_t         frame_seq_;
+    uint32_t         started_cnt_;
+    uint32_t         done_compose_;
+    uint64_t         worker_done_seq_[COMP_CPUS_SANITY];
+    int32_t          cur_x_, cur_y_;
+    uint8_t          cur_visible_;
+    int32_t          committed_x_, committed_y_;
+    int32_t          dx0_, dy0_, dx1_, dy1_;
+    uint8_t          dirty_;
+    uint32_t         back_bytes_;
+    uint32_t*        back_;
 };
+
+#endif /* SYNTHESIZER_WINDOW_H */

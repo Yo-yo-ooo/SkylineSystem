@@ -13,16 +13,12 @@
 #include <base/font/ttf/ttf.h>
 #include <mouse/ps2.h>
 #include <synthesizer/window.h>
+#include <synthesizer/wm_client.h>
 /* P5-105: __thread 消除全局缓冲的非重入问题 (合成器 worker 线程
    并行调用 to_string 时互不踩踏) */
 static __thread char intTo_stringOutput[128];
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place);
-
-/* Generic windowed-app spawn (defined in loader.cpp); notepad uses it. */
-uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
-                          uint32_t bodyW, uint32_t bodyH,
-                          SkyWinPlacement *place, uint32_t paperRGB);
 
 /* Caption glyph painter + sized chrome rasterizer, both defined in loader.cpp */
 void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
@@ -125,14 +121,16 @@ static inline uint32_t wm_acrylic_pixel(uint32_t wallpaper) {
     return 0xFF000000u | (r << 16) | (g << 8) | b;
 }
 
-/* Paint the bottom taskbar straight into the wallpaper bitmap (compositor
-   layer 0). `cleanBar` is the pristine wallpaper strip; it is restored first
-   so repeatedly repainting (clock tick / state change) never compounds the
-   acrylic darkening. appState: 0 idle (shown), 1 active (minimized),
-   2 closed (no app entry). */
+/* Paint the bottom taskbar straight into the wallpaper bitmap (bottom-most
+   compositor layer). `cleanBar` is the pristine wallpaper strip; it is
+   restored first so repeatedly repainting (clock tick / state change) never
+   compounds the acrylic darkening. appState: 0 idle (shown), 1 active
+   (minimized), 2 closed (no app entry). */
 static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
                             uint32_t W, uint32_t H, int appState,
                             const WmDateTime* dt, bool haveClock) {
+    if (!wall || !cleanBar) return;   /* 卡死修复: cleanBar malloc 失败时点击
+                                         任务栏不再 memcpy(nullptr) 页故障 */
     FrameBuffer lb;
     lb.BaseAddress       = wall;
     lb.BufferSize        = (uint64_t)W * H * sizeof(uint32_t);
@@ -195,6 +193,7 @@ static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
     int32_t blockH = 2 * th + 2;
     int32_t right  = (int32_t)W - (int32_t)SKY_TRAY_MARGIN;
     int32_t blockTop = (int32_t)y0 + ((int32_t)barH - blockH) / 2;
+    (void)blockW;
     if (tf && haveClock) {
         TTF_DrawText(&lb, tf, right - w1, blockTop,             line1, SKYRGB_TRAY_INK);
         TTF_DrawText(&lb, tf, right - w2, blockTop + th + 2,    line2, SKYRGB_TRAY_INK);
@@ -355,10 +354,8 @@ int main(){
 
     /* Start compositor workers BEFORE spawning any client app: the other
        cores are idle now, so the pinned workers execute their entry ack
-       immediately. Starting them later, after the clients occupy those
-       cores, races the bounded startup wait and can wrongly degrade to
-       single-thread, leaving the lower screen unrendered. The workers just
-       spin until the first frame once windows are registered. */
+       immediately. The workers just spin until the first frame once windows
+       are registered. */
     comp.StartWorkers();
 
     WmDateTime bootDT;
@@ -378,12 +375,12 @@ int main(){
     static SkyWinPlacement place;
     uint64_t consoleSurf = TLoad(&fb, &place);
 
-    CompLayer* layer0 = comp.CreateLayer(0);
-    comp.RegisterWindow(&wallpaperWin, layer0);
-    /* Function-scoped layer handles so the input loop can compare their
-       current stacking order (z) to hit-test the topmost window first. */
-    CompLayer* layer1 = nullptr;   /* console */
-    CompLayer* layer2 = nullptr;   /* notepad */
+    /* ---- auto layers: registration order == initial stacking order -----
+       Wallpaper first (bottom), console next, then every spawned client —
+       no hand-numbered z values anywhere. The console keeps a layer handle
+       only for the topmost-hit z comparison in the input loop. */
+    comp.RegisterWindowAuto(&wallpaperWin);
+    CompLayer* consoleLayer = nullptr;
 
     static Window consoleWin;
     if (consoleSurf && place.desk_surf) {
@@ -396,37 +393,17 @@ int main(){
         consoleWin.FrameEndX   = SKYWIN_CONTENT_X + SKYWIN_CONTENT_W;
         consoleWin.FrameEndY   = SKYWIN_CONTENT_Y + SKYWIN_CONTENT_H;
         consoleWin.FbAddr = place.desk_surf;
-        consoleWin.HasAlpha = 1;   /* rounded corners + soft drop shadow      */
-        CompLayer* layer1b = comp.CreateLayer(1);
-        layer1 = layer1b;
-        comp.RegisterWindow(&consoleWin, layer1b);
+        consoleWin.HasAlpha = 1;   /* rounded corners + soft drop shadow */
+        consoleLayer = comp.RegisterWindowAuto(&consoleWin);
     }
 
-    /* ---- Notepad: a second, interactive windowed app (layer 2) ----------
-       Spawned through the same generic surface-sharing path; it mmaps the
-       keyboard event ring and edits text. Offset from the centered console so
-       both stacked windows stay visible. */
-#if 1  /* notepad enabled */
-    static SkyWinPlacement notePlace;
-    static Window noteWin;
-    const uint32_t NOTE_W = 560u, NOTE_H = 420u;
-    const uint32_t NOTE_PAPER = 0xFF0F0F12u;  /* matches notepad content bg */
-    if (SpawnWindowedApp(&fb, "/mp/notepad.elf", "Notepad",
-                         NOTE_W, NOTE_H, &notePlace, NOTE_PAPER)) {
-        noteWin.PosX = notePlace.x + 90u;
-        noteWin.PosY = notePlace.y + 70u;
-        noteWin.SizeX = notePlace.w;
-        noteWin.SizeY = notePlace.h;
-        noteWin.FrameStartX = SKYWIN_SHADOW;
-        noteWin.FrameStartY = SKYWIN_SHADOW + SKYWIN_TITLE_H;
-        noteWin.FrameEndX   = SKYWIN_SHADOW + NOTE_W;
-        noteWin.FrameEndY   = SKYWIN_SHADOW + NOTE_H - SKYWIN_RADIUS;
-        noteWin.FbAddr   = notePlace.desk_surf;
-        noteWin.HasAlpha = 1;
-        layer2 = comp.CreateLayer(2);
-        comp.RegisterWindow(&noteWin, layer2);
-    }
-#endif
+    /* ---- generic windowed clients ---------------------------------------
+       Notepad is down to spawn PARAMETERS now: title, body size, paper
+       colour, stacking offset. Caption drag / close / click-to-front /
+       dead-process cleanup are app-agnostic (wm_client.cpp); adding
+       another windowed app is one more wm_client_spawn() line. */
+    wm_client_spawn(comp, &fb, "/mp/notepad.elf", "Notepad",
+                    560u, 420u, 0xFF0F0F12u, 90u, 70u);
 
     /* Desktop-owned (NOT shared with the client) full-work-area surface used
        only while maximized: opaque, no rounded shadow margin. The live text is
@@ -476,18 +453,12 @@ int main(){
     int wmKbdSlot = wmKbd ? kbd_reader_register(wmKbd) : -1;
     uint64_t wmKbdCursor = wmKbdSlot >= 0 ? kbd_reader_pos(wmKbd, wmKbdSlot) : 0;
 
-    /* Two independent layers:
-       - SCENE (wallpaper + windows): composited off-screen and presented at
-         a modest rate -- it changes slowly.
-       - POINTER: its own layer written straight to the scanout. A move only
-         restores the saved 16x16 backdrop and re-stamps the arrow
-         (CursorMoveTo): O(16^2), workers stay asleep, no full-screen copy. */
     const uint64_t tsc_per_ms = probe_tsc_per_ms();
     const uint64_t move_gap   = 16u  * tsc_per_ms;   /* pointer overlay ~60Hz */
     const uint64_t scene_gap  = 33u  * tsc_per_ms;   /* recompose scene ~30Hz */
     const uint64_t idle_gap   = 50u  * tsc_per_ms;   /* scene refresh, still  */
     const uint64_t chrome_gap = 16u  * tsc_per_ms;   /* live-resize repaint  */
-    const uint64_t clock_gap  = 500u * tsc_per_ms;   /* poll RTC at 2 Hz (P5-110: 原注释 "twice/min" 错误) */
+    const uint64_t clock_gap  = 500u * tsc_per_ms;   /* poll RTC at 2 Hz (P5-110) */
 
     int32_t prev_x = -100;
     int32_t prev_y = -100;
@@ -514,13 +485,9 @@ int main(){
     int32_t  grabDX = 0, grabDY = 0;
     uint8_t  rzDir = 0;   /* edge resize directions: bit0 L,1 R,2 T,3 B       */
     int32_t  rsX = 0, rsY = 0, rsW = 0, rsH = 0, rsMX = 0, rsMY = 0;
-    int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz,7 note,8 content,9 note-close */
+    int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz,8 content;
+                                generic-client presses are owned by wm_client_* */
     uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
-
-    /* Notepad is the topmost layer and independent of the console WM state;
-       these track a caption drag of that window. */
-    bool     noteDrag = false;
-    int32_t  noteGrabX = 0, noteGrabY = 0;
 
     comp.SetCursor(0, 0, true);
 
@@ -544,8 +511,7 @@ int main(){
         /* Drain the WM keyboard cursor (multi-reader ring; notepad has its
            own). Global shortcuts would be handled here; text goes to notepad.
            C10 (round 22 记录): 事件被显式丢弃 —— 键盘输入到焦点客户端的
-           转发通道未实现 (需要 z-order raise + 焦点路由), 属功能路线图
-           (见 docs/xhci-roadmap.md 外的 WM 路线图, 待补档) */
+           转发通道未实现 (已知缺口, 见 WM 路线图) */
         if (wmKbd) {
             uint64_t kh = __atomic_load_n(&wmKbd->head, __ATOMIC_ACQUIRE);
             wmKbdCursor = kbd_reader_resync(wmKbd, wmKbdCursor);
@@ -582,40 +548,27 @@ int main(){
         if (leftDown && !prevLeft) {                 /* press edge: classify  */
             pressHit = 0; rzDir = 0;
 
-            /* Hit-test windows in CURRENT z-order: whichever window's layer is
-               on top is tested first, so a press on the visible top window is
-               never stolen by a window stacked underneath. Notepad geometry is
-               computed once and reused by the lower-priority stage below. */
-            bool noteTop = layer1 ? (layer2 && layer2->z >= layer1->z)
-                                  : (layer2 != nullptr);
-            int32_t nbx = (int32_t)noteWin.PosX + M;
-            int32_t nby = (int32_t)noteWin.PosY + M;
-            int32_t nbw = (int32_t)noteWin.SizeX - 2 * M;
-            int32_t nbh = (int32_t)noteWin.SizeY - 2 * M;
-            bool inNote = (mx >= nbx && mx < nbx + nbw &&
-                           my >= nby && my < nby + nbh);
-            if (noteTop && inNote) {
-                pressHit = 7;
-                comp.RaiseWindow(&noteWin);   /* click-to-front (Win11) */
-                int32_t btnStart = nbx + nbw - 3 * (int32_t)SKYWIN_BTN_W;
-                int32_t noteCloseL = nbx + nbw - (int32_t)SKYWIN_BTN_W;
-                if (inBox(noteCloseL, nby, (int32_t)SKYWIN_BTN_W, th)) {
-                    pressHit = 9;             /* notepad close button */
-                } else if (my < nby + th && mx < btnStart) {
-                    noteDrag = true;
-                    noteGrabX = mx - (int32_t)noteWin.PosX;
-                    noteGrabY = my - (int32_t)noteWin.PosY;
-                }
-            }
+            /* ---- topmost-window hit test --------------------------------
+               Every window (console + generic clients) sits on its own
+               auto-created layer, so stacking order == layer z. Whichever
+               covering window has the HIGHEST z owns the press; a press on
+               the visible top window is never stolen from underneath. */
+            WmClient* cTop = wm_client_hit(mx, my);
 
-            if (pressHit == 0 && (wmMode == WM_NORMAL || wmMode == WM_MAX)) {
-                /* Win11 click-to-front: a press anywhere on the window body
-                   (caption, border band or content) raises it above every
-                   other window. The resize band straddles a few px outside
-                   the body, so that branch raises explicitly as well. */
-                bool inConsole = (mx >= bx && mx < bx + bw &&
-                                  my >= by && my < by + bh);
-                if (inConsole) comp.RaiseWindow(&consoleWin);
+            /* Console grab region = body plus a few px outside (the resize
+               band below reaches over the shadow, corners included). */
+            const int32_t OUT = 4;
+            bool inConsole = (wmMode == WM_NORMAL || wmMode == WM_MAX) &&
+                             consoleLayer != nullptr &&
+                             mx >= bx - OUT && mx < bx + bw + OUT &&
+                             my >= by - OUT && my < by + bh + OUT;
+            bool consoleTop = inConsole &&
+                              (!cTop || consoleLayer->z >= cTop->layer->z);
+
+            if (consoleTop) {
+                /* Win11 click-to-front: a press anywhere on the body (caption,
+                   border band or content) raises it above every other window. */
+                comp.RaiseWindow(&consoleWin);
 
                 int32_t minL   = bx + bw - 3 * (int32_t)SKYWIN_BTN_W;
                 int32_t maxL   = bx + bw - 2 * (int32_t)SKYWIN_BTN_W;
@@ -628,13 +581,6 @@ int main(){
                     int32_t dL = mx - bx, dR = bx + bw - 1 - mx;
                     int32_t dT = my - by, dB = by + bh - 1 - my;
                     const int32_t RB = (int32_t)SKYWIN_RESIZE_BORDER;
-                    /* The grab band straddles the frame: it reaches a few
-                       pixels *outside* the body (over the shadow), exactly as
-                       desktop WM do, so an edge is catchable from both sides. */
-                    const int32_t OUT = 4;
-                    /* Orthogonal spans also straddle the frame so a *corner*
-                       is catchable even when the pointer sits a few px outside
-                       both edges at once (e.g. the top-left corner). */
                     bool spanX = mx >= bx - OUT && mx < bx + bw + OUT;
                     bool spanY = my >= by - OUT && my < by + bh + OUT;
                     bool onL = spanY && dL >= -OUT && dL < RB;
@@ -644,40 +590,31 @@ int main(){
                     if (onL || onR || onT || onB) {
                         rzDir = (uint8_t)((onL?1:0)|(onR?2:0)|(onT?4:0)|(onB?8:0));
                         pressHit = 6;
-                        comp.RaiseWindow(&consoleWin);   /* grab on frame edge */
                         resizing = true;
                         rsX = (int32_t)normX; rsY = (int32_t)normY;
                         rsW = (int32_t)normW; rsH = (int32_t)normH;
                         rsMX = mx; rsMY = my;
-                        last_chrome = 0;             /* repaint immediately   */
+                        last_chrome = 0;         /* repaint immediately   */
                     } else if (inBox(bx, by, bw, th)) {
-                        pressHit = 1;                /* caption empty area    */
+                        pressHit = 1;            /* caption empty area    */
                         dragging = true;
                         grabDX = mx - (int32_t)normX;
                         grabDY = my - (int32_t)normY;
                     }
                 }
-                /* A plain press on the content area only raises/focuses the
-                   window; claim it so it cannot fall through to the taskbar. */
-                if (pressHit == 0 && inConsole) pressHit = 8;
+                /* Plain content press only raised the window; claim it so it
+                   cannot fall through to the taskbar. */
+                if (pressHit == 0 && mx >= bx && mx < bx + bw &&
+                                        my >= by && my < by + bh)
+                    pressHit = 8;
+            } else if (cTop) {
+                /* Generic client press: raise + arm close/drag — all client
+                   interaction lives in wm_client.cpp (the old notepad
+                   special cases pressHit 7 / 9 used to be inline here). */
+                wm_client_press(comp, cTop, mx, my);
             }
 
-            /* Notepad stacked UNDER the console: reachable only when the
-               console missed the press. A click here raises it back on top. */
-            if (pressHit == 0 && !noteTop && inNote) {
-                pressHit = 7;
-                comp.RaiseWindow(&noteWin);
-                int32_t btnStart = nbx + nbw - 3 * (int32_t)SKYWIN_BTN_W;
-                int32_t noteCloseL = nbx + nbw - (int32_t)SKYWIN_BTN_W;
-                if (inBox(noteCloseL, nby, (int32_t)SKYWIN_BTN_W, th)) {
-                    pressHit = 9;             /* notepad close button */
-                } else if (my < nby + th && mx < btnStart) {
-                    noteDrag = true;
-                    noteGrabX = mx - (int32_t)noteWin.PosX;
-                    noteGrabY = my - (int32_t)noteWin.PosY;
-                }
-            }
-            if (pressHit == 0 && wmMode != WM_CLOSED &&
+            if (pressHit == 0 && !wm_client_pressed() && wmMode != WM_CLOSED &&
                 inBox(tbX0, tbY0, tbW, tbH)) pressHit = 5;
         }
 
@@ -695,21 +632,10 @@ int main(){
             comp.MoveWindow(&consoleWin, normX, normY);
         }
 
-        if (leftDown && noteDrag) {                          /* notepad move  */
-            int32_t nx = mx - noteGrabX, ny = my - noteGrabY;
-            const int32_t bodyW = (int32_t)noteWin.SizeX - 2 * M;
-            /* Keep at least 120 px of the body on screen and above taskbar. */
-            const int32_t xLo = -(bodyW + 2 * M - 120);
-            const int32_t xHi = fb_width  - 120;
-            const int32_t yLo = -M;
-            const int32_t yHi = fb_height - (int32_t)barH - th - M;
-            if (nx < xLo) { nx = xLo; }
-            if (nx > xHi) { nx = xHi; }
-            if (ny < yLo) { ny = yLo; }
-            if (ny > yHi) { ny = yHi; }
-            noteWin.PosX = (uint32_t)nx; noteWin.PosY = (uint32_t)ny;
-            comp.MoveWindow(&noteWin, noteWin.PosX, noteWin.PosY);
-        }
+        /* Generic client caption drags — one shared path for every spawned
+           app (replaces the notepad-only noteDrag block). */
+        if (leftDown)
+            wm_client_drag_all(comp, mx, my, fb_width, fb_height, (int32_t)barH);
 
         if (leftDown && resizing && wmMode == WM_NORMAL) {      /* edge resize */
             int32_t dx = mx - rsMX, dy = my - rsMY;
@@ -751,13 +677,13 @@ int main(){
                 fire = inBox(lx, by, (int32_t)SKYWIN_BTN_W, th);
             } else if (pressHit == 5) {
                 fire = inBox(tbX0, tbY0, tbW, tbH);
-            } else if (pressHit == 9) {
-                int32_t nbx2 = (int32_t)noteWin.PosX + M;
-                int32_t nby2 = (int32_t)noteWin.PosY + M;
-                int32_t nbw2 = (int32_t)noteWin.SizeX - 2 * M;
-                int32_t noteCloseL = nbx2 + nbw2 - (int32_t)SKYWIN_BTN_W;
-                fire = inBox(noteCloseL, nby2, (int32_t)SKYWIN_BTN_W, th);
             }
+
+            /* Generic-client release (old pressHit 7/9): fire an armed close
+               button only if the release is still inside it; every armed
+               client drag ends here as well. Runs between Compose() frames,
+               so the unregister/kill inside is worker-park safe. */
+            wm_client_release(comp, mx, my);
 
             /* Finish a live resize at the exact release geometry. */
             if (resizing) {
@@ -773,7 +699,6 @@ int main(){
             }
             dragging = false;
             resizing = false;
-            noteDrag = false;
 
             if (fire) {
                 WmDateTime fireDT;
@@ -790,6 +715,7 @@ int main(){
                        is only a liveness probe and left the button dead. */
                     if (place.client_pid) sys_kill(place.client_pid, 9);
                     comp.UnregisterWindow(&consoleWin);
+                    consoleLayer = nullptr;   /* auto layer retired with it */
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 2, &fireDT, haveDT);
                     wmDirty = true;
                 } else if (pressHit == 3 && (maxSurf)) {    /* maximize toggle  */
@@ -804,8 +730,7 @@ int main(){
                     wmDirty = true;
                 } else if (pressHit == 5) {                 /* taskbar toggle   */
                     if (wmMode == WM_MIN) {
-                        /* C9 (round 24 恢复): round 19 隔离时回退, round 20
-                           证明 fault 根因是 D7 而非本改动 —— 恢复先态还原 */
+                        /* C9 (round 24 恢复): 恢复最小化前先态 */
                         if (wm_prior == WM_MAX && maxSurf) {
                             wmMode = WM_MAX;
                             wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
@@ -825,12 +750,15 @@ int main(){
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tbState,
                                     &fireDT, haveDT);
                     wmDirty = true;
-                } else if (pressHit == 9) {                 /* notepad close    */
-                    if (notePlace.client_pid) sys_kill(notePlace.client_pid, 9);
-                    comp.UnregisterWindow(&noteWin);
-                    notePlace.client_pid = 0;
-                    wmDirty = true;
                 }
+                /* notepad close (old pressHit 9) was handled above inside
+                   wm_client_release() — nothing left to do here. */
+
+                /* 卡死修复: 任务栏切换是点击触发的最重栅格化 (圆角 pill +
+                   SDF 文本)。本内核的 IRQ 下半部依赖 idle 线程, 而 WM 主
+                   循环可长期 RUNNABLE —— 让出一次, 给 PS/2 鼠标/键盘中断
+                   处理喘息, 避免慢速/模拟核心上点击后输入看起来冻死。 */
+                sys_yield();
             }
             pressHit = 0;
         }
@@ -847,8 +775,7 @@ int main(){
                               (int32_t)normW, (int32_t)normH,
                               (const uint32_t*)place.desk_surf);
 
-        /* 审计卫生 (round 15): 实际为 2 Hz (clock_gap = 500ms), 原
-           "twice a minute" 注释错误 */
+        /* 审计卫生 (round 15): 实际为 2 Hz (clock_gap = 500ms) */
         if (cleanBar && now - last_clock >= clock_gap) {
             last_clock = now;
             WmDateTime ndt;
@@ -860,26 +787,21 @@ int main(){
             }
         }
 
-        /* P1-47: 死窗口轮询 —— 客户端进程退出后移除窗口 (hw2 打印完
-           即 exit, WM 原无感知; sys_kill(pid,0) = 存活探测) */
+        /* P1-47: 死窗口轮询 —— 客户端进程退出后移除窗口 (sys_kill(pid,0)
+           为存活探测)。控制台单独处理; 其余通用客户端 (含 notepad) 由
+           wm_clients_sweep 统一清扫, 图层随最后一个窗口自动退役。 */
         {
             static uint64_t dead_check_at = 0;
             if (now - dead_check_at > tsc_per_ms * 500) {
                 dead_check_at = now;
                 int64_t rConsole = place.client_pid ? sys_kill(place.client_pid, 0) : 1;
-                int64_t rNote    = notePlace.client_pid ? sys_kill(notePlace.client_pid, 0) : 1;
                 if (place.client_pid && rConsole < 0) {
                     comp.UnregisterWindow(&consoleWin);
                     place.client_pid = 0;
+                    consoleLayer = nullptr;   /* auto layer retired with it */
                     wmDirty = true;
                 }
-#if 1
-                if (notePlace.client_pid && rNote < 0) {
-                    comp.UnregisterWindow(&noteWin);
-                    notePlace.client_pid = 0;
-                    wmDirty = true;
-                }
-#endif
+                wm_clients_sweep(comp, &wmDirty);
             }
         }
 
@@ -911,17 +833,14 @@ int main(){
 
             /* Drag/resize tracks the hand; otherwise recompose the slow scene
                at ~30Hz so console output still advances while moving. */
-            if (dragging || resizing || noteDrag || now - last_scene >= scene_gap) {
+            if (dragging || resizing || wm_client_any_drag() ||
+                now - last_scene >= scene_gap) {
                 comp.Compose();
                 last_scene = now;
             }
         } else {
             /* Pointer still: poll on a short bounded spin instead of a long
-               sys_yield(). A yield can be scheduled out longer than a quick
-               button press, which would make us miss the press edge and drop
-               the click entirely; a 2 ms cap guarantees the down/up edges are
-               always sampled. Fairness against other tasks still comes from
-               the scheduler's preemptive tick (pause is HT-friendly). */
+               sys_yield() so the down/up edges are always sampled. */
             if (now - last_scene < idle_gap) {
                 uint64_t until = now + 2u * tsc_per_ms;
                 do {

@@ -15,9 +15,15 @@
  * strip id cannot be handed in directly; an atomic ticket pool assigns one.
  */
 static uint32_t g_strip_ticket = 0;
-/* P1-53: 卸载窗口的退役节点列表 (LockList 保护), 由 Compose 的
-   帧屏障点统一释放 —— 防在途遍历 UAF */
+/* P1-53: 卸载窗口的退役节点链 (LockList 保护写入), 由 Compose 的
+   帧屏障点统一释放 —— 防在途遍历 UAF。链走 prev: worker 只读 next,
+   被退役节点保持 next 指向原后继, 在途遍历可无缝继续。 */
 static CompWinNode* g_retire_list = nullptr;
+/* Auto-layer retire chain: RegisterWindowAuto 创建的图层随其最后一个
+   窗口的注销而退役, 同样在帧屏障点释放。链走 l_prev (worker 只读
+   l_next); 被退役图层的 l_next 保持指向原后继, 在途遍历会"穿过"这个
+   空图层继续走进仍注册的栈段。 */
+static CompLayer* g_retire_layers = nullptr;
 
 /* Freestanding 32-bit span equality (no libc memcmp declaration needed);
    -O2 lowers a word loop like this to a fast vectorised compare. Used by the
@@ -43,6 +49,11 @@ static inline void cpu_relax() {
    only the waiter, every yield takes a full scheduling interrupt only to
    re-pick the same thread, drowning the whole system in context switches. */
 #define COMP_SPIN_BUDGET 2048u
+/* 帧屏障耐心值 (任务栏卡死修复): sys_yield 这么多次还凑不齐 peers, 判定
+   有 worker 已丢失 (其核心被不让出的客户端占死 / 线程意外退出), 主线程
+   自补缺失 strip 并永久降级单线程 —— 宁可变慢也不锁死桌面。嫌自愈慢可
+   调小; 负载重导致误降级则调大。 */
+#define COMP_FRAME_YIELD_BUDGET 512u
 static inline void comp_backoff(uint32_t &spin) {
     if (spin < COMP_SPIN_BUDGET) { cpu_relax(); ++spin; }
     else { sys_yield(); spin = 0; }
@@ -128,6 +139,7 @@ bool Compositor::Init(FrameBuffer* screen) {
     list_lock_  = 0;
     frame_seq_  = 0;
     started_cnt_ = 0;
+    done_compose_ = 0;
     for (uint32_t i = 0; i < COMP_CPUS_SANITY; i++) worker_done_seq_[i] = 0;
     cur_x_ = cur_y_ = 0;
     cur_visible_ = 0;
@@ -193,12 +205,16 @@ bool Compositor::DestroyLayer(CompLayer* layer) {
     if (!layer) return false;
     LockList();
 
-    /* free every window-node wrapper owned by this layer */
+    /* Retire every window-node wrapper owned by this layer (deferred free at
+       the frame barrier, same as UnregisterWindow). The retire chain links
+       through prev, so an in-flight worker following next is never derailed
+       into the retire chain. */
     CompWinNode* n = layer->win_head;
     while (n) {
         CompWinNode* dead = n;
         n = n->next;
-        free(dead);
+        dead->prev = g_retire_list;
+        g_retire_list = dead;
     }
 
     if (layer->l_prev) layer->l_prev->l_next = layer->l_next;
@@ -206,9 +222,13 @@ bool Compositor::DestroyLayer(CompLayer* layer) {
     if (layer->l_next) layer->l_next->l_prev = layer->l_prev;
     else               layer_tail_ = layer->l_prev;
 
+    /* ...and the layer itself joins the layer retire chain (its l_next keeps
+       pointing at the old successor — see the comment on g_retire_layers). */
+    layer->l_prev = g_retire_layers;
+    g_retire_layers = layer;
+
     UnlockList();
-    free(layer);                 /* layer node itself is dynamic */
-    return true;
+    return true;                 /* actual free happens at the frame barrier */
 }
 
 /* ---- window registry (Window struct itself is never written) ------------- */
@@ -243,6 +263,40 @@ bool Compositor::RegisterWindow(Window* w, CompLayer* layer) {
     return true;
 }
 
+CompLayer* Compositor::RegisterWindowAuto(Window* w) {
+    if (!w) return nullptr;
+
+    LockList();
+    if (FindNode(w)) { UnlockList(); return nullptr; }   /* already registered */
+
+    CompLayer*   layer = (CompLayer*)malloc(sizeof(CompLayer));
+    CompWinNode* node  = (CompWinNode*)malloc(sizeof(CompWinNode));
+    if (!layer || !node) {
+        free(layer);
+        free(node);
+        UnlockList();
+        return nullptr;
+    }
+
+    /* z strictly above the current topmost layer (0 for the very first). */
+    layer->win_head     = layer->win_tail = nullptr;
+    layer->window_count = 0;
+    layer->z            = layer_tail_ ? layer_tail_->z + 1u : 0u;
+    layer->l_next = layer->l_prev = nullptr;
+    InsertLayerOrdered(layer);                 /* by construction: new tail */
+
+    node->win     = w;
+    node->layer   = layer;
+    node->visible = 1;
+    node->next    = nullptr;
+    node->prev    = nullptr;
+    layer->win_head = layer->win_tail = node;
+    layer->window_count = 1;
+
+    UnlockList();
+    return layer;
+}
+
 bool Compositor::UnregisterWindow(Window* w) {
     if (!w) return false;
     LockList();
@@ -258,10 +312,27 @@ bool Compositor::UnregisterWindow(Window* w) {
     L->window_count--;
 
     /* P1-53: 节点延迟回收 —— 立即 free(node) 若与在途 worker 的
-       列表遍历失步即 UAF; 改为退役列表, 由 Compose 的屏障点
-       (done_compose == peers) 统一释放 */
-    node->next = g_retire_list;
+       列表遍历失步即 UAF; 改为退役链, 由 Compose 的屏障点统一释放。
+       退役链走 prev (worker 只读 next), 被退役节点保持 next 指向原
+       后继 —— 在途遍历无缝继续。 */
+    node->prev = g_retire_list;
     g_retire_list = node;
+
+    /* Auto layer management: a layer that just lost its LAST window dies
+       with it — RegisterWindowAuto callers never destroy layers by hand.
+       Like the node, the layer is only RETIRED here and freed at the frame
+       barrier (a worker may be walking layer_head_ right now); its l_next
+       keeps pointing at the old successor, so the walk "passes through"
+       this now-empty layer into the still-registered stack. */
+    if (L->window_count == 0) {
+        if (L->l_prev) L->l_prev->l_next = L->l_next;
+        else           layer_head_ = L->l_next;
+        if (L->l_next) L->l_next->l_prev = L->l_prev;
+        else           layer_tail_ = L->l_prev;
+
+        L->l_prev = g_retire_layers;      /* retire chain via l_prev */
+        g_retire_layers = L;
+    }
 
     UnlockList();
     return true;
@@ -304,24 +375,34 @@ void Compositor::RaiseWindow(Window* w) {
     L->z = layer_tail_->z + 1;
     InsertLayerOrdered(L);
 
+    /* Auto layers mint a fresh z on every registration and every raise;
+       relabel the stack bottom->top as 0..N-1 afterwards so the z field
+       stays a dense rank and can never creep toward overflow in a long
+       session. (List order is authoritative; z is only the insert key and
+       the WM's topmost-hit comparison. Workers never read z.) */
+    uint32_t zrel = 0;
+    for (CompLayer* p = layer_head_; p; p = p->l_next) p->z = zrel++;
+
     UnlockList();
 }
 
 /* ========================================================================== */
-/*  Phase 1: render one strip into the INVISIBLE back buffer.                 */
+/*  Phase 1: render one Y-range into the INVISIBLE back buffer.               */
 /*  Traversal = layer list -> in-layer window list = O(window count).         */
 /*  Because dst is off-screen, the clear-to-black transient is never visible. */
 /* ========================================================================== */
 void Compositor::ComposeStripToBack(uint32_t id) {
-    const Strip& s = strips_[id];
+    ComposeRangeToBack(strips_[id].y0, strips_[id].y1);
+}
 
+void Compositor::ComposeRangeToBack(uint32_t ry0, uint32_t ry1) {
     uint32_t*      dst   = back_;                 /* off-screen target        */
     const uint32_t pitch = (uint32_t)screen_.PixelsPerScanLine;
     const uint32_t sw    = (uint32_t)screen_.Width;
     const uint32_t row_bytes = sw * COMP_BPP;
 
-    /* 1) repaint this strip's backdrop in the back buffer */
-    for (uint32_t y = s.y0; y < s.y1; y++) {
+    /* 1) repaint this range's backdrop in the back buffer */
+    for (uint32_t y = ry0; y < ry1; y++) {
         uint32_t* dline = dst + (uint64_t)y * pitch;
         if (background_)
             memcpy(dline, background_ + (uint64_t)y * pitch, row_bytes);
@@ -336,10 +417,10 @@ void Compositor::ComposeStripToBack(uint32_t id) {
             const Window* w = node->win;
             if (!node->visible || !w || w->FbAddr == 0) continue;
 
-            /* clip window rect against this strip and the screen width */
-            int64_t cy0 = max_i64((int64_t)w->PosY, (int64_t)s.y0);
-            int64_t cy1 = min_i64((int64_t)w->PosY + w->SizeY, (int64_t)s.y1);
-            if (cy0 >= cy1) continue;                          /* misses strip */
+            /* clip window rect against this range and the screen width */
+            int64_t cy0 = max_i64((int64_t)w->PosY, (int64_t)ry0);
+            int64_t cy1 = min_i64((int64_t)w->PosY + w->SizeY, (int64_t)ry1);
+            if (cy0 >= cy1) continue;                          /* misses range */
 
             int64_t cx0 = max_i64((int64_t)w->PosX, (int64_t)0);
             int64_t cx1 = min_i64((int64_t)w->PosX + w->SizeX, (int64_t)sw);
@@ -405,10 +486,6 @@ void Compositor::blitSceneAvoidCursor(int32_t x0,int32_t y0,int32_t x1,int32_t y
         for (int e = 0; e < ne; ++e) {
             int32_t a = exL[e], b = exR[e];
             if (a < 0) a = 0; if (b > W) b = W;
-            /* dirty-rect compare-and-blit: write a span ONLY if the scene
-               actually changed. On a static frame every span compares equal
-               and the scanout is left byte-for-byte untouched, so there is no
-               full-screen rewrite window a scanline/snapshot could catch. */
             if (a > cur && !span_eq_u32(d + cur, s + cur, (uint32_t)(a - cur)))
                 memcpy(d + cur, s + cur, (size_t)(a - cur) * COMP_BPP);
             if (b > cur) cur = b;
@@ -482,9 +559,8 @@ void Compositor::blendCursorSquare(int32_t x, int32_t y) {
 }
 
 /* Cursor is the LAST scanout write of a frame. P1-44: 先恢复旧方块再画新
-   箭头 —— 原顺序 (新后旧) 在 <16px 位移时旧方块恢复会擦掉新箭头的一部分
-   (自愈但每次移动可见)。Tracks the on-screen square in committed_ so an
-   in-flight scene blit knows which arrow to preserve. */
+   箭头。Tracks the on-screen square in committed_ so an in-flight scene blit
+   knows which arrow to preserve. */
 void Compositor::overlayCursorFinal(int32_t ox,int32_t oy,int32_t nx,int32_t ny) {
     if ((ox != nx || oy != ny) && ox >= 0 && oy >= 0)
         paintSquareFromBack(ox, oy);
@@ -501,16 +577,35 @@ void Compositor::commitScene(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
     overlayCursorFinal(ox,oy,nx,ny);
 }
 
+/* Frame-barrier retire free (P1-53 semantics, extended to layers). Runs ONLY
+   on the main thread (both Compose paths are main-thread-only); the retire
+   chains are mutated only by main-thread registry calls, and the barrier
+   above guarantees no worker still walks the layer/window lists — so no lock
+   is needed here. Node chain links through `prev`, layer chain through
+   `l_prev` (walkers only ever read `next` / `l_next`). */
+static void comp_reclaim_retired() {
+    CompWinNode* rn = g_retire_list;
+    CompLayer*   rl = g_retire_layers;
+    g_retire_list   = nullptr;
+    g_retire_layers = nullptr;
+    while (rn) { CompWinNode* d = rn->prev; free(rn); rn = d; }
+    while (rl) { CompLayer*   d = rl->l_prev; free(rl); rl = d; }
+}
+
 void Compositor::ComposeSingleThreaded() {
-    for (uint32_t i = 0; i < ncpus_; i++) ComposeStripToBack(i);
-    /* P1-53: 单线程模式无并发遍历, 退役节点可立即释放 */
-    {
-        LockList();
-        CompWinNode* r = g_retire_list;
-        g_retire_list = nullptr;
-        UnlockList();
-        while (r) { CompWinNode* n = r->next; free(r); r = n; }
+    /* Full-screen fallback when the strip table is absent or degraded. The
+       old `for (i < ncpus_)` loop, after ANY degrade to ncpus_==1 that kept
+       the N-strip table, rendered ONLY the top band and left the lower
+       screen (taskbar included) permanently stale; with strips_ == nullptr
+       it rendered nothing at all (or faulted). */
+    if (strips_ && ncpus_ > 1) {
+        for (uint32_t i = 0; i < ncpus_; i++)
+            ComposeRangeToBack(strips_[i].y0, strips_[i].y1);
+    } else {
+        ComposeRangeToBack(0, (uint32_t)screen_.Height);
     }
+    /* P1-53: 单线程模式无并发遍历, 退役链在此立即回收 (共享同一路径) */
+    comp_reclaim_retired();
     /* scene finished off-screen; single commit preserves then redraws cursor */
     commitScene(0, 0, (int32_t)screen_.Width, (int32_t)screen_.Height,
                 committed_x_, committed_y_, cur_x_, cur_y_);
@@ -546,21 +641,29 @@ void Compositor::WorkerEntry(uint32_t id) {
     __atomic_add_fetch(&started_cnt_, 1, __ATOMIC_RELEASE);
 
     uint64_t last_seq = 0;
-    while (!__atomic_load_n(&shutdown_, __ATOMIC_ACQUIRE)) {
+    for (;;) {
         uint64_t seq;
         uint32_t wait = 0;
         do {                                   /* spin/yield until a frame */
+            if (__atomic_load_n(&shutdown_, __ATOMIC_ACQUIRE)) return;
             seq = __atomic_load_n(&frame_seq_, __ATOMIC_ACQUIRE);
             if (seq != last_seq) break;
-            if (__atomic_load_n(&shutdown_, __ATOMIC_ACQUIRE)) return;
             comp_backoff(wait);
         } while (true);
+
+        /* Shutdown check BEFORE rendering: once Compose()'s barrier timeout
+           has degraded the compositor, the main thread finished this strip
+           itself — a late-waking worker must exit WITHOUT writing back_
+           again (a straggler render would tear the frame the main thread is
+           committing). */
+        if (__atomic_load_n(&shutdown_, __ATOMIC_ACQUIRE)) return;
         last_seq = seq;
 
         ComposeStripToBack(id);                 /* scene -> back_ only */
-        /* Signal this worker finished its strip for the current frame. */
+        /* Publish per-strip completion for THIS frame seq: Compose()'s
+           timeout path reads it to learn which strips it must finish. */
+        __atomic_store_n(&worker_done_seq_[id], seq, __ATOMIC_RELEASE);
         __atomic_add_fetch(&done_compose_, 1, __ATOMIC_RELEASE);
-        (void)worker_done_seq_;
     }
 }
 
@@ -590,7 +693,21 @@ void Compositor::StartWorkers() {
 
     /* dynamically allocate the exact strip table for this CPU count */
     strips_ = (Strip*)malloc(n * sizeof(Strip));
-    if (!strips_) { ncpus_ = 1; strips_ = (Strip*)malloc(sizeof(Strip)); }
+    if (!strips_) {
+        /* Alloc-fail fallback: ONE full-screen strip. (The old code only set
+           ncpus_ = 1 but left n at the CPU count, so the carve loop below
+           wrote n entries into a 1-entry buffer — a heap overflow.) */
+        n = 1;
+        ncpus_ = 1;
+        strips_ = (Strip*)malloc(sizeof(Strip));
+    }
+    if (!strips_) {
+        /* Total alloc failure: Compose()'s single-thread path renders a
+           full-screen range with strips_ == nullptr; nothing to launch. */
+        ncpus_ = 1;
+        launched_ = 1;
+        return;
+    }
 
     /* carve N horizontal strips: equal width (== screen width), equal
        height (H/N); the last strip absorbs the remainder rows. */
@@ -612,8 +729,7 @@ void Compositor::StartWorkers() {
     __atomic_store_n(&shutdown_,     0, __ATOMIC_SEQ_CST);
 
     /* Strip 0 is rendered by the main thread itself; launch workers ONLY
-       for the other cores so each frame barrier never has to hand this core
-       to a same-core worker. P1-48: 统计实际成功的启动数 —— 原实现忽略
+       for the other cores. P1-48: 统计实际成功的启动数 —— 原实现忽略
        返回值, 启动失败时下面的等待循环永转。 */
     uint32_t peers = (n > 1) ? n - 1 : 0;
     uint32_t launched_ok = 0;
@@ -621,12 +737,10 @@ void Compositor::StartWorkers() {
         if (sys_thread_launch((uint64_t)CompWorkerTrampoline, i + 1) >= 0)
             launched_ok++;
     }
-    /* Wait for every launched worker to run its entry ack. They were inserted
-       RUNNING with a wake IPI, so they will execute; yield generously so a
-       worker that shares a pinned core with a booting client still gets
-       scheduled. The high safety bound only guards a wedged system and, if it
-       is ever hit, shuts the workers down BEFORE degrading so no thread is
-       left spinning on a frame_seq that single-thread mode would never bump. */
+    /* Wait for every launched worker to run its entry ack. The high safety
+       bound only guards a wedged system and, if it is ever hit, shuts the
+       workers down BEFORE degrading so no thread is left spinning on a
+       frame_seq that single-thread mode would never bump. */
     uint32_t spin = 0, yields = 0;
     while (__atomic_load_n(&started_cnt_, __ATOMIC_ACQUIRE) < launched_ok) {
         if (spin < 512u) { cpu_relax(); ++spin; }
@@ -636,6 +750,14 @@ void Compositor::StartWorkers() {
             if (++yields > 2000u) {
                 __atomic_store_n(&shutdown_, 1, __ATOMIC_RELEASE);
                 __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
+                /* Degrade to ONE full-screen strip. ncpus_ = 1 alone would
+                   keep the N-strip table, so ComposeSingleThreaded would
+                   render only strip 0 and the lower screen (taskbar) would
+                   stay unrendered forever. */
+                if (strips_) {
+                    strips_[0].y0 = 0;
+                    strips_[0].y1 = (uint32_t)screen_.Height;
+                }
                 ncpus_ = 1;
                 launched_ = 1;
                 return;
@@ -646,39 +768,60 @@ void Compositor::StartWorkers() {
 }
 
 void Compositor::Compose() {
-    if (!back_) { ComposeSingleThreaded(); return; }
+    if (!back_) return;          /* Init failed / Shutdown: nothing to compose */
     if (!launched_ || ncpus_ <= 1) { ComposeSingleThreaded(); return; }
 
     /* Peers are workers pinned to the OTHER cores; the main thread renders
-       strip 0 itself (help-the-work). The old design launched a worker on
-       EVERY core including this one and sys_yield()'d at each barrier: on a
-       shared core that is main<->worker ping-pong through the scheduler, and
-       frame gaps jittered by whole scheduling quanta (stuttery pointer). */
+       strip 0 itself (help-the-work). */
     const uint32_t peers = ncpus_ - 1;
 
     /* phase 1 (off-screen): peers render strips 1..N-1 to back_, main strip 0.
        Bump the frame sequence, then wait on the per-frame completion counter. */
     __atomic_store_n(&done_compose_, 0, __ATOMIC_RELEASE);
-    __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
+    const uint64_t seq = __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
     ComposeStripToBack(0);
-    uint32_t cw = 0;
-    while (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) < peers)
-        comp_backoff(cw);
 
-    /* P1-53: barrier point -- every worker has finished this frame's list
-       walk, so retired nodes are referenced by nobody and can be freed. */
-    {
-        LockList();
-        CompWinNode* r = g_retire_list;
-        g_retire_list = nullptr;
-        UnlockList();
-        while (r) { CompWinNode* n = r->next; free(r); r = n; }
+    /* BOUNDED barrier — the actual taskbar-click freeze fix. The old
+       unbounded spin was the one true hard-freeze point reachable from a
+       click: any input action that sets wmDirty (e.g. the taskbar toggle)
+       funnels into Compose(); if a single pinned worker misses the frame
+       (its core lost to a client that never yields, or the thread died),
+       the wait never ended and the WHOLE desktop — cursor included, it
+       lives in this same main loop — locked up. Now: after
+       COMP_FRAME_YIELD_BUDGET yields the main thread finishes every strip
+       that has not published completion for `seq` itself, then degrades
+       permanently to single-thread. Worst case is one possibly torn frame
+       (a straggler worker mid-render sees shutdown_ == 1 and exits without
+       writing back_ again); never a hang. */
+    uint32_t spin = 0, yields = 0;
+    for (;;) {
+        if (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) >= peers) break;
+        if (spin < COMP_SPIN_BUDGET) { cpu_relax(); ++spin; continue; }
+        sys_yield();
+        spin = 0;
+        if (++yields > COMP_FRAME_YIELD_BUDGET) {
+            for (uint32_t i = 1; i < ncpus_; i++)
+                if (__atomic_load_n(&worker_done_seq_[i], __ATOMIC_ACQUIRE) < seq)
+                    ComposeStripToBack(i);      /* finish missing strips here */
+            __atomic_store_n(&shutdown_, 1, __ATOMIC_RELEASE);
+            __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE); /* wake */
+            /* ONE full-screen strip from now on (see StartWorkers). */
+            if (strips_) {
+                strips_[0].y0 = 0;
+                strips_[0].y1 = (uint32_t)screen_.Height;
+            }
+            ncpus_ = 1;
+            break;
+        }
     }
+
+    /* P1-53 (扩展到图层): barrier point — 所有 worker 已完成本帧的列表
+       遍历 (或已判定降级), 退役节点与退役图层不再被引用, 可安全释放。 */
+    comp_reclaim_retired();
 
     /* phase 2 (single commit point, main thread only): push the whole scene
        to the scanout while preserving the cursor square, then draw the
-       cursor LAST at its freshest position. Workers never touch the fb, so
-       the pointer is never erased by an in-flight present -> no flicker. */
+       cursor LAST at its freshest position. */
     commitScene(0, 0, (int32_t)screen_.Width, (int32_t)screen_.Height,
                 committed_x_, committed_y_, cur_x_, cur_y_);
     dirty_ = 0;
