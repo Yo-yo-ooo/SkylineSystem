@@ -1,0 +1,8 @@
+*.wad
+*.WAD
+*.lmp
+object/
+bin/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake

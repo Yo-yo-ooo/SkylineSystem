@@ -441,6 +441,20 @@ int main(){
     wm_client_spawn(comp, &fb, "/mp/notepad.elf", "Notepad",
                     560u, 420u, 0xFF0F0F12u, 90u, 70u);
 
+    /* DOOM (PureDOOM shim). The game is only spawned when the user has
+       actually dropped the shareware IWAD at /mp/doom1.wad — otherwise the
+       client would I_Error() and exit during boot. Body 640x440 leaves the
+       WM a 640x400 content area, i.e. exactly 2x DOOM's fixed 320x200
+       framebuffer. Sound and music are hidden: there is no audio driver. */
+    /* {
+        FILE* wad = fopen("/mp/doom1.wad", "rb");
+        if (wad) {
+            fclose(wad);
+            wm_client_spawn(comp, &fb, "/mp/doom.elf", "DOOM",
+                            640u, 440u, 0xFF000000u, 120u, 60u);
+        }
+    } */
+
     /* Desktop-owned (NOT shared with the client) full-work-area surface used
        only while maximized: opaque, no rounded shadow margin. The live text is
        mirrored in from the normal shared surface each frame. */
@@ -908,6 +922,11 @@ int main(){
                 wmDirty = true;
             }
         }
+
+        /* Same frame ping for the generic (non-console) clients: DOOM bumps
+           OUT_SEQ once per rendered frame, so a continuous-render client is
+           recomposed at its own pace instead of the 2 Hz idle fallback. */
+        wm_clients_poll_output(&wmDirty);
 
         wm_refocus();   /* keyboard focus tracks the topmost visible window */
 

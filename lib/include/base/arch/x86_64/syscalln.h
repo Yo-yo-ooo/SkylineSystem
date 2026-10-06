@@ -29,6 +29,8 @@
 
 
 #define SYSCALL_DEV_MMAP        21
+/* 24: 用户态串口调试输出 (与内核 syscalln.h 对齐) */
+#define SYSCALL_DBGSOUT         24
 #define SYSCALL_DEV_IOCTL       26
 
 #endif

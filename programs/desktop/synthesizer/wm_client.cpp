@@ -253,3 +253,15 @@ void wm_clients_sweep(Compositor& comp, bool* dirty) {
         }
     }
 }
+
+void wm_clients_poll_output(bool* dirty) {
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) {
+        WmClient* c = &g_clients[i];
+        if (!c->used || !c->place.proto) continue;
+        uint64_t seq = *(volatile uint64_t*)(c->place.proto +
+                                             SKYWIN_PROTO_OUT_SEQ * 8u);
+        if (seq == c->last_seq) continue;
+        c->last_seq = seq;
+        if (dirty) *dirty = true;
+    }
+}

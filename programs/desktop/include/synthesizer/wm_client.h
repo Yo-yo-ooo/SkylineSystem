@@ -27,6 +27,7 @@ struct WmClient {
     SkyWinPlacement place;       /* shared surface + client pid                */
     Window          win;         /* compositor window (static storage: stable) */
     const char*     title;       /* spawn title (string-literal lifetime)      */
+    uint64_t        last_seq;    /* last observed client OUT_SEQ (frame ping)  */
 };
 
 WmClient* wm_client_spawn   (Compositor& comp, FrameBuffer* fb, const char* elf,
@@ -40,6 +41,10 @@ void      wm_client_drag_all(Compositor& comp, int32_t mx, int32_t my,
                              int32_t scrW, int32_t scrH, int32_t taskbarH);
 bool      wm_client_any_drag(void);
 void      wm_clients_sweep  (Compositor& comp, bool* dirty);
+/* Per-client frame ping: a client that renders continuously (DOOM) bumps
+   OUT_SEQ in its protocol page; poll it every loop turn and mark the scene
+   dirty so the compositor picks the new frame up immediately. */
+void      wm_clients_poll_output(bool* dirty);
 void      wm_client_close   (Compositor& comp, WmClient* c);
 void      wm_client_minimize(Compositor& comp, WmClient* c);
 void      wm_client_restore (Compositor& comp, WmClient* c);
