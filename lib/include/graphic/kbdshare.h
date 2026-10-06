@@ -64,22 +64,67 @@ typedef struct KbdShared {
        publishes its progress; the kernel reads the slowest slot. */
     volatile uint64_t consumer[KBD_MAX_READERS];
 
+    /* Focus routing (click-to-front keyboard delivery). The WM publishes the
+       single reader that should receive keys. focus_owner == 0 means broadcast
+       (every reader processes events); otherwise it stores (slot index + 1) of
+       the focused window. slot_pid records the pid owning each slot so the WM
+       can map a clicked window (client pid) to its reader slot. */
+    volatile int64_t focus_owner;                  /* 0 = broadcast */
+    volatile int32_t slot_pid[KBD_MAX_READERS];    /* pid owning slot, 0 = free */
+
     KbdEvent ring[KBD_RING_CAP];
 } KbdShared;
+
+/* ---- focus routing helpers ---------------------------------------------- */
+
+/* Broadcast keys to every reader (legacy behaviour). */
+static inline void kbd_focus_broadcast(KbdShared* k) {
+    __atomic_store_n(&k->focus_owner, 0, __ATOMIC_RELEASE);
+}
+
+/* Direct keys at one reader slot. */
+static inline void kbd_focus_set_slot(KbdShared* k, int slot) {
+    __atomic_store_n(&k->focus_owner, (int64_t)slot + 1, __ATOMIC_RELEASE);
+}
+
+/* Focused slot, or -1 when broadcasting. */
+static inline int kbd_focus_slot(KbdShared* k) {
+    int64_t f = __atomic_load_n(&k->focus_owner, __ATOMIC_ACQUIRE);
+    return f > 0 ? (int)(f - 1) : -1;
+}
+
+/* Map a client pid to its reader slot, or -1 if it has not registered. */
+static inline int kbd_slot_for_pid(KbdShared* k, int32_t pid) {
+    for (uint32_t i = 0; i < KBD_MAX_READERS; i++)
+        if (__atomic_load_n(&k->slot_pid[i], __ATOMIC_ACQUIRE) == pid && pid != 0)
+            return (int)i;
+    return -1;
+}
+
+/* Whether this reader should process events right now. */
+static inline int kbd_focus_allows(KbdShared* k, int slot) {
+    int f = kbd_focus_slot(k);
+    return f < 0 || f == slot;
+}
+
 
 /* ---- reader-side cursor protocol (shared by kernel and userspace) -------- */
 
 /* Acquire a reader slot. The reader joins at the current head (all earlier
    events are skipped), which also keeps a late-joining reader from replaying
-   an overwritten ring. Returns the slot index, or -1 if all slots are taken. */
-static inline int kbd_reader_register(KbdShared* k) {
+   an overwritten ring. `pid` is the reader's process id, recorded so the WM
+   can focus a clicked window. Returns the slot index, or -1 if all slots
+   are taken. */
+static inline int kbd_reader_register(KbdShared* k, int32_t pid) {
     for (uint32_t i = 0; i < KBD_MAX_READERS; i++) {
         uint64_t expected = 0;
         uint64_t h = __atomic_load_n(&k->head, __ATOMIC_ACQUIRE);
         uint64_t want = h + 1;   /* encode consumed_seq = h */
         if (__atomic_compare_exchange_n(&k->consumer[i], &expected, want,
-                                        0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+                                        0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            __atomic_store_n(&k->slot_pid[i], pid, __ATOMIC_RELEASE);
             return (int)i;
+        }
     }
     return -1;
 }

@@ -43,6 +43,8 @@ static void wm_drop(Compositor& comp, WmClient* c) {
     c->used = false;
     c->dragging = false;
     c->pressClose = false;
+    c->pressMin = false;
+    c->minimized = false;
     if (g_press == c) g_press = nullptr;
 }
 
@@ -50,6 +52,44 @@ void wm_client_close(Compositor& comp, WmClient* c) {
     if (!c || !c->used) return;
     if (c->place.client_pid) sys_kill(c->place.client_pid, 9);
     wm_drop(comp, c);
+}
+
+void wm_client_minimize(Compositor& comp, WmClient* c) {
+    if (!c || !c->used) return;
+    c->minimized = true;
+    comp.SetVisible(&c->win, false);
+}
+
+void wm_client_restore(Compositor& comp, WmClient* c) {
+    if (!c || !c->used || !c->layer) return;
+    c->minimized = false;
+    comp.SetVisible(&c->win, true);
+    comp.RaiseWindow(&c->win);   /* a restored window takes the top */
+}
+
+int wm_client_count(void) {
+    int n = 0;
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) if (g_clients[i].used) n++;
+    return n;
+}
+
+WmClient* wm_client_by_order(int idx) {
+    int n = 0;
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) {
+        if (!g_clients[i].used) continue;
+        if (n++ == idx) return &g_clients[i];
+    }
+    return nullptr;
+}
+
+WmClient* wm_client_top_visible(void) {
+    WmClient* best = nullptr;
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) {
+        WmClient* c = &g_clients[i];
+        if (!c->used || !c->layer || c->minimized) continue;
+        if (!best || c->layer->z > best->layer->z) best = c;
+    }
+    return best;
 }
 
 WmClient* wm_client_spawn(Compositor& comp, FrameBuffer* fb, const char* elf,
@@ -126,6 +166,9 @@ void wm_client_press(Compositor& comp, WmClient* c, int32_t mx, int32_t my) {
     if (mx >= closeL && mx < closeL + (int32_t)SKYWIN_BTN_W &&
         my >= by && my < by + th) {
         c->pressClose = true;             /* close button armed            */
+    } else if (mx >= btnStart && mx < btnStart + (int32_t)SKYWIN_BTN_W &&
+               my >= by && my < by + th) {
+        c->pressMin = true;               /* minimize button armed         */
     } else if (my < by + th && mx < btnStart) {
         c->dragging  = true;              /* caption drag armed            */
         c->grabX = mx - (int32_t)c->win.PosX;
@@ -149,10 +192,21 @@ void wm_client_release(Compositor& comp, int32_t mx, int32_t my) {
             wm_client_close(comp, c);
     }
 
-    /* a release edge ends every armed drag / armed close, client or not */
+    if (c && c->used && c->pressMin) {
+        /* minimize fires with the same release-inside rule. */
+        int32_t bx, by, bw, bh;
+        wm_body(c, &bx, &by, &bw, &bh);
+        int32_t minL = bx + bw - 3 * (int32_t)SKYWIN_BTN_W;
+        if (mx >= minL && mx < minL + (int32_t)SKYWIN_BTN_W &&
+            my >= by && my < by + (int32_t)SKYWIN_TITLE_H)
+            wm_client_minimize(comp, c);
+    }
+
+    /* a release edge ends every armed drag / armed button, client or not */
     for (int i = 0; i < WM_MAX_CLIENTS; i++) {
         g_clients[i].dragging   = false;
         g_clients[i].pressClose = false;
+        g_clients[i].pressMin   = false;
     }
 }
 
@@ -191,7 +245,9 @@ void wm_clients_sweep(Compositor& comp, bool* dirty) {
     for (int i = 0; i < WM_MAX_CLIENTS; i++) {
         WmClient* c = &g_clients[i];
         if (!c->used || !c->place.client_pid) continue;
-        if (sys_kill(c->place.client_pid, 0) < 0) {   /* liveness probe */
+        /* sys_kill returns uint64_t with errors encoded as negative values;
+           cast before comparing (an unsigned "< 0" is always false). */
+        if ((int64_t)sys_kill(c->place.client_pid, 0) < 0) { /* liveness probe */
             wm_drop(comp, c);
             if (dirty) *dirty = true;
         }

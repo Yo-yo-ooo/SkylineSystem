@@ -20,6 +20,8 @@ struct WmClient {
     bool            used;        /* slot occupied                              */
     bool            dragging;    /* caption drag in progress                   */
     bool            pressClose;  /* current press is on the close button       */
+    bool            pressMin;    /* current press is on the minimize button    */
+    bool            minimized;   /* window hidden via the minimize button      */
     int32_t         grabX, grabY;/* press offset inside the surface            */
     CompLayer*      layer;       /* auto layer (nullptr once dropped)          */
     SkyWinPlacement place;       /* shared surface + client pid                */
@@ -39,5 +41,12 @@ void      wm_client_drag_all(Compositor& comp, int32_t mx, int32_t my,
 bool      wm_client_any_drag(void);
 void      wm_clients_sweep  (Compositor& comp, bool* dirty);
 void      wm_client_close   (Compositor& comp, WmClient* c);
+void      wm_client_minimize(Compositor& comp, WmClient* c);
+void      wm_client_restore (Compositor& comp, WmClient* c);
+
+/* Enumeration used by taskbar drawing / focus routing. */
+int       wm_client_count       (void);                 /* used slots              */
+WmClient* wm_client_by_order    (int idx);              /* idx-th used client      */
+WmClient* wm_client_top_visible (void);                 /* highest-z shown client  */
 
 #endif /* SYNTHESIZER_WM_CLIENT_H */

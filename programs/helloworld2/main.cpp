@@ -36,6 +36,10 @@ static void self_tests(void) {
     double d = 0.0;
     check("dbl",   sscanf("1e3", "%lf", &d) == 1 && d > 999.0 && d < 1001.0);
 
+    double hf = 0.0, hf2 = 0.0;
+    check("hexf",  sscanf("0x1.8p3", "%la", &hf) == 1 && hf == 12.0);
+    check("hexf2", sscanf("0X1p-2", "%la", &hf2) == 1 && hf2 == 0.25);
+
     check("set",   sscanf("abc123", "%[a-z]", w) == 1
                    && w[0] == 'a' && w[1] == 'b' && w[2] == 'c' && w[3] == '\0');
     check("negset",sscanf("hello,world", "%[^,]", w) == 1

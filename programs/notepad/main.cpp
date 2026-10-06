@@ -139,7 +139,7 @@ int main() {
                              0, 0, 0, 0, 0);
     if ((int64_t)kbdVA <= 0) return 1;
     KbdShared* kbd = (KbdShared*)kbdVA;
-    int kbdSlot = kbd_reader_register(kbd);
+    int kbdSlot = kbd_reader_register(kbd, (int32_t)sys_getpid());
     uint64_t cursor = kbdSlot >= 0 ? kbd_reader_pos(kbd, kbdSlot) : 0;
 
     TTF_Font* font = nullptr;
@@ -194,9 +194,12 @@ int main() {
         uint64_t h = __atomic_load_n(&kbd->head, __ATOMIC_ACQUIRE);
         cursor = kbd_reader_resync(kbd, cursor);
         bool changed = false;
+        /* Focus gate: only the focused notepad edits text; a non-focused
+           instance still drains the ring below. */
+        bool allowed = (kbdSlot < 0) || kbd_focus_allows(kbd, kbdSlot);
         while (cursor < h) {
             KbdEvent e = kbd->ring[cursor & (KBD_RING_CAP - 1u)];
-            if (e.action == KBD_ACTION_DOWN) { ed_key(e.key); changed = true; }
+            if (allowed && e.action == KBD_ACTION_DOWN) { ed_key(e.key); changed = true; }
             cursor++;
         }
         if (kbdSlot >= 0) kbd_reader_setpos(kbd, kbdSlot, cursor);

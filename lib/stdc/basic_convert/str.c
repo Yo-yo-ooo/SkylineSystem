@@ -215,11 +215,70 @@ unsigned long long swar_strtoull(const char* nptr, char** endptr, int base) {
 }
 long long swar_atoll(const char* nptr) { return swar_strtoll(nptr, NULL, 10); }
 
+/* ---- C99 hexadecimal floating point (0x1.8p3 == 12.0) ------------------- */
+static int swar_hexdig(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Parse a hex float starting at s (already past any sign). On success set
+   *out, advance *pp past the literal and return 1; otherwise return 0 so the
+   caller falls back to the decimal path. */
+static int swar_hexstrtod(const char* s, const char** pp, double* out) {
+    if (!(s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))) return 0;
+    const char* q = s + 2;
+    double val = 0.0;
+    int nInt = 0, nFrac = 0;
+
+    for (;;) {                       /* integer hex digits */
+        int d = swar_hexdig(*q);
+        if (d < 0) break;
+        val = val * 16.0 + d; nInt++; q++;
+    }
+
+    if (*q == '.') {                /* fraction hex digits */
+        const char* r = q + 1;
+        double scale = 1.0;
+        for (;;) {
+            int d = swar_hexdig(*r);
+            if (d < 0) break;
+            scale *= 0.0625;         /* 1/16 */
+            val += d * scale; nFrac++; r++;
+        }
+        q = r;                       /* consume the dot regardless */
+    }
+
+    if (nInt + nFrac == 0) return 0; /* 0x with no digits is not a float */
+
+    long e = 0, eNeg = 0, eAny = 0;
+    if (*q == 'p' || *q == 'P') {   /* binary exponent (decimal digits) */
+        const char* t = q + 1;
+        if (*t == '-') { eNeg = 1; t++; }
+        else if (*t == '+') t++;
+        while (*t >= '0' && *t <= '9') { e = e * 10 + (*t - '0'); eAny = 1; t++; }
+        if (!eAny) return 0;         /* dangling p is malformed */
+        q = t;
+    }
+
+    /* scale by 2^e in safe steps (overflow -> inf, underflow -> 0) */
+    long k = eNeg ? -e : e;
+    if (k >= 0) while (k > 0) { int s = k > 60 ? 60 : (int)k;
+                                 val *= (double)(1ULL << s); k -= s; }
+    else { k = -k; while (k > 0) { int s = k > 60 ? 60 : (int)k;
+                                 val /= (double)(1ULL << s); k -= s; } }
+
+    *pp = q;
+    *out = val;
+    return 1;
+}
+
 /* ==========================================================================
    2. 浮点数解析器
-   注：当前实现为高精度近似，17位以内数字误差极小，但不保证标准级正确舍入
+   注：十进制路径为高精度近似，17位以内数字误差极小，但不保证标准级正确舍入
        (round to nearest, ties to even)。若追求完美精度需升级为 Eisel-Lemire 算法。
-       同时暂不支持 C99 十六进制浮点数 (0x1.2p3) 解析。
+       C99 十六进制浮点数 (0x1.8p3) 由 swar_hexstrtod 单独精确解析。
    ========================================================================== */
 static double swar_strtod_impl(const char* nptr, char** endptr) {
     const char* p = nptr;
@@ -232,6 +291,15 @@ static double swar_strtod_impl(const char* nptr, char** endptr) {
     while (IS_SPACE((unsigned char)*p)) p++;
     if (*p == '-') { neg = 1; p++; }
     else if (*p == '+') { p++; }
+
+    /* C99 hexadecimal float (0x1.8p3); handled before the decimal path. */
+    {
+        const char* hp; double hv;
+        if (swar_hexstrtod(p, &hp, &hv)) {
+            if (endptr) *endptr = (char*)hp;
+            return neg ? -hv : hv;
+        }
+    }
 
     if ((*p == 'i' || *p == 'I') && (p[1] == 'n' || p[1] == 'N') && (p[2] == 'f' || p[2] == 'F')) {
         p += 3;

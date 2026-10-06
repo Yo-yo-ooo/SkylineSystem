@@ -126,11 +126,43 @@ static inline uint32_t wm_acrylic_pixel(uint32_t wallpaper) {
    restored first so repeatedly repainting (clock tick / state change) never
    compounds the acrylic darkening. appState: 0 idle (shown), 1 active
    (minimized), 2 closed (no app entry). */
+/* One taskbar pill geometry. Shared by drawing and click hit-testing so the
+   click areas can never drift from what is painted. */
+struct TBRect { int32_t x, w; int id, state; const char* title; };
+
+/* Lay out pills left-to-right: console first (unless closed), then every
+   generic client in spawn order. state: 0 shown, 1 minimized. */
+static int tb_layout(TBRect* r, int cap, int consoleHidden, TTF_Font* f) {
+    int n = 0;
+    /* Each pill is title-text width + padding, with a 96px floor. */
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass == 0) {
+            if (consoleHidden) continue;
+            int32_t tw = 0, th = 0;
+            if (f) TTF_GetTextSize(f, "Skyline Console", &tw, &th);
+            int32_t pw = tw + 34; if (pw < 96) pw = 96;
+            r[n].x = 10; r[n].w = pw; r[n].id = 0; r[n].state = 0;
+            r[n].title = "Skyline Console"; n++;
+        } else {
+            int cc = wm_client_count();
+            for (int i = 0; i < cc && n < cap; i++) {
+                WmClient* c = wm_client_by_order(i);
+                int32_t tw = 0, th = 0;
+                if (f) TTF_GetTextSize(f, c->title, &tw, &th);
+                int32_t pw = tw + 34; if (pw < 96) pw = 96;
+                r[n].x = r[n-1].x + r[n-1].w + 8; r[n].w = pw;
+                r[n].id = i + 1; r[n].state = c->minimized ? 1 : 0;
+                r[n].title = c->title; n++;
+            }
+        }
+    }
+    return n;
+}
+
 static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
                             uint32_t W, uint32_t H, int appState,
                             const WmDateTime* dt, bool haveClock) {
-    if (!wall || !cleanBar) return;   /* 卡死修复: cleanBar malloc 失败时点击
-                                         任务栏不再 memcpy(nullptr) 页故障 */
+    if (!wall || !cleanBar) return;   /* cleanBar malloc failure guard */
     FrameBuffer lb;
     lb.BaseAddress       = wall;
     lb.BufferSize        = (uint64_t)W * H * sizeof(uint32_t);
@@ -147,18 +179,22 @@ static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
     for (uint32_t i = 0; i < W * barH; i++) stripe[i] = wm_acrylic_pixel(stripe[i]);
     DrawFillRect(&lb, 0, y0, W, 1, SKYRGB_TB_HILITE);   /* luminous top edge  */
 
-    /* 2) left: rounded app pill (hidden once the window is closed) */
-    if (appState != 2) {
-        const int32_t bx = 10, by = (int32_t)y0 + 7, bw = 208, bh = (int32_t)barH - 14;
+    /* 2) left: one rounded pill per open window (console + generic clients) */
+    TTF_Font* f = console_font();
+    TBRect rects[12];
+    int ne = tb_layout(rects, 12, appState == 2, f);
+    const int32_t py = (int32_t)y0 + 7, ph = (int32_t)barH - 14;
+    for (int i = 0; i < ne; i++) {
+        const TBRect* t = &rects[i];
         BasicDraw pill(&lb);
-        const uint32_t face = appState == 1 ? SKYRGB_TBTN_ON : SKYRGB_TBTN_IDLE;
-        pill.DrawRoundedRect(bx, by, bw, bh, 7, face, true);
-        pill.DrawRoundedRect(bx, by, bw, bh, 7, appState == 1 ? SKYRGB_ACCENT : SKYRGB_BORDER, false);
-        if (appState == 1) DrawFillRect(&lb, bx + 2, by + 5, 3, bh - 10, SKYRGB_ACCENT);
-        TTF_Font* f = console_font();
+        const bool on = (t->state == 1);
+        const uint32_t face = on ? SKYRGB_TBTN_ON : SKYRGB_TBTN_IDLE;
+        pill.DrawRoundedRect(t->x, py, t->w, ph, 7, face, true);
+        pill.DrawRoundedRect(t->x, py, t->w, ph, 7, on ? SKYRGB_ACCENT : SKYRGB_BORDER, false);
+        if (on) DrawFillRect(&lb, t->x + 2, py + 5, 3, ph - 10, SKYRGB_ACCENT);
         if (f)
-            TTF_DrawText(&lb, f, bx + 16, by + (bh - 22) / 2,
-                         "Skyline Console", appState == 1 ? 0xFFFFFFFFu : SKYRGB_INK);
+            TTF_DrawText(&lb, f, t->x + 16, py + (ph - 22) / 2,
+                         t->title, on ? 0xFFFFFFFFu : SKYRGB_INK);
     }
 
     /* 3) right tray: Win11-style two-line clock, right aligned */
@@ -450,7 +486,7 @@ int main(){
     uint64_t kbdAddr = syscall(SYSCALL_DEV_MMAP, (uint64_t)KBD_DEV_TYPE,
                                0, 0, 0, 0, 0);
     if ((int64_t)kbdAddr > 0) wmKbd = (KbdShared*)kbdAddr;
-    int wmKbdSlot = wmKbd ? kbd_reader_register(wmKbd) : -1;
+    int wmKbdSlot = wmKbd ? kbd_reader_register(wmKbd, (int32_t)sys_getpid()) : -1;
     uint64_t wmKbdCursor = wmKbdSlot >= 0 ? kbd_reader_pos(wmKbd, wmKbdSlot) : 0;
 
     const uint64_t tsc_per_ms = probe_tsc_per_ms();
@@ -487,7 +523,32 @@ int main(){
     int32_t  rsX = 0, rsY = 0, rsW = 0, rsH = 0, rsMX = 0, rsMY = 0;
     int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz,8 content;
                                 generic-client presses are owned by wm_client_* */
+    int      tbPressId = -1; /* taskbar pill id under the current press        */
     uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
+
+    /* ---- focus routing (keyboard delivery follows click-to-front) ----
+       Recompute the focused window every frame: the topmost VISIBLE window
+       owns the keyboard. This self-heals lazy reader registration and client
+       death without per-event bookkeeping. */
+    auto wm_focus_pid = [&](uint64_t pid) {
+        if (!wmKbd) return;
+        if (!pid) { kbd_focus_broadcast(wmKbd); return; }
+        int s = kbd_slot_for_pid(wmKbd, (int32_t)pid);
+        if (s >= 0) kbd_focus_set_slot(wmKbd, s);
+        /* slot not registered yet: leave the current owner, retried next frame */
+    };
+    auto wm_refocus = [&]() {
+        if (!wmKbd) return;
+        const bool consVis = (wmMode == WM_NORMAL || wmMode == WM_MAX) &&
+                             consoleLayer != nullptr;
+        WmClient* tc = wm_client_top_visible();
+        if (consVis && (!tc || consoleLayer->z >= tc->layer->z))
+            wm_focus_pid(place.client_pid);
+        else if (tc)
+            wm_focus_pid(tc->place.client_pid);
+        else
+            kbd_focus_broadcast(wmKbd);
+    };
 
     comp.SetCursor(0, 0, true);
 
@@ -614,8 +675,17 @@ int main(){
                 wm_client_press(comp, cTop, mx, my);
             }
 
-            if (pressHit == 0 && !wm_client_pressed() && wmMode != WM_CLOSED &&
-                inBox(tbX0, tbY0, tbW, tbH)) pressHit = 5;
+            if (pressHit == 0 && !wm_client_pressed() && my >= tbY0 &&
+                my < tbY0 + tbH) {
+                /* Hit whichever taskbar pill (console + generic clients) is
+                   under the pointer; record its window id for the release. */
+                TBRect tr[12];
+                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font());
+                for (int i = 0; i < nt; i++)
+                    if (mx >= tr[i].x && mx < tr[i].x + tr[i].w) {
+                        pressHit = 5; tbPressId = tr[i].id; break;
+                    }
+            }
         }
 
         if (leftDown && dragging && wmMode == WM_NORMAL) {       /* caption move */
@@ -676,7 +746,13 @@ int main(){
                 int32_t lx = bx + bw - (5 - pressHit) * (int32_t)SKYWIN_BTN_W;
                 fire = inBox(lx, by, (int32_t)SKYWIN_BTN_W, th);
             } else if (pressHit == 5) {
-                fire = inBox(tbX0, tbY0, tbW, tbH);
+                /* fire only if the release stays inside the same pill. */
+                TBRect tr[12];
+                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font());
+                for (int i = 0; i < nt; i++)
+                    if (tr[i].id == tbPressId && mx >= tr[i].x &&
+                        mx < tr[i].x + tr[i].w && my >= tbY0 && my < tbY0 + tbH)
+                        fire = true;
             }
 
             /* Generic-client release (old pressHit 7/9): fire an armed close
@@ -729,27 +805,42 @@ int main(){
                     }
                     wmDirty = true;
                 } else if (pressHit == 5) {                 /* taskbar toggle   */
-                    if (wmMode == WM_MIN) {
-                        /* C9 (round 24 恢复): 恢复最小化前先态 */
-                        if (wm_prior == WM_MAX && maxSurf) {
-                            wmMode = WM_MAX;
-                            wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
-                        } else {
-                            wmMode = WM_NORMAL;
-                            wm_apply_normal(&consoleWin, &place, normX, normY,
-                                            normW, normH, rzSurf, rzPitch);
+                    if (tbPressId == 0) {
+                        /* Console pill: the existing minimize/restore path. */
+                        if (wmMode == WM_MIN) {
+                            /* restore the pre-minimize mode */
+                            if (wm_prior == WM_MAX && maxSurf) {
+                                wmMode = WM_MAX;
+                                wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
+                            } else {
+                                wmMode = WM_NORMAL;
+                                wm_apply_normal(&consoleWin, &place, normX, normY,
+                                                normW, normH, rzSurf, rzPitch);
+                            }
+                            comp.SetVisible(&consoleWin, true);
+                            tbState = 0;
+                        } else if (wmMode == WM_NORMAL || wmMode == WM_MAX) {
+                            wm_prior = wmMode;
+                            wmMode = WM_MIN;
+                            comp.SetVisible(&consoleWin, false);
+                            tbState = 1;
                         }
-                        comp.SetVisible(&consoleWin, true);
-                        tbState = 0;
-                    } else if (wmMode == WM_NORMAL || wmMode == WM_MAX) {
-                        wm_prior = wmMode;                 /* C9: 记录先态 */
-                        wmMode = WM_MIN;
-                        comp.SetVisible(&consoleWin, false);
-                        tbState = 1;
+                        wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tbState,
+                                        &fireDT, haveDT);
+                        wmDirty = true;
+                    } else if (tbPressId >= 1) {
+                        /* Generic-client pill: minimize or restore that app. */
+                        WmClient* cc = wm_client_by_order(tbPressId - 1);
+                        if (cc) {
+                            if (cc->minimized) wm_client_restore(comp, cc);
+                            else               wm_client_minimize(comp, cc);
+                        }
+                        const int cs = (wmMode == WM_CLOSED) ? 2
+                                       : ((wmMode == WM_MIN) ? 1 : 0);
+                        wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, cs,
+                                        &fireDT, haveDT);
+                        wmDirty = true;
                     }
-                    wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tbState,
-                                    &fireDT, haveDT);
-                    wmDirty = true;
                 }
                 /* notepad close (old pressHit 9) was handled above inside
                    wm_client_release() — nothing left to do here. */
@@ -761,6 +852,7 @@ int main(){
                 sys_yield();
             }
             pressHit = 0;
+            tbPressId = -1;
         }
         prevLeft = leftDown;
 
@@ -816,6 +908,8 @@ int main(){
                 wmDirty = true;
             }
         }
+
+        wm_refocus();   /* keyboard focus tracks the topmost visible window */
 
         if (wmDirty) { comp.Compose(); last_scene = rdtsc64(); }
 

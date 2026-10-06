@@ -76,7 +76,7 @@ static KbdShared *stdin_kbd(void) {
     if ((int64_t)va <= 0) return NULL;
 
     g_kbd  = (KbdShared *)va;
-    g_slot = kbd_reader_register(g_kbd);
+    g_slot = kbd_reader_register(g_kbd, (int32_t)sys_getpid());
     g_pos  = (g_slot >= 0)
                ? kbd_reader_pos(g_kbd, g_slot)
                : __atomic_load_n(&g_kbd->head, __ATOMIC_ACQUIRE);
@@ -90,12 +90,15 @@ static uint16_t next_key(void) {
     for (;;) {
         uint64_t h = __atomic_load_n(&k->head, __ATOMIC_ACQUIRE);
         g_pos = kbd_reader_resync(k, g_pos);
+        /* Focus gate: a non-focused reader still drains the ring (so it never
+           holds up the slowest-reader accounting) but returns no keys. */
+        int allowed = (g_slot < 0) || kbd_focus_allows(k, g_slot);
 
         while (g_pos < h) {
             KbdEvent e = k->ring[g_pos & (KBD_RING_CAP - 1u)];
             g_pos++;
             if (g_slot >= 0) kbd_reader_setpos(k, g_slot, g_pos);
-            if (e.action == KBD_ACTION_DOWN) return e.key;
+            if (allowed && e.action == KBD_ACTION_DOWN) return e.key;
         }
         sys_yield();
     }
