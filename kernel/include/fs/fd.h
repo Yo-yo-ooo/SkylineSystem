@@ -70,6 +70,11 @@ typedef struct fd_t {
     char *path;
     uint32_t         path_len;   // The length of file path
     uint64_t         file_size;  
+    /* 当前读写偏移。必须由内核自己记账: lwext4 的 ext4_fseek() 返回的是
+       状态码 (EOK=0) 而不是新位置, 所以不能用 lseek(f,0,SEEK_CUR) 查询
+       偏移 —— 那样永远得到 0, 并且会把文件位置重置回开头, 表现为
+       "seek 被忽略、每次读都从头开始"。 */
+    uint64_t         offset;
     void     *filedesc;
     FS_PDESC *FSOPS;
     void     *MP;

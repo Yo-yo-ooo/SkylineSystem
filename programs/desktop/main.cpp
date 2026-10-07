@@ -27,6 +27,17 @@ void SkyPaintChromeSized(FrameBuffer* s, int32_t surfW, int32_t surfH,
                          int32_t bodyW, int32_t bodyH, int restoreGlyph,
                          const char* title, uint32_t paperRGB);
 
+/* Pointer shape for an edge-resize direction bitmask (bit0 L,1 R,2 T,3 B):
+   corners get the diagonal double-arrow, pure edges the axis-aligned one. */
+static uint32_t cursor_shape_for(uint8_t dir) {
+    const bool l = (dir & 1) != 0, r = (dir & 2) != 0;
+    const bool t = (dir & 4) != 0, b = (dir & 8) != 0;
+    if ((l || r) && (t || b)) return SKY_CURSOR_SIZE_DIAG;
+    if (l || r)               return SKY_CURSOR_SIZE_HORZ;
+    if (t || b)               return SKY_CURSOR_SIZE_VERT;
+    return SKY_CURSOR_ARROW;
+}
+
 const char *to_string(uint64_t value)
 {
     uint8_t i = 0;
@@ -441,19 +452,21 @@ int main(){
     wm_client_spawn(comp, &fb, "/mp/notepad.elf", "Notepad",
                     560u, 420u, 0xFF0F0F12u, 90u, 70u);
 
-    /* DOOM (PureDOOM shim). The game is only spawned when the user has
-       actually dropped the shareware IWAD at /mp/doom1.wad — otherwise the
-       client would I_Error() and exit during boot. Body 640x440 leaves the
-       WM a 640x400 content area, i.e. exactly 2x DOOM's fixed 320x200
-       framebuffer. Sound and music are hidden: there is no audio driver. */
-    /* {
-        FILE* wad = fopen("/mp/doom1.wad", "rb");
+    /* DOOM (PureDOOM shim). The game is only spawned when an IWAD is
+       actually present at /mp/doom.wad (registered) or /mp/doom1.wad
+       (shareware) — otherwise the client would I_Error() and exit during
+       boot. Body 640x440 leaves the WM a 640x400 content area, i.e. exactly
+       2x DOOM's fixed 320x200 framebuffer. Sound and music are hidden:
+       there is no audio driver. */
+    {
+        FILE* wad = fopen("/mp/doom.wad", "rb");
+        if (!wad) wad = fopen("/mp/doom1.wad", "rb");
         if (wad) {
             fclose(wad);
             wm_client_spawn(comp, &fb, "/mp/doom.elf", "DOOM",
                             640u, 440u, 0xFF000000u, 120u, 60u);
         }
-    } */
+    }
 
     /* Desktop-owned (NOT shared with the client) full-work-area surface used
        only while maximized: opaque, no rounded shadow margin. The live text is
@@ -532,6 +545,8 @@ int main(){
     uint32_t normX = place.x, normY = place.y;   /* NORMAL surface top-left   */
     uint32_t normW = SKYWIN_W, normH = SKYWIN_H; /* NORMAL body size          */
     bool     prevLeft = false, dragging = false, resizing = false;
+    bool     clientResizing = false;   /* a generic client owns the edge drag  */
+    WmClient* rzClient = nullptr;      /* the client being resized             */
     int32_t  grabDX = 0, grabDY = 0;
     uint8_t  rzDir = 0;   /* edge resize directions: bit0 L,1 R,2 T,3 B       */
     int32_t  rsX = 0, rsY = 0, rsW = 0, rsH = 0, rsMX = 0, rsMY = 0;
@@ -618,6 +633,34 @@ int main(){
         auto inBox = [&](int32_t x0, int32_t y0, int32_t ww, int32_t hh) {
             return mx >= x0 && mx < x0 + ww && my >= y0 && my < y0 + hh;
         };
+        /* ---- cursor shape: resize glyphs over (or dragging) an edge band -- */
+        {
+            uint32_t want = SKY_CURSOR_ARROW;
+            if (clientResizing && rzClient)
+                want = cursor_shape_for(rzClient->rzDir);
+            else if (resizing)
+                want = cursor_shape_for(rzDir);
+            else if (!leftDown) {
+                uint8_t d = 0;
+                if (wm_client_edge_at(mx, my, &d) && d) {
+                    want = cursor_shape_for(d);
+                } else if (wmMode == WM_NORMAL && consoleLayer) {
+                    const int32_t OUT = 4, RB = (int32_t)SKYWIN_RESIZE_BORDER;
+                    bool spanX = mx >= bx - OUT && mx < bx + bw + OUT;
+                    bool spanY = my >= by - OUT && my < by + bh + OUT;
+                    uint8_t cd = 0;
+                    if (spanY && (mx - bx) >= -OUT && (mx - bx) < RB)      cd |= 1;
+                    if (spanY && (bx + bw - 1 - mx) >= -OUT &&
+                                 (bx + bw - 1 - mx) < RB)                  cd |= 2;
+                    if (spanX && (my - by) >= -OUT && (my - by) < RB)      cd |= 4;
+                    if (spanX && (by + bh - 1 - my) >= -OUT &&
+                                 (by + bh - 1 - my) < RB)                  cd |= 8;
+                    if (cd) want = cursor_shape_for(cd);
+                }
+            }
+            comp.SetCursorShape(want);
+        }
+
         bool wmDirty = false;
 
         if (leftDown && !prevLeft) {                 /* press edge: classify  */
@@ -685,8 +728,18 @@ int main(){
             } else if (cTop) {
                 /* Generic client press: raise + arm close/drag — all client
                    interaction lives in wm_client.cpp (the old notepad
-                   special cases pressHit 7 / 9 used to be inline here). */
-                wm_client_press(comp, cTop, mx, my);
+                   special cases pressHit 7 / 9 used to be inline here).
+                   The edge/corner resize band wins over the caption, exactly
+                   like the console window. */
+                uint8_t dir = 0;
+                WmClient* rz = wm_client_edge_at(mx, my, &dir);
+                if (rz && dir) {
+                    wm_client_resize_begin(rz, mx, my, dir);
+                    clientResizing = true;
+                    rzClient = rz;
+                } else {
+                    wm_client_press(comp, cTop, mx, my);
+                }
             }
 
             if (pressHit == 0 && !wm_client_pressed() && my >= tbY0 &&
@@ -720,6 +773,15 @@ int main(){
            app (replaces the notepad-only noteDrag block). */
         if (leftDown)
             wm_client_drag_all(comp, mx, my, fb_width, fb_height, (int32_t)barH);
+
+        /* Generic-client edge/corner resize (same 8 directions as the
+           console). Rate-limited by the caller's compose cadence. */
+        if (leftDown && clientResizing && rzClient) {
+            bool dirty = false;
+            wm_client_resize_drag(rzClient, mx, my, fb_width, fb_height,
+                                  (int32_t)barH, &dirty);
+            if (dirty) { comp.Compose(); last_scene = now; }
+        }
 
         if (leftDown && resizing && wmMode == WM_NORMAL) {      /* edge resize */
             int32_t dx = mx - rsMX, dy = my - rsMY;
@@ -773,7 +835,21 @@ int main(){
                button only if the release is still inside it; every armed
                client drag ends here as well. Runs between Compose() frames,
                so the unregister/kill inside is worker-park safe. */
-            wm_client_release(comp, mx, my);
+            bool relDirty = false;
+            wm_client_release(comp, mx, my, fb_width, fb_height,
+                              (int32_t)barH, &relDirty);
+            if (relDirty) wmDirty = true;
+
+            /* Finish a generic-client resize: repaint the real chrome once at
+               the release geometry (the drag only showed a flat preview). */
+            if (clientResizing && rzClient) {
+                bool dirty = false;
+                wm_client_resize_end(rzClient, fb_width, fb_height,
+                                     (int32_t)barH, &dirty);
+                if (dirty) wmDirty = true;
+            }
+            clientResizing = false;
+            rzClient = nullptr;
 
             /* Finish a live resize at the exact release geometry. */
             if (resizing) {

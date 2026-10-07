@@ -23,19 +23,26 @@ all:
 	e2cp $(PROGRAM_BUILD_DIR)/notepad.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/doom.elf $(DISK_IMG):/
 
-	@# DOOM IWAD (shareware doom1.wad, ~4 MB) —— 不随仓库分发, 使用者自备:
-	@#   放在 programs/PureDOOM/doom1.wad, 构建时拷进镜像; 缺失则
-	@#   doom.elf 仍会入盘, 但桌面不会spawn DOOM 窗口。
-	@if [ -f "./PureDOOM/doom1.wad" ]; then \
-	    if e2ls $(DISK_IMG) 2>/dev/null | grep -q "doom1.wad"; then \
-	        echo "doom1.wad Exists in image"; \
+	@# DOOM IWAD —— 不随仓库分发, 使用者自备:
+	@#   放在 programs/PureDOOM/doom.wad (完整版) 或 doom1.wad (共享版),
+	@#   构建时拷进镜像; 缺失则 doom.elf 仍入盘, 但桌面不会 spawn DOOM 窗口。
+	@WAD=""; \
+	for f in ./PureDOOM/doom.wad ./PureDOOM/doom1.wad; do \
+	    [ -f "$$f" ] && WAD="$$f" && break; \
+	done; \
+	if [ -n "$$WAD" ]; then \
+	    NAME=`basename "$$WAD"`; \
+	    if e2ls $(DISK_IMG) 2>/dev/null | grep -q "$$NAME"; then \
+	        echo "$$NAME Exists in image"; \
 	    else \
-	        e2cp ./PureDOOM/doom1.wad $(DISK_IMG):/; \
+	        e2cp "$$WAD" $(DISK_IMG):/; \
+	        echo "copied $$NAME into image"; \
 	    fi \
 	else \
-	    echo "doom1.wad not provided - DOOM window will not spawn"; \
+	    echo "no IWAD provided (doom.wad/doom1.wad) - DOOM window will not spawn"; \
 	fi
-
+	@# 自检: 打印镜像内 wad 的大小, 和本地对比 (大小不符说明镜像/ext4 有脏数据)
+	@e2ls -l $(DISK_IMG):/ 2>/dev/null | grep -i "\.wad" || echo "(no wad in image)"
 	@if e2ls $(DISK_IMG) 2>/dev/null | grep -q "README.md"; then \
 	    echo "README.md Exists"; \
 	else \

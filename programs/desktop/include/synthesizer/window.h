@@ -27,6 +27,12 @@ struct Window {
 /* One horizontal band of the screen, rendered by one worker. */
 struct Strip { uint32_t y0, y1; };
 
+/* Pointer shapes (see Compositor::SetCursorShape). */
+#define SKY_CURSOR_ARROW     0u   /* default arrow                          */
+#define SKY_CURSOR_SIZE_DIAG 1u   /* corner resize: diagonal double-arrow    */
+#define SKY_CURSOR_SIZE_HORZ 2u   /* left/right edge: horizontal double-arrow*/
+#define SKY_CURSOR_SIZE_VERT 3u   /* top/bottom edge: vertical double-arrow  */
+
 struct CompLayer;
 
 /* Window-node wrapper inside a layer's list (registry bookkeeping). */
@@ -80,6 +86,9 @@ public:
     /* ---- cursor ---- */
     void SetCursor(int32_t x, int32_t y, bool visible);
     void CursorMoveTo(int32_t x, int32_t y);
+    /* Shape the pointer takes: arrow by default, resize glyphs while the
+       pointer is over (or dragging) a window edge/corner band. */
+    void SetCursorShape(uint32_t shape);
 
     /* ---- worker entry (called from the C trampoline) ---- */
     void WorkerEntry(uint32_t id);
@@ -116,6 +125,7 @@ private:
     uint64_t         worker_done_seq_[COMP_CPUS_SANITY];
     int32_t          cur_x_, cur_y_;
     uint8_t          cur_visible_;
+    uint32_t         cur_shape_;      /* SKY_CURSOR_*                       */
     int32_t          committed_x_, committed_y_;
     int32_t          dx0_, dy0_, dx1_, dy1_;
     uint8_t          dirty_;

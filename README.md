@@ -12,7 +12,7 @@
                      \______/                                        \______/
 ```
 <p align="center">
-  <img src="skyline_modern_desktop.png" alt="SkylineSystem modern desktop" width="820">
+  <img src="_qemu_doom_ingame.png" alt="SkylineSystem modern desktop" width="820">
   <br><em>An x86_64 SMP hobby OS with a CPU-parallel software compositor —
   a rounded console over the wallpaper and an acrylic taskbar with app pill,
   battery and a live clock. Runs in QEMU (tested with 512 MB – 2 GB RAM).</em>

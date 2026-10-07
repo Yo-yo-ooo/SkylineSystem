@@ -1,5 +1,3 @@
-*.wad
-*.WAD
 *.lmp
 object/
 bin/

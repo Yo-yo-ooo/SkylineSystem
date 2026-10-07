@@ -15,7 +15,14 @@ CC  := gcc
 CXX := g++
 AS  := as
 
-LDFLAGS := -entry=_start -static -nostdlib -m elf_x86_64 -z noexecstack
+# NOTE: -T ./link/console_x86_64.ld is mandatory, not cosmetic. It reserves a
+# WRITABLE .prepad page at 0x400000 — that page IS the WM protocol page
+# (SKYWIN_PROTO_PAGE_VA, see graphic/winstyle.h); the WM shares it into its
+# own address space before the client starts. Without it the ELF's own
+# read-only header lands at 0x400000 and the first OUT_SEQ bump faults with
+# "write to RO" (addr=0x400048).
+LDFLAGS := -entry=_start -static -nostdlib -m elf_x86_64 -z noexecstack \
+           -T ./link/console_x86_64.ld
 
 # DOOM's 1993 code is not warning-clean and predates C23: `enum { false, true }`
 # collides with the C23 keywords, so this project is pinned to gnu17.

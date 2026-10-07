@@ -11,6 +11,7 @@
 *.iso
 *.hdd
 .vscode/
+*.ppm
 *.img
 a.out
 a.si4project/
@@ -18,7 +19,7 @@ a.si4project/
 *.zip
 *.log
 *.png
-!skyline_modern_desktop.png
+!_qemu_doom_ingame.png
 /*.c
 /*.h
 /*.py

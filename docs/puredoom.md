@@ -16,7 +16,8 @@ an ordinary SkylineSystem windowed client next to the console and Notepad.
 | Build | `programs/PureDOOM/Makefile` | builds `programs/bin/doom.elf` (pinned `-std=gnu17`) |
 | Spawn | `programs/desktop/main.cpp` | one `wm_client_spawn()` after the Notepad launch |
 | Frame ping | `programs/desktop/synthesizer/wm_client.cpp` | `wm_clients_poll_output()` — per-client OUT_SEQ |
-| Disk image | `programs/Makefile` | copies `doom.elf`, and `doom1.wad` if supplied |
+| Disk image | `programs/Makefile` | copies `doom.elf`, and `doom.wad` / `doom1.wad` if supplied |
+| Host test | `programs/PureDOOM/hosttest/` | runs the shim unmodified on a desktop (no OS build) |
 
 ## Hook wiring
 
@@ -24,7 +25,7 @@ an ordinary SkylineSystem windowed client next to the console and Notepad.
 |---|---|
 | `doom_set_malloc` | libc `malloc` / `free` (the 12 MB zone is one `sys_mmap` mode-2 mapping) |
 | `doom_set_file_io` | libc `fopen/fread/fseek/ftell` + `fsize` for eof; **writes are refused** (libc has no `fwrite`), so no junk files are created |
-| `doom_set_gettime` | TSC calibrated against one RTC second (`sys_time`, syscall 17) at startup |
+| `doom_set_gettime` | RTC-anchored clock: whole seconds from `sys_time` (syscall 17), sub-second fraction from the TSC, with the TSC rate **re-measured across every real second** — self-recalibrating, no cumulative drift |
 | `doom_set_getenv` | `DOOMWADDIR` and `HOME` both return `/mp` (`HOME` NULL makes DOOM `I_Error`) |
 | `doom_set_exit` | `sys_exit` |
 | `doom_set_print` | `sys_dbgsout` (serial) — diagnostics only, never drawn into the window |
@@ -43,25 +44,86 @@ recompose in real time.
 
 ## Building and running
 
-1. Obtain the shareware IWAD yourself (see Licensing) and place it at
-   `programs/PureDOOM/doom1.wad`.
+1. Obtain the IWAD yourself (see Licensing) and place it at
+   `programs/PureDOOM/doom.wad` (registered, ~11 MB) or
+   `programs/PureDOOM/doom1.wad` (shareware, ~4 MB).
 2. Build as usual (`make cm`); `programs/Makefile` copies `doom.elf` into the
-   image and, when the WAD is present, `doom1.wad` to `/mp/`.
-3. Boot. The desktop only spawns the DOOM window when `/mp/doom1.wad` exists,
+   image and, when an IWAD is present, it to `/mp/`.
+3. Boot. The desktop only spawns the DOOM window when `/mp/doom.wad` (or `/mp/doom1.wad`) exists,
    so a missing WAD costs nothing at boot.
 
-## Known limitations
+## Kernel bugs this port shook out (both fixed)
+
+DOOM is the first Skyline userspace program that **probes for files** and
+**seeks around inside a file**, and it tripped two latent kernel bugs:
+
+1. **`sys_fopen` reported failed opens as success** (`fops.cpp`). The fs layer
+   returns *positive* errno (lwext4: `EOK=0`, `ENOENT=2`) but the check was
+   `err < 0`, so opening a missing file handed out a valid fd whose
+   `ext4_file` was never opened; the next op hit
+   `ext4_assert(file && file->mp)` and panicked the kernel. Now `err != 0`,
+   with the positive errno normalised to negative for the syscall ABI.
+   (`exec.cpp` / `task.cpp` already used `!= 0`.)
+
+2. **Every read was served from offset 0** (`fops.cpp`, `fd.h`). The read path
+   queried the position with `lseek(fd, 0, SEEK_CUR)`, but lwext4's
+   `ext4_fseek()` returns a *status code* (`EOK=0`), not the new position — so
+   the "current offset" was always 0 and the following
+   `lseek(fd, cur_offset, SEEK_SET)` reset the file to the start. A single
+   whole-file read from 0 still worked, which is why the 31 MB TTF font
+   loaded fine and hid the bug. Fixed by tracking the offset in `fd_t::offset`
+   (set by `sys_flseek`, advanced by `sys_fread`/`sys_fwrite`).
+
+### Client build requirement: the linker script
+
+Every windowed client must link with `-T ./link/console_x86_64.ld`. That script
+reserves a **writable `.prepad` page at 0x400000**, which is the WM protocol
+page (`SKYWIN_PROTO_PAGE_VA`) the desktop shares *before* the client starts.
+Linking without it puts the ELF's own read-only header at 0x400000, and the
+first `OUT_SEQ` bump dies with `write to RO` at `0x400048`. This is easy to
+miss because Notepad never writes `OUT_SEQ`.
+
+Diagnosing both relied on the serial log (`sys_dbgsout`) and a QEMU monitor
+`screendump`; see `programs/PureDOOM/hosttest/` and `res/scripts/`.
+
+## Known limitations (temporary)
 
 - **No audio.** The kernel has no sound driver, so `doom_get_sound_buffer()`
   / `doom_tick_midi()` are never called; the sound and music menu entries are
   hidden with `DOOM_FLAG_HIDE_SOUND_OPTIONS | DOOM_FLAG_HIDE_MUSIC_OPTIONS`.
-- **No mouse.** First version is keyboard-only; the PS/2 page is currently
-  consumed by the desktop, so mouse-look needs a shared-ring agreement first.
+- **Mouse: look + fire only.** The client maps the shared PS/2 page
+  (`graphic/mouseshare.h`) and feeds `doom_mouse_move()` / `doom_button_*()`
+  while its window holds focus. The desktop still owns the pointer for
+  dragging/resizing, so there is no grab (moving the mouse off the window just
+  stops turning).
+- **Window resize is "more room", not scaling.** The client's surface is
+  allocated once at spawn size, so the WM mirrors the 640x400 bitmap 1:1 into
+  its own presentation surface: shrinking crops, enlarging/maximizing leaves
+  paper around it. Getting true scaling needs the client surface to be
+  re-shared at the new size (protocol work, not done).
 - **Fixed 320x200.** `doom_set_resolution()` is a no-op upstream; higher
   resolution needs the engine's `SCREENWIDTH/HEIGHT` to stop being constants.
-- **TCS fallback.** If the RTC does not tick during calibration the clock falls
-  back to a nominal 3 GHz, which paces the game wrong but keeps it running.
-- **Not benchmarked.** No frame-rate measurement yet under QEMU TCG.
+- **Not benchmarked on target.** The host test proves the logic; guest frame
+  rate under QEMU TCG is unmeasured. The clock self-recalibrates, so even a
+  guest with a virtualised/odd TSC stays paced by the RTC.
+
+## Verification (host run)
+
+`programs/PureDOOM/hosttest/` runs `skyline/doom_main.c` unmodified on a
+desktop by faking the protocol page, the keyboard ring and the syscalls.
+With the real registered IWAD (`doom.wad`, 11.16 MB) on a Windows host — an earlier run with freedoom showed its own teal-green assets, which is what a too-green/cyan looking screen means (asset palette, not a channel bug) (gcc -O2):
+
+- boot reaches `ST_Init`, IWAD (28.8 MB) loads through the file hooks;
+- scripted ENTERs drive menu → New Game → skill → E1M1 through the
+  keyboard-ring protocol;
+- the game runs at a steady **35 tics/s** (DOOM's fixed rate);
+- dumped frames (`frame_menu.png`, `frame_game.png`) show the skill menu and
+  first-person E1M1 with the full HUD, correctly 2x-upscaled into the ARGB
+  surface layout the WM shares.
+
+The test also caught the one real bug so far: a one-shot TSC calibration ran
+the game at ~228 tics/s (6.5x) on a machine whose TSC rate is not invariant —
+fixed by the per-second re-anchoring clock described above.
 
 ## Licensing
 
@@ -70,6 +132,6 @@ LICENSE is GPL-2.0; the shim links against it and is therefore tagged
 **GPL-2.0-only**, unlike the rest of `programs/` (MIT). Linking the MIT libc
 into a GPL-2.0 program is fine; the resulting `doom.elf` is GPL-2.0.
 
-The **WAD is not part of the source license** — `doom1.wad` (shareware, ~4 MB)
+The **WAD is not part of the source license** — the IWAD
 is id Software game data and must not be committed. `programs/PureDOOM/.gitignore`
 excludes `*.wad`.

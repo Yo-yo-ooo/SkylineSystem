@@ -28,8 +28,8 @@ GENERATE_IGN3()) {
     size_t out_len = 0;
     cpu_t *cpu = this_cpu();
     
-    // 获取当前文件偏移量，解决缓存未包含偏移导致的数据错位 Bug
-    uint64_t cur_offset = FD->FSOPS->lseek(FD->filedesc, 0, SEEK_CUR);
+    /* 由内核记账当前偏移 (lwext4 的 lseek 返回状态码, 不能用来查询位置) */
+    uint64_t cur_offset = FD->offset;
     
     void *cached_data = file_cache_get(cpu->file_cache,(const uint8_t*)FD->path, FD->path_len, count, &out_len, &cache_entry);
     
@@ -45,6 +45,7 @@ GENERATE_IGN3()) {
             
             // 读取成功后，推进文件描述符的偏移量
             FD->FSOPS->lseek(FD->filedesc, cur_offset + count, SEEK_SET);
+            FD->offset = cur_offset + count;
             file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, count, NULL, FD->file_size, (uint64_t)FD->filedesc);
             return count;
         }
@@ -79,6 +80,7 @@ GENERATE_IGN3()) {
         }
         if (all_hit) {
             FD->FSOPS->lseek(FD->filedesc, cur_offset + count, SEEK_SET);
+            FD->offset = cur_offset + count;
             file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, count, NULL, FD->file_size, (uint64_t)FD->filedesc);
             return count;
         }
@@ -135,6 +137,7 @@ GENERATE_IGN3()) {
     }
 
     kfree(kbuf);
+    if (total_read > 0) FD->offset = cur_offset + total_read;
     return (int64_t)total_read;
 }
 
@@ -167,8 +170,8 @@ GENERATE_IGN3()) {
         return -EFAULT;
     }
 
-    // 获取写入前的偏移量
-    uint64_t cur_offset = FD->FSOPS->lseek(FD->filedesc, 0, SEEK_CUR);
+    // 获取写入前的偏移量 (内核记账: lseek 返回的是状态码, 不能用来查询)
+    uint64_t cur_offset = FD->offset;
 
     size_t wcnt = 0;
     int32_t status = FD->FSOPS->write(FD->filedesc, kbuf, count, &wcnt);
@@ -244,6 +247,7 @@ GENERATE_IGN3()) {
         
         // 修复 Bug 5: 不能盲目 +=，必须从文件系统获取真实大小
         FD->file_size = FD->FSOPS->fsize(FD->filedesc);
+        FD->offset = cur_offset + wcnt;
     }
 
     kfree(kbuf); 
@@ -260,7 +264,17 @@ GENERATE_IGN3()){
     if(!FD){return -EBADF;}
     
     if (whence > 2) {return -EINVAL; }
-    return FD->FSOPS->lseek(FD->filedesc,offset,whence);
+    int32_t lr = FD->FSOPS->lseek(FD->filedesc, offset, whence);
+    if (lr != 0) return (uint64_t)(int64_t)(lr > 0 ? -lr : lr);
+
+    /* 记账新的绝对偏移: SEEK_SET=0 / SEEK_CUR=1 / SEEK_END=2 */
+    uint64_t base = (whence == SEEK_SET) ? 0u
+                  : (whence == SEEK_CUR) ? FD->offset
+                  : FD->file_size;
+    uint64_t np = base + offset;
+    if (np > FD->file_size) np = FD->file_size;
+    FD->offset = np;
+    return np;
 }
 
 static inline bool is_path_too_long(const char* kpath) {
@@ -325,16 +339,25 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
 
     fd_struct->FSOPS = MP->FSOPS;
     fd_struct->MP = MP;
+    fd_struct->offset = 0;          /* 内核记账的文件偏移从 0 开始 */
     fd_struct->filedesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
     _memset(fd_struct->filedesc,0,MP->FSOPS->SIZEOF_FILE_DESC);
     
     int32_t err = MP->FSOPS->open(fd_struct->filedesc, kpath, flags);
 
-    if (err < 0) {
+    /* 文件系统层的返回约定是 0(EOK) 成功、其余为**正** errno
+       (lwext4: ENOENT=2, EIO=5), 而系统调用 ABI 是**负** errno。
+       这里原来写成 `err < 0`, 于是"打开一个不存在的文件"会被当成成功
+       并返回一个有效 fd; 该 fd 的 ext4_file 从未被真正打开 (mp==0),
+       后续的 fsize/read/close 立刻踩中 ext4_assert(file && file->mp)
+       导致内核 panic。任何"探测文件是否存在"的用户态程序都会触发,
+       DOOM 的 WAD 探测 (依次尝试 6 个 wad 名) 是第一个踩到的。
+       exec.cpp / task.cpp 用的都是 `!= 0`, 这里对齐它们。 */
+    if (err != 0) {
         kfree(fd_struct->filedesc);
         fd_free(proc->FDMan, fd_idx);
         kfree(kpath);
-        return err; 
+        return (uint64_t)(int64_t)(err > 0 ? -err : err);
     }
 
     // 修复 Bug 6: 额外分配1字节用于 NUL 终止符，防止越界读

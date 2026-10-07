@@ -120,6 +120,75 @@ static const char* const kCursorArrow[16] = {
     "......*........."
 };
 
+/* Resize cursors, shown while the pointer sits on a window edge/corner band
+   (and for the whole duration of an edge drag). Diagonal is used for the four
+   corners, the double-arrows for the four edges. */
+static const char* const kCursorSizeDiag[16] = {
+    ".....*..........",
+    "....**..........",
+    "...*O*..........",
+    "..*OO*..........",
+    ".*OOO*..........",
+    "*OOOO*...*......",
+    "*OOOO*.***......",
+    "*OOOO*O*O*......",
+    ".*OOO**O*O*.....",
+    "..*OO*.*O*O*....",
+    "...*O*..*O*O*...",
+    "....*....*O*O*..",
+    "..........*O*...",
+    "...........*....",
+    "................",
+    "................"
+};
+
+static const char* const kCursorSizeHorz[16] = {
+    "................",
+    "................",
+    "................",
+    ".......*........",
+    "......*O*.......",
+    "..*..*OO*..*....",
+    ".*O**OOOO**O*...",
+    "*OOOOOO*OOOOO*..",
+    ".*O**OOOO**O*...",
+    "..*..*OO*..*....",
+    "......*O*.......",
+    ".......*........",
+    "................",
+    "................",
+    "................",
+    "................"
+};
+
+static const char* const kCursorSizeVert[16] = {
+    ".......*........",
+    "......*O*.......",
+    ".....*OO*.......",
+    "....*OOO*.......",
+    ".....*OO*.......",
+    "......*O*.......",
+    "......*O*.......",
+    "......*O*.......",
+    "......*O*.......",
+    "......*O*.......",
+    "......*O*.......",
+    "......*O*.......",
+    ".....*OO*.......",
+    "....*OOO*.......",
+    ".....*OO*.......",
+    "......*........."
+};
+
+static const char* const* cursor_glyph(uint32_t shape) {
+    switch (shape) {
+    case SKY_CURSOR_SIZE_DIAG: return kCursorSizeDiag;
+    case SKY_CURSOR_SIZE_HORZ: return kCursorSizeHorz;
+    case SKY_CURSOR_SIZE_VERT: return kCursorSizeVert;
+    default:                   return kCursorArrow;
+    }
+}
+
 /* ========================================================================== */
 /*  Compositor                                                                */
 /* ========================================================================== */
@@ -143,6 +212,7 @@ bool Compositor::Init(FrameBuffer* screen) {
     for (uint32_t i = 0; i < COMP_CPUS_SANITY; i++) worker_done_seq_[i] = 0;
     cur_x_ = cur_y_ = 0;
     cur_visible_ = 0;
+    cur_shape_ = SKY_CURSOR_ARROW;
     committed_x_ = committed_y_ = -1;
     dx0_ = dy0_ = dx1_ = dy1_ = 0;
     dirty_ = 0;
@@ -532,10 +602,11 @@ void Compositor::blendCursorSquare(int32_t x, int32_t y) {
             crow[cx] = (px >= 0 && px < W) ? srow[px] : 0u;
         }
     }
-    /* 2) merge the arrow glyph into the finished cell */
-    if (cur_visible_)
+    /* 2) merge the pointer glyph into the finished cell */
+    if (cur_visible_) {
+        const char* const* glyph = cursor_glyph(cur_shape_);
         for (int cy = 0; cy < SKY_CURS; ++cy) {
-            const char* row = kCursorArrow[cy];
+            const char* row = glyph[cy];
             uint32_t* crow = cell + cy * SKY_CURS;
             for (int cx = 0; cx < SKY_CURS; ++cx) {
                 char g = row[cx];
@@ -543,6 +614,7 @@ void Compositor::blendCursorSquare(int32_t x, int32_t y) {
                 else if (g == 'O') crow[cx] = 0xFFFFFFFFu;  /* white fill    */
             }
         }
+    }
     /* 3) publish the finished square; compare-and-blit each row so a static
           cursor writes NOTHING to the scanout (fb stays byte-identical, hence
           no transient a scanline/snapshot could ever catch -> no flicker). */
@@ -631,6 +703,15 @@ void Compositor::SetCursor(int32_t x, int32_t y, bool visible) {
 void Compositor::CursorMoveTo(int32_t x, int32_t y) {
     if (x == committed_x_ && y == committed_y_) return;
     overlayCursorFinal(committed_x_, committed_y_, x, y);
+}
+
+/* Shape swap forces a repaint of the 16x16 cell, otherwise the old glyph
+   would be left under the new one (the fast path skips identical cells). */
+void Compositor::SetCursorShape(uint32_t shape) {
+    if (shape == cur_shape_) return;
+    cur_shape_ = shape;
+    committed_x_ = committed_y_ = -1;
+    if (cur_visible_) blendCursorSquare(cur_x_, cur_y_);
 }
 
 /* ---- worker: render its strip into the OFF-SCREEN back_ only ------------
