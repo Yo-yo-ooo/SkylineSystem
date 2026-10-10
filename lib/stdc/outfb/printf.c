@@ -66,8 +66,9 @@ static TTF_Font *g_stdout_font;
  * paint its title bar with the same font instead of loading a second copy. */
 TTF_Font *console_font(void) {
     if (g_stdout_font == NULL) {
-        if (TTF_ReadFont(&g_stdout_font, CONSOLE_FONT_PATH,
-                         CONSOLE_FONT_PX, 192) != 0)
+        /* on-demand: only the tables the rasterizer needs are read */
+        if (TTF_ReadFontGlyfLazy(&g_stdout_font, CONSOLE_FONT_PATH,
+                             CONSOLE_FONT_PX, 192) != 0)
             g_stdout_font = NULL;
     }
     return g_stdout_font;

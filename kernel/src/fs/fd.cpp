@@ -276,6 +276,10 @@ int32_t fd_manager_dup(fd_manager_t* dst, fd_manager_t* src) {
             ne->FSOPS = se->FSOPS;
             ne->MP = se->MP;
             ne->filedesc = nullptr;
+            /* 复制的是同一个打开实例: 沿用 file_uid, 块缓存可以共享
+               (只读块)。若也复制 offset, 父子共享同一个读写位置。 */
+            ne->offset   = se->offset;
+            ne->file_uid = se->file_uid;
 
             if (se->path) {
                 ne->path = (char*)kmalloc(se->path_len + 1);

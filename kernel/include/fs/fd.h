@@ -78,6 +78,10 @@ typedef struct fd_t {
     void     *filedesc;
     FS_PDESC *FSOPS;
     void     *MP;
+    /* 块级缓存的 file_id。不能用 filedesc 指针: 关闭后该地址会被下一次
+       open 的 kmalloc 复用, 于是"新文件"会命中"旧文件"同块号的缓存块,
+       静默返回另一个文件的数据。这里用单调序号保证一个打开实例一个身份。 */
+    uint64_t         file_uid;
 } fd_t;
 
 extern "C" int32_t __hmap_s_mp_compare(const void* a, const void* b, void *udata);

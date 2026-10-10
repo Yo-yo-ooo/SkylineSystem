@@ -221,7 +221,15 @@ namespace Serial
     {
         if (!SerialWorks)
             return;
-        while (!_CanWrite());
+        /* 修复: 原实现是 `while (!_CanWrite());` 的无界忙等。本函数是在持有
+           printf 的 ptf_lock 时被调用的 —— 一旦 UART 不再报 THRE, 本核会
+           永远占着这把锁, 而其它核只要一动 printk 就全体卡死, 整机表现为
+           "日志在一行的中间突然全停" (实测停在 "[lw" 处)。
+           改成有界等待: 超时就照写 (最坏丢一个字符), 绝不让整机陪着等。 */
+        uint64_t spins = 0;
+        while (!_CanWrite()) {
+            if (unlikely(++spins > 2000000ULL)) break;
+        }
         Soutb(0, chr);
     }
 

@@ -80,6 +80,36 @@ uint8_t TTF_ReadFont(
     int32_t pixel_height, int32_t CacheCap
 );
 
+/* On-demand variant: reads the sfnt directory and fetches only the tables the
+   rasterizer uses (cmap/glyf/head/hhea/hmtx/loca/maxp), one seek+read each,
+   instead of copying the whole file. Falls back to TTF_ReadFont() for TTC
+   collections or a missing table. See ttf.c for what this does and does not
+   save (glyf dominates CJK fonts). */
+uint8_t TTF_ReadFontLazy(
+    TTF_Font **out_font, const char* path,
+    int32_t pixel_height, int32_t CacheCap
+);
+
+/* Glyph-granular on-demand variant. Like TTF_ReadFontLazy() it keeps only the
+   small tables resident, but `glyf` (the outline data, ~96% of a CJK font)
+   stays on disk too: the font image carries a glyf *directory entry* that
+   points at a sliding window, and one glyph slice is read + its two `loca`
+   entries rewritten whenever that glyph is first measured or rasterized.
+   Composite glyphs pull their components in with them. Resident memory drops
+   from "whole file" to "small tables + window" (SourceHanSerifTC: ~30 MB ->
+   ~1.5 MB). Degrades to TTF_ReadFontLazy() for TTC, short-loca or odd fonts. */
+uint8_t TTF_ReadFontGlyfLazy(
+    TTF_Font **out_font, const char* path,
+    int32_t pixel_height, int32_t CacheCap
+);
+
+/* Observability for the glyph window (all zeros for non-lazy fonts):
+   resident = bytes of outline currently held, cap = window size,
+   fetches = slice reads issued, since_load = bytes read from the file. */
+void TTF_GetGlyfStats(TTF_Font *font, unsigned long *out_cap,
+                      unsigned long *out_resident, unsigned long *out_fetches,
+                      unsigned long *out_bytes);
+
 void TTF_DrawText(
     FrameBuffer *FB, TTF_Font *TTFFont,
     int32_t x, int32_t y, const char* text, uint32_t color

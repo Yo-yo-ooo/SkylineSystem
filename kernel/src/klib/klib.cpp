@@ -47,8 +47,19 @@ void hcf(void) {
 }
 
 
+/* P0 修复 (SMP 内存序): 解锁原来是 atomic_store_4(l,0,ATOMIC_RELAXED),
+   展开为一条无屏障的 movl。x86 硬件 TSO 不会重排 store-store, 但
+   relaxed 对【编译器】不构成屏障 —— 临界区里的写可以被合法地下沉到解锁
+   store 之后, 于是另一个 CPU 拿到锁时仍可能看到尚未提交的临界区修改。
+   改 ATOMIC_RELEASE (解锁前插编译器屏障), 与加锁侧 xchgb (隐含 lock 前缀
+   + "memory" clobber, acquire 语义) 配对。
+
+   注意: 加锁侧不要用 "关中断 + 无限自旋" 来当保护措施 —— BSP 在关中断
+   自旋期间收不到 PIT 的 IRQ0, 全局墙钟 (TicksSinceBoot) 会冻结, 把所有
+   以 TimeSinceBootMS() 为 deadline 的等待变成永旋 (已实测整机挂死)。
+   需要 deadline 的地方一律用 PIT::MonotonicMS()。 */
 extern "C" void spinlock_lock(spinlock_t* l) {
-    while(atomic_test_and_set(l,1))
+    while(atomic_test_and_set(l,ATOMIC_ACQUIRE))
 #ifdef __x86_64__
         asm volatile("pause");
 #elif defined(__aarch64__)
@@ -59,7 +70,7 @@ extern "C" void spinlock_lock(spinlock_t* l) {
 }
 
 extern "C" void spinlock_unlock(spinlock_t* l) {
-    atomic_store_4(l,0,0);
+    atomic_store_4(l,0,ATOMIC_RELEASE);
 }
 
 

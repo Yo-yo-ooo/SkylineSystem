@@ -53,6 +53,10 @@ namespace HPET
     void InitHPET();
     uint64_t GetTimeNS();
     void SleepNS(uint64_t ns);
+    /* HPET 主计数器是否可用。注意 GetTimeNS() 在不可用时会退化成返回
+       PIT::TicksSinceBoot (单位不是纳秒), 所以任何"以 HPET 为时间基准"
+       的调用方都必须先查这个 —— 否则会拿 tick 当 ns 用。 */
+    bool Available();
 }
 
 #endif

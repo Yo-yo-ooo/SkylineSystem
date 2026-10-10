@@ -68,3 +68,40 @@ key_len = 16
 - tests/fc/regression.cpp adds: cross-block read hit/miss, cross-block writeback,
   block-level invalidation broadcast, large-file sparse cache (memory-usage assertion)
 - Full golden + 30-minute soak (ping 169 baseline)
+
+## 7. Invariant: cached blocks are block prefixes (bug found 2026-10-07)
+
+A block entry is keyed by `(file_id, block#)` and the hit path indexes it with
+the caller's *within-block* offset:
+
+```c
+void *bdata = file_cache_get_block(..., first_block + b, ...);   /* bdata = ? */
+size_t from = (cur_offset + b * BLOCK_SZ) % BLOCK_SZ;
+CopyToUser(buf, bdata + from, chunk);        /* assumes bdata starts at the block */
+```
+
+That only works if the promoted buffer really starts at the block boundary. The
+original promote loop sliced a hardware read into per-block chunks and promoted
+**every** chunk, including the first one when the read started mid-block — so a
+54-byte read at within-block offset 2644 was cached as "block N", and any later
+read in block N whose offset satisfied `from < 54` got those 54 bytes back at
+the wrong address. Silent data corruption, not a crash.
+
+It stayed hidden because reads used to be few and large. The per-glyph TTF
+loader is what exposed it: glyph slices are ~500 B, so a 4 KB block holds ~8 of
+them and consecutive loads poisoned each other — outlines came back garbage,
+`stbtt` rasterized absurd bounding boxes, and both vCPUs were found spinning in
+`stbtt__v_prefilter` while the console client hung at boot.
+
+Fixes:
+
+- **promote**: only chunks with `(cur_offset + off) % BLOCK_SZ == 0` are cached
+  (read path and write path — the write path had the same loop).
+- **file_id**: the block key used `(uint64_t)FD->filedesc`, which is a pointer
+  that `kmalloc` hands straight back to the next `open()` after a close. Two
+  different files could therefore share block keys. `fd_t` now carries a
+  monotonic `file_uid` (assigned in `sys_fopen`, preserved by `fd_manager_dup`)
+  and every cache call uses that instead.
+- **user side**: the TTF loader reads glyph slices from the block start and
+  copies the slice out, so it is correct even against an unpatched cache — and
+  aligned reads are also the shape the cache promotes best.

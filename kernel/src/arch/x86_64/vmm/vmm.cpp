@@ -276,6 +276,14 @@ namespace VMM {
             if (in) __atomic_sub_fetch(&in->shootdown_acks, 1, __ATOMIC_RELEASE);
         }
 
+        static inline void AckMaskClear(int32_t initiator, uint32_t responder) {
+            if (initiator < 0) return;
+            cpu_t* in = smp_cpu_list[initiator];
+            if (in && responder < 64u)
+                __atomic_and_fetch(&in->shootdown_ack_mask,
+                                   ~(1ULL << responder), __ATOMIC_RELAXED);
+        }
+
         /* Service every queued request on the local CPU (FIFO). Used by the
            IPI handler and while this CPU waits for its own ACKs. */
         static void DrainLocal(cpu_t* c) {
@@ -293,15 +301,21 @@ namespace VMM {
                     if (r.pm) BitmapClear(r.pm->cpus_with_tlb, c->id);
                 } else if (r.type == 3) LocalGlobalFlush();
                 DoAck(r.ack_cpu);
+                AckMaskClear(r.ack_cpu, c->id);
             }
         }
 
         /* Append one request to a target queue whose lock is held. Apply
            backpressure (drop the lock, kick the target, retry) instead of
            overflowing, so requests are never silently lost and every ACK
-           stays reachable. Returns with the target lock held. */
+           stays reachable. Returns with the target lock held.*/
+
+        #define TLB_PUT_TIMEOUT_MS  20
+        #define TLB_PUT_MAX_SPINS   200000ULL
         static void PutLocked(cpu_t* t, const cpu_t::shootdown_req& r) {
-            for (uint64_t tries = 0; ; tries++) {
+            uint64_t deadline = PIT::MonotonicMS() + TLB_PUT_TIMEOUT_MS;
+            uint64_t spins = 0;
+            for (;;) {
                 uint32_t head = t->shootdown_head, tail = t->shootdown_tail;
                 if (tail - head < TLB_SHOOTDOWN_QMAX) {
                     t->shootdown_queue[tail & QMask()] = r;
@@ -312,8 +326,11 @@ namespace VMM {
                 LAPIC::IPI(t->lapic_id, TLB_FLUSH_VEC);
                 for (int i = 0; i < 128; i++) asm volatile("pause");
                 spinlock_lock(&t->shootdown_lock);
-                if (unlikely(tries > 200000000ULL)) {
-                    /* pathological: collapse to one global flush, keep this ACK */
+                if (unlikely(PIT::MonotonicMS() > deadline) ||
+                    unlikely(++spins > TLB_PUT_MAX_SPINS)) {
+                    uint32_t h = t->shootdown_head, tl = t->shootdown_tail;
+                    for (uint32_t k = h; k != tl; k++)
+                        DoAck(t->shootdown_queue[k & QMask()].ack_cpu);
                     t->shootdown_head = 0; t->shootdown_tail = 1;
                     t->shootdown_queue[0] = {nullptr, 0, 3, r.ack_cpu};
                     return;
@@ -329,44 +346,66 @@ namespace VMM {
                                const uint64_t* addrs, uint32_t nr, bool want_ack) {
             cpu_t* me = this_cpu();
             const int32_t meid = (int32_t)me->id;   /* P0-3: 全程 int32 */
-            if (want_ack)
+            if (want_ack) {
                 __atomic_add_fetch(&me->shootdown_acks, 1, __ATOMIC_RELAXED);
+                if (likely(t->id < 64u))
+                    __atomic_fetch_or(&me->shootdown_ack_mask,
+                                      1ULL << t->id, __ATOMIC_RELAXED);
+            }
 
-            uint64_t rf;
-            asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rf) :: "memory");
+
             spinlock_lock(&t->shootdown_lock);
             if (type == 1) {
-                for (uint32_t k = 0; k < nr; k++) {
-                    bool last = (k == nr - 1);
-                    PutLocked(t, {pm, addrs[k], 1,
-                                  (last && want_ack) ? meid : (int32_t)-1});
+                uint32_t space = TLB_SHOOTDOWN_QMAX -
+                                 (t->shootdown_tail - t->shootdown_head);
+                if (unlikely(nr > space)) {
+                    PutLocked(t, {pm, 0, 2, want_ack ? meid : (int32_t)-1});
+                } else {
+                    for (uint32_t k = 0; k < nr; k++) {
+                        bool last = (k == nr - 1);
+                        PutLocked(t, {pm, addrs[k], 1,
+                                      (last && want_ack) ? meid : (int32_t)-1});
+                    }
                 }
             } else {
                 PutLocked(t, {pm, 0, type, want_ack ? meid : (int32_t)-1});
             }
             spinlock_unlock(&t->shootdown_lock);
-            asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
             LAPIC::IPI(t->lapic_id, TLB_FLUSH_VEC);
         }
 
         /* Wait for every ACK this CPU requested. Drain our own queue between
            checks so a peer that is simultaneously sending to us cannot form
-           a cross-CPU wait cycle. P0-2 重做 (round 81): 超时改 PIT 墙钟
-           (100ms) —— round 52 的 4 亿次 pause 自旋在 TCG 引导期每个
-           batch 耗时分钟级, 表现为挂死; 正常 ACK 在微秒内, 100ms 封顶
-           仅在 AP 失联时降级为异步语义 (记日志)。 */
+           a cross-CPU wait cycle.
+
+           P0 重做 (SMP 挂死根因): 原 deadline 取 PIT::TimeSinceBootMS(), 而
+           PIT 节拍只在 BSP 的中断上下文递增 —— BSP 一旦处在关中断自旋
+           (本核或他核在 spinlock 临界区), 该时钟冻结, 100ms 封顶永远不触发。
+           而本函数恰恰常被持锁调用 (CleanPM 持有 pm->pt_lock/vma_lock 走
+           FreeOwnedRegion -> ShootdownFence), 于是形成闭环:
+               BSP 抢锁(IF=0) -> 时钟冻结 -> 持锁者 WaitAcks 永不超时
+             -> 锁永不释放 -> BSP 永旋 -> 整机挂死。
+           改 PIT::MonotonicMS() (TSC 优先, 不受 IF 影响) + 自旋次数兜底,
+           保证任何时钟失效的情况下本核都能退出。 */
+        #define TLB_ACK_TIMEOUT_MS  100
+        #define TLB_ACK_MAX_SPINS   1000000ULL
         static void WaitAcks(cpu_t* me) {
-            uint64_t deadline = PIT::TimeSinceBootMS() + 100;
+            uint64_t deadline = PIT::MonotonicMS() + TLB_ACK_TIMEOUT_MS;
+            uint64_t spins = 0;
             while (__atomic_load_n(&me->shootdown_acks, __ATOMIC_ACQUIRE) > 0) {
                 DrainLocal(me);
-                if (unlikely(PIT::TimeSinceBootMS() > deadline)) {
-                    kerrorln("TLB shootdown: ACK timeout (%d left), "
-                             "degrading to async",
-                             (int)me->shootdown_acks);
-                    __atomic_store_n(&me->shootdown_acks, 0, __ATOMIC_RELEASE);
-                    return;
-                }
+                if (unlikely(PIT::MonotonicMS() > deadline)) break;
+                if (unlikely(++spins > TLB_ACK_MAX_SPINS)) break;
                 asm volatile("pause");
+            }
+            if (unlikely(__atomic_load_n(&me->shootdown_acks, __ATOMIC_ACQUIRE) > 0)) {
+                kerrorln("TLB shootdown: ACK timeout (%d left), unacked mask 0x%lx, "
+                         "degrading to async",
+                         (int)__atomic_load_n(&me->shootdown_acks, __ATOMIC_RELAXED),
+                         (uint64_t)__atomic_load_n(&me->shootdown_ack_mask,
+                                                   __ATOMIC_RELAXED));
+                __atomic_store_n(&me->shootdown_acks, 0, __ATOMIC_RELEASE);
+                __atomic_store_n(&me->shootdown_ack_mask, 0, __ATOMIC_RELAXED);
             }
         }
 
@@ -420,6 +459,7 @@ namespace VMM {
             if (unlikely(!pm || !smp_started)) return;
             cpu_t* me = this_cpu();
             __atomic_store_n(&me->shootdown_acks, 0, __ATOMIC_RELAXED);
+            __atomic_store_n(&me->shootdown_ack_mask, 0, __ATOMIC_RELAXED);
             for (int32_t i = 0; i <= smp_last_cpu; i++) {
                 cpu_t* t = smp_cpu_list[i];
                 if (unlikely(!t || t == me)) continue;
@@ -488,6 +528,8 @@ namespace VMM {
             b->active = false;
 
             if (likely(smp_started && pm)) {
+                cpu_t* me0 = this_cpu();
+                __atomic_store_n(&me0->shootdown_ack_mask, 0, __ATOMIC_RELAXED);
                 if (likely(!need_full && nr > 0)) {
                     /* P0-2 重做: want_ack=true —— 页释放路径等远端完成
                        invlpg 后才能复用该页; WaitAcks 已改 100ms 墙钟

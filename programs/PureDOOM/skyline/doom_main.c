@@ -59,12 +59,16 @@ static int sky_ends_with(const char* s, const char* suf) {
    ext4_assert(file && file->mp) and panics the whole kernel (fixed in
    syscall/fops.cpp — this guard keeps the client alive on unfixed kernels,
    and is a no-op once the kernel is rebuilt). */
-/* ---- in-RAM IWAD mirror (fallback) ------------------------------------
-   If the VFS cannot service "seek to a far offset then read" (which is how
-   DOOM reads the lump directory), we mirror the whole IWAD into RAM once at
-   startup with plain sequential reads from offset 0, and serve every later
-   open/read/seek/tell from the mirror. Costs ~11 MB and removes the VFS
-   offset semantics from the game's path entirely. */
+/* ---- in-RAM IWAD mirror (OPTIONAL fallback) ---------------------------
+   The kernel's read path is fixed (fd_t::offset accounting), so DOOM reads
+   lumps straight from the file on demand — which is what the engine is
+   designed for: W_ReadLump() pulls one lump at a time and the zone cache
+   keeps the hot ones, while the kernel file cache serves repeated hits.
+   The mirror is only a safety net for a kernel whose seek+read is broken
+   again; enable it with -DSKY_WAD_MIRROR_FALLBACK=1. */
+#ifndef SKY_WAD_MIRROR_FALLBACK
+#define SKY_WAD_MIRROR_FALLBACK 0
+#endif
 static unsigned char* g_wad      = 0;
 static long           g_wad_len  = 0;
 static long           g_wad_pos  = 0;
@@ -128,7 +132,11 @@ static void* sky_open(const char* fn, const char* mode) {
     return (void*)fopen(fn, "rb");
 }
 static void sky_close(void* h) { if (h && !sky_is_mirror(h)) fclose((FILE*)h); }
-#define SKY_READ_CHUNK 1024
+
+/* Lumps are pulled one at a time (W_ReadLump) and the zone cache keeps the
+   hot ones, so requests are small; the loop is only a guard against a short
+   read. */
+#define SKY_READ_CHUNK 8192
 
 static int  sky_read(void* h, void* buf, int count) {
     /* Read in small chunks and retry: DOOM asks for the whole lump directory
@@ -443,8 +451,8 @@ int main(void) {
 
     char* argv[] = { (char*)"doom.elf" };
     sky_wad_probe("/mp/doom.wad");
-    if (!sky_seek_ok("/mp/doom.wad")) {
-        sky_dbg("[doom] VFS cannot seek+read the lump directory -> "
+    if (SKY_WAD_MIRROR_FALLBACK && !sky_seek_ok("/mp/doom.wad")) {
+        sky_dbg("[doom] VFS seek+read unusable -> "
                 "mirroring the IWAD in RAM\n");
         if (sky_wad_load("/mp/doom.wad")) {
             sky_dbg("[doom] IWAD mirrored in RAM, bytes:\n");
@@ -453,7 +461,7 @@ int main(void) {
             sky_dbg("[doom] WARN: IWAD mirror failed, falling back to VFS\n");
         }
     } else {
-        sky_dbg("[doom] VFS seek+read OK, using file I/O directly\n");
+        sky_dbg("[doom] on-demand WAD reads via the VFS\n");
     }
     doom_init(1, argv, DOOM_FLAG_HIDE_MOUSE_OPTIONS |
                        DOOM_FLAG_HIDE_SOUND_OPTIONS |

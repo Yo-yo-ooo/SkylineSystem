@@ -23,6 +23,10 @@
 #define TTF_STRLEN(s) strlen(s)
 #endif
 #include <atomic/atomic.h>
+/* stdio is needed by the file-backed loaders (fopen/fread/fseek/fsize) AND by
+   the lazy-glyf window, which lives in TTF_Font — so it cannot stay next to
+   TTF_ReadFont() like it used to. */
+#include <stdio.h>
 #define TTF_MUTEX_TYPE atomic_flag
 #define TTF_MUTEX_INIT(m)       atomic_clear(&(m), ATOMIC_RELEASE)
 #define TTF_MUTEX_LOCK(m)       while(atomic_test_and_set(&(m), ATOMIC_ACQUIRE)){ __asm__ __volatile__("pause"); }
@@ -119,6 +123,21 @@ struct TTF_Font_Internal {
     unsigned long hit_count;
     unsigned long miss_count;
     unsigned long evict_count;
+
+    /* ---- lazy glyf: outlines fetched per glyph (TTF_ReadFontGlyfLazy) ---- */
+    bool           glyf_lazy;      /* glyf lives on disk, window in data[]   */
+    FILE*          glyf_fd;        /* held open for the font's lifetime      */
+    uint32_t       glyf_file_off;  /* absolute offset of glyf in the file    */
+    uint32_t       glyf_file_len;
+    size_t         glyf_win_off;   /* where the window starts inside data[]  */
+    size_t         glyf_win_cap;   /* window bytes available                 */
+    size_t         glyf_win_used;  /* window bytes consumed                  */
+    uint32_t*      glyf_loc_orig;  /* unpatched loca: gid -> offset in glyf  */
+    unsigned char* glyf_scratch;   /* aligned read staging buffer            */
+    size_t         glyf_scratch_cap;
+    int32_t*       win_gids;       /* glyph ids currently resident           */
+    int32_t        win_count, win_cap;
+    unsigned long  glyf_fetches, glyf_bytes;
 };
 
 typedef struct TTF_Font_Internal TTF_Font;
@@ -231,11 +250,206 @@ static void downsample_bilinear(TTF_Bitmap *bmp, int32_t target_w, int32_t targe
     bmp->height = target_h;
 }
 
+// ---------------------------------------------------------------------------
+// Lazy glyf: per-glyph on-demand outline fetch
+// ---------------------------------------------------------------------------
+/* TTF_ReadFontGlyfLazy() leaves the outline table (`glyf`) on disk. The font
+   image still carries a *directory entry* for glyf, but it points at a sliding
+   window at the tail of the image; a glyph only becomes usable once its byte
+   slice has been read into that window AND its two `loca` entries have been
+   rewritten to address it. stb_truetype resolves glyph offsets through
+   stbtt__GetGlyfOffset() = data + glyf + loca[gid] on *every* access, so
+   patching loca is sufficient — the rasterizer needs no changes.
+
+   Resident glyphs are listed in win_gids[]. A glyph that is not resident has
+   its loca pair zeroed, which makes stbtt report "empty glyph" (-1) instead of
+   reading outside the window. Composite glyphs drag their components in with
+   them (bounded depth), so a component reference never lands on a hole.
+
+   Only long-loca fonts are eligible: with short loca the whole glyf table is
+   by definition < 256 KB, so lazy-loading it would be pure overhead. */
+
+#define TTF_GLYF_WIN_DEFAULT  (512u * 1024u)   /* sliding window, bytes     */
+#define TTF_GLYF_WIN_SLOTS    256              /* initial win_gids capacity */
+#define TTF_GLYF_MAX_DEPTH    8                /* composite nesting guard   */
+
+/* Write loca[gid] = v. Long format only (v is a raw byte offset). */
+static void ttf_loca_set(TTF_Font* f, int32_t gid, uint32_t v) {
+    unsigned char* p = f->data + f->info.loca + (size_t)gid * 4u;
+    p[0] = (unsigned char)((v >> 24) & 0xFF);
+    p[1] = (unsigned char)((v >> 16) & 0xFF);
+    p[2] = (unsigned char)((v >> 8) & 0xFF);
+    p[3] = (unsigned char)(v & 0xFF);
+}
+static uint32_t ttf_loca_get(const TTF_Font* f, int32_t gid) {
+    const unsigned char* p = f->data + f->info.loca + (size_t)gid * 4u;
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8)  | (uint32_t)p[3];
+}
+
+/* Drop every resident glyph. Called only from the root of a load, never while
+   a partially-loaded composite chain is in flight. */
+static void ttf_glyf_reset(TTF_Font* f) {
+    for (int32_t i = 0; i < f->win_count; i++) {
+        int32_t gid = f->win_gids[i];
+        ttf_loca_set(f, gid, 0);
+        if (gid + 1 <= f->info.numGlyphs) ttf_loca_set(f, gid + 1, 0);
+    }
+    f->win_count     = 0;
+    f->glyf_win_used = 0;
+}
+
+/* Grow the image so the window can hold `need` bytes. The window lives at the
+   tail, so no other table moves — only info.data has to be refreshed. */
+static bool ttf_glyf_grow(TTF_Font* f, size_t need) {
+    size_t cap = f->glyf_win_cap ? f->glyf_win_cap : 8192u;
+    while (cap < need) {
+        if (cap > (size_t)1 << 30) return false;
+        cap *= 2;
+    }
+    unsigned char* nd = (unsigned char*)TTF_REALLOC(f->data, f->glyf_win_off + cap);
+    if (!nd) return false;
+    f->data       = nd;
+    f->info.data  = nd;          /* stbtt caches the pointer, not just offsets */
+    f->glyf_win_cap = cap;
+    return true;
+}
+
+static bool ttf_glyf_slot_push(TTF_Font* f, int32_t gid) {
+    if (f->win_count == f->win_cap) {
+        int32_t nc = f->win_cap ? f->win_cap * 2 : TTF_GLYF_WIN_SLOTS;
+        if (nc > 65536) return false;
+        int32_t* ng = (int32_t*)TTF_REALLOC(f->win_gids, sizeof(int32_t) * (size_t)nc);
+        if (!ng) return false;
+        f->win_gids = ng;
+        f->win_cap  = nc;
+    }
+    f->win_gids[f->win_count++] = gid;
+    return true;
+}
+
+/* Read one glyph (and, for composites, its components) into the window. */
+static bool ttf_glyf_load(TTF_Font* f, int32_t gid, int depth) {
+    if (gid < 0 || gid >= f->info.numGlyphs) return false;
+    for (int32_t i = 0; i < f->win_count; i++)
+        if (f->win_gids[i] == gid) return true;      /* already resident */
+
+    uint32_t a = f->glyf_loc_orig[gid];
+    uint32_t b = f->glyf_loc_orig[gid + 1];
+    uint32_t len = (b > a) ? (b - a) : 0;
+
+    if (len == 0) {                    /* blank glyph: zero-length loca pair */
+        ttf_loca_set(f, gid, 0);
+        ttf_loca_set(f, gid + 1, 0);
+        return ttf_glyf_slot_push(f, gid);
+    }
+    /* stay inside the glyf table: a corrupt loca must not read past it */
+    if (a > f->glyf_file_len || len > f->glyf_file_len - a) return false;
+
+    uint32_t pad = (len + 3u) & ~3u;                 /* keep offsets aligned */
+    if (f->glyf_win_used + pad > f->glyf_win_cap) {
+        if (depth == 0 && pad <= f->glyf_win_cap) {
+            ttf_glyf_reset(f);                       /* recycle the window   */
+        } else if (!ttf_glyf_grow(f, f->glyf_win_used + pad)) {
+            return false;                            /* cannot evict: chained */
+        }
+        if (f->glyf_win_used + pad > f->glyf_win_cap) return false;
+    }
+
+    size_t  at   = f->glyf_win_used;
+    size_t  base = f->glyf_win_off + at;
+
+    /* Read the slice on a block-aligned boundary.
+       Why: the kernel's block cache keys a cached block by (file, block#) and
+       serves it as "the block starting at the block boundary". A short read at
+       an unaligned offset therefore poisons every later read inside that block.
+       Glyph slices are ~500 B, so a 4 KB block holds ~8 of them and consecutive
+       loads would corrupt each other. Reading from the block start keeps us
+       correct no matter how the cache behaves, and it is also the shape the
+       cache promotes best — later glyphs in the same block become real hits. */
+    const uint64_t BLK = 4096u;
+    uint64_t blk  = (uint64_t)a & ~(BLK - 1u);
+    uint32_t need = (uint32_t)(a - (uint32_t)blk) + len;   /* <= BLK + len */
+    if (f->glyf_scratch_cap < (size_t)need) {
+        size_t nc = BLK * 2;
+        while (nc < (size_t)need) nc *= 2;
+        unsigned char* ns = (unsigned char*)TTF_REALLOC(f->glyf_scratch, nc);
+        if (!ns) return false;
+        f->glyf_scratch = ns;
+        f->glyf_scratch_cap = nc;
+    }
+    if (fseek(f->glyf_fd, (long)(f->glyf_file_off + blk), SEEK_SET) != 0) return false;
+    if (fread(f->glyf_scratch, 1, (size_t)need, f->glyf_fd) != (size_t)need) return false;
+    TTF_MEMCPY(f->data + base, f->glyf_scratch + (a - (uint32_t)blk), (size_t)len);
+    TTF_MEMSET(f->data + base + len, 0, (size_t)(pad - len));
+
+    ttf_loca_set(f, gid, (uint32_t)at);
+    ttf_loca_set(f, gid + 1, (uint32_t)(at + len));
+    if (!ttf_glyf_slot_push(f, gid)) return false;
+    f->glyf_win_used += pad;
+    f->glyf_fetches++;
+    f->glyf_bytes += len;
+
+    /* Composite: walk the component records and pull each child in. `gd` is
+       re-derived every iteration because a child load may realloc data[]. */
+    if (depth < TTF_GLYF_MAX_DEPTH && len >= 10) {
+        const unsigned char* gd = f->data + base;
+        int32_t nc = (int32_t)(int16_t)(uint16_t)(((uint16_t)gd[0] << 8) | gd[1]);
+        if (nc < 0) {
+            size_t o = 10;
+            for (;;) {
+                if (o + 4 > len) break;
+                uint32_t flags = ((uint32_t)gd[o] << 8) | gd[o + 1];
+                uint32_t child = ((uint32_t)gd[o + 2] << 8) | gd[o + 3];
+                o += 4;
+                o += (flags & 0x0001u) ? 4u : 2u;            /* args are words */
+                if      (flags & 0x0008u) o += 2u;           /* single scale   */
+                else if (flags & 0x0040u) o += 4u;           /* x/y scale      */
+                else if (flags & 0x0080u) o += 8u;           /* 2x2            */
+                if (child < (uint32_t)f->info.numGlyphs)
+                    ttf_glyf_load(f, (int32_t)child, depth + 1);
+                if (!(flags & 0x0020u)) break;               /* MORE_COMPONENTS */
+                gd = f->data + base;                         /* may have moved */
+            }
+        }
+    }
+    return true;
+}
+
+/* Make glyph `gid` addressable. No-op for non-lazy fonts and for gids already
+   resident; a failed fetch leaves the glyph blank rather than crashing. */
+static void ttf_glyph_ensure(TTF_Font* f, int32_t gid) {
+    if (!f->glyf_lazy || !f->glyf_fd || gid < 0) return;
+    for (int32_t i = 0; i < f->win_count; i++)
+        if (f->win_gids[i] == gid) return;
+    ttf_glyf_load(f, gid, 0);
+}
+
+/* Release every lazily-held resource. Safe on a non-lazy font. */
+static void ttf_glyf_teardown(TTF_Font* f) {
+    if (!f) return;
+    if (f->glyf_fd) fclose(f->glyf_fd);
+    if (f->glyf_loc_orig) TTF_FREE(f->glyf_loc_orig);
+    if (f->glyf_scratch) TTF_FREE(f->glyf_scratch);
+    if (f->win_gids) TTF_FREE(f->win_gids);
+    f->glyf_fd = NULL;
+    f->glyf_loc_orig = NULL;
+    f->glyf_scratch = NULL;
+    f->win_count = f->win_cap = 0;
+    f->glyf_lazy = false;
+    f->glyf_win_off = f->glyf_win_cap = f->glyf_win_used = 0;
+    f->glyf_file_off = f->glyf_file_len = 0;
+    f->glyf_fetches = f->glyf_bytes = 0;
+}
+
 /* Caller holds font->lock. Pure metrics: no rasterization, no allocation,
    no atlas interaction. Mirrors the transform chain of render_glyph exactly
    (bold smears inside the existing box; italic widens and shifts;
    oversampling divides dims and offsets). */
 static void glyph_geo(TTF_Font* font, int32_t codepoint, TTF_GlyphGeo* g) {
+    /* Lazy fonts must have the outline resident before stbtt reads its bbox. */
+    if (font->glyf_lazy)
+        ttf_glyph_ensure(font, stbtt_FindGlyphIndex(&font->info, codepoint));
     int32_t advanceWidth, leftSideBearing;
     stbtt_GetCodepointHMetrics(&font->info, codepoint, &advanceWidth, &leftSideBearing);
     g->advance = (int32_t)(advanceWidth * font->scale);
@@ -715,6 +929,7 @@ void TTF_DestroyFont(TTF_Font* font) {
     if (!font) return;
     TTF_ClearGlyphCache(font);
     TTF_MUTEX_DESTROY(font->lock);
+    ttf_glyf_teardown(font);            /* closes the glyf fd, frees the maps */
     if (font->data) TTF_FREE(font->data);
     if (font->pages) TTF_FREE(font->pages);      /* page structs; pixels freed above */
     if (font->glyphs) TTF_FREE(font->glyphs);
@@ -748,6 +963,7 @@ void TTF_GetAtlasStats(TTF_Font *font, TTF_AtlasStats *out_stats) {
 bool TTF_LoadFontFromMemory(TTF_Font *font, const unsigned char *data, size_t data_size, int32_t pixel_height) {
     if (!font || !data || data_size == 0) return false;
     if (font->is_initialized) TTF_ClearGlyphCache(font);
+    ttf_glyf_teardown(font);                /* a full image needs no window   */
     if (font->data) { TTF_FREE(font->data); font->data = NULL; }
 
     font->data = (unsigned char*)TTF_MALLOC(data_size);
@@ -1182,8 +1398,6 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
     return final_bmp;
 }
 
-#include <stdio.h>
-
 uint8_t TTF_ReadFont(
     TTF_Font **out_font, const char* path,
     int32_t pixel_height, int32_t CacheCap
@@ -1241,6 +1455,255 @@ uint8_t TTF_ReadFont(
     TTF_SetPixelHeight(rf, pixel_height);
     TTF_SetOversampling(rf, 2);
     return 0;
+}
+
+/* ---- on-demand font loads ----------------------------------------------
+   The classic loader slurps the whole file into one allocation. These two
+   variants read the sfnt directory and fetch only what stb_truetype actually
+   touches — GSUB, GPOS, name, post, DSIG, vmtx/vhea, VORG, BASE, GDEF stay on
+   disk. Each kept table is read with its own seek+read, so the kernel file
+   cache serves them.
+
+     TTF_ReadFontLazy()      keeps cmap/glyf/head/hhea/hmtx/loca/maxp.
+                             Saves the unused tables only; for CJK fonts glyf
+                             is ~96% of the file, so this barely helps.
+
+     TTF_ReadFontGlyfLazy()  keeps the same MINUS glyf. The image still carries
+                             a glyf *directory record*, but it points at a
+                             sliding window that holds only the glyphs actually
+                             used. See the lazy-glyf block above for the
+                             mechanics (loca patching, composite pull-in).
+
+   Anything unexpected falls back to the whole-file loader. */
+static const char* const kTTFNeeded[] = {
+    "cmap", "glyf", "head", "hhea", "hmtx", "loca", "maxp", 0
+};
+/* glyph-granular: glyf is not copied in, only addressed through the window */
+static const char* const kTTFMetaOnly[] = {
+    "cmap", "head", "hhea", "hmtx", "loca", "maxp", 0
+};
+
+static int ttf_tag_is(const char* tag4, const char* t) {
+    return tag4[0] == t[0] && tag4[1] == t[1] && tag4[2] == t[2] && tag4[3] == t[3];
+}
+static int ttf_table_in(const char* tag4, const char* const* list) {
+    for (int i = 0; list[i]; i++) if (ttf_tag_is(tag4, list[i])) return 1;
+    return 0;
+}
+
+static uint32_t ttf_rec_u32(const unsigned char* r, int at) {
+    return ((uint32_t)r[at] << 24) | ((uint32_t)r[at + 1] << 16) |
+           ((uint32_t)r[at + 2] << 8) | (uint32_t)r[at + 3];
+}
+
+/* Shared builder. per_glyph=false -> table-granular; per_glyph=true -> also
+   stream glyf one slice at a time out of the sliding window. */
+static uint8_t ttf_read_lazy(TTF_Font** out_font, const char* path,
+                             int32_t pixel_height, int32_t CacheCap,
+                             bool per_glyph) {
+    if (!out_font) return 254;
+    *out_font = TTF_CreateFont(CacheCap);
+    if (!(*out_font)) return 1;
+    TTF_Font* rf = *out_font;
+    unsigned char* recs = NULL;
+
+    FILE* fd = fopen(path, "r");
+    if (!fd) { TTF_DestroyFont(rf); *out_font = NULL; return 2; }
+    uint64_t file_size = fsize(fd);
+    if (file_size == 0) goto fallback;
+
+    unsigned char hdr[12];
+    if (fread(hdr, 1, 12, fd) != 12) goto fallback;
+    /* TrueType only ('\0\1\0\0'); TTC collections keep the old path */
+    if (!(hdr[0] == 0 && hdr[1] == 1 && hdr[2] == 0 && hdr[3] == 0)) goto fallback;
+    uint32_t ntab = ((uint32_t)hdr[4] << 8) | (uint32_t)hdr[5];
+    if (ntab == 0 || ntab > 1024) goto fallback;
+
+    size_t dirBytes = (size_t)ntab * 16u;
+    recs = (unsigned char*)TTF_MALLOC(dirBytes);
+    if (!recs) goto fallback;
+    if (fread(recs, 1, dirBytes, fd) != dirBytes) goto fallback;
+
+    uint32_t glyf_off = 0, glyf_len = 0, head_off = 0;
+    bool have_glyf = false;
+    for (uint32_t i = 0; i < ntab; i++) {
+        const unsigned char* r = recs + i * 16u;
+        if (r[0] == 'g' && r[1] == 'l' && r[2] == 'y' && r[3] == 'f') {
+            glyf_off = ttf_rec_u32(r, 8);
+            glyf_len = ttf_rec_u32(r, 12);
+            have_glyf = true;
+        } else if (r[0] == 'h' && r[1] == 'e' && r[2] == 'a' && r[3] == 'd') {
+            head_off = ttf_rec_u32(r, 8);
+        }
+    }
+    if (!have_glyf) goto fallback;
+
+    if (per_glyph) {
+        /* Long loca only: short loca caps glyf at ~256 KB, which is not worth
+           streaming, and the 16-bit entries cannot address a >128 KB window. */
+        int locfmt = -1;
+        unsigned char hb[54];
+        if (head_off && fseek(fd, (long)head_off, SEEK_SET) == 0 &&
+            fread(hb, 1, 54, fd) == 54)
+            locfmt = (int)(int16_t)(uint16_t)(((uint16_t)hb[50] << 8) | hb[51]);
+        if (locfmt != 1) per_glyph = false;
+    }
+
+    const char* const* list  = per_glyph ? kTTFMetaOnly : kTTFNeeded;
+    uint32_t           wantN = per_glyph ? 6u : 7u;
+
+    /* first pass: how many tables do we keep, and how big is the image? */
+    uint32_t keep = 0;
+    size_t   body = 0;
+    for (uint32_t i = 0; i < ntab; i++) {
+        const unsigned char* r = recs + i * 16u;
+        char tag4[5] = { (char)r[0], (char)r[1], (char)r[2], (char)r[3], 0 };
+        if (!ttf_table_in(tag4, list)) continue;
+        keep++;
+        body += ((size_t)ttf_rec_u32(r, 12) + 3u) & ~(size_t)3u;
+    }
+    if (keep != wantN) goto fallback;              /* a table is missing */
+
+    const uint32_t slots  = keep + (per_glyph ? 1u : 0u);   /* + glyf record */
+    const size_t   winOff = 12u + (size_t)slots * 16u + body;
+    const size_t   outSize = winOff + (per_glyph ? (size_t)TTF_GLYF_WIN_DEFAULT : 0u);
+
+    unsigned char* out = (unsigned char*)TTF_MALLOC(outSize);
+    if (!out) goto fallback;
+    TTF_MEMSET(out, 0, outSize);
+
+    unsigned char* oh = out;
+    oh[0] = hdr[0]; oh[1] = hdr[1]; oh[2] = hdr[2]; oh[3] = hdr[3];
+    oh[4] = (unsigned char)(slots >> 8); oh[5] = (unsigned char)(slots & 0xFF);
+    /* searchRange / entrySelector / rangeShift are only hints for a binary
+       search stb_truetype does not perform (it scans the directory), so the
+       original values are copied verbatim. */
+    oh[6] = hdr[6];  oh[7] = hdr[7];  oh[8] = hdr[8];  oh[9] = hdr[9];
+    oh[10] = hdr[10]; oh[11] = hdr[11];
+
+    size_t   cursor = 12u + (size_t)slots * 16u;
+    uint32_t slot   = 0;
+    for (uint32_t i = 0; i < ntab; i++) {
+        const unsigned char* r = recs + i * 16u;
+        char tag4[5] = { (char)r[0], (char)r[1], (char)r[2], (char)r[3], 0 };
+        if (!ttf_table_in(tag4, list)) continue;
+        uint32_t off = ttf_rec_u32(r, 8);
+        uint32_t len = ttf_rec_u32(r, 12);
+
+        if (fseek(fd, (long)off, SEEK_SET) != 0 ||
+            fread(out + cursor, 1, (size_t)len, fd) != (size_t)len) {
+            TTF_FREE(out);
+            goto fallback;
+        }
+        unsigned char* orec = out + 12u + (size_t)slot * 16u;
+        orec[0] = r[0]; orec[1] = r[1]; orec[2] = r[2]; orec[3] = r[3];
+        orec[4] = r[4]; orec[5] = r[5]; orec[6] = r[6]; orec[7] = r[7]; /* checksum */
+        orec[8]  = (unsigned char)((cursor >> 24) & 0xFF);
+        orec[9]  = (unsigned char)((cursor >> 16) & 0xFF);
+        orec[10] = (unsigned char)((cursor >> 8) & 0xFF);
+        orec[11] = (unsigned char)(cursor & 0xFF);
+        orec[12] = r[12]; orec[13] = r[13]; orec[14] = r[14]; orec[15] = r[15];
+        cursor += ((size_t)len + 3u) & ~(size_t)3u;
+        slot++;
+    }
+    if (per_glyph) {                 /* glyf record -> the sliding window     */
+        unsigned char* orec = out + 12u + (size_t)slot * 16u;
+        orec[0] = 'g'; orec[1] = 'l'; orec[2] = 'y'; orec[3] = 'f';
+        orec[4] = orec[5] = orec[6] = orec[7] = 0;
+        orec[8]  = (unsigned char)((winOff >> 24) & 0xFF);
+        orec[9]  = (unsigned char)((winOff >> 16) & 0xFF);
+        orec[10] = (unsigned char)((winOff >> 8) & 0xFF);
+        orec[11] = (unsigned char)(winOff & 0xFF);
+        orec[12] = (unsigned char)((glyf_len >> 24) & 0xFF);
+        orec[13] = (unsigned char)((glyf_len >> 16) & 0xFF);
+        orec[14] = (unsigned char)((glyf_len >> 8) & 0xFF);
+        orec[15] = (unsigned char)(glyf_len & 0xFF);
+        slot++;
+    }
+    TTF_FREE(recs);
+    recs = NULL;
+
+    if (!stbtt_InitFont(&rf->info, out, 0)) { TTF_FREE(out); goto fallback; }
+    rf->data = out;                  /* owned by the font, freed on destroy */
+    rf->is_initialized = true;
+
+    if (per_glyph) {
+        int32_t ng = rf->info.numGlyphs;
+        if (ng <= 0 || rf->info.indexToLocFormat != 1 ||
+            rf->info.loca == 0 || rf->info.glyf == 0) {
+            TTF_FREE(out); rf->data = NULL; rf->is_initialized = false;
+            goto fallback;
+        }
+        rf->glyf_loc_orig = (uint32_t*)TTF_MALLOC(sizeof(uint32_t) * (size_t)(ng + 1));
+        if (!rf->glyf_loc_orig) {
+            TTF_FREE(out); rf->data = NULL; rf->is_initialized = false;
+            goto fallback;
+        }
+        for (int32_t i = 0; i <= ng; i++) rf->glyf_loc_orig[i] = ttf_loca_get(rf, i);
+        /* nothing is resident yet: every loca pair reads as zero-length, which
+           stbtt reports as "empty glyph" instead of reading past the window. */
+        TTF_MEMSET(rf->data + rf->info.loca, 0, (size_t)(ng + 1) * 4u);
+
+        rf->glyf_lazy     = true;
+        rf->glyf_fd       = fd;      /* owned by the font from here on */
+        rf->glyf_file_off = glyf_off;
+        rf->glyf_file_len = glyf_len;
+        rf->glyf_win_off  = winOff;
+        rf->glyf_win_cap  = (size_t)TTF_GLYF_WIN_DEFAULT;
+        rf->glyf_win_used = 0;
+        fd = NULL;
+    }
+
+    TTF_SetPixelHeight(rf, pixel_height);
+    TTF_SetOversampling(rf, 2);
+    return 0;
+
+fallback:
+    if (recs) TTF_FREE(recs);
+    if (fd) fclose(fd);
+    TTF_DestroyFont(rf);
+    return TTF_ReadFont(out_font, path, pixel_height, CacheCap);
+}
+
+uint8_t TTF_ReadFontLazy(TTF_Font** out_font, const char* path,
+                         int32_t pixel_height, int32_t CacheCap) {
+    return ttf_read_lazy(out_font, path, pixel_height, CacheCap, false);
+}
+
+/* Emergency switch for the per-glyph loader.
+   1 (default): stream `glyf` one glyph at a time out of the sliding window.
+   0          : behave exactly like TTF_ReadFont() (slurp the whole file).
+
+   Flip it (add -DTTF_GLYF_LAZY=0 to the build, or edit this default) if a
+   target's kernel misbehaves under the "many small scattered reads" pattern —
+   that is the only respect in which this loader differs from the old one. */
+#ifndef TTF_GLYF_LAZY
+#define TTF_GLYF_LAZY 0
+#endif
+
+uint8_t TTF_ReadFontGlyfLazy(TTF_Font** out_font, const char* path,
+                             int32_t pixel_height, int32_t CacheCap) {
+#if !TTF_GLYF_LAZY
+    return TTF_ReadFont(out_font, path, pixel_height, CacheCap);
+#else
+    return ttf_read_lazy(out_font, path, pixel_height, CacheCap, true);
+#endif
+}
+
+void TTF_GetGlyfStats(TTF_Font *font, unsigned long *out_cap,
+                      unsigned long *out_resident, unsigned long *out_fetches,
+                      unsigned long *out_bytes) {
+    if (out_cap)      *out_cap = 0;
+    if (out_resident) *out_resident = 0;
+    if (out_fetches)  *out_fetches = 0;
+    if (out_bytes)    *out_bytes = 0;
+    if (!font || !font->glyf_lazy) return;
+    TTF_MUTEX_LOCK(font->lock);
+    if (out_cap)      *out_cap = (unsigned long)font->glyf_win_cap;
+    if (out_resident) *out_resident = (unsigned long)font->glyf_win_used;
+    if (out_fetches)  *out_fetches = font->glyf_fetches;
+    if (out_bytes)    *out_bytes = font->glyf_bytes;
+    TTF_MUTEX_UNLOCK(font->lock);
 }
 
 void TTF_DrawText(

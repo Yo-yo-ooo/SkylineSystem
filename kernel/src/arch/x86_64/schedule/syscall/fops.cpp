@@ -46,7 +46,7 @@ GENERATE_IGN3()) {
             // 读取成功后，推进文件描述符的偏移量
             FD->FSOPS->lseek(FD->filedesc, cur_offset + count, SEEK_SET);
             FD->offset = cur_offset + count;
-            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, count, NULL, FD->file_size, (uint64_t)FD->filedesc);
+            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, count, NULL, FD->file_size, FD->file_uid);
             return count;
         }
         // 读取范围超出缓存范围，放弃缓存，回退到硬件读取
@@ -63,9 +63,12 @@ GENERATE_IGN3()) {
             file_cache_entry_t *be = NULL;
             size_t blen = 0;
             void *bdata = file_cache_get_block(cpu->file_cache,
-                (uint64_t)FD->filedesc, first_block + b,
+                FD->file_uid, first_block + b,
                 count, &blen, &be);
             if (!bdata) { all_hit = false; break; }
+            /* 命中语义: 缓存块 = 该文件第 (first_block+b) 块**自块首起**
+               的 blen 个字节。所以 from 必须落在 [0, blen) 内且整段读都要
+               在这段已知前缀之内, 否则放弃缓存走硬件。 */
             size_t from = (size_t)((cur_offset + b * BLOCK_SZ) % BLOCK_SZ);
             size_t chunk = count - b * BLOCK_SZ;
             if (from >= blen) { all_hit = false; file_cache_put(cpu->file_cache, be); break; }
@@ -81,7 +84,7 @@ GENERATE_IGN3()) {
         if (all_hit) {
             FD->FSOPS->lseek(FD->filedesc, cur_offset + count, SEEK_SET);
             FD->offset = cur_offset + count;
-            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, count, NULL, FD->file_size, (uint64_t)FD->filedesc);
+            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, count, NULL, FD->file_size, FD->file_uid);
             return count;
         }
     }
@@ -108,7 +111,7 @@ GENERATE_IGN3()) {
             void *cache_buf = kmalloc(total_read);
             if (cache_buf) {
                 __memcpy(cache_buf, kbuf, total_read);
-                file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, cache_buf, FD->file_size, (uint64_t)FD->filedesc);
+                file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, cache_buf, FD->file_size, FD->file_uid);
             }
         } else {
             /* Step 2 (round 27): 非零偏移读取改为逐块 promote ——
@@ -118,21 +121,31 @@ GENERATE_IGN3()) {
             const uint64_t BLOCK_SZ = 4096;
             uint64_t off = 0;
             while (off < total_read) {
-                uint64_t block_no = (cur_offset + off) / BLOCK_SZ;
-                size_t in_block = (size_t)(BLOCK_SZ -
-                    ((cur_offset + off) % BLOCK_SZ));
+                uint64_t foff     = cur_offset + off;
+                uint64_t blk_from = foff % BLOCK_SZ;      /* 本次在块内的起点 */
+                uint64_t block_no = foff / BLOCK_SZ;
+                size_t in_block = (size_t)(BLOCK_SZ - blk_from);
                 size_t chunk = (total_read - off < in_block) ?
                     (total_read - off) : in_block;
-                void *block_buf = kmalloc(chunk);
-                if (!block_buf) break;   /* OOM: 放弃剩余块, 已 promote 的保留 */
-                __memcpy(block_buf, (uint8_t*)kbuf + off, chunk);
-                file_cache_promote_block(cpu->file_cache,
-                    (uint64_t)FD->filedesc, block_no,
-                    block_buf, chunk, false, FD->file_size);
+
+                /* 只缓存**从块首开始**的块。命中路径按 (file, block#) 取块
+                   后用调用方的块内偏移直接索引, 隐含"数据是块前缀"; 若把
+                   块内偏移 2644 处的 54 字节当块 promote, 同块内其它偏移
+                   的读就会命中并拿到错位数据 —— 密集的小块读 (逐字形读
+                   glyf 切片, 每 4KB 块里约 8 个字形) 必然连环踩中, 表现为
+                   文件内容随机损坏。非块首的部分块跳过, 后续块仍然入缓存。 */
+                if (blk_from == 0) {
+                    void *block_buf = kmalloc(chunk);
+                    if (!block_buf) break;   /* OOM: 放弃剩余块, 已 promote 的保留 */
+                    __memcpy(block_buf, (uint8_t*)kbuf + off, chunk);
+                    file_cache_promote_block(cpu->file_cache,
+                        FD->file_uid, block_no,
+                        block_buf, chunk, false, FD->file_size);
+                }
                 off += chunk;
             }
             // 仍记录整次 IO 统计以供启发式策略使用
-            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, NULL, FD->file_size, (uint64_t)FD->filedesc);
+            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, NULL, FD->file_size, FD->file_uid);
         }
     }
 
@@ -201,7 +214,7 @@ GENERATE_IGN3()) {
                 uint64_t wb1 = (cur_offset + wcnt - 1) / BLOCK_SZ;
                 for (uint64_t wb = wb0; wb <= wb1; wb++)
                     file_cache_invalidate_block(cpu->file_cache,
-                        (uint64_t)FD->filedesc, wb);
+                        FD->file_uid, wb);
             } else {
                 // 写入超出了缓存范围，现有缓存不再能代表文件前缀，使其失效
                 file_cache_put(cpu->file_cache, cache_entry);
@@ -211,7 +224,7 @@ GENERATE_IGN3()) {
             if (cache_entry) {
                 file_cache_put(cpu->file_cache, cache_entry);
             }
-            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
+            file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, wcnt, NULL, FD->file_size, FD->file_uid);
         } else {
             // 缓存未命中。如果是从 offset 0 开始写，则可以将这批数据作为新的缓存块 promote
             if (cur_offset == 0) {
@@ -219,7 +232,7 @@ GENERATE_IGN3()) {
                 if (cache_buf) {
                     __memcpy(cache_buf, kbuf, wcnt);
                     // is_dirty = false，因为 FSOPS->write 已经同步落盘
-                    int32_t r = file_cache_promote(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, cache_buf, wcnt, false, FD->file_size, (uint64_t)FD->filedesc);
+                    int32_t r = file_cache_promote(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, cache_buf, wcnt, false, FD->file_size, FD->file_uid);
                     if (r != 0) kfree(cache_buf); 
                 }
             } else {
@@ -228,20 +241,24 @@ GENERATE_IGN3()) {
                 const uint64_t BLOCK_SZ = 4096;
                 uint64_t off = 0;
                 while (off < wcnt) {
-                    uint64_t block_no = (cur_offset + off) / BLOCK_SZ;
-                    size_t in_block = (size_t)(BLOCK_SZ -
-                        ((cur_offset + off) % BLOCK_SZ));
+                    uint64_t foff     = cur_offset + off;
+                    uint64_t blk_from = foff % BLOCK_SZ;
+                    uint64_t block_no = foff / BLOCK_SZ;
+                    size_t in_block = (size_t)(BLOCK_SZ - blk_from);
                     size_t chunk = (wcnt - off < in_block) ?
                         (wcnt - off) : in_block;
-                    void *block_buf = kmalloc(chunk);
-                    if (!block_buf) break;
-                    __memcpy(block_buf, (uint8_t*)kbuf + off, chunk);
-                    file_cache_promote_block(cpu->file_cache,
-                        (uint64_t)FD->filedesc, block_no,
-                        block_buf, chunk, false, FD->file_size);
+                    /* 与读路径同一条不变量: 只缓存自块首起的块前缀 */
+                    if (blk_from == 0) {
+                        void *block_buf = kmalloc(chunk);
+                        if (!block_buf) break;
+                        __memcpy(block_buf, (uint8_t*)kbuf + off, chunk);
+                        file_cache_promote_block(cpu->file_cache,
+                            FD->file_uid, block_no,
+                            block_buf, chunk, false, FD->file_size);
+                    }
                     off += chunk;
                 }
-                file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, wcnt, NULL, FD->file_size, (uint64_t)FD->filedesc);
+                file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, wcnt, NULL, FD->file_size, FD->file_uid);
             }
         }
         
@@ -340,6 +357,7 @@ uint64_t sys_fopen(uint64_t path, uint64_t flags, GENERATE_IGN4()) {
     fd_struct->FSOPS = MP->FSOPS;
     fd_struct->MP = MP;
     fd_struct->offset = 0;          /* 内核记账的文件偏移从 0 开始 */
+    fd_struct->file_uid = fc_next_file_uid();
     fd_struct->filedesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
     _memset(fd_struct->filedesc,0,MP->FSOPS->SIZEOF_FILE_DESC);
     
@@ -392,7 +410,7 @@ uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5()){
        这才把 P3-73 的 "fsync 机制存在但生产未激活" 激活 */
     cpu_t *cpu = this_cpu();
     if (cpu->file_cache && FD->filedesc)
-        file_cache_fsync(cpu->file_cache, (uint64_t)FD->filedesc);
+        file_cache_fsync(cpu->file_cache, FD->file_uid);
     int32_t res = FD->FSOPS->close(FD->filedesc);
     
     if (FD->path) {

@@ -86,6 +86,48 @@ miss because Notepad never writes `OUT_SEQ`.
 Diagnosing both relied on the serial log (`sys_dbgsout`) and a QEMU monitor
 `screendump`; see `programs/PureDOOM/hosttest/` and `res/scripts/`.
 
+## Resource loading: on demand
+
+Both big assets are read on demand, not slurped into RAM up front:
+
+| Asset | Before | Now |
+|---|---|---|
+| IWAD (`/mp/doom.wad`) | mirrored into RAM (11.2 MB) as a workaround for the broken VFS seek | read lump by lump through the VFS; DOOM's zone cache keeps the hot lumps and the kernel file cache serves the rest. The mirror still exists as `SKY_WAD_MIRROR_FALLBACK` (compile-time, default **0**) in case a kernel ever loses seek again |
+| TTF (`SourceHanSerifTC`) | one 30 MB `fread` of the whole file | `TTF_ReadFontGlyfLazy()` keeps only the 6 small tables and streams `glyf` **one glyph at a time**. Callers: `lib/stdc/outfb/printf.c` (console) and `programs/notepad` |
+
+### How per-glyph `glyf` works
+
+`glyf` is 28.94 MB of the 30.13 MB font, so it cannot stay resident. The loader
+still writes a glyf *directory record* into the font image, but it points at a
+**sliding window** (512 KB) at the tail of the image:
+
+1. `stb_truetype` resolves a glyph through `stbtt__GetGlyfOffset()` =
+   `data + glyf + loca[gid]` on **every** access, so patching `loca` is
+   enough — the rasterizer itself needed no changes.
+2. On a miss the glyph's byte slice is read from the file into the window and
+   its two `loca` entries are rewritten to address it. Composites pull their
+   components in with them (depth-limited).
+3. A non-resident glyph has its `loca` pair zeroed, which stbtt reads as
+   "empty glyph" (-1) — never an out-of-bounds read.
+4. When the window fills it is recycled; the window only grows if a single
+   composite chain cannot fit.
+
+The unpatched `loca` is mirrored once (`numGlyphs+1` uint32) so slices can be
+located after patching. Short-loca fonts (glyf < 256 KB by definition) and TTC
+collections fall back to `TTF_ReadFontLazy()` / `TTF_ReadFont()`.
+
+| | per process | both processes |
+|---|---|---|
+| whole-file loader | 30.13 MB | 60.26 MB |
+| per-glyph loader | **1.47 MB** (1.22 MB image + 0.25 MB loca mirror) | 2.94 MB |
+| saved | 28.66 MB (**20.5x**) | **57.33 MB** |
+
+`res/scripts/test/ttf_ondemand/` renders the same text through all three
+loaders and compares the bitmaps byte by byte: short mixed string (3880 B) and
+2000 distinct CJK glyphs (479700 B, forces many window recycles) — **0
+differing bytes** in both. The 2000-glyph run reads 1.28 MB of outline out of
+28.94 MB. `TTF_GetGlyfStats()` reports window cap / resident bytes / fetches.
+
 ## Known limitations (temporary)
 
 - **No audio.** The kernel has no sound driver, so `doom_get_sound_buffer()`

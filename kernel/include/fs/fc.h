@@ -154,7 +154,12 @@ int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t 
 /* ---- 块级缓存 API (fc-block-cache-design.md Step 1, round 26) ----
    键 = (file_id, block#) 16 字节; 与 path 版并存, 语义相同 (本阶段
    仍为整条目语义, 键构造先行 —— 后续 Step 2/3 由 fops 逐块调用后
-   自然获得块粒度) */
+   自然获得块粒度)
+
+   ⚠ 入缓存的块数据必须**从块首开始**: 命中路径以 (块号) 取块、再按调用
+   方的 `块内偏移` 直接索引 data[from .. from+len)。若把"块内偏移 2644 处
+   读到的 54 字节"当成一个块 promote, 同一块内其它偏移的合法读就会命中并
+   拿到错位数据 —— 表现为文件内容随机损坏。见 fops.cpp 的 promote 循环。 */
 void*   file_cache_get_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block,
                              size_t io_len, size_t *out_len, file_cache_entry_t **out_entry);
 int32_t file_cache_promote_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block,
@@ -163,6 +168,11 @@ int32_t file_cache_promote_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t
 void    file_cache_invalidate_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t block);
 void    file_cache_invalidate_file(file_cache_cpu_t *s, uint64_t file_id,
                                    uint64_t file_size);
+
+/* 块缓存的 file_id 分配器。fops 用它替代 `FD->filedesc` 指针: 指针在
+   fclose 之后会被下一次 open 的 kmalloc 复用, 于是两个不同文件共用同一批
+   (file_id, block#) 键 —— 读新文件会静默返回旧文件的数据。 */
+uint64_t fc_next_file_uid(void);
 
 void    file_cache_check_load(file_cache_cpu_t *s, uint32_t load_factor);
 void    file_cache_idle_handler(file_cache_cpu_t *s);

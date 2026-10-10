@@ -767,6 +767,13 @@ void file_cache_check_load(file_cache_cpu_t *src, uint32_t load_factor) {
 
 #pragma region Get / Put / Record / Promote / Readahead
 
+/* 打开实例编号: 每次 fopen 取一个新号, 用作块缓存的 file_id。
+   0 保留 (fc.cpp 内部多处以 file_id==0 表示"无效")。 */
+uint64_t fc_next_file_uid(void) {
+    static uint64_t s_next = 1;
+    return __atomic_add_fetch(&s_next, 1, __ATOMIC_RELAXED);
+}
+
 void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                      size_t io_len, size_t *out_len, file_cache_entry_t **out_entry) {
     if (unlikely(!s || !key || key_len == 0)) return NULL;

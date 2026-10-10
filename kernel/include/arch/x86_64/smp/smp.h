@@ -134,6 +134,10 @@ typedef struct cpu_t {
     volatile uint32_t shootdown_head;  // FIFO consumer index (this CPU)
     volatile uint32_t shootdown_tail;  // FIFO producer index (initiators)
     volatile int32_t  shootdown_acks;  // initiator: outstanding ACK counter
+    /* 诊断: 本核已发出但尚未收回 ACK 的目标 CPU 位图。仅在 ACK 超时时打印,
+       用来一眼看出"是哪个核没回" —— 正常路径只有两次原子位操作, 可忽略。
+       不参与任何同步语义, 缺失/错位只会影响日志。 */
+    volatile uint64_t shootdown_ack_mask;
     bool SMEP_ENABLED = false;   /* P5-98: 原 ISSMEP_ENABLEED 拼写 */
     bool SMAP_ENABLED = false;   /* P5-98: 原 ISSMAP_ENABLEED 拼写 */
     file_cache_cpu_t *file_cache;

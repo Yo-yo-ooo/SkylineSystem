@@ -143,7 +143,8 @@ int main() {
     uint64_t cursor = kbdSlot >= 0 ? kbd_reader_pos(kbd, kbdSlot) : 0;
 
     TTF_Font* font = nullptr;
-    TTF_ReadFont(&font, "/mp/SourceHanSerifTC_Medium.ttf", 20, 256);
+    /* on-demand: read only the tables the rasterizer needs */
+    TTF_ReadFontGlyfLazy(&font, "/mp/SourceHanSerifTC_Medium.ttf", 20, 256);
     if (!font) return 1;
     int32_t lineH = TTF_GetLineHeight(font);
     if (lineH <= 0) lineH = 22;

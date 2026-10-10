@@ -54,12 +54,17 @@ static inline void detach_thread_from_proc(thread_t *thread) {
 }
 
 static inline void wait_for_transfer(thread_t *t) {
-    uint64_t t0 = PIT::TimeSinceBootMS();
+    /* 时钟口径: 一律用 PIT::MonotonicMS()。TimeSinceBootMS() 的节拍只在 BSP
+       的 PIT 中断里递增, BSP 关中断自旋时它会冻结 —— 用它算 deadline 时,
+       下面所有的超时兜底会一并失效, 本函数退化成静默永旋 (注释里"不再整机
+       Panic"的兜底也就名存实亡)。 */
+    uint64_t t0 = PIT::MonotonicMS();
     uint64_t last_log = 0;
+    uint64_t spins = 0;
     while (__atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == THREAD_TRANSFER) {
         /* 修复: 用户态可达的 kill 路径超时不再整机 Panic; 保持等待语义
            (放弃回收会让调用方释放仍在运行的线程 -> UAF), 只定期告警 */
-        uint64_t now = PIT::TimeSinceBootMS();
+        uint64_t now = PIT::MonotonicMS();
         if (now - last_log > WAIT_THREAD_TIMEOUT_MS) {
             kerrorln("Thread %lu stuck in TRANSFER state - keep waiting",
                      (uint64_t)t->id);
@@ -73,6 +78,14 @@ static inline void wait_for_transfer(thread_t *t) {
             __atomic_store_n(&t->state, THREAD_RUNNING, __ATOMIC_RELEASE);
             return;
         }
+        /* 兜底: MonotonicMS 在 TSC 未校准时仍可能退回被冻结的 PIT 墙钟,
+           故再叠一层自旋上限 —— 任何一种时钟失效都不能让本核静默永旋 */
+        if (unlikely(++spins > 200000000ULL)) {
+            kerrorln("Thread %lu TRANSFER spin limit hit, force-clearing",
+                     (uint64_t)t->id);
+            __atomic_store_n(&t->state, THREAD_RUNNING, __ATOMIC_RELEASE);
+            return;
+        }
         asm volatile("pause");
     }
 }
@@ -81,7 +94,8 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
     /* 修复: 重试循环加超时 —— THREAD_ZOMBIE==5 (sched.h), 构造中的线程
        (memset 后 state==0) 不属于任何分支, 若对端恰在构造窗口会让
        等待无限自旋, 故加墙钟超时兜底 (P3-83: 原注释 "ZOMBIE==0" 过时) */
-    uint64_t batch_start = PIT::TimeSinceBootMS();
+    uint64_t batch_start = PIT::MonotonicMS();
+    uint64_t spins = 0;
     /* 审计 #14 (round 4 修复): 原超时仅重置计时器无限重试 —— 对端
        永久卡死时本核永转。改有界: 3 个超时窗口后放弃 (target 的
        CPU 不配合 = 该线程的资源由其对端 CPU 的收割兜底, 本核不再
@@ -89,7 +103,7 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
     int32_t timeouts = 0;
 
     while (true) {
-        if (unlikely(PIT::TimeSinceBootMS() - batch_start > KILL_RETRY_TIMEOUT_MS)) {
+        if (unlikely(PIT::MonotonicMS() - batch_start > KILL_RETRY_TIMEOUT_MS)) {
             if (++timeouts >= 3) {
                 kerrorln("kill_thread_batch: target %lu stuck beyond %d windows - giving up",
                          (uint64_t)target->id, timeouts);
@@ -97,7 +111,15 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
             }
             kerrorln("kill_thread_batch: target %lu still stuck - retry %d/3",
                      (uint64_t)target->id, timeouts);
-            batch_start = PIT::TimeSinceBootMS();
+            batch_start = PIT::MonotonicMS();
+        }
+
+        /* 兜底: 时钟彻底失效 (TSC 未校准 + PIT 冻结) 时上面的窗口判断恒为
+           假 —— 用自旋上限保证本核仍能放弃, 不把整机拖死 */
+        if (unlikely(++spins > 200000000ULL)) {
+            kerrorln("kill_thread_batch: target %lu spin limit hit - giving up",
+                     (uint64_t)target->id);
+            return;
         }
 
         wait_for_transfer(target);
@@ -417,7 +439,11 @@ namespace Schedule {
 
     void WaitForThreadOffCpu(thread_t *thread) {
         if (!thread) return;
-        uint64_t start_time = PIT::TimeSinceBootMS();
+        /* 时钟口径改 MonotonicMS(): 见 wait_for_transfer 的注释 —— 用会被
+           BSP 关中断冻结的 TimeSinceBootMS() 时, 下面的超时判断恒不成立,
+           本函数变成既不告警也不退出的静默永旋。 */
+        uint64_t start_time = PIT::MonotonicMS();
+        uint64_t spins = 0;
         while (true) {
             uint32_t cpu_num = __atomic_load_n(&thread->cpu_num, __ATOMIC_ACQUIRE);
             if (cpu_num >= MAX_CPU) break;
@@ -425,12 +451,14 @@ namespace Schedule {
             if (!cpu) break;
             thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
             if (curr != thread) break;
-            if (PIT::TimeSinceBootMS() - start_time > WAIT_THREAD_TIMEOUT_MS) {
+            if (unlikely(PIT::MonotonicMS() - start_time > WAIT_THREAD_TIMEOUT_MS) ||
+                unlikely(++spins > 200000000ULL)) {
                 /* 修复: 不再整机 Panic —— 继续等待并定期告警
                    (提前返回会导致释放仍在运行的线程) */
                 kerrorln("WaitForThreadOffCpu: thread %lu still on CPU %u - keep waiting",
                          (uint64_t)thread->id, cpu_num);
-                start_time = PIT::TimeSinceBootMS();
+                start_time = PIT::MonotonicMS();
+                spins = 0;
             }
             asm volatile("pause");
         }

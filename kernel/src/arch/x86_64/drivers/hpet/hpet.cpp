@@ -46,6 +46,9 @@ namespace HPET
 
         kinfo("HPET initialization finished\n");
     }
+    bool Available(){
+        return hpet != nullptr && hpet_period != 0;
+    }
     uint64_t GetTimeNS(){
         if(hpet == nullptr)
             return PIT::TicksSinceBoot;
