@@ -61,6 +61,9 @@ namespace AHCI
         hbaPort->cmdStatus &= ~HBA_PxCMD_ST;
         hbaPort->cmdStatus &= ~HBA_PxCMD_FRE;
 
+        /* round 97: 这里只能用 TimeSinceBootMS (引导早期 TSC 尚未校准,
+           MonotonicMS 会退化成它)。它现在的实现直接复读 PIT channel 0 硬件
+           计数器, 即使本核收不到 IRQ0 也会推进, 因此这个等待有界。 */
         uint64_t deadline = PIT::TimeSinceBootMS() + 500;
         while (PIT::TimeSinceBootMS() < deadline)
         {
@@ -81,6 +84,41 @@ namespace AHCI
 
         hbaPort->cmdStatus |= HBA_PxCMD_FRE;
         hbaPort->cmdStatus |= HBA_PxCMD_ST;
+    }
+
+    /* 命令超时/端口报错后的恢复。
+       背景 (docs/debug-hang-2026-10-11.md 第 5 节): 一个未完成的命令会让
+       PxCI 的对应位一直置着, FindCommandSlot() 之后永远返回 -1 ⇒ 该端口
+       的读写全部永久失败; 反复失败还会让调用方陷入"每 5 秒超时一次"的
+       慢速死循环, 配合 TLB shootdown 把整机拖停。
+       恢复动作 (AHCI 规范 10.4.4 的最小版, 不清命令表/不重分配内存):
+         1. 清 PxIS (写 1 清) 与 PxSERR;
+         2. 停命令引擎 (PxCMD.ST=0, 等 CR 落);
+         3. 清 PxCI (此时引擎已停, 硬件不再拥有任何 slot);
+         4. 重新 StartCMD。
+       必须在 slot_lock 之外调用 (StopCMD/StartCMD 里有最长 500ms 的等待)。 */
+    AHCI_NOOPT bool Port::RecoverPort()
+    {
+        if (recover_attempts >= 2) {
+            kerrorln("AHCI: port %d recovery limit reached, I/O unavailable",
+                     portNumber);
+            return false;
+        }
+        recover_attempts++;
+
+        uint32_t ci_before = hbaPort->commandIssue;
+        uint32_t is_before = hbaPort->interruptStatus;
+        hbaPort->interruptStatus = (uint32_t)-1;   /* 写 1 清所有 PxIS 位 */
+        hbaPort->sataError = (uint32_t)-1;         /* 写 1 清所有 PxSERR 位 */
+
+        StopCMD();
+        hbaPort->commandIssue = 0;
+        StartCMD();
+
+        kerrorln("AHCI: port %d recovered (CI %#x -> %#x, IS was %#x, attempts %u)",
+                 portNumber, ci_before, hbaPort->commandIssue, is_before,
+                 recover_attempts);
+        return true;
     }
 
     AHCI_NOOPT SATA_Ident Port::Identifydrive()
@@ -120,7 +158,7 @@ namespace AHCI
         hbaPort->commandIssue |= 1;
 
         /***Wait for a reply***/
-        uint64_t s = PIT::TimeSinceBootMS() + 3000;
+        uint64_t s = PIT::MonotonicMS() + 3000;
         bool timeout = true;
         /* The syscall path runs with IRQs masked (syscall_entry does cli).
            Spinning on device completion with IRQs off monopolises this core
@@ -128,7 +166,7 @@ namespace AHCI
            Keep IRQs enabled while polling so the scheduler can preempt us, and
            restore the masked state expected by the syscall ABI on the way out. */
         asm volatile("sti");
-        while(PIT::TimeSinceBootMS() < s)
+        while(PIT::MonotonicMS() < s)
         {
             if((hbaPort->commandIssue & 1) == 0)
             {
@@ -141,10 +179,14 @@ namespace AHCI
         
         if (timeout)
         {
+            kerror("AHCI: port %d IDENTIFY timeout (CI=%#x, IS=%#x)\n",
+                   portNumber, hbaPort->commandIssue, hbaPort->interruptStatus);
+            RecoverPort();      /* 释放 slot 1, 否则端口永久失效 */
             PMM::Free((void*)ident_phys);
             return zero_ident;
         }
 
+        recover_attempts = 0;
         SATA_Ident test = *((SATA_Ident*)HIGHER_HALF((void*)ident_phys));
 
         PMM::Free((void*)ident_phys);
@@ -245,19 +287,24 @@ namespace AHCI
         /* P2-59: 同 Write —— 命令表写全后、门铃前释放屏障 */
         __atomic_thread_fence(__ATOMIC_RELEASE);
         hbaPort->commandIssue = 1 << slot;
-        spinlock_unlock(&slot_lock);   /* 审计 #15: 签发后释放 (短临界区) */        uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
+        spinlock_unlock(&slot_lock);   /* 审计 #15: 签发后释放 (短临界区) */
+        /* round 97: deadline 用 MonotonicMS (TSC 直读) —— 原实现用
+           TimeSinceBootMS, 该时钟在"本核收不到 PIT 节拍"时会冻结, 于是
+           这个轮询退化成永旋 (实测卡死 55 秒以上、整机停摆)。 */
+        uint64_t deadline = PIT::MonotonicMS() + 5000;
         /* The syscall path runs with IRQs masked (syscall_entry does cli).
            Spinning on device completion with IRQs off monopolises this core
            for up to the whole timeout and starves peer threads pinned to it.
            Keep IRQs enabled while polling so the scheduler can preempt us, and
            restore the masked state expected by the syscall ABI on the way out. */
         asm volatile("sti");
-        while (PIT::TimeSinceBootMS() < deadline)
+        while (PIT::MonotonicMS() < deadline)
         {
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
                 asm volatile("cli");
+                RecoverPort();
                 return false;
             }
             asm volatile("pause");
@@ -265,6 +312,7 @@ namespace AHCI
         asm volatile("cli");
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
+            RecoverPort();
             return false;
         }
 
@@ -274,9 +322,11 @@ namespace AHCI
         if (hbaPort->commandIssue & (1 << slot)) {
             kerror("AHCI: port %d slot %d timeout (CI=%#x, IS=%#x)\n",
                    portNumber, slot, hbaPort->commandIssue, hbaPort->interruptStatus);
+            RecoverPort();      /* 释放卡住的 slot, 否则该端口永久失效 */
             return false;
         }
 
+        recover_attempts = 0;   /* 成功一笔就重置恢复限流 */
         return true;
     }
 
@@ -363,34 +413,39 @@ namespace AHCI
         hbaPort->commandIssue = 1<<slot;
         spinlock_unlock(&slot_lock);   /* 审计 #15: 签发后释放 (短临界区) */
 
-        uint64_t deadline = PIT::TimeSinceBootMS() + 5000;
+        uint64_t deadline = PIT::MonotonicMS() + 5000;
         /* The syscall path runs with IRQs masked (syscall_entry does cli).
            Spinning on device completion with IRQs off monopolises this core
            for up to the whole timeout and starves peer threads pinned to it.
            Keep IRQs enabled while polling so the scheduler can preempt us, and
            restore the masked state expected by the syscall ABI on the way out. */
         asm volatile("sti");
-        while (PIT::TimeSinceBootMS() < deadline)
+        while (PIT::MonotonicMS() < deadline)
         {
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES)
-            { asm volatile("cli"); return false; }
+            { asm volatile("cli"); RecoverPort(); return false; }
             asm volatile("pause");
         }
         asm volatile("cli");
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
-                return false;
+        {
+            RecoverPort();
+            return false;
+        }
 
         /* 审计 #9 (round 1 修复): 原实现超时后直接 return true ——
            丢写报成功。补 CI 检查 (与 Read 对称): 超时未完成 = 失败 */
         if (hbaPort->commandIssue & (1 << slot)) {
             kerror("AHCI: port %d slot %d WRITE timeout (CI=%#x, IS=%#x)\n",
                    portNumber, slot, hbaPort->commandIssue, hbaPort->interruptStatus);
+            RecoverPort();
             return false;
         }
 
+        recover_attempts = 0;
         return true;
     }
 

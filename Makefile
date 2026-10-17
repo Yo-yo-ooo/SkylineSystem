@@ -8,8 +8,13 @@ MAKEFLAGS += -rR
 # Convenience macro to reliably declare user overridable variables.
 override USER_VARIABLE = $(if $(filter $(origin $(1)),default undefined),$(eval override $(1) := $(2)))
 
-# Get Path of build directory
-override SS_BUILD_DIR := $(shell pwd)
+# Get Path of build directory.
+# 必须用立即展开 (:=) + $(CURDIR), 不能用 $(shell pwd):
+# SS_BUILD_DIR 被 export 给子 make (kernel/), 而递归变量会在子 make 里重新
+# 展开 shell pwd -> kernel/kernel, 于是 -I$(SS_BUILD_DIR)/kernel/include 指错,
+# 内核任何改动都编译不过 ("klib/kprintf.h file not found")。$(CURDIR) 是
+# make 自带的绝对路径, 立即展开后与子目录无关; 外部显式传入的值优先。
+override SS_BUILD_DIR := $(if $(SS_BUILD_DIR),$(SS_BUILD_DIR),$(CURDIR))
 export SS_BUILD_DIR
 include ./gdef.mk
 # Target architecture to build for. Default to x86_64.
@@ -170,7 +175,12 @@ kernel-deps:
 .PHONY: kernel
 kernel: kernel-deps
 	@echo "Start Building Kernel!"
-	$(MAKE) -C kernel
+	@# 必须在 kernel/ 目录里调用子 make: kernel/Makefile 会执行
+	@# `override SS_BUILD_DIR := $(shell pwd)`, 在子目录里就是正确值。
+	@# 若写成 $(MAKE) -C kernel, 递归变量 SS_BUILD_DIR 会在子 make 中
+	@# 重新展开, 而 $(shell pwd) 仍是仓库根 -> -I 路径多一层 kernel/,
+	@# 内核任何改动都编译不过。为稳妥起见这里显式传入绝对路径。
+	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)"
 
 $(IMAGE_NAME).iso: limine-binary/limine kernel
 	rm -rf iso_root

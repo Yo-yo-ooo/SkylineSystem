@@ -72,6 +72,40 @@ memops.o: $(OBJS_TO_LINK)
 	ld -r $(OBJS_TO_LINK) -o $@
 	@rm -f $(OBJS_TO_LINK)
 
+# ==============================================================
+# PIC 版本 (供 libsky.so 使用)
+# --------------------------------------------------------------
+# CFLAGS_x86mem 里是 -fpie, 产生的 R_X86_64_PC32 重定位在共享库里是非法的
+# (实测: "relocation R_X86_64_PC32 against symbol `x86mem_cache_limit'
+#  can not be used when making a shared object")。
+# 这里用 -fPIC 重编同一批源, 产出 memops.pic.o。默认 all 目标不受影响。
+# ==============================================================
+CFLAGS_x86mem_pic := $(filter-out -fpie,$(CFLAGS_x86mem)) -fPIC -fno-plt
+
+define COMPILE_TEMPLATE_PIC
+memops_pic_$(1).o: $(SRCS)
+	@echo " -> Compiling x86mem [$(1)] tier (PIC)..."
+	$(CC_x86mem) $(CFLAGS_x86mem_pic) $(FLAGS_$(1)) -c memcpy.c -o memcpy_pic_$(1).o
+	$(CC_x86mem) $(CFLAGS_x86mem_pic) $(FLAGS_$(1)) -c memmove.c -o memmove_pic_$(1).o
+	$(CC_x86mem) $(CFLAGS_x86mem_pic) $(FLAGS_$(1)) -c memset.c -o memset_pic_$(1).o
+	$(CC_x86mem) $(CFLAGS_x86mem_pic) $(FLAGS_$(1)) -c memcmp.c -o memcmp_pic_$(1).o
+	$(CC_x86mem) $(CFLAGS_x86mem_pic) $(FLAGS_$(1)) -c x86mem_init.c -o x86mem_init_pic_$(1).o
+	ld -r memcpy_pic_$(1).o memmove_pic_$(1).o memset_pic_$(1).o memcmp_pic_$(1).o x86mem_init_pic_$(1).o -o $$@
+	@rm -f memcpy_pic_$(1).o memmove_pic_$(1).o memset_pic_$(1).o memcmp_pic_$(1).o x86mem_init_pic_$(1).o
+endef
+
+$(foreach arch,$(TARGET_ARCHS),$(eval $(call COMPILE_TEMPLATE_PIC,$(arch))))
+
+OBJS_PIC = $(foreach arch,$(TARGET_ARCHS),memops_pic_$(arch).o)
+
+.PHONY: pic
+pic: memops.pic.o
+
+memops.pic.o: $(OBJS_PIC)
+	@echo " => Packing Fat Binary (PIC): memops.pic.o"
+	ld -r $(OBJS_PIC) -o $@
+	@rm -f $(OBJS_PIC)
+
 # 引入自动生成的依赖文件
 -include $(wildcard *.d)
 

@@ -183,6 +183,12 @@ namespace PIT
         }
     }
 
+    /* round 98 记录 (失败的尝试, 勿重蹈): 曾把 PIT channel 0 的硬件计数器
+       读进来算"节拍内分数部分", 想让本函数彻底不依赖 IRQ0。实测墙钟会跑快
+       约 1.9x (lwIP 的 10 秒统计节拍变成 ~5.3 秒), 说明 TicksSinceBoot 的
+       实际节拍率与 Divisor 推算出的不一致 —— 分数项等于重复计时。
+       已回退。真正需要"不受中断影响"的 deadline 请直接用 MonotonicMS()
+       (纯 TSC), AHCI 路径已全部改成这样。 */
     uint64_t TimeSinceBootMS()
     {
         if (!Inited)

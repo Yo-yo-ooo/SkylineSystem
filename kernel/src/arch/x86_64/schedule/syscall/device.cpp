@@ -60,6 +60,7 @@ uint64_t sys_dev_ioctl(
         GENERATE_IGN2()){
     IGNV_2();
     VDL dev = Dev::FindDevice((VsDevType)DevType, (uint32_t)DevIDX);
+    if (!dev.ops.ioctl) return 0;
     return dev.ops.ioctl(cmd,arg);
 }
 

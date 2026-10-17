@@ -266,6 +266,9 @@ void __init x86_64_init(void){
     thread_t *desktop3 = Schedule::NewThread(proc3, 0, 1, 
         "/mp/hw2.elf", 1, argv, envp);   */
     kinfoln("desktop PROCESS: %d",proc->id);
+    /* 桌面进程 id 记入全局: 诊断线程据此报告"窗口管理器已经不在" */
+    extern int32_t g_desktop_pid;
+    g_desktop_pid = (int32_t)proc->id;
     asm volatile("sti");
     LAPIC::IPI(smp_bsp_cpu,SCHED_VEC);
     LAPIC::IPIOthers(smp_bsp_cpu, SCHED_VEC);

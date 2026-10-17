@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/schedule/syscalln.h>
+#include <klib/stallwatch.h>
 
 static uint64_t 
 SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,syscall_frame_t*){return NULL;}
@@ -24,7 +25,14 @@ void dump_REG(syscall_frame_t *frame){
 }
 
 extern "C" void syscall_handler(syscall_frame_t *frame) {
+    /* 停滞看门狗: 系统调用也是"本核还在动"的证据, 而且卡在自旋锁里时
+       (syscall_entry 先 cli, 中断不来) 只有这里能刷新现场 —— 缺了这一步,
+       看门狗看到的是上一次中断的老快照, 会把现场读成垃圾。 */
+    stall_note_entry(frame->rip, frame->rsp, frame->rflags, 0, 1);
+    stall_set_kernel_busy(1);
+
     if (frame->rax >= 512 || syscall_lists[frame->rax] == nullptr) {
+        stall_set_kernel_busy(0);
         frame->rax = -ENOSYS; 
         return;
     }
@@ -32,7 +40,12 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
     auto func = syscall_lists[frame->rax];
 
     //kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);
-    frame->rax = func(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9,frame);
+    /* 返回值只写进**帧槽** —— user.asm 的收尾是从帧槽读回 %rax 交给用户态
+       (不再依赖"函数返回时 %rax 还是返回值"; %rax 是 caller-saved, 本函数
+       返回前的任何一步都会踩掉它, 那正是"内核返回 0x320、用户态收到 0/1"
+       这个 bug 的根源, 详见 docs/debug-hang-2026-10-11.md 第 11 节)。 */
+    frame->rax = func(frame->rdi, frame->rsi, frame->rdx, frame->r10, frame->r8, frame->r9, frame);
+    stall_set_kernel_busy(0);
 
     //kinfoln("Syscall returned %ld", frame->rax);
 }

@@ -344,6 +344,21 @@ static void lwip_thread(void) {
                     s.rx_dropped, s.rx_err, s.tx_full, s.irq_count, g_ping_replies);
             prev_rx = s.rx_pkts; prev_tx = s.tx_pkts;
             last_diag = now;
+
+            /* 桌面进程 (PID 7) 是唯一窗口管理器: 它一旦没了, 桌面就不再
+               合成新窗口、也不会再 spawn 子进程 (用户看到的现象就是
+               "PID 11 之后什么都没有了")。这里周期性点名, 让"桌面已死"
+               变成日志里一眼可见的事实, 而不是靠推断。 */
+            extern int32_t g_desktop_pid;
+            extern bool proc_alive(uint64_t pid);
+            static bool desktop_gone = false;
+            if (g_desktop_pid > 0 && !desktop_gone &&
+                !proc_alive((uint64_t)g_desktop_pid)) {
+                desktop_gone = true;
+                kerrorln("[desktop] PID %d (window manager) is GONE - "
+                         "no new windows or clients can appear from now on",
+                         (int)g_desktop_pid);
+            }
         }
 
         /* 停滞自诊断: 30 秒无新 RX 帧 → dump 环形状态机全景 */

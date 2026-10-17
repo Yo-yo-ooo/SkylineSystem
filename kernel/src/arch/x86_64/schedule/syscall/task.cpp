@@ -22,8 +22,17 @@ uint64_t sys_gettid(GENERATE_IGN6()) {
     return Schedule::this_thread()->id;
 }
 
-uint64_t sys_exit(uint64_t code,GENERATE_IGN5()) {
+uint64_t sys_exit(uint64_t code, GENERATE_IGN5()) {
     IGNV_5();
+    /* 退出前把"用户态在哪一条指令上调用 exit"记下来 —— 这是"进程怎么自己
+       退了"唯一可靠的定位手段: 内核日志给出这个 rip, 拿它去 objdump 对应的
+       ELF 就能落到具体函数/行。syscall_handler 把当前帧通过第 7 个参数
+       传进来 (见 syscall.h 的 nullframe)。 */
+    if (nullframe) {
+        kinfoln("[exit] pid=%d code=%d user_rip=%p user_rsp=%p",
+                Schedule::this_proc() ? (int)Schedule::this_proc()->id : -1,
+                (int)code, (void *)nullframe->rip, (void *)nullframe->rsp);
+    }
     Schedule::Exit((int32_t)code);
     return 0;
 }

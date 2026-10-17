@@ -23,6 +23,7 @@
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/interrupt/gdt.h>
 #include <pdef.h>
+#include <klib/stallwatch.h>
 
 #include <arch/x86_64/schedule/sched_internal.h>
 
@@ -526,6 +527,11 @@ namespace Schedule {
         void Switch(context_t *ctx) {
             LAPIC::StopTimer();
             cpu_t *cpu = this_cpu();
+            /* 停滞看门狗: 每次调度入口推进本核心跳并检查其它核。
+               心跳放在这里 (而不是中断入口) —— 只要本核还在被调度就说明
+               它活着; 某个核彻底不再进调度 (关中断自旋/死锁) 才会被点名。 */
+            stall_note_beat();
+            stall_watch_tick();
             if (unlikely(!cpu)) {
                 /* 早退也要 EOI, 否则 LAPIC ISR 位悬挂, 阻断后续中断 */
                 LAPIC::EOI();

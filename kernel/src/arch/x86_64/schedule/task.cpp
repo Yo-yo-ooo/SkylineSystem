@@ -37,7 +37,18 @@ extern uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
                   uint64_t *tls_offset = nullptr,
                   uint64_t *tls_memsz = nullptr,
                   uint64_t *tls_filesz = nullptr,
-                  uint64_t *tls_align = nullptr);
+                  uint64_t *tls_align = nullptr,
+                  uint64_t *out_bias = nullptr);
+
+/* 加载期动态链接 (kernel/src/elf/elf_dyn.cpp): 读 DT_NEEDED, 把共享库映射进
+ * 进程并完成全部重定位。桌面进程正是由本文件的 NewThread 加载的, 所以这里
+ * 必须接上 —— 只在 sys_load 里做的话桌面不会触发动态链接。 */
+extern int elf_dyn_apply(uint8_t *main_img, uint64_t main_len, pagemap_t *pm,
+                         uint64_t *tls_offset, uint64_t *tls_memsz,
+                         uint64_t *tls_filesz, uint64_t *tls_align,
+                         uint64_t main_bias,
+                         uint8_t **out_so_tls_img, uint64_t *out_so_tls_len,
+                         uint64_t *out_tls_main_data_off);
 
 static inline void detach_thread_from_proc(thread_t *thread) {
     if (thread->parent && thread->parent->threads) {
@@ -469,6 +480,12 @@ namespace Schedule {
         if (__sync_lock_test_and_set(&proc->exiting, 1) != 0) {
             return;
         }
+        /* 被别的进程 kill 掉的路径: 同样留日志 (谁杀的不一定知道, 但至少
+           知道"这个 pid 被外部清掉了", 而不是它自己退出)。 */
+        kinfoln("[exit] pid=%d killed-by-pid=%d caller=%p",
+                (int)proc->id,
+                Schedule::this_proc() ? (int)Schedule::this_proc()->id : -1,
+                __builtin_return_address(0));
 
         uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
         if (proc->parent) {
@@ -596,6 +613,15 @@ namespace Schedule {
     void Exit(int32_t code) {
         asm volatile("cli"); LAPIC::StopTimer();
         proc_t *curr_proc = Schedule::this_proc();
+        /* 每一次进程退出都必须有日志 —— 否则"桌面怎么自己退了"只能靠猜。
+           caller 用 __builtin_return_address(0) 指出是谁触发的:
+           sys_exit (用户程序主动退出) / 异常处理 (用户态崩溃被回收) /
+           其它内核路径。 */
+        thread_t *ct = Schedule::this_thread();
+        kinfoln("[exit] pid=%d tid=%d code=%d caller=%p",
+                curr_proc ? (int)curr_proc->id : -1,
+                ct ? (int)ct->id : -1, (int)code,
+                __builtin_return_address(0));
         if (!curr_proc) {          // 修复: 无所属进程时无法退出, 原地自旋
             while(1) { asm volatile("hlt"); }
         }
@@ -831,13 +857,34 @@ namespace Schedule {
         MP->FSOPS->close(FileDesc); kfree(FileDesc);
 
         uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
+        uint64_t main_bias = 0;
         _memset(&thread->ctx, 0, sizeof(context_t));
-        thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz, &tls_filesz, &tls_align);
+        thread->ctx.rip = elf_load(buffer, thread->pagemap, &tls_offset, &tls_memsz,
+                                   &tls_filesz, &tls_align, &main_bias);
         if (thread->ctx.rip == 0) {
             kerrorln("ELF load failed!");
             /* 注: 此前 PT_LOAD 已 map 的页泄漏 (pagemap 归 parent, 由
                进程退出统一回收, 非 immediate UAF, 可接受) */
             kfree(buffer); kfree(thread); return nullptr;
+        }
+
+        /* ---- 动态链接 (与 sys_load 走同一个入口) --------------------
+         * 桌面正是从这里加载的 (init.cpp 的 "Creating desktop process..."),
+         * 所以动态链接必须在这里也接上 —— 只在 sys_load 里做的话, 静态的
+         * 桌面进程根本不会触发它。 */
+        uint8_t *so_tls_image = nullptr;
+        uint64_t so_tls_image_len = 0;
+        uint64_t tls_main_data_off = 0;
+        {
+            int dr = elf_dyn_apply(buffer, FSize, thread->pagemap,
+                                   &tls_offset, &tls_memsz, &tls_filesz, &tls_align,
+                                   main_bias,
+                                   &so_tls_image, &so_tls_image_len, &tls_main_data_off);
+            if (dr < 0) {
+                kerrorln("dynamic linking failed: %d", dr);
+                kfree(buffer); kfree(thread);
+                return nullptr;
+            }
         }
 
         thread->fx_area = (char*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
@@ -865,6 +912,7 @@ namespace Schedule {
             uint64_t tls_pages = DIV_ROUND_UP(total_tls_size, PAGE_SIZE);
             uint64_t tls_mem = (uint64_t)VMM::Alloc(thread->pagemap, tls_pages, true);
             if (!tls_mem) {
+                if (so_tls_image) kfree(so_tls_image);
                 kfree(buffer);
                 VMM::Free(kernel_pagemap, (void*)thread->fx_area);
                 VMM::Free(kernel_pagemap, (void*)kernel_stack);
@@ -874,14 +922,32 @@ namespace Schedule {
                 return nullptr;
             }
             uint64_t tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align);
-            VMM::SwitchPageMap(thread->pagemap);
+            /* 页表必须**存旧再复原**, 不能一律切回 kernel_pagemap:
+               NewThread 是在某个上层进程的地址空间里被调用的, 强行换成
+               内核页表会让调用者在返回后继续用错误的 CR3 执行用户代码 ——
+               表现为用户态取指缺页 (ERROR_CODE=0x14, RIP=main+0x42)。
+               实测踩过: 加了 TLS dump 之后桌面立刻变成这样。 */
+            pagemap_t *tls_restore_pm = VMM::SwitchPageMap(thread->pagemap);
             { SmapGuard tls_ug;   // TLS image + TCB self pointer are user pages
-              __memcpy((void*)(tcb_base - ALIGN_UP(tls_memsz, tls_align)), (void*)(buffer + tls_offset), tls_filesz);
+              /* 动态链接时合并块布局是 [ .so 的 TLS | 主程序 TLS ]:
+                 块首放 .so 的 .tdata 镜像, 主程序自己的 .tdata 放在
+                 tls_main_data_off 处。静态链接时 so_tls_image==nullptr 且
+                 off==0, 行为与原来一致。
+                 另外必须先把整块清零: PT_TLS 的 .tdata 只覆盖前 filesz 字节,
+                 .tbss 部分 (以及页填充) 若不清零, __thread 状态 (例如
+                 per-class free cache) 一开始就是垃圾。 */
+              _memset((void*)tls_mem, 0, tls_pages * PAGE_SIZE);
+              if (so_tls_image)
+                  __memcpy((void*)tls_mem, so_tls_image, so_tls_image_len);
+              __memcpy((void*)(tls_mem + tls_main_data_off),
+                       (void*)(buffer + tls_offset), tls_filesz);
               *(uint64_t*)tcb_base = tcb_base;
             }
-            VMM::SwitchPageMap(kernel_pagemap);
+            VMM::SwitchPageMap(tls_restore_pm ? tls_restore_pm : (pagemap_t*)kernel_pagemap);
             thread->fs = tcb_base; thread->tls_base = tls_mem; thread->tls_pages = tls_pages;
         }
+
+        if (so_tls_image) { kfree(so_tls_image); so_tls_image = nullptr; }
 
         kfree(buffer);
         if (!Schedule::Internal::ProcessAddThread(parent, thread)) {

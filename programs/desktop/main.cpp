@@ -3,6 +3,7 @@
 #include <graphic/fb.h>
 #include <syscall.h>
 #include <base/arch/x86_64/syscalln.h>
+#include <graphic/devtype.h>   /* DEV_TYPE_FRAMEBUFFER: 设备类型编号权威 */
 #include <graphic/basicdraw.hpp>
 #include <graphic/winstyle.h>
 #include <graphic/flanterm.h>
@@ -373,16 +374,72 @@ static void wm_paint_chrome_live(uint32_t* rzSurf, int32_t rzPitch,
 
 
 int main(){
-    FrameBuffer fb;
-    uint64_t FbAddr = MapFB();
-    fb = GetFBInfo();
-    fb.BaseAddress = (void*)FbAddr;
+    /* 第一件事: 打开串口自检通道。用固定字符串 (不经过 snprintf), 排除
+       "格式化函数本身出问题"导致日志缺失的可能。 */
+    {
+        static const char probe[] = "[desktop] main reached, start probe\n";
+        syscall(SYS_DBGSOUT, (uint64_t)probe, (uint64_t)(sizeof(probe) - 1),
+                0, 0, 0, 0);
+    }
+
+    /* ---- 帧缓冲初始化 -------------------------------------------------
+       MapFB() 走 sys_dev_mmap: 内核把 FB 映射进本进程并返回目标 VA
+       (内核日志 "Framebuffer mapped to VADDR: 0x..." 即此); 几何信息走
+       GetFBInfo() 的 sys_dev_ioctl。
+       这两条路径曾因为系统调用返回值根本回不到用户态而返回全 0, 桌面于是
+       在 "framebuffer info failed" 上自杀 —— 根因是 user.asm 收尾写的是
+       %rax 而不是帧槽 (见 docs/debug-hang-2026-10-11.md 第 11 节), 已修。
+       这里保留逐个字段的兜底: 万一某个字段为 0, 用 ioctl 再取一次。 */
+    FrameBuffer fb = GetFBInfo();
+    fb.BaseAddress = (void*)MapFB();
+    if (fb.Width == 0)
+        fb.Width = syscall(SYSCALL_DEV_IOCTL, DEV_TYPE_FRAMEBUFFER, 0, 4, 0, 0, 0);
+    if (fb.Height == 0)
+        fb.Height = syscall(SYSCALL_DEV_IOCTL, DEV_TYPE_FRAMEBUFFER, 0, 2, 0, 0, 0);
+    if (fb.PixelsPerScanLine == 0)
+        fb.PixelsPerScanLine = syscall(SYSCALL_DEV_IOCTL, DEV_TYPE_FRAMEBUFFER, 0, 3, 0, 0, 0);
+    if (fb.BufferSize == 0)
+        fb.BufferSize = syscall(SYSCALL_DEV_IOCTL, DEV_TYPE_FRAMEBUFFER, 0, 1, 0, 0, 0);
+    uint64_t FbAddr = (uint64_t)fb.BaseAddress;
+
+    /* 启动自检日志: 桌面进程一旦"自己退了", 日志必须说清是哪一步。
+       (实测: PROC 7 曾以 code=1 静默退出, 内核只知道"它调了 sys_exit(1)",
+       不知道是 malloc 失败还是 compositor 初始化失败 —— 靠这里点名。) */
+    char boot_msg[192];
+    int bn = snprintf(boot_msg, sizeof(boot_msg),
+                      "[desktop] start: fb=%llx %llux%llu psl=%llu bufsz=%llu\n",
+                      (unsigned long long)FbAddr,
+                      (unsigned long long)fb.Width,
+                      (unsigned long long)fb.Height,
+                      (unsigned long long)fb.PixelsPerScanLine,
+                      (unsigned long long)fb.BufferSize);
+    if (bn > 0) syscall(SYS_DBGSOUT, (uint64_t)boot_msg, (uint64_t)bn, 0, 0, 0, 0);
+
+    /* 所有 "启动失败 -> return 1" 的地方统一走这个报告器: 之前静默退出
+       让"桌面为什么没了"完全无法从日志回答。 */
+    auto boot_fatal = [&](const char *what, unsigned long long bytes) -> int {
+        int n = snprintf(boot_msg, sizeof(boot_msg),
+                         "[desktop] FATAL: %s failed (bytes=%llu, %llux%llu) -> exit\n",
+                         what, bytes, (unsigned long long)fb.Width,
+                         (unsigned long long)fb.Height);
+        if (n > 0) syscall(SYS_DBGSOUT, (uint64_t)boot_msg, (uint64_t)n, 0, 0, 0, 0);
+        return 1;
+    };
 
     uint32_t scrW = (uint32_t)fb.Width;
     uint32_t scrH = (uint32_t)fb.Height;
+    if (scrW == 0 || scrH == 0 || FbAddr == 0)
+        return boot_fatal("framebuffer info", (unsigned long long)FbAddr);
+
     size_t wallBytes = (size_t)scrW * scrH * sizeof(uint32_t);
     uint32_t* wallBuf = (uint32_t*)malloc(wallBytes);
-    if (wallBuf == nullptr) return 1;
+    if (wallBuf == nullptr) {
+        /* 降级而不是退出: 壁纸/合成缓冲各约 8MB@1080p, 一次分配失败不应
+           让唯一的窗口管理器整体消失。这里退到 1/4 面积再试一次。 */
+        wallBuf = (uint32_t*)malloc((wallBytes = wallBytes / 4));
+        if (wallBuf == nullptr)
+            return boot_fatal("wallpaper malloc", (unsigned long long)wallBytes);
+    }
 
     const uint32_t barH = SKYWIN_TASKBAR_H;
 
@@ -397,13 +454,38 @@ int main(){
                (size_t)scrW * barH * sizeof(uint32_t));
 
     Compositor& comp = Compositor::Get();
-    if (!comp.Init((FrameBuffer*)&fb)) return 1;
+    if (!comp.Init((FrameBuffer*)&fb)) {
+        /* 同样先降级: compositor 的后台缓冲是 malloc 出来的, 失败时
+           报告具体字节数, 便于判断是"内存不够"还是"参数非法"。 */
+        return boot_fatal("Compositor::Init",
+                          (unsigned long long)((uint64_t)scrW * scrH * 4u));
+    }
 
     /* Start compositor workers BEFORE spawning any client app: the other
        cores are idle now, so the pinned workers execute their entry ack
        immediately. The workers just spin until the first frame once windows
        are registered. */
     comp.StartWorkers();
+
+    /* 启动自检: 确认 spawn worker 之后主线程的 TCB 自指针 ([fs:0] 就是运行期
+       的 %fs 值) 没有被破坏。
+       背景: 动态链接调试期间, 桌面曾在 StartWorkers 之后崩在 malloc 的
+       `%fs` 访问上; 真正原因是内核侧 TPOFF64 公式算错 (见
+       docs/dynamic-linking-plan.md), 但这条日志在定位过程中很有用,
+       留下来作为回归检查 —— 它每进程只打一行。 */
+    {
+        uint64_t fsv = 0;
+        __asm__ volatile("movq %%fs:0, %0" : "=r"(fsv));
+        char m[160];
+        int k = snprintf(m, sizeof(m),
+                         "[desktop] after StartWorkers: fs(tcb)=0x%llx\n",
+                         (unsigned long long)fsv);
+        if (k > 0) syscall(SYS_DBGSOUT, (uint64_t)m, (uint64_t)k, 0, 0, 0, 0);
+    }
+
+    bn = snprintf(boot_msg, sizeof(boot_msg),
+                  "[desktop] compositor up, workspace allocated; spawning console\n");
+    if (bn > 0) syscall(SYS_DBGSOUT, (uint64_t)boot_msg, (uint64_t)bn, 0, 0, 0, 0);
 
     WmDateTime bootDT;
     bool haveClock = wm_read_datetime(&bootDT);
@@ -966,6 +1048,36 @@ int main(){
                 wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tstate,
                                 &ndt, true);
                 wmDirty = true;
+            }
+        }
+
+        /* 分配器健康自检 (排查 "日志停在一行中间" 类整机停摆):
+           deferred-free 链表一旦被写坏, 加固后的 walker 会累加这个计数。
+           非 0 就说明"堆链表损坏"这个 bug 还存在 (只是不再把桌面打死),
+           把计数与坏指针打到串口, 便于定位根因。
+
+           动态链接注意: 这里**不能**用 `extern uint64_t g_alloc_...` 直接读 ——
+           那两个变量住在 libsky.so 里, 主程序直接引用会生成 R_X86_64_COPY
+           重定位 (链接器在主程序 BSS 里再留一份副本), 于是"读的人"和"写的人"
+           看到的不是同一块内存, 计数永远是 0。改为通过导出函数取值。 */
+        {
+            static uint64_t alloc_check_at = 0;
+            static uint64_t alloc_reported = 0;
+            if (now - alloc_check_at > tsc_per_ms * 2000) {
+                alloc_check_at = now;
+                uint64_t corrupt = alloc_scb_list_corrupt_count();
+                if (corrupt && corrupt != alloc_reported) {
+                    alloc_reported = corrupt;
+                    char msg[160];
+                    int n = snprintf(msg, sizeof(msg),
+                                     "[alloc] deferred-free list corrupt: "
+                                     "count=%llu bad_ptr=0x%llx\n",
+                                     (unsigned long long)corrupt,
+                                     (unsigned long long)alloc_scb_list_bad_ptr_value());
+                    if (n > 0)
+                        syscall(SYS_DBGSOUT, (uint64_t)msg, (uint64_t)n,
+                                0, 0, 0, 0);
+                }
             }
         }
 

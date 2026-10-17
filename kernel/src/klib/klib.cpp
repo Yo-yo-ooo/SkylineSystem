@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <atomic/atomic.h>
+#include <klib/stallwatch.h>
 
 extern "C" void Panic(const char* message){
     kerrorln("Panic!");
@@ -59,6 +60,9 @@ void hcf(void) {
    以 TimeSinceBootMS() 为 deadline 的等待变成永旋 (已实测整机挂死)。
    需要 deadline 的地方一律用 PIT::MonotonicMS()。 */
 extern "C" void spinlock_lock(spinlock_t* l) {
+    /* 停滞诊断: 记录待锁现场 (锁地址 + 加锁点)。只有两条 store, 热路径可接受;
+       CPU 停在这把锁上时, 看门狗 (stallwatch.cpp) 会把它打出来。 */
+    stall_note_lock_wait((uint64_t)l, (uint64_t)__builtin_return_address(0));
     while(atomic_test_and_set(l,ATOMIC_ACQUIRE))
 #ifdef __x86_64__
         asm volatile("pause");
@@ -67,9 +71,11 @@ extern "C" void spinlock_lock(spinlock_t* l) {
 #elif defined (__riscv)
         asm volatile("pause");
 #endif
+    stall_note_lock_acquired((uint64_t)l, (uint64_t)__builtin_return_address(0));
 }
 
 extern "C" void spinlock_unlock(spinlock_t* l) {
+    stall_note_lock_released();
     atomic_store_4(l,0,ATOMIC_RELEASE);
 }
 

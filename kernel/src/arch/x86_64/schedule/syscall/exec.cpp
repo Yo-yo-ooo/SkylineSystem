@@ -13,6 +13,27 @@
 extern int has_rdrand(void);
 extern uint64_t rdrand64_retry(int retries);
 
+/* 动态链接 (共享库) —— 实现在 kernel/src/elf/elf_dyn.cpp。
+ * 内核在把主程序装载好之后, 自己把 DT_NEEDED 指向的共享库也映射进该进程并
+ * 完成全部重定位 (等价 LD_BIND_NOW, 不做 PLT 延迟绑定)。链接主程序时用
+ * `ld --no-dynamic-linker`, 所以 ELF 里没有 PT_INTERP, 不需要用户态 ld.so。 */
+extern int elf_dyn_prepare(uint8_t *main_img, uint64_t main_len, pagemap_t *pm,
+                           uint64_t *tls_offset, uint64_t *tls_memsz,
+                           uint64_t *tls_filesz, uint64_t *tls_align,
+                           uint8_t *so_img, uint64_t so_len, const char *so_name,
+                           uint64_t *tls_main_off,
+                           uint8_t *so_tls_out, uint64_t so_tls_out_cap,
+                           uint64_t main_bias);
+
+/* 一步到位的动态链接: 读 DT_NEEDED -> 映射 .so -> 全部重定位。
+ * 实现在 elf_dyn.cpp; sys_load 与 Schedule::NewThread 都用它。 */
+extern int elf_dyn_apply(uint8_t *main_img, uint64_t main_len, pagemap_t *pm,
+                         uint64_t *tls_offset, uint64_t *tls_memsz,
+                         uint64_t *tls_filesz, uint64_t *tls_align,
+                         uint64_t main_bias,
+                         uint8_t **out_so_tls_img, uint64_t *out_so_tls_len,
+                         uint64_t *out_tls_main_data_off);
+
 #define SYS_MAX_PATH     4096
 #define SYS_MAX_ARGLEN   32768
 #define SYS_MAX_ARGC     256
@@ -117,11 +138,15 @@ static int64_t copy_user_strarray(char **src, char ***out_arr, int *out_cnt, int
     return 0;
 }
 
+/* dyn_read_needed() 已移到 kernel/src/elf/elf_dyn.cpp —— 桌面的加载路径是
+ * Schedule::NewThread (kernel/src/arch/x86_64/init.cpp 里 "Creating desktop
+ * process..."), 不走本文件的 sys_load。两个加载器都要做动态链接, 所以把
+ * "读 DT_NEEDED + 映射 + 重定位" 收进 elf_dyn.cpp 的 elf_dyn_apply()。 */
 /* ============ ELF 加载(带边界校验的实现 + 兼容旧签名的包装) ============ */
 static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
                               uint64_t *tls_offset, uint64_t *tls_memsz,
                               uint64_t *tls_filesz, uint64_t *tls_align,
-                              uint64_t data_len) {
+                              uint64_t data_len, uint64_t *out_bias = nullptr) {
     Elf64::Elf64_Ehdr *hdr = (Elf64::Elf64_Ehdr*)data;
 
     if (hdr->e_ident.c[0] != 0x7f ||
@@ -265,18 +290,28 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
     VMM::VMA::SetStart(pagemap, max_vaddr, 1);
     kpokln("LOAD ELF!");
 
+    /* 入口点必须可见: "进程刚起来就 exit 了"这类问题的第一现场就是
+       "内核到底跳到哪条指令"。 */
+    kinfoln("ELF entry: e_entry=0x%lx bias=0x%lx -> rip=0x%lx",
+            (unsigned long)hdr->e_entry, (unsigned long)load_bias,
+            (unsigned long)(hdr->e_entry + load_bias));
+
+    if (out_bias) *out_bias = load_bias;
     return hdr->e_entry + load_bias;
 }
 
 /* 兼容包装: 保持原 6 参数签名 —— task.cpp 的 extern 声明按此签名 mangle,
- * 改参数表会链接失败。新调用方(sys_load)走 elf_load_impl 带长度校验。 */
+ * 改参数表会链接失败。新调用方(sys_load)走 elf_load_impl 带长度校验。
+ * out_bias: 新增的可选出参, 动态链接需要它把 DT_* 里的链接期虚拟地址
+ *           换算成运行期地址 (PIE 主程序必需, 见 elf_dyn.cpp)。 */
 uint64_t elf_load(uint8_t *data, pagemap_t *pagemap,
                   uint64_t *tls_offset = nullptr,
                   uint64_t *tls_memsz = nullptr,
                   uint64_t *tls_filesz = nullptr,
-                  uint64_t *tls_align = nullptr) {
+                  uint64_t *tls_align = nullptr,
+                  uint64_t *out_bias = nullptr) {
     return elf_load_impl(data, pagemap, tls_offset, tls_memsz,
-                         tls_filesz, tls_align, 0);
+                         tls_filesz, tls_align, 0, out_bias);
 }
 
 extern uint64_t sched_tid;
@@ -421,13 +456,34 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     kfree(pathname); pathname = nullptr;
 
     uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
+    uint64_t main_bias = 0;
     _memset(&thread->ctx, 0, sizeof(context_t));
     thread->ctx.rip = elf_load_impl(buffer, thread->pagemap,     // 修复: 带长度校验
-                                    &tls_offset, &tls_memsz, &tls_filesz, &tls_align, FSize);
+                                    &tls_offset, &tls_memsz, &tls_filesz, &tls_align,
+                                    FSize, &main_bias);
     if (unlikely(thread->ctx.rip == 0)) {
         kerrorln("ELF load failed!");
         sys_load_fail(parent, thread, nullptr, buffer, argv, argc, envp, envc);
         return -EINVAL;
+    }
+
+    /* ---- 动态链接: 装载 DT_NEEDED 声明的共享库并完成重定位 --------------
+     * 必须在 elf_load_impl 之后 (主程序镜像已就位), 且在 TLS 块分配之前
+     * (TLS 布局要按"合并后的尺寸"一次算好)。
+     * 静态链接的程序直接返回 0, 一切照旧。
+     * so_tls_image / tls_main_data_off 交给下面的 TLS 建立代码使用。 */
+    uint8_t *so_tls_image = nullptr;
+    uint64_t so_tls_image_len = 0;
+    uint64_t tls_main_data_off = 0;
+    {
+        int dr = elf_dyn_apply(buffer, FSize, thread->pagemap,
+                               &tls_offset, &tls_memsz, &tls_filesz, &tls_align,
+                               main_bias,
+                               &so_tls_image, &so_tls_image_len, &tls_main_data_off);
+        if (unlikely(dr < 0)) {
+            sys_load_fail(parent, thread, nullptr, buffer, argv, argc, envp, envc);
+            return dr;
+        }
     }
 
     // fx_area 必须内核态私有(user=true 会映射成 U/S=1, 用户程序可直接读写)
@@ -478,6 +534,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         uint64_t tls_pages = DIV_ROUND_UP(total_tls_size, PAGE_SIZE);
         uint64_t tls_mem = (uint64_t)VMM::Alloc(thread->pagemap, tls_pages, true);
         if (unlikely(!tls_mem)) {
+            if (so_tls_image) kfree(so_tls_image);
             sys_load_fail(parent, thread, nullptr, buffer, argv, argc, envp, envc);
             return -ENOMEM;
         }
@@ -490,7 +547,15 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
           // portion (and page padding) must be cleared explicitly or __thread
           // state such as the per-class free caches starts as garbage.
           _memset((void*)tls_mem, 0, tls_pages * PAGE_SIZE);
-          __memcpy((void*)tls_mem, (void*)(buffer + tls_offset), tls_filesz);
+          /* 动态链接时, 合并块的布局是 [ .so 的 TLS | 主程序 TLS ]:
+             - 块首放 .so 的 .tdata 镜像 (so_tls_image, STATIC_TLS);
+             - 主程序自己的 .tdata 放在 tls_main_data_off 处。
+             静态链接时 so_tls_image == nullptr 且 off == 0, 行为与原来一致。 */
+          if (so_tls_image) {
+              __memcpy((void*)tls_mem, so_tls_image, so_tls_image_len);
+          }
+          __memcpy((void*)(tls_mem + tls_main_data_off),
+                   (void*)(buffer + tls_offset), tls_filesz);
           *(uint64_t*)tcb_base = tcb_base;
         }
         VMM::SwitchPageMap(caller_pm);
@@ -498,6 +563,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         thread->tls_base = tls_mem;
         thread->tls_pages = tls_pages;
     }
+    if (so_tls_image) { kfree(so_tls_image); so_tls_image = nullptr; }
 
     kfree(buffer);
     execve_cleanup(argc, envc, argv, envp);

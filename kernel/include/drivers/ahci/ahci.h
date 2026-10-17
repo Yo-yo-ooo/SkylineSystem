@@ -168,10 +168,17 @@ namespace AHCI
         bool     ident_cached = false;
         uint64_t cached_max_sector = 0;
         uint16_t cached_sector_size = 0;
+        /* 恢复限流: 一次失败恢复 1 次, 连续两轮失败就放弃 (避免把一次
+           硬件故障变成每笔 I/O 都做 COMRESET 的风暴) */
+        uint32_t recover_attempts = 0;
 
         void Configure();
         void StartCMD();
         void StopCMD();
+        /* 命令超时/端口报错后的恢复: 清错误位 + 复位命令引擎, 释放被卡住的
+           slot。返回 true = 端口已可用。没有它, 一个未完成的命令会永久占住
+           端口 (FindCommandSlot 之后永远返回 -1) = 磁盘 I/O 永久停摆。 */
+        bool RecoverPort();
         bool Read(uint64_t sector, uint32_t sectorCount, void* buffer);
         bool Write(uint64_t sector, uint32_t sectorCount, void* buffer);
         int32_t FindCommandSlot();

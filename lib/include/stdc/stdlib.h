@@ -16,6 +16,13 @@ void free(void* ptr);
 void* calloc(size_t nmemb, size_t size);
 void* realloc(void* ptr, size_t size);
 
+/* 分配器健康自检的**读取入口** (定义在 stdc/allocator/allocator.c)。
+   必须用函数而不是直接 extern 变量: 动态链接时用户程序直接引用 libsky.so
+   里的全局变量会生成 R_X86_64_COPY —— 主程序 BSS 里多出一份副本, 读到的
+   永远是初始 0 (实测在 desktop.dyn.elf 上正是这两个符号)。 */
+uint64_t alloc_scb_list_corrupt_count(void);
+uint64_t alloc_scb_list_bad_ptr_value(void);
+
 /* restrict C89 / C++ No restrict keyword! */
 #if !defined(__STDC_VERSION__) || (__STDC_VERSION__ < 199901L) || defined(__cplusplus)
 #  ifndef restrict

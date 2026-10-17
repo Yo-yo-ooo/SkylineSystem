@@ -5,6 +5,7 @@
 /limine-protocol
 /lib/bin
 /lib/obj
+/lib/obj-so
 /tests/bin
 /iso_root
 *.pcap
@@ -24,6 +25,7 @@ a.si4project/
 /*.h
 /*.py
 /*.sh
+/*.ps1
 /*.log
 /*.json
 /*.txt

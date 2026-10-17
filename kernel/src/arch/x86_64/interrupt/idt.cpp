@@ -6,6 +6,7 @@
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/schedule/sched.h>
+#include <klib/stallwatch.h>
 
 extern void FT_Clear();
 
@@ -173,6 +174,13 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     cpu_t *cpu = this_cpu();
     bool from_user = ((ctx->cs & 3) == 3);
 
+    /* 停滞看门狗: 记录本核现场 (RIP/RSP/RFLAGS/向量)。
+       心跳由调度器 (Schedule::Switch) 推进; 这里只标记"本核处在内核上下文",
+       看门狗据此把"卡在内核里"和"空闲的 AP"区分开。 */
+    stall_note_entry(ctx->rip, ctx->rsp, ctx->rflags, ctx->int_no, 0);
+    stall_set_kernel_busy(1);
+    struct StallClear { ~StallClear() { stall_set_kernel_busy(0); } } stall_clear;
+
     /* if (ctx->int_no == SCHED_VEC || ctx->int_no == SCHED_VEC + 1) {
         if (cpu) cpu->preempt_count++;
         Schedule::Internal::Switch(ctx);
@@ -248,12 +256,23 @@ extern "C" void idt_exception_handler(context_t *ctx) {
     
     if (smp_started && this_cpu()->current_thread)
         kerrorln("On thread %d", this_cpu()->current_thread->id);
-    stackframe_t *stack;
-    __asm__ volatile ("movq %%rbp, %0" : "=r"(stack));
-    kerror("Stack trace:\n");
-    for (int32_t i = 0; i < 5 && stack; i++) {
-        kerror("    0x%p\n", stack->rip);
-        stack = stack->rbp;
+    /* 栈回溯: 原实现直接沿 rbp 链解引用 —— 栈一旦被踩坏, 处理程序自己
+       在打印现场时二次缺页 (实测: "Stack trace:" 之后整机静默, 现场全丢)。
+       改成只在【内核栈区间内】按 16 字节对齐扫栈, 挑出像内核返回地址的
+       字; 每个候选值先做区间校验, 绝不 dereference 未知指针。 */
+    kerror("Stack trace (heuristic scan from rsp=%p):\n", (void*)ctx->rsp);
+    {
+        uint64_t sp = (ctx->rsp + 15) & ~15ULL;
+        int printed = 0;
+        for (int i = 0; i < 256 && printed < 12; i++, sp += 8) {
+            if (sp < 0xFFFF800000000000ULL || sp >= 0xFFFFFFFF00000000ULL) break;
+            uint64_t v = *(volatile uint64_t*)sp;
+            if (v >= 0xFFFFFFFF80000000ULL && v < 0xFFFFFFFFC0000000ULL) {
+                kerror("    %p\n", (void*)v);
+                printed++;
+            }
+        }
+        if (!printed) kerror("    (no kernel return addresses on stack)\n");
     }
     hcf();
 }

@@ -63,10 +63,17 @@ syscall_entry:
 
     call syscall_handler
 
-    ; P5-97: [rsp + 14*8] = syscall_frame_t.rax 槽位 (r15..rax 的
-    ; 第 15 个字段, 索引 14)。pushaq 顺序与 syscall.h 的
-    ; syscall_frame_t 布局一一对应 —— 顺序若变必须同步此偏移。
-    mov [rsp + 14*8], rax 
+    ; ---- 系统调用返回值 (关键修复) ------------------------------------
+    ; 原实现写的是 `mov [rsp + 14*8], rax` —— 依赖"syscall_handler 返回时
+    ; %rax 仍是返回值"。但 %rax 是 caller-saved: 只要 C++ 侧在
+    ;   frame->rax = ret;
+    ; 之后还有任何一步(函数调用/辅助代码), %rax 就会被覆盖, 用户态拿到的
+    ; 就是那个残留值。实测表现极具误导性: 内核日志里 handler 返回
+    ; 0x320 / 0xFFFF8000FD000000, 用户态却收到 0 或 1, 于是桌面在
+    ; "framebuffer info failed" 上自杀。
+    ; 正确做法: 从**帧槽**读回返回值 (syscall_handler 总是写 frame->rax),
+    ; 而帧槽就在 [rsp+112] —— 与 %rax 是否被覆盖无关。
+    mov rax, [rsp + 14*8]
 
     pop r15
     pop r14

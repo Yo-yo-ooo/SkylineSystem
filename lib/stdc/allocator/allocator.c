@@ -7,6 +7,7 @@
 #include <base/arch/x86_64/syscall.h>
 #endif
 #include <stdc/stdlib.h>
+#include <stdio.h>          /* qsbr_slot 护栏诊断用 snprintf */
 #include <base/base.h>
 
 extern volatile uint64_t SizeClassTable[75][3];
@@ -46,6 +47,76 @@ extern volatile uint64_t SizeClassTable[75][3];
 
 #define DIV_ROUND_UP(x, y) (((x) + ((y) - 1)) / (y))
 #define PAGE_SIZE 4096
+
+/* 用户态合法地址上界 (与释放路径的 header 校验同源) */
+#define SKYLINE_MAX_LEGAL_ADDR  0x00007FFFFFFFFFFFULL
+
+/* deferred-free 链表的最大长度。正常一次 flush 只挂几个 SCB; 超过这个数
+   说明链已经坏了 (环/野指针), 必须停下来而不是继续走。
+   背景: 实测桌面进程在 flush_tls_scb_all 里沿链表走到未映射页 (RIP
+   0x4083A9, CR2 在 0x7FFF... 栈区), 处理成"进程静默死亡 + 整机停摆"。
+   现在改成: 走链时逐个校验指针, 一旦不合法就丢弃这一批并记数, 绝不再
+   解引用 (宁可漏回收, 不可踩野指针)。 */
+#define SCB_LIST_MAX_STEPS      4096U
+
+/* 诊断出口: 用户在 GDB 里可直接读这两个符号 */
+volatile uint64_t g_alloc_scb_list_corrupt = 0;   /* 检测到坏链的次数 */
+volatile uint64_t g_alloc_scb_list_bad_ptr = 0;   /* 最后一次的坏指针    */
+
+/* 导出访问函数 (动态链接必需): 若用户程序直接 `extern` 上面两个变量,
+   链接器会生成 R_X86_64_COPY —— 在主程序 BSS 里再放一份副本, 于是
+   "libsky.so 里写的人" 与 "主程序里读的人" 看到的不是同一块内存,
+   计数永远是 0 (实测 desktop.dyn.elf 上正是这两个符号)。走函数读取即可。 */
+uint64_t alloc_scb_list_corrupt_count(void) { return g_alloc_scb_list_corrupt; }
+uint64_t alloc_scb_list_bad_ptr_value(void) { return g_alloc_scb_list_bad_ptr; }
+
+static inline int scb_ptr_ok(const void* p) {
+    uint64_t v = (uint64_t)p;
+    if (v == 0) return 0;
+    if (v & 0x7u) return 0;                        /* 未对齐 */
+    if (v < 0x10000ULL) return 0;
+    if (v > SKYLINE_MAX_LEGAL_ADDR) return 0;
+    return 1;
+}
+
+/* 走到链表尾; 返回尾块, 0 = 空表, (void*)-1 = 链损坏 */
+static inline void* scb_list_tail(const void* head) {
+    const void* p = head;
+    uint32_t steps = 0;
+    while (scb_ptr_ok(p)) {
+        if (++steps > SCB_LIST_MAX_STEPS) {
+            g_alloc_scb_list_corrupt++;
+            g_alloc_scb_list_bad_ptr = (uint64_t)p;
+            return (void*)-1;
+        }
+        void* next = *(void* const*)p;
+        if (!next) return (void*)p;
+        p = next;
+    }
+    g_alloc_scb_list_corrupt++;
+    g_alloc_scb_list_bad_ptr = (uint64_t)p;
+    return (void*)-1;
+}
+
+/* 统计链长; 损坏时返回 0 (调用方据此跳过本批) */
+static inline uint64_t scb_list_count(const void* head) {
+    const void* p = head;
+    uint64_t n = 0;
+    while (scb_ptr_ok(p)) {
+        if (++n > SCB_LIST_MAX_STEPS) {
+            g_alloc_scb_list_corrupt++;
+            g_alloc_scb_list_bad_ptr = (uint64_t)p;
+            return 0;
+        }
+        p = *(void* const*)p;
+    }
+    if (p != 0) {                                  /* 非正常收尾 */
+        g_alloc_scb_list_corrupt++;
+        g_alloc_scb_list_bad_ptr = (uint64_t)p;
+        return 0;
+    }
+    return n;
+}
 
 #define IS_LARGE_PATH_FLAG      0x80000000U
 
@@ -115,8 +186,8 @@ static void _free_large_object_real(void* block_addr, AllocBlock_t* header);
 #define FLUSH_TLS_LIST(tls_list, tls_count, global_list, global_count) do { \
     if (!(tls_list)) break; \
     void* _fl_head = (void*)(tls_list); \
-    void* _fl_tail = _fl_head; \
-    while (*(void**)_fl_tail) _fl_tail = *(void**)_fl_tail; \
+    void* _fl_tail = scb_list_tail(_fl_head); \
+    if (_fl_tail == (void*)-1) break;   /* 链损坏: 保留本批, 绝不解引用 */ \
     void* _fl_old = NULL; \
     do { \
         _fl_old = (void*)(global_list); \
@@ -173,6 +244,24 @@ static inline void push_deferred_scb(void* scb, int is_large) {
 // ============================================================================
 
 static inline int32_t qsbr_enter() {
+    /* 廉价护栏: slot 只允许是 -1 (未领取) 或 [0, QSBR_SLOTS)。
+       动态链接调试期间这里曾读到过 ASCII "2026" 这类垃圾值, 根因是内核侧
+       TPOFF64 公式算错 (见 kernel/src/elf/elf_dyn.cpp 的 TPOFF64 分支)，
+       已修。留这条断言, 以后再出现同类偏移错误会立刻可见而不是变成随机崩溃。 */
+    if (__builtin_expect(tls_data.qsbr_slot != -1 &&
+                         (tls_data.qsbr_slot < 0 ||
+                          tls_data.qsbr_slot >= (int32_t)QSBR_SLOTS), 0)) {
+        uint64_t fs = 0;
+        __asm__ volatile("movq %%fs:0, %0" : "=r"(fs));
+        char b[192];
+        int n = snprintf(b, sizeof(b),
+            "[alloc] FATAL qsbr_slot out of range: %d (0x%x) fs=0x%llx\n",
+            (int)tls_data.qsbr_slot, (unsigned)tls_data.qsbr_slot,
+            (unsigned long long)fs);
+        if (n > 0) syscall(SYS_DBGSOUT, (long)b, (long)n, 0, 0, 0, 0);
+        syscall(SYS_EXIT, 77, 0, 0, 0, 0, 0);
+    }
+
     if (__builtin_expect(tls_data.qsbr_slot == -1, 0)) {
         tls_data.qsbr_slot = atomic_fetch_add_n(&global_qsbr_slot_alloc, 1, ATOMIC_RELAXED) % QSBR_SLOTS;
     }
@@ -237,10 +326,11 @@ static inline void try_gc() {
 
     #define APPEND_LIST(head, tail_list) do { \
         if (tail_list) { \
-            void* t = (tail_list); \
-            while (*(void**)t) t = *(void**)t; \
-            *(void**)t = (head); \
-            (head) = (tail_list); \
+            void* t = scb_list_tail(tail_list); \
+            if (t != (void*)-1) { \
+                *(void**)t = (head); \
+                (head) = (tail_list); \
+            } \
         } \
     } while(0)
 
@@ -249,9 +339,13 @@ static inline void try_gc() {
 
     if (!small_list && !large_list) goto unlock;
 
-    uint64_t n_small = 0, n_large = 0;
-    for (void* p = small_list; p; p = *(void**)p) n_small++;
-    for (void* p = large_list; p; p = *(void**)p) n_large++;
+    uint64_t n_small = scb_list_count(small_list);
+    uint64_t n_large = scb_list_count(large_list);
+    if ((small_list && n_small == 0) || (large_list && n_large == 0)) {
+        /* 链损坏: 本批不可回收 (回收会 munmap 未知页), 直接放弃本轮 */
+        atomic_store_n(&gc_lock, 0, ATOMIC_RELEASE);
+        return;
+    }
 
     uint64_t total_pending = n_small + n_large;
 
@@ -281,20 +375,22 @@ static inline void try_gc() {
     } else {
         void* old_head;
         if (small_list) {
-            void* tail = small_list;
-            while (*(void**)tail) tail = *(void**)tail;
-            do {
-                old_head = (void*)old_small_scb_list;
-                *(void**)tail = old_head;
-            } while (__a_cas_p(&old_small_scb_list, old_head, small_list) != old_head);
+            void* tail = scb_list_tail(small_list);
+            if (tail != (void*)-1) {
+                do {
+                    old_head = (void*)old_small_scb_list;
+                    *(void**)tail = old_head;
+                } while (__a_cas_p(&old_small_scb_list, old_head, small_list) != old_head);
+            }
         }
         if (large_list) {
-            void* tail = large_list;
-            while (*(void**)tail) tail = *(void**)tail;
-            do {
-                old_head = (void*)old_large_scb_list;
-                *(void**)tail = old_head;
-            } while (__a_cas_p(&old_large_scb_list, old_head, large_list) != old_head);
+            void* tail = scb_list_tail(large_list);
+            if (tail != (void*)-1) {
+                do {
+                    old_head = (void*)old_large_scb_list;
+                    *(void**)tail = old_head;
+                } while (__a_cas_p(&old_large_scb_list, old_head, large_list) != old_head);
+            }
         }
         atomic_fetch_add_n(&pending_small_count, n_small, ATOMIC_RELEASE);
         atomic_fetch_add_n(&pending_large_count, n_large, ATOMIC_RELEASE);
@@ -693,7 +789,7 @@ static void* _skyline_malloc_internal(size_t size) {
 // ============================================================================
 // 释放路径
 // ============================================================================
-#define SKYLINE_MAX_LEGAL_ADDR  0x00007FFFFFFFFFFFULL
+/* SKYLINE_MAX_LEGAL_ADDR / SCB 链表校验见文件前部 (deferred-free 部分) */
 /* P1-46: 元数据校验失败 = 堆损坏, 立即终止本进程 (原静默 return 让
    伪 header 继续驱动进程内任意写/位操作); sys_exit 不会返回 */
 #define ALLOCTOR_SECURITY_ASSERT(cond) do { \
@@ -796,6 +892,8 @@ static void _skyline_free_internal(void* ptr) {
 // ============================================================================
 // 标准 API
 // ============================================================================
+
+
 void* malloc(size_t size) {
     int32_t slot = qsbr_enter();
     void* ptr = _skyline_malloc_internal(size);

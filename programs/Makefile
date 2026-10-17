@@ -23,6 +23,22 @@ all:
 	e2cp $(PROGRAM_BUILD_DIR)/notepad.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/doom.elf $(DISK_IMG):/
 
+	@# 共享库 (动态链接): 内核从 /mp/libsky.so 加载, 所以必须进盘。
+	@# 缺失时不影响现有静态链接的程序, 只提示一句。
+	@if [ -f ../lib/bin/libsky.so ]; then \
+	    e2cp ../lib/bin/libsky.so $(DISK_IMG):/ && echo "libsky.so -> image"; \
+	else \
+	    echo "(libsky.so not built yet - run 'make -C lib so' for dynamic linking)"; \
+	fi
+
+	@# 动态链接版桌面 (desktop.dyn.elf)。内核目前按固定路径 /mp/desktop.elf
+	@# 加载, 所以动态版本要"顶替"这个名字 —— 保留一份静态副本便于回退。
+	@# 验收要点: 体积从 ~1.04MB 降到 ~245KB, 且启动日志出现 [dynlink] 行。
+	@if [ -f $(PROGRAM_BUILD_DIR)/desktop.dyn.elf ]; then \
+	    e2cp $(PROGRAM_BUILD_DIR)/desktop.dyn.elf $(DISK_IMG):/desktop.elf && \
+	    echo "desktop.dyn.elf -> disk.img:/desktop.elf (DYNAMIC desktop in image)"; \
+	fi
+
 	@# DOOM IWAD —— 不随仓库分发, 使用者自备:
 	@#   放在 programs/PureDOOM/doom.wad (完整版) 或 doom1.wad (共享版),
 	@#   构建时拷进镜像; 缺失则 doom.elf 仍入盘, 但桌面不会 spawn DOOM 窗口。
