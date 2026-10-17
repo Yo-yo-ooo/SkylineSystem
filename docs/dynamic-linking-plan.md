@@ -172,9 +172,45 @@ uint32_t exports_cap;   /* 初始 256, 满则翻倍 */
 实测日志 (证明增长真的发生了, 且静态主程序零分配):
 
 ```
-[dynlink] main: syms=31 exports=0 cap=0 (dyn alloc, 0 bytes)      <- 静态主程序, 不分配
-[dynlink] libsky.so: syms=288 exports=287 cap=512 (dyn alloc, 36864 bytes)
+[dynlink] main: syms=31 exports=0 cap=0 (0 B) htab=0 (0 B, load=0.00)   <- 静态主程序, 不分配
+[dynlink] libsky.so: syms=288 exports=287 cap=512 (36864 B) htab=1024 (4096 B, load=0.28)
                                        ^^^^^^^^^ 256 翻倍到 512
+```
+
+## 符号名哈希索引
+
+有了动态导出表之后, **查找**仍然是瓶颈: `dl_lookup()` 对每个对象的
+`exports[]` 做线性扫描, 而重定位阶段每条 `GLOB_DAT`/`JUMP_SLOT` 都要查一次。
+287 个导出 × 约 300 条重定位 ≈ **8 万次槽位比较**, 且每次命中都要
+`__strcmp`。
+
+改成**每对象一个开放寻址哈希表**, 表里存 `exports[]` 的下标:
+
+```c
+uint32_t *htab;     /* 表长 = >= 2×nexports 的 2 的幂; DL_HTAB_EMPTY 表示空槽 */
+uint32_t  htab_sz;  /* 0 = 尚未构建 (或已失效) */
+uint32_t  htab_cap; /* 已分配的表长, 复用它避免反复 kmalloc */
+```
+
+- `dl_htab_build()`: 收集完全部导出后调用一次; 线性探测插入,
+  **空槽才插入** ⇒ 同名的先出现者优先, 与 ELF"第一个定义胜出"的顺序语义一致,
+  去重也顺手在建表时完成 (所以 `dl_add_export()` 不再做 O(n²) 查重);
+- `dl_obj_find()`: 哈希 + 线性探测, 命中才 `__strcmp`; 探测次数封顶 `htab_sz`
+  防御 (实际负载 ≤ 0.5, 探测链极短);
+- 不做删除 ⇒ 不需要墓碑标记; 整表重建即可。
+- `dl_lookup()` 现在**只算一次哈希**, 各对象共用, 逐对象探测。
+
+内存代价: `1024 × 4B = 4KB` (对比省下的 ~8 万次比较, 完全值得), 且与
+`exports[]` 一起在 `dl_exports_free()` 里释放, 静态主程序仍然是零分配。
+
+实测 (负载因子 0.28, 所有符号解析成功):
+
+```
+[dynlink] main: syms=31 exports=0 cap=0 (0 B) htab=0 (0 B, load=0.00)
+[dynlink] libsky.so: syms=288 exports=287 cap=512 (36864 B) htab=1024 (4096 B, load=0.28)
+unresolved/unsupported/oom : 0
+segfault / user crash      : 0
+doom init done             : 1
 ```
 
 ## 6. 当前卡点 (下一步)

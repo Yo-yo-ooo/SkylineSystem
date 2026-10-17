@@ -24,19 +24,25 @@ all:
 	e2cp $(PROGRAM_BUILD_DIR)/doom.elf $(DISK_IMG):/
 
 	@# 共享库 (动态链接): 内核从 /mp/libsky.so 加载, 所以必须进盘。
-	@# 缺失时不影响现有静态链接的程序, 只提示一句。
+	@# 动态链接现在是**默认**产物, 所以缺这个库就是硬错误 —— 早点报出来,
+	@# 别等到程序链接时才莫名其妙地 "cannot find -l:libsky.so"。
 	@if [ -f ../lib/bin/libsky.so ]; then \
 	    e2cp ../lib/bin/libsky.so $(DISK_IMG):/ && echo "libsky.so -> image"; \
 	else \
-	    echo "(libsky.so not built yet - run 'make -C lib so' for dynamic linking)"; \
+	    echo "ERROR: ../lib/bin/libsky.so 不存在 —— 先 'make -C lib' (或直接 'make cm')"; \
+	    exit 1; \
 	fi
 
-	@# 动态链接版桌面 (desktop.dyn.elf)。内核目前按固定路径 /mp/desktop.elf
-	@# 加载, 所以动态版本要"顶替"这个名字 —— 保留一份静态副本便于回退。
-	@# 验收要点: 体积从 ~1.04MB 降到 ~245KB, 且启动日志出现 [dynlink] 行。
-	@if [ -f $(PROGRAM_BUILD_DIR)/desktop.dyn.elf ]; then \
-	    e2cp $(PROGRAM_BUILD_DIR)/desktop.dyn.elf $(DISK_IMG):/desktop.elf && \
-	    echo "desktop.dyn.elf -> disk.img:/desktop.elf (DYNAMIC desktop in image)"; \
+	@# 自检: 镜像里的 /mp/desktop.elf 必须是动态链接版 (NEEDED libsky.so)。
+	@# 内核按固定路径加载它, 混淆静态/动态会让"改了半天没生效"这种问题重现。
+	@if [ -f $(DISK_IMG) ]; then \
+	    if e2cp $(DISK_IMG):/desktop.elf /tmp/_desk_check.elf >/dev/null 2>&1; then \
+	        if readelf -d /tmp/_desk_check.elf 2>/dev/null | grep -q 'libsky.so'; then \
+	            echo "image desktop.elf: DYNAMIC (NEEDED libsky.so) OK"; \
+	        else \
+	            echo "warning: 镜像里的 desktop.elf 不是动态链接版"; \
+	        fi; \
+	    fi; \
 	fi
 
 	@# DOOM IWAD —— 不随仓库分发, 使用者自备:
@@ -65,20 +71,37 @@ all:
 	    e2cp ./README.md $(DISK_IMG):/; \
 	fi
 
+	@# 字体是**可选资源**: res/font 不入库 (*.ttf 在 .gitignore 里), 由使用者自备。
+	@# 拿不到字体时只告警、绝不中断构建 —— 桌面对字体做了判空
+	@# (console_font() 可能返回 NULL, 所有调用点都有 `if (f)` 保护, 只是不画
+	@# 文字), 所以缺字体不影响启动。以前这里失败会 exit 1, 在离线环境里
+	@# `make cm` 必然失败, 而且报错点离真正的原因 (没有网络) 很远。
 	@if [ ! -f "$(FONT_FILE)" ]; then \
-	    echo "Font not found locally, downloading..."; \
-        wget -q https://github.com/Yo-yo-ooo/SkylineSystem/releases/download/font/SourceHanSerifTC_Medium.zip -O /tmp/font.zip; \
-        if [ $$? -ne 0 ]; then echo "Failed to download font!"; exit 1; fi; \
-        mkdir -p ../res/font; \
-        unzip -o -q /tmp/font.zip -d ../res/font/; \
-        rm -f /tmp/font.zip; \
+	    echo "Font not found locally, trying to download..."; \
+	    if wget -q https://github.com/Yo-yo-ooo/SkylineSystem/releases/download/font/SourceHanSerifTC_Medium.zip -O /tmp/font.zip 2>/dev/null \
+	       && [ -s /tmp/font.zip ]; then \
+	        mkdir -p ../res/font; \
+	        if unzip -o -q /tmp/font.zip -d ../res/font/ 2>/dev/null; then \
+	            echo "font downloaded -> ../res/font"; \
+	        else \
+	            echo "warning: 字体压缩包解压失败"; \
+	        fi; \
+	        rm -f /tmp/font.zip; \
+	    else \
+	        rm -f /tmp/font.zip; \
+	        echo "warning: 字体 SourceHanSerifTC_Medium.ttf 缺失且下载失败 (通常是没网)。"; \
+	        echo "         界面文字不会渲染, 但桌面已判空, 不影响启动。"; \
+	        echo "         需要文字时把该 ttf 放到 res/font/ 后重跑 make -C programs。"; \
+	    fi; \
 	fi
 
-	@# 检查镜像中是否已有字体，没有则拷贝
+	@# 镜像里已有就跳过; 本地有就拷进去; 都没有则明确跳过 (不报错)
 	@if e2ls $(DISK_IMG) 2>/dev/null | grep -q "SourceHanSerifTC_Medium.ttf"; then \
-        echo "SourceHanSerifTC_Medium.ttf Exists in image"; \
+	    echo "SourceHanSerifTC_Medium.ttf Exists in image"; \
+	elif [ -f "$(FONT_FILE)" ]; then \
+	    e2cp $(FONT_FILE) $(DISK_IMG):/ && echo "font -> image"; \
 	else \
-	    e2cp $(FONT_FILE) $(DISK_IMG):/; \
+	    echo "(font 既不在镜像里也不在本地 - 跳过, 不视为错误)"; \
 	fi
 
 clean:

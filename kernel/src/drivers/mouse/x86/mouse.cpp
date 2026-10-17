@@ -10,6 +10,8 @@
 #include <arch/x86_64/schedule/sched.h>
 #include <drivers/dev/dev.h>
 #include <arch/x86_64/pit/pit.h>
+extern void keyboard_feed_byte(uint8_t code);
+
 #define PS2_DATA_PORT     0x60
 #define PS2_STATUS_PORT   0x64
 #define PS2_CMD_PORT      0x64
@@ -210,8 +212,12 @@ void ps2_mouse_handler(registers *regs) {
         return; // 没有数据
     }
     if (!(status & 0x20)) {
-        io_in8(PS2_DATA_PORT); // 丢弃键盘数据
-        LAPIC::EOI();  // P1-25: 同上
+        /* 这一字节其实属于**键盘**。原实现直接读出来丢掉 —— 键盘和鼠标
+           共用 0x60 端口, 当两个设备同时有数据时 (快速打字 + 移动鼠标)
+           就会静默吞掉按键。改为交给键盘翻译。 */
+        uint8_t kb = io_in8(PS2_DATA_PORT);
+        keyboard_feed_byte(kb);
+        LAPIC::EOI();
         return;
     }
 
@@ -255,15 +261,20 @@ void ps2_mouse_handler(registers *regs) {
             //kinfoln("%d",PS2MouseEvent.ps2_mouse_state.left);
             //kinfoln("%d",PS2MouseEvent.ps2_mouse_state.right);
 
-            // 解析 X 移动 (利用 C 语言的隐式符号扩展)
-            int8_t dx_raw = (int8_t)mouse_bytes[1];
-            int16_t dx = dx_raw; 
+            /* X/Y 增量是**9 位有符号**数: 符号位不在数据字节里, 而在
+               byte0 的 bit4(X)/bit5(Y) —— 数据字节只有低 8 位。
+               原实现直接 (int8_t) 转换, 于是 |Δ| > 127 的快速移动会被
+               当成反方向的 8 位数: 例如 Δy = -200 在数据字节里是 0x38,
+               读成 +56, 光标**反向跳**。实测注入 -400 的移动时光标反而
+               下移, 就是这个。这里把第 9 位补回来 (标准 PS/2 做法)。 */
+            int32_t dx = (int32_t)(uint8_t)mouse_bytes[1];
+            int32_t dy = (int32_t)(uint8_t)mouse_bytes[2];
+            if (mouse_bytes[0] & 0x10) dx -= 256;   /* X 符号位 */
+            if (mouse_bytes[0] & 0x20) dy -= 256;   /* Y 符号位 */
             PS2MouseEvent.ps2_mouse_state.x += dx;
 
-            // 解析 Y 移动 (Y 轴方向是向上的，屏幕坐标系通常是向下的，所以取反)
-            int8_t dy_raw = (int8_t)mouse_bytes[2];
-            int16_t dy = dy_raw;
-            PS2MouseEvent.ps2_mouse_state.y -= dy; 
+            /* PS/2 的 Y 轴向上为正, 屏幕坐标向下为正, 所以取反 */
+            PS2MouseEvent.ps2_mouse_state.y -= dy;
 
             // 再次插入内存屏障，确保上面的写入先于 seq++ 完成
             asm volatile("" ::: "memory");

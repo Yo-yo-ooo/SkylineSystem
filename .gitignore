@@ -21,6 +21,7 @@ a.si4project/
 *.log
 *.png
 !_qemu_doom_ingame.png
+/*.err
 /*.c
 /*.h
 /*.py

@@ -1,6 +1,7 @@
 OBJDIR := ../object
 BINDIR := ../bin
 PROJ_NAME := HW
+ELF_NAME  := hw
 
 include ../../gdef.mk
 
@@ -34,12 +35,13 @@ OBJ := $(addprefix $(OBJDIR)/$(PROJ_NAME)/, \
 )
 
 .PHONY: all clean
-all: $(BINDIR)/hw.elf
+# 默认产出**动态链接**版 $(BINDIR)/hw.elf (NEEDED libsky.so, 无 PT_INTERP)。
+# 静态版仍然可用: `make static` -> $(BINDIR)/hw.static.elf。
+# 规则细节见 programs/dynprog.mk。
+include ../dynprog.mk
 
+all: $(DYN_ELF)
 
- $(BINDIR)/hw.elf: $(OBJ) Makefile
-	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) -o $@ $(OBJ) -L../../lib/bin -l:lib.a 
 
  $(OBJDIR)/$(PROJ_NAME)/%.c.o: %.c Makefile
 	@echo "CC $<"

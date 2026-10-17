@@ -62,6 +62,25 @@ X86MEM_OBJ    += ../ablib/arch/x86_64/x86mem/memops.o
 X86MEM_PIC_OBJ += ../ablib/arch/x86_64/x86mem/memops.pic.o
 CFLAGS += $(X86MEM_CFLAGS)
 OBJS   += $(X86MEM_OBJ)
+
+# ------------------------------------------------------------------------------
+# x86mem 的两个产物 (memops.o / memops.pic.o) 住在另一个目录、由另一个 make
+# 生成。它们却是 lib.a / libsky.so 的**文件型先决条件**。
+# 只靠 phony 目标去"顺手编一下"不够: `make clean` 会把它们删掉 (x86mem 的
+# clean 是 rm -rf *.o), 之后 make 找不到规则就报
+#   *** 没有规则可制作目标 "../ablib/arch/x86_64/x86mem/memops.o"，由 "bin/lib.a" 需求
+# 而 `make cm` 正是"先 clean 再 build", 所以必踩。
+# 这里补上真正的文件规则, 把源文件列为先决条件: 源码没变就不重复编译。
+X86MEM_SRCS := $(wildcard ../ablib/arch/x86_64/x86mem/*.c \
+                           ../ablib/arch/x86_64/x86mem/*.h)
+
+../ablib/arch/x86_64/x86mem/memops.o: $(X86MEM_SRCS)
+	@echo "CC      x86mem/memops.o"
+	@$(MAKE) -s -C ../ablib/arch/x86_64/x86mem >/dev/null
+
+../ablib/arch/x86_64/x86mem/memops.pic.o: $(X86MEM_SRCS)
+	@echo "CC      x86mem/memops.pic.o (PIC)"
+	@$(MAKE) -s -C ../ablib/arch/x86_64/x86mem pic >/dev/null
 endif
 
 # 生成依赖文件
@@ -106,15 +125,10 @@ SO_LDFLAGS = -shared -m elf_x86_64 -z noexecstack --hash-style=sysv \
 SO_DEPS = $(SOBJS:.o=.d)
 
 .PHONY: so
-so: $(BINDIR) memops-pic $(SOTARGET)
+so: $(SOTARGET)
 
-# PIC 版 memops 由 ablib 的 x86mem 构建产出
-.PHONY: memops-pic
-memops-pic:
-	@$(MAKE) -s -C ../ablib/arch/x86_64/x86mem pic >/dev/null
-
-# 依赖里带上 memops-pic: 直接 `make all` 时也要先把 PIC 版 memops 编出来
-$(SOTARGET): $(SOBJS) Makefile memops-pic
+# 依赖里带上 memops-pic: 直接 `make so` 时也要先把 PIC 版 memops 编出来
+$(SOTARGET): $(SOBJS) Makefile
 	@echo "LD      $@"
 	@$(LD) $(SO_LDFLAGS) -o $@ $(SOBJS)
 	@echo "Shared library built: $@"
@@ -139,6 +153,13 @@ $(SOBJDIR)/%.cpp.o: %.cpp
 # ==============================================
 # 主规则
 # ==============================================
+# 默认目标必须显式指定: 本文件里 `so:` 规则在 `all:` 之前出现, make 会把
+# **第一个**非特殊目标当作默认目标 —— 于是 `make -C lib` 只构建 libsky.so,
+# 不生成 lib.a。而 `make cm` 随后链接程序时需要 lib.a, 于是报
+#   ld: 找不到 -l:lib.a
+# 这种"lib 看起来构建成功、程序却链接失败"的错最费时间, 所以这里钉死默认目标。
+.DEFAULT_GOAL := all
+
 all: $(OBJDIR) $(BINDIR) $(TARGET) $(SOTARGET)
 $(info $(OBJS))
 # 构建静态库
@@ -179,7 +200,7 @@ $(BINDIR):
 # 清理规则
 # ==============================================
 clean:
-	rm -rf $(OBJDIR) $(BINDIR)
+	rm -rf $(OBJDIR) $(BINDIR) $(SOBJDIR)
 	@echo "Library all cleaned."
 
 .PHONY: all clean

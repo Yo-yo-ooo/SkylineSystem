@@ -248,6 +248,14 @@ static void SyncKillProcThreads(proc_t *proc, thread_t *except_thread) {
         thread_t *t = proc->threads;
         if (t) {
             thread_t *start = t;
+            /* 有界遍历: 这段代码**持有 PROC_LIST_LOCK**。若线程链表被破坏
+               (某个 next 不指回 start, 或 proc->threads 一直非空), 原来的
+               do/while 会永远循环并一直持锁 —— 实测后果是另一个 CPU 在
+               Schedule::PROC_KILL 里等 32 秒以上, 随后所有 TLB shootdown
+               因为目标核关中断等锁而全部 ACK 超时, 日志被
+               "[KERR] TLB shootdown: ACK timeout" 刷屏。
+               宁可放弃本轮回收并报一次错, 也绝不在持锁状态下死等。 */
+            uint64_t guard = 0;
             do {
                 thread_t *next = t->next;
                 if (t != except_thread && count < 64) {
@@ -255,6 +263,12 @@ static void SyncKillProcThreads(proc_t *proc, thread_t *except_thread) {
                     batch[count++] = t;
                 }
                 t = next;
+                if (unlikely(++guard > 4096)) {
+                    kerrorln("[sched] thread list corrupt in "
+                             "SyncKillProcThreads (pid=%d), aborting batch",
+                             proc->id);
+                    break;
+                }
             } while (t != start && proc->threads);
         }
         spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);

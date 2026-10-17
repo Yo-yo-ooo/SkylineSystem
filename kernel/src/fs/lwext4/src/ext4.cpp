@@ -70,7 +70,59 @@
 //UNSAFE INCLUDE
 #ifdef __x86_64__
 #include <arch/x86_64/rtc/rtc.h>
+#include <arch/x86_64/schedule/sched.h>
 #endif
+
+/* ---------------------------------------------------------------------------
+ * 挂载点全局锁 (lwext4 的 os_locks 回调)
+ * ---------------------------------------------------------------------------
+ * lwext4 是**单线程设计**: 它用一棵共享的缓冲缓存红黑树 (ext4_bcache),
+ * 里面 *没有* 任何内部同步。本内核有 4 个 CPU, 多个进程会同时从系统调用
+ * 进入 ext4 (桌面/notepad/doom 同时 fopen 就够), 于是 RB_INSERT/RB_REMOVE
+ * 并发改同一棵树 -> 树结构损坏 -> 后续旋转解引用 NULL -> 内核 #PF @ 0x70
+ * (实测栈: sys_fopen -> ext4_bcache_alloc -> RB_REMOVE_COLOR)。
+ *
+ * lwext4 自己留了挂载点锁接口 (EXT4_MP_LOCK / EXT4_MP_UNLOCK 宏),
+ * 只要挂载后调用 ext4_mount_setup_locks() 把回调装上, 它就会在所有
+ * 公开入口外层串行化。本文件原先**没有调用过它**, mp->os_locks 恒为 NULL,
+ * 那些宏全是空操作 —— 这就是并发损坏的直接原因。
+ *
+ * 为什么做成**递归锁**: lwext4 的公开函数之间会互相调用 (例如
+ * ext4_fopen2 -> ext4_generic_open2), 若每一层都 EXT4_MP_LOCK, 非递归
+ * 自旋锁会自死锁。这里用 "owner = 当前 CPU + 深度计数", 只有最外层真正
+ * 拿锁 / 放锁, 内层仅增加深度。irqsave 的 flags 也只在最外层保存,
+ * 否则内层会把中断状态恢复错。
+ * ------------------------------------------------------------------------- */
+static spinlock_t g_ext4_mplock;
+static volatile uint32_t g_ext4_owner;   /* 0 = 空闲; 否则 cpu_id + 1 */
+static volatile uint32_t g_ext4_depth;
+static uint64_t g_ext4_flags;
+
+static void ext4_os_lock(void) {
+    uint32_t me = (uint32_t)this_cpu()->id + 1;
+    if (g_ext4_owner == me) {            /* 同一 CPU 重入 */
+        g_ext4_depth++;
+        return;
+    }
+    g_ext4_flags = spin_lock_irqsave(&g_ext4_mplock);
+    g_ext4_owner = me;
+    g_ext4_depth = 1;
+}
+
+static void ext4_os_unlock(void) {
+    if (g_ext4_depth > 1) {              /* 内层: 只退深度 */
+        g_ext4_depth--;
+        return;
+    }
+    g_ext4_depth = 0;
+    g_ext4_owner = 0;
+    spin_unlock_irqrestore(&g_ext4_mplock, g_ext4_flags);
+}
+
+static const struct ext4_lock g_ext4_locks = {
+    .lock   = ext4_os_lock,
+    .unlock = ext4_os_unlock,
+};
 /**@brief   Mount point OS dependent lock*/
 #define EXT4_MP_LOCK(_m)                                                       \
 	do {                                                                   \
@@ -3289,6 +3341,16 @@ bool ext4_kernel_init(const char* devname,const char* mpname,uint32_t wpart){
 	uint32_t r = ext4_mount(p, mpname, false);
 	if (r != EOK){kerror("ext4_mount: rc = %d\n", r);hcf();}
     kpok("EXT4 MOUNTED!\n");
+
+    /* 装挂载点锁 (必须在上面的 mount 之后, 因为 mp 是 mount 里建的)。
+       没有这一步, lwext4 的 EXT4_MP_LOCK 全是空操作, 多 CPU 并发会改坏
+       bcache 的红黑树。详见本文件顶部 ext4_os_lock 的注释。 */
+    r = ext4_mount_setup_locks(mpname, &g_ext4_locks);
+    if (r != EOK) {
+        kerrorln("ext4_mount_setup_locks: rc = %d (SMP 下文件系统不安全)", r);
+        return false;
+    }
+    kpok("EXT4 MP LOCK INSTALLED!\n");
     
 
 	r = ext4_recover(mpname);

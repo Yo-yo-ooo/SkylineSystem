@@ -131,7 +131,17 @@ static inline uint64_t scb_list_count(const void* head) {
 #endif
 
 void LessCore(void* x, uint64_t y) {
-    sys_munmap((uint64_t)x, y);
+    /* 单位换算: MoreCore/LessCore 这一层一路用的都是**页数**
+       (MoreCore 走 sys_mmap(mode=2), 那个模式下第二个参数就是页数)。
+       而 sys_munmap 的第二个参数是**字节长度**, 内部会算 length / PAGE_SIZE。
+       原来直接透传页数, 于是 y=4 被当成 4 字节 -> 0 页 -> sys_munmap 里
+       `if (pages == 0) return 0;` 直接返回, **一个字节都没归还**。
+       后果(实测): 桌面 50 秒内 mmap 16000+ 次(每次 64 页 = 256KB),
+       而 munmap 全部变成空操作, 2GB 物理内存在半分钟内被抽干, 随后
+       PMM OOM 刷屏 + 每次失败的 VMM::Alloc 都触发一次全量 TLB shootdown
+       (就是日志里那条 ACK timeout)。
+       这里必须换算成字节。 */
+    sys_munmap((uint64_t)x, y * PAGE_SIZE);
 }
 
 void* MoreCore(uint64_t PageCount) {

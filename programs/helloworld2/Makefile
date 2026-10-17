@@ -1,6 +1,8 @@
 OBJDIR := ../object
 BINDIR := ../bin
 PROJ_NAME := HW2
+ELF_NAME  := hw2
+ELF_NAME  := hw2
 
 include ../../gdef.mk
 
@@ -34,12 +36,11 @@ OBJ := $(addprefix $(OBJDIR)/$(PROJ_NAME)/, \
 )
 
 .PHONY: all clean
-all: $(BINDIR)/hw2.elf
+# 动态链接版 (PIE + libsky.so)。内核会在加载期兜底映射 0x400000 的
+# WM 协议页, 所以不再需要 ./link/console_x86_64.ld。
+include ../dynprog.mk
 
-
- $(BINDIR)/hw2.elf: $(OBJ) Makefile
-	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) -o $@ $(OBJ) -L../../lib/bin -l:lib.a 
+all: $(DYN_ELF)
 
  $(OBJDIR)/$(PROJ_NAME)/%.c.o: %.c Makefile
 	@echo "CC $<"

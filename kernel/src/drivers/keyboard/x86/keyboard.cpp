@@ -106,9 +106,14 @@ int32_t keyboard_wait_read()
     return 1;
 }
 
+/* 供**鼠标中断**复用。
+   PS/2 键盘和鼠标共用 0x60 数据端口, 靠 0x64 状态寄存器的 bit5 区分。
+   如果鼠标中断里发现当前字节其实属于键盘, 必须把它交给键盘翻译, 而
+   不能读出来丢掉 —— 否则那一拍按键会被**静默吞掉** (表现为偶发漏字)。 */
+void keyboard_feed_byte(uint8_t code) { feed_scancode(code); }
+
 /* IRQ1: translate the waiting set-1 scancode into the shared event ring. */
-void keyboard_handler(registers *regs) {
-    (void)regs;
+void keyboard_handler(registers *regs) {    (void)regs;
 
     uint8_t status = io_in8(0x64);
     /* bit5 == 0 means this byte belongs to the keyboard (not the mouse) */

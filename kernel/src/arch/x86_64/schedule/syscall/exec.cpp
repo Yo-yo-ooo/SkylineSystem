@@ -248,26 +248,15 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
               if (phdr->p_memsz > filesz)
                   _memset((void*)(eff_vaddr + filesz), 0, phdr->p_memsz - filesz);
             }
-            /* 修复(B25/W^X): 装载完成后按 ELF 段权限收紧 —— 必须无条件执行:
-               P1-45: 原条件 (无 X 或无 W 才收紧) 让 W+X 段保留 RWX。
-               收紧规则: 可执行段至少去 W (W 仅在 W&&!X 时保留),
-               不可执行段加 NX */
-            {
-                uint64_t prot_flags = MM_READ | MM_USER |
-                                      ((phdr->p_flags & 2) && !(phdr->p_flags & 1) ? MM_WRITE : 0) |
-                                      ((phdr->p_flags & 1) ? 0 : MM_NX);
-                for (uint64_t p = start; p < end; p += PAGE_SIZE) {
-                    VMM::Internal::PageInfo pi = VMM::Internal::GetPageInfo(pagemap, p);
-                    if (pi.size == PAGE_2MB) {
-                        VMM::Map2M(pagemap, p, pi.phys, prot_flags);
-                        __asm__ volatile("invlpg (%0)" : : "r"(p) : "memory");
-                        p += PAGE_2MB - PAGE_SIZE;
-                    } else if (pi.size == PAGE_SIZE) {
-                        VMM::Map4K(pagemap, p, pi.phys, prot_flags);
-                        __asm__ volatile("invlpg (%0)" : : "r"(p) : "memory");
-                    }
-                }
-            }
+            /* 权限收紧**不在这里做** —— 见第一个 PT_LOAD 循环之后的第二趟。
+               原因(实测): 段可以**重叠**。hw2 动态版的布局是
+                 seg2 va=0x401000 filesz=0x3060 flags=5 (RX)  跨 0x401000~0x404060
+                 seg3 va=0x402000 filesz=0x3040 flags=4 (R)   起点落在 seg2 的页内
+               如果每段拷完就立刻收紧, seg2 的收尾会把 0x402000 变成只读,
+               紧接着 seg3 往同一页拷数据 -> 写只读页 #PF
+               (ERROR_CODE=0x3, CR0.WP=1, 内核态同样受保护)。
+               所以统一挪到"全部段都拷完"之后再按段收紧。 */
+            (void)0;
             if (end > max_vaddr)
                 max_vaddr = end;
             kinfoln("ELF LOADER PT_LOAD: vaddr=[0x%lx~0x%lx], filesz=0x%lx, memsz=0x%lx, flags=0x%x",
@@ -281,6 +270,66 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
             if (tls_align)  *tls_align  = phdr->p_align;
             kinfoln("ELF LOADER PT_TLS: offset=0x%lx, filesz=0x%lx, memsz=0x%lx, align=0x%lx",
                     phdr->p_offset, phdr->p_filesz, phdr->p_memsz, phdr->p_align);
+        }
+    }
+
+    /* ---------------------------------------------------------------------
+     * 第二趟: 所有段都拷完之后, 再按 ELF 的 p_flags 收紧权限。
+     * 为什么必须推迟到这里: 段与段**可以重叠** (ld 在页粒度上让相邻段共享
+     * 同一个物理页)。若在每段拷完就收紧, 前一段会把共享页设成只读,
+     * 后一段再往同一页写数据就缺页 (实测 CR2=0x402000, ERROR_CODE=0x3,
+     * CR0.WP=1 下内核态同样受写保护)。
+     * 收紧规则保持不变 (B25/W^X): 可执行段去掉 W, 不可执行段加 NX。
+     * ------------------------------------------------------------------- */
+    for (int i = 0; i < hdr->e_phnum; i++) {
+        Elf64::Elf64_Phdr *phdr = &phdrs[i];
+        if (phdr->p_type != 1) continue;
+        const uint64_t eff_vaddr = phdr->p_vaddr + load_bias;
+        uint64_t start = ALIGN_DOWN(eff_vaddr, PAGE_SIZE);
+        uint64_t end = ALIGN_UP(eff_vaddr + phdr->p_memsz, PAGE_SIZE);
+        uint64_t prot_flags = MM_READ | MM_USER |
+                              ((phdr->p_flags & 2) && !(phdr->p_flags & 1) ? MM_WRITE : 0) |
+                              ((phdr->p_flags & 1) ? 0 : MM_NX);
+        for (uint64_t p = start; p < end; p += PAGE_SIZE) {
+            VMM::Internal::PageInfo pi = VMM::Internal::GetPageInfo(pagemap, p);
+            if (pi.size == PAGE_2MB) {
+                VMM::Map2M(pagemap, p, pi.phys, prot_flags);
+                __asm__ volatile("invlpg (%0)" : : "r"(p) : "memory");
+                p += PAGE_2MB - PAGE_SIZE;
+            } else if (pi.size == PAGE_SIZE) {
+                VMM::Map4K(pagemap, p, pi.phys, prot_flags);
+                __asm__ volatile("invlpg (%0)" : : "r"(p) : "memory");
+            }
+        }
+    }
+
+    /* ---------------------------------------------------------------------
+     * WM 协议页 (ABI 固定 VA = 0x400000) 兜底映射。
+     * -------------------------------------------------------------------
+     * programs/desktop/loader.cpp 是这样把协议页交给客户端的:
+     *     sys_pmmapSHARE(self, 0, PAGE_SIZE, FLAGS, pid, 0x400000)
+     * 参数顺序是 (dst_pid, dst_addr, len, flags, src_pid, src_addr) ——
+     * **客户端是 src**, 所以它共享的是客户端**已经存在**的那一页。
+     *
+     * 静态客户端的链接脚本用 .prepad 在 0x400000 预留了一页, 正好满足;
+     * 但 PIE(ET_DYN) 客户端会被内核搬到高地址 (bias >= 0x10000000),
+     * 0x400000 变成空洞, pmmapSHARE 直接失败, 客户端被 WM 击杀。
+     *
+     * 所以在加载期统一兜底: 若该 VA 还没有映射, 就分配一页给它。
+     * 这样客户端就可以和其它程序一样用 -pie + libsky.so, 不必再维护
+     * 那套脆弱的自定义链接脚本 (实测它会把 .rodata 同时塞进两个 PT_LOAD,
+     * 造成段重叠 + dl_vaddr_to_off 反查错位)。
+     * ------------------------------------------------------------------- */
+    {
+        const uint64_t kProtoVa = 0x400000;
+        if (!VMM::GetPhysics(pagemap, kProtoVa)) {
+            uint64_t pg = (uint64_t)PMM::Request();
+            if (pg) {
+                VMM::Map(pagemap, kProtoVa, pg, MM_READ | MM_WRITE | MM_USER);
+                VMM::VMA::AddRegion(pagemap, kProtoVa, 1,
+                                    MM_READ | MM_WRITE | MM_USER);
+                kinfoln("ELF> mapped WM protocol page at 0x%lx", kProtoVa);
+            }
         }
     }
 

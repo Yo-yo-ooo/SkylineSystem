@@ -39,7 +39,6 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags, u
     if (unlikely(page_count > (1u << 18))) {
         return SYS_MAP_FAILED;
     }
-
     uint64_t ret = (uint64_t)VMM::Alloc(pagemap, page_count, true);
     if (ret == (uint64_t)SYS_MAP_FAILED || ret == 0) {
         return SYS_MAP_FAILED;

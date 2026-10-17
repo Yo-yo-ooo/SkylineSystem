@@ -92,6 +92,7 @@ using Elf64::Elf64_Rela;
  * 长名截断 —— C++ 修饰名可能很长, 56 字节足够区分我们导出的符号。 */
 #define DL_NAME_MAX      56
 #define DL_EXPORTS_INIT  256      /* 初始容量 (libsky.so 实测 287 个导出) */
+#define DL_HTAB_EMPTY    0xFFFFFFFFu
 
 struct dl_sym {
     uint32_t hash;
@@ -120,6 +121,15 @@ struct dl_obj {
     dl_sym  *exports;
     uint32_t nexports;
     uint32_t exports_cap;
+    /* 符号名哈希索引 (开放寻址, 存 exports[] 的下标)。
+     * 为什么需要: 重定位阶段每个 GLOB_DAT/JUMP_SLOT 都要查一次符号,
+     * 原来是对 exports[] 线性扫描 —— 287 个导出 × 约 300 条重定位,
+     * 量级是 8 万次比较; 换成哈希后每个符号基本一次命中。
+     * 表长取 >= 2×nexports 的 2 的幂, 空槽用 DL_HTAB_EMPTY 标记,
+     * 删除一律不做 (整表重建), 所以不必处理墓碑。 */
+    uint32_t *htab;
+    uint32_t  htab_sz;      /* 表长 (2 的幂); 0 表示尚未构建 */
+    uint32_t  htab_cap;     /* htab 已分配的表长, 复用它避免反复 kmalloc */
     uint64_t hash_tab;      /* DT_HASH 的**链接期虚拟地址** */
     bool     is_so;         /* true = 共享库 (用于区分 TPOFF 修正) */
 };
@@ -177,8 +187,11 @@ static void dl_reset_image_refs(dl_obj *o) {
     o->nsym = 0;
     /* 只清空"已用条数", **保留已分配的缓冲区** —— dl_parse_dynamic 会被调用
        两次 (先在内核缓冲上取 PT_TLS, 再在目标页表里正式解析), 保留容量可以
-       让第二次不用重新 kmalloc, 也不会泄漏。缓冲区最终由 dl_exports_free 回收。 */
+       让第二次不用重新 kmalloc, 也不会泄漏。缓冲区最终由 dl_exports_free 回收。
+       哈希索引同理: 置 htab_sz=0 让它失效 (内容已过期), 表内存留着复用,
+       dl_parse_dynamic 结束时会被重建。 */
     o->nexports = 0;
+    o->htab_sz = 0;
 }
 
 /* 把"动态段里的地址"折算成运行期虚拟地址。
@@ -226,26 +239,87 @@ static int dl_exports_reserve(dl_obj *o, uint32_t need) {
     return 0;
 }
 
-/* 释放某个对象的导出表 */
+/* 释放某个对象的导出表与哈希索引 */
 static void dl_exports_free(dl_obj *o) {
     if (o->exports) { kfree(o->exports); o->exports = nullptr; }
+    if (o->htab)    { kfree(o->htab);    o->htab = nullptr; }
     o->nexports = 0;
     o->exports_cap = 0;
+    o->htab_sz = 0;
+    o->htab_cap = 0;
+}
+
+/* 构建符号名哈希索引。
+ * - 表长: >= 2×nexports 的最小 2 的幂 (负载因子 <= 0.5, 线性探测足够短);
+ * - 冲突: 线性探测; 空槽才插入, 所以**先出现的同名符号优先** (与 ELF
+ *   动态链接"第一个定义胜出"的顺序语义一致), 重复项自然被忽略;
+ * - 不做删除, 整表重建, 因此不需要墓碑标记。
+ * 必须在**导出收集完成之后**调用一次。 */
+static int dl_htab_build(dl_obj *o) {
+    o->htab_sz = 0;
+    uint32_t n = o->nexports;
+    if (n == 0) return 0;
+
+    uint32_t sz = 16;
+    while (sz < n * 2) {
+        if (sz >= (1u << 24)) return -ENOMEM;     /* 上限, 防失控 */
+        sz <<= 1;
+    }
+    /* 复用更大的旧表, 避免每次解析都 kmalloc/kfree */
+    if (!o->htab || o->htab_cap < sz) {
+        uint32_t *t = (uint32_t*)kmalloc((uint64_t)sz * sizeof(uint32_t));
+        if (!t) return -ENOMEM;
+        if (o->htab) kfree(o->htab);
+        o->htab = t;
+        o->htab_cap = sz;
+    }
+    _memset(o->htab, 0xFF, (uint64_t)sz * sizeof(uint32_t));
+
+    const uint32_t mask = sz - 1;
+    for (uint32_t i = 0; i < n; i++) {
+        const dl_sym *s = &o->exports[i];
+        uint32_t slot = s->hash & mask;
+        for (;;) {
+            uint32_t j = o->htab[slot];
+            if (j == DL_HTAB_EMPTY) { o->htab[slot] = i; break; }
+            if (o->exports[j].hash == s->hash &&
+                __strcmp(o->exports[j].name, s->name) == 0)
+                break;                            /* 重复: 保留先出现的 */
+            slot = (slot + 1) & mask;
+        }
+    }
+    o->htab_sz = sz;
+    return 0;
+}
+
+/* 在**单个对象**的哈希索引里查符号; 未命中返回 nullptr */
+static const dl_sym *dl_obj_find(const dl_obj *o, const char *name, uint32_t h) {
+    if (!o->htab || !o->htab_sz || !o->exports) return nullptr;
+    const uint32_t mask = o->htab_sz - 1;
+    uint32_t slot = h & mask;
+    /* 上限 htab_sz 次探测: 表不会满 (负载 <= 0.5), 但防御性封顶 */
+    for (uint32_t probes = 0; probes < o->htab_sz; probes++) {
+        uint32_t j = o->htab[slot];
+        if (j == DL_HTAB_EMPTY) return nullptr;
+        const dl_sym *s = &o->exports[j];
+        if (s->hash == h && __strcmp(s->name, name) == 0) return s;
+        slot = (slot + 1) & mask;
+    }
+    return nullptr;
 }
 
 static void dl_add_export(dl_obj *o, const char *name, uint64_t value) {
     if (!name || !name[0]) return;
-    uint32_t h = dl_elf_hash(name);
-    for (uint32_t i = 0; i < o->nexports; i++)
-        if (o->exports[i].hash == h && __strcmp(o->exports[i].name, name) == 0) return;
-    /* 动态扩容: 满就翻倍, 不再有 512 条上限, 也不会静默丢符号 */
+    /* 这里只做追加 —— 去重交给 dl_htab_build。
+       原来在追加前对整表做一次线性查重, 287 个符号就是 O(n²) 次比较,
+       而哈希索引本来就要求"先全部收集完再建表", 去重顺手就做了。 */
     if (dl_exports_reserve(o, o->nexports + 1) != 0) {
         kerrorln("[dynlink] %s: out of memory growing export table (%u)",
                  o->name, o->nexports);
         return;
     }
     dl_sym *e = &o->exports[o->nexports++];
-    e->hash = h;
+    e->hash = dl_elf_hash(name);
     e->value = value;
     uint32_t k = 0;
     while (name[k] && k < DL_NAME_MAX - 1) { e->name[k] = name[k]; k++; }
@@ -254,13 +328,10 @@ static void dl_add_export(dl_obj *o, const char *name, uint64_t value) {
 
 static uint64_t dl_lookup(dl_obj *objs, int nobj, const char *name) {
     if (!name || !name[0]) return 0;
-    uint32_t h = dl_elf_hash(name);
+    const uint32_t h = dl_elf_hash(name);       /* 只算一次, 各对象共用 */
     for (int k = 0; k < nobj; k++) {
-        dl_obj *o = &objs[k];
-        if (!o->exports) continue;      /* 该对象没有导出 (例如静态主程序) */
-        for (uint32_t i = 0; i < o->nexports; i++)
-            if (o->exports[i].hash == h && __strcmp(o->exports[i].name, name) == 0)
-                return o->exports[i].value;
+        const dl_sym *s = dl_obj_find(&objs[k], name, h);
+        if (s) return s->value;
     }
     return 0;
 }
@@ -353,11 +424,25 @@ static void dl_parse_dynamic(dl_obj *o) {
         if (s->st_name == 0) continue;
         dl_add_export(o, strs + s->st_name, o->bias + s->st_value);
     }
-    /* cap 反映动态分配实际增长到的容量: 初始 256, 本例 287 个导出会翻倍到
-       512。以前固定数组时这里恒为 512 且超限静默丢符号; 现在按需增长。 */
-    kinfoln("[dynlink] %s: syms=%llu exports=%u cap=%u (dyn alloc, %llu bytes)",
+    /* ---- 建符号名哈希索引 ------------------------------------------
+       必须在收集**全部**导出之后调用 (所以放在这里, 而不是 dl_add_export 里)。
+       htab 装的是 exports[] 的下标, 重定位阶段每次查符号就是一次哈希 + 探测,
+       不再线性扫 287 项。 */
+    if (dl_htab_build(o) != 0) {
+        kerrorln("[dynlink] %s: failed to build symbol hash index (%u entries)",
+                 o->name, o->nexports);
+    }
+
+    /* cap/htab 数值给出"动态分配真的增长了"以及哈希表的负载情况:
+       exports 从 256 翻倍到 512; htab 取 >= 2×287 的 2 的幂 = 1024。 */
+    kinfoln("[dynlink] %s: syms=%llu exports=%u cap=%u (%llu B) "
+            "htab=%u (%llu B, load=%u.%02u)",
             o->name, (unsigned long long)nsym, o->nexports, o->exports_cap,
-            (unsigned long long)((uint64_t)o->exports_cap * sizeof(dl_sym)));
+            (unsigned long long)((uint64_t)o->exports_cap * sizeof(dl_sym)),
+            o->htab_sz,
+            (unsigned long long)((uint64_t)o->htab_sz * sizeof(uint32_t)),
+            o->htab_sz ? (o->nexports * 100u / o->htab_sz) / 100u : 0,
+            o->htab_sz ? (o->nexports * 100u / o->htab_sz) % 100u : 0);
 }
 
 /* 应用一个对象自身的重定位。exports 尚未收集完时用 skip_undef 跳过
@@ -796,18 +881,38 @@ int elf_dyn_prepare(uint8_t *main_img, uint64_t main_len, pagemap_t *pm,
         uint64_t so_file = objs[1].tls_filesz;
         if (tls_align) *tls_align = so_align;
         if (main_mem == 0) {
-            /* 主程序没有 TLS: .so 独占整块, 偏移就是它自己的 0 */
+            /* 主程序没有 TLS: .so 独占整块, 偏移就是它自己的 0。
+               **不要**在这里加 TCB 的 8 字节: .so 是用 -ftls-model=initial-exec
+               链接的, %fs 偏移在链接期就烤死了, 它假定"线程指针 = .so TLS 末尾
+               对齐处" = ALIGN_UP(so_mem)。而消费方 (exec.cpp / task.cpp) 自己会算
+                   tcb_base = tls_mem + ALIGN_UP(tls_memsz, tls_align)
+                   total    = ALIGN_UP(tls_memsz, tls_align) + 8   ← +8 在那边
+               这里多加 8 会让 fs_off 从 952 变成 960, 整个 %fs 偏 8 字节,
+               libsky 分配器的 qsbr_slot 落到结构体外, 触发它的 TLS 守卫
+               直接 exit(77) —— 实测三个客户端同时这样死掉。 */
             g_tls_so_base = 0;
-            if (tls_memsz) *tls_memsz = so_mem + 8;
+            if (tls_memsz) *tls_memsz = so_mem;
             if (tls_offset) *tls_offset = 0;
-            if (tls_filesz) *tls_filesz = so_file;
+            /* **不要**把 tls_filesz 设成 so_file!
+               tls_filesz 的语义是"**主程序** PT_TLS 的 .tdata 字节数",
+               消费方 (exec.cpp) 用它做:
+                   __memcpy(tls_mem + tls_main_data_off, buffer + tls_offset, tls_filesz);
+               主程序没有 PT_TLS 时它本来是 0, 拷 0 字节, 什么都不做。
+               一旦在这里写成 so_file(=948), 上面那句就会从 ELF 文件偏移 0
+               开始拷 948 字节 —— 也就是把 **ELF 头("\x7fELF")** 覆盖到 TLS 块
+               开头, 正好把 .so 的 .tdata 镜像 (line 619 刚拷好的) 冲掉。
+               实测现象: 客户端 qsbr_slot 读到 0x464c457f, 分配器护栏
+               exit(77) —— 三个窗口客户端全部瞬间死亡。
+               .so 的 .tdata 镜像由 so_tls_image 那条路径负责, 与此无关。 */
+            if (tls_filesz) *tls_filesz = 0;
             if (tls_main_off) *tls_main_off = 0;
             kinfoln("[dynlink] TLS: only .so (%llu bytes)", (unsigned long long)so_mem);
         } else {
             /* 布局 [ 主程序 TLS | .so TLS ]: 主程序是 local-exec,
-               它的偏移不能动, 所以主程序占块首, .so 顺延。 */
+               它的偏移不能动, 所以主程序占块首, .so 顺延。
+               同样**不加** TCB 的 8 字节 (理由同上)。 */
             g_tls_so_base = dl_align_up(main_mem, so_align);
-            if (tls_memsz) *tls_memsz = g_tls_so_base + so_mem + 8;
+            if (tls_memsz) *tls_memsz = g_tls_so_base + so_mem;
             if (tls_main_off) *tls_main_off = 0;
             kinfoln("[dynlink] TLS merged: main=%llu @0, so=%llu @%llu, total=%llu, align=%llu",
                     (unsigned long long)main_mem,

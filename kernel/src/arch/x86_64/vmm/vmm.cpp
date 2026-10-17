@@ -273,7 +273,23 @@ namespace VMM {
         static inline void DoAck(int32_t initiator) {   /* P0-3: int8_t ≥128 核溢出 */
             if (initiator < 0) return;
             cpu_t* in = smp_cpu_list[initiator];
-            if (in) __atomic_sub_fetch(&in->shootdown_acks, 1, __ATOMIC_RELEASE);
+            if (!in) return;
+            /* 饱和递减 (P0: 迟到 ACK 破坏计数)。
+               WaitAcks 超时后会把 shootdown_acks **清 0** 并降级为 async,
+               但那次请求的 IPI 仍可能在目标核上排队, 稍后照样回 ACK。
+               原来无条件 __atomic_sub_fetch, 于是计数被减成 -1; 下一次
+               shootdown 先 add 1 -> 又变回 0, WaitAcks 看到 0 就**立刻返回,
+               一页都没刷**: 表现为莫名其妙的陈旧 TLB / 随机缺页。
+               反过来若先把计数减到负很多, 也会让之后每次等待都白等 100ms。
+               只在 > 0 时递减, 让"迟到 ACK"变成无害的空操作。 */
+            int32_t cur;
+            do {
+                cur = __atomic_load_n(&in->shootdown_acks, __ATOMIC_RELAXED);
+                if (cur <= 0) return;
+            } while (!__atomic_compare_exchange_n(&in->shootdown_acks, &cur,
+                                                  cur - 1, false,
+                                                  __ATOMIC_RELEASE,
+                                                  __ATOMIC_RELAXED));
         }
 
         static inline void AckMaskClear(int32_t initiator, uint32_t responder) {

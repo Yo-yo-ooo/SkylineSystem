@@ -21,6 +21,7 @@
 #include <fs/fc.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/pit/pit.h>
+#include <mem/pmm.h>
 #include <arch/x86_64/interrupt/gdt.h>
 #include <pdef.h>
 #include <klib/stallwatch.h>
@@ -96,6 +97,14 @@ void sched_idle() {
         if (unlikely(cpu->thread_count > 0)) {
             asm volatile("int %0" :: "i"(SCHED_VEC));
         }
+        /* 停滞看门狗: 进 hlt 之前必须清掉 kernel_busy。
+           原因: 一个**阻塞型系统调用** (等输入/等子进程/等唤醒) 会让
+           syscall_handler 走不到结尾那句 stall_set_kernel_busy(0); 该 CPU
+           随后被切到 idle 线程, 于是 busy 永远停在 1。看门狗看到"进了内核
+           11~15 秒没动、中断开着、也没有等任何锁", 就把正常的空闲核报成
+           卡死 —— 桌面明明还在跑, 却刷了一屏 STALL WATCHDOG。
+           在 hlt 期间本核确实没有任何工作, 标记为"不忙"才是语义正确的。 */
+        stall_set_kernel_busy(0);
         asm volatile("sti; hlt; cli" ::: "memory");
     }
 }

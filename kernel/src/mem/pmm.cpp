@@ -447,6 +447,40 @@ static void* pcp_refill(cpu_t* cpu) {
 #endif
 
 // ---------------------------------------------------------------------------
+// 保留 bootloader 自己占用的内存 (页表就在这里)
+// ---------------------------------------------------------------------------
+// 症状 (实测): 某个低地址页被 PMM 当作空闲页发出去, 调用方按惯例清零整页,
+// 内核立刻"卡死"且**没有任何异常打印**。真相是那一页属于 bootloader 的活
+// 页表: 清零它 = 卸载当前映射 -> 取下一条指令就缺页 -> 缺页处理程序也已被
+// 卸载 -> double/triple fault -> QEMU 带 --no-shutdown 时直接停机。
+// 现场极具误导性: 该页可读、单独写几个字节也没事, 只有整页清零才炸。
+//
+// 为什么不去遍历 CR3 把页表页精确标出来: 试过了, 行不通 ——
+// Limine 的页表页所在的物理内存**并没有被映射进当前地址空间**(CPU 用物理
+// 地址走页表, 不需要映射), 软件去 HIGHER_HALF(CR3) 读它直接 #PF
+// (实测 CR2 == CR3 == 0x7FF71000)。
+//
+// 所以改用保守但正确的做法: 把 memmap 里 BOOTLOADER_RECLAIMABLE 的整段
+// 标记为已分配。这确实会浪费几 MB (本系统也没有回收器去 reclaim 它们),
+// 但换来的是"绝不把活页表发出去"这一硬保证。
+static void reserve_bootloader_memory() {
+    uint64_t reserved = 0;
+    for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+        struct limine_memmap_entry* e = pmm_memmap->entries[i];
+        if (e->type != LIMINE_MEMMAP_BOOTLOADER_RECLAIMABLE) continue;
+        if (e->length == 0) continue;
+        uint64_t first = e->base >> 12;
+        uint64_t count = (e->length + PAGE_SIZE - 1) >> 12;
+        if (first >= pmm_bitmap_pages) continue;
+        if (count > pmm_bitmap_pages - first) count = pmm_bitmap_pages - first;
+        mark_allocated(first, count);
+        reserved += count;
+    }
+    kinfoln("PMM: reserved %llu bootloader pages (%llu KB) as used",
+            (unsigned long long)reserved, (unsigned long long)(reserved * 4));
+}
+
+// ---------------------------------------------------------------------------
 // Init (单线程, SMP 启动前)
 // ---------------------------------------------------------------------------
 void Init() {
@@ -538,6 +572,10 @@ void Init() {
 
     mark_allocated(0, 1);  // physical page 0 must never be handed out (NULL)
 
+    /* 关键: 保留 bootloader 占用的内存 (它自己的页表就在里面)。
+       必须在下面的 free_pages 统计**之前**, 否则计数会把它们算成空闲。 */
+    reserve_bootloader_memory();
+
     free_pages = 0;
     for (uint64_t l2 = 0; l2 < total_l2_bits; l2++) {
         if (bit_test(l2_map, l2)) continue;        /* 满 2MiB 块: 0 空闲 */
@@ -567,8 +605,9 @@ void* Request(uint64_t n) {
         cpu_t* cpu = this_cpu();
         if (cpu) {
             IrqSave irq;                                // 只保护 per-CPU cache
-            if (cpu->pmm_cache_count > 0)
+            if (cpu->pmm_cache_count > 0) {
                 return cpu->pmm_cache[--cpu->pmm_cache_count];
+            }
 
             void* page = pcp_refill(cpu);               // 分片化批量补充
             if (page) return page;

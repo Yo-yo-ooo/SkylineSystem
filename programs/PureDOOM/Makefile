@@ -1,6 +1,8 @@
 OBJDIR := ../object
 BINDIR := ../bin
 PROJ_NAME := DOOM
+ELF_NAME  := doom
+ELF_NAME  := doom
 
 include ../../gdef.mk
 
@@ -48,11 +50,13 @@ OBJ := $(addprefix $(OBJDIR)/$(PROJ_NAME)/, \
 )
 
 .PHONY: all clean
-all: $(BINDIR)/doom.elf
+# 动态链接版 (PIE + libsky.so)。原先 -T ./link/console_x86_64.ld 是必须的
+# (静态 ET_EXEC 的只读头部会落在 0x400000 = WM 协议页, 第一次 OUT_SEQ 就写
+# 只读页崩在 addr=0x400048); 现在内核在加载期保证该 VA 有可写页, 且 PIE
+# 程序被搬到高地址, 头部不再占用它。详见 docs/dynamic-clients-plan.md。
+include ../dynprog.mk
 
-$(BINDIR)/doom.elf: $(OBJ) Makefile
-	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) -o $@ $(OBJ) -L../../lib/bin -l:lib.a
+all: $(DYN_ELF)
 
 $(OBJDIR)/$(PROJ_NAME)/%.c.o: %.c Makefile PureDOOM.h
 	@echo "CC $<"
