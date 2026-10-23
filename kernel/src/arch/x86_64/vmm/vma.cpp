@@ -4,6 +4,7 @@
 #include <conf.h>
 #include <arch/x86_64/vmm/vmm.h>
 #include <mem/pmm.h>
+#include <mem/heap.h>
 #include <klib/algorithm/rbtree.h>
 #include <klib/klib.h>
 
@@ -19,6 +20,55 @@ extern int has_rdrand(void);
 
 namespace VMM{
     namespace VMA {
+
+    /* vma_region_t 只有几十字节, 但原来每个区域都 PMM::Request() 一整页 4KiB:
+       实测 2900 个区域 = 11 MiB, 而真实数据不到 300 KiB。
+       SLUB/kmalloc **不能**用在这里: VMM::Init 期间就要分配 VMA 节点, 而
+       SLAB/SLUB 的初始化排在 VMM::Init 之后 (init.cpp 的顺序),
+       上次改成 kmem_cache 直接导致早期启动崩溃 (CR2=0x0, 栈里有 SLAB::Alloc)。
+       所以这里自带一个**只依赖 PMM** 的页内小对象池: 一页切成 N 个节点,
+       空闲节点用 next 指针串起来。内存降到原来的 1/N。 */
+    static vma_region_t *g_node_free_list = nullptr;
+    static volatile int g_node_pool_lock = 0;
+
+    static inline void node_pool_lock() {
+        while (__atomic_test_and_set(&g_node_pool_lock, __ATOMIC_ACQUIRE)) {
+            __asm__ __volatile__("pause");
+        }
+    }
+    static inline void node_pool_unlock() {
+        __atomic_clear(&g_node_pool_lock, __ATOMIC_RELEASE);
+    }
+
+    static vma_region_t *vma_alloc_node() {
+        node_pool_lock();
+        if (vma_unlikely(!g_node_free_list)) {
+            void *pg = PMM::Request();
+            if (vma_unlikely(!pg)) {
+                node_pool_unlock();
+                return nullptr;
+            }
+            vma_region_t *base = HIGHER_HALF((vma_region_t*)pg);
+            const uint32_t n = PAGE_SIZE / sizeof(vma_region_t);
+            for (uint32_t i = 1; i + 1 < n; i++) base[i].next = &base[i + 1];
+            if (n > 1) base[n - 1].next = nullptr;
+            g_node_free_list = (n > 1) ? &base[1] : nullptr;
+            node_pool_unlock();
+            return &base[0];
+        }
+        vma_region_t *r = g_node_free_list;
+        g_node_free_list = r->next;
+        node_pool_unlock();
+        return r;
+    }
+
+    static void vma_free_node(vma_region_t *r) {
+        if (vma_unlikely(!r)) return;
+        node_pool_lock();
+        r->next = g_node_free_list;
+        g_node_free_list = r;
+        node_pool_unlock();
+    }
 
         
 
@@ -96,7 +146,7 @@ namespace VMM{
             if (r->rb_root) { rb_erase(r->rb_root, &r->rb_node); r->rb_root = nullptr; }
             r->next->prev = r->prev;
             r->prev->next = r->next;
-            PMM::Free(PHYSICAL((void*)r));
+            vma_free_node(r);
         }
 
         // Split @region at a page-aligned @split_addr. The original node keeps
@@ -163,7 +213,7 @@ namespace VMM{
                 pagemap->vma_head->start = start;
                 return;
             }
-            vma_region_t *sentinel = HIGHER_HALF((vma_region_t*)PMM::Request());
+            vma_region_t *sentinel = vma_alloc_node();
             if (vma_unlikely(!sentinel)) return;
             sentinel->start       = start;
             sentinel->page_count  = 0;
@@ -179,7 +229,7 @@ namespace VMM{
 
         vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags) {
             if (vma_unlikely(!after)) return nullptr;
-            vma_region_t *region = HIGHER_HALF((vma_region_t*)PMM::Request());
+            vma_region_t *region = vma_alloc_node();
             if (vma_unlikely(!region)) return nullptr;   /*  PMM 耗尽,调用方须判空 */
             region->start      = start;
             region->page_count = page_count;
@@ -232,7 +282,7 @@ namespace VMM{
             }
             region->next->prev = region->prev;
             region->prev->next = region->next;
-            PMM::Free(PHYSICAL((void*)region));
+            vma_free_node(region);
         }
 
         vma_region_t *FindRegion(pagemap_t *pagemap, uint64_t addr) {

@@ -39,7 +39,31 @@ static void sky_dbg(const char* s) {
 }
 
 /* ---- memory ------------------------------------------------------------ */
-static void* sky_malloc(int size) { return malloc((size_t)size); }
+/* 临时诊断: 统计 DOOM 的实时堆占用, 每增长 4 MiB 打一条 (带调用者地址)。
+   目的: 找出那 45 MiB 到底花在哪 (zone 只占 6 MiB)。 */
+static volatile long doomm_live;
+static volatile unsigned long doomm_calls;
+
+static void doomm_note(long delta, void* ra, int size) {
+    long live = __atomic_add_fetch(&doomm_live, delta, __ATOMIC_RELAXED);
+    unsigned long n = __atomic_add_fetch(&doomm_calls, 1, __ATOMIC_RELAXED);
+    static long last_mb;
+    long mb = live >> 20;
+    if (delta > 0 && mb != last_mb) {
+        last_mb = mb;
+        char b[160];
+        int len = snprintf(b, sizeof(b),
+            "[doomm] #%lu live=%ld MiB size=%d ra=%p\n",
+            n, mb, size, ra);
+        if (len > 0) syscall(SYSCALL_DBGSOUT, (uint64_t)b, (uint64_t)len, 0, 0, 0, 0);
+    }
+}
+
+static void* sky_malloc(int size) {
+    void* p = malloc((size_t)size);
+    if (p) doomm_note(size, __builtin_return_address(0), size);
+    return p;
+}
 static void  sky_free(void* p)    { free(p); }
 
 /* ---- file I/O ----------------------------------------------------------
@@ -138,6 +162,8 @@ static void sky_close(void* h) { if (h && !sky_is_mirror(h)) fclose((FILE*)h); }
    read. */
 #define SKY_READ_CHUNK 8192
 
+static int  sky_seek(void* h, int offset, doom_seek_t origin);
+
 static int  sky_read(void* h, void* buf, int count) {
     /* Read in small chunks and retry: DOOM asks for the whole lump directory
        (numlumps * 16 B, ~35 KB for doom.wad) in a single fread, and a short
@@ -155,11 +181,27 @@ static int  sky_read(void* h, void* buf, int count) {
     }
     if (!h || count <= 0) return 0;
     size_t got = 0;
+    int zero_retries = 0;
     while (got < (size_t)count) {
         size_t want = (size_t)count - got;
         if (want > SKY_READ_CHUNK) want = SKY_READ_CHUNK;
         size_t n = fread((char*)buf + got, 1, want, (FILE*)h);
-        if (n == 0) break;
+        if (n == 0) {
+            /* 内存紧张时内核的文件读可能瞬时返回 0 (中转缓冲或块缓存分配失败)。
+               直接 break 会让整次 W_ReadLump 变成"只读了一半", DOOM 随即
+               I_Error 退出 —— 实测 64/72/80 MiB 下就是这样起的。
+               先原地位重试; 若仍然 0, **重新 seek 回当前位置再试** ——
+               内核侧的 FD 偏移和底层文件位置可能已经不同步。 */
+            if (++zero_retries <= 32) {
+                for (volatile int spin = 0; spin < 20000; spin++) { }
+                if ((zero_retries & 7) == 0) {
+                    sky_seek(h, (int)got, DOOM_SEEK_SET);
+                }
+                continue;
+            }
+            break;
+        }
+        zero_retries = 0;
         got += n;
     }
     return (int)got;

@@ -7,6 +7,7 @@
  *   TX: 协议栈 → low_level_output → 静态弹跳缓冲 → E1000::Send
  * 多核/DPDK-lite (每核 pbuf 池、零拷贝、多队列) 见后续轮。 */
 #include <drivers/net/e1000.h>
+#include <mem/pmm.h>
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/smp/smp.h>
@@ -343,8 +344,6 @@ static void lwip_thread(void) {
                     (unsigned long long)rxp_s, (unsigned long long)txp_s,
                     s.rx_dropped, s.rx_err, s.tx_full, s.irq_count, g_ping_replies);
             prev_rx = s.rx_pkts; prev_tx = s.tx_pkts;
-            last_diag = now;
-
             /* 桌面进程 (PID 7) 是唯一窗口管理器: 它一旦没了, 桌面就不再
                合成新窗口、也不会再 spawn 子进程 (用户看到的现象就是
                "PID 11 之后什么都没有了")。这里周期性点名, 让"桌面已死"

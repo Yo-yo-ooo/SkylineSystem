@@ -174,7 +174,10 @@ extern struct ext4_mountpoint *s_mp;
 /**@brief Switches use of malloc/free functions family
  *        from standard library to user provided*/
 #ifndef CONFIG_USE_USER_MALLOC
-#define CONFIG_USE_USER_MALLOC 0
+/* 1 = 走 ext4_user_malloc 等钩子 (见 kernel/src/fs/lwext4/ext4_user_alloc.cpp)。
+   这些钩子正常情况转调 kmalloc, 失败时退到一个静态应急池, 保证内存紧张时
+   文件系统仍能读下去 (否则 ext4_buf_alloc 拿不到 4 KiB 缓冲, 读会中途返回 0)。 */
+#define CONFIG_USE_USER_MALLOC 1
 #endif
 
 

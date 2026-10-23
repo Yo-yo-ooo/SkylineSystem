@@ -105,6 +105,7 @@ private:
     void blitSceneAvoidCursor(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
                               int32_t ox, int32_t oy, int32_t nx, int32_t ny);
     void paintSquareFromBack(int32_t x, int32_t y);
+    void eraseCursor();
     void blendCursorSquare(int32_t x, int32_t y);
     void overlayCursorFinal(int32_t ox, int32_t oy, int32_t nx, int32_t ny);
     void commitScene(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
@@ -130,7 +131,18 @@ private:
     int32_t          dx0_, dy0_, dx1_, dy1_;
     uint8_t          dirty_;
     uint32_t         back_bytes_;
-    uint32_t*        back_;
+    uint32_t*        back_;           /* == 帧缓冲首地址 (直写, 不再单独分配) */
+
+    /* 光标下方的 16x16 干净像素快照。
+       去掉离屏 back_ 之后, 没有"无光标的场景副本"可以取, 于是改成经典做法:
+       画光标前先把那块像素存下来, 需要擦除时再贴回去。
+       快照只在"场景本帧没有被重绘"时有效; Compose 开始时先擦除光标并作废快照,
+       合成完再重新保存。 */
+    static const int COMP_CURSOR_SAVE_MAX = 32;   /* >= SKY_CURS (16) */
+    uint32_t         cursor_save_[COMP_CURSOR_SAVE_MAX * COMP_CURSOR_SAVE_MAX];
+    int32_t          cursor_save_x_, cursor_save_y_;
+    uint8_t          cursor_save_valid_;
+    uint8_t          cursor_save_len_;            /* 实际边长 (16) */
 };
 
 #endif /* SYNTHESIZER_WINDOW_H */

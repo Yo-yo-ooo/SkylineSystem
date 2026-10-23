@@ -164,6 +164,24 @@ void __init x86_64_init(void){
     InitFunc("HPET",HPET::InitHPET());
     bsp_cpu->file_cache = (file_cache_cpu_t*)kmalloc(sizeof(file_cache_cpu_t));
     file_cache_cpu_init(bsp_cpu->file_cache, bsp_cpu->id,file_cache_writeback_callback);
+    /* 文件缓存必须有上限。
+       file_cache_should_cache() 的判据是
+           if (soft_limit == 0 || total_cache_bytes < soft_limit) { 缓存 }
+       而内核从来没有调用过 file_cache_set_limits() (只有 tests/ 调),
+       于是 soft_limit 恒为 0 → **无条件缓存所有读过的数据**, 永不淘汰。
+       实测: 2 GiB 机器上, 稳态空闲内存从 130 MiB 一路掉到 21 MiB —— 读一次
+       30 MiB 字体 + 11 MiB WAD 就全进了缓存。64 MiB 目标下这是致命的。
+       这里按总内存的 1/32 分配, 每核 512 KiB ~ 4 MiB。 */
+    {
+        uint64_t free_bytes = PMM::FreePages() << 12;
+        uint64_t per_cpu = free_bytes / 32;
+        /* 每个 CPU 的文件缓存预算: 至少 512 KiB, 至多 4 MiB。
+           实测把上限压到 1 MiB 反而更糟 (80 MiB 下 OOM 从 50 涨到 171) ——
+           缓存太小 → 读盘次数暴增 → 每次读都要临时 kbuf, 瞬时压力更大。 */
+        if (per_cpu < (512u << 10))  per_cpu = (512u << 10);
+        if (per_cpu > (4u << 20))    per_cpu = (4u << 20);
+        file_cache_set_limits(bsp_cpu->file_cache, per_cpu, per_cpu * 2);
+    }
     InitFunc("SMP",smp_init());
     /* Route the legacy PIT (IRQ0/GSI0) to vector 32 on the BSP and unmask it.
        The 8259 PIC is fully masked above, so without this IOAPIC redirection no

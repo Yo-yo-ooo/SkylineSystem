@@ -43,10 +43,18 @@ uint64_t sys_mmap_(void *addr, uint64_t length, uint64_t mode, uint64_t flags, u
     if (ret == (uint64_t)SYS_MAP_FAILED || ret == 0) {
         return SYS_MAP_FAILED;
     }
-
+    /* 修复: VMA 链表的插入/删除必须与 sys_munmap 用同一把锁。
+       原来这里(以及 AddRegion)完全不加锁, 而 sys_munmap 是加锁的 ——
+       桌面和客户端都是多线程并发 mmap/munmap, 于是链表被撕裂:
+       InsertRegion 里 `after->next->prev = region` 解引用了悬空指针,
+       实测在低内存下表现为内核缺页 + 关中断卡死(STALL WATCHDOG,
+       rip=VMM::VMA::InsertRegion vma.cpp:190), 并且丢失的 VMA 区域
+       让已分配的物理页再也还不回来(就是"内存只增不减"的来源之一)。 */
+    spinlock_lock(&pagemap->vma_lock);
     if (!VMM::VMA::FindRegion(pagemap, ret)) {
         VMM::VMA::AddRegion(pagemap, ret, page_count, MM_READ | MM_WRITE | MM_USER);
     }
+    spinlock_unlock(&pagemap->vma_lock);
 
     return ret;
 }

@@ -1030,6 +1030,19 @@ int32_t file_cache_promote(file_cache_cpu_t *s, const uint8_t *key, uint32_t key
     bool use_inline = (data_len <= FC_INLINE_DATA_SIZE);
     if (use_inline) alloc_size += data_len;
 
+    /* 硬上限: 超过就**不缓存这一块** (返回错误, 调用方按"未命中"处理)。
+       原来这里只看"分配是否失败", 而真正的淘汰只发生在
+       file_cache_idle_handler() —— 它由 sched_idle() 调用, 而机器满载时
+       4 个 CPU 都在跑用户态, 那个循环根本不会执行。于是缓存**只进不出**:
+       实测 DOOM 读一遍 11MiB 的 WAD (每 4KiB 一个块) 再加字体, 让空闲
+       物理内存从 132 MiB 掉到 22 MiB; 不启动 DOOM 则稳定在 132 MiB。 */
+    if (s->hard_limit > 0) {
+        uint64_t need = (uint64_t)alloc_size + key_len +
+                        (use_inline ? 0 : (uint64_t)data_len);
+        if (s->total_cache_bytes + need > s->hard_limit)
+            return FC_ERR_NO_MEMORY;
+    }
+
     file_cache_entry_t *e = (file_cache_entry_t *)fc_kcalloc_with_fallback(s, 1, alloc_size);
     if (unlikely(!e)) return FC_ERR_NO_MEMORY;
 

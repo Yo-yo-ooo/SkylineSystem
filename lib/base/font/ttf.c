@@ -1676,9 +1676,14 @@ uint8_t TTF_ReadFontLazy(TTF_Font** out_font, const char* path,
 
    Flip it (add -DTTF_GLYF_LAZY=0 to the build, or edit this default) if a
    target's kernel misbehaves under the "many small scattered reads" pattern —
-   that is the only respect in which this loader differs from the old one. */
+   that is the only respect in which this loader differs from the old one.
+
+   2026-10: 默认值曾是 0, 等于让 TTF_ReadFontGlyfLazy() **静默退化成整文件
+   读取** —— 调用方(console 的 printf.c、notepad)以为自己在用 1.5MB 的按需
+   加载器, 实际每次都 malloc 30MB (SourceHanSerifTC = 31,595,460 字节),
+   在 64MB 机器上直接把内存吃光。改成 1, 按需加载才真正生效。 */
 #ifndef TTF_GLYF_LAZY
-#define TTF_GLYF_LAZY 0
+#define TTF_GLYF_LAZY 1
 #endif
 
 uint8_t TTF_ReadFontGlyfLazy(TTF_Font** out_font, const char* path,

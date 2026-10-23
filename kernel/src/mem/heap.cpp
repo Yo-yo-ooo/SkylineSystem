@@ -10,6 +10,23 @@
 
 #include "heap_internal.h"
 
+/* 临时诊断: 按调用者统计内核堆分配字节数 (64 槽哈希)。
+   目的: 找出"DOOM 启动后消失的 ~110 MiB" 是哪些内核调用点要的。
+   只累加, 不在这里打印 —— 打印放在 lwip 的定时统计里, 避免重入。 */
+#define KM_TRACK_SLOTS 64
+volatile uint64_t g_km_bytes[KM_TRACK_SLOTS];
+volatile uint64_t g_km_calls[KM_TRACK_SLOTS];
+volatile uint64_t g_km_ra[KM_TRACK_SLOTS];
+volatile uint64_t g_km_total;
+
+static inline void km_track(uint64_t size, void *ra) {
+    uint64_t h = ((uint64_t)ra >> 4) & (KM_TRACK_SLOTS - 1);
+    __atomic_add_fetch(&g_km_bytes[h], size, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_km_calls[h], 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_km_ra[h], (uint64_t)ra, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_km_total, size, __ATOMIC_RELAXED);
+}
+
 #ifdef __x86_64__
 extern "C" kmem_cache *kmem_cache_create(const char *n, uint64_t sz, uint64_t al) { return SLUB::Create(n, sz, al ? al : 8); }
 extern "C" void        kmem_cache_destroy(kmem_cache *c) { SLUB::Destroy(c); }
@@ -51,6 +68,7 @@ extern "C" void *kmalloc(uint64_t size) {
         if (g_kalloc_log_on)
             g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)p, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
 #endif
+        km_track(size, __builtin_return_address(0));
         return p;
     }
 #endif
@@ -62,6 +80,7 @@ extern "C" void *kmalloc(uint64_t size) {
             g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)q, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
     }
 #endif
+    if (q) km_track(size, __builtin_return_address(0));
     return q;
 }
 

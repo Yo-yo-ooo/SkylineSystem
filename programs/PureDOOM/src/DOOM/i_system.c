@@ -32,7 +32,11 @@
 #include "i_system.h"
 
 
-int mb_used = 6 * (sizeof(void*) / 4);
+/* Zone size in MiB. Upstream doubles it for 64-bit pointers (6 * 2 = 12 MiB),
+   but the zone is pure lump cache: on this port lumps are read one at a time
+   straight from the WAD, so 12 MiB was pure waste. Measured here: 2 MiB makes
+   DOOM crash during init, 3 MiB is the smallest size it survives. */
+int mb_used = 3;
 ticcmd_t emptycmd;
 
 

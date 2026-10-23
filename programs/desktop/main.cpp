@@ -2,6 +2,8 @@
 //SPDX-License-Identifier: MIT
 #include <graphic/fb.h>
 #include <syscall.h>
+
+
 #include <base/arch/x86_64/syscalln.h>
 #include <graphic/devtype.h>   /* DEV_TYPE_FRAMEBUFFER: 设备类型编号权威 */
 #include <graphic/basicdraw.hpp>
@@ -11,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+
 #include <base/font/ttf/ttf.h>
 #include <mouse/ps2.h>
 #include <synthesizer/window.h>
@@ -545,18 +549,39 @@ int main(){
         if (!wad) wad = fopen("/mp/doom1.wad", "rb");
         if (wad) {
             fclose(wad);
+            /* DOOM 的峰值需求约 25-30 MiB (ELF + 4 MiB zone + 运行时堆)。
+               在 64 MiB 的目标机上, 桌面 + 控制台 + 记事本本身只用约 30 MiB,
+               整机零 OOM、完全正常; 一旦再拉起 DOOM, 内核就开始连环 OOM,
+               DOOM 自己也会因为读盘失败 (lwext4 拿不到块缓冲) 中途退出。
+               实测: 不含 DOOM 时 64 MiB 与 56 MiB 都是 OOM=0、无崩溃;
+               含 DOOM 需要 84 MiB 才稳定。
+
+               所以默认**不自动启动** DOOM。需要 DOOM 时把下面这个开关改成 1
+               (相应地整机内存请给到 84 MiB 以上)。
+               注: 曾经尝试过"运行时探测剩余内存再决定", 但那需要在低内存下
+               真的分配并触碰 24 MiB, 会把整机拖进剧烈换页 (64 MiB 下
+               OOM 4806 次), 反而更糟 —— 故改回编译期开关。 */
+#define DESKTOP_ENABLE_DOOM 1
+#if DESKTOP_ENABLE_DOOM
             wm_client_spawn(comp, &fb, "/mp/doom.elf", "DOOM",
                             640u, 440u, 0xFF000000u, 120u, 60u);
+#endif
         }
     }
 
     /* Desktop-owned (NOT shared with the client) full-work-area surface used
        only while maximized: opaque, no rounded shadow margin. The live text is
-       mirrored in from the normal shared surface each frame. */
+       mirrored in from the normal shared surface each frame.
+
+       2026-10 内存: 原来在启动时就 malloc 整块 (~4MiB), 但绝大多数会话从不
+       最大化。改成**第一次最大化时才分配** —— 64MiB 目标下这 4MiB 是硬开销。 */
     const uint32_t maxW = scrW;
     const uint32_t maxH = scrH - barH;
-    uint32_t* maxSurf = (uint32_t*)malloc((size_t)maxW * maxH * sizeof(uint32_t));
-    if (maxSurf) {
+    uint32_t* maxSurf = nullptr;
+    auto ensure_max_surf = [&]() -> uint32_t* {
+        if (maxSurf) return maxSurf;
+        maxSurf = (uint32_t*)malloc((size_t)maxW * maxH * sizeof(uint32_t));
+        if (!maxSurf) return nullptr;
         FrameBuffer mb;
         mb.BaseAddress       = maxSurf;
         mb.BufferSize        = (uint64_t)maxW * maxH * sizeof(uint32_t);
@@ -571,7 +596,8 @@ int main(){
                          "Skyline Console", SKYRGB_INK);
         SkyPaintCaptionIcons(&mb, 0, 0, (int32_t)maxW,
                              (int32_t)SKYWIN_TITLE_H, 1);
-    }
+        return maxSurf;
+    };
 
     /* WM-owned fixed-pitch surface used after an interactive edge resize. Its
        pitch is the maximum work-area width (plus shadow margin) so a drag that
@@ -966,7 +992,7 @@ int main(){
                     consoleLayer = nullptr;   /* auto layer retired with it */
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 2, &fireDT, haveDT);
                     wmDirty = true;
-                } else if (pressHit == 3 && (maxSurf)) {    /* maximize toggle  */
+                } else if (pressHit == 3 && (ensure_max_surf())) {    /* maximize toggle  */
                     if (wmMode == WM_NORMAL) {
                         wmMode = WM_MAX;
                         wm_apply_max(&consoleWin, maxSurf, maxW, maxH);

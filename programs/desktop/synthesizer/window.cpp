@@ -220,9 +220,16 @@ bool Compositor::Init(FrameBuffer* screen) {
     /* Off-screen compose target, same layout as the scanout (pitch == PSL).
        All clear/stack work happens here so the visible front buffer is only
        ever touched by the final, whole-frame present pass. */
+    /* 直写帧缓冲: 不再单独分配 4 MiB 的离屏副本, back_ 直接指向扫描出缓冲。
+       代价是合成过程中屏幕上会看到"部分更新"的一帧 (不再有整帧原子呈现),
+       收益是省下 4 MiB —— 对 64 MiB 目标这是关键的一块。
+       光标的"干净背景"改由 16x16 快照提供 (见 blendCursorSquare/eraseCursor)。 */
     back_bytes_ = screen_.PixelsPerScanLine * screen_.Height * COMP_BPP;
-    back_ = (uint32_t*)malloc((size_t)back_bytes_);
+    back_ = (uint32_t*)screen_.BaseAddress;
     if (!back_) return false;
+    cursor_save_valid_ = 0;
+    cursor_save_x_ = cursor_save_y_ = -1;
+    cursor_save_len_ = 0;
 
     return true;
 }
@@ -525,60 +532,41 @@ void Compositor::ComposeRangeToBack(uint32_t ry0, uint32_t ry1) {
 /* ========================================================================== */
 #define SKY_CURS 16
 
-/* Dirty-rectangle commit: push back_->fb over [x0,x1)x[y0,y1), leaving the  */
-/* up-to-two cursor squares (old ox,oy / new nx,ny) untouched, and writing a  */
-/* scene span ONLY where its pixels differ (compare-and-blit). Static frames */
-/* therefore perform zero scanout writes outside the cursor squares.         */
+/* 直写帧缓冲之后, 场景本来就已经在扫描出缓冲里, 不需要再从离屏副本搬运。
+   保留这个函数只是为了让调用点不动。 */
 void Compositor::blitSceneAvoidCursor(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
                                       int32_t ox,int32_t oy,int32_t nx,int32_t ny) {
+    (void)x0; (void)y0; (void)x1; (void)y1;
+    (void)ox; (void)oy; (void)nx; (void)ny;
+}
+
+/* 把光标下方保存的干净像素贴回帧缓冲 (擦除光标)。快照无效时什么也不做。 */
+void Compositor::eraseCursor() {
+    if (!cursor_save_valid_) return;
+    cursor_save_valid_ = 0;
     uint32_t* fb = (uint32_t*)screen_.BaseAddress;
     const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
     const int32_t W = (int32_t)screen_.Width, H = (int32_t)screen_.Height;
-    if (x0 < 0) x0 = 0; if (y0 < 0) y0 = 0;
-    if (x1 > W) x1 = W; if (y1 > H) y1 = H;
-    if (x0 >= x1 || y0 >= y1) return;
-    const int32_t cyA[2] = { oy, ny }, cxA[2] = { ox, nx };
-    for (int32_t y = y0; y < y1; ++y) {
-        const uint32_t* s = back_ + (uint64_t)y * pitch;
-        uint32_t*       d = fb   + (uint64_t)y * pitch;
-        int32_t exL[2], exR[2]; int ne = 0;
-        for (int r = 0; r < 2; ++r) {
-            if (y >= cyA[r] && y < cyA[r] + SKY_CURS) {
-                exL[ne] = cxA[r]; exR[ne] = cxA[r] + SKY_CURS; ++ne;
-            }
+    const int32_t n = cursor_save_len_ ? cursor_save_len_ : SKY_CURS;
+    for (int32_t cy = 0; cy < n; ++cy) {
+        int32_t py = cursor_save_y_ + cy;
+        if (py < 0 || py >= H) continue;
+        uint32_t* drow = fb + (uint64_t)py * pitch;
+        const uint32_t* srow = cursor_save_ + (uint32_t)cy * COMP_CURSOR_SAVE_MAX;
+        for (int32_t cx = 0; cx < n; ++cx) {
+            int32_t px = cursor_save_x_ + cx;
+            if (px < 0 || px >= W) continue;
+            drow[px] = srow[cx];
         }
-        for (int a = 1; a < ne; ++a)          /* sort <=2 spans by left edge */
-            if (exL[a] < exL[a-1]) {
-                int32_t t; t=exL[a];exL[a]=exL[a-1];exL[a-1]=t;
-                t=exR[a];exR[a]=exR[a-1];exR[a-1]=t;
-            }
-        int32_t cur = x0;
-        for (int e = 0; e < ne; ++e) {
-            int32_t a = exL[e], b = exR[e];
-            if (a < 0) a = 0; if (b > W) b = W;
-            if (a > cur && !span_eq_u32(d + cur, s + cur, (uint32_t)(a - cur)))
-                memcpy(d + cur, s + cur, (size_t)(a - cur) * COMP_BPP);
-            if (b > cur) cur = b;
-        }
-        if (cur < x1 && !span_eq_u32(d + cur, s + cur, (uint32_t)(x1 - cur)))
-            memcpy(d + cur, s + cur, (size_t)(x1 - cur) * COMP_BPP);
     }
 }
 
-/* Copy the 16x16 scene at (x,y) from the authoritative back_ onto the fb. */
+/* 恢复 (x,y) 处的光标方块: 用之前保存的干净像素贴回去。
+   快照与请求位置不匹配时什么也不做 (说明该处场景已经重绘过)。 */
 void Compositor::paintSquareFromBack(int32_t x, int32_t y) {
-    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
-    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
-    const int32_t W = (int32_t)screen_.Width, H = (int32_t)screen_.Height;
-    for (int cy = 0; cy < SKY_CURS; ++cy) {
-        int32_t py = y + cy; if (py < 0 || py >= H) continue;
-        const uint32_t* s = back_ + (uint64_t)py * pitch;
-        uint32_t*       d = fb   + (uint64_t)py * pitch;
-        for (int cx = 0; cx < SKY_CURS; ++cx) {
-            int32_t px = x + cx; if (px < 0 || px >= W) continue;
-            d[px] = s[px];
-        }
-    }
+    if (!cursor_save_valid_) return;
+    if (x != cursor_save_x_ || y != cursor_save_y_) return;
+    eraseCursor();
 }
 
 /* Build the FINAL 16x16 square (backdrop from back_ + arrow merged) in a local
@@ -665,6 +653,7 @@ static void comp_reclaim_retired() {
 }
 
 void Compositor::ComposeSingleThreaded() {
+    eraseCursor();
     /* Full-screen fallback when the strip table is absent or degraded. The
        old `for (i < ncpus_)` loop, after ANY degrade to ncpus_==1 that kept
        the N-strip table, rendered ONLY the top band and left the lower
@@ -850,6 +839,9 @@ void Compositor::StartWorkers() {
 
 void Compositor::Compose() {
     if (!back_) return;          /* Init failed / Shutdown: nothing to compose */
+    /* 先把上次画的光标擦掉, 否则 worker 直接写帧缓冲时会把箭头留在画面上;
+       擦除同时作废快照 (场景即将改变)。 */
+    eraseCursor();
     if (!launched_ || ncpus_ <= 1) { ComposeSingleThreaded(); return; }
 
     /* Peers are workers pinned to the OTHER cores; the main thread renders
@@ -912,5 +904,5 @@ void Compositor::Shutdown() {
     __atomic_store_n(&shutdown_, 1, __ATOMIC_RELEASE);
     __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);   /* wake waiters */
     if (strips_) { free(strips_); strips_ = nullptr; }
-    if (back_)   { free(back_);   back_ = nullptr; }
+    back_ = nullptr;             /* 指向帧缓冲, 绝不能 free */
 }

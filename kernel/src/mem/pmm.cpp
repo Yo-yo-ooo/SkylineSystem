@@ -168,7 +168,13 @@ static inline void bits_clear(uint64_t* map, uint64_t first, uint64_t last) {
         map[wf] &= ~m;
         return;
     }
-    map[wf] &= ~0ULL << (first & 63);
+    /* 首字: 清掉从 first&63 往上的位。
+       原写法 `map[wf] &= ~0ULL << (first & 63)` 是反的 —— 掩码是"高位全 1",
+       与运算保留高位、清掉低位; first 落在字边界时掩码全 1, 一个 bit 都不清,
+       于是每个 2 MiB 块的头 64 页 (1/8) 永远标成已用 (2 GiB 少 255 MiB,
+       64 MiB 少约 7 MiB)。
+       现在改为正确写法; 若早期结构占用这批页导致不稳, 会回退。 */
+    map[wf] &= ~(~0ULL << (first & 63));
     for (uint64_t w = wf + 1; w < wl; w++) map[w] = 0;
     map[wl] &= ~(~0ULL >> (63 - ((last - 1) & 63)));
 }
@@ -496,11 +502,25 @@ void Init() {
         }
     }
 
+    /* 位图只需要覆盖**能发出去的物理页**, 也就是 USABLE 区域的上界。
+       原来取"所有 memmap 项的最大 base+length", 结果被一条位于
+       0x10000000000 (1 TiB) 的保留/MMIO 项拉到 1 TiB, 于是位图按 1 TiB
+       建 (l1 = 32 MiB), 而且分配器初始化要扫 2.68 亿个页号 (实际只需 52 万)。
+       实测: meta=32932 KiB, 白白吃掉 32 MiB 常驻内存 + 拖慢启动。
+       改为只统计 USABLE; 若一条都没有再退回全量统计 (防御)。 */
     uint64_t max_phys = 0;
     for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
         struct limine_memmap_entry* e = pmm_memmap->entries[i];
+        if (e->type != LIMINE_MEMMAP_USABLE) continue;
         uint64_t top = e->base + e->length;
         if (top > max_phys) max_phys = top;
+    }
+    if (max_phys == 0) {
+        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+            struct limine_memmap_entry* e = pmm_memmap->entries[i];
+            uint64_t top = e->base + e->length;
+            if (top > max_phys) max_phys = top;
+        }
     }
     if (max_phys == 0) Panic("PMM: empty memory map!");
 
@@ -576,10 +596,37 @@ void Init() {
        必须在下面的 free_pages 统计**之前**, 否则计数会把它们算成空闲。 */
     reserve_bootloader_memory();
 
+    /* ---------------------------------------------------------------------
+     * 由 l1 反推 l2/l3, 并统计空闲页。
+     * -------------------------------------------------------------------
+     * 原来的做法是: 先按 usable 入口清 l2 位, 再只对"非满"块调
+     * ensure_l2_init(l2) 去清 l1 位。问题是**被预先标满的块永远不会
+     * 被 init**, 而 ensure_l2_init 才是真正把 usable 页的 l1 位清掉的地方
+     * (它先整块置满, 再按 memmap 清)。于是那些块里的可用页永远发不出去。
+     * 实测: usable=2041 MiB 但 free=1675 MiB, 差 365 MiB; 且 63 个 2MiB 块
+     * 一直显示 full, 其中 62 个本不该是满的。
+     *
+     * 现在: **无条件**对每个块做一次 ensure_l2_init, 再用 l1 反推 l2、
+     * 由 l2 反推 l3。这样位图必然与 memmap 完全一致, 不依赖两次清位的时序。
+     * ------------------------------------------------------------------- */
+    for (uint64_t l2 = 0; l2 < total_l2_bits; l2++) {
+        ensure_l2_init(l2);
+        if (l2_block_full(l2)) bit_set(l2_map, l2);
+        else                   bit_clear(l2_map, l2);
+    }
+    for (uint64_t l3 = 0; l3 < total_l3_bits; l3++) {
+        uint64_t wb = l3 * L3_L2_WORDS;
+        bool all_full = true;
+        for (uint64_t i = 0; i < L3_L2_WORDS; i++) {
+            if (l2_map[wb + i] != ~0ULL) { all_full = false; break; }
+        }
+        if (all_full) bit_set(l3_map, l3);
+        else          bit_clear(l3_map, l3);   // Init 单线程, 普通操作即可
+    }
+
     free_pages = 0;
     for (uint64_t l2 = 0; l2 < total_l2_bits; l2++) {
         if (bit_test(l2_map, l2)) continue;        /* 满 2MiB 块: 0 空闲 */
-        ensure_l2_init(l2);
         uint64_t wb = l2 * L2_L1_WORDS;
         uint64_t cnt = 0;
         for (uint64_t w = 0; w < L2_L1_WORDS; w++)
@@ -592,6 +639,27 @@ void Init() {
     pmm_bitmap_size  = l1_map_size;
     slow_hint = 1;
     rr_seq    = 0;
+
+    /* 启动统计: 位图按"每页 1 bit"设计, 元数据应当只有 max_phys/1024/8 左右。
+       这条日志用来暴露 max_phys 被某条高地址保留项拉大、进而白占内存的情况。
+       usable 是所有 USABLE 段的字节总和 —— 和 free 相比就能看出
+       "物理内存到底有多少真的能发出去"、"内核自己吃了多少"。 */
+    {
+        uint64_t usable_bytes = 0;
+        for (uint64_t i = 0; i < pmm_memmap->entry_count; i++) {
+            struct limine_memmap_entry* e = pmm_memmap->entries[i];
+            if (e->type == LIMINE_MEMMAP_USABLE) usable_bytes += e->length;
+        }
+        kinfoln("PMM: max_phys=0x%lx (%lu MiB), usable=%lu MiB, pages=%lu, "
+                "meta=%lu KiB, free=%lu MiB",
+                (unsigned long)max_phys,
+                (unsigned long)(max_phys >> 20),
+                (unsigned long)(usable_bytes >> 20),
+                (unsigned long)pmm_bitmap_pages,
+                (unsigned long)(total_meta >> 10),
+                (unsigned long)((free_pages << 12) >> 20));
+
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -608,7 +676,6 @@ void* Request(uint64_t n) {
             if (cpu->pmm_cache_count > 0) {
                 return cpu->pmm_cache[--cpu->pmm_cache_count];
             }
-
             void* page = pcp_refill(cpu);               // 分片化批量补充
             if (page) return page;
             // 各分片瞬时均无空闲 → 落到通用路径做最终兜底

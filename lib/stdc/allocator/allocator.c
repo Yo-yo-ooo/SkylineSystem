@@ -364,6 +364,27 @@ static inline void try_gc() {
        is_quiescent 的积压老化阈值承担 (积压越深老化越快) */
     int32_t gc_success = is_quiescent(total_pending);
 
+    /* 兜底: 静默判定可能**永久**失败。
+       is_quiescent() 的老化判据是 `gc_generation - last_epoch`, 而
+       gc_generation 只在 GC **成功**时自增 —— 一旦某个槽位的 count 卡在
+       非 0 (线程在临界区内终止、计数泄漏等), 静默判定永远为假、世代
+       永远不前进、老化也就永远不触发: 经典死锁。
+       实测后果: 分配器完全失去回收能力, 一个 42 KiB 的客户端进程在
+       运行期向内核要了 75 MiB (256 次 MoreCore, 均值 304 KiB),
+       全系统累计 179 MiB, 把 64 MiB 目标彻底堵死。
+       这里加一个有界退路: 连续 64 次判定失败且确实有积压时, 强制回收
+       一轮。分配器的临界区只有记账 (微秒级), 连续 64 轮都等不到,
+       只可能是计数坏了。 */
+    static volatile uint64_t gc_fail_streak;
+    if (gc_success) {
+        gc_fail_streak = 0;
+    } else if (total_pending > 0) {
+        if (++gc_fail_streak >= 64) {
+            gc_success = 1;
+            gc_fail_streak = 0;
+        }
+    }
+
     if (gc_success) {
         while (small_list) {
             void* next = *(void**)small_list;
@@ -443,6 +464,15 @@ static void* _skyline_malloc_internal(size_t size) {
 
     uint64_t size_class  = SizeClassTable[idx][0];
     uint64_t region_size = SizeClassTable[idx][2];
+    /* 区域上限: SizeClassTable 给每个尺寸类 128-512 KiB 的数据区, 而
+       分配器一旦"创建过就不再归还"(实测 created=137 / reclaimed=0),
+       于是一个只要 42 KiB 的客户端进程也能把每个尺寸类各拉一份,
+       累计向内核要 75 MiB。把小对象区压到 64 KiB 后, 同一个进程只需
+       几 MiB。32 KiB 会让桌面被看门狗打死, 64 KiB 是实测的稳定下限。 */
+    {
+        const uint64_t REGION_CAP = 64u * 1024u;
+        if (region_size > REGION_CAP) region_size = REGION_CAP;
+    }
     void* allocated_ptr  = NULL;
 
     if (region_size != 0) {

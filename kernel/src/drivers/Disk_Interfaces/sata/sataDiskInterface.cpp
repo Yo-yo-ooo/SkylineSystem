@@ -90,15 +90,63 @@ u8 SataDiskInterface::FRegVsDEV_Rb(uint64_t address, uint64_t count, void* buffe
         return Dev::RW_ERROR;
 }
 
+/* 预留的 DMA 页池。
+   原来每个请求都现场 PMM::Request() 一页, 内存紧张时这一页拿不到, Read()
+   就直接返回 false —— 上层 ext4 收到 EIO, 用户态看到的是"文件读到一半
+   返回 0"。实测: 80 MiB 下 DOOM 在 WAD 的 3.4 MB 偏移处稳定报
+   `W_ReadLump: only read 0 of 16297`, 而同一地址在 84 MiB 下完全正常。
+   块设备读不该因为内存紧张而失败, 所以启动时先留一小把页, 请求时从池里
+   取 (纯原子操作, 不会阻塞, 因此不受 AHCI WaitCommand 的 sti 窗口影响),
+   只有池空时才退回 PMM。 */
+#define SATA_DMA_POOL 8
+static void*         g_dma_pages[SATA_DMA_POOL];
+static volatile int  g_dma_busy[SATA_DMA_POOL];
+static volatile int  g_dma_pool_state;      /* 0=未初始化 1=初始化中 2=就绪 */
+
+static void dma_pool_init(void) {
+    int expected = 0;
+    if (!__atomic_compare_exchange_n(&g_dma_pool_state, &expected, 1,
+                                     0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+        return;                              /* 别人正在初始化或已就绪 */
+    for (int i = 0; i < SATA_DMA_POOL; i++) {
+        g_dma_pages[i] = PMM::Request();
+        g_dma_busy[i] = 0;
+    }
+    __atomic_store_n(&g_dma_pool_state, 2, __ATOMIC_RELEASE);
+}
+
+static void* dma_get(void) {
+    /* 首次使用时建池; 若别的 CPU 正在建, 本次直接走下面的动态分配退回。 */
+    if (__atomic_load_n(&g_dma_pool_state, __ATOMIC_ACQUIRE) != 2)
+        dma_pool_init();
+    for (int i = 0; i < SATA_DMA_POOL; i++) {
+        if (!g_dma_pages[i]) continue;
+        if (!__atomic_test_and_set(&g_dma_busy[i], __ATOMIC_ACQUIRE))
+            return g_dma_pages[i];
+    }
+    return PMM::Request();                   /* 池满: 退回动态分配 */
+}
+
+static void dma_put(void* p) {
+    if (!p) return;
+    for (int i = 0; i < SATA_DMA_POOL; i++) {
+        if (g_dma_pages[i] == p) {
+            __atomic_clear(&g_dma_busy[i], __ATOMIC_RELEASE);
+            return;
+        }
+    }
+    PMM::Free(p);
+}
+
 bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
 {
     /* P0-12 重做 (round 80): 每请求独立 DMA 页 —— round 52 的 iolock
        方案因 AHCI WaitCommand 的 sti 窗口回退; 每请求缓冲无共享状态,
-       天然并发安全 (PMM 页走 per-CPU 缓存, 分配开销可忽略) */
+       天然并发安全。现在改为优先从预留池取 (见 dma_get), 池空才现场分配。 */
     uint8_t* buf = (uint8_t*)buffer;
     int32_t sectorCountDiv8 = ((sectorCount) / 8);
 
-    void* dma_phys = PMM::Request();
+    void* dma_phys = dma_get();
     if (!dma_phys) return false;
     void* hhdm_buffer = HIGHER_HALF(dma_phys);
 
@@ -110,7 +158,7 @@ bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer
         if (!Port->Read(sector, 8, dma_phys))
         {
             debugpln("(SataDiskInterface::Read)HIT ERROR 1");
-            PMM::Free(dma_phys);
+            dma_put(dma_phys);
             return false;
         }
         __memcpy(buf, hhdm_buffer, 0x1000);
@@ -126,14 +174,14 @@ bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer
         if (!Port->Read(sector, remaining, dma_phys))
         {
             debugpln("(SataDiskInterface::Read)HIT ERROR 2");
-            PMM::Free(dma_phys);
+            dma_put(dma_phys);
             return false;
         }
         __memcpy(buf, hhdm_buffer, remaining << 9);
     }
 
     debugpln("(SataDiskInterface::Read)HIT OK!");
-    PMM::Free(dma_phys);
+    dma_put(dma_phys);
     return true;
 }
 

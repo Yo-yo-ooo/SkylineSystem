@@ -90,8 +90,67 @@ GENERATE_IGN3()) {
     }
 
     // Cache Miss: Hardware
-    void* kbuf = kmalloc(count);
-    if (!kbuf) return -ENOMEM;
+    /* 中转缓冲按 count 分配; 内存紧张时 kmalloc 可能失败。
+       原实现直接返回 -ENOMEM, 而上层 (libc 的 fread 循环) 拿到 0 就
+       **提前结束**, 表现为"只读了一半"的静默截断 —— 实测 64/72 MiB 下
+       DOOM 报 `W_ReadLump: only read 8192 of 17544 on lump 1955`,
+       整局游戏起不来。
+       改为降级: 分配不到就把本次请求缩小到能分配的最大块, 返回**部分读**。
+       调用方的循环会继续, 只是多几次系统调用。 */
+    /* 中转缓冲优先用**每 CPU 静态 8 KiB** (不占堆、不会失败), 但同一 CPU 上
+       可能被抢占重入 (FS 读会阻塞), 所以配一个占用标志: 缓冲已忙时退回
+       内核堆分配 (分配不到再逐级缩小, 返回部分读而不是 -ENOMEM)。
+       只用静态缓冲的版本实测会因重入踩坏数据: 72 MiB 下 DOOM 崩溃 +
+       STALL WATCHDOG (等待 FFFFFFFF80025F81 处的锁)。 */
+    static char s_read_bounce[MAX_CPU][8192];
+    static volatile int s_bounce_busy[MAX_CPU];
+    cpu_t *rcpu = this_cpu();
+    uint32_t rcid = rcpu ? (uint32_t)rcpu->id : 0u;
+    if (rcid >= MAX_CPU) rcid = 0;
+    const size_t bounce_cap = sizeof(s_read_bounce[0]);
+
+    void *kbuf = nullptr;
+    bool use_static = false;
+    if (count <= bounce_cap &&
+        !__atomic_test_and_set(&s_bounce_busy[rcid], __ATOMIC_ACQUIRE)) {
+        kbuf = s_read_bounce[rcid];
+        use_static = true;
+    } else {
+        kbuf = kmalloc(count);
+        if (!kbuf) {
+            size_t shrink = (size_t)count;
+            while (shrink > 512) {
+                shrink >>= 1;
+                kbuf = kmalloc(shrink);
+                if (kbuf) break;
+            }
+            if (!kbuf) return -ENOMEM;
+            count = shrink;
+        }
+    }
+    bool big_read = (count > bounce_cap);
+
+    if (big_read) {
+        /* 大读: 逐 8 KiB 块读入并直接拷给用户, 不建立缓存前缀。 */
+        size_t done = 0;
+        while (done < (size_t)count) {
+            size_t n = (size_t)count - done;
+            if (n > bounce_cap) n = bounce_cap;
+            FD->FSOPS->lseek(FD->filedesc, cur_offset + done, SEEK_SET);
+            size_t got = 0;
+            FD->FSOPS->read(FD->filedesc, kbuf, n, &got);
+            if (got == 0) break;
+            if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf + done, kbuf, got)) {
+                if (done == 0) return -EFAULT;
+                break;
+            }
+            done += got;
+            if (got < n) break;
+        }
+        if (use_static) __atomic_clear(&s_bounce_busy[rcid], __ATOMIC_RELEASE);
+        if (done > 0) FD->offset = cur_offset + done;
+        return done;                        /* 部分读也是合法的进展 */
+    }
     
     // 确保文件偏移量正确（前面 lseek 可能未改变，但保险起见恢复状态）
     FD->FSOPS->lseek(FD->filedesc, cur_offset, SEEK_SET);
@@ -102,7 +161,7 @@ GENERATE_IGN3()) {
     if (total_read > 0) {
         
         if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf, kbuf, total_read)) {
-            kfree(kbuf);
+            /* kbuf 是静态中转缓冲, 不能 kfree */
             return -EFAULT;
         }
 
@@ -149,7 +208,8 @@ GENERATE_IGN3()) {
         }
     }
 
-    kfree(kbuf);
+    if (use_static) __atomic_clear(&s_bounce_busy[rcid], __ATOMIC_RELEASE);
+    else kfree(kbuf);
     if (total_read > 0) FD->offset = cur_offset + total_read;
     return (int64_t)total_read;
 }
@@ -267,7 +327,7 @@ GENERATE_IGN3()) {
         FD->offset = cur_offset + wcnt;
     }
 
-    kfree(kbuf); 
+    kfree(kbuf);
 
     if (status != 0) return (int64_t)status;
     return (int64_t)wcnt;

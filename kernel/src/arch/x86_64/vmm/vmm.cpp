@@ -806,8 +806,53 @@ namespace VMM {
         return pm;
     }
 
+    /* vm_mapping_t 只有几十字节, 原来每个都要 PMM::Request() 一整页 4KiB:
+       实测 2900 个 mapping = 11 MiB。这里复用一个**只依赖 PMM** 的页内
+       小对象池 (与 vma.cpp 里的 vma_region_t 池同理)。不能直接用 SLUB:
+       NewMapping 在 VMM::Init 期间就会被调用, 而 SLAB/SLUB 的初始化排在
+       VMM::Init 之后。 */
+    static vm_mapping_t *g_map_free_list = nullptr;
+    static volatile int g_map_pool_lock = 0;
+
+    static inline void map_pool_lock() {
+        while (__atomic_test_and_set(&g_map_pool_lock, __ATOMIC_ACQUIRE)) {
+            __asm__ __volatile__("pause");
+        }
+    }
+    static inline void map_pool_unlock() {
+        __atomic_clear(&g_map_pool_lock, __ATOMIC_RELEASE);
+    }
+
+    static vm_mapping_t *map_alloc_node() {
+        map_pool_lock();
+        if (unlikely(!g_map_free_list)) {
+            void *pg = PMM::Request();
+            if (unlikely(!pg)) { map_pool_unlock(); return nullptr; }
+            vm_mapping_t *base = HIGHER_HALF((vm_mapping_t*)pg);
+            const uint32_t n = PAGE_SIZE / sizeof(vm_mapping_t);
+            for (uint32_t i = 1; i + 1 < n; i++) base[i].next = &base[i + 1];
+            if (n > 1) base[n - 1].next = nullptr;
+            g_map_free_list = (n > 1) ? &base[1] : nullptr;
+            map_pool_unlock();
+            return &base[0];
+        }
+        vm_mapping_t *m = g_map_free_list;
+        g_map_free_list = m->next;
+        map_pool_unlock();
+        return m;
+    }
+
+    static void map_free_node(vm_mapping_t *m) {
+        if (unlikely(!m)) return;
+        map_pool_lock();
+        m->next = g_map_free_list;
+        g_map_free_list = m;
+        map_pool_unlock();
+    }
+
     vm_mapping_t *NewMapping(pagemap_t *pm, uint64_t start, uint64_t pc, uint64_t flags){
-        vm_mapping_t *m = HIGHER_HALF((vm_mapping_t*)PMM::Request());
+        vm_mapping_t *m = map_alloc_node();
+        if (unlikely(!m)) return nullptr;
         m->start = start; m->page_count = pc; m->flags = flags;
         if (likely(pm->vm_mappings)) {
             m->prev = pm->vm_mappings->prev; m->next = pm->vm_mappings;
@@ -819,7 +864,7 @@ namespace VMM {
 
     void RemoveMapping(vm_mapping_t *m){
         m->next->prev = m->prev; m->prev->next = m->next;
-        PMM::Free(PHYSICAL((void*)m));
+        map_free_node(m);
     }
 
     /* ---- 共享区域: 逐 4K 递减引用计数, 归零才 PMM::Free ---- */
