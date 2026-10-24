@@ -372,8 +372,13 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
     t->kernel_rsp = kstack + PAGE_SIZE * 4;
 
     /*  用户栈 — 内核分配 (无 stack 参数的代价, 内核必须管):
-       在调用者的 pagemap 里分配, 8 页 (NewThread 同款) */
-    uint64_t ustack = (uint64_t)VMM::Alloc(me->pagemap, 8, true);
+       在调用者的 pagemap 里分配。
+       原来是 8 页 (32 KiB): 桌面合成器的 worker 在压力下会打到栈底 ——
+       实测崩溃点 RSP 恰好等于缺页地址 (CR2), 且 RIP 在
+       flush_tls_scb_all (线程退出时调 allocator_thread_exit_cleanup),
+       即**栈已经溢出到未映射页**。32 页 (128 KiB) 给 worker 留足余量,
+       每个线程多 96 KiB, 4 个 worker 约多 384 KiB。 */
+    uint64_t ustack = (uint64_t)VMM::Alloc(me->pagemap, USER_THREAD_STACK_PAGES, true);
     if (!ustack) {
         VMM::Free(kernel_pagemap, (void*)kstack);
         VMM::Free(kernel_pagemap, t->fx_area);
@@ -382,9 +387,16 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
     }
     t->stack = ustack;
 
-    /* 用户上下文 — 无 arg, rsp 指栈顶对齐 */
+    /* 用户上下文 — 无 arg。
+       初始 rsp 必须落在**映射区内**并留出一个可读的槽位:
+       原来写成 `ustack + N*PAGE` 恰好越过最后一个有效字节, 该地址未映射。
+       任何在第一次 push 之前就读 [rsp] 的指令 (ret / pop / 取栈上参数 /
+       栈保护读) 都会立刻缺页, 而且 CR2 与 RSP 完全相同、且是页对齐的 ——
+       与实测崩溃日志 (RSP==CR2==0x...000, ERROR_CODE=4 读, 用户态) 完全吻合。
+       这里减 8: [rsp] 落在最后一个有效字节内, 同时保持 16 字节对齐要求
+       (纯线程入口没有返回地址, 减 8 是常见做法)。 */
     t->ctx.rip = entry;
-    t->ctx.rsp = (ustack + 8 * PAGE_SIZE) & ~0xFULL;
+    t->ctx.rsp = ((ustack + USER_THREAD_STACK_PAGES * PAGE_SIZE) & ~0xFULL) - 8;
     t->ctx.rdi = 0;                          /* 定义死: arg == 0 */
     t->ctx.cs = 0x23; t->ctx.ss = 0x1b; t->ctx.rflags = 0x202;
     t->thread_stack = t->ctx.rsp;

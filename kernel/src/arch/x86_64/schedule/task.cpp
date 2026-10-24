@@ -245,31 +245,26 @@ static void SyncKillProcThreads(proc_t *proc, thread_t *except_thread) {
         thread_t *batch[64];
         int count = 0;
         uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
-        thread_t *t = proc->threads;
-        if (t) {
-            thread_t *start = t;
-            /* 有界遍历: 这段代码**持有 PROC_LIST_LOCK**。若线程链表被破坏
-               (某个 next 不指回 start, 或 proc->threads 一直非空), 原来的
-               do/while 会永远循环并一直持锁 —— 实测后果是另一个 CPU 在
-               Schedule::PROC_KILL 里等 32 秒以上, 随后所有 TLB shootdown
-               因为目标核关中断等锁而全部 ACK 超时, 日志被
-               "[KERR] TLB shootdown: ACK timeout" 刷屏。
-               宁可放弃本轮回收并报一次错, 也绝不在持锁状态下死等。 */
-            uint64_t guard = 0;
+        /* 每次只摘一个可摘节点。
+           旧写法用 start 当遍历哨兵, 但 detach_thread_from_proc() 会把被摘
+           节点的 next/prev 置空 —— 一旦 start 自己被摘掉, `t != start` 就
+           永远成立, 只能靠 4096 次 guard 兜底退出, 期间**一直持有
+           PROC_LIST_LOCK**。实测后果: 其它 CPU 在 PROC_KILL 里等锁数十秒,
+           TLB shootdown 全部 ACK 超时, 整机卡顿。
+           现在以"链表里只剩 except_thread(或已空)"作为唯一终止条件:
+           每轮确定性地摘掉一个节点, count 上限 64, 必然结束。 */
+        while (count < 64) {
+            thread_t *t = proc->threads;
+            if (!t) break;
+            thread_t *p = t;
+            thread_t *cand = nullptr;
             do {
-                thread_t *next = t->next;
-                if (t != except_thread && count < 64) {
-                    detach_thread_from_proc(t);
-                    batch[count++] = t;
-                }
-                t = next;
-                if (unlikely(++guard > 4096)) {
-                    kerrorln("[sched] thread list corrupt in "
-                             "SyncKillProcThreads (pid=%d), aborting batch",
-                             proc->id);
-                    break;
-                }
-            } while (t != start && proc->threads);
+                if (p != except_thread) { cand = p; break; }
+                p = p->next;
+            } while (p && p != t);
+            if (!cand) break;                 /* 只剩 except_thread */
+            detach_thread_from_proc(cand);
+            batch[count++] = cand;
         }
         spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
 

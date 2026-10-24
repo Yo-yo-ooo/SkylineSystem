@@ -1217,6 +1217,27 @@ namespace VMM {
         auto segv = [&](const char *why) -> uint32_t {
             spinlock_unlock(&pm->pt_lock);
             kerrorln("Segfault: %s (addr=%p rip=%p)", why, cr2, ctx->rip);
+            /* 诊断: 用户态故障时把该线程的栈/TLS 范围一并打出来。
+               "RSP == CR2" 这类日志只有对照栈范围才能判定是不是栈越界 ——
+               没有这行, 只能靠猜。 */
+            if (us) {
+                thread_t *th = Schedule::this_thread();
+                if (th) {
+                    uint64_t stk = th->stack;
+                    uint64_t stk_end = stk + (uint64_t)USER_THREAD_STACK_PAGES * PAGE_SIZE;
+                    bool in_stack = (cr2 >= stk && cr2 < stk_end);
+                    bool in_tls = th->tls_pages &&
+                                  cr2 >= th->tls_base &&
+                                  cr2 < th->tls_base + (uint64_t)th->tls_pages * PAGE_SIZE;
+                    kerrorln("  [fault] pid=%d tid=%d rsp=%p stack=[%p,%p) %s%s tls=[%p,+%lu) %s",
+                             th->parent ? th->parent->id : -1, th->id,
+                             (void*)ctx->rsp, (void*)stk, (void*)stk_end,
+                             in_stack ? "IN-STACK" : "outside-stack",
+                             (in_stack && cr2 <= ctx->rsp) ? " (stack exhausted)" : "",
+                             (void*)th->tls_base, (unsigned long)th->tls_pages,
+                             in_tls ? "IN-TLS" : "");
+                }
+            }
             return 1;
         };
         if (info.size == 0) return segv("unmapped");

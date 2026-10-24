@@ -100,7 +100,7 @@ private:
     CompWinNode* FindNode(Window* w);
 
     void ComposeStripToBack(uint32_t id);
-    void ComposeRangeToBack(uint32_t ry0, uint32_t ry1);
+    void ComposeRangeToBack(uint32_t ry0, uint32_t ry1, uint32_t* stage);
     void ComposeSingleThreaded();
     void blitSceneAvoidCursor(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
                               int32_t ox, int32_t oy, int32_t nx, int32_t ny);
@@ -109,7 +109,8 @@ private:
     void blendCursorSquare(int32_t x, int32_t y);
     void overlayCursorFinal(int32_t ox, int32_t oy, int32_t nx, int32_t ny);
     void commitScene(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
-                     int32_t ox, int32_t oy, int32_t nx, int32_t ny);
+                     int32_t ox, int32_t oy, int32_t nx, int32_t ny,
+                      bool cursor_in_frame = false);
 
     FrameBuffer      screen_;
     const uint32_t*  background_;
@@ -117,6 +118,10 @@ private:
     uint32_t         launched_;
     int              shutdown_;
     Strip*           strips_;
+    /* 每个 worker 一份"单行暂存": 合成一行完整像素后再整行写回扫描出缓冲,
+       屏幕上不会出现"先清成壁纸、再叠窗口"的中间态 (桌面闪烁的来源)。
+       一行 = 屏幕宽 x 4B, 1280 宽时约 5 KiB. */
+    uint32_t*        stage_[COMP_CPUS_SANITY];
     CompLayer*       layer_head_;
     CompLayer*       layer_tail_;
     unsigned char    list_lock_;

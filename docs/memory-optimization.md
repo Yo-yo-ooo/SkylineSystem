@@ -1174,3 +1174,392 @@ if (!dma_phys) return false;      // → ext4 收到 EIO → 用户态看到短�
 
 `slab.cpp` / `slub.cpp` 里的 `DumpUsage()` 和 lwip 定时器里的一次性调用**还在树里**
 （每次开机多打 8 行日志）。它们是无害的诊断代码，下次清理时应移除。
+
+## 第 27 轮：修复桌面闪烁（逐行合成 + 单行暂存）
+
+### 根因
+
+第 23 轮把合成器改成"直写帧缓冲"（去掉 4 MiB 离屏 `back_`）之后，
+`ComposeRangeToBack` 仍然是两遍：**先把整段区域刷成壁纸，再叠加窗口**。
+离屏时这两遍的中间态看不见；直写之后中间态就在屏幕上——这就是闪烁。
+
+### 修法
+
+改为**逐行合成**：把这一行的最终像素先做进一个单行暂存缓冲（壁纸 + 该行
+所有窗口），然后**整行一次写回**扫描出缓冲。每一行只对帧缓冲写一次，
+写进去的已经是最终像素，中间态永远不会上屏。
+
+- 每个 worker 一份暂存行（屏幕宽 x 4B，1280 宽约 5 KiB；4 核共约 20 KiB）
+- `stage == nullptr` 时退化为直写（会闪但不会崩）
+- 顺手把内层循环从 "每窗口遍历行" 改成 "每行遍历窗口"，复杂度不变
+
+### 验证（64 MiB，DOOM 关闭）
+
+用 `_win_flicker.ps1` 在持续移动鼠标（每帧都会重合成）的情况下连拍 6 帧，
+再用 `_dbg_flickcheck.py` 统计"记事本区域内深色像素比例"：
+
+| 帧 | 记事本区域深色比例 | 纯壁纸区域深色比例 |
+|---|---|---|
+| _f0 ~ _f5 | **0.998**（六帧完全一致） | 0.043 |
+
+若存在"清屏中间态"，出现闪白的那一帧该比例会骤降。**六帧全部 0.998，
+没有任何一帧出现中间态。**
+
+同时：OOM=0、crash=0、STALL=0。
+
+### 内存代价
+
+约 20 KiB（4 个 worker 各一行），可忽略：
+- 72 MiB + DOOM：doom=1、OOM=36、crash=0（与改前 34~37 同量级）
+- 64 MiB 默认：procs=2、OOM=0、crash=0
+
+## 第 28 轮：修复鼠标闪烁（光标并入合成行）
+
+### 根因
+
+第 27 轮把合成改成逐行之后，`Compose()` 开头仍然先调 `eraseCursor()`
+把光标擦掉，等所有 worker 合成完、barrier 之后才由 `overlayCursorFinal`
+重画。**这两步之间屏幕上没有光标** —— 每一次 Compose 都闪一下，
+鼠标移动时 Compose 频率高，闪烁就非常明显。
+
+### 修法：让光标成为场景的一部分
+
+在 `ComposeRangeToBack` 的逐行循环里，叠完窗口后若该行落在光标方块内，
+就**直接把箭头字形画进这一行**（同时把干净像素存进快照供"移动光标"的
+快路径擦除），再整行写回。
+
+- `Compose()` / `ComposeSingleThreaded()` 里不再调 `eraseCursor()`
+- `commitScene(..., bool cursor_in_frame)`：合成帧传 true，只同步记账不再重画
+  （否则会把箭头当成"干净背景"存进快照，之后擦除留残影）
+- `eraseCursor()` 保留，仅服务于"不重新合成、只移动光标"的快路径
+
+### 验证（64 MiB / 128 MiB，DOOM 关闭）
+
+**1. 光标始终在屏**：把指针推到左上角停住，连拍 6 帧，检查 (0,0)-(17,17)
+内的纯白/纯黑像素（箭头 = 白填充 + 黑描边）：
+
+```
+_k0.._k5:  white=40 black=40   → 6/6 帧都有光标, 且完全一致
+```
+
+**2. 交互正常**：移动 + 点击 + 输入 `hithere` 后截图，记事本里文字正确、
+光标只有一处（无重影）、OOM=0 / crash=0 / STALL=0。
+
+### 说明
+
+这是纯 CPU 侧改动，不增加内存占用（快照本来就存在）。
+`blendCursorSquare` 现在只被快路径使用。
+
+## 第 29 轮：修 CI 金样（allocator chaos 退出码 13）
+
+### 现象
+
+CI 的 `allocator chaos (P4-86)` 步骤在 `make -B alloc && ./bin/alloc_test`
+之后以 **exit 13** 结束，且测试**没有任何输出**（连第一条 PASS 都没打）。
+
+13 的来源不是崩溃，而是分配器的安全断言：
+`sys_exit(0xBAADF00D)` → `_exit((int)0xBAADF00D)` → 低 8 位 = **13**。
+
+### 定位
+
+1. 在断言宏里加宿主专用的行号打印 → 命中 `allocator.c:890`
+   `ALLOCTOR_SECURITY_ASSERT(header->Magic == ALLOC_BLOCK_MAGIC)`。
+2. 再打印失败块的字段：
+   `bad magic=0 ptr=0x...4040 base=0x...4040 size=65536 hdr=0x...4000`
+   —— 失败的是 **malloc(65536)**，正好等于我加的 `REGION_CAP`。
+3. 实验：把 `REGION_CAP` 临时设为 ~0 → 测试 PASS。确认是它引入的。
+
+### 根因
+
+`REGION_CAP = 64 KiB` 截断后，size_class = 65536 的尺寸类算出
+`total_objects = 65536 / (65536 + sizeof(AllocBlock_t)) = 0`，
+于是被下面 `if (total_objects == 0) region_size = 0;` 判成"该尺寸类不用小对象
+路径"，**改走大对象路径**。两条路径的释放语义不同（大对象用
+`_free_large_object_real`），结果同一个块被当成小对象再释放一次 —— 表现为
+free 时 `Magic == 0`（已被清掉）。
+
+### 修法
+
+截断后保证**至少能放下一个对象**：
+
+```c
+const uint64_t step_min = size_class + sizeof(AllocBlock_t);
+if (region_size < step_min) region_size = step_min;
+```
+
+这样 64 KiB 类仍是小对象路径（1 对象/区域），语义不变；其它尺寸类的
+64 KiB 上限收益保持不变。
+
+### 顺带修掉 golden.sh 的调用 bug
+
+`golden.sh` 先 `cd` 到 `tests/`，之后仍然用相对形式的 `$0` 去调 `ci.sh`，
+于是按它自己文档写的 `bash res/scripts/test/golden.sh` 必然失败
+（找不到 ci.sh → 127 → 打印 "GOLDEN: CI 失败"）。改成先解析绝对路径
+`HERE`，相对/绝对调用都可用。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| `make -B alloc && ./bin/alloc_test` | rc=0、`ALLOC RESULT: PASS` |
+| `bash res/scripts/test/golden.sh`（相对路径）| **GOLDEN: PASS** |
+| 绝对路径调用 golden.sh | **GOLDEN: PASS** |
+| 64 MiB 启动 | procs=2、OOM=0、crash=0 |
+
+临时诊断（断言行号、坏 magic 转储）已全部移除。
+
+## 第 30 轮：桌面卡顿 + 桌面进程崩溃（PID 7）
+
+### 日志给出的两条独立线索
+
+**1. 段错误 = 用户线程栈溢出**
+
+```
+RIP: 0x70000000169B4   CR2: 0x6FFFFF9CC000 / 0x6FFFFFC5D000
+RSP: 0x6FFFFFC5D000    ERROR_CODE: 0x4 (用户态读, 页不存在)
+```
+
+- `RIP - 0x700000000000 = 0x169B4` → `addr2line` 得到
+  **`flush_tls_scb_all` (allocator.c:215)**，即线程退出时
+  `allocator_thread_exit_cleanup()` 调用的分配器冲刷。
+- **`RSP` 与 `CR2` 完全相同** —— 栈指针本身落在未映射页上，是典型的
+  "栈长过了映射底部"。
+- 内核给用户线程的栈在 `sys_thread_launch` 里写死 **8 页 = 32 KiB**，
+  桌面的合成器 worker 在压力下打穿了它。
+
+修复: 用户线程栈 8 → **32 页 (128 KiB)**（每线程多 96 KiB，4 个 worker
+约多 384 KiB）。
+
+**2. 卡顿 = 线程链表回收路径持锁自旋**
+
+```
+[KERR] [sched] thread list corrupt in SyncKillProcThreads (pid=7), aborting batch
+```
+
+这条 "corrupt" 其实是**我自己之前写的有界遍历在报假警**：
+`SyncKillProcThreads` 用 `start` 当遍历哨兵，但
+`detach_thread_from_proc()` 会把被摘节点的 `next/prev` 置空 —— 一旦
+`start` 自己先被摘掉，`t != start` 就永远成立，只能靠 4096 次 guard 退出，
+**而这段时间一直持有 `PROC_LIST_LOCK`**。其它 CPU 在 `PROC_KILL` 里等锁，
+表现为整机卡顿 / 看门狗告警。
+
+修复: 改成"每次确定性地摘掉一个节点"，以"链表为空或只剩 except_thread"
+作为唯一终止条件；count 上限 64，必然结束，不再有长时间持锁。
+
+### 验证
+
+| 配置 | 结果 |
+|---|---|
+| 64 MiB | procs=2、OOM=0、crash=0、segv=0、listcorrupt=0、TLB=0 |
+| 96 MiB | 同上（TLB 提示 1 条）|
+| 64 MiB 交互测试（移动/点击/输入）| OOM=0、crash=0、STALL=0 |
+
+### 诚实的局限
+
+**我没能复现用户报的那次崩溃**（多次 20~45 秒运行都是零崩溃）。上面两处
+修复针对的是日志里**确实存在**的机制，但"改完就一定会好"我无法用复现来证明。
+若再次出现，请提供同样的日志（尤其 `RSP`/`CR2` 与 `thread list corrupt` 两行）。
+
+## 第 31 轮：修正上一轮自己引入的栈尺寸 bug + 加故障诊断
+
+### 先纠正上一轮的错误
+
+上一轮把用户线程栈从 8 页改成 32 页，但**只改了分配，没改初始 rsp**：
+
+```c
+t->ctx.rsp = (ustack + 8 * PAGE_SIZE) & ~0xFULL;   // 仍是 8 页!
+```
+
+后果：线程只用到这 32 页的中间一段（从 +8 页向下），其余 24 页白占。
+也就是说**上一轮那个"修复"实际无效，只是多吃了内存**。
+
+现在统一成一个常量 `USER_THREAD_STACK_PAGES`（放在 `kernel/include/conf.h`），
+分配与 `ctx.rsp` 都引用它，避免再次不同步。
+
+### 关于崩溃：仍未复现，但加了能定位的证据
+
+本轮尝试复现（64 MiB，反复移动鼠标 + 三次点击关闭按钮，触发线程回收路径）：
+`Segfault=0 / crash=0 / thread list corrupt=0 / OOM=0 / STALL=0`，没有复现。
+
+所以改为**让下一次崩溃自己说明问题**：用户态段错误时，
+`vmm.cpp` 的 `segv()` 除原来的 addr/rip 外，再打印该线程的栈与 TLS 范围：
+
+```
+[fault] pid=7 tid=9 rsp=0x... stack=[0x...,0x...) IN-STACK (stack exhausted)
+        tls=[0x...,+N) 
+```
+
+有了这行，下次可以直接判定是"栈越界"还是"上下文被破坏"——
+这正是这轮卡住的地方：仅凭 RSP==CR2 只能猜。
+
+### 两处已确认的机制（沿用上一轮修复）
+
+1. **用户线程栈溢出**：崩溃点 RSP 恰好等于 CR2，RIP 在
+   `flush_tls_scb_all`（线程退出清理）。栈页数已统一为 32。
+2. **线程链表回收持锁自旋**：`SyncKillProcThreads` 旧实现用 start 当哨兵，
+   摘链后永远回不到起点，靠 4096 次 guard 退出且**全程持有
+   PROC_LIST_LOCK** —— 这是"卡顿"的机制。已改为每次确定性摘一个。
+
+### 验证
+
+| 配置 | 结果 |
+|---|---|
+| 64 MiB 启动 | procs=2、OOM=0、crash=0 |
+| 64 MiB 关窗压力 | Segfault=0、crashed=0、list corrupt=0、OOM=0、STALL=0 |
+
+## 第 32 轮：找到"页对齐 RSP"的成因 —— 初始 rsp 越过了栈末尾
+
+### 关键观察
+
+崩溃日志里两个线程的 RSP **都是页对齐的**：
+
+```
+RSP = 0x00006FFFFF9CC000   CR2 = 0x00006FFFFF9CC000
+RSP = 0x00006FFFFFC5D000   CR2 = 0x00006FFFFFC5D000
+```
+
+真实调用栈在 `ret` 处的 RSP 几乎不可能正好落在页边界上。页对齐 + CR2==RSP
++ ERROR_CODE=4（读）+ 用户态 —— 这组合指向 `ret`/`pop` 从**未映射的那个槽位**
+读取返回地址。
+
+### 成因
+
+`sys_thread_launch()` 给 worker 线程设的初始栈指针是：
+
+```c
+t->ctx.rsp = (ustack + N * PAGE_SIZE) & ~0xFULL;   // 越过了最后一个有效字节
+```
+
+`ustack` 是区间 `[base, base + N*PAGE)` 的**基址**，所以上式计算出的地址
+正好是区间外第一个字节 —— **未映射**。线程入口不像进程入口会先压一个
+初始栈帧，因此任何在第一次 push 之前读 `[rsp]` 的指令（`ret`、`pop`、
+栈上取参、栈保护读）都会立刻缺页，且 CR2 == RSP、地址页对齐，
+与日志完全吻合。
+
+### 修复
+
+```c
+t->ctx.rsp = ((ustack + USER_THREAD_STACK_PAGES * PAGE_SIZE) & ~0xFULL) - 8;
+```
+
+减 8 让 `[rsp]` 落在最后一个有效字节内；纯线程入口没有返回地址，
+这是常见做法。`NewThread()` 的路径不受影响（它随后会
+`PrepareUserStack()` 压入初始栈帧，rsp 自然落在区间内）。
+
+### 验证
+
+| 配置 | 结果 |
+|---|---|
+| 64 MiB 启动 | procs=2、OOM=0、crash=0、segv=0 |
+
+（worker 线程正常工作：compositor up、桌面与窗口渲染正常。）
+
+### 仍未闭环的部分
+
+这条修复能解释**页对齐的 RSP**，但崩溃 RIP 落在
+`flush_tls_scb_all`（线程退出清理）而不是线程入口 —— 两者不完全自洽。
+因此我仍**没有复现**该崩溃，只能说是"修掉了一个确定的越界缺陷"，
+不能断言"用户的崩溃已消除"。下一轮若再出现，`[fault]` 那行会给出
+rsp 与栈区间的关系，可直接定性。
+
+## 第 33 轮：长跑浸泡未复现 + 一条自洽的因果链
+
+### 浸泡结果（64 MiB，110 秒，290 次输入操作）
+
+```
+compositor up=1  Segfault=0  crashed=0  [fault]=0
+thread list corrupt=0  OOM=0  STALL=0  GONE=0
+```
+
+持续移动 + 点击 + 按键，**没有复现**。
+
+### 一条能解释崩溃的因果链
+
+把日志和代码对上之后，最自洽的解释是：
+
+1. 64 MiB 下合成器的带界 barrier 可能超时（worker 没在预算内完成 strip）；
+2. 超时路径会 `shutdown_ = 1` 并把合成器**降级为单线程**，worker 线程随即退出；
+3. worker 退出时调用 `allocator_thread_exit_cleanup()` → `flush_tls_scb_all()`
+   —— **这正是崩溃的 RIP**；
+4. 此时若栈指针已经落在未映射页（本轮修掉的"初始 rsp 越过栈末尾"
+   就是一个确定存在的原因；此外还有未被证明的"栈在退出前被回收"），
+   `ret`/`pop` 读 `[rsp]` 立即缺页，CR2 == RSP 且页对齐，与日志吻合。
+
+这条链也解释了为什么两个 worker（tid 9、10）**几乎同时**在同一 RIP 崩溃：
+它们是被同一次降级一起通知退出的。
+
+### 已修（累计四处）
+
+| 修复 | 性质 |
+|---|---|
+| 初始 rsp 越过栈末尾（页对齐 CR2）| 确定缺陷 |
+| 栈 8 → 32 页，且分配/rsp 用同一常量 | 上轮漏改 rsp，已修正 |
+| `SyncKillProcThreads` 持锁自旋 | 卡顿的直接机制 |
+| 段错误时打印 `[fault]` 栈/TLS 范围 | 诊断，供下次定性 |
+
+### 下一步（若再出现）
+
+优先验证第 4 步："线程退出清理时栈是否已被回收"。具体做法是在
+`allocator_thread_exit_cleanup()` 入口读一次 `rsp` 并核对它与
+`thread->stack` 区间的关系（`[fault]` 行已经能给出后者）。
+
+## 第 34 轮：崩溃根因确认 —— worker 线程入口 return，`ret` 从无返回地址的栈上取地址
+
+### 复现方法（关键突破）
+
+之前 110 秒浸泡都复现不了，因为**worker 从来不退出**。崩溃只在合成器
+**降级为单线程**时发生（内存压力下 barrier 超时 → `shutdown_ = 1` → worker 退出）。
+
+于是把 `COMP_FRAME_YIELD_BUDGET` 临时设为 0，强制第一帧就降级，立刻复现：
+
+```
+Segfault: unmapped (addr=0000000000000000 rip=0000000000000000)  ×3
+[desktop] PID 7 (window manager) is GONE
+STALL WATCHDOG: rip=0000000000000000
+```
+
+### 根因
+
+```cpp
+extern "C" void CompWorkerTrampoline() {
+    Compositor::Get().WorkerEntry(id);
+    allocator_thread_exit_cleanup();
+}   // ← 函数返回了
+```
+
+线程是 `sys_thread_launch` 创建的，**栈上没有任何返回地址**。末尾那条
+`ret` 会去读 `[rsp]`：
+
+- 修复前 `ctx.rsp = ustack + N*PAGE` —— 正好落在栈顶**外**那一页（未映射）：
+  `ret` 读它立即缺页 → **CR2 == RSP、地址页对齐、ERROR_CODE=4（读）**，
+  RIP 落在紧邻的前一条语句 `flush_tls_scb_all` —— 与用户日志逐项吻合；
+- 把 rsp 改成 `top - 8` 之后同样的 `ret` 读到的是**零**，于是 RIP=0、CR2=0
+  （就是上面这次的复现输出）。
+
+两次现象不同、机制同一个：**`ret` 在没有返回地址的栈上取地址**。
+
+### 修复
+
+1. `ctx.rsp = (ustack + N*PAGE) & ~0xF - 8`（`[rsp]` 落回最后一个有效槽位）；
+2. **入口函数绝不返回**：`allocator_thread_exit_cleanup()` 之后
+   `for (;;) sys_yield();` 原地停驻。
+
+   注意**不能用 `sys_exit`**：它走 `Schedule::Exit`，退的是整个进程 ——
+   实测 worker 一退出桌面直接 GONE（且没有任何段错误），比原崩溃更糟。
+   内核目前没有"只退当前线程"的系统调用。
+
+### 验证
+
+| 场景 | 结果 |
+|---|---|
+| 强制降级 + `return`（修复前）| Segfault ×3、桌面 GONE ❌ |
+| 强制降级 + `sys_exit`（中间尝试）| 无段错误、桌面 GONE ❌ |
+| **强制降级 + 原地停驻（最终）** | **无段错误、桌面存活、procs=2** ✅ |
+| 常规 64 MiB | procs=2、OOM=0、crash=0、segv=0、GONE=0 ✅ |
+
+`COMP_FRAME_YIELD_BUDGET` 已恢复为 512u。
+
+### 顺带（卡顿）
+
+`SyncKillProcThreads` 的持锁自旋已改为确定性摘链（见第 31 轮），
+那是"卡顿"的直接机制：旧实现最长会持 `PROC_LIST_LOCK` 跑 4096 次迭代。

@@ -472,6 +472,13 @@ static void* _skyline_malloc_internal(size_t size) {
     {
         const uint64_t REGION_CAP = 64u * 1024u;
         if (region_size > REGION_CAP) region_size = REGION_CAP;
+        /* 关键: 截断后必须仍能放下至少一个对象。
+           否则 total_objects == 0, 这个尺寸类会在下面被判成 region_size = 0,
+           从而**改走大对象路径** —— 两条路径的释放语义不同。实测由
+           tests/bin/alloc_test 暴露为重复释放 (free 时 bad magic=0)。
+           所以下限抬到一个 step。 */
+        const uint64_t step_min = size_class + sizeof(AllocBlock_t);
+        if (region_size < step_min) region_size = step_min;
     }
     void* allocated_ptr  = NULL;
 
@@ -871,6 +878,7 @@ static void _free_large_object_real(void* block_addr, AllocBlock_t* header) {
 
 static void _skyline_free_internal(void* ptr) {
     AllocBlock_t* header = (AllocBlock_t*)((uint64_t)ptr - sizeof(AllocBlock_t));
+
 
     ALLOCTOR_SECURITY_ASSERT(header->AllocPtrBaseAddress == (uint64_t)ptr);
     ALLOCTOR_SECURITY_ASSERT(header->BitMapBase > 0 && header->BitMapBase < SKYLINE_MAX_LEGAL_ADDR);

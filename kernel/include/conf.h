@@ -69,3 +69,10 @@ COMMON: 0:FALSE
 
 #define BACKGROUND_COLOR_AUTHOR_LIKE 0x292D3E
 #define BACKGROUND_COLOR_DEFAULT 0x00000000
+
+/* 用户线程栈页数 (sys_thread_launch / NewThread / exec 共用)。
+   分配与初始 rsp 必须用同一个值: 曾经只改了分配、rsp 仍按 8 页算,
+   线程实际只能用中间一小段, 其余页白占。 */
+#ifndef USER_THREAD_STACK_PAGES
+#define USER_THREAD_STACK_PAGES 32
+#endif
