@@ -271,10 +271,24 @@ void ps2_mouse_handler(registers *regs) {
             int32_t dy = (int32_t)(uint8_t)mouse_bytes[2];
             if (mouse_bytes[0] & 0x10) dx -= 256;   /* X 符号位 */
             if (mouse_bytes[0] & 0x20) dy -= 256;   /* Y 符号位 */
-            PS2MouseEvent.ps2_mouse_state.x += dx;
+            /* 夹紧到合理范围 (16K 足够覆盖任何显示器, 1024 的 16 倍)。
+               不夹紧的话, 指针被推到屏幕外会**无界累加**: 之后即使往反方向
+               移动很多, 坐标仍是负的, 桌面每帧都把它夹到 0 —— 用户看到的就是
+               "鼠标突然没反应了", 要走完那段死区才恢复。 */
+            {
+                int32_t nx = PS2MouseEvent.ps2_mouse_state.x + dx;
+                if (nx < 0) nx = 0;
+                if (nx > 16384) nx = 16384;
+                PS2MouseEvent.ps2_mouse_state.x = nx;
+            }
 
             /* PS/2 的 Y 轴向上为正, 屏幕坐标向下为正, 所以取反 */
-            PS2MouseEvent.ps2_mouse_state.y -= dy;
+            {
+                int32_t ny = PS2MouseEvent.ps2_mouse_state.y - dy;
+                if (ny < 0) ny = 0;
+                if (ny > 16384) ny = 16384;
+                PS2MouseEvent.ps2_mouse_state.y = ny;
+            }
 
             // 再次插入内存屏障，确保上面的写入先于 seq++ 完成
             asm volatile("" ::: "memory");

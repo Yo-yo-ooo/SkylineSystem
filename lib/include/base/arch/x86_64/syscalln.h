@@ -32,5 +32,9 @@
 /* 24: 用户态串口调试输出 (与内核 syscalln.h 对齐) */
 #define SYSCALL_DBGSOUT         24
 #define SYSCALL_DEV_IOCTL       26
+/* 27: 毫秒级单调时钟 (从启动起算, 不受 RTC 校准误差影响) */
+#define SYSCALL_MONOTONIC_MS    27
+/* 28: 毫秒级睡眠 (内核 Schedule::Sleep, 定时器轮真睡眠) */
+#define SYSCALL_SLEEP_MS        28
 
 #endif

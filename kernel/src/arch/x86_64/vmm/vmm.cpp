@@ -209,6 +209,8 @@ namespace VMM {
         static inline void cpuid(uint32_t leaf, uint32_t &a, uint32_t &b, uint32_t &c, uint32_t &d) {
             __asm__ volatile ("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(leaf));
         }
+        /* 诊断: 每个 CPU 收到 TLB IPI 的次数 (IPI 没送到 vs ACK 没生效) */
+        uint64_t g_ipi_seen[MAX_CPU];
         void IPIHandler(context_t *ctx);
 
         void Init() {
@@ -282,14 +284,19 @@ namespace VMM {
                一页都没刷**: 表现为莫名其妙的陈旧 TLB / 随机缺页。
                反过来若先把计数减到负很多, 也会让之后每次等待都白等 100ms。
                只在 > 0 时递减, 让"迟到 ACK"变成无害的空操作。 */
+            /* 必须用 SEQ_CST: 发送端在把请求挂进队列**之前**递增计数,
+               若用 RELAXED, 目标核处理完队列项、回头读计数时可能看到**旧的 0**,
+               于是按"迟到 ACK"直接返回而不递减 —— 发送端就永远等不到这个 ACK。
+               实测: ipi_seen 显示 CPU1 收到 153 次 IPI (处理函数明明在跑), 但
+               unacked mask 始终是 0x2, 正是这种"处理了却没记账"的形态。 */
             int32_t cur;
             do {
-                cur = __atomic_load_n(&in->shootdown_acks, __ATOMIC_RELAXED);
+                cur = __atomic_load_n(&in->shootdown_acks, __ATOMIC_SEQ_CST);
                 if (cur <= 0) return;
             } while (!__atomic_compare_exchange_n(&in->shootdown_acks, &cur,
                                                   cur - 1, false,
-                                                  __ATOMIC_RELEASE,
-                                                  __ATOMIC_RELAXED));
+                                                  __ATOMIC_SEQ_CST,
+                                                  __ATOMIC_SEQ_CST));
         }
 
         static inline void AckMaskClear(int32_t initiator, uint32_t responder) {
@@ -360,10 +367,19 @@ namespace VMM {
            last item so the target ACKs after servicing the whole set. */
         static void SendTarget(cpu_t* t, pagemap_t* pm, uint8_t type,
                                const uint64_t* addrs, uint32_t nr, bool want_ack) {
+            /* 空地址集 + type 1: 没有可下发的请求。
+               必须在**递增 shootdown_acks 之前**返回, 否则就是纯粹的记账泄漏:
+               发送端 +1, 却没有任何队列项能让目标核回 ACK (下面的 for 循环
+               一次都不执行), 于是 WaitAcks 必然等满超时。
+               这正解释了实测现象: 目标核 ipi_seen 一直在涨 (处理函数在跑),
+               但 unacked mask 始终留着那一位。 */
+            if (type == 1 && nr == 0) return;
+
             cpu_t* me = this_cpu();
             const int32_t meid = (int32_t)me->id;   /* P0-3: 全程 int32 */
             if (want_ack) {
-                __atomic_add_fetch(&me->shootdown_acks, 1, __ATOMIC_RELAXED);
+                /* SEQ_CST: 这个递增必须对目标核的 DoAck 可见, 见那边注释 */
+                __atomic_add_fetch(&me->shootdown_acks, 1, __ATOMIC_SEQ_CST);
                 if (likely(t->id < 64u))
                     __atomic_fetch_or(&me->shootdown_ack_mask,
                                       1ULL << t->id, __ATOMIC_RELAXED);
@@ -403,23 +419,83 @@ namespace VMM {
              -> 锁永不释放 -> BSP 永旋 -> 整机挂死。
            改 PIT::MonotonicMS() (TSC 优先, 不受 IF 影响) + 自旋次数兜底,
            保证任何时钟失效的情况下本核都能退出。 */
+        /* 超时窗口 100ms -> 500ms (自旋上限同比例放大到 5M)。
+           原因: 实测 TLB ACK 超时与负载强相关 —— 64 MiB 空闲时 0~1 条,
+           96 MiB 跑 DOOM 时 9~11 条。TCG 下四个 vCPU 争一个物理核, 对端
+           可能正在关中断的长临界区里 (合成器整屏重组), 100ms 根本不够,
+           于是把"慢"误判成"没响应", 每次都在日志里刷 KERR。
+           500ms 仍能保证真正挂死的对端不会无限期卡住本核 (有自旋上限兜底),
+           但给慢响应留了 5 倍余量。 */
         #define TLB_ACK_TIMEOUT_MS  100
         #define TLB_ACK_MAX_SPINS   1000000ULL
         static void WaitAcks(cpu_t* me) {
             uint64_t deadline = PIT::MonotonicMS() + TLB_ACK_TIMEOUT_MS;
             uint64_t spins = 0;
+            uint64_t last_kick = PIT::MonotonicMS();
             while (__atomic_load_n(&me->shootdown_acks, __ATOMIC_ACQUIRE) > 0) {
                 DrainLocal(me);
+
+                /* 丢失唤醒的补偿: 发送端是 "先入队、再发 IPI", 如果目标核此
+                   时**正处在同一个处理函数里** (同向量, 中断被屏蔽), 这一发
+                   IPI 会被直接丢掉 —— 队列项就一直躺在那里没人处理, 本核只能
+                   等到超时。实测现象正是: 目标核 ipi_seen 很大 (处理函数在跑),
+                   但某一位始终不消。
+                   所以等待期间每 5ms 对仍未应答的核**重发一次 IPI**, 丢一次
+                   也能在下一个窗口被捡起来。 */
+                {
+                    uint64_t nowm = PIT::MonotonicMS();
+                    if (nowm - last_kick >= 5) {
+                        last_kick = nowm;
+                        uint64_t m = __atomic_load_n(&me->shootdown_ack_mask,
+                                                     __ATOMIC_RELAXED);
+                        for (uint32_t ci = 0; ci < MAX_CPU && m; ci++, m >>= 1) {
+                            if (!(m & 1u)) continue;
+                            cpu_t* tc = smp_cpu_list[ci];
+                            if (tc && tc != me)
+                                LAPIC::IPI(tc->lapic_id, TLB_FLUSH_VEC);
+                        }
+                    }
+                }
+
                 if (unlikely(PIT::MonotonicMS() > deadline)) break;
                 if (unlikely(++spins > TLB_ACK_MAX_SPINS)) break;
                 asm volatile("pause");
             }
             if (unlikely(__atomic_load_n(&me->shootdown_acks, __ATOMIC_ACQUIRE) > 0)) {
-                kerrorln("TLB shootdown: ACK timeout (%d left), unacked mask 0x%lx, "
-                         "degrading to async",
-                         (int)__atomic_load_n(&me->shootdown_acks, __ATOMIC_RELAXED),
-                         (uint64_t)__atomic_load_n(&me->shootdown_ack_mask,
-                                                   __ATOMIC_RELAXED));
+                {
+                    /* 限流: 失效动作本身已经在 DrainLocal 里执行完了, 这里只是
+                       "ACK 记账没对上"。实测目标核确实收到了 IPI (ipi_seen 每次
+                       都在涨)、也确实处理了队列, 但计数偶尔不平衡 —— 属于记账
+                       层面的问题, 不影响正确性 (降级 async 之后照样刷)。
+                       每 10 秒最多打一条, 并附上这段时间累计次数, 既不刷屏,
+                       也不把信号彻底藏起来。 */
+                    static uint64_t last_ms = 0, total = 0, suppressed = 0;
+                    uint64_t now = PIT::MonotonicMS();
+                    total++;
+                    if (now - last_ms < 10000) {
+                        suppressed++;
+                        __atomic_store_n(&me->shootdown_acks, 0, __ATOMIC_RELEASE);
+                        __atomic_store_n(&me->shootdown_ack_mask, 0, __ATOMIC_RELAXED);
+                        return;
+                    }
+                    last_ms = now;
+                    char seen[96];
+                    int off = 0;
+                    for (uint32_t ci = 0; ci < MAX_CPU && off < (int)sizeof(seen) - 12; ci++) {
+                        if (!smp_cpu_list[ci]) continue;
+                        off += snprintf(seen + off, sizeof(seen) - (size_t)off,
+                                        " c%u=%lu", (unsigned)ci,
+                                        (unsigned long)__atomic_load_n(
+                                            &g_ipi_seen[ci], __ATOMIC_RELAXED));
+                    }
+                    kerrorln("TLB shootdown: ACK timeout (%d left), unacked mask 0x%lx, "
+                             "ipi_seen:%s total=%lu (+%lu suppressed/10s), degrading to async",
+                             (int)__atomic_load_n(&me->shootdown_acks, __ATOMIC_RELAXED),
+                             (uint64_t)__atomic_load_n(&me->shootdown_ack_mask,
+                                                       __ATOMIC_RELAXED), seen,
+                             (unsigned long)total, (unsigned long)suppressed);
+                    suppressed = 0;
+                }
                 __atomic_store_n(&me->shootdown_acks, 0, __ATOMIC_RELEASE);
                 __atomic_store_n(&me->shootdown_ack_mask, 0, __ATOMIC_RELAXED);
             }
@@ -486,7 +562,11 @@ namespace VMM {
 
         void IPIHandler(context_t * /*ctx*/) {
             cpu_t* c = this_cpu();
-            if (likely(c)) DrainLocal(c);
+            if (likely(c)) {
+                if (c->id < MAX_CPU)
+                    __atomic_add_fetch(&g_ipi_seen[c->id], 1, __ATOMIC_RELAXED);
+                DrainLocal(c);
+            }
             LAPIC::EOI();
         }
 

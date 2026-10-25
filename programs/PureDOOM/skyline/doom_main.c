@@ -39,31 +39,7 @@ static void sky_dbg(const char* s) {
 }
 
 /* ---- memory ------------------------------------------------------------ */
-/* 临时诊断: 统计 DOOM 的实时堆占用, 每增长 4 MiB 打一条 (带调用者地址)。
-   目的: 找出那 45 MiB 到底花在哪 (zone 只占 6 MiB)。 */
-static volatile long doomm_live;
-static volatile unsigned long doomm_calls;
-
-static void doomm_note(long delta, void* ra, int size) {
-    long live = __atomic_add_fetch(&doomm_live, delta, __ATOMIC_RELAXED);
-    unsigned long n = __atomic_add_fetch(&doomm_calls, 1, __ATOMIC_RELAXED);
-    static long last_mb;
-    long mb = live >> 20;
-    if (delta > 0 && mb != last_mb) {
-        last_mb = mb;
-        char b[160];
-        int len = snprintf(b, sizeof(b),
-            "[doomm] #%lu live=%ld MiB size=%d ra=%p\n",
-            n, mb, size, ra);
-        if (len > 0) syscall(SYSCALL_DBGSOUT, (uint64_t)b, (uint64_t)len, 0, 0, 0, 0);
-    }
-}
-
-static void* sky_malloc(int size) {
-    void* p = malloc((size_t)size);
-    if (p) doomm_note(size, __builtin_return_address(0), size);
-    return p;
-}
+static void* sky_malloc(int size) { return malloc((size_t)size); }
 static void  sky_free(void* p)    { free(p); }
 
 /* ---- file I/O ----------------------------------------------------------
@@ -254,27 +230,13 @@ static uint64_t g_last_probe  = 0;   /* TSC of the last RTC probe        */
 #define SKYCLOCK_PROBE_US 10000      /* re-anchor granularity: 10 ms     */
 
 static void sky_gettime(int* sec, int* usec) {
-    uint64_t now = rdtsc();
-
-    if (!g_q10 || now - g_last_probe >
-                      (g_q10 * (uint64_t)SKYCLOCK_PROBE_US) >> 10) {
-        g_last_probe = now;
-        uint64_t s = syscall(SYSCALL_TIME, 0, 0, 0, 0, 0, 0);
-        if (s != g_last_sec) {
-            if (g_last_sec && s > g_last_sec && now > g_tsc_at_sec) {
-                uint64_t new_q10 = ((now - g_tsc_at_sec) << 10) /
-                                   ((s - g_last_sec) * 1000000ull);
-                if (new_q10) g_q10 = new_q10;   /* measured over a real second */
-            }
-            g_last_sec   = s;
-            g_tsc_at_sec = now;
-        }
-    }
-
-    uint64_t frac = g_q10 ? (((now - g_tsc_at_sec) << 10) / g_q10) : 0;
-    if (frac > 999999ull) frac = 999999ull;   /* hold until the next second */
-    *sec  = (int)g_last_sec;
-    *usec = (int)frac;
+    /* 用内核的毫秒单调时钟 (SYSCALL_MONOTONIC_MS)。
+       原来的实现是"RTC 秒 + TSC 补小数", 需要自己用 TSC 相对 RTC 秒做校准;
+       实测该校准整体偏大约 1.8 倍 —— 于是 DOOM 的 35 Hz 节拍实际只有约
+       19 Hz, 整个游戏慢放, 看起来就像"卡"。内核直接给毫秒后就不需要校准了。 */
+    uint64_t ms = syscall(SYSCALL_MONOTONIC_MS, 0, 0, 0, 0, 0, 0);
+    *sec  = (int)(ms / 1000u);
+    *usec = (int)((ms % 1000u) * 1000u);
 }
 
 /* ---- exit / getenv ----------------------------------------------------- */
@@ -426,45 +388,6 @@ static void sky_dbg_num(const char* tag, unsigned long v) {
     sky_dbg(line);
 }
 
-/* IWAD sanity probe: header reads fine but the lump directory did not, so
-   dump raw bytes at several offsets to tell "the image data is zero here"
-   apart from "fseek does not move the file position". */
-static void sky_wad_probe(const char* path) {
-    FILE* f = fopen(path, "rb");
-    if (!f) {
-        sky_dbg("[doom] probe: cannot open IWAD\n");
-        return;
-    }
-    sky_dbg_num("size", (unsigned long)fsize(f));
-
-    unsigned char hdr[12];
-    long got = (long)fread(hdr, 1, 12, f);
-    uint32_t numlumps = (uint32_t)hdr[4] | ((uint32_t)hdr[5] << 8) |
-                        ((uint32_t)hdr[6] << 16) | ((uint32_t)hdr[7] << 24);
-    uint32_t tableofs = (uint32_t)hdr[8] | ((uint32_t)hdr[9] << 8) |
-                        ((uint32_t)hdr[10] << 16) | ((uint32_t)hdr[11] << 24);
-    sky_dbg_hex("magic", hdr, 4);              /* 49 57 41 44 = IWAD */
-    sky_dbg_num("hdr_bytes", (unsigned long)got);
-    sky_dbg_num("numlumps", numlumps);
-    sky_dbg_num("tableofs", tableofs);
-
-    unsigned char b[16];
-    if (fseek(f, 0, SEEK_SET) == 0) {
-        if ((long)fread(b, 1, 16, f) == 16) sky_dbg_hex("off0", b, 16);
-    }
-    if (fseek(f, (long)tableofs, SEEK_SET) == 0) {
-        if ((long)fread(b, 1, 16, f) == 16)
-            sky_dbg_hex("offtable", b, 16);    /* last 8 bytes = lump name */
-    } else {
-        sky_dbg("[doom] probe: seek to directory FAILED\n");
-    }
-    if (fseek(f, 0, SEEK_SET) == 0) {
-        if ((long)fread(b, 1, 16, f) == 16) sky_dbg_hex("off0-again", b, 16);
-    }
-    sky_dbg("[doom] probe: if offtable == off0 -> the seek is being ignored\n");
-    fclose(f);
-}
-
 int main(void) {
     volatile uint64_t* q = (volatile uint64_t*)SKYWIN_PROTO_PAGE_VA;
     uint64_t contentVA = q[SKYWIN_PROTO_CONTENT_VA];
@@ -492,7 +415,6 @@ int main(void) {
     doom_set_default_int("mouse_move",      0);
 
     char* argv[] = { (char*)"doom.elf" };
-    sky_wad_probe("/mp/doom.wad");
     if (SKY_WAD_MIRROR_FALLBACK && !sky_seek_ok("/mp/doom.wad")) {
         sky_dbg("[doom] VFS seek+read unusable -> "
                 "mirroring the IWAD in RAM\n");
@@ -503,7 +425,6 @@ int main(void) {
             sky_dbg("[doom] WARN: IWAD mirror failed, falling back to VFS\n");
         }
     } else {
-        sky_dbg("[doom] on-demand WAD reads via the VFS\n");
     }
     doom_init(1, argv, DOOM_FLAG_HIDE_MOUSE_OPTIONS |
                        DOOM_FLAG_HIDE_SOUND_OPTIONS |
@@ -551,9 +472,39 @@ int main(void) {
 
         sky_mouse_pump(focused);
 
+        /* 帧率限制 (DOOM 原生 35 Hz)。
+           没有它主循环会跑到 200+ fps: 每一轮都递增 OUT_SEQ, 等于要求桌面
+           每秒重组两百多次, 合成器直接被这一路请求占满 —— 表现就是"DOOM
+           跑着跑着整个桌面卡住/卡顿"。放在输入泵之后, 输入延迟不受影响。 */
+        {
+            static int64_t next_us;
+            int gs = 0, gu = 0;
+            sky_gettime(&gs, &gu);
+            int64_t now_us = (int64_t)gs * 1000000 + (int64_t)gu;
+            if (next_us && now_us < next_us) { sys_yield(); continue; }
+            next_us = now_us + (1000000 / 35);
+        }
+
         doom_update();
         blit_frame(surf, pitch, cw, ch, doom_get_framebuffer(4), scale);
         q[SKYWIN_PROTO_OUT_SEQ]++;     /* new frame: ask the WM to recompose */
+
+        /* 帧心跳: 每 128 帧往串口打一行。
+           用途 —— 用户报"DOOM 运行到一半卡了"时, 看这行就能定性:
+             * 心跳停了            -> DOOM 自己的主循环卡住 (doom_update/blit_frame)
+             * 心跳继续但画面不动  -> 桌面合成/共享表面那边的问题, 与 DOOM 无关
+           没有这个判别, 只能靠猜。 */
+        {
+            static uint64_t frames;
+            if ((++frames & 127u) == 0) {
+                char hb[80];
+                int hl = snprintf(hb, sizeof(hb), "[doom] f=%lu ms=%lu seq=%lu\n",
+                                  (unsigned long)frames,
+                                  (unsigned long)syscall(SYSCALL_MONOTONIC_MS, 0, 0, 0, 0, 0, 0),
+                                  (unsigned long)q[SKYWIN_PROTO_OUT_SEQ]);
+                if (hl > 0) syscall(SYSCALL_DBGSOUT, (uint64_t)hb, (uint64_t)hl, 0, 0, 0, 0);
+            }
+        }
         sys_yield();
     }
     return 0;

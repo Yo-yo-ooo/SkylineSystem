@@ -138,12 +138,30 @@ static void dma_put(void* p) {
     PMM::Free(p);
 }
 
+/* 诊断: 统计请求尺寸分布 —— 判断"每次只读 4 KB"是文件系统层还是驱动层的问题 */
+static volatile uint64_t g_rd_calls, g_rd_sectors, g_rd_max;
+
 bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
 {
+    {
+        uint64_t c = __atomic_add_fetch(&g_rd_calls, 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&g_rd_sectors, sectorCount, __ATOMIC_RELAXED);
+        uint64_t mx = __atomic_load_n(&g_rd_max, __ATOMIC_RELAXED);
+        while (sectorCount > mx &&
+               !__atomic_compare_exchange_n(&g_rd_max, &mx, sectorCount, 0,
+                                            __ATOMIC_RELAXED, __ATOMIC_RELAXED)) { }
+        if ((c & 8191u) == 0) {
+            kinfoln("[io] reads=%lu sectors=%lu max=%lu",
+                    (unsigned long)c,
+                    (unsigned long)__atomic_load_n(&g_rd_sectors, __ATOMIC_RELAXED),
+                    (unsigned long)__atomic_load_n(&g_rd_max, __ATOMIC_RELAXED));
+        }
+    }
     /* P0-12 重做 (round 80): 每请求独立 DMA 页 —— round 52 的 iolock
        方案因 AHCI WaitCommand 的 sti 窗口回退; 每请求缓冲无共享状态,
        天然并发安全。现在改为优先从预留池取 (见 dma_get), 池空才现场分配。 */
     uint8_t* buf = (uint8_t*)buffer;
+
     int32_t sectorCountDiv8 = ((sectorCount) / 8);
 
     void* dma_phys = dma_get();

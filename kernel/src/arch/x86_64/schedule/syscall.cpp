@@ -92,6 +92,8 @@ void syscall_init() {
     syscall_lists[SYSCALL_MUNMAP] = sys_munmap;
     syscall_lists[SYSCALL_SYSINFO] = sys_sysinfo;
     syscall_lists[SYSCALL_TIME] = sys_time;             /* RTC wall seconds */
+    syscall_lists[SYSCALL_MONOTONIC_MS] = sys_monotonic_ms;  /* 毫秒单调时钟 */
+    syscall_lists[SYSCALL_SLEEP_MS] = sys_sleep_ms;          /* 毫秒真睡眠 */
     syscall_lists[SYSCALL_KILL] = sys_kill;             /* terminate a process */
 
     syscall_lists[SYSCALL_ARCH_PRCTL] = sys_arch_prctl;

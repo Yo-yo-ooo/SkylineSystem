@@ -102,6 +102,8 @@ uint64_t sys_munmap(uint64_t addr, uint64_t length, \
     GENERATE_IGN4());
 uint64_t sys_exit(uint64_t code,GENERATE_IGN5());
 uint64_t sys_time(uint64_t tloc,GENERATE_IGN5());
+uint64_t sys_monotonic_ms(GENERATE_IGN6());
+uint64_t sys_sleep_ms(uint64_t ms, GENERATE_IGN5());
 uint64_t sched_yield(GENERATE_IGN6());
 uint64_t sys_arch_prctl(uint64_t op, uint64_t extra,GENERATE_IGN4());
 uint64_t sys_gettid(GENERATE_IGN6());

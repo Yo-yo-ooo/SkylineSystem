@@ -8,6 +8,7 @@
 #include <klib/algorithm/queue.h>
 #include <arch/x86_64/drivers/hpet/hpet.h>
 #include <arch/x86_64/rtc/rtc.h>
+#include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/cpu/smap.h>
 
 static const int32_t CLOCK_REALTIME __attribute__((unused)) = 0;
@@ -48,6 +49,27 @@ uint64_t sys_time(uint64_t tloc,GENERATE_IGN5()) {
     else { SmapGuard ug; *((time_t*)tloc) = x; }
     return (uint64_t)((time_t)-1);
 }
+/* 毫秒级单调时钟: 直接返回内核的 PIT::MonotonicMS() (纯 TSC, 从启动起算)。
+   为什么需要它: 用户态原本只能拿到**秒级** RTC (SYSCALL_TIME), 秒内的小数
+   只能靠自己用 TSC 相对 RTC 秒去校准 —— 实测该校准整体偏大约 1.8 倍,
+   导致 DOOM 这类按毫秒算节拍的程序整体慢放。有了这个接口就不需要任何
+   用户态校准了。 */
+/* 毫秒级睡眠: 走内核的 Schedule::Sleep (定时器轮, 真正让出 CPU)。
+   为什么要暴露它: 用户态的等待循环原来只有 sys_yield(), 让出后立刻又会被
+   调度回来, 等于换一种方式空转。合成器的 worker 在帧间等待时就是这样一直
+   占着 CPU, 实测把重负载客户端 (DOOM) 的启动拖慢一倍。 */
+uint64_t sys_sleep_ms(uint64_t ms, GENERATE_IGN5()) {
+    IGNV_5();
+    if (ms > 0) Schedule::Sleep(ms);
+    else        Schedule::Yield();
+    return 0;
+}
+
+uint64_t sys_monotonic_ms(GENERATE_IGN6()) {
+    IGNV_6();
+    return (uint64_t)PIT::MonotonicMS();
+}
+
 struct timeval {
     time_t      tv_sec;     /* seconds */
     suseconds_t tv_usec;    /* microseconds */

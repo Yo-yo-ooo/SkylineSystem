@@ -34,5 +34,7 @@
 #define SYSCALL_DBGSOUT         24
 #define SYSCALL_DEV_GETINFO     25
 #define SYSCALL_DEV_IOCTL       26
+#define SYSCALL_MONOTONIC_MS    27   /* 毫秒级单调时钟 */
+#define SYSCALL_SLEEP_MS        28   /* 毫秒级真睡眠 */
 
 #endif

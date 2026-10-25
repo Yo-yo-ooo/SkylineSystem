@@ -138,6 +138,16 @@ struct TTF_Font_Internal {
     int32_t*       win_gids;       /* glyph ids currently resident           */
     int32_t        win_count, win_cap;
     unsigned long  glyf_fetches, glyf_bytes;
+
+    /* 几何缓存 (直接映射, codepoint & 255)。
+       为什么需要: glyph_geo() 原来每次都重新读 stbtt 的 bbox, 而 lazy 字体
+       为了取 bbox 必须先把字形载入窗口 -> 驱逐相邻字形 -> 下次又读盘。
+       实测后果: 桌面串口吞吐从 12~16 KB/s 掉到 5.5 KB/s (整体卡顿),
+       DOOM 启动(大量文字)也明显变慢。
+       有了这层缓存, 同一个字形的度量只算一次, 之后测量/绘制都不再碰窗口。 */
+    TTF_GlyphGeo   geo_cache[256];
+    int32_t        geo_cp[256];
+    uint8_t        geo_valid[256];
 };
 
 typedef struct TTF_Font_Internal TTF_Font;
@@ -289,6 +299,26 @@ static uint32_t ttf_loca_get(const TTF_Font* f, int32_t gid) {
 
 /* Drop every resident glyph. Called only from the root of a load, never while
    a partially-loaded composite chain is in flight. */
+/* 驱逐单个字形: 把它的 loca 条目清成 0 并从窗口槽位里摘掉。
+   为什么需要"单个"驱逐 —— loca 是 n+1 个**共享边界**:
+   loca[gid] 是 gid 的起点, 同时也是 gid-1 的终点。原来的写法直接
+   ttf_loca_set(gid, at) / ttf_loca_set(gid+1, at+len), 于是加载 gid+1 时
+   会覆盖 loca[gid+1] —— 而它正是 gid 的**终点**。结果 gid 的长度变成
+   "从自己起点跨到 gid+1 起点"的一大段, stbtt 把别人的字节当轮廓解析,
+   bbox 暴涨 (实测同一字符串度量从 33px 变成 371px, 行高 18→71),
+   绘制落点直接飞出屏幕 —— 这就是"时间不显示"的根因。
+   现在加载前先驱逐两个邻居, 这条边界就只属于当前字形。 */
+static void ttf_glyf_evict(TTF_Font* f, int32_t gid) {
+    if (gid < 0) return;
+    for (int32_t i = 0; i < f->win_count; i++) {
+        if (f->win_gids[i] != gid) continue;
+        ttf_loca_set(f, gid, 0);
+        if (gid + 1 <= f->info.numGlyphs) ttf_loca_set(f, gid + 1, 0);
+        f->win_gids[i] = f->win_gids[--f->win_count];
+        return;
+    }
+}
+
 static void ttf_glyf_reset(TTF_Font* f) {
     for (int32_t i = 0; i < f->win_count; i++) {
         int32_t gid = f->win_gids[i];
@@ -334,9 +364,13 @@ static bool ttf_glyf_load(TTF_Font* f, int32_t gid, int depth) {
     for (int32_t i = 0; i < f->win_count; i++)
         if (f->win_gids[i] == gid) return true;      /* already resident */
 
+    /* 先记下原始偏移, 再驱逐两个邻居: 驱逐会把 loca[gid]、loca[gid+1]
+       清 0 (可能已被邻居占用), 之后我们才写入自己的这一对。 */
     uint32_t a = f->glyf_loc_orig[gid];
     uint32_t b = f->glyf_loc_orig[gid + 1];
     uint32_t len = (b > a) ? (b - a) : 0;
+    ttf_glyf_evict(f, gid - 1);
+    ttf_glyf_evict(f, gid + 1);
 
     if (len == 0) {                    /* blank glyph: zero-length loca pair */
         ttf_loca_set(f, gid, 0);
@@ -447,6 +481,11 @@ static void ttf_glyf_teardown(TTF_Font* f) {
    (bold smears inside the existing box; italic widens and shifts;
    oversampling divides dims and offsets). */
 static void glyph_geo(TTF_Font* font, int32_t codepoint, TTF_GlyphGeo* g) {
+    /* 注意: 这里**不能**走几何缓存短路。render_glyph() 也是先调 glyph_geo()
+       再光栅化, 若在这里提前返回, 就跳过了 ttf_glyph_ensure(), 字形数据可能
+       已被驱逐 -> 光栅化出垃圾 (实测任务栏文字变成 "SSylEie Co" 这种重影)。
+       缓存只在测量路径 TTF_GetTextSize() 里用。 */
+
     /* Lazy fonts must have the outline resident before stbtt reads its bbox. */
     if (font->glyf_lazy)
         ttf_glyph_ensure(font, stbtt_FindGlyphIndex(&font->info, codepoint));
@@ -478,6 +517,22 @@ static void glyph_geo(TTF_Font* font, int32_t codepoint, TTF_GlyphGeo* g) {
     }
     g->width = w; g->height = h;
     g->off_x = ox; g->off_y = oy;
+}
+
+/* 只读度量: 走几何缓存, **不**保证字形驻留在 lazy 窗口里。
+   排版/测量只需要 advance 和 bbox, 不需要轮廓数据; 以前它们也调 glyph_geo(),
+   于是每次排版都触发一次字形载入 (驱逐邻居 -> 下次又读盘), 这是"卡"的根源。
+   只有真正要光栅化的 render_glyph() 才必须走完整的 glyph_geo()。 */
+static void glyph_geo_measured(TTF_Font* font, int32_t codepoint, TTF_GlyphGeo* g) {
+    uint32_t slot = (uint32_t)codepoint & 255u;
+    if (font->geo_valid[slot] && font->geo_cp[slot] == codepoint) {
+        *g = font->geo_cache[slot];
+        return;
+    }
+    glyph_geo(font, codepoint, g);          /* 首次: 真算一次 (会载入字形) */
+    font->geo_cache[slot] = *g;
+    font->geo_cp[slot]    = codepoint;
+    font->geo_valid[slot] = 1;
 }
 
 /* Caller holds font->lock. Rasterizes on demand. out->pixels is freshly
@@ -913,6 +968,8 @@ void TTF_ClearGlyphCache(TTF_Font *font) {
     font->glyph_count = 0;
     for (int32_t i = 0; i < font->hash_size; i++) font->hash[i] = -1;
     font->hash_used = 0;
+    /* 几何缓存也一起失效: 它保存的是"当前字号/样式"下的度量 */
+    for (int32_t i = 0; i < 256; i++) font->geo_valid[i] = 0;
     if (font->transient.pixels) {
         TTF_FREE(font->transient.pixels);
         font->transient.pixels = NULL;
@@ -1028,7 +1085,13 @@ void TTF_GetTextSize(TTF_Font *font, const char *text, int32_t *out_width, int32
         int32_t advance = 0;
         int32_t codepoint = utf8_to_codepoint(&text[i], len - i, &advance);
         TTF_GlyphGeo g;
-        glyph_geo(font, codepoint, &g);
+        /* 测量专用几何缓存: 同一个字形只算一次。
+           为什么重要: lazy 字体算 bbox 必须先把字形载入窗口, 而窗口紧张时会
+           驱逐相邻字形, 下次又要读盘 —— 实测桌面串口吞吐因此从 12~16 KB/s
+           掉到 5.5 KB/s (整机卡顿 + DOOM 启动变慢)。
+           只缓存测量用得到的字段, 且**不跳过** glyph_geo 里的 resident 检查
+           (那是给光栅化用的, 见 glyph_geo 注释)。 */
+        glyph_geo_measured(font, codepoint, &g);
         int32_t top = font->ascent + g.off_y;
         int32_t bot = top + g.height;
         if (top < min_y) min_y = top;
@@ -1209,7 +1272,7 @@ bool TTF_RenderTextToBuffer(TTF_Font *font, const char *text, TTF_Bitmap *out_bm
         cmd->x_advance = 0;
 
         TTF_GlyphGeo g;
-        glyph_geo(font, codepoint, &g);
+        glyph_geo_measured(font, codepoint, &g);
         int32_t top = font->ascent + g.off_y;
         int32_t bot = top + g.height;
         if (top < min_y) min_y = top;
@@ -1320,7 +1383,7 @@ TTF_Bitmap TTF_RenderTextMultiline(TTF_Font *font, const char *text, int32_t max
             }
 
             TTF_GlyphGeo g;
-            glyph_geo(font, codepoint, &g);
+            glyph_geo_measured(font, codepoint, &g);
             int32_t char_w = g.advance;
 
             if (max_width > 0 && x_pos + char_w > max_width) {

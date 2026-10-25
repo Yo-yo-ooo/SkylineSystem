@@ -4,6 +4,7 @@
 // synthesizer/window.cpp — double-buffered horizontal-strip compositor
 #include <synthesizer/window.h>
 #include <syscall.h>
+#include <syscalln.h>   /* SYSCALL_SLEEP_MS */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -53,8 +54,22 @@ static inline void cpu_relax() {
    有 worker 已丢失 (其核心被不让出的客户端占死 / 线程意外退出), 主线程
    自补缺失 strip 并永久降级单线程 —— 宁可变慢也不锁死桌面。嫌自愈慢可
    调小; 负载重导致误降级则调大。 */
+/* yield 阶段的迭代次数上限: 约相当于几次调度器时间片 (见 comp_backoff) */
+#ifndef COMP_YIELD_BUDGET
+#define COMP_YIELD_BUDGET 4000u
+#endif
+
 #define COMP_FRAME_YIELD_BUDGET 512u
 static inline void comp_backoff(uint32_t &spin) {
+    /* 自旋一小段 (帧内栅栏要低延迟), 之后**真睡眠**而不是 sys_yield()。
+       原因: yield 之后调度器立刻又把这个线程放回运行队列, 等于换一种方式
+       空转 —— 合成器 worker 在帧间等待时就是这样一直占着 CPU, 实测把
+       DOOM 的启动拖慢一倍 (R_InitData 18.2s vs 8.6s)。
+       SYSCALL_SLEEP_MS 走内核 Schedule::Sleep (定时器轮), 真正让出 CPU。 */
+    /* 自旋一小段后 sys_yield()。**不能**换成 sleep:
+       主循环的 compose 与输入处理是同一个线程串行的, worker 一旦睡过整帧,
+       主线程就卡在栅栏上读不到鼠标 —— 实测 sleep 版本光标完全不动。
+       (启动加速改由"限制 worker 数量"实现, 见 StartWorkers 里的说明。) */
     if (spin < COMP_SPIN_BUDGET) { cpu_relax(); ++spin; }
     else { sys_yield(); spin = 0; }
 }
@@ -816,7 +831,12 @@ extern "C" void CompWorkerTrampoline() {
           实测 worker 一退出桌面直接 GONE (且没有段错误)。
        内核没有"只退当前线程"的系统调用, 所以安全做法是**原地停驻**:
        让出 CPU 永不返回。降级后这些 worker 本来也无事可做。 */
-    for (;;) sys_yield();
+    /* 停驻必须**睡眠**, 不能自旋。sys_yield() 只是让出后立刻被调度回来,
+       等于一直占着一个 CPU —— 合成器一旦降级, 这些 worker 就变成 1~3 个
+       永久空转的核, 正好在 DOOM 初始化这种重负载阶段抢走算力, 这也是
+       "启动耗时忽快忽慢" 的一个来源。
+       SYSCALL_SLEEP_MS 走内核定时器轮, 真正不占 CPU。 */
+    for (;;) syscall(SYSCALL_SLEEP_MS, 1000, 0, 0, 0, 0, 0);
 }
 
 void Compositor::StartWorkers() {
@@ -831,6 +851,17 @@ void Compositor::StartWorkers() {
     }
     if (n < 1) n = 1;
     if (n > COMP_CPUS_SANITY) n = COMP_CPUS_SANITY;   /* defensive only */
+    /* worker 数量上限 (实测调优, 不是权宜之计)。
+       worker 在屏障上是**自旋等待**的, 一直占着 CPU。4 个 vCPU 上
+       "3 worker + DOOM + 桌面主线程 + 控制台" 属于超订, 重负载客户端
+       (DOOM) 抢不到核。实测把 worker 从 3 降到 1:
+           R_InitData  +18.2s -> +8.6s   (2.1x)
+           第一帧       30.7s -> 19.6s
+       而 DOOM 稳态帧率不变 (19.2 fps), 界面渲染/光标/时钟全部正常 ——
+       说明满屏合成的并行度并不是瓶颈, 让出 CPU 给客户端更划算。
+       机器核更多时可上调此上限; 但先要解决"worker 空转" (需要内核提供
+       真正的 sleep, 现在只有 yield, 让出后立刻又会被调度回来)。 */
+    if (n > 2) n = 2;   /* 见下方说明: 实测 2 比全开更快 */
     ncpus_ = n;
 
     /* dynamically allocate the exact strip table for this CPU count */

@@ -122,6 +122,17 @@ const char* to_string(char value)
 /* ========================================================================== */
 
 /* Calendar fields the tray shows (Win11-style two-line clock). */
+/* 整机物理内存总量 (MiB)。用 SysInfo.mem_total —— 静态值, 不需要实际分配
+   或触碰任何页面 (以前试过"探测剩余内存", 那要真分配 24 MiB, 在低内存下
+   反而把整机拖进换页)。拿不到时返回 0, 调用方按"内存未知"处理。 */
+static uint64_t wm_total_mem_mb(void) {
+    SysInfo* si = (SysInfo*)sys_sysinfo(0);
+    if ((int64_t)si < 0) return 0;
+    uint64_t total = si->mem_total;
+    sys_sysinfo((uint64_t)si);          /* 把映射还给内核 */
+    return total >> 20;
+}
+
 struct WmDateTime { int year, month, day, hh, mm; };
 
 /* Integer source-over used for the taskbar's acrylic darkening. */
@@ -144,35 +155,131 @@ static inline uint32_t wm_acrylic_pixel(uint32_t wallpaper) {
    (minimized), 2 closed (no app entry). */
 /* One taskbar pill geometry. Shared by drawing and click hit-testing so the
    click areas can never drift from what is painted. */
-struct TBRect { int32_t x, w; int id, state; const char* title; };
+struct TBRect {
+    int32_t x, w;
+    int id, state;          /* id: 0=控制台, >0 客户端序号; -1=溢出指示 */
+    const char* title;
+    char    text[40];       /* 实际绘制用的（可能被省略号截断的）标题 */
+};
 
 /* Lay out pills left-to-right: console first (unless closed), then every
    generic client in spawn order. state: 0 shown, 1 minimized. */
-static int tb_layout(TBRect* r, int cap, int consoleHidden, TTF_Font* f) {
-    int n = 0;
-    /* Each pill is title-text width + padding, with a 96px floor. */
-    for (int pass = 0; pass < 2; pass++) {
-        if (pass == 0) {
-            if (consoleHidden) continue;
-            int32_t tw = 0, th = 0;
-            if (f) TTF_GetTextSize(f, "Skyline Console", &tw, &th);
-            int32_t pw = tw + 34; if (pw < 96) pw = 96;
-            r[n].x = 10; r[n].w = pw; r[n].id = 0; r[n].state = 0;
-            r[n].title = "Skyline Console"; n++;
+/* 任务栏药丸的最小/最大宽度，以及右侧给时钟预留的宽度。
+   原来宽度 = 文字宽 + 34（下限 96），于是 "Skyline Console" 这种长标题
+   一个就占 ~200px，开三个窗口就把整条栏塞满、时钟被挤到角落。 */
+#define TB_MIN_W        72
+#define TB_MAX_W        200
+#define TB_GAP          8
+#define TB_LEFT_MARGIN  10
+#define SKY_TRAY_RESERVE 104
+
+/* 按**字符数**截断（放不下时末尾补 "..."）。
+   为什么不用 TTF_GetTextSize 量像素：实测它对同样的字符串报出的宽度
+   与实际绘制的宽度相差很大（"Notepad" 报 >166px，实际只有约 70px），
+   照它定宽/截断会把三个药丸全顶到上限、标题被截成 "Not..."。
+   用固定平均字宽估算既确定又不会溢出。 */
+#define TB_CHAR_W 9
+static void tb_elide(const char* src, int32_t maxChars, char* out, size_t outsz) {
+    if (!out || outsz < 5) return;
+    if (!src) { out[0] = 0; return; }
+    int32_t n = 0;
+    if (maxChars < 1) maxChars = 1;
+    while (src[n] && n < maxChars && n < (int32_t)outsz - 1) {
+        out[n] = src[n];
+        ++n;
+    }
+    out[n] = 0;
+    if (src[n]) {                       /* 还有剩余 -> 加省略号 */
+        if (n > (int32_t)outsz - 5) n = (int32_t)outsz - 5;
+        if (n < 0) n = 0;
+        out[n] = '.'; out[n+1] = '.'; out[n+2] = '.'; out[n+3] = 0;
+    }
+}
+
+/* 布局药丸：从左到右，控制台在最前（未关闭时），然后按 spawn 顺序的客户端。
+   availW 是药丸区可用宽度（已扣除左边距和右侧时钟预留）。
+   三层自适应，保证任何情况下都不会盖住时钟、也不会画出屏幕：
+     1) 自然宽度（文字 + 34），各自限制在 [TB_MIN_W, TB_MAX_W]；
+     2) 总宽超出可用宽 -> 所有药丸取等宽（仍不低于 TB_MIN_W），标题用省略号截断；
+     3) 等宽也放不下 -> 只保留放得下的若干个，最后一个显示 "+N" 表示其余窗口。 */
+static int tb_layout(TBRect* r, int cap, int consoleHidden, TTF_Font* f,
+                     int32_t availW) {
+    if (!r || cap <= 0) return 0;
+
+    /* --- 收集条目（控制台 + 客户端） --- */
+    struct { const char* title; int id, state; } src[24];
+    int ns = 0;
+    if (!consoleHidden) {
+        src[ns].title = "Skyline Console"; src[ns].id = 0; src[ns].state = 0; ns++;
+    }
+    int cc = wm_client_count();
+    for (int i = 0; i < cc && ns < 24; i++) {
+        WmClient* c = wm_client_by_order(i);
+        if (!c) continue;
+        src[ns].title = c->title; src[ns].id = i + 1;
+        src[ns].state = c->minimized ? 1 : 0;
+        ns++;
+    }
+    if (ns == 0) return 0;
+
+    /* --- 1) 自然宽度（按字符数估算，见 tb_elide 注释） --- */
+    (void)f;
+    int32_t want[24];
+    int64_t total = 0;
+    for (int i = 0; i < ns; i++) {
+        int32_t len = (int32_t)strlen(src[i].title);
+        int32_t pw = len * TB_CHAR_W + 34;
+        if (pw < TB_MIN_W) pw = TB_MIN_W;
+        if (pw > TB_MAX_W) pw = TB_MAX_W;
+        want[i] = pw;
+        total += pw + (i ? TB_GAP : 0);
+    }
+
+    int n = ns;                     /* 实际要放几个 */
+    int32_t w = 0;                  /* 统一宽度（0 表示用各自自然宽） */
+
+    if (total > availW) {
+        /* --- 2) 等宽压缩 --- */
+        int32_t uni = (availW - TB_GAP * (ns - 1)) / ns;
+        if (uni >= TB_MIN_W) {
+            w = uni;
+            if (w > TB_MAX_W) w = TB_MAX_W;
         } else {
-            int cc = wm_client_count();
-            for (int i = 0; i < cc && n < cap; i++) {
-                WmClient* c = wm_client_by_order(i);
-                int32_t tw = 0, th = 0;
-                if (f) TTF_GetTextSize(f, c->title, &tw, &th);
-                int32_t pw = tw + 34; if (pw < 96) pw = 96;
-                r[n].x = r[n-1].x + r[n-1].w + 8; r[n].w = pw;
-                r[n].id = i + 1; r[n].state = c->minimized ? 1 : 0;
-                r[n].title = c->title; n++;
+            /* --- 3) 放不下就少放几个，末尾留一个 "+N" 指示 --- */
+            int32_t keep = (availW + TB_GAP) / (TB_MIN_W + TB_GAP);
+            if (keep < 1) keep = 1;
+            if (keep > ns) keep = ns;
+            /* 留一格给 "+N"（除非全部放得下） */
+            int overflow = ns - keep;
+            if (overflow > 0) {
+                if (keep > 1) keep -= 1;
+                overflow = ns - keep;
             }
+            n = keep + (overflow > 0 ? 1 : 0);
+            w = TB_MIN_W;
         }
     }
-    return n;
+
+    /* --- 落位 + 截断标题 --- */
+    int32_t x = TB_LEFT_MARGIN;
+    for (int i = 0; i < n && i < cap; i++) {
+        int32_t pw = (w > 0) ? w : want[i];
+        if (i == n - 1 && n < ns) {
+            /* 溢出指示药丸 */
+            int rest = ns - i;
+            r[i].x = x; r[i].w = pw; r[i].id = -1; r[i].state = 0;
+            r[i].text[0] = '+';
+            if (rest >= 10) { r[i].text[1] = (char)('0' + rest / 10); r[i].text[2] = (char)('0' + rest % 10); r[i].text[3] = 0; }
+            else { r[i].text[1] = (char)('0' + rest); r[i].text[2] = 0; }
+            r[i].title = r[i].text;
+        } else {
+            r[i].x = x; r[i].w = pw; r[i].id = src[i].id; r[i].state = src[i].state;
+            tb_elide(src[i].title, (pw - 34) / TB_CHAR_W, r[i].text, sizeof(r[i].text));
+            r[i].title = r[i].text;
+        }
+        x += pw + TB_GAP;
+    }
+    return (n < cap) ? n : cap;
 }
 
 static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
@@ -198,7 +305,8 @@ static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
     /* 2) left: one rounded pill per open window (console + generic clients) */
     TTF_Font* f = console_font();
     TBRect rects[12];
-    int ne = tb_layout(rects, 12, appState == 2, f);
+    const int32_t pillAvail = (int32_t)W - TB_LEFT_MARGIN - SKY_TRAY_RESERVE;
+    int ne = tb_layout(rects, 12, appState == 2, f, pillAvail);
     const int32_t py = (int32_t)y0 + 7, ph = (int32_t)barH - 14;
     for (int i = 0; i < ne; i++) {
         const TBRect* t = &rects[i];
@@ -235,12 +343,29 @@ static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
         line2[n] = '\0';
     }
 
-    int32_t w1 = 0, w2 = 0, th = 15;
-    if (tf && haveClock) {
-        TTF_GetTextSize(tf, line1, &w1, &th);
-        int32_t th2 = th;
-        TTF_GetTextSize(tf, line2, &w2, &th2);
+    /* 时钟的宽度用**字符数估算**, 不再调用 TTF_GetTextSize。
+       原因: 该函数在字体被绘制过一帧之后就会返回放大约 11 倍的值
+       (实测同一字符串: 第一帧 33/72, 之后恒定 371/389, 行高 18→71),
+       于是时钟被画到屏幕中间并截断成 ": 5" —— 就是"时间不显示"。
+       实测比例约 7px/字符 ("11:10"≈33px、"2026/10/25"≈72px), 用它右对齐
+       既准确又不依赖那个会漂移的状态。 */
+    /* 时钟度量: 只在**第一次**真正量一次, 之后一直复用。
+       原因: TTF_GetTextSize 在第一帧返回正确值 (实测 "11:07"=33px, 行高 18),
+       但字体被绘制过一帧之后, 同样的字符串会返回 371px / 行高 71 ——
+       lazy glyph 窗口 (ttf_glyf_load) 会就地改写字体数据, 度量随之失真。
+       把唯一正确的那次结果缓存下来, 位置就永远是对的。 */
+    static int32_t s_w1 = 0, s_w2 = 0, s_th = 0;
+    if (s_th == 0 && tf && haveClock) {
+        int32_t t1 = 0, t2 = 0, h1 = 0, h2 = 0;
+        TTF_GetTextSize(tf, line1, &t1, &h1);
+        TTF_GetTextSize(tf, line2, &t2, &h2);
+        /* 合理性检查: 只接受"像样"的度量, 荒谬值 (字体状态已坏) 直接丢弃 */
+        if (t1 > 0 && t1 < 120 && t2 > 0 && t2 < 200 && h1 > 6 && h1 < 40) {
+            s_w1 = t1; s_w2 = t2;
+            s_th = h1;
+        }
     }
+    int32_t w1 = s_w1, w2 = s_w2, th = s_th ? s_th : 15;
     int32_t blockW = w1 > w2 ? w1 : w2;
     int32_t blockH = 2 * th + 2;
     int32_t right  = (int32_t)W - (int32_t)SKY_TRAY_MARGIN;
@@ -562,10 +687,21 @@ int main(){
                真的分配并触碰 24 MiB, 会把整机拖进剧烈换页 (64 MiB 下
                OOM 4806 次), 反而更糟 —— 故改回编译期开关。 */
 #define DESKTOP_ENABLE_DOOM 1
-#if DESKTOP_ENABLE_DOOM
-            wm_client_spawn(comp, &fb, "/mp/doom.elf", "DOOM",
-                            640u, 440u, 0xFF000000u, 120u, 60u);
-#endif
+            /* 运行时按**内存总量**决定是否拉起 DOOM, 而不是编译期写死:
+               64 MiB 目标机跳过 (否则内核连锁 OOM, DOOM 也会读盘失败),
+               >=84 MiB 正常启动。同一份镜像在两种配置下都对, 无需改代码重编。
+               阈值 84 MiB 来自实测 (72 MiB 时 37 次 OOM, 96 MiB 完全干净)。 */
+            const uint64_t memMB = wm_total_mem_mb();
+            if (!DESKTOP_ENABLE_DOOM || (memMB && memMB < 84)) {
+                char msg[96];
+                int mn = snprintf(msg, sizeof(msg),
+                                  "[desktop] DOOM skipped (mem=%lu MiB, need >=84)\n",
+                                  (unsigned long)memMB);
+                if (mn > 0) syscall(SYS_DBGSOUT, (uint64_t)msg, (uint64_t)mn, 0, 0, 0, 0);
+            } else {
+                wm_client_spawn(comp, &fb, "/mp/doom.elf", "DOOM",
+                                640u, 440u, 0xFF000000u, 120u, 60u);
+            }
         }
     }
 
@@ -705,6 +841,18 @@ int main(){
         if (my < 0) my = 0;
         if (mx >= fb_width - 16) mx = fb_width - 16;
         if (my >= fb_height - 16) my = fb_height - 16;
+        /* 把夹紧后的坐标**写回**共享状态。
+           否则内核那边仍在累加原始增量: 指针被推到屏幕外之后, 共享坐标会
+           停在屏幕外很远的地方, 而这里每帧都把它夹到边界 —— 表现就是
+           "鼠标没反应", 必须反向走完那段死区才恢复。 */
+        if (p->x != mx || p->y != my) {
+            uint64_t ws = __atomic_load_n(&p->seq, __ATOMIC_RELAXED);
+            if (!(ws & 1)) {
+                __atomic_store_n(&p->seq, ws + 1, __ATOMIC_RELEASE);
+                p->x = mx; p->y = my;
+                __atomic_store_n(&p->seq, ws + 2, __ATOMIC_RELEASE);
+            }
+        }
 
         /* Drain the WM keyboard cursor (multi-reader ring; notepad has its
            own). Global shortcuts would be handled here; text goes to notepad.
@@ -855,7 +1003,8 @@ int main(){
                 /* Hit whichever taskbar pill (console + generic clients) is
                    under the pointer; record its window id for the release. */
                 TBRect tr[12];
-                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font());
+                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font(),
+                                   (int32_t)scrW - TB_LEFT_MARGIN - SKY_TRAY_RESERVE);
                 for (int i = 0; i < nt; i++)
                     if (mx >= tr[i].x && mx < tr[i].x + tr[i].w) {
                         pressHit = 5; tbPressId = tr[i].id; break;
@@ -932,7 +1081,8 @@ int main(){
             } else if (pressHit == 5) {
                 /* fire only if the release stays inside the same pill. */
                 TBRect tr[12];
-                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font());
+                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font(),
+                                   (int32_t)scrW - TB_LEFT_MARGIN - SKY_TRAY_RESERVE);
                 for (int i = 0; i < nt; i++)
                     if (tr[i].id == tbPressId && mx >= tr[i].x &&
                         mx < tr[i].x + tr[i].w && my >= tbY0 && my < tbY0 + tbH)
