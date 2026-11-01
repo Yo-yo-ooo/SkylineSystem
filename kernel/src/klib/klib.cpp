@@ -6,6 +6,19 @@
 #include <atomic/atomic.h>
 #include <klib/stallwatch.h>
 
+/* 整机致命错误标志: 见 klib.h 的说明 */
+extern "C" volatile int g_kernel_panic = 0;
+
+#ifdef __x86_64__
+#define KLIB_HALT_THIS_CPU() for (;;) { asm volatile("cli; hlt"); }
+#elif defined(__aarch64__)
+#define KLIB_HALT_THIS_CPU() for (;;) { asm volatile("msr daifset, #0xf; wfi"); }
+#elif defined(__riscv)
+#define KLIB_HALT_THIS_CPU() for (;;) { asm volatile("csrci mstatus, 0x8; wfi"); }
+#else
+#define KLIB_HALT_THIS_CPU() for (;;) { asm volatile("idle 0"); }
+#endif
+
 extern "C" void Panic(const char* message){
     kerrorln("Panic!");
     /* 可诊断性: 消息同时进串口 (此前只走 E9 调试端口, 串口只见
@@ -33,9 +46,15 @@ void Panic(const char* message,bool halt){
 
 // Halt and catch fire function.
 void hcf(void) {
-    /* P5-107: 停机前输出诊断 (原实现直接 hlt, 引导失败时串口无任何
+    /* 停机前输出诊断 (原实现直接 hlt, 引导失败时串口无任何
        可诊断信息; headless 调试场景串口即唯一现场) */
     kerrorln("SYSTEM HALTED (hcf): no usable root filesystem or fatal init error");
+    /* 在进入死循环**之前**置位 (打印期间仍允许其它核正常抢锁, 否则
+       诊断日志可能因为抢不到串口锁而丢掉)。此后其余核一旦撞上锁等待
+       就自行停摆 —— 否则它们会抱着"持锁者已停机"的锁永远自旋, 整机
+       表现为假死 (实测: CPU0 file_cache_get / CPU3 file_cache_fsync
+       双双卡死, 桌面再也拿不到 CPU)。 */
+    __atomic_store_n(&g_kernel_panic, 1, __ATOMIC_RELEASE);
     for (;;) {
 #ifdef __x86_64__
         asm volatile("hlt");
@@ -63,7 +82,12 @@ extern "C" void spinlock_lock(spinlock_t* l) {
     /* 停滞诊断: 记录待锁现场 (锁地址 + 加锁点)。只有两条 store, 热路径可接受;
        CPU 停在这把锁上时, 看门狗 (stallwatch.cpp) 会把它打出来。 */
     stall_note_lock_wait((uint64_t)l, (uint64_t)__builtin_return_address(0));
-    while(atomic_test_and_set(l,ATOMIC_ACQUIRE))
+    while(atomic_test_and_set(l,ATOMIC_ACQUIRE)) {
+        /* 整机已判定致命错误: 这把锁的持有者很可能已经停机, 再自旋下去
+           就是把一个 CPU 的 panic 放大成整机假死。本核就地停摆, 保留
+           已经打出的现场 (谁崩的、卡在哪把锁)。 */
+        if (__builtin_expect(__atomic_load_n(&g_kernel_panic, __ATOMIC_ACQUIRE) != 0, 0))
+            KLIB_HALT_THIS_CPU();
 #ifdef __x86_64__
         asm volatile("pause");
 #elif defined(__aarch64__)
@@ -71,6 +95,7 @@ extern "C" void spinlock_lock(spinlock_t* l) {
 #elif defined (__riscv)
         asm volatile("pause");
 #endif
+    }
     stall_note_lock_acquired((uint64_t)l, (uint64_t)__builtin_return_address(0));
 }
 

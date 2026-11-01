@@ -111,7 +111,7 @@ namespace PIT
     {
         if (!Inited)
             return;
-        /* P2-62 接活 (round 96): 调度器就绪 (有线程上下文) 时走真睡眠
+        /* 接活: 调度器就绪 (有线程上下文) 时走真睡眠
            (Schedule::Sleep 的定时器轮 + THREAD_SLEEPING + Yield), 释放
            本核给其他线程; 引导早期 (驱动探测, 无线程上下文) 保持忙等
            —— 忙等语义在无调度器时必需 */
@@ -145,7 +145,7 @@ namespace PIT
 
 
     void Tick(){
-        /* P2-57: 原子加载函数指针 —— 写入侧 (sched Install) 用
+        /* 原子加载函数指针 —— 写入侧 (sched Install) 用
            atomic_store, 读取侧必须匹配, 否则跨核初始化窗口 = 数据竞争 */
         uint64_t fn = __atomic_load_n((uint64_t*)&TickHandle, __ATOMIC_ACQUIRE);
         ((void(*)(void))(uintptr_t)fn)();
@@ -183,7 +183,7 @@ namespace PIT
         }
     }
 
-    /* round 98 记录 (失败的尝试, 勿重蹈): 曾把 PIT channel 0 的硬件计数器
+    /* 记录 (失败的尝试, 勿重蹈): 曾把 PIT channel 0 的硬件计数器
        读进来算"节拍内分数部分", 想让本函数彻底不依赖 IRQ0。实测墙钟会跑快
        约 1.9x (lwIP 的 10 秒统计节拍变成 ~5.3 秒), 说明 TicksSinceBoot 的
        实际节拍率与 Divisor 推算出的不一致 —— 分数项等于重复计时。
@@ -228,11 +228,25 @@ namespace PIT
     {
         if (!Inited)
             return 0;
-        uint64_t cpm = sched_tsc_per_ms();
-        if (likely(cpm))
-            return tsc_now_raw() / cpm;
-        /* 未校准: 退回 PIT 墙钟 —— 调用方必须另有自旋次数上限兜底 */
-        return TimeSinceBootMS();
+
+        /* 时钟口径: 以**全局 PIT 节拍**为准, 而不是裸 TSC。
+           原因 (实测): TSC 是每 CPU 独立的, SMP 下各核读数的差可以很可观;
+           线程在核间迁移时 `TSC/tsc_per_ms` 会**倒退或停住**。后果:
+             * DOOM 的帧率限制器 `while (now < next) yield;` 会永远等下去
+               —— "DOOM 跑一会就卡死" (心跳停止、进程还在、内核无恙);
+             * 所有以毫秒为单位的时间测量都会失真 (调试时被误导过)。
+           PIT 节拍只在 BSP 上由定时器中断推进, 是**全局唯一**的计数器,
+           天然单调、跨核一致; 1ms 分辨率对帧率限制/超时/节流都足够。
+           另外再加一层高水位夹紧, 防止任何路径让它倒退。 */
+        uint64_t v = TimeSinceBootMS();
+        static uint64_t g_last_ms = 0;
+        uint64_t last = __atomic_load_n(&g_last_ms, __ATOMIC_RELAXED);
+        for (;;) {
+            if (v <= last) return last;              /* 不倒退 */
+            if (__atomic_compare_exchange_n(&g_last_ms, &last, v, false,
+                                            __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+                return v;
+        }
     }
 
 }

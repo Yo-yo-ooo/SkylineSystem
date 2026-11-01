@@ -199,9 +199,9 @@ public:
 
     typedef struct NVMERequest {
         //task_Request req;
-        volatile bool done;      /* P0-13: 跨核可见 (IRQ 与轮询并发收割) */
+        volatile bool done;      /* 跨核可见 (IRQ 与轮询并发收割) */
         int32_t inputSz;
-        uint16_t cid;            /* 审计 #10: 提交时的 CID (超时隔离用) */
+        uint16_t cid;            /* 提交时的 CID (超时隔离用) */
         NVME::CmplQueEntry res;
         NVME::SubQueEntry input[0];
     } NVMERequest;
@@ -216,7 +216,7 @@ public:
 
         spinlock_t Lock;
 
-        uint64_t retired_cids;   /* 审计 #10: 超时命令的 CID 位图 (≤64) */
+        uint64_t retired_cids;   /* 超时命令的 CID 位图 (≤64) */
 
         NVME::SubQueEntry *Entries;
         NVME::CmplQue *Trg;
@@ -297,7 +297,7 @@ protected:
     uint64_t flags;
     /*
     */
-   uint8_t FailureNUM;   /* P5-98: 原 FialureNUM 拼写 */
+   uint8_t FailureNUM;   /* 原 FialureNUM 拼写 */
 
    
 

@@ -1,4 +1,4 @@
-# res/scripts/test/power_cut.ps1 — 断电强杀/崩溃恢复验证 (D3, round 13)
+# res/scripts/test/power_cut.ps1 — 断电强杀/崩溃恢复验证
 # 用法: pwsh -File res/scripts/test/power_cut.ps1 [-Root <路径>] [-Qemu <路径>] [-Cycles 3]
 # 断言: 每次随机时刻强杀 QEMU 后重启, 内核能重新挂载 ext4 且 0 异常
 #   (崩溃恢复验证: 文件系统在无 fsck 下的挂载容错)

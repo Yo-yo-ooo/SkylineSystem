@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
-/* P2-62 口径: Schedule::Sleep + 定时器轮 (tv1/tv2/tv3) 当前无调用者 ——
+/* 口径: Schedule::Sleep + 定时器轮 (tv1/tv2/tv3) 当前无调用者 ——
    全内核睡眠走 PIT::Sleep (忙等)。接活方案 = PIT::Sleep 改调本模块
    (真睡眠), 需先解引导期依赖 (PIT::Sleep 在调度器安装前被 e1000/
    xHCI 探测使用, 忙等语义在无调度器时必需)。列入路线图, 非死代码

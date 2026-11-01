@@ -1,6 +1,17 @@
-// -*- C++ -*-
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 //=============================================================
-// flat_map.hpp -- complete <flat_map>, C++23~C++26.
+// <flat_map> — C++23 有序平面映射
+//
+// 旧实现把键和值分别放在两个 vector 里，iterator 直接是
+// MappedContainer::iterator（即 T*），导致：
+//   * it->first 根本编译不过（迭代器指向值，不是键值对）
+//   * 两容器必须手工保持下标同步，erase/insert 各写一遍，极易错位
+// 这里按标准语义重写：单个按 key 有序的 vector<value_type>，
+// value_type = pair<Key, T>（std::flat_map 就是这个类型），
+// 迭代器直接暴露键值对，查找用二分。
+//
+// 复杂度：查找 O(log n)；插入/删除 O(n)（内存连续，常数很小）。
 //=============================================================
 #ifndef STDCPP_FLAT_MAP_HPP
 #define STDCPP_FLAT_MAP_HPP
@@ -10,15 +21,15 @@
 #include <functional>
 #include <algorithm>
 #include <initializer_list>
-#include <flat_set>
-
-#define STDCPP_FM_CXX23 (__cplusplus >= 202100L)
+#include <utility>
+#include "detail/config.h"
+#include "detail/throw.h"
 
 #ifndef _GLIBCXX_FLAT_MAP
 #  define _GLIBCXX_FLAT_MAP 1
 #endif
 
-#if STDCPP_FM_CXX23
+#if __cplusplus >= 202100L
 
 namespace std {
 
@@ -26,136 +37,187 @@ template<class Key, class T, class Compare = less<Key>,
          class KeyContainer = vector<Key>, class MappedContainer = vector<T> >
 class flat_map {
 public:
-    typedef Key key_type;
-    typedef T mapped_type;
-    typedef pair<const Key, T> value_type;
-    typedef Compare key_compare;
-    typedef size_t size_type;
-
-    typedef typename KeyContainer::iterator key_iterator;
-    typedef typename MappedContainer::iterator iterator;
-    typedef typename MappedContainer::const_iterator const_iterator;
-    typedef std::reverse_iterator<iterator> reverse_iterator;
+    typedef Key                        key_type;
+    typedef T                          mapped_type;
+    typedef pair<Key, T>               value_type;
+    typedef Compare                    key_compare;
+    typedef value_type&                reference;
+    typedef const value_type&          const_reference;
+    typedef size_t                     size_type;
+    typedef ptrdiff_t                  difference_type;
 
 private:
-    KeyContainer _M_keys;
-    MappedContainer _M_vals;
-    Compare _M_comp;
+    // 容器模板参数保留在签名里以兼容标准用法，但存储统一为
+    // vector<value_type>：这样迭代器天然指向键值对。
+    vector<value_type> _M_v;
+    Compare            _M_comp;
+
+    template<class K>
+    size_type _M_lower(const K& k) const {
+        size_type lo = 0, hi = _M_v.size();
+        while (lo < hi) {
+            size_type mid = lo + (hi - lo) / 2;
+            if (_M_comp(_M_v[mid].first, k)) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
 
 public:
+    typedef typename vector<value_type>::iterator       iterator;
+    typedef typename vector<value_type>::const_iterator const_iterator;
+    typedef std::reverse_iterator<iterator>             reverse_iterator;
+    typedef std::reverse_iterator<const_iterator>       const_reverse_iterator;
+
     flat_map() {}
     explicit flat_map(const Compare& comp) : _M_comp(comp) {}
-    template<class InputIt>
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
     flat_map(InputIt first, InputIt last, const Compare& comp = Compare()) : _M_comp(comp) {
         for (; first != last; ++first) insert(*first);
     }
-    flat_map(const flat_map&) = default;
-    flat_map(flat_map&&) = default;
-    flat_map(initializer_list<pair<Key, T> > il) {
-        for (const auto& v : il) insert(v);
+    flat_map(initializer_list<value_type> il, const Compare& comp = Compare()) : _M_comp(comp) {
+        for (const value_type& v : il) insert(v);
     }
 
-    flat_map& operator=(const flat_map&) = default;
-    flat_map& operator=(flat_map&&) = default;
-    flat_map& operator=(initializer_list<pair<Key, T> > il) {
+    flat_map& operator=(initializer_list<value_type> il) {
         clear();
-        for (const auto& v : il) insert(v);
+        for (const value_type& v : il) insert(v);
         return *this;
     }
 
-    iterator begin() { return _M_vals.begin(); }
-    const_iterator begin() const { return _M_vals.begin(); }
-    iterator end() { return _M_vals.end(); }
-    const_iterator end() const { return _M_vals.end(); }
-    reverse_iterator rbegin() { return reverse_iterator(end()); }
-    reverse_iterator rend() { return reverse_iterator(begin()); }
+    //---------------------------------------------------------
+    // 迭代器 / 容量
+    //---------------------------------------------------------
+    iterator begin() noexcept { return _M_v.begin(); }
+    const_iterator begin() const noexcept { return _M_v.begin(); }
+    iterator end() noexcept { return _M_v.end(); }
+    const_iterator end() const noexcept { return _M_v.end(); }
+    reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
+    reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
 
-    bool empty() const { return _M_keys.empty(); }
-    size_type size() const { return _M_keys.size(); }
-    size_type max_size() const { return _M_keys.max_size(); }
-    void clear() { _M_keys.clear(); _M_vals.clear(); }
+    bool empty() const noexcept { return _M_v.empty(); }
+    size_type size() const noexcept { return _M_v.size(); }
+    size_type max_size() const noexcept { return _M_v.max_size(); }
+    void clear() noexcept { _M_v.clear(); }
 
-    pair<iterator, bool> insert(const pair<Key, T>& v) {
-        auto it = lower_bound_key(v.first);
-        if (it != _M_keys.end() && !_M_comp(v.first, *it))
-            return pair<iterator, bool>(_M_vals.begin() + (it - _M_keys.begin()), false);
-        size_type idx = it - _M_keys.begin();
-        _M_keys.insert(it, v.first);
-        _M_vals.insert(_M_vals.begin() + idx, v.second);
-        return pair<iterator, bool>(_M_vals.begin() + idx, true);
+    //---------------------------------------------------------
+    // 修改
+    //---------------------------------------------------------
+    pair<iterator, bool> insert(const value_type& v) {
+        size_type idx = _M_lower(v.first);
+        if (idx < _M_v.size() && !_M_comp(v.first, _M_v[idx].first))
+            return pair<iterator, bool>(_M_v.begin() + idx, false);
+        _M_v.insert(_M_v.begin() + idx, v);
+        return pair<iterator, bool>(_M_v.begin() + idx, true);
     }
-    void insert(initializer_list<pair<Key, T> > il) { for (const auto& v : il) insert(v); }
+    pair<iterator, bool> insert(value_type&& v) {
+        size_type idx = _M_lower(v.first);
+        if (idx < _M_v.size() && !_M_comp(v.first, _M_v[idx].first))
+            return pair<iterator, bool>(_M_v.begin() + idx, false);
+        _M_v.insert(_M_v.begin() + idx, static_cast<value_type&&>(v));
+        return pair<iterator, bool>(_M_v.begin() + idx, true);
+    }
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
+    void insert(InputIt first, InputIt last) {
+        for (; first != last; ++first) insert(*first);
+    }
+    void insert(initializer_list<value_type> il) {
+        for (const value_type& v : il) insert(v);
+    }
+
+    template<class... Args>
+    pair<iterator, bool> emplace(Args&&... args) {
+        value_type v(std::forward<Args>(args)...);
+        return insert(static_cast<value_type&&>(v));
+    }
 
     iterator erase(const_iterator pos) {
-        size_type idx = pos - _M_vals.begin();
-        _M_keys.erase(_M_keys.begin() + idx);
-        return _M_vals.erase(_M_vals.begin() + idx);
+        size_type idx = static_cast<size_type>(pos - _M_v.begin());
+        return _M_v.erase(_M_v.begin() + idx);
     }
-    size_type erase(const Key& k) {
-        auto it = find(k);
-        if (it == end()) return 0;
-        erase(it);
+    size_type erase(const key_type& k) {
+        size_type idx = _M_lower(k);
+        if (idx >= _M_v.size() || _M_comp(k, _M_v[idx].first)) return 0;
+        _M_v.erase(_M_v.begin() + idx);
         return 1;
     }
 
-    T& operator[](const Key& k) {
-        auto it = lower_bound_key(k);
-        size_type idx = it - _M_keys.begin();
-        if (it != _M_keys.end() && !_M_comp(k, *it)) return _M_vals[idx];
-        _M_keys.insert(it, k);
-        _M_vals.insert(_M_vals.begin() + idx, T());
-        return _M_vals[idx];
-    }
-    T& at(const Key& k) {
-        auto it = find(k);
-        if (it == end()) throw out_of_range("flat_map::at");
-        return *it;
-    }
-    const T& at(const Key& k) const {
-        auto it = find(k);
-        if (it == end()) throw out_of_range("flat_map::at");
-        return *it;
+    T& operator[](const key_type& k) {
+        size_type idx = _M_lower(k);
+        if (idx < _M_v.size() && !_M_comp(k, _M_v[idx].first)) return _M_v[idx].second;
+        iterator it = _M_v.insert(_M_v.begin() + idx, value_type(k, T()));
+        return it->second;
     }
 
-    iterator find(const Key& k) {
-        auto it = lower_bound_key(k);
-        if (it != _M_keys.end() && !_M_comp(k, *it))
-            return _M_vals.begin() + (it - _M_keys.begin());
-        return end();
+    T& at(const key_type& k) {
+        size_type idx = _M_lower(k);
+        if (idx >= _M_v.size() || _M_comp(k, _M_v[idx].first))
+            __detail::throw_out_of_range("flat_map::at");
+        return _M_v[idx].second;
     }
-    const_iterator find(const Key& k) const {
-        auto it = lower_bound_key(k);
-        if (it != _M_keys.end() && !_M_comp(k, *it))
-            return _M_vals.begin() + (it - _M_keys.begin());
-        return end();
-    }
-    size_type count(const Key& k) const { return find(k) != end() ? 1 : 0; }
-    bool contains(const Key& k) const { return find(k) != end(); }
-
-    void swap(flat_map& other) {
-        _M_keys.swap(other._M_keys);
-        _M_vals.swap(other._M_vals);
-        std::swap(_M_comp, other._M_comp);
+    const T& at(const key_type& k) const {
+        size_type idx = _M_lower(k);
+        if (idx >= _M_v.size() || _M_comp(k, _M_v[idx].first))
+            __detail::throw_out_of_range("flat_map::at");
+        return _M_v[idx].second;
     }
 
-private:
-    key_iterator lower_bound_key(const Key& k) {
-        return std::lower_bound(_M_keys.begin(), _M_keys.end(), k, _M_comp);
+    //---------------------------------------------------------
+    // 查找
+    //---------------------------------------------------------
+    iterator find(const key_type& k) {
+        size_type idx = _M_lower(k);
+        if (idx < _M_v.size() && !_M_comp(k, _M_v[idx].first)) return _M_v.begin() + idx;
+        return _M_v.end();
     }
-    typename KeyContainer::const_iterator lower_bound_key(const Key& k) const {
-        return std::lower_bound(_M_keys.begin(), _M_keys.end(), k, _M_comp);
+    const_iterator find(const key_type& k) const {
+        size_type idx = _M_lower(k);
+        if (idx < _M_v.size() && !_M_comp(k, _M_v[idx].first)) return _M_v.begin() + idx;
+        return _M_v.end();
     }
+    bool contains(const key_type& k) const { return find(k) != end(); }
+    size_type count(const key_type& k) const { return find(k) != end() ? 1 : 0; }
+
+    iterator lower_bound(const key_type& k) { return _M_v.begin() + _M_lower(k); }
+    const_iterator lower_bound(const key_type& k) const { return _M_v.begin() + _M_lower(k); }
+    iterator upper_bound(const key_type& k) {
+        size_type idx = _M_lower(k);
+        if (idx < _M_v.size() && !_M_comp(k, _M_v[idx].first)) ++idx;
+        return _M_v.begin() + idx;
+    }
+    const_iterator upper_bound(const key_type& k) const {
+        size_type idx = _M_lower(k);
+        if (idx < _M_v.size() && !_M_comp(k, _M_v[idx].first)) ++idx;
+        return _M_v.begin() + idx;
+    }
+    pair<iterator, iterator> equal_range(const key_type& k) {
+        return pair<iterator, iterator>(lower_bound(k), upper_bound(k));
+    }
+    pair<const_iterator, const_iterator> equal_range(const key_type& k) const {
+        return pair<const_iterator, const_iterator>(lower_bound(k), upper_bound(k));
+    }
+
+    key_compare key_comp() const { return _M_comp; }
+    void swap(flat_map& other) { _M_v.swap(other._M_v); std::swap(_M_comp, other._M_comp); }
 };
 
 template<class K, class T, class C, class KC, class MC>
 bool operator==(const flat_map<K, T, C, KC, MC>& a, const flat_map<K, T, C, KC, MC>& b) {
     if (a.size() != b.size()) return false;
-    return equal(a.begin(), a.end(), b.begin());
+    typename flat_map<K, T, C, KC, MC>::const_iterator i = a.begin();
+    typename flat_map<K, T, C, KC, MC>::const_iterator j = b.begin();
+    for (; i != a.end(); ++i, ++j) {
+        if (i->first != j->first || i->second != j->second) return false;
+    }
+    return true;
 }
 template<class K, class T, class C, class KC, class MC>
-void swap(flat_map<K, T, C, KC, MC>& a, flat_map<K, T, C, KC, MC>& b) { a.swap(b); }
+bool operator!=(const flat_map<K, T, C, KC, MC>& a, const flat_map<K, T, C, KC, MC>& b) {
+    return !(a == b);
+}
 
 } // namespace std
 
-#endif // STDCPP_FM_CXX23
+#endif // C++23
+
 #endif // STDCPP_FLAT_MAP_HPP

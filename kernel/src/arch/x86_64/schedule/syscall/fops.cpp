@@ -52,7 +52,7 @@ GENERATE_IGN3()) {
         // 读取范围超出缓存范围，放弃缓存，回退到硬件读取
         file_cache_put(cpu->file_cache, cache_entry);
     } else {
-        /* Step 2 (round 27): path 键整文件未命中时, 尝试逐块命中 ——
+        /* Step 2: path 键整文件未命中时, 尝试逐块命中 ——
            任意 offset 的读都能命中已 promote 的块 (非零 offset 的
            promote 见下方 miss 分支) */
         const uint64_t BLOCK_SZ = 4096;
@@ -173,7 +173,7 @@ GENERATE_IGN3()) {
                 file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, cache_buf, FD->file_size, FD->file_uid);
             }
         } else {
-            /* Step 2 (round 27): 非零偏移读取改为逐块 promote ——
+            /* Step 2: 非零偏移读取改为逐块 promote ——
                原实现直接放弃缓存, 任意 offset 的读都无法建立缓存。
                按 4KB 块切分读到的数据, 每块以 (file_id, block#) 键
                promote (块级缓存, fc-block-cache-design.md) */
@@ -266,7 +266,7 @@ GENERATE_IGN3()) {
                 /* 修复: 原地更新后必须跨 CPU 失效, 否则其他核的缓存条目
                    仍持有旧字节(陈旧读) */
                 file_cache_invalidate(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len);
-                /* Step 3 (round 28): 同时失效写入范围覆盖的块条目 ——
+                /* Step 3: 同时失效写入范围覆盖的块条目 ——
                    块级条目与 path 条目并存, 只失效 path 会让块条目
                    保持陈旧字节 */
                 const uint64_t BLOCK_SZ = 4096;
@@ -296,7 +296,7 @@ GENERATE_IGN3()) {
                     if (r != 0) kfree(cache_buf); 
                 }
             } else {
-                /* Step 3 (round 28): 非零偏移写同样逐块 promote (与读
+                /* Step 3: 非零偏移写同样逐块 promote (与读
                    路径对称) —— 写已同步落盘, is_dirty=false */
                 const uint64_t BLOCK_SZ = 4096;
                 uint64_t off = 0;
@@ -464,10 +464,10 @@ uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5()){
     proc_t *proc = Schedule::this_proc();
     fd_t *FD = fd_get(proc->FDMan,fd);
     if(!FD){return -EBADF;}
-    /* round 94 (完整语义支柱): 关闭前冲刷该文件的脏缓存页 ——
+    /* 关闭前冲刷该文件的脏缓存页 ——
        file_id = (uint64_t)filedesc 与 fops 的 promote/record_io 键一致;
        fsync 的写回回调按路径重开文件落盘, 失败不丢脏 (fc 的重试机制)。
-       这才把 P3-73 的 "fsync 机制存在但生产未激活" 激活 */
+       这才让 "fsync 机制存在但生产未激活" 变成已激活 */
     cpu_t *cpu = this_cpu();
     if (cpu->file_cache && FD->filedesc)
         file_cache_fsync(cpu->file_cache, FD->file_uid);

@@ -9,6 +9,7 @@
 #include <pdef.h>
 
 #include "heap_internal.h"
+#include <klib/kprintf.h>
 
 slab_cache_t caches[MAX_SLAB_ORDER];
 static uint64_t g_cache_lock_acquires[MAX_SLAB_ORDER];
@@ -643,6 +644,17 @@ namespace SLAB {
         }
 
         if (page->magic != SLAB_PAGE_MAGIC) {
+            /* 只报"坏指针"无法定位。把 ptr / 页基址 / 实际 magic / 调用者
+               一并打出来: 三种成因一眼可分 ——
+                 magic==0            -> 该页已归还 buddy (重复释放 / UAF)
+                 magic 为奇怪值       -> 页头被越界写踩坏
+                 页基址不是 slab 页   -> 指针根本不是 kmalloc 出来的
+                                        (静态区/栈/mmap/内偏移) */
+            kerrorln("[slab] invalid free: ptr=%p page=%p magic=%p want=%p caller=%p",
+                     (void*)ptr, (void*)page,
+                     (void*)(uintptr_t)page->magic,
+                     (void*)(uintptr_t)SLAB_PAGE_MAGIC,
+                     __builtin_return_address(0));
             slab_fatal("Critical SLAB error: Trying to free invalid or corrupted ptr.\n");
         }
 
@@ -664,7 +676,7 @@ namespace SLAB {
 #endif
 
         if (cpu) {
-            /* A6 (round 3 修复): magazine push 前即时双释检出 ——
+            /* magazine push 前即时双释检出 ——
                原仅 drain 时的下溢检测 (延迟, 已产生链表环)。此处
                遍历本 CPU magazine (长度 ≤ SLAB_BATCH*2+1 ≈ 33, 开销
                可忽略) 检出重复指针 */

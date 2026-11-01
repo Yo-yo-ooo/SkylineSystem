@@ -61,7 +61,7 @@ namespace AHCI
         hbaPort->cmdStatus &= ~HBA_PxCMD_ST;
         hbaPort->cmdStatus &= ~HBA_PxCMD_FRE;
 
-        /* round 97: 这里只能用 TimeSinceBootMS (引导早期 TSC 尚未校准,
+        /* 这里只能用 TimeSinceBootMS (引导早期 TSC 尚未校准,
            MonotonicMS 会退化成它)。它现在的实现直接复读 PIT channel 0 硬件
            计数器, 即使本核收不到 IRQ0 也会推进, 因此这个等待有界。 */
         uint64_t deadline = PIT::TimeSinceBootMS() + 500;
@@ -210,7 +210,7 @@ namespace AHCI
     
     AHCI_NOOPT bool Port::Read(uint64_t sector, uint32_t sectorCount, void* buffer)
     {
-        /* P0-11: PRDT 数量钳制 (命令表 1 页 ≈ 248 条目), 防越界 memset */
+        /* PRDT 数量钳制 (命令表 1 页 ≈ 248 条目), 防越界 memset */
         if (sectorCount > 248 * 16) {
             kerror("AHCI Read: sectorCount %u exceeds PRDT capacity\n", sectorCount);
             return false;
@@ -220,7 +220,7 @@ namespace AHCI
         uint32_t sectorCountCopy = sectorCount;
         
         hbaPort->interruptStatus = (uint32_t)-1;
-        /* 审计 #15 (round 9): 选槽 + 表填 + 签发在同一短临界区 ——
+        /* 选槽 + 表填 + 签发在同一短临界区 ——
            两个线程并发写同一端口时不会再选到同一 slot (原实现
            FindCommandSlot 的扫描无锁) */
         spinlock_lock(&slot_lock);
@@ -284,11 +284,11 @@ namespace AHCI
         if (spin == 1000000)
             return false;
 
-        /* P2-59: 同 Write —— 命令表写全后、门铃前释放屏障 */
+        /* 同 Write —— 命令表写全后、门铃前释放屏障 */
         __atomic_thread_fence(__ATOMIC_RELEASE);
         hbaPort->commandIssue = 1 << slot;
-        spinlock_unlock(&slot_lock);   /* 审计 #15: 签发后释放 (短临界区) */
-        /* round 97: deadline 用 MonotonicMS (TSC 直读) —— 原实现用
+        spinlock_unlock(&slot_lock);   /* 签发后释放 (短临界区) */
+        /* deadline 用 MonotonicMS (TSC 直读) —— 原实现用
            TimeSinceBootMS, 该时钟在"本核收不到 PIT 节拍"时会冻结, 于是
            这个轮询退化成永旋 (实测卡死 55 秒以上、整机停摆)。 */
         uint64_t deadline = PIT::MonotonicMS() + 5000;
@@ -316,7 +316,7 @@ namespace AHCI
             return false;
         }
 
-        /* P0-10: 超时未完成必须失败 (原实现超时后返回 true = 坏数据 +
+        /* 超时未完成必须失败 (原实现超时后返回 true = 坏数据 +
            slot 永不回收)。端口级 COMRESET 恢复见路线图, 先保证错误
            语义向上传播。 */
         if (hbaPort->commandIssue & (1 << slot)) {
@@ -332,7 +332,7 @@ namespace AHCI
 
     AHCI_NOOPT bool Port::Write(uint64_t sector, uint32_t sectorCount, void* buffer)
     {
-        /* P0-11: PRDT 数量钳制 (命令表 1 页 ≈ 248 条目), 防越界 memset */
+        /* PRDT 数量钳制 (命令表 1 页 ≈ 248 条目), 防越界 memset */
         if (sectorCount > 248 * 16) {
             kerror("AHCI Write: sectorCount %u exceeds PRDT capacity\n", sectorCount);
             return false;
@@ -342,7 +342,7 @@ namespace AHCI
         uint32_t sectorCountCopy = sectorCount;
         
         hbaPort->interruptStatus = (uint32_t)-1;
-        /* 审计 #15 (round 9): 选槽 + 表填 + 签发在同一短临界区 ——
+        /* 选槽 + 表填 + 签发在同一短临界区 ——
            两个线程并发写同一端口时不会再选到同一 slot (原实现
            FindCommandSlot 的扫描无锁) */
         spinlock_lock(&slot_lock);
@@ -406,12 +406,12 @@ namespace AHCI
         if (spin == 1000000)
             return false;
 
-        /* P2-59: 命令表全部写入后、拉起 commandIssue 前加释放屏障 ——
+        /* 命令表全部写入后、拉起 commandIssue 前加释放屏障 ——
            x86 上编译期即可见序 (WB 内存模型), 此 fence 文档化「表先于
            门铃」契约并保证移植到弱序架构时语义不变 */
         __atomic_thread_fence(__ATOMIC_RELEASE);
         hbaPort->commandIssue = 1<<slot;
-        spinlock_unlock(&slot_lock);   /* 审计 #15: 签发后释放 (短临界区) */
+        spinlock_unlock(&slot_lock);   /* 签发后释放 (短临界区) */
 
         uint64_t deadline = PIT::MonotonicMS() + 5000;
         /* The syscall path runs with IRQs masked (syscall_entry does cli).
@@ -436,7 +436,7 @@ namespace AHCI
             return false;
         }
 
-        /* 审计 #9 (round 1 修复): 原实现超时后直接 return true ——
+        /* 原实现超时后直接 return true ——
            丢写报成功。补 CI 检查 (与 Read 对称): 超时未完成 = 失败 */
         if (hbaPort->commandIssue & (1 << slot)) {
             kerror("AHCI: port %d slot %d WRITE timeout (CI=%#x, IS=%#x)\n",

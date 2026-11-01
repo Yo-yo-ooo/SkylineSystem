@@ -81,6 +81,9 @@ typedef struct cpu_t {
     int8_t* KernelXsaveSpace;
 
     int32_t preempt_count = 0;
+    /* 抢占计数泄漏自愈: 用户态被中断时计数仍 >1 的连续次数。
+       见 sched.cpp Switch() 的说明 —— 超过阈值判定为泄漏并就地修复。 */
+    uint32_t preempt_leak_streak = 0;
     bool InIntr = false;
     
     bool has_runnable_thread;
@@ -129,7 +132,7 @@ typedef struct cpu_t {
         pagemap_t *pm;
         uint64_t   vaddr;
         uint8_t    type;    // 1=page, 2=full pm, 3=global
-        int32_t    ack_cpu; // P0-3: initiator CPU to ACK; -1 = none (int8 ≥128 核溢出)
+        int32_t    ack_cpu; // initiator CPU to ACK; -1 = none (int8 ≥128 核溢出)
     } shootdown_queue[TLB_SHOOTDOWN_QMAX];
     volatile uint32_t shootdown_head;  // FIFO consumer index (this CPU)
     volatile uint32_t shootdown_tail;  // FIFO producer index (initiators)
@@ -138,8 +141,8 @@ typedef struct cpu_t {
        用来一眼看出"是哪个核没回" —— 正常路径只有两次原子位操作, 可忽略。
        不参与任何同步语义, 缺失/错位只会影响日志。 */
     volatile uint64_t shootdown_ack_mask;
-    bool SMEP_ENABLED = false;   /* P5-98: 原 ISSMEP_ENABLEED 拼写 */
-    bool SMAP_ENABLED = false;   /* P5-98: 原 ISSMAP_ENABLEED 拼写 */
+    bool SMEP_ENABLED = false;   /* 原 ISSMEP_ENABLEED 拼写 */
+    bool SMAP_ENABLED = false;   /* 原 ISSMAP_ENABLEED 拼写 */
     file_cache_cpu_t *file_cache;
     uint64_t rip_avg_rate;
 } cpu_t;

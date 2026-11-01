@@ -9,7 +9,7 @@
 
 #define user_access_begin()  asm volatile("stac" ::: "memory")
 #define user_access_end()    asm volatile("clac" ::: "memory")
-/* P5-96: user_access_guard 结构 (RAII 形式) 无调用者 —— 保留宏形式的
+/* user_access_guard 结构 (RAII 形式) 无调用者 —— 保留宏形式的
    stac/clac (SMAP 路径在用); 若未来要 RAII, 再恢复该结构 */
 
 extern "C++" {
@@ -60,7 +60,7 @@ typedef struct thread_t {
     thread_t** timer_bucket;
 
     bool IsForkThread;
-    /* B2 (round 5): CPU 钉扎 —— TryPush 负载均衡跳过 pinned 线程
+    /* CPU 钉扎 —— TryPush 负载均衡跳过 pinned 线程
        (lwIP RX FIFO 依赖线程与 IRQ 同核, 迁核即双生产者竞态) */
     bool pinned;
 
@@ -123,7 +123,7 @@ typedef struct proc_t {
     fd_manager_t *FDMan;
     volatile int32_t exiting;
     bool IsTrusted;
-    /* B4 (round 16): 引用计数 —— 根治 exiting 的 check-then-act。
+    /* 引用计数 —— 根治 exiting 的 check-then-act。
        计数语义: 1 = 进程表引用; 每持指针跨锁/跨上下文的路径
        proc_get/proc_put 配对 (children 遍历、kill 对端、waitpid)。
        refcount 归零才允许释放 FDMan/pagemap/结构体 */
@@ -157,7 +157,7 @@ static inline void irq_restore(uint64_t flags) {
     asm volatile("push %0\n\tpopfq" :: "r"(flags) : "memory");
 }
 
-/* B4 (round 18): proc 引用计数配对 —— 持指针跨锁/跨上下文的路径
+/* proc 引用计数配对 —— 持指针跨锁/跨上下文的路径
    (kill 对端、children 遍历) 以 proc_get/proc_put 配对; 计数归零
    时僵尸回收器才释放结构体 */
 static inline void proc_get(proc_t *p) {
@@ -198,7 +198,7 @@ namespace Schedule{
         void Switch(context_t *ctx);
         void Preempt(context_t *ctx);
 
-        bool ProcessAddThread(proc_t *parent, thread_t *thread);   /* round 91: 锁内重检 exiting, 失败返 false */
+        bool ProcessAddThread(proc_t *parent, thread_t *thread);   /* 锁内重检 exiting, 失败返 false */
         
         void RemoveFromQueue(cpu_t *cpu, thread_t *thread);
         void InsertToQueue(cpu_t *cpu, thread_t *thread);
@@ -238,7 +238,7 @@ namespace Schedule{
     void PAUSE();
     void Tick();
     void Resume();
-    void Sleep(uint64_t ms);   /* P2-62 接活 (round 96): 定时器轮真睡眠 */
+    void Sleep(uint64_t ms);   /* 接活: 定时器轮真睡眠 */
 
     void DeleteThread(cpu_t *cpu, thread_t *thread);
     void DeleteProc(proc_t *proc);

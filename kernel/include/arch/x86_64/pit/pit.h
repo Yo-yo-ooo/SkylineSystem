@@ -25,7 +25,7 @@ namespace PIT
     void SetDivisor(uint16_t divisor);
 
     /* 开机毫秒数 (记账/定时器轮/uptime 语义)。
-        实现 (round 97 修复): TicksSinceBoot (IRQ0 累加) + **直接读 PIT
+        实现: TicksSinceBoot (IRQ0 累加) + **直接读 PIT
         channel 0 硬件计数器**得到的节拍内分数, 因此:
           - 某个核收不到 / 被屏蔽 IRQ0 时, 复读硬件计数器仍能看到它在走;
           - deadline 不会再因为"本核墙钟冻结"而变成永旋 (实测症状: 卡在

@@ -11,7 +11,7 @@ HEAP_SRC := ../kernel/src/mem/heap.cpp ../kernel/src/mem/slab.cpp ../kernel/src/
 ART_SRC  := ../kernel/src/klib/algorithm/art.c
 FC_SRC   := ../kernel/src/fs/fc.cpp ../kernel/src/fs/fc_idle.cpp
 
-# P4-89: 游离工具纳入目标 (art_mini = ART 前缀冲突隔离, art_replay = 复现工具)
+# 游离工具纳入目标 (art_mini = ART 前缀冲突隔离, art_replay = 复现工具)
 art-mini: bin/art_mini
 bin/art_mini: art_mini.cpp common/kernel_shim.cpp $(HEAP_SRC) $(ART_SRC)
 	@mkdir -p bin
@@ -22,7 +22,7 @@ bin/art_replay: art_replay.cpp common/kernel_shim.cpp $(HEAP_SRC) $(ART_SRC)
 	@mkdir -p bin
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDLIBS)
 
-# P4-86: 用户态分配器宿主测试 (allocator.c + mmap 桩)
+# 用户态分配器宿主测试 (allocator.c + mmap 桩)
 alloc: bin/alloc_test
 bin/alloc_test: alloc/alloc_main.cpp ../lib/stdc/allocator/allocator.c ../lib/stdc/allocator/sct.c
 	@mkdir -p bin

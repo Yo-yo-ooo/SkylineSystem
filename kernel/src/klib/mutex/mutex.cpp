@@ -8,7 +8,7 @@
 #endif
 
 #ifdef __x86_64__
-/* P0-1 修复: 唤醒阻塞线程必须重新入队 + 触发抢占。
+/* 唤醒阻塞线程必须重新入队 + 触发抢占。
    原实现只改 state=RUNNING —— 线程已不在任何运行队列 (Acquire 的
    BLOCKED 让 switch 路径不重插), 被唤醒后永久丢失 → 并发下挂死。 */
 static void wake_thread(thread_t *t)
@@ -99,7 +99,7 @@ void MutexRelease(mutex_t *mutex)
     mutex->owner = NULL;
     __sync_lock_release(&mutex->lock);
 
-    // 唤醒队首第一个等待线程 (重新入队 + 抢占, P0-1)
+    // 唤醒队首第一个等待线程 (重新入队 + 抢占, )
     thread_t *wait_thread = (thread_t*)Queue::Dequeue(mutex->queue);
     wake_thread(wait_thread);
 #endif

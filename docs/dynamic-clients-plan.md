@@ -135,7 +135,7 @@ total    = ALIGN_UP(tls_memsz, tls_align) + 8;   ← +8 在这里
 修正后布局自洽了（`only .so: total=948, fs_off=952`，desktop: `fs_off=1080`），
 **但客户端的 77 仍然出现**，说明还有第二处偏差。
 
-### 下一轮的定位手段（一步到位）
+### 定位手段（一步到位）
 
 在客户端进程里，把下面两个值同时打印出来对比：
 
@@ -242,7 +242,7 @@ hw2.elf  42,736 字节（静态版 884,120）  Type: DYN  NEEDED: libsky.so
 
 至此三个程序是动态链接：`desktop.elf`、`hw.elf`、`hw2.elf`。
 `notepad` 与 `PureDOOM` 仍是静态，转换方式完全相同（各加两行、去掉
-`-T` 脚本依赖），留给下一轮。
+`-T` 脚本依赖），留给后续。
 
 ## 已废弃：ET_EXEC + 自定义脚本（保留记录以免重犯）
 
@@ -263,7 +263,7 @@ hw2.elf  42,736 字节（静态版 884,120）  Type: DYN  NEEDED: libsky.so
 也就是说 `elf_dyn_apply()` 对 hw2 提前返回了（`dyn_read_needed` 没找到
 `DT_NEEDED`），PLT 里的 5 个 `JUMP_SLOT` 从未被解析，客户端一跳就飞。
 
-下一轮要从 `elf_dyn_apply` 的早退路径入手：给它加日志，确认是
+后续要从 `elf_dyn_apply` 的早退路径入手：给它加日志，确认是
 `so_name` 为空（`dyn_read_needed` 失败）还是 `elf_dyn_prepare` 返回 0。
 怀疑点：hw2 的 `DT_STRTAB`/`DT_NEEDED` 指向被脚本合并进大段的地址，
 `dl_vaddr_to_off()` 用 PT_LOAD 反查时落在**重叠段**的边界上，取到错误偏移。

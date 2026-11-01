@@ -1,22 +1,38 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
+//=============================================================
+// <cstdint> — 定宽整数类型
+//
+// 旧版只转发了 intN_t / int_fastN_t / int_leastN_t，缺三类标准成员：
+//   intptr_t / uintptr_t（指针宽度整数，<memory> 的 align() 就要用）
+//   intmax_t / uintmax_t（最大宽度整数）
+//   INTN_MIN/MAX、INTPTR_MAX 等宏的 std:: 命名空间转发
+//=============================================================
 #pragma once
 
 #include <stdint.h>
 
-namespace std{
-    using ::int8_t;         using ::uint8_t;
-    using ::int16_t;        using ::uint16_t;
-    using ::int32_t;        using ::uint32_t;
-    using ::int64_t;        using ::uint64_t;
+namespace std {
 
-    unsig ::int_fast8_t;    using ::uint_fast8_t;
-    using ::int_fast16_t;   using ::uint_fast16_t;
-    using ::int_fast32_t;   using ::uint_fast32_t;
-    using ::int_fast64_t;   using ::uint_fast64_t;
-    
-    using ::int_least8_t;   using ::uint_least8_t;
-    using ::int_least16_t;  using ::uint_least16_t;
-    using ::int_least32_t;  using ::uint_least32_t;
-    using ::int_least64_t;  using ::uint_least64_t;
-} 
+using ::int8_t;         using ::uint8_t;
+using ::int16_t;        using ::uint16_t;
+using ::int32_t;        using ::uint32_t;
+using ::int64_t;        using ::uint64_t;
+
+using ::int_fast8_t;    using ::uint_fast8_t;
+using ::int_fast16_t;   using ::uint_fast16_t;
+using ::int_fast32_t;   using ::uint_fast32_t;
+using ::int_fast64_t;   using ::uint_fast64_t;
+
+using ::int_least8_t;   using ::uint_least8_t;
+using ::int_least16_t;  using ::uint_least16_t;
+using ::int_least32_t;  using ::uint_least32_t;
+using ::int_least64_t;  using ::uint_least64_t;
+
+using ::intptr_t;       using ::uintptr_t;      // 指针宽度整数
+using ::intmax_t;       using ::uintmax_t;      // 最大宽度整数
+
+// 注意：INT8_MIN/INT32_MAX 等是 <stdint.h> 定义的宏，展开后是字面量，
+// 无法（也不应该）放进 namespace std —— 标准同样只要求它们在全局可用。
+
+} // namespace std

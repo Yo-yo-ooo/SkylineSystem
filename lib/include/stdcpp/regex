@@ -1,0 +1,1723 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+//=============================================================
+// <regex> — 正则表达式（ECMAScript 子集，回溯实现）
+//
+// 实现路线：正则文本 --解析--> 抽象语法（边解析边发射）--编译--> 线性字节码
+//          --> DFS 回溯匹配（带捕获槽位）。
+//
+// 支持：
+//   * 字面量、`.`、字符类 `[a-z^...]`（含 `\d \w \s` 等简写）
+//   * 分组 `(...)`、非捕获 `(?:...)`、交替 `|`
+//   * 量词 `* + ? {n} {n,} {n,m}`，以及懒惰形式 `*? +? ?? {n,m}?`
+//   * 锚点 `^ $`、词边界 `\b \B`
+//   * 反向引用 `\1`..`\9`
+//   * 转义 `\n \r \t \f \v \0 \\ \. \xHH \uHHHH`
+//   * 选项：icase / nosubs / multiline
+//   * API：regex_match / regex_search / regex_replace / sregex_iterator /
+//          smatch / ssub_match / regex_error
+//
+// 不支持（与完整 ECMAScript 的差距，已在 README 记录）：
+//   前瞻/后顾断言 (?=) (?!) (?<=) (?<!)、命名分组 (?<name>)、
+//   字符类内的 POSIX 类名 [[:alpha:]]、\p{...}、Unicode 属性；
+//   递归实现，超长目标串上的 `.*` 会加深调用栈。
+//=============================================================
+#ifndef STDCPP_REGEX_HPP
+#define STDCPP_REGEX_HPP
+
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+#include <utility>
+#include <iterator>
+#include "detail/config.h"
+#include "detail/throw.h"
+
+#ifndef _GLIBCXX_REGEX
+#  define _GLIBCXX_REGEX 1
+#endif
+
+namespace std {
+
+//=============================================================
+// regex_constants
+//=============================================================
+namespace regex_constants {
+
+typedef unsigned int syntax_option_type;
+constexpr syntax_option_type icase      = 1u << 0;
+constexpr syntax_option_type nosubs     = 1u << 1;
+constexpr syntax_option_type optimize   = 1u << 2;
+constexpr syntax_option_type collate    = 1u << 3;
+constexpr syntax_option_type ECMAScript = 1u << 4;
+constexpr syntax_option_type basic      = 1u << 5;
+constexpr syntax_option_type extended   = 1u << 6;
+constexpr syntax_option_type awk        = 1u << 7;
+constexpr syntax_option_type grep       = 1u << 8;
+constexpr syntax_option_type egrep      = 1u << 9;
+constexpr syntax_option_type multiline  = 1u << 10;
+
+typedef unsigned int match_flag_type;
+constexpr match_flag_type match_default     = 0;
+constexpr match_flag_type match_not_bol     = 1u << 0;
+constexpr match_flag_type match_not_eol     = 1u << 1;
+constexpr match_flag_type match_not_bow     = 1u << 2;
+constexpr match_flag_type match_not_eow     = 1u << 3;
+constexpr match_flag_type match_any         = 1u << 4;
+constexpr match_flag_type match_not_null    = 1u << 5;
+constexpr match_flag_type match_continuous  = 1u << 6;
+constexpr match_flag_type match_prev_avail  = 1u << 7;
+constexpr match_flag_type format_default    = 0;
+constexpr match_flag_type format_sed        = 1u << 8;
+constexpr match_flag_type format_no_copy    = 1u << 9;
+constexpr match_flag_type format_first_only = 1u << 10;
+
+typedef int error_type;
+constexpr error_type error_collate    = 0;
+constexpr error_type error_ctype      = 1;
+constexpr error_type error_escape     = 2;
+constexpr error_type error_backref    = 3;
+constexpr error_type error_brack      = 4;
+constexpr error_type error_paren      = 5;
+constexpr error_type error_brace      = 6;
+constexpr error_type error_badbrace   = 7;
+constexpr error_type error_range      = 8;
+constexpr error_type error_space      = 9;
+constexpr error_type error_badrepeat  = 10;
+constexpr error_type error_complexity = 11;
+constexpr error_type error_stack      = 12;
+
+} // namespace regex_constants
+
+//=============================================================
+// regex_error
+//=============================================================
+class regex_error : public runtime_error {
+public:
+    explicit regex_error(regex_constants::error_type code)
+        : runtime_error("std::regex_error"), _M_code(code) {}
+    regex_constants::error_type code() const { return _M_code; }
+private:
+    regex_constants::error_type _M_code;
+};
+
+//=============================================================
+// 内部：字符分类 / 字符类 / 字节码
+//=============================================================
+namespace __regex_detail {
+
+inline bool is_word_char(uint32_t c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+inline bool is_space_char(uint32_t c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+inline bool is_digit_char(uint32_t c) { return c >= '0' && c <= '9'; }
+
+inline uint32_t ascii_lower(uint32_t c) {
+    return (c >= 'A' && c <= 'Z') ? (c + 32) : c;
+}
+
+struct char_class {
+    // 区间列表；negated 表示取反
+    std::vector<std::pair<uint32_t, uint32_t> > ranges;
+    bool negated;
+
+    char_class() : negated(false) {}
+
+    void add(uint32_t lo, uint32_t hi) { ranges.push_back(std::make_pair(lo, hi)); }
+    void add(uint32_t c) { add(c, c); }
+
+    bool raw_match(uint32_t c) const {
+        for (size_t i = 0; i < ranges.size(); ++i)
+            if (c >= ranges[i].first && c <= ranges[i].second) return true;
+        return false;
+    }
+
+    bool match(uint32_t c, bool icase) const {
+        bool hit = raw_match(c);
+        if (!hit && icase) {
+            // 大小写不敏感：再试一次换大小写后的字符
+            if (c >= 'a' && c <= 'z') hit = raw_match(c - 32);
+            else if (c >= 'A' && c <= 'Z') hit = raw_match(c + 32);
+        }
+        return negated ? !hit : hit;
+    }
+};
+
+struct inst {
+    enum op_t {
+        OpChar,      // 匹配单字符 c
+        OpAny,       // 匹配任意字符（不含换行，除非 match_any）
+        OpClass,     // 匹配字符类（c = 类下标）
+        OpSplit,     // 优先走 x，失败再走 y
+        OpJmp,       // 跳到 x
+        OpSave,      // 记录捕获槽 c 的当前位置
+        OpBol,       // ^
+        OpEol,       // $
+        OpWordB,     // \b
+        OpNotWordB,  // \B
+        OpBackref,   // 反向引用（c = 组号）
+        OpMatch      // 成功
+    };
+
+    op_t     op;
+    uint32_t c;
+    size_t   x;
+    size_t   y;
+
+    inst(op_t o = OpMatch, uint32_t cc = 0, size_t xx = 0, size_t yy = 0)
+        : op(o), c(cc), x(xx), y(yy) {}
+};
+
+//-------------------------------------------------------------
+// 解析器：边解析边发射字节码
+//-------------------------------------------------------------
+template<class CharT, class Traits>
+class compiler {
+public:
+    typedef CharT value_type;
+
+    compiler(const CharT* pat, size_t len, regex_constants::syntax_option_type flags)
+        : _M_p(pat), _M_len(len), _M_pos(0), _M_flags(flags), _M_groups(0), _M_error(-1) {}
+
+    bool compile() {
+        emit(inst::OpSave, 0);
+        if (!parse_alternation()) return false;
+        emit(inst::OpSave, 1);
+        emit(inst::OpMatch);
+        if (_M_pos != _M_len) { fail(regex_constants::error_paren); return false; }
+        return true;
+    }
+
+    std::vector<inst>&     program() { return _M_prog; }
+    std::vector<char_class>& classes() { return _M_classes; }
+    size_t group_count() const { return _M_groups; }
+    int    error() const { return _M_error; }
+
+private:
+    const CharT* _M_p;
+    size_t       _M_len;
+    size_t       _M_pos;
+    regex_constants::syntax_option_type _M_flags;
+    std::vector<inst>       _M_prog;
+    std::vector<char_class> _M_classes;
+    size_t       _M_groups;
+    int          _M_error;
+
+    bool icase() const { return (_M_flags & regex_constants::icase) != 0; }
+    bool multiline() const { return (_M_flags & regex_constants::multiline) != 0; }
+
+    void fail(int code) { if (_M_error < 0) _M_error = code; }
+
+    bool eof() const { return _M_pos >= _M_len; }
+    CharT cur() const { return _M_p[_M_pos]; }
+
+    size_t emit(inst::op_t op, uint32_t c = 0, size_t x = 0, size_t y = 0) {
+        _M_prog.push_back(inst(op, c, x, y));
+        return _M_prog.size() - 1;
+    }
+
+    // 从 _M_pos 起，在当前括号深度内是否还有 '|'。
+    // 只有确认存在多分支时才发射 Split，避免单分支也平白多出一次回溯分叉。
+    bool has_alternation() const {
+        size_t depth = 0;
+        for (size_t i = _M_pos; i < _M_len; ++i) {
+            const CharT c = _M_p[i];
+            if (c == '\\') { ++i; continue; }
+            if (c == '[') {
+                ++i;
+                while (i < _M_len && _M_p[i] != ']') { if (_M_p[i] == '\\') ++i; ++i; }
+                continue;
+            }
+            if (c == '(') { ++depth; continue; }
+            if (c == ')') {
+                if (depth == 0) return false;      // 本层结束
+                --depth;
+                continue;
+            }
+            if (c == '|' && depth == 0) return true;
+        }
+        return false;
+    }
+
+    // alternation := concat ('|' concat)*
+    //
+    // 生成结构（以 a|b|c 为例）：
+    //     S1: Split a, S2
+    //     a:  <code a>   Jmp End
+    //     S2: Split b, c
+    //     b:  <code b>   Jmp End
+    //     c:  <code c>
+    //     End:
+    //
+    // 两个必须避开的坑：
+    //   1) 只发 Jmp 不发 Split → "cat|dog" 会被编译成 "catdog"，
+    //      分支 1 失败后根本没机会试分支 2。
+    //   2) 给最后一个分支也发 Split(分支, End) → 分支失败时会跳到 End，
+    //      等于"跳过整个分组"，于是 a(b|c)d 能匹配 "ad"。
+    //      所以只有后面还有分支时才发 Split。
+    bool parse_alternation() {
+        if (!has_alternation()) return parse_concat();
+
+        std::vector<size_t> jmps;                  // 各分支末尾 Jmp End，待回填
+        size_t prev_split = emit(inst::OpSplit);
+
+        _M_prog[prev_split].x = _M_prog.size();
+        if (!parse_concat()) return false;
+
+        while (!eof() && cur() == '|') {
+            ++_M_pos;
+            jmps.push_back(emit(inst::OpJmp));     // 上一分支成功 → 跳到 End
+
+            if (has_alternation()) {
+                // 后面还有分支：先开一个 Split，上一分支失败时转到这里
+                const size_t sp = emit(inst::OpSplit);
+                _M_prog[prev_split].y = sp;
+                prev_split = sp;
+                _M_prog[prev_split].x = _M_prog.size();
+            } else {
+                // 最后一个分支：直接落在这里
+                _M_prog[prev_split].y = _M_prog.size();
+            }
+            if (!parse_concat()) return false;
+        }
+
+        const size_t end = _M_prog.size();
+        for (size_t k = 0; k < jmps.size(); ++k) _M_prog[jmps[k]].x = end;
+        return _M_error < 0;
+    }
+
+    // concat := repeat*
+    bool parse_concat() {
+        while (!eof() && cur() != '|' && cur() != ')') {
+            if (!parse_repeat()) return false;
+        }
+        return _M_error < 0;
+    }
+
+    // repeat := atom quantifier?
+    bool parse_repeat() {
+        const size_t atom_start = _M_prog.size();
+        if (!parse_atom()) return false;
+
+        if (eof()) return true;
+
+        // 量词
+        CharT c = cur();
+        if (c == '*' || c == '+' || c == '?') {
+            ++_M_pos;
+            bool greedy = true;
+            if (!eof() && cur() == '?') { greedy = false; ++_M_pos; }
+
+            if (c == '*')      apply_star(atom_start, greedy);
+            else if (c == '+') apply_plus(atom_start, greedy);
+            else               apply_question(atom_start, greedy);
+            return true;
+        }
+        if (c == '{') {
+            // {n} / {n,} / {n,m}
+            const size_t save = _M_pos;
+            ++_M_pos;
+            long n = 0, m = -1;
+            bool has_comma = false;
+            if (!parse_number(n)) { _M_pos = save; return true; }   // 不是量词，按字面量处理
+            if (!eof() && cur() == ',') {
+                has_comma = true;
+                ++_M_pos;
+                if (!eof() && cur() >= '0' && cur() <= '9') {
+                    if (!parse_number(m)) return true;
+                }
+            }
+            if (eof() || cur() != '}') {
+                fail(regex_constants::error_badbrace);
+                return false;
+            }
+            ++_M_pos;
+            bool greedy = true;
+            if (!eof() && cur() == '?') { greedy = false; ++_M_pos; }
+
+            if (has_comma && m < 0) {
+                apply_n_or_more(atom_start, (size_t)n, greedy);
+            } else if (!has_comma) {
+                apply_n_times(atom_start, (size_t)n, greedy);
+            } else {
+                if (m < n) { fail(regex_constants::error_badbrace); return false; }
+                apply_n_to_m(atom_start, (size_t)n, (size_t)m, greedy);
+            }
+            return true;
+        }
+        return true;
+    }
+
+    bool parse_number(long& out) {
+        if (eof() || cur() < '0' || cur() > '9') return false;
+        out = 0;
+        while (!eof() && cur() >= '0' && cur() <= '9') {
+            out = out * 10 + (cur() - '0');
+            if (out > 100000) { fail(regex_constants::error_badbrace); return false; }
+            ++_M_pos;
+        }
+        return true;
+    }
+
+    // 把 [atom_start, end) 拷到新位置，返回新起点
+    size_t copy_block(size_t from, size_t to) {
+        const size_t base = _M_prog.size();
+        for (size_t i = from; i < to; ++i) {
+            inst in = _M_prog[i];
+            if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                in.x = (in.x >= from && in.x < to) ? (in.x - from + base) : in.x;
+                in.y = (in.y >= from && in.y < to) ? (in.y - from + base) : in.y;
+            }
+            _M_prog.push_back(in);
+        }
+        return base;
+    }
+
+    void apply_star(size_t atom_start, bool greedy) {
+        const size_t atom_end = _M_prog.size();
+        const size_t block_len = atom_end - atom_start;
+        if (block_len == 0) { fail(regex_constants::error_badrepeat); return; }
+
+        // 把原子整体搬家，在前面留出 Split 的位置
+        std::vector<inst> block(_M_prog.begin() + atom_start, _M_prog.end());
+        _M_prog.resize(atom_start);
+
+        const size_t split = emit(inst::OpSplit);
+        const size_t body = _M_prog.size();
+        for (size_t i = 0; i < block.size(); ++i) {
+            inst in = block[i];
+            if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                if (in.x >= atom_start && in.x < atom_end)
+                    in.x = in.x - atom_start + body;
+                if (in.y >= atom_start && in.y < atom_end)
+                    in.y = in.y - atom_start + body;
+            }
+            _M_prog.push_back(in);
+        }
+        emit(inst::OpJmp, 0, split);
+        const size_t after = _M_prog.size();
+
+        if (greedy) { _M_prog[split].x = body; _M_prog[split].y = after; }
+        else        { _M_prog[split].x = after; _M_prog[split].y = body; }
+    }
+
+    void apply_plus(size_t atom_start, bool greedy) {
+        const size_t atom_end = _M_prog.size();
+        if (atom_end == atom_start) { fail(regex_constants::error_badrepeat); return; }
+
+        // X+ == X X*
+        std::vector<inst> block(_M_prog.begin() + atom_start, _M_prog.end());
+        const size_t body = atom_start;
+        const size_t split = emit(inst::OpSplit);
+        const size_t body2 = _M_prog.size();
+        for (size_t i = 0; i < block.size(); ++i) {
+            inst in = block[i];
+            if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                if (in.x >= body && in.x < atom_end) in.x = in.x - body + body2;
+                if (in.y >= body && in.y < atom_end) in.y = in.y - body + body2;
+            }
+            _M_prog.push_back(in);
+        }
+        emit(inst::OpJmp, 0, split);
+        const size_t after = _M_prog.size();
+        if (greedy) { _M_prog[split].x = body2; _M_prog[split].y = after; }
+        else        { _M_prog[split].x = after; _M_prog[split].y = body2; }
+    }
+
+    void apply_question(size_t atom_start, bool greedy) {
+        std::vector<inst> block(_M_prog.begin() + atom_start, _M_prog.end());
+        _M_prog.resize(atom_start);
+
+        const size_t split = emit(inst::OpSplit);
+        const size_t body = _M_prog.size();
+        for (size_t i = 0; i < block.size(); ++i) {
+            inst in = block[i];
+            if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                if (in.x >= atom_start) in.x = in.x - atom_start + body;
+                if (in.y >= atom_start) in.y = in.y - atom_start + body;
+            }
+            _M_prog.push_back(in);
+        }
+        const size_t after = _M_prog.size();
+        if (greedy) { _M_prog[split].x = body; _M_prog[split].y = after; }
+        else        { _M_prog[split].x = after; _M_prog[split].y = body; }
+    }
+
+    void apply_n_times(size_t atom_start, size_t n, bool greedy) {
+        (void)greedy;
+        std::vector<inst> block(_M_prog.begin() + atom_start, _M_prog.end());
+        _M_prog.resize(atom_start);
+        for (size_t k = 0; k < n; ++k) {
+            const size_t base = _M_prog.size();
+            for (size_t i = 0; i < block.size(); ++i) {
+                inst in = block[i];
+                if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                    if (in.x >= atom_start) in.x = in.x - atom_start + base;
+                    if (in.y >= atom_start) in.y = in.y - atom_start + base;
+                }
+                _M_prog.push_back(in);
+            }
+        }
+    }
+
+    void apply_n_or_more(size_t atom_start, size_t n, bool greedy) {
+        std::vector<inst> block(_M_prog.begin() + atom_start, _M_prog.end());
+        _M_prog.resize(atom_start);
+        // n 份必需
+        for (size_t k = 0; k < n; ++k) {
+            const size_t base = _M_prog.size();
+            for (size_t i = 0; i < block.size(); ++i) {
+                inst in = block[i];
+                if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                    if (in.x >= atom_start) in.x = in.x - atom_start + base;
+                    if (in.y >= atom_start) in.y = in.y - atom_start + base;
+                }
+                _M_prog.push_back(in);
+            }
+        }
+        // 再来一个 X*
+        const size_t star_start = _M_prog.size();
+        {
+            const size_t base = _M_prog.size();
+            for (size_t i = 0; i < block.size(); ++i) {
+                inst in = block[i];
+                if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                    if (in.x >= atom_start) in.x = in.x - atom_start + base;
+                    if (in.y >= atom_start) in.y = in.y - atom_start + base;
+                }
+                _M_prog.push_back(in);
+            }
+        }
+        apply_star(star_start, greedy);
+    }
+
+    void apply_n_to_m(size_t atom_start, size_t n, size_t m, bool greedy) {
+        std::vector<inst> block(_M_prog.begin() + atom_start, _M_prog.end());
+        _M_prog.resize(atom_start);
+        for (size_t k = 0; k < n; ++k) {
+            const size_t base = _M_prog.size();
+            for (size_t i = 0; i < block.size(); ++i) {
+                inst in = block[i];
+                if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                    if (in.x >= atom_start) in.x = in.x - atom_start + base;
+                    if (in.y >= atom_start) in.y = in.y - atom_start + base;
+                }
+                _M_prog.push_back(in);
+            }
+        }
+        for (size_t k = n; k < m; ++k) {
+            const size_t before = _M_prog.size();
+            const size_t base = _M_prog.size();
+            for (size_t i = 0; i < block.size(); ++i) {
+                inst in = block[i];
+                if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                    if (in.x >= atom_start) in.x = in.x - atom_start + base;
+                    if (in.y >= atom_start) in.y = in.y - atom_start + base;
+                }
+                _M_prog.push_back(in);
+            }
+            // 包一层 Split 变成可选
+            const size_t block_end = _M_prog.size();
+            std::vector<inst> opt(_M_prog.begin() + before, _M_prog.end());
+            _M_prog.resize(before);
+            const size_t split = emit(inst::OpSplit);
+            const size_t body = _M_prog.size();
+            for (size_t i = 0; i < opt.size(); ++i) {
+                inst in = opt[i];
+                if (in.op == inst::OpSplit || in.op == inst::OpJmp) {
+                    if (in.x >= before && in.x < block_end) in.x = in.x - before + body;
+                    if (in.y >= before && in.y < block_end) in.y = in.y - before + body;
+                }
+                _M_prog.push_back(in);
+            }
+            const size_t after = _M_prog.size();
+            if (greedy) { _M_prog[split].x = body; _M_prog[split].y = after; }
+            else        { _M_prog[split].x = after; _M_prog[split].y = body; }
+        }
+    }
+
+    // atom := '(' alt ')' | '[' class ']' | '.' | '^' | '$' | '\' esc | char
+    bool parse_atom() {
+        if (eof()) return true;
+        const CharT c = cur();
+
+        if (c == '(') {
+            ++_M_pos;
+            bool capture = true;
+            if (!eof() && cur() == '?') {
+                if (_M_pos + 1 < _M_len && _M_p[_M_pos + 1] == ':') {
+                    _M_pos += 2;
+                    capture = false;
+                } else {
+                    fail(regex_constants::error_paren);   // 不支持 (?= 等
+                    return false;
+                }
+            }
+            size_t slot = 0;
+            if (capture) {
+                ++_M_groups;
+                slot = _M_groups;
+                emit(inst::OpSave, static_cast<uint32_t>(2 * slot));
+            }
+            if (!parse_alternation()) return false;
+            if (eof() || cur() != ')') { fail(regex_constants::error_paren); return false; }
+            ++_M_pos;
+            if (capture) emit(inst::OpSave, static_cast<uint32_t>(2 * slot + 1));
+            return true;
+        }
+
+        if (c == ')') { fail(regex_constants::error_paren); return false; }
+
+        if (c == '[') { return parse_class(); }
+
+        if (c == '.') { ++_M_pos; emit(inst::OpAny); return true; }
+
+        if (c == '^') { ++_M_pos; emit(inst::OpBol); return true; }
+        if (c == '$') { ++_M_pos; emit(inst::OpEol); return true; }
+
+        if (c == '\\') { return parse_escape(false); }
+
+        // 裸量词符号出现在原子位置 → 非法
+        if (c == '*' || c == '+' || c == '?') {
+            fail(regex_constants::error_badrepeat);
+            return false;
+        }
+        ++_M_pos;
+        emit(inst::OpChar, static_cast<uint32_t>(c));
+        return true;
+    }
+
+    bool parse_escape(bool in_class) {
+        ++_M_pos;                     // 跳过 '\'
+        if (eof()) { fail(regex_constants::error_escape); return false; }
+        const CharT c = cur();
+        ++_M_pos;
+
+        switch (c) {
+            case 'd': add_class_shorthand(1, false); return true;
+            case 'D': add_class_shorthand(1, true);  return true;
+            case 'w': add_class_shorthand(2, false); return true;
+            case 'W': add_class_shorthand(2, true);  return true;
+            case 's': add_class_shorthand(3, false); return true;
+            case 'S': add_class_shorthand(3, true);  return true;
+            case 'b':
+                if (in_class) { emit(inst::OpChar, 8); return true; }   // 退格
+                emit(inst::OpWordB); return true;
+            case 'B':
+                if (in_class) { emit(inst::OpChar, 'B'); return true; }
+                emit(inst::OpNotWordB); return true;
+            case 'n': emit(inst::OpChar, '\n'); return true;
+            case 'r': emit(inst::OpChar, '\r'); return true;
+            case 't': emit(inst::OpChar, '\t'); return true;
+            case 'f': emit(inst::OpChar, '\f'); return true;
+            case 'v': emit(inst::OpChar, '\v'); return true;
+            case '0': emit(inst::OpChar, 0); return true;
+            case 'x': {
+                uint32_t v = 0;
+                if (!parse_hex(2, v)) { fail(regex_constants::error_escape); return false; }
+                emit(inst::OpChar, v);
+                return true;
+            }
+            case 'u': {
+                uint32_t v = 0;
+                if (!parse_hex(4, v)) { fail(regex_constants::error_escape); return false; }
+                emit(inst::OpChar, v);
+                return true;
+            }
+            case 'c': {
+                if (eof()) { fail(regex_constants::error_escape); return false; }
+                const uint32_t v = static_cast<uint32_t>(cur()) & 0x1F;
+                ++_M_pos;
+                emit(inst::OpChar, v);
+                return true;
+            }
+            default:
+                break;
+        }
+
+        if (c >= '1' && c <= '9' && !in_class) {
+            // 反向引用
+            const uint32_t g = static_cast<uint32_t>(c - '0');
+            if (g > _M_groups) { fail(regex_constants::error_backref); return false; }
+            emit(inst::OpBackref, g);
+            return true;
+        }
+
+        // 其余转义按字面量处理（\. \* \\ 等）
+        emit(inst::OpChar, static_cast<uint32_t>(c));
+        return true;
+    }
+
+    bool parse_hex(int n, uint32_t& out) {
+        out = 0;
+        for (int i = 0; i < n; ++i) {
+            if (eof()) return false;
+            const CharT c = cur();
+            int d;
+            if (c >= '0' && c <= '9') d = c - '0';
+            else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+            else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+            else return false;
+            out = out * 16 + static_cast<uint32_t>(d);
+            ++_M_pos;
+        }
+        return true;
+    }
+
+    void add_class_shorthand(int which, bool negate) {
+        char_class cls;
+        cls.negated = negate;
+        if (which == 1) { cls.add('0', '9'); }
+        else if (which == 2) {
+            cls.add('a', 'z'); cls.add('A', 'Z'); cls.add('0', '9'); cls.add('_');
+        } else {
+            cls.add(' '); cls.add('\t'); cls.add('\n'); cls.add('\r'); cls.add('\f'); cls.add('\v');
+        }
+        _M_classes.push_back(cls);
+        emit(inst::OpClass, static_cast<uint32_t>(_M_classes.size() - 1));
+    }
+
+    // '[' ... ']'
+    bool parse_class() {
+        ++_M_pos;                       // 跳过 '['
+        char_class cls;
+        if (!eof() && cur() == '^') { cls.negated = true; ++_M_pos; }
+
+        bool first = true;
+        while (!eof()) {
+            if (cur() == ']' && !first) break;
+            first = false;
+
+            // 转义简写类（\d \w \s）在类内要并入区间
+            if (cur() == '\\' && _M_pos + 1 < _M_len) {
+                const CharT e = _M_p[_M_pos + 1];
+                if (e == 'd' || e == 'D' || e == 'w' || e == 'W' || e == 's' || e == 'S') {
+                    _M_pos += 2;
+                    const bool neg = (e == 'D' || e == 'W' || e == 'S');
+                    const int which = (e == 'd' || e == 'D') ? 1 : (e == 'w' || e == 'W') ? 2 : 3;
+                    if (neg) {
+                        // 取反的简写类无法用区间并集表达，这里按标准做法：
+                        // 生成一个嵌套类，用两条指令组合实现
+                        char_class inner;
+                        if (which == 1) inner.add('0', '9');
+                        else if (which == 2) { inner.add('a', 'z'); inner.add('A', 'Z'); inner.add('0', '9'); inner.add('_'); }
+                        else { inner.add(' '); inner.add('\t'); inner.add('\n'); inner.add('\r'); inner.add('\f'); inner.add('\v'); }
+                        inner.negated = true;
+                        _M_classes.push_back(inner);
+                        // 用「类 + 负向」表达：等价于 [^...]，与已有区间取并集时
+                        // 按“命中任一即匹配”，所以直接发射为独立类会有冲突。
+                        // 简化：把负向简写类展开为完整区间（char 范围内）
+                        char_class expanded;
+                        const uint32_t maxc = 0x10FFFF;
+                        // 将 inner 的补集加入 cls
+                        std::vector<std::pair<uint32_t, uint32_t> > comp;
+                        uint32_t cursor = 0;
+                        for (size_t i = 0; i < inner.ranges.size(); ++i) {
+                            if (cursor < inner.ranges[i].first)
+                                comp.push_back(std::make_pair(cursor, inner.ranges[i].first - 1));
+                            cursor = inner.ranges[i].second + 1;
+                        }
+                        if (cursor <= maxc) comp.push_back(std::make_pair(cursor, maxc));
+                        for (size_t i = 0; i < comp.size(); ++i) cls.add(comp[i].first, comp[i].second);
+                    } else {
+                        if (which == 1) cls.add('0', '9');
+                        else if (which == 2) { cls.add('a', 'z'); cls.add('A', 'Z'); cls.add('0', '9'); cls.add('_'); }
+                        else { cls.add(' '); cls.add('\t'); cls.add('\n'); cls.add('\r'); cls.add('\f'); cls.add('\v'); }
+                    }
+                    continue;
+                }
+            }
+
+            // 普通字符或转义字符
+            uint32_t lo;
+            if (cur() == '\\') {
+                ++_M_pos;
+                if (eof()) { fail(regex_constants::error_escape); return false; }
+                const CharT e = cur();
+                ++_M_pos;
+                switch (e) {
+                    case 'n': lo = '\n'; break;
+                    case 'r': lo = '\r'; break;
+                    case 't': lo = '\t'; break;
+                    case 'f': lo = '\f'; break;
+                    case 'v': lo = '\v'; break;
+                    case '0': lo = 0; break;
+                    case 'x': { uint32_t v; if (!parse_hex(2, v)) { fail(regex_constants::error_escape); return false; } lo = v; break; }
+                    case 'u': { uint32_t v; if (!parse_hex(4, v)) { fail(regex_constants::error_escape); return false; } lo = v; break; }
+                    default:  lo = static_cast<uint32_t>(e); break;
+                }
+            } else {
+                lo = static_cast<uint32_t>(cur());
+                ++_M_pos;
+            }
+
+            // 区间 a-z
+            if (!eof() && cur() == '-' && _M_pos + 1 < _M_len && _M_p[_M_pos + 1] != ']') {
+                ++_M_pos;
+                uint32_t hi;
+                if (cur() == '\\') {
+                    ++_M_pos;
+                    if (eof()) { fail(regex_constants::error_escape); return false; }
+                    const CharT e = cur();
+                    ++_M_pos;
+                    switch (e) {
+                        case 'n': hi = '\n'; break;
+                        case 'r': hi = '\r'; break;
+                        case 't': hi = '\t'; break;
+                        default:  hi = static_cast<uint32_t>(e); break;
+                    }
+                } else {
+                    hi = static_cast<uint32_t>(cur());
+                    ++_M_pos;
+                }
+                if (hi < lo) { fail(regex_constants::error_range); return false; }
+                cls.add(lo, hi);
+            } else {
+                cls.add(lo, lo);
+            }
+        }
+
+        if (eof()) { fail(regex_constants::error_brack); return false; }
+        ++_M_pos;                        // 跳过 ']'
+        _M_classes.push_back(cls);
+        emit(inst::OpClass, static_cast<uint32_t>(_M_classes.size() - 1));
+        return true;
+    }
+};
+
+} // namespace __regex_detail
+
+//=============================================================
+// sub_match
+//=============================================================
+template<class BidirIt>
+class sub_match : public pair<BidirIt, BidirIt> {
+public:
+    typedef typename iterator_traits<BidirIt>::value_type value_type;
+    typedef typename iterator_traits<BidirIt>::difference_type difference_type;
+    typedef BidirIt iterator;
+    typedef basic_string<value_type> string_type;
+
+    bool matched;
+
+    sub_match() : pair<BidirIt, BidirIt>(), matched(false) {}
+
+    difference_type length() const { return matched ? this->second - this->first : 0; }
+
+    operator string_type() const { return str(); }
+
+    string_type str() const {
+        return matched ? string_type(this->first, this->second) : string_type();
+    }
+
+    int compare(const string_type& s) const { return str().compare(s); }
+    int compare(const value_type* s) const { return str().compare(s); }
+};
+
+template<class BidirIt>
+bool operator==(const sub_match<BidirIt>& a, const sub_match<BidirIt>& b) {
+    return a.compare(b.str()) == 0;
+}
+template<class BidirIt>
+bool operator!=(const sub_match<BidirIt>& a, const sub_match<BidirIt>& b) {
+    return a.compare(b.str()) != 0;
+}
+template<class BidirIt>
+bool operator<(const sub_match<BidirIt>& a, const sub_match<BidirIt>& b) {
+    return a.compare(b.str()) < 0;
+}
+
+//=============================================================
+// match_results
+//=============================================================
+template<class BidirIt>
+class match_results {
+public:
+    typedef sub_match<BidirIt>                       value_type;
+    typedef const value_type&                        const_reference;
+    typedef value_type&                              reference;
+    typedef BidirIt                                  const_iterator;
+    typedef typename value_type::string_type         string_type;
+    typedef typename string_type::size_type          size_type;
+    typedef typename iterator_traits<BidirIt>::difference_type difference_type;
+    typedef std::vector<value_type>                  container_type;
+
+    match_results() {}
+    explicit match_results(const BidirIt& b, const BidirIt& e) : _M_begin(b), _M_end(e) {}
+
+    bool ready() const { return _M_ready; }
+    size_type size() const { return _M_subs.size(); }
+    bool empty() const { return _M_subs.empty(); }
+
+    const_reference operator[](size_type n) const { return _M_subs[n]; }
+    const_reference prefix() const { return _M_prefix; }
+    const_reference suffix() const { return _M_suffix; }
+
+    string_type str(size_type n = 0) const { return _M_subs[n].str(); }
+    const_iterator begin() const { return _M_begin; }
+    const_iterator end() const { return _M_end; }
+
+    difference_type position(size_type n = 0) const {
+        return _M_subs[n].matched ? _M_subs[n].first - _M_begin : -1;
+    }
+    difference_type length(size_type n = 0) const {
+        return _M_subs[n].length();
+    }
+
+    void swap(match_results& o) {
+        _M_subs.swap(o._M_subs);
+        std::swap(_M_begin, o._M_begin);
+        std::swap(_M_end, o._M_end);
+        std::swap(_M_prefix, o._M_prefix);
+        std::swap(_M_suffix, o._M_suffix);
+        std::swap(_M_ready, o._M_ready);
+    }
+
+    // 供内部使用
+    std::vector<value_type>& _M_slots() { return _M_subs; }
+    value_type& _M_prefix_slot() { return _M_prefix; }
+    value_type& _M_suffix_slot() { return _M_suffix; }
+    void _M_set(bool ready, BidirIt b, BidirIt e) {
+        _M_ready = ready; _M_begin = b; _M_end = e;
+    }
+
+private:
+    std::vector<value_type> _M_subs;
+    BidirIt     _M_begin{};
+    BidirIt     _M_end{};
+    value_type  _M_prefix;
+    value_type  _M_suffix;
+    bool        _M_ready = false;
+};
+
+//=============================================================
+// basic_regex
+//=============================================================
+template<class CharT, class Traits = char_traits<CharT> >
+class basic_regex {
+public:
+    typedef CharT                                  value_type;
+    typedef Traits                                 traits_type;
+    typedef basic_string<CharT, Traits>            string_type;
+    typedef regex_constants::syntax_option_type    flag_type;
+    typedef const CharT*                           locale_type;
+    typedef __regex_detail::char_class             char_class_type;
+
+    // 标准要求把 regex_constants 的语法开关作为 basic_regex 的静态成员暴露，
+    // 这样 std::regex::icase 才能用（而不必写 std::regex_constants::icase）
+    static constexpr flag_type icase      = regex_constants::icase;
+    static constexpr flag_type nosubs     = regex_constants::nosubs;
+    static constexpr flag_type optimize   = regex_constants::optimize;
+    static constexpr flag_type collate    = regex_constants::collate;
+    static constexpr flag_type ECMAScript = regex_constants::ECMAScript;
+    static constexpr flag_type basic      = regex_constants::basic;
+    static constexpr flag_type extended   = regex_constants::extended;
+    static constexpr flag_type awk        = regex_constants::awk;
+    static constexpr flag_type grep       = regex_constants::grep;
+    static constexpr flag_type egrep      = regex_constants::egrep;
+
+    basic_regex() : _M_flags(regex_constants::ECMAScript), _M_groups(0) {}
+
+    explicit basic_regex(const CharT* p, flag_type f = regex_constants::ECMAScript)
+        : _M_flags(f), _M_groups(0) {
+        _M_compile(p, Traits::length(p));
+    }
+
+    basic_regex(const CharT* p, size_t len, flag_type f = regex_constants::ECMAScript)
+        : _M_flags(f), _M_groups(0) {
+        _M_compile(p, len);
+    }
+
+    basic_regex(const string_type& s, flag_type f = regex_constants::ECMAScript)
+        : _M_flags(f), _M_groups(0) {
+        _M_compile(s.data(), s.size());
+    }
+
+    basic_regex(const basic_regex&) = default;
+    basic_regex(basic_regex&&) = default;
+    basic_regex& operator=(const basic_regex&) = default;
+    basic_regex& operator=(basic_regex&&) = default;
+
+    basic_regex& operator=(const CharT* p) { assign(p); return *this; }
+    basic_regex& operator=(const string_type& s) { assign(s); return *this; }
+
+    basic_regex& assign(const CharT* p, flag_type f = regex_constants::ECMAScript) {
+        _M_flags = f; _M_groups = 0; _M_compile(p, Traits::length(p)); return *this;
+    }
+    basic_regex& assign(const CharT* p, size_t len, flag_type f = regex_constants::ECMAScript) {
+        _M_flags = f; _M_groups = 0; _M_compile(p, len); return *this;
+    }
+    basic_regex& assign(const string_type& s, flag_type f = regex_constants::ECMAScript) {
+        return assign(s.data(), s.size(), f);
+    }
+
+    void swap(basic_regex& o) {
+        _M_prog.swap(o._M_prog);
+        _M_classes.swap(o._M_classes);
+        std::swap(_M_flags, o._M_flags);
+        std::swap(_M_groups, o._M_groups);
+    }
+
+    size_t mark_count() const { return _M_groups; }
+    flag_type flags() const { return _M_flags; }
+    bool empty() const { return _M_prog.empty(); }
+
+    // 内部访问
+    const std::vector<__regex_detail::inst>& _M_program() const { return _M_prog; }
+    const std::vector<__regex_detail::char_class>& _M_char_classes() const { return _M_classes; }
+
+private:
+    void _M_compile(const CharT* p, size_t len) {
+        __regex_detail::compiler<CharT, Traits> c(p, len, _M_flags);
+        if (!c.compile()) {
+            // error() 返回标准 error_type；负值表示内存不足
+            regex_constants::error_type e = (c.error() < 0)
+                ? regex_constants::error_space
+                : static_cast<regex_constants::error_type>(c.error());
+            STDCPP_THROW(regex_error(e));
+            STDCPP_FAIL("std::regex: bad pattern");
+        }
+        _M_prog.swap(c.program());
+        _M_classes.swap(c.classes());
+        _M_groups = c.group_count();
+        if (_M_flags & regex_constants::nosubs) _M_groups = 0;
+    }
+
+    std::vector<__regex_detail::inst>       _M_prog;
+    std::vector<__regex_detail::char_class> _M_classes;
+    flag_type _M_flags;
+    size_t    _M_groups;
+};
+
+typedef basic_regex<char>    regex;
+typedef basic_regex<wchar_t> wregex;
+
+//=============================================================
+// 匹配引擎
+//=============================================================
+namespace __regex_detail {
+
+template<class CharT, class Traits>
+struct matcher {
+    typedef basic_regex<CharT, Traits> regex_type;
+    typedef basic_string<CharT, Traits> string_type;
+
+    const std::vector<inst>&       prog;
+    const std::vector<char_class>& classes;
+    const CharT*                   text;
+    size_t                         len;
+    bool                           icase_on;
+    bool                           multiline_on;
+    bool                           not_bol_on;   // match_not_bol: 起点不当作行首
+    bool                           not_eol_on;   // match_not_eol: 终点不当作行尾
+    bool                           full_match;   // regex_match：要求正好消耗到串尾
+    size_t                         ngroups;
+
+    // 捕获槽：每个组两个槽（起点/终点），0 槽为整体匹配
+    std::vector<size_t> caps;
+
+    matcher(const regex_type& re, const CharT* t, size_t n, bool icase_f, bool ml)
+        : prog(re._M_program()), classes(re._M_char_classes()), text(t), len(n),
+          icase_on(icase_f), multiline_on(ml), not_bol_on(false), not_eol_on(false),
+          full_match(false), ngroups(re.mark_count()) {
+        caps.assign((ngroups + 1) * 2, npos());
+    }
+
+    void not_bol(bool v) { not_bol_on = v; }
+    void not_eol(bool v) { not_eol_on = v; }
+
+    static size_t npos() { return static_cast<size_t>(-1); }
+
+    bool char_eq(uint32_t a, uint32_t b) const {
+        if (a == b) return true;
+        if (!icase_on) return false;
+        return ascii_lower(a) == ascii_lower(b);
+    }
+
+    bool at_bol(size_t sp) const {
+        if (sp == 0) return !not_bol_on;
+        if (!multiline_on) return false;
+        return static_cast<uint32_t>(text[sp - 1]) == '\n';
+    }
+    bool at_eol(size_t sp) const {
+        if (sp == len) return !not_eol_on;
+        if (!multiline_on) return false;
+        return static_cast<uint32_t>(text[sp]) == '\n';
+    }
+    bool is_word_at(size_t i) const {
+        return i < len && is_word_char(static_cast<uint32_t>(text[i]));
+    }
+
+    //---------------------------------------------------------
+    // 迭代式回溯匹配（显式栈）
+    //
+    // 不用递归的原因有两个，都是在内核里不可接受的：
+    //   1) 递归深度随输入长度增长（"a*" 匹配 10 万字符 = 10 万层栈帧）；
+    //   2) 空匹配的循环（如 (a*)*）会无限递归直到栈溢出。
+    //
+    // 栈上放两类撤销记录，按 LIFO 弹出：
+    //   UAlt  - 备选分支 (pc, sp)
+    //   USave - 回滚某个捕获槽
+    //   UMark - 回滚"空循环"哨兵
+    // 失败时依次弹出：先回滚捕获，遇到 UAlt 就换到备选分支继续。
+    //---------------------------------------------------------
+    struct undo {
+        size_t kind;   // 0=Alt 1=Save 2=Mark
+        size_t a;      // pc / slot / pc
+        size_t b;      // sp / 旧值 / 旧值
+    };
+
+    std::vector<undo>  _M_stack;
+    std::vector<size_t> _M_mark;   // 每个 Split 上一次被进入时的 sp（防空循环）
+
+    void full(bool v) { full_match = v; }
+
+    bool run(size_t pc0, size_t sp0) {
+        _M_stack.clear();
+        if (_M_mark.size() != prog.size()) _M_mark.assign(prog.size(), npos());
+
+        size_t pc = pc0, sp = sp0;
+        bool failed = false;
+
+        for (;;) {
+            if (!failed) {
+                if (pc >= prog.size()) { failed = true; }
+                else {
+                    const inst& in = prog[pc];
+                    switch (in.op) {
+                        case inst::OpChar:
+                            if (sp >= len || !char_eq(static_cast<uint32_t>(text[sp]), in.c)) failed = true;
+                            else { ++sp; ++pc; }
+                            continue;
+
+                        case inst::OpAny:
+                            if (sp >= len || static_cast<uint32_t>(text[sp]) == '\n') failed = true;
+                            else { ++sp; ++pc; }
+                            continue;
+
+                        case inst::OpClass:
+                            if (sp >= len || !classes[in.c].match(static_cast<uint32_t>(text[sp]), icase_on)) failed = true;
+                            else { ++sp; ++pc; }
+                            continue;
+
+                        case inst::OpBol:
+                            if (!at_bol(sp)) failed = true; else ++pc;
+                            continue;
+
+                        case inst::OpEol:
+                            if (!at_eol(sp)) failed = true; else ++pc;
+                            continue;
+
+                        case inst::OpWordB: {
+                            const bool a = sp > 0 && is_word_char(static_cast<uint32_t>(text[sp - 1]));
+                            const bool b = is_word_at(sp);
+                            if (a == b) failed = true; else ++pc;
+                            continue;
+                        }
+
+                        case inst::OpNotWordB: {
+                            const bool a = sp > 0 && is_word_char(static_cast<uint32_t>(text[sp - 1]));
+                            const bool b = is_word_at(sp);
+                            if (a != b) failed = true; else ++pc;
+                            continue;
+                        }
+
+                        case inst::OpBackref: {
+                            const size_t g = in.c;
+                            if (g == 0 || 2 * g + 1 >= caps.size()) { failed = true; continue; }
+                            const size_t bs = caps[2 * g], be = caps[2 * g + 1];
+                            if (bs == npos() || be == npos()) { failed = true; continue; }  // 未参与匹配
+                            const size_t n = be - bs;
+                            if (sp + n > len) { failed = true; continue; }
+                            bool eq = true;
+                            for (size_t i = 0; i < n; ++i)
+                                if (!char_eq(static_cast<uint32_t>(text[sp + i]),
+                                             static_cast<uint32_t>(text[bs + i]))) { eq = false; break; }
+                            if (!eq) { failed = true; continue; }
+                            sp += n; ++pc;
+                            continue;
+                        }
+
+                        case inst::OpSave: {
+                            const size_t slot = in.c;
+                            if (slot < caps.size()) {
+                                undo u; u.kind = 1; u.a = slot; u.b = caps[slot];
+                                _M_stack.push_back(u);
+                                caps[slot] = sp;
+                            }
+                            ++pc;
+                            continue;
+                        }
+
+                        case inst::OpSplit: {
+                            // 空循环保护：同一个 Split 在没有前进的情况下又被进入，
+                            // 说明循环体匹配了空串 —— 只能走退出分支，否则永不终止。
+                            if (_M_mark[pc] == sp) { pc = in.y; continue; }
+                            undo m; m.kind = 2; m.a = pc; m.b = _M_mark[pc];
+                            _M_stack.push_back(m);
+                            _M_mark[pc] = sp;
+
+                            undo u; u.kind = 0; u.a = in.y; u.b = sp;
+                            _M_stack.push_back(u);
+                            pc = in.x;                 // 先试优先分支 x
+                            continue;
+                        }
+
+                        case inst::OpJmp:
+                            pc = in.x;
+                            continue;
+
+                        case inst::OpMatch:
+                            // regex_match 要求正好消耗到串尾；否则回溯继续找别的路径
+                            if (!full_match || sp == len) return true;
+                            failed = true;
+                            continue;
+                    }
+                    failed = true;
+                    continue;
+                }
+            }
+
+            //---------------- 回溯 ----------------
+            bool resumed = false;
+            while (!_M_stack.empty()) {
+                const undo u = _M_stack.back();
+                _M_stack.pop_back();
+                if (u.kind == 1) { caps[u.a] = u.b; continue; }   // 回滚捕获
+                if (u.kind == 2) { _M_mark[u.a] = u.b; continue; } // 回滚空循环哨兵
+                pc = u.a; sp = u.b;                                // 换到备选分支
+                resumed = true;
+                break;
+            }
+            if (!resumed) return false;
+            failed = false;
+        }
+    }
+};
+
+} // namespace __regex_detail
+
+//=============================================================
+// regex_match / regex_search
+//=============================================================
+template<class BidirIt, class CharT, class Traits>
+bool regex_match(BidirIt first, BidirIt last,
+                 match_results<BidirIt>& m,
+                 const basic_regex<CharT, Traits>& re,
+                 regex_constants::match_flag_type flags = regex_constants::match_default) {
+    typedef __regex_detail::matcher<CharT, Traits> M;
+    const size_t n = static_cast<size_t>(last - first);
+    M mm(re, &*first, n,
+         (re.flags() & regex_constants::icase) != 0,
+         (re.flags() & regex_constants::multiline) != 0);
+    // match_not_bol / match_not_eol 会关闭 ^ / $ 的锚定语义
+    mm.not_bol((flags & regex_constants::match_not_bol) != 0);
+    mm.not_eol((flags & regex_constants::match_not_eol) != 0);
+
+    // regex_match：必须从 first 开始且消耗到 last。
+    // full_match 让引擎在 OpMatch 处校验 sp == len 并继续回溯，
+    // 而不是"找到第一个就返回"（那样贪婪/懒惰量词在整串匹配时会直接失败）。
+    mm.full(true);
+
+    if (!mm.run(0, 0)) {
+        // 即便失败也把槽位填满，避免调用方索引未初始化的 sub_match
+        m._M_set(true, first, last);
+        m._M_slots().assign(mm.ngroups + 1, sub_match<BidirIt>());
+        return false;
+    }
+
+    m._M_set(true, first, last);
+    std::vector<sub_match<BidirIt> >& subs = m._M_slots();
+    subs.assign(mm.ngroups + 1, sub_match<BidirIt>());
+    for (size_t g = 0; g <= mm.ngroups; ++g) {
+        if (mm.caps[2 * g] != M::npos() && mm.caps[2 * g + 1] != M::npos()) {
+            subs[g].first = first + static_cast<typename iterator_traits<BidirIt>::difference_type>(mm.caps[2 * g]);
+            subs[g].second = first + static_cast<typename iterator_traits<BidirIt>::difference_type>(mm.caps[2 * g + 1]);
+            subs[g].matched = true;
+        }
+    }
+    return true;
+}
+
+template<class BidirIt, class CharT, class Traits>
+bool regex_match(BidirIt first, BidirIt last, const basic_regex<CharT, Traits>& re,
+                 regex_constants::match_flag_type flags = regex_constants::match_default) {
+    match_results<BidirIt> m;
+    return regex_match(first, last, m, re, flags);
+}
+
+template<class CharT, class Traits>
+bool regex_match(const CharT* str, match_results<const CharT*>& m,
+                 const basic_regex<CharT, Traits>& re,
+                 regex_constants::match_flag_type flags = regex_constants::match_default) {
+    const CharT* end = str + Traits::length(str);
+    return regex_match(str, end, m, re, flags);
+}
+
+template<class CharT, class Traits>
+bool regex_match(const CharT* str, const basic_regex<CharT, Traits>& re,
+                 regex_constants::match_flag_type flags = regex_constants::match_default) {
+    const CharT* end = str + Traits::length(str);
+    return regex_match(str, end, re, flags);
+}
+
+template<class ST, class SA, class CharT, class Traits>
+bool regex_match(const basic_string<CharT, ST, SA>& s, match_results<typename basic_string<CharT, ST, SA>::const_iterator>& m,
+                 const basic_regex<CharT, Traits>& re,
+                 regex_constants::match_flag_type flags = regex_constants::match_default) {
+    return regex_match(s.begin(), s.end(), m, re, flags);
+}
+
+template<class ST, class SA, class CharT, class Traits>
+bool regex_match(const basic_string<CharT, ST, SA>& s,
+                 const basic_regex<CharT, Traits>& re,
+                 regex_constants::match_flag_type flags = regex_constants::match_default) {
+    return regex_match(s.begin(), s.end(), re, flags);
+}
+
+template<class BidirIt, class CharT, class Traits>
+bool regex_search(BidirIt first, BidirIt last,
+                  match_results<BidirIt>& m,
+                  const basic_regex<CharT, Traits>& re,
+                  regex_constants::match_flag_type flags = regex_constants::match_default) {
+    typedef __regex_detail::matcher<CharT, Traits> M;
+    const size_t n = static_cast<size_t>(last - first);
+    if (n == 0 && re.mark_count() == 0 && re.empty()) return false;
+
+    const size_t start = (flags & regex_constants::match_continuous) ? 0 : 0;
+    const size_t stop = (flags & regex_constants::match_continuous) ? 1 : n + 1;
+
+    for (size_t pos = start; pos < stop; ++pos) {
+        M mm(re, &*first, n,
+             (re.flags() & regex_constants::icase) != 0,
+             (re.flags() & regex_constants::multiline) != 0);
+        // 把文本起点“偏移”到 pos：直接让 matcher 从 pos 开始尝试
+        if (mm.run(0, pos)) {
+            m._M_set(true, first, last);
+            m._M_slots().assign(mm.ngroups + 1, sub_match<BidirIt>());
+            for (size_t g = 0; g <= mm.ngroups; ++g) {
+                if (mm.caps[2 * g] != M::npos() && mm.caps[2 * g + 1] != M::npos()) {
+                    m._M_slots()[g].first = first + static_cast<typename iterator_traits<BidirIt>::difference_type>(mm.caps[2 * g]);
+                    m._M_slots()[g].second = first + static_cast<typename iterator_traits<BidirIt>::difference_type>(mm.caps[2 * g + 1]);
+                    m._M_slots()[g].matched = true;
+                }
+            }
+            // prefix / suffix
+            typename iterator_traits<BidirIt>::difference_type b =
+                static_cast<typename iterator_traits<BidirIt>::difference_type>(mm.caps[0]);
+            typename iterator_traits<BidirIt>::difference_type e =
+                static_cast<typename iterator_traits<BidirIt>::difference_type>(mm.caps[1]);
+            m._M_prefix_slot().first = first;
+            m._M_prefix_slot().second = first + b;
+            m._M_prefix_slot().matched = true;
+            m._M_suffix_slot().first = first + e;
+            m._M_suffix_slot().second = last;
+            m._M_suffix_slot().matched = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+template<class BidirIt, class CharT, class Traits>
+bool regex_search(BidirIt first, BidirIt last, const basic_regex<CharT, Traits>& re,
+                  regex_constants::match_flag_type flags = regex_constants::match_default) {
+    match_results<BidirIt> m;
+    return regex_search(first, last, m, re, flags);
+}
+
+template<class CharT, class Traits>
+bool regex_search(const CharT* str, match_results<const CharT*>& m,
+                  const basic_regex<CharT, Traits>& re,
+                  regex_constants::match_flag_type flags = regex_constants::match_default) {
+    const CharT* end = str + Traits::length(str);
+    return regex_search(str, end, m, re, flags);
+}
+
+template<class CharT, class Traits>
+bool regex_search(const CharT* str, const basic_regex<CharT, Traits>& re,
+                  regex_constants::match_flag_type flags = regex_constants::match_default) {
+    const CharT* end = str + Traits::length(str);
+    return regex_search(str, end, re, flags);
+}
+
+template<class ST, class SA, class CharT, class Traits>
+bool regex_search(const basic_string<CharT, ST, SA>& s,
+                  match_results<typename basic_string<CharT, ST, SA>::const_iterator>& m,
+                  const basic_regex<CharT, Traits>& re,
+                  regex_constants::match_flag_type flags = regex_constants::match_default) {
+    return regex_search(s.begin(), s.end(), m, re, flags);
+}
+
+template<class ST, class SA, class CharT, class Traits>
+bool regex_search(const basic_string<CharT, ST, SA>& s,
+                  const basic_regex<CharT, Traits>& re,
+                  regex_constants::match_flag_type flags = regex_constants::match_default) {
+    return regex_search(s.begin(), s.end(), re, flags);
+}
+
+//=============================================================
+// 常用 typedef
+//=============================================================
+typedef match_results<const char*>                  cmatch;
+typedef match_results<const wchar_t*>               wcmatch;
+typedef match_results<std::string::const_iterator>  smatch;
+typedef match_results<std::wstring::const_iterator> wsmatch;
+
+//=============================================================
+// regex_replace
+//=============================================================
+namespace __regex_detail {
+
+// 展开替换格式：$1..$9、$&、$$（format_default）；\1..\9 用于 format_sed
+template<class CharT, class Traits, class OutIt>
+OutIt format_expand(const std::string& fmt, bool sed,
+                    const match_results<const CharT*>& m, OutIt out) {
+    for (size_t i = 0; i < fmt.size(); ++i) {
+        const char c = fmt[i];
+        if (c == '$' && !sed && i + 1 < fmt.size()) {
+            const char d = fmt[i + 1];
+            if (d == '$') { *out++ = CharT('$'); ++i; continue; }
+            if (d == '&') {
+                const std::string s = m.str(0);
+                for (size_t k = 0; k < s.size(); ++k) *out++ = static_cast<CharT>(s[k]);
+                ++i; continue;
+            }
+            if (d >= '0' && d <= '9') {
+                const size_t g = static_cast<size_t>(d - '0');
+                if (g < m.size()) {
+                    const std::string s = m.str(g);
+                    for (size_t k = 0; k < s.size(); ++k) *out++ = static_cast<CharT>(s[k]);
+                }
+                ++i; continue;
+            }
+            *out++ = CharT('$');
+            continue;
+        }
+        if (c == '\\' && sed && i + 1 < fmt.size()) {
+            const char d = fmt[i + 1];
+            if (d >= '0' && d <= '9') {
+                const size_t g = static_cast<size_t>(d - '0');
+                if (g < m.size()) {
+                    const std::string s = m.str(g);
+                    for (size_t k = 0; k < s.size(); ++k) *out++ = static_cast<CharT>(s[k]);
+                }
+                ++i; continue;
+            }
+        }
+        *out++ = static_cast<CharT>(c);
+    }
+    return out;
+}
+
+} // namespace __regex_detail
+
+template<class OutIt, class BidirIt, class CharT, class Traits, class ST, class SA>
+OutIt regex_replace(OutIt out, BidirIt first, BidirIt last,
+                    const basic_regex<CharT, Traits>& re,
+                    const basic_string<CharT, ST, SA>& fmt,
+                    regex_constants::match_flag_type flags = regex_constants::match_default) {
+    typedef match_results<BidirIt> MR;
+    const bool no_copy = (flags & regex_constants::format_no_copy) != 0;
+    const bool first_only = (flags & regex_constants::format_first_only) != 0;
+    const bool sed = (flags & regex_constants::format_sed) != 0;
+
+    std::string narrow;
+    for (size_t i = 0; i < fmt.size(); ++i) narrow.push_back(static_cast<char>(fmt[i]));
+
+    BidirIt cur = first;
+    while (cur != last) {
+        MR m;
+        if (!regex_search(cur, last, m, re, flags)) break;
+
+        // 匹配前的原文
+        if (!no_copy) {
+            for (BidirIt it = cur; it != m[0].first; ++it) *out++ = *it;
+        }
+        // 展开替换
+        {
+            // 借用 const CharT* 版本的 formatter：这里直接内联展开
+            for (size_t i = 0; i < narrow.size(); ++i) {
+                const char c = narrow[i];
+                if (c == '$' && !sed && i + 1 < narrow.size()) {
+                    const char d = narrow[i + 1];
+                    if (d == '$') { *out++ = static_cast<CharT>('$'); ++i; continue; }
+                    if (d == '&') {
+                        for (BidirIt it = m[0].first; it != m[0].second; ++it) *out++ = *it;
+                        ++i; continue;
+                    }
+                    if (d >= '0' && d <= '9') {
+                        const size_t g = static_cast<size_t>(d - '0');
+                        if (g < m.size() && m[g].matched) {
+                            for (BidirIt it = m[g].first; it != m[g].second; ++it) *out++ = *it;
+                        }
+                        ++i; continue;
+                    }
+                    *out++ = static_cast<CharT>('$');
+                    continue;
+                }
+                if (c == '\\' && sed && i + 1 < narrow.size()) {
+                    const char d = narrow[i + 1];
+                    if (d >= '0' && d <= '9') {
+                        const size_t g = static_cast<size_t>(d - '0');
+                        if (g < m.size() && m[g].matched) {
+                            for (BidirIt it = m[g].first; it != m[g].second; ++it) *out++ = *it;
+                        }
+                        ++i; continue;
+                    }
+                }
+                *out++ = static_cast<CharT>(c);
+            }
+        }
+
+        cur = m[0].second;
+        if (first_only) break;
+        if (m[0].first == m[0].second) {
+            // 空匹配：前进一个字符，避免死循环
+            if (cur == last) break;
+            if (!no_copy) *out++ = *cur;
+            ++cur;
+        }
+    }
+    if (!no_copy) {
+        for (BidirIt it = cur; it != last; ++it) *out++ = *it;
+    }
+    return out;
+}
+
+// 注意：返回串的重载不能带"推导不出来"的模板参数（原实现多了一个 class A，
+// 它不在任何函数参数里出现 → 永远推导失败 → 这个重载实际上不可调用）。
+template<class CharT, class Traits, class ST, class SA>
+basic_string<CharT, ST, SA> regex_replace(const basic_string<CharT, ST, SA>& s,
+                                          const basic_regex<CharT, Traits>& re,
+                                          const basic_string<CharT, ST, SA>& fmt,
+                                          regex_constants::match_flag_type flags = regex_constants::match_default) {
+    basic_string<CharT, ST, SA> result;
+    regex_replace(std::back_inserter(result), s.begin(), s.end(), re, fmt, flags);
+    return result;
+}
+
+// 输入串是 C 字符串：用默认 traits/allocator 构造出 basic_string 再走上面的版本
+template<class CharT, class Traits>
+basic_string<CharT, Traits> regex_replace(const CharT* s,
+                                          const basic_regex<CharT, Traits>& re,
+                                          const basic_string<CharT, Traits>& fmt,
+                                          regex_constants::match_flag_type flags = regex_constants::match_default) {
+    return regex_replace(basic_string<CharT, Traits>(s), re, fmt, flags);
+}
+
+// 替换串是 C 字符串：直接转成 basic_string 再走上面的版本
+template<class CharT, class Traits, class ST, class SA>
+basic_string<CharT, ST, SA> regex_replace(const basic_string<CharT, ST, SA>& s,
+                                          const basic_regex<CharT, Traits>& re,
+                                          const CharT* fmt,
+                                          regex_constants::match_flag_type flags = regex_constants::match_default) {
+    return regex_replace(s, re, basic_string<CharT, ST, SA>(fmt), flags);
+}
+
+//=============================================================
+// regex_iterator
+//=============================================================
+template<class BidirIt, class CharT = typename iterator_traits<BidirIt>::value_type,
+         class Traits = char_traits<CharT> >
+class regex_iterator {
+public:
+    typedef basic_regex<CharT, Traits> regex_type;
+    typedef match_results<BidirIt>     value_type;
+    typedef ptrdiff_t                  difference_type;
+    typedef const value_type*          pointer;
+    typedef const value_type&          reference;
+    typedef std::forward_iterator_tag  iterator_category;
+
+    regex_iterator() : _M_re(nullptr), _M_done(true) {}
+    regex_iterator(BidirIt a, BidirIt b, const regex_type& re,
+                   regex_constants::match_flag_type f = regex_constants::match_default)
+        : _M_begin(a), _M_end(b), _M_re(&re), _M_flags(f), _M_done(false) {
+        _M_search();
+    }
+    regex_iterator(const regex_iterator&) = default;
+    regex_iterator& operator=(const regex_iterator&) = default;
+
+    bool operator==(const regex_iterator& o) const {
+        if (_M_done && o._M_done) return true;
+        if (_M_done != o._M_done) return false;
+        return _M_match[0].first == o._M_match[0].first &&
+               _M_match[0].second == o._M_match[0].second &&
+               _M_begin == o._M_begin && _M_end == o._M_end;
+    }
+    bool operator!=(const regex_iterator& o) const { return !(*this == o); }
+
+    const value_type& operator*() const { return _M_match; }
+    const value_type* operator->() const { return &_M_match; }
+
+    regex_iterator& operator++() {
+        if (_M_done) return *this;
+        BidirIt next = _M_match[0].second;
+        if (_M_match[0].first == _M_match[0].second) {
+            // 空匹配：推进一个字符后继续搜索
+            if (next == _M_end) { _M_done = true; return *this; }
+            ++next;
+        }
+        _M_begin = next;
+        _M_search();
+        return *this;
+    }
+    regex_iterator operator++(int) { regex_iterator t = *this; ++*this; return t; }
+
+private:
+    void _M_search() {
+        if (!_M_re) { _M_done = true; return; }
+        if (_M_begin == _M_end) {
+            // 允许在空串上匹配一次（如 "^"）
+            if (!regex_search(_M_begin, _M_end, _M_match, *_M_re, _M_flags)) {
+                _M_done = true;
+            }
+            return;
+        }
+        if (!regex_search(_M_begin, _M_end, _M_match, *_M_re, _M_flags)) _M_done = true;
+    }
+
+    BidirIt  _M_begin{};
+    BidirIt  _M_end{};
+    const regex_type* _M_re;
+    regex_constants::match_flag_type _M_flags = regex_constants::match_default;
+    value_type _M_match;
+    bool _M_done = true;
+};
+
+typedef regex_iterator<std::string::const_iterator> sregex_iterator;
+typedef regex_iterator<std::wstring::const_iterator> wsregex_iterator;
+
+inline sregex_iterator sregex_iterator_begin(const std::string& s, const std::regex& re) {
+    return sregex_iterator(s.begin(), s.end(), re);
+}
+
+//=============================================================
+// regex_token_iterator
+//
+// 支持两种常用用法：
+//   submatch >= 0 : 每次匹配产出第 submatch 个子匹配
+//   submatch == -1: 产出匹配之间的文本（"按分隔符切分"）
+// 也可传入一组下标，每个匹配依次产出这些下标对应的内容。
+//=============================================================
+template<class BidirIt, class CharT = typename iterator_traits<BidirIt>::value_type,
+         class Traits = char_traits<CharT> >
+class regex_token_iterator {
+public:
+    typedef basic_regex<CharT, Traits> regex_type;
+    typedef sub_match<BidirIt>         value_type;
+    typedef ptrdiff_t                  difference_type;
+    typedef const value_type*          pointer;
+    typedef const value_type&          reference;
+    typedef std::forward_iterator_tag  iterator_category;
+
+    regex_token_iterator() : _M_done(true) {}
+
+    regex_token_iterator(BidirIt a, BidirIt b, const regex_type& re, int submatch = 0,
+                         regex_constants::match_flag_type f = regex_constants::match_default)
+        : _M_begin(a), _M_end(b), _M_re(&re), _M_flags(f), _M_done(false) {
+        _M_subs.push_back(submatch);
+        _M_init();
+    }
+
+    regex_token_iterator(BidirIt a, BidirIt b, const regex_type& re,
+                         const std::vector<int>& subs,
+                         regex_constants::match_flag_type f = regex_constants::match_default)
+        : _M_begin(a), _M_end(b), _M_re(&re), _M_subs(subs), _M_flags(f), _M_done(false) {
+        _M_init();
+    }
+
+    bool operator==(const regex_token_iterator& o) const {
+        if (_M_done || o._M_done) return _M_done == o._M_done;
+        return _M_cur.first == o._M_cur.first && _M_cur.second == o._M_cur.second
+            && _M_idx == o._M_idx;
+    }
+    bool operator!=(const regex_token_iterator& o) const { return !(*this == o); }
+
+    const value_type& operator*() const { return _M_cur; }
+    const value_type* operator->() const { return &_M_cur; }
+
+    regex_token_iterator& operator++() {
+        if (_M_done) return *this;
+        ++_M_idx;
+        if (_M_idx < _M_subs.size()) { _M_emit(); return *this; }
+        _M_advance();
+        return *this;
+    }
+    regex_token_iterator operator++(int) { regex_token_iterator t = *this; ++*this; return t; }
+
+private:
+    // -1 是否在下标表里：决定了"末尾残余文本"要不要单独产出一个 token
+    bool _M_wants_split() const {
+        for (size_t i = 0; i < _M_subs.size(); ++i)
+            if (_M_subs[i] == -1) return true;
+        return false;
+    }
+
+    void _M_find_next() {
+        _M_have = regex_search(_M_begin, _M_end, _M_match, *_M_re, _M_flags);
+    }
+
+    void _M_emit() {
+        const int idx = _M_subs[_M_idx];
+        if (idx == -1) {
+            // 上一段结尾 → 本次匹配开头；没有匹配了就是到串尾
+            _M_cur.first  = _M_prev_end;
+            _M_cur.second = _M_have ? _M_match[0].first : _M_end;
+            _M_cur.matched = true;
+        } else if (_M_have && static_cast<size_t>(idx) < _M_match.size()) {
+            _M_cur = _M_match[static_cast<size_t>(idx)];
+        } else {
+            _M_cur.first = _M_cur.second = _M_end;
+            _M_cur.matched = false;
+        }
+    }
+
+    void _M_init() {
+        _M_prev_end = _M_begin;
+        _M_idx = 0;
+        _M_find_next();
+        if (!_M_have && !_M_wants_split()) { _M_done = true; return; }
+        _M_emit();
+    }
+
+    void _M_advance() {
+        if (!_M_have) { _M_done = true; return; }   // 残余文本已产出，后面没有了
+        _M_prev_end = _M_match[0].second;
+
+        BidirIt next = _M_match[0].second;
+        if (_M_match[0].first == next) {            // 空匹配：必须前进一格
+            if (next == _M_end) { _M_done = true; return; }
+            ++next;
+        }
+        _M_begin = next;
+        _M_idx = 0;
+        _M_find_next();
+        // 没有更多匹配时：只有 -1 模式才再产出一个残余 token
+        if (!_M_have && !_M_wants_split()) { _M_done = true; return; }
+        _M_emit();
+    }
+
+    BidirIt  _M_begin{};
+    BidirIt  _M_end{};
+    BidirIt  _M_prev_end{};
+    const regex_type* _M_re{};
+    std::vector<int>  _M_subs;
+    size_t   _M_idx = 0;
+    regex_constants::match_flag_type _M_flags = regex_constants::match_default;
+    match_results<BidirIt> _M_match;
+    value_type _M_cur;
+    bool     _M_have = false;
+    bool     _M_done = true;
+};
+
+typedef regex_token_iterator<std::string::const_iterator> sregex_token_iterator;
+typedef regex_token_iterator<std::wstring::const_iterator> wsregex_token_iterator;
+
+} // namespace std
+
+#endif // STDCPP_REGEX_HPP

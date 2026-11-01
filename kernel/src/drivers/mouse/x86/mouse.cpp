@@ -26,9 +26,10 @@ extern void keyboard_feed_byte(uint8_t code);
 #define PS2_CMD_SEND_TO_PORT2 0xD4 // 下一个写到 0x60 的数据将发送给鼠标
 
 // 鼠标指令
-#define MOUSE_CMD_RESET       0xFF
-#define MOUSE_CMD_SET_DEFAULT 0xF6
+#define MOUSE_CMD_RESET         0xFF
+#define MOUSE_CMD_SET_DEFAULT   0xF6
 #define MOUSE_CMD_ENABLE_REPORT 0xF4
+#define MOUSE_CMD_SET_SAMPLE_RATE 0xF3   /* 后跟 1 字节: 10/20/40/60/80/100/200 Hz */
 
 // 鼠标响应
 #define MOUSE_ACK             0xFA
@@ -183,6 +184,16 @@ bool ps2_mouse_init(void) {
     mouse_write(MOUSE_CMD_SET_DEFAULT);
     mouse_read(); // ACK
 
+    // 8.5 采样率提到 200Hz。
+    // 为什么不设: 复位/默认后 PS/2 鼠标是 **100Hz** —— 每 10ms 才产生一个位置
+    // 采样, 也就是说光标位置本身就有 10ms 的量化, 手快时表现为"跟不上"、
+    // 一顿一顿。PS/2 支持 10/20/40/60/80/100/200Hz, 取上限 200Hz 把量化
+    // 降到 5ms。这是驱动侧唯一能直接改善"跟手度"的旋钮。
+    mouse_write(MOUSE_CMD_SET_SAMPLE_RATE);
+    mouse_read();                       // ACK
+    mouse_write(200);                   // 且这是 200Hz 档
+    mouse_read();                       // ACK
+
     // 9. 启用数据报告 (让鼠标开始自动发包)
     mouse_write(MOUSE_CMD_ENABLE_REPORT);
     mouse_read(); // ACK
@@ -208,7 +219,7 @@ bool ps2_mouse_init(void) {
 void ps2_mouse_handler(registers *regs) {
     uint8_t status = io_in8(PS2_STATUS_PORT);
     if (!(status & 0x01)) {
-        LAPIC::EOI();  // P1-25: 全路径 EOI (假中断缺失 EOI 会永久饥饿同优先级)
+        LAPIC::EOI();  // 全路径 EOI (假中断缺失 EOI 会永久饥饿同优先级)
         return; // 没有数据
     }
     if (!(status & 0x20)) {

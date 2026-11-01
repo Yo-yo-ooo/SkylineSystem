@@ -21,7 +21,7 @@ SataDiskInterface::SataDiskInterface(AHCI::Port* port)
     if(port == nullptr)
         return;
     this->Port = port;
-    /* P0-12: 每请求缓冲方案后, 共享 buffer 不再用于 DMA —— 保留分配
+    /* 每请求缓冲方案后, 共享 buffer 不再用于 DMA —— 保留分配
        仅为兼容其他引用方, 不再有并发语义 */
     this->Port->buffer = (uint8_t*)(PMM::Request()); // 4096 Bytes
     
@@ -157,7 +157,7 @@ bool SataDiskInterface::Read(uint64_t sector, uint32_t sectorCount, void* buffer
                     (unsigned long)__atomic_load_n(&g_rd_max, __ATOMIC_RELAXED));
         }
     }
-    /* P0-12 重做 (round 80): 每请求独立 DMA 页 —— round 52 的 iolock
+    /* 每请求独立 DMA 页 —— 早期 iolock
        方案因 AHCI WaitCommand 的 sti 窗口回退; 每请求缓冲无共享状态,
        天然并发安全。现在改为优先从预留池取 (见 dma_get), 池空才现场分配。 */
     uint8_t* buf = (uint8_t*)buffer;
@@ -208,7 +208,7 @@ bool SataDiskInterface::Write(uint64_t sector, uint32_t sectorCount, void* buffe
     uint8_t* buf = (uint8_t*)buffer;
     int32_t sectorCountDiv8 = ((sectorCount) / 8);
     
-    /* P0-12: 每请求独立 DMA 页 (同 Read) */
+    /* 每请求独立 DMA 页 (同 Read) */
     void* dma_phys = PMM::Request();
     if (!dma_phys) return false;
     void* hhdm_buffer = HIGHER_HALF(dma_phys);
@@ -249,7 +249,7 @@ bool SataDiskInterface::ReadBytes(uint64_t address, uint64_t count, void* buffer
 {
     if (count == 0)
         return true;
-    /* A4 (round 1 修复): 溢出安全边界 —— 原 address+count-1 >= C*512
+    /* 溢出安全边界 —— 原 address+count-1 >= C*512
        在 address+count 回绕时失效。改为减法形式 (无回绕) + 扇区级
        双保险: 起始扇区 + 需读扇区数不得超过容量 */
     if (address > SectorCount * 512 || count > SectorCount * 512 - address)
@@ -262,7 +262,7 @@ bool SataDiskInterface::ReadBytes(uint64_t address, uint64_t count, void* buffer
     if (!buffer2) return false;   /* OOM 显式失败 */
     _memset(buffer2, 0, tempSectorCount * 512);
 
-    /* P1-38: 读失败直接返回, 不得把未填充的 buffer2 拷给调用者
+    /* 读失败直接返回, 不得把未填充的 buffer2 拷给调用者
        (原实现失败路径仍拷贝零页 → 调用者拿到被污染的缓冲) */
     if (!Read((address / 512), tempSectorCount, buffer2))
     {
@@ -285,7 +285,7 @@ bool SataDiskInterface::WriteBytes(uint64_t address, uint64_t count, void* buffe
     
     if (count == 0)
         return true;
-    /* A4 (round 1 修复): 溢出安全边界 + 扇区级双保险 (同 ReadBytes) */
+    /* 溢出安全边界 + 扇区级双保险 (同 ReadBytes) */
     if (address > SectorCount * 512 || count > SectorCount * 512 - address)
         return false;
     

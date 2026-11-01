@@ -50,7 +50,7 @@
 
 static spinlock_t ptf_lock = 0;
 
-/* D8 (round 12): 0x400000 双定义收敛 —— 唯一权威在
+/* 0x400000 双定义收敛 —— 唯一权威在
    graphic/winstyle.h 的 SKYWIN_PROTO_PAGE_VA, 此处不再重复定义 */
 #include <graphic/winstyle.h>
 #define CONSOLE_PROTO_VA   SKYWIN_PROTO_PAGE_VA
@@ -814,7 +814,7 @@ static int32_t  _vsnprintf(out_fct_type out, char* buffer, const size_t maxlen, 
           if (flags & FLAGS_LONG_LONG) {
 #if defined(PRINTF_SUPPORT_LONG_LONG)
             const long long value = va_arg(va, long long);
-            /* D6 (round 11): INT64_MIN 取负 UB 修复 —— 0-value 在
+            /* INT64_MIN 取负 UB 修复 —— 0-value 在
                INT64_MIN 时溢出; 改为无符号减 (回绕 = 二进制补码正确值) */
             idx = _ntoa_long_long(out, buffer, idx, maxlen, (unsigned long long)(value > 0 ? value : 0ULL - (unsigned long long)value), value < 0, base, precision, width, flags);
 #endif

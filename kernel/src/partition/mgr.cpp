@@ -36,7 +36,7 @@ namespace PartitionManager
 #ifdef USE_VIRT_IMAGE
         return CurDevice->ops.Read(CurDevice->classp, lba, SectorCount, Buffer);
 #else
-        /* P1-43: 按 partitionID 解析边界 (原实现忽略参数, 用 Init 遗留的
+        /* 按 partitionID 解析边界 (原实现忽略参数, 用 Init 遗留的
            全局 CurPartitionStart/End —— 多分区读写全部错位); 返回语义
            统一为 Dev::RW_OK/RW_ERROR (原实现颠倒) */
         uint64_t pStart = 0, pEnd = 0;
@@ -65,7 +65,7 @@ namespace PartitionManager
 #ifdef USE_VIRT_IMAGE
         return CurDevice->ops.Write(CurDevice->classp, lba, SectorCount, Buffer);
 #else
-        /* P1-43: 同上 —— 按 partitionID 解析 + 统一返回语义 */
+        /* 同上 —— 按 partitionID 解析 + 统一返回语义 */
         uint64_t pStart = 0, pEnd = 0;
         if (GetPartitionStart(DriverType, DriverID, partitionID, pStart) != 0 ||
             GetPartitionEnd(DriverType, DriverID, partitionID, pEnd) != 0)

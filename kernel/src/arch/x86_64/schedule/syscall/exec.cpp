@@ -62,7 +62,7 @@ extern uint64_t sys_fread(uint64_t fd_idx, uint64_t buf, uint64_t count, \
 
 
 /* ============ 用户字符串带上界拷贝 ============
- * P1-20: 逐页校验 —— 字符串中途跨入未映射页时提前返回 -EFAULT,
+ * 逐页校验 —— 字符串中途跨入未映射页时提前返回 -EFAULT,
  * 不再触发内核 #PF → hcf。 */
 static int64_t copy_user_str(const char *src, char **out, uint64_t cap) {
     *out = nullptr;
@@ -102,7 +102,7 @@ static int64_t copy_user_strarray(char **src, char ***out_arr, int *out_cnt, int
     if (!src) return 0;                       // POSIX 允许 NULL (空参数表)
 
     SmapGuard ug;   // src[] is a user pointer array; nested copy_user_str is re-entrant
-    /* 审计 #24 (round 8 修复): 原 while 循环裸读 src[n] —— 指针数组跨页
+    /* 原 while 循环裸读 src[n] —— 指针数组跨页
        到未映射区域即内核 #PF (hcf)。逐元素经 GetPageInfo 校验页存在
        且为用户页后再读 (每页 512 个 8B 槽, 页边界处重验) */
     proc_t *me = Schedule::this_proc();
@@ -238,7 +238,7 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
                     continue;
                 uint64_t page = (uint64_t)PMM::Request();
                 VMM::Map(pagemap, p, page, flags);
-                /* P5-94: 每页 kinfoln 为运行期噪音, 已降级移除 */
+                /* 每页 kinfoln 为运行期噪音, 已降级移除 */
             }
             VMM::NewMapping(pagemap, start, (end - start) / PAGE_SIZE, flags);
             // 登记 VMA:否则 Fork 克隆不到镜像、进程退出时这些页无人释放
@@ -388,7 +388,7 @@ static void sys_load_fail(proc_t *proc, thread_t *thread,
         if (proc->FDMan) {                       // 修复: 原来 kfree(parent) 漏掉的
             fd_manager_destroy(proc->FDMan);
             kfree(proc->FDMan);
-            proc->FDMan = nullptr;               /* round 90: 所有权交接 ——
+            proc->FDMan = nullptr;               /* 所有权交接 ——
                原实现释放后不置空, 退出收割器二次 destroy; 此前 FD 树恒空
                (浅拷贝已除), 二次清空无害; fd_manager_dup 引入继承后树非空,
                二次 destroy 遍历已释放分片 → 页错误 (0xFFFFFFFF80024D18) */
@@ -638,7 +638,7 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
 
     // 线程账本: 先挂链再发布(launch 侧看到的 proc->threads 必然有效)
     if (!Schedule::Internal::ProcessAddThread(parent, thread)) {
-        /* round 91: 锁内重检失败 —— 顶层检查与挂链之间进程已退出 */
+        /* 锁内重检失败 —— 顶层检查与挂链之间进程已退出 */
         if (thread->fx_area)      VMM::Free(kernel_pagemap, (void*)thread->fx_area);
         if (thread->kernel_stack) VMM::Free(kernel_pagemap, (void*)thread->kernel_stack);
         kfree(thread);

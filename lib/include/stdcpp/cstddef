@@ -1,58 +1,81 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
-#pragma once
+//=============================================================
+// <cstddef> — freestanding 版, 只依赖编译器自带的 <stddef.h>
+//=============================================================
+#ifndef STDCPP_CSTDDEF_HPP
+#define STDCPP_CSTDDEF_HPP
 
 #include <stddef.h>
 
-namespace std{
-    using ::size_t;
-#if (defined (__STDC_VERSION__) && __STDC_VERSION__ >= 201112L) \
-  || (defined(__cplusplus) && __cplusplus >= 201103L)
-    using ::max_align_t;
-    using nullptr_t = decltype(nullptr);
+namespace std {
+
+using ::size_t;
+using ::ptrdiff_t;
+#if defined(__cplusplus) && __cplusplus >= 201103L
+using ::max_align_t;
+using nullptr_t = decltype(nullptr);
 #endif
-    using ::ptrdiff_t;
-#if (defined(__cplusplus) && __cplusplus >= 201703L)
-    template<class IntType>
-    constexpr byte& operator<<=(byte& b, IntType shift) noexcept{
-        return b = b << shift;
-    }
-    template<class IntType>
-    constexpr byte operator<<(byte b, IntType shift) noexcept{
-        return std::byte(static_cast<unsigned int>(b) << shift);
-    }
-    template<class IntType>
-    constexpr byte& operator>>=(byte& b, IntType shift) noexcept{
-        return b = b >> shift;
-    }
-    template<class IntType>
-    constexpr byte operator>>(byte b, IntType shift) noexcept{
-        return std::byte(static_cast<unsigned int>(b) >> shift);
-    }
-    constexpr byte& operator|=(byte& l, byte r) noexcept{
-        return l = l | r;
-    }
-    constexpr byte operator|(byte l, byte r) noexcept{
-        return std::byte(static_cast<unsigned int>(l) | static_cast<unsigned int>(r));
-    }
-    constexpr byte& operator&=(byte& l, byte r) noexcept{
-        return l = l & r;
-    }
-    constexpr byte operator&(byte l, byte r) noexcept{
-        return std::byte(static_cast<unsigned int>(l) & static_cast<unsigned int>(r));
-    }
-    constexpr byte& operator^=(byte& l, byte r) noexcept{
-        return l = l ^ r;
-    }
-    constexpr byte operator^(byte l, byte r) noexcept{
-        return std::byte(static_cast<unsigned int>(l) ^ static_cast<unsigned int>(r));
-    }
-    constexpr byte operator~(byte b) noexcept{
-        return std::byte(~static_cast<unsigned int>(b));
-    }
-    template<class IntType>
-    constexpr IntType to_integer(byte b) noexcept{
-        return IntegerType(b);
-    }
-#endif
+
+//-------------------------------------------------------------
+// std::byte (C++17)
+//   必须定义在 std 内; 原实现只写了运算符而漏了类型本身。
+//   与整数互转只允许通过 static_cast / to_integer, 与标准一致。
+//-------------------------------------------------------------
+#if defined(__cplusplus) && __cplusplus >= 201703L
+enum class byte : unsigned char {};
+
+template <class IntType>
+constexpr byte& operator<<=(byte& b, IntType shift) noexcept {
+    return b = byte(static_cast<unsigned char>(static_cast<unsigned int>(b) << shift));
 }
+template <class IntType>
+constexpr byte operator<<(byte b, IntType shift) noexcept {
+    return byte(static_cast<unsigned char>(static_cast<unsigned int>(b) << shift));
+}
+template <class IntType>
+constexpr byte& operator>>=(byte& b, IntType shift) noexcept {
+    return b = byte(static_cast<unsigned char>(static_cast<unsigned int>(b) >> shift));
+}
+template <class IntType>
+constexpr byte operator>>(byte b, IntType shift) noexcept {
+    return byte(static_cast<unsigned char>(static_cast<unsigned int>(b) >> shift));
+}
+
+constexpr byte& operator|=(byte& l, byte r) noexcept {
+    return l = byte(static_cast<unsigned char>(static_cast<unsigned int>(l) |
+                                               static_cast<unsigned int>(r)));
+}
+constexpr byte operator|(byte l, byte r) noexcept {
+    return byte(static_cast<unsigned char>(static_cast<unsigned int>(l) |
+                                           static_cast<unsigned int>(r)));
+}
+constexpr byte& operator&=(byte& l, byte r) noexcept {
+    return l = byte(static_cast<unsigned char>(static_cast<unsigned int>(l) &
+                                               static_cast<unsigned int>(r)));
+}
+constexpr byte operator&(byte l, byte r) noexcept {
+    return byte(static_cast<unsigned char>(static_cast<unsigned int>(l) &
+                                           static_cast<unsigned int>(r)));
+}
+constexpr byte& operator^=(byte& l, byte r) noexcept {
+    return l = byte(static_cast<unsigned char>(static_cast<unsigned int>(l) ^
+                                               static_cast<unsigned int>(r)));
+}
+constexpr byte operator^(byte l, byte r) noexcept {
+    return byte(static_cast<unsigned char>(static_cast<unsigned int>(l) ^
+                                           static_cast<unsigned int>(r)));
+}
+constexpr byte operator~(byte b) noexcept {
+    return byte(static_cast<unsigned char>(~static_cast<unsigned int>(b)));
+}
+
+template <class IntType>
+constexpr IntType to_integer(byte b) noexcept {
+    return static_cast<IntType>(b);
+}
+#endif // C++17
+
+} // namespace std
+
+#endif // STDCPP_CSTDDEF_HPP

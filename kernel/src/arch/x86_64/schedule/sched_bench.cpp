@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
 // sched_bench.cpp — REEVDF 反馈环基准
-//
+
 // 只依赖公开接口: NewProcess / NewKernelThread / Exit / Yield /
 // this_thread / GetRipStats / PIT::TimeSinceBootMS / thread_t 字段.
 // 集成点 (两处):
@@ -72,7 +72,7 @@ static thread_t *g_sw_target_ptr = nullptr;   /* 目标线程指针 (外部读 d
 static inline void fast_body(unsigned n) {          /* 纯 ALU: 高 RIP 速率 */
     uint64_t x = g_sink;
     /* 圈数随机化: 固定圈数在片边界 RIP 归位 → 差分=0 (stalled 43/47 的
-       根因, round 47 定位) */
+       根因, 定位) */
     n += (unsigned)(x & 7);
     for (unsigned i = 0; i < n; i++) x = x * 1664525u + 1013904223u;
     g_sink = x;
@@ -121,7 +121,7 @@ static void bench_step_thread() {
     run_phase(true, STEP_B_MS, true);
     g_done = 1;
     for(;;) PIT::Sleep(1000); /* UAF修复: 不退出 — Exit 击杀整个 bench proc,
-        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF (round 33 符号化);
+        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF;
         定时睡眠 (真正离队, hlt 立即被唤醒会滞留运行队列拖慢后续相位) */
 }
 static void eval_step(step_result_t *r, const uint64_t pre[14], const uint64_t post[14]) {
@@ -172,7 +172,7 @@ static void bench_victim() {
     }
     g_done = 1;
     for(;;) PIT::Sleep(1000); /* UAF修复: 不退出 — Exit 击杀整个 bench proc,
-        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF (round 33 符号化);
+        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF;
         定时睡眠 (真正离队, hlt 立即被唤醒会滞留运行队列拖慢后续相位) */
 }
 static void eval_pollute(pollute_result_t *r) {
@@ -212,7 +212,7 @@ static void bench_sw_target() {
     }
     g_done = 1;
     for(;;) PIT::Sleep(1000); /* UAF修复: 不退出 — Exit 击杀整个 bench proc,
-        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF (round 33 符号化);
+        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF;
         定时睡眠 (真正离队, hlt 立即被唤醒会滞留运行队列拖慢后续相位) */
 }
 static void eval_shortwin(shortwin_result_t *r, const uint64_t pre[14], const uint64_t post[14]) {
@@ -235,7 +235,7 @@ static void bench_osc_thread() {
     }
     g_done = 1;
     for(;;) PIT::Sleep(1000); /* UAF修复: 不退出 — Exit 击杀整个 bench proc,
-        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF (round 33 符号化);
+        后续相位线程 spawn 进被并发终结的 proc → FDMan 锁 UAF;
         定时睡眠 (真正离队, hlt 立即被唤醒会滞留运行队列拖慢后续相位) */
 }
 
@@ -335,7 +335,7 @@ bool Run(uint32_t bench_cpu) {
     g_report.osc.toggles = toggles;
     g_report.osc.entered_osc = (wmax <= 64);        /* 到过慢模式 */
     g_report.osc.hyst_ok = (toggles <= 4);          /* 迟滞有效, 无乒乓 */
-    /* 实际量子快照: shortwin 判据的前提 (round 25 动态量子失配) */
+    /* 实际量子快照: shortwin 判据的前提 */
     cpu_t *bcpu = get_cpu(bench_cpu);
     g_report.base_quantum_ms = bcpu ? bcpu->base_quantum : 0;
     kinfoln("[bench] all four phases complete\n");

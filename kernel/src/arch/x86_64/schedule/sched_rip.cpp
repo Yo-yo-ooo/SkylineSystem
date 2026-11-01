@@ -38,7 +38,7 @@
 #define RIP_FAST_W_NORM_Q10  256                /* 快通道常规融合权重 25% */
 #define RIP_FAST_W_OSC_Q10   64                 /* 振荡时 6.25% */
 /* 累加器采样窗口: 按线程自身执行时长每 4ms 出一个 obs_rate 样本
-   (round 28 根因: 逐片采样对抢占变长片的噪声敏感 → pollute 振荡) */
+   */
 #define RIP_SAMPLE_PERIOD_MS 4
 #define RIP_OSC_HI  (RIPRATE_ONE >> 2)          /* |dev| 均值 > 25% → 慢模式 */
 #define RIP_OSC_LO  (RIPRATE_ONE >> 3)          /* < 12.5% → 恢复 (迟滞) */
@@ -335,12 +335,12 @@ void riprate_update(cpu_t *cpu, thread_t *thread,
         return;
     }
 
-    /* ---- 3b) 累加器 (固定窗口采样, round 28 修复设计) ----
+    /* ---- 3b) 累加器 (固定窗口采样, 设计) ----
      * 按线程自身执行时长累积差分, 每 RIP_SAMPLE_PERIOD_MS 出一个
      * obs_rate 样本 —— 抢占变长片的噪声被窗口吸收 (pollute 振荡的
      * 根因修复)。分母用 wall_ms (= 调用方 last_slice_ms, 线程自身
      * 片长): 经 TSC 调整的 elapsed 的 tsc_dt 跨了采样 gap (含他线程
-     * 片), 不是自身执行时长 —— round 33 实测 base=[51,724] 仍摆,
+     * 片), 不是自身执行时长 —— base=[51,724] 仍摆,
      * 改用自身片长后才语义正确。 */
     thread->rip_acc_progress += progress;
     thread->rip_acc_ms += wall_ms;

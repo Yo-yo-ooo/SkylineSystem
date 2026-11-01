@@ -1,0 +1,267 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+//=============================================================
+// <string_view> — C++17 只读字符串视图
+//
+// README 里原本标为 Deferred，但 <string> 内部已经内嵌了一份私有的
+// basic_string_view。这里把它独立成标准头，<string> 反过来复用它。
+// 无分配、无异常：find 系列越界返回 npos，substr 由调用方保证 pos <= size()。
+//=============================================================
+#ifndef STDCPP_STRING_VIEW_HPP
+#define STDCPP_STRING_VIEW_HPP
+
+#include <cstddef>
+#include <iterator>
+#include <functional>
+#include "detail/config.h"
+
+#ifndef _GLIBCXX_STRING_VIEW
+#  define _GLIBCXX_STRING_VIEW 1
+#endif
+
+namespace std {
+
+template<class CharT> struct char_traits;
+
+namespace __detail {
+
+// 与 char_traits 解耦的最小比较原语（traits 尚未可见时也能用）
+template<class CharT>
+inline int sv_compare(const CharT* a, const CharT* b, size_t n) {
+    for (size_t i = 0; i < n; ++i) {
+        if (a[i] < b[i]) return -1;
+        if (b[i] < a[i]) return 1;
+    }
+    return 0;
+}
+
+template<class CharT>
+inline size_t sv_length(const CharT* s) {
+    size_t n = 0;
+    while (s[n] != CharT()) ++n;
+    return n;
+}
+
+} // namespace __detail
+
+template<class CharT, class Traits = char_traits<CharT> >
+class basic_string_view {
+public:
+    typedef Traits       traits_type;
+    typedef CharT        value_type;
+    typedef const CharT* pointer;
+    typedef const CharT* const_pointer;
+    typedef const CharT& reference;
+    typedef const CharT& const_reference;
+    typedef const CharT* iterator;
+    typedef const CharT* const_iterator;
+    typedef size_t       size_type;
+    typedef ptrdiff_t    difference_type;
+
+    static constexpr size_type npos = size_type(-1);
+
+    constexpr basic_string_view() noexcept : _M_data(nullptr), _M_size(0) {}
+    constexpr basic_string_view(const CharT* s) noexcept
+        : _M_data(s), _M_size(s ? __detail::sv_length(s) : 0) {}
+    constexpr basic_string_view(const CharT* s, size_type n) noexcept : _M_data(s), _M_size(n) {}
+
+    //---------------------------------------------------------
+    // 容量 / 迭代
+    //---------------------------------------------------------
+    constexpr const_iterator begin() const noexcept { return _M_data; }
+    constexpr const_iterator end() const noexcept { return _M_data + _M_size; }
+    constexpr const_iterator cbegin() const noexcept { return _M_data; }
+    constexpr const_iterator cend() const noexcept { return _M_data + _M_size; }
+    constexpr const_pointer data() const noexcept { return _M_data; }
+    constexpr size_type size() const noexcept { return _M_size; }
+    constexpr size_type length() const noexcept { return _M_size; }
+    constexpr size_type max_size() const noexcept { return size_type(-1) / sizeof(CharT); }
+    constexpr bool empty() const noexcept { return _M_size == 0; }
+
+    //---------------------------------------------------------
+    // 元素访问
+    //---------------------------------------------------------
+    constexpr const_reference operator[](size_type i) const { return _M_data[i]; }
+    constexpr const_reference front() const { return _M_data[0]; }
+    constexpr const_reference back() const { return _M_data[_M_size - 1]; }
+    constexpr const_pointer data_at(size_type i) const { return _M_data + i; }
+
+    //---------------------------------------------------------
+    // 修改（只改视图，不改内容）
+    //---------------------------------------------------------
+    constexpr void remove_prefix(size_type n) { _M_data += n; _M_size -= n; }
+    constexpr void remove_suffix(size_type n) { _M_size -= n; }
+    constexpr void swap(basic_string_view& v) noexcept {
+        const_pointer d = _M_data; _M_data = v._M_data; v._M_data = d;
+        size_type n = _M_size; _M_size = v._M_size; v._M_size = n;
+    }
+
+    //---------------------------------------------------------
+    // 比较 / 子串
+    //---------------------------------------------------------
+    constexpr int compare(basic_string_view v) const noexcept {
+        size_type rlen = _M_size < v._M_size ? _M_size : v._M_size;
+        int r = __detail::sv_compare(_M_data, v._M_data, rlen);
+        if (r != 0) return r;
+        if (_M_size < v._M_size) return -1;
+        if (_M_size > v._M_size) return 1;
+        return 0;
+    }
+    constexpr int compare(size_type pos, size_type n, basic_string_view v) const {
+        return substr(pos, n).compare(v);
+    }
+
+    // substr: pos 越界时返回空视图（标准为抛异常；视图在无异常构建下
+    // 统一退化为空，调用方可用 empty() 判定）
+    constexpr basic_string_view substr(size_type pos = 0, size_type n = npos) const noexcept {
+        if (pos > _M_size) return basic_string_view();
+        size_type r = _M_size - pos;
+        if (n < r) r = n;
+        return basic_string_view(_M_data + pos, r);
+    }
+
+    constexpr bool starts_with(basic_string_view v) const noexcept {
+        return _M_size >= v._M_size && __detail::sv_compare(_M_data, v._M_data, v._M_size) == 0;
+    }
+    constexpr bool starts_with(CharT c) const noexcept {
+        return _M_size > 0 && __detail::sv_compare(_M_data, &c, 1) == 0;
+    }
+    constexpr bool starts_with(const CharT* s) const noexcept { return starts_with(basic_string_view(s)); }
+
+    constexpr bool ends_with(basic_string_view v) const noexcept {
+        return _M_size >= v._M_size &&
+               __detail::sv_compare(_M_data + _M_size - v._M_size, v._M_data, v._M_size) == 0;
+    }
+    constexpr bool ends_with(CharT c) const noexcept {
+        return _M_size > 0 && __detail::sv_compare(_M_data + _M_size - 1, &c, 1) == 0;
+    }
+    constexpr bool ends_with(const CharT* s) const noexcept { return ends_with(basic_string_view(s)); }
+
+    constexpr bool contains(basic_string_view v) const noexcept { return find(v) != npos; }
+    constexpr bool contains(CharT c) const noexcept { return find(c) != npos; }
+    constexpr bool contains(const CharT* s) const noexcept { return find(basic_string_view(s)) != npos; }
+
+    //---------------------------------------------------------
+    // 查找
+    //---------------------------------------------------------
+    constexpr size_type find(basic_string_view v, size_type pos = 0) const noexcept {
+        if (v._M_size == 0) return pos <= _M_size ? pos : npos;
+        if (pos > _M_size || v._M_size > _M_size - pos) return npos;
+        for (size_type i = pos; i + v._M_size <= _M_size; ++i)
+            if (__detail::sv_compare(_M_data + i, v._M_data, v._M_size) == 0) return i;
+        return npos;
+    }
+    constexpr size_type find(CharT c, size_type pos = 0) const noexcept {
+        for (size_type i = pos; i < _M_size; ++i)
+            if (__detail::sv_compare(_M_data + i, &c, 1) == 0) return i;
+        return npos;
+    }
+    constexpr size_type find(const CharT* s, size_type pos = 0) const noexcept {
+        return find(basic_string_view(s), pos);
+    }
+
+    constexpr size_type rfind(basic_string_view v, size_type pos = npos) const noexcept {
+        if (v._M_size > _M_size) return npos;
+        size_type i = (_M_size - v._M_size);
+        if (pos < i) i = pos;
+        for (;;) {
+            if (__detail::sv_compare(_M_data + i, v._M_data, v._M_size) == 0) return i;
+            if (i == 0) break;
+            --i;
+        }
+        return npos;
+    }
+    constexpr size_type rfind(CharT c, size_type pos = npos) const noexcept {
+        if (_M_size == 0) return npos;
+        size_type i = _M_size - 1;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (__detail::sv_compare(_M_data + i, &c, 1) == 0) return i;
+            if (i == 0) break;
+            --i;
+        }
+        return npos;
+    }
+
+    constexpr size_type find_first_of(basic_string_view v, size_type pos = 0) const noexcept {
+        for (size_type i = pos; i < _M_size; ++i)
+            if (v.find(_M_data[i]) != npos) return i;
+        return npos;
+    }
+    constexpr size_type find_first_of(CharT c, size_type pos = 0) const noexcept { return find(c, pos); }
+
+    constexpr size_type find_last_of(basic_string_view v, size_type pos = npos) const noexcept {
+        if (_M_size == 0) return npos;
+        size_type i = _M_size - 1;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (v.find(_M_data[i]) != npos) return i;
+            if (i == 0) break;
+            --i;
+        }
+        return npos;
+    }
+
+    constexpr size_type find_first_not_of(basic_string_view v, size_type pos = 0) const noexcept {
+        for (size_type i = pos; i < _M_size; ++i)
+            if (v.find(_M_data[i]) == npos) return i;
+        return npos;
+    }
+    constexpr size_type find_first_not_of(CharT c, size_type pos = 0) const noexcept {
+        for (size_type i = pos; i < _M_size; ++i)
+            if (_M_data[i] != c) return i;
+        return npos;
+    }
+
+    constexpr size_type find_last_not_of(basic_string_view v, size_type pos = npos) const noexcept {
+        if (_M_size == 0) return npos;
+        size_type i = _M_size - 1;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (v.find(_M_data[i]) == npos) return i;
+            if (i == 0) break;
+            --i;
+        }
+        return npos;
+    }
+    constexpr size_type find_last_not_of(CharT c, size_type pos = npos) const noexcept {
+        if (_M_size == 0) return npos;
+        size_type i = _M_size - 1;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (_M_data[i] != c) return i;
+            if (i == 0) break;
+            --i;
+        }
+        return npos;
+    }
+
+private:
+    const_pointer _M_data;
+    size_type     _M_size;
+};
+
+//-------------------------------------------------------------
+// 比较运算符
+//-------------------------------------------------------------
+template<class C, class T>
+constexpr bool operator==(basic_string_view<C, T> a, basic_string_view<C, T> b) noexcept { return a.compare(b) == 0; }
+template<class C, class T>
+constexpr bool operator!=(basic_string_view<C, T> a, basic_string_view<C, T> b) noexcept { return a.compare(b) != 0; }
+template<class C, class T>
+constexpr bool operator<(basic_string_view<C, T> a, basic_string_view<C, T> b) noexcept { return a.compare(b) < 0; }
+template<class C, class T>
+constexpr bool operator<=(basic_string_view<C, T> a, basic_string_view<C, T> b) noexcept { return a.compare(b) <= 0; }
+template<class C, class T>
+constexpr bool operator>(basic_string_view<C, T> a, basic_string_view<C, T> b) noexcept { return a.compare(b) > 0; }
+template<class C, class T>
+constexpr bool operator>=(basic_string_view<C, T> a, basic_string_view<C, T> b) noexcept { return a.compare(b) >= 0; }
+
+typedef basic_string_view<char>     string_view;
+typedef basic_string_view<wchar_t>  wstring_view;
+typedef basic_string_view<char16_t> u16string_view;
+typedef basic_string_view<char32_t> u32string_view;
+
+} // namespace std
+
+#endif // STDCPP_STRING_VIEW_HPP

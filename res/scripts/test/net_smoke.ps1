@@ -3,7 +3,7 @@
 # 用法: pwsh -File res/scripts/test/net_smoke.ps1 [-Root <路径>] [-Qemu <路径>] [-WaitSeconds 60]
 #   (退出码 0 = 通过)
 # 断言: ① 无异常字样; ② 至少 1 次 ping 回复; ③ 统计节拍出现
-# P4-88: 参数化 (原硬编码 C:\ZSY\SkylineSystem 与 QEMU 路径)
+# 参数化 (原硬编码 C:\ZSY\SkylineSystem 与 QEMU 路径)
 # 迁移 (用户清理): 原 tests/net_smoke.ps1 → 此处, 默认 Root 上溯到仓库根
 param(
     [string]$Root = "",

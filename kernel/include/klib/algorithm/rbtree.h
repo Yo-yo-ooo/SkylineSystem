@@ -626,7 +626,7 @@ static inline void rb_erase_fixup(rb_node_t **root, rb_node_t *node, rb_node_t *
     while (node != *root && (!node || node->color == RB_BLACK)) {
         if (node == parent->left) {
             rb_node_t *sibling = parent->right;
-            /* round 99 静态分析: RB 不变式保证 BLACK 节点的兄弟非空
+            /* 静态分析: RB 不变式保证 BLACK 节点的兄弟非空
                (黑高要求), 但腐坏树的防御 —— sibling 为空即放弃修正,
                避免在已损坏结构上越陷越深 */
             if (RB_UNLIKELY(!sibling)) break;
@@ -658,7 +658,7 @@ static inline void rb_erase_fixup(rb_node_t **root, rb_node_t *node, rb_node_t *
             }
         } else {
             rb_node_t *sibling = parent->left;
-            if (RB_UNLIKELY(!sibling)) break;   /* round 99: 对称防御 */
+            if (RB_UNLIKELY(!sibling)) break;   /* 对称防御 */
             if (sibling->color == RB_RED) {
                 sibling->color = RB_BLACK;
                 parent->color  = RB_RED;

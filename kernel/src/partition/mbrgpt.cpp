@@ -7,7 +7,7 @@
 // 辅助宏：判断是否为 GPT 保护分区
 #define IS_GPT(dpt) ((dpt).PartitionTypeIndicator == 0xEE && (dpt).BootIndicator == 0x00)
 
-/* B3 (round 6): GPT 头 CRC32 (bitwise, 表无关 —— 启动早期不依赖
+/* GPT 头 CRC32 (bitwise, 表无关 —— 启动早期不依赖
    init 顺序; GPT 规范: 头 92 字节, CRC 字段 (16..19) 计算时置零) */
 static uint32_t gpt_crc32(const uint8_t *data, size_t len) {
     uint32_t crc = 0xFFFFFFFFu;
@@ -31,7 +31,7 @@ static bool gpt_header_ok(VDL *d) {
     return gpt_crc32(hdr, 92) == stored_crc;
 }
 
-/* B3 (round 6): 分区表项数对容量校验 —— entry_count × 128B 不得
+/* 分区表项数对容量校验 —— entry_count × 128B 不得
    超出设备容量 (原无此检查, 损坏的 entry_count 可驱动越界读) */
 static bool gpt_entry_count_sane(VDL *d, uint32_t entry_count) {
     uint64_t cap_bytes = (uint64_t)d->MaxSectorCount * 512;
@@ -43,7 +43,7 @@ uint8_t IdentifyMBR(VsDevType DriverType, uint32_t DriverID) {
     VDL* d = Dev::GetSDEV(DriverType, DriverID);
     if (!d) return 2;
 
-    /* P1-42: MBR 引导签名 0x55AA 校验 (缺失时分区表不可信) */
+    /* MBR 引导签名 0x55AA 校验 (缺失时分区表不可信) */
     uint16_t signature = 0;
     if (Dev::ReadBytes(d, 510, 2, &signature) == Dev::RW_ERROR)
         return 2;
@@ -53,7 +53,7 @@ uint8_t IdentifyMBR(VsDevType DriverType, uint32_t DriverID) {
         return 2;
 
     if(IS_GPT(dpt)) {
-        /* B3 (round 6): GPT 头 CRC32 校验 (原仅 "EFI PART" magic) */
+        /* GPT 头 CRC32 校验 (原仅 "EFI PART" magic) */
         if (!gpt_header_ok(d)) return 2;
         return 3; // GPT
     }
@@ -71,7 +71,7 @@ uint8_t GetPartitionSize(VsDevType DriverType, uint32_t DriverID, uint32_t Parti
         // GPT Header 在 LBA 1 (512字节处)
         if (Dev::ReadBytes(d, 512 + GPT_HEADER_NUMBER_OF_PTE_OFFSET, 4, &entry_count) == Dev::RW_ERROR)
             return 4; /* 修复: 原忽略读失败, entry_count 为垃圾 */
-        if (!gpt_entry_count_sane(d, entry_count)) return 4;   /* B3 */
+        if (!gpt_entry_count_sane(d, entry_count)) return 4;   
         if (PartitionID >= entry_count) return 4;
 
         GPT_PTE gptpte;

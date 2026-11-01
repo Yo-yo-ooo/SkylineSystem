@@ -1,6 +1,6 @@
 # fc block-level cache design (audit design debt #5)
 
-> Status: **implementation complete (round 26-30)**. Steps 1-4 landed; Step 5 decided as
+> Status: **implementation complete**. Steps 1-4 landed; Step 5 decided as
 > keeping the path whole-file API as the small-file fast path (dual-track coexistence, block-level primary).
 
 ## Implementation log
@@ -30,7 +30,7 @@ key = file_id(8B) + block_no(8B, 4KB-aligned sector offset >> 3)
 key_len = 16
 ```
 
-- file_id keeps using `(uint64_t)filedesc` (round 5 writeback already wrote through this way)
+- file_id keeps using `(uint64_t)filedesc` (the write-through path already works this way)
 - ART index needs no change (variable-length keys already supported); path kept as auxiliary (for diagnostics/invalidation broadcast)
 - Compatibility with fc's existing API: `file_cache_get/put/promote/fsync` gain
   `offset/block` parameter overloads; old path signatures kept as whole-file aliases
@@ -41,10 +41,10 @@ key_len = 16
 - **Read**: `sys_read` first computes the block list covered by [offset, offset+count) →
   per-block get → memory-copy hits, per-block disk read + promote misses
   (small reads ≤ 2KB still go direct-read to avoid cache thrash, threshold reuses FC_TINY_FILE_THRESHOLD)
-- **Write**: write-through keeps current semantics (re-verified in round 24,
+- **Write**: write-through keeps current semantics (re-verified,
   fops.cpp:110-144 flow unchanged), only the hit-decision key changes from path to
   (file_id, block)
-- **fsync/writeback**: round 5's file_id write-through unchanged; the entry-level
+- **fsync/writeback**: the file_id write-through is unchanged; the entry-level
   dirty bit drops from whole-file granularity to block granularity
 
 ## 4. Consistency

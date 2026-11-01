@@ -1,13 +1,13 @@
 # xHCI Enumeration Depth Roadmap (C12)
 
 > Audit C12: the xHCI enumeration depth (hub/HID descriptors/EP0 mps) is a feature roadmap
-> that had no documentation at all. This file archives it (round 13).
+> that had no documentation at all. This file archives it.
 
 ## Current State (Implemented)
 
 - Controller initialization, MSI-X, command ring, event ring
-- EP0 control transfers (synchronous path; the P1-32 IRQ-context blocking issue is fixed)
-- Port reset/enable, device address assignment (PORTSC W1C fixed in P1-24)
+- EP0 control transfers (synchronous path; the IRQ-context blocking issue is fixed)
+- Port reset/enable, device address assignment (PORTSC W1C fixed)
 - Single-device enumeration (verified on QEMU xHCI)
 
 ## Gaps (by Priority)

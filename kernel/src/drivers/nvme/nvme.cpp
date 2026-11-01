@@ -87,7 +87,7 @@ NVME::NVME(PCI::PCIHeader0 *header){
     PCI::enable_bus_mastering((uint64_t)this->phdr);
 
     // Map the 64-bit MMIO BAR: controller registers plus per-queue doorbells.
-    // P1-29: 校验 BAR0 的类型 (bit0 = IO 空间, bit1-2 = 64 位标志) —— 原实现
+    // 校验 BAR0 的类型 (bit0 = IO 空间, bit1-2 = 64 位标志) —— 原实现
     // 无条件 BAR1<<32, 32 位 BAR/IO BAR 会拼出垃圾地址。
     uint32_t bar0 = header->BAR0;
     if ((bar0 & 1) != 0 || ((bar0 >> 1) & 3) != 2) {
@@ -111,7 +111,7 @@ NVME::NVME(PCI::PCIHeader0 *header){
 
     // Re-read CAP after quiesce. CAP.NSSRS (bit 36) gates the subsystem reset.
     this->CAPREG = this->ReadReg(NVME_CTRLREG_CAP);
-    /* 审计 #22 (round 7 修复): MQES (CAP[15:0]) = 最大队列深度-1, 0 = 非法
+    /* MQES (CAP[15:0]) = 最大队列深度-1, 0 = 非法
        (深度 1 都不到) —— 无校验时后续按 0 深度建队必失败且难诊断 */
     if ((this->CAPREG & 0xFFFF) == 0) {
         kerror("[NVME %p]: CAP.MQES == 0 (invalid controller), skipping\n",
@@ -165,7 +165,7 @@ NVME::NVME(PCI::PCIHeader0 *header){
         this->ReadReg(NVME_CTRLREG_CSTS), this->ReadReg(NVME_CTRLREG_CC));
 
     // Mask every vector first, then unmask the queues we actually created.
-    // (P1-30: 轮询回退时无 MSI-X 向量, 跳过掩码写入)
+    
     if (this->flags & NVME_FLAG_MISIX) {
         this->WriteReg(NVME_CTRLREG_INITMS, 0xFFFFFFFFu);
         this->WriteReg(NVME_CTRLREG_INITMC, (1u << this->INTRNUM) - 1);
@@ -202,7 +202,7 @@ bool NVME::CreateCmplQue(NVME::NVMERequest *req, NVME::CmplQue *cmplQue) {
     entry->OPCode = 0x05;
     entry->PRP[0] = VMM::GetPhysics(kernel_pagemap, (uint64_t)cmplQue->Entries);
     entry->Spec[0] = cmplQue->Ident | ((u32)(cmplQue->Size - 1) << 16);
-    /* P1-30: 轮询回退时 IEN=0 (纯轮询); MSI-X 时 0b11 (PC+IEN) */
+    /* 轮询回退时 IEN=0 (纯轮询); MSI-X 时 0b11 (PC+IEN) */
     entry->Spec[1] = ((this->flags & NVME_FLAG_MISIX) ? 0b11 : 0b01) |
                      ((u32)(cmplQue->Ident) << 16);
     return true;
@@ -217,7 +217,7 @@ bool NVME::TryInsertRequest(NVME::SubQue *subQue, NVME::NVMERequest *req) {
     subQue->Load += req->inputSz;
     for (int32_t i = 0; i < req->inputSz; i++) {
         req->input[i].CommandIdent = subQue->Tail;
-        req->cid = subQue->Tail;             /* 审计 #10: 记录 CID 供超时隔离 */
+        req->cid = subQue->Tail;             /* 记录 CID 供超时隔离 */
         subQue->Req[subQue->Tail] = req;
         // __memcpy 参数顺序是 dest, src
         __memcpy(subQue->Entries + subQue->Tail, &req->input[i], sizeof(NVME::SubQueEntry));
@@ -238,7 +238,7 @@ void NVME::Request(NVME::SubQue *subQue, NVME::NVMERequest *req){
     // Wait for completion. Polling the target CQ lets bring-up/admin commands
     // finish before interrupts are enabled; once MSI-X is live the IRQ handler
     // performs the same harvest ahead of us (PollCQ is phase-idempotent).
-    // P0-13: 有界超时 (约 5s) — 原实现无超时, 控制器失联时永久挂起
+    // 有界超时 (约 5s) — 原实现无超时, 控制器失联时永久挂起
     uint64_t spins = 0;
     while (!req->done) {
         this->PollCQ(subQue->Trg);
@@ -248,7 +248,7 @@ void NVME::Request(NVME::SubQue *subQue, NVME::NVMERequest *req){
             kerror("(NVME %p): request %p TIMEOUT, aborting wait\n",
                    (uint64_t)this, req);
             req->res.Status = 0xFFFF;   /* 合成失败状态: 上层 fail 路径 + 槽位释放 */
-            /* 审计 #10 (round 6 修复): 超时的 CID 进入退役位图 ——
+            /* 超时的 CID 进入退役位图 ——
                迟到的完成收割时被丢弃, 不再写进复用槽的新请求 (原实现
                迟到完成会污染复用槽的 req->res) */
             if (req->cid < 64)
@@ -335,7 +335,7 @@ bool NVME::InitNsp() {
         return false;
     }
 
-    /* P0-14: 命名空间扫描限界 (nspLst 页 = 1024 项, 全非零时越页) */
+    /* 命名空间扫描限界 (nspLst 页 = 1024 项, 全非零时越页) */
     for (this->devNum = 0; this->devNum < 1024 && nspLst[this->devNum]; this->devNum++) ;
 
     if (this->devNum == 0) {
@@ -401,7 +401,7 @@ bool NVME::InitNsp() {
         auto* self = static_cast<NVMECtrl*>(i);
         return self->dev[0].size * ((uint64_t)self->dev[0].lbaBytes / 512);
     };
-    Dev::AddStorageDevice(VsDevType::NVME, ops, sectors512, this);   /* P0-14: 全程 64 位 */
+    Dev::AddStorageDevice(VsDevType::NVME, ops, sectors512, this);   /* 全程 64 位 */
     return true;
 }
 
@@ -470,7 +470,7 @@ bool NVME::InitIntr() {
     this->flags &= ~NVME_FLAG_MISIX;
     this->MSIX = PCI::GetMSIXCap(this->phdr);
     if (this->MSIX == nullptr) {
-        /* P1-30: 无 MSI-X → 轮询回退 (Request 的等待循环本就 PollCQ,
+        /* 无 MSI-X → 轮询回退 (Request 的等待循环本就 PollCQ,
            中断仅是优化)。保留最小队列集 (INTRNUM=2 → nIO=1 无除零),
            不注册路由; CQ 的 IEN 关闭 (见 CreateCmplQue)。
            注: QEMU 的 NVMe 恒有 MSI-X, 此路径无实机验证, 属降级兜底。 */
@@ -554,7 +554,7 @@ void NVME::PollCQ(NVME::CmplQue *cmpq){
         SQ->Load -= consumed;
 
         NVME::NVMERequest *req = SQ->Req[entry->CmdIden];
-        /* 审计 #10: 退役 CID 的迟到完成 —— 丢弃, 不得写进复用槽 */
+        /* 退役 CID 的迟到完成 —— 丢弃, 不得写进复用槽 */
         if (entry->CmdIden < 64 &&
             (SQ->retired_cids & (1ULL << entry->CmdIden))) {
             SQ->retired_cids &= ~(1ULL << entry->CmdIden);

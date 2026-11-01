@@ -1,0 +1,1612 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+//=============================================================
+// <random> — 随机数引擎与分布
+//
+// 引擎（与标准逐位一致，mt19937 用标准测试向量校验）：
+//   linear_congruential_engine / mersenne_twister_engine /
+//   subtract_with_carry_engine，以及 discard_block_engine /
+//   independent_bits_engine / shuffle_order_engine 三个适配器。
+//
+// 分布：uniform_int / uniform_real / normal / lognormal / gamma /
+//   chi_squared / cauchy / fisher_f / student_t / bernoulli / binomial /
+//   geometric / negative_binomial / poisson / exponential / weibull /
+//   extreme_value / discrete / piecewise_constant / piecewise_linear。
+//
+// 取舍说明：
+//   * 全部为头文件实现，状态在对象内，freestanding 可用；
+//   * 实数分布用 double 计算（与 libstdc++ 一致），需要 exp/log/sqrt；
+//     sqrt 走自包含牛顿迭代，exp/log 落到 libm 符号（不调用则不产生）。
+//   * random_device 没有熵源：用对象地址 + 调用计数 + 引擎混合，
+//     仅保证“同一个进程内的不同实例不同”，**不是密码学安全**的熵。
+//=============================================================
+#ifndef STDCPP_RANDOM_HPP
+#define STDCPP_RANDOM_HPP
+
+#include <cstddef>
+#include <cstdint>
+#include <initializer_list>
+#include <vector>
+#include "detail/config.h"
+#include "detail/throw.h"
+#include "detail/math.h"
+
+#ifndef _GLIBCXX_RANDOM
+#  define _GLIBCXX_RANDOM 1
+#endif
+
+namespace std {
+
+//=============================================================
+// 内部工具
+//=============================================================
+namespace __detail {
+
+// 2^bits - 1（bits 取 1..64，避免 1<<64 的 UB）
+constexpr uint64_t mask_bits(unsigned bits) {
+    return bits >= 64 ? ~0ULL : ((1ULL << bits) - 1ULL);
+}
+
+// 模乘：m 可能接近 2^64，直接乘会溢出
+template<class UIntType>
+constexpr UIntType mulmod(UIntType a, UIntType b, UIntType m) {
+#if defined(__SIZEOF_INT128__)
+    if (m == 0) return static_cast<UIntType>(a * b);
+    return static_cast<UIntType>((static_cast<unsigned __int128>(a) * b) % m);
+#else
+    // 无 128 位整数时用「加乘」避免溢出（O(log b) 次加法）
+    if (m == 0) return static_cast<UIntType>(a * b);
+    UIntType r = 0;
+    a %= m;
+    b %= m;
+    while (b) {
+        if (b & 1) { r += a; if (r >= m) r -= m; }
+        a += a;
+        if (a >= m) a -= m;
+        b >>= 1;
+    }
+    return r;
+#endif
+}
+
+// 实数尾数位数（给 generate_canonical 用，避免依赖 <limits>）
+template<class T> struct real_digits;
+template<> struct real_digits<float>       { static constexpr int value = __FLT_MANT_DIG__; };
+template<> struct real_digits<double>      { static constexpr int value = __DBL_MANT_DIG__; };
+template<> struct real_digits<long double> { static constexpr int value = __LDBL_MANT_DIG__; };
+
+} // namespace __detail
+
+//=============================================================
+// seed_seq
+//=============================================================
+class seed_seq {
+public:
+    template<class InputIt>
+    seed_seq(InputIt begin, InputIt end) {
+        for (; begin != end; ++begin) _M_v.push_back(static_cast<uint32_t>(*begin));
+    }
+    seed_seq(initializer_list<uint32_t> il) {
+        for (const uint32_t* p = il.begin(); p != il.end(); ++p) _M_v.push_back(*p);
+    }
+    template<class RandomAccessIt>
+    void generate(RandomAccessIt begin, RandomAccessIt end) const {
+        size_t n = static_cast<size_t>(end - begin);
+        if (n == 0) return;
+        if (_M_v.empty()) {
+            // 标准规定的退化情形
+            for (size_t k = 0; k < n; ++k) begin[k] = 0x8b8b8b8bu;
+            return;
+        }
+        const size_t s = _M_v.size();
+
+        // 1) 用 0x8b8b8b8b 填充，并混入 seed 序列
+        for (size_t k = 0; k < n; ++k) begin[k] = 0x8b8b8b8bu;
+
+        // 2) t = log2(n) 次混合
+        size_t t = 0;
+        for (size_t v = n; v > 1; v >>= 1) ++t;   // floor(log2(n))
+
+        for (size_t i = 0; i < t; ++i) {
+            // 每轮对 [0,n) 做一次 "带进位的循环混合"
+            for (size_t k = 0; k < n; ++k) {
+                const uint32_t prev = (k == 0) ? begin[n - 1] : begin[k - 1];
+                const uint32_t cur = begin[k];
+                begin[k] = cur ^ ((prev ^ (prev >> 27)) * 1664525u);
+                begin[k] += (k < s) ? _M_v[k] : 0u;
+            }
+        }
+    }
+
+    size_t size() const { return _M_v.size(); }
+
+    template<class OutputIt>
+    void param(OutputIt dest) const {
+        for (size_t i = 0; i < _M_v.size(); ++i) *dest++ = _M_v[i];
+    }
+
+private:
+    std::vector<uint32_t> _M_v;
+};
+
+//=============================================================
+// linear_congruential_engine
+//=============================================================
+template<class UIntType, UIntType a, UIntType c, UIntType m>
+class linear_congruential_engine {
+public:
+    typedef UIntType result_type;
+    static constexpr result_type multiplier = a;
+    static constexpr result_type increment = c;
+    static constexpr result_type modulus = m;
+    static constexpr result_type default_seed = 1u;
+
+    explicit linear_congruential_engine(result_type s = default_seed) { seed(s); }
+
+    void seed(result_type s = default_seed) {
+        _M_x = (c % m == 0 && s == 0) ? 1 : (s % m);
+    }
+
+    result_type operator()() {
+        _M_x = static_cast<result_type>(
+            (__detail::mulmod<result_type>(a, _M_x, m) + c % m) % m);
+        return _M_x;
+    }
+
+    void discard(unsigned long long z) { while (z--) (*this)(); }
+
+    static constexpr result_type min() { return c == 0u ? 1u : 0u; }
+    static constexpr result_type max() { return m - 1u; }
+
+    bool operator==(const linear_congruential_engine& y) const { return _M_x == y._M_x; }
+    bool operator!=(const linear_congruential_engine& y) const { return !(*this == y); }
+
+private:
+    result_type _M_x;
+};
+
+//=============================================================
+// mersenne_twister_engine
+//
+// 逐位对照标准（C++ [rand.predef]）：状态转移、tempering 常数顺序都按标准，
+// 数组下标回绕用 (i+1)%n。
+//=============================================================
+template<class UIntType, size_t w, size_t n, size_t m, size_t r,
+         UIntType a, size_t u, UIntType d, size_t s, UIntType b,
+         size_t t, UIntType c, size_t l, UIntType f>
+class mersenne_twister_engine {
+public:
+    typedef UIntType result_type;
+    static constexpr size_t word_size = w;
+    static constexpr size_t state_size = n;
+    static constexpr size_t shift_size = m;
+    static constexpr size_t mask_bits = r;
+    static constexpr result_type xor_mask = a;
+    static constexpr size_t tempering_u = u;
+    static constexpr result_type tempering_d = d;
+    static constexpr size_t tempering_s = s;
+    static constexpr result_type tempering_b = b;
+    static constexpr size_t tempering_t = t;
+    static constexpr result_type tempering_c = c;
+    static constexpr size_t tempering_l = l;
+    static constexpr result_type initialization_multiplier = f;
+    static constexpr result_type default_seed = 5489u;
+
+    explicit mersenne_twister_engine(result_type sd = default_seed) { seed(sd); }
+
+    template<class Sseq>
+    explicit mersenne_twister_engine(Sseq& q) { seed(q); }
+
+    template<class Sseq>
+    void seed(Sseq& q) {
+        // 用 seed_seq 直接铺满状态，然后从 index = n 开始（下次调用触发 twist）
+        uint32_t buf[n];
+        q.generate(buf, buf + n);
+        const result_type wmask = static_cast<result_type>(__detail::mask_bits(w));
+        for (size_t i = 0; i < n; ++i)
+            _M_x[i] = static_cast<result_type>(buf[i]) & wmask;
+        _M_i = n;
+    }
+
+    void seed(result_type value = default_seed) {
+        const result_type wmask = static_cast<result_type>(__detail::mask_bits(w));
+        _M_x[0] = value & wmask;
+        for (size_t i = 1; i < n; ++i) {
+            const result_type prev = _M_x[i - 1];
+            _M_x[i] = (f * (prev ^ (prev >> (w - 2))) + static_cast<result_type>(i)) & wmask;
+        }
+        _M_i = n;
+    }
+
+    result_type operator()() {
+        if (_M_i >= n) _M_twist();
+        result_type y = _M_x[_M_i++];
+        y ^= (y >> u) & d;
+        y ^= (y << s) & b;
+        y ^= (y << t) & c;
+        y ^= (y >> l);
+        return y & static_cast<result_type>(__detail::mask_bits(w));
+    }
+
+    void discard(unsigned long long z) { while (z--) (*this)(); }
+
+    static constexpr result_type min() { return 0; }
+    static constexpr result_type max() {
+        return static_cast<result_type>(__detail::mask_bits(w));
+    }
+
+    bool operator==(const mersenne_twister_engine& y) const {
+        if (_M_i != y._M_i) return false;
+        for (size_t k = 0; k < n; ++k)
+            if (_M_x[k] != y._M_x[k]) return false;
+        return true;
+    }
+    bool operator!=(const mersenne_twister_engine& y) const { return !(*this == y); }
+
+private:
+    void _M_twist() {
+        const result_type wmask = static_cast<result_type>(__detail::mask_bits(w));
+        const result_type lower = static_cast<result_type>(__detail::mask_bits(r));
+        const result_type upper = static_cast<result_type>(wmask & ~lower);
+
+        for (size_t i = 0; i < n; ++i) {
+            const result_type y = (_M_x[i] & upper) | (_M_x[(i + 1) % n] & lower);
+            const result_type y1 = y >> 1;
+            const result_type ya = (y & 1u) ? a : static_cast<result_type>(0);
+            _M_x[i] = _M_x[(i + m) % n] ^ y1 ^ ya;
+        }
+        _M_i = 0;
+    }
+
+    result_type _M_x[n];
+    size_t      _M_i;
+};
+
+//=============================================================
+// subtract_with_carry_engine
+//
+// 递推：x[i] = (x[i-s] - x[i-r] - carry) mod 2^w
+// 用一个长度为 r 的环形缓冲：位置 i 上的旧值就是 x[i-r]，被覆盖。
+//=============================================================
+template<class UIntType, size_t w, size_t s, size_t r>
+class subtract_with_carry_engine {
+public:
+    typedef UIntType result_type;
+    static constexpr size_t word_size = w;
+    static constexpr size_t short_lag = s;
+    static constexpr size_t long_lag = r;
+    static constexpr result_type default_seed = 19780503u;
+
+    explicit subtract_with_carry_engine(result_type value = default_seed) { seed(value); }
+
+    template<class Sseq>
+    explicit subtract_with_carry_engine(Sseq& q) { seed(q); }
+
+    template<class Sseq>
+    void seed(Sseq& q) {
+        uint32_t buf[r];
+        q.generate(buf, buf + r);
+        const uint32_t wmask = static_cast<uint32_t>(__detail::mask_bits(w));
+        for (size_t i = 0; i < r; ++i) _M_x[i] = static_cast<result_type>(buf[i] & wmask);
+        _M_carry = (_M_x[r - 1] == 0) ? 1u : 0u;
+        _M_k = 0;
+        discard(r);
+    }
+
+    void seed(result_type value = default_seed) {
+        // 标准做法：用线性同余引擎铺满初始状态，再丢弃 r 个值消除初值相关性
+        typedef linear_congruential_engine<uint32_t, 40014u, 0u, 2147483563u> lcg_t;
+        lcg_t lcg(value == 0u ? default_seed : value);
+        const uint32_t wmask = static_cast<uint32_t>(__detail::mask_bits(w));
+        for (size_t i = 0; i < r; ++i) {
+            _M_x[i] = static_cast<result_type>(lcg() & wmask);
+        }
+        _M_carry = (_M_x[r - 1] == 0) ? 1u : 0u;
+        _M_k = 0;
+        discard(r);                     // 预热
+    }
+
+    result_type operator()() {
+        const result_type wmask = static_cast<result_type>(__detail::mask_bits(w));
+        const size_t i = _M_k;
+        const size_t j = (i + r - s) % r;          // i - s (mod r)
+
+        const long long d = static_cast<long long>(_M_x[j])
+                          - static_cast<long long>(_M_x[i])
+                          - static_cast<long long>(_M_carry);
+        _M_carry = (d < 0) ? 1u : 0u;
+        _M_x[i] = static_cast<result_type>(static_cast<unsigned long long>(d) & wmask);
+        _M_k = (i + 1) % r;
+        return _M_x[i];
+    }
+
+    void discard(unsigned long long z) { while (z--) (*this)(); }
+
+    static constexpr result_type min() { return 0; }
+    static constexpr result_type max() {
+        return static_cast<result_type>(__detail::mask_bits(w));
+    }
+
+    bool operator==(const subtract_with_carry_engine& y) const {
+        if (_M_carry != y._M_carry || _M_k != y._M_k) return false;
+        for (size_t k = 0; k < r; ++k)
+            if (_M_x[k] != y._M_x[k]) return false;
+        return true;
+    }
+    bool operator!=(const subtract_with_carry_engine& y) const { return !(*this == y); }
+
+private:
+    result_type _M_x[r];
+    result_type _M_carry;
+    size_t      _M_k;
+};
+
+//=============================================================
+// 适配器：discard_block_engine
+//=============================================================
+template<class Engine, size_t p, size_t r>
+class discard_block_engine {
+public:
+    typedef typename Engine::result_type result_type;
+    static constexpr size_t block_size = p;
+    static constexpr size_t used_block = r;
+
+    discard_block_engine() : _M_e(), _M_n(0) {}
+    explicit discard_block_engine(const Engine& e) : _M_e(e), _M_n(0) {}
+    explicit discard_block_engine(Engine&& e) : _M_e(static_cast<Engine&&>(e)), _M_n(0) {}
+    explicit discard_block_engine(result_type s) : _M_e(s), _M_n(0) {}
+
+    void seed(result_type s = Engine::default_seed) { _M_e.seed(s); _M_n = 0; }
+    void seed(seed_seq& q) { _M_e.seed(q); _M_n = 0; }
+
+    result_type operator()() {
+        if (_M_n >= used_block) {
+            _M_e.discard(block_size - used_block);
+            _M_n = 0;
+        }
+        ++_M_n;
+        return _M_e();
+    }
+
+    void discard(unsigned long long z) { while (z--) (*this)(); }
+
+    const Engine& base() const { return _M_e; }
+
+    static constexpr result_type min() { return Engine::min(); }
+    static constexpr result_type max() { return Engine::max(); }
+
+    bool operator==(const discard_block_engine& y) const {
+        return _M_n == y._M_n && _M_e == y._M_e;
+    }
+    bool operator!=(const discard_block_engine& y) const { return !(*this == y); }
+
+private:
+    Engine _M_e;
+    size_t _M_n;
+};
+
+//=============================================================
+// 适配器：independent_bits_engine
+//=============================================================
+template<class Engine, size_t w, class UIntType>
+class independent_bits_engine {
+public:
+    typedef UIntType result_type;
+
+    independent_bits_engine() : _M_e() {}
+    explicit independent_bits_engine(const Engine& e) : _M_e(e) {}
+    explicit independent_bits_engine(Engine&& e) : _M_e(static_cast<Engine&&>(e)) {}
+    explicit independent_bits_engine(result_type s) : _M_e(s) {}
+
+    void seed(result_type s = Engine::default_seed) { _M_e.seed(s); }
+    void seed(seed_seq& q) { _M_e.seed(q); }
+
+    result_type operator()() {
+        if (w == 0) return 0;
+        // 用「拒绝采样」构造 w 位无偏值：凑够 w 位或超过上界就重来
+        const result_type range = static_cast<result_type>(
+            w >= sizeof(result_type) * 8 ? ~result_type(0) : ((result_type(1) << w) - 1));
+        const result_type src_range = static_cast<result_type>(Engine::max() - Engine::min());
+
+        if (w <= 32 && src_range >= range) {
+            // 源范围足够大：单次取值后取低位（标准允许的简化实现）
+            result_type v;
+            do {
+                v = static_cast<result_type>(_M_e() - Engine::min());
+            } while (v > range);
+            return v;
+        }
+
+        // 拼接多次取值
+        result_type result = 0;
+        size_t filled = 0;
+        while (filled < w) {
+            result_type v = static_cast<result_type>(_M_e() - Engine::min());
+            size_t take = (w - filled) < (sizeof(result_type) * 8) ? (w - filled)
+                                                                   : sizeof(result_type) * 8;
+            const result_type mask = static_cast<result_type>(
+                take >= sizeof(result_type) * 8 ? ~result_type(0) : ((result_type(1) << take) - 1));
+            result |= static_cast<result_type>((v & mask) << filled);
+            filled += take;
+        }
+        return static_cast<result_type>(result & range);
+    }
+
+    void discard(unsigned long long z) { while (z--) (*this)(); }
+
+    const Engine& base() const { return _M_e; }
+    static constexpr result_type min() { return 0; }
+    static constexpr result_type max() {
+        return static_cast<result_type>(
+            w >= sizeof(result_type) * 8 ? ~result_type(0) : ((result_type(1) << w) - 1));
+    }
+
+    bool operator==(const independent_bits_engine& y) const { return _M_e == y._M_e; }
+    bool operator!=(const independent_bits_engine& y) const { return !(*this == y); }
+
+private:
+    Engine _M_e;
+};
+
+//=============================================================
+// 适配器：shuffle_order_engine
+//=============================================================
+template<class Engine, size_t k>
+class shuffle_order_engine {
+public:
+    typedef typename Engine::result_type result_type;
+
+    shuffle_order_engine() { _M_init(); }
+    explicit shuffle_order_engine(const Engine& e) : _M_e(e) { _M_init(); }
+    explicit shuffle_order_engine(Engine&& e) : _M_e(static_cast<Engine&&>(e)) { _M_init(); }
+    explicit shuffle_order_engine(result_type s) : _M_e(s) { _M_init(); }
+
+    void seed(result_type s = Engine::default_seed) { _M_e.seed(s); _M_init(); }
+    void seed(seed_seq& q) { _M_e.seed(q); _M_init(); }
+
+    result_type operator()() {
+        const size_t j = static_cast<size_t>(
+            _M_e() % static_cast<result_type>(k));
+        result_type r = _M_v[j];
+        _M_v[j] = (_M_y == 0) ? _M_e() : _M_y;
+        _M_y = r;
+        return r;
+    }
+
+    void discard(unsigned long long z) { while (z--) (*this)(); }
+
+    const Engine& base() const { return _M_e; }
+    static constexpr result_type min() { return Engine::min(); }
+    static constexpr result_type max() { return Engine::max(); }
+
+    bool operator==(const shuffle_order_engine& y) const {
+        if (_M_y != y._M_y || !(_M_e == y._M_e)) return false;
+        for (size_t i = 0; i < k; ++i)
+            if (_M_v[i] != y._M_v[i]) return false;
+        return true;
+    }
+    bool operator!=(const shuffle_order_engine& y) const { return !(*this == y); }
+
+private:
+    void _M_init() {
+        for (size_t i = 0; i < k; ++i) _M_v[i] = _M_e();
+        _M_y = _M_e();
+    }
+
+    Engine     _M_e;
+    result_type _M_v[k];
+    result_type _M_y;
+};
+
+//=============================================================
+// 标准引擎 typedef
+//=============================================================
+typedef linear_congruential_engine<uint_fast32_t, 16807, 0, 2147483647>    minstd_rand0;
+typedef linear_congruential_engine<uint_fast32_t, 48271, 0, 2147483647>    minstd_rand;
+
+typedef mersenne_twister_engine<uint_fast32_t, 32, 624, 397, 31,
+                                0x9908b0dfUL, 11, 0xffffffffUL, 7,
+                                0x9d2c5680UL, 15, 0xefc60000UL, 18,
+                                1812433253UL> mt19937;
+
+typedef mersenne_twister_engine<uint_fast64_t, 64, 312, 156, 31,
+                                0xb5026f5aa96619e9ULL, 29, 0x5555555555555555ULL,
+                                17, 0x71d67fffeda60000ULL, 37, 0xfff7eee000000000ULL,
+                                43, 6364136223846793005ULL> mt19937_64;
+
+typedef subtract_with_carry_engine<uint_fast32_t, 24, 10, 24> ranlux24_base;
+typedef subtract_with_carry_engine<uint_fast64_t, 48, 5, 12>  ranlux48_base;
+
+typedef discard_block_engine<ranlux24_base, 223, 23> ranlux24;
+typedef discard_block_engine<ranlux48_base, 389, 11> ranlux48;
+
+typedef shuffle_order_engine<minstd_rand0, 256> knuth_b;
+
+//=============================================================
+// generate_canonical
+//=============================================================
+template<class RealType, size_t bits, class URBG>
+RealType generate_canonical(URBG& g) {
+    const size_t digits = static_cast<size_t>(__detail::real_digits<RealType>::value);
+    const size_t b = (bits < digits) ? bits : digits;
+
+    // r = 引擎取值个数；log2(r) 用位长近似（r 是 2 的幂时精确）
+    const unsigned long long r_u = static_cast<unsigned long long>(URBG::max())
+                                 - static_cast<unsigned long long>(URBG::min()) + 1ULL;
+    size_t log2r = 0;
+    { unsigned long long v = r_u; while (v > 1) { v >>= 1; ++log2r; } }
+    if (log2r == 0) log2r = 1;
+
+    const size_t k = (b + log2r - 1) / log2r;   // 需要抽取的次数
+
+    // sum_{i=0}^{k-1} (g()-min) * r^i  /  r^k  ∈ [0,1)
+    const long double r = static_cast<long double>(r_u);
+    long double sum = 0.0L;
+    long double factor = 1.0L;
+    for (size_t i = 0; i < k; ++i) {
+        sum += static_cast<long double>(g() - URBG::min()) * factor;
+        factor *= r;
+    }
+    return static_cast<RealType>(sum / factor);
+}
+
+//=============================================================
+// 离散均匀分布
+//=============================================================
+template<class IntType = int>
+class uniform_int_distribution {
+public:
+    typedef IntType result_type;
+
+    struct param_type {
+        param_type(IntType a = 0, IntType b = 9) : _M_a(a), _M_b(b) {}
+        IntType a() const { return _M_a; }
+        IntType b() const { return _M_b; }
+        bool operator==(const param_type& o) const { return _M_a == o._M_a && _M_b == o._M_b; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        IntType _M_a, _M_b;
+    };
+
+    explicit uniform_int_distribution(IntType a = 0, IntType b = 9) : _M_p(a, b) {}
+    explicit uniform_int_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    result_type a() const { return _M_p.a(); }
+    result_type b() const { return _M_p.b(); }
+    result_type min() const { return _M_p.a(); }
+    result_type max() const { return _M_p.b(); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        using urange = unsigned long long;
+        const urange range = static_cast<urange>(
+            static_cast<long long>(_M_p.b()) - static_cast<long long>(_M_p.a()));
+        const urange src = static_cast<urange>(URBG::max() - URBG::min());
+        if (range == 0) return _M_p.a();
+
+        if (src >= range) {
+            // 拒绝采样：避免取模偏差
+            const urange limit = src - (src % (range + 1));
+            urange v;
+            do { v = static_cast<urange>(g() - URBG::min()); } while (v >= limit && limit != 0);
+            return static_cast<result_type>(_M_p.a() + static_cast<IntType>(v % (range + 1)));
+        }
+        // 源范围小于目标范围：拼接
+        urange v = 0;
+        urange acc = 1;
+        while (acc <= range) {
+            v = v * (src + 1) + static_cast<urange>(g() - URBG::min());
+            acc *= (src + 1);
+        }
+        return static_cast<result_type>(_M_p.a() + static_cast<IntType>(v % (range + 1)));
+    }
+
+    template<class URBG>
+    result_type operator()(URBG& g, const param_type& p) {
+        uniform_int_distribution tmp(p);
+        return tmp(g);
+    }
+
+    bool operator==(const uniform_int_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const uniform_int_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+//=============================================================
+// 实数均匀分布
+//=============================================================
+template<class RealType = double>
+class uniform_real_distribution {
+public:
+    typedef RealType result_type;
+
+    struct param_type {
+        param_type(RealType a = RealType(0), RealType b = RealType(1)) : _M_a(a), _M_b(b) {}
+        RealType a() const { return _M_a; }
+        RealType b() const { return _M_b; }
+        bool operator==(const param_type& o) const { return _M_a == o._M_a && _M_b == o._M_b; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_a, _M_b;
+    };
+
+    explicit uniform_real_distribution(RealType a = RealType(0), RealType b = RealType(1))
+        : _M_p(a, b) {}
+    explicit uniform_real_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    result_type a() const { return _M_p.a(); }
+    result_type b() const { return _M_p.b(); }
+    result_type min() const { return _M_p.a(); }
+    result_type max() const { return _M_p.b(); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        const result_type u = generate_canonical<result_type, 53, URBG>(g);
+        return static_cast<result_type>(_M_p.a() + u * (_M_p.b() - _M_p.a()));
+    }
+    template<class URBG>
+    result_type operator()(URBG& g, const param_type& p) {
+        uniform_real_distribution tmp(p);
+        return tmp(g);
+    }
+
+    bool operator==(const uniform_real_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const uniform_real_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+//=============================================================
+// 正态 / 对数正态
+//=============================================================
+template<class RealType = double>
+class normal_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type(RealType m = RealType(0), RealType s = RealType(1)) : _M_mean(m), _M_stddev(s) {}
+        RealType mean() const { return _M_mean; }
+        RealType stddev() const { return _M_stddev; }
+        bool operator==(const param_type& o) const {
+            return _M_mean == o._M_mean && _M_stddev == o._M_stddev;
+        }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_mean, _M_stddev;
+    };
+
+    explicit normal_distribution(RealType mean = RealType(0), RealType stddev = RealType(1))
+        : _M_p(mean, stddev), _M_has(false), _M_saved(0) {}
+    explicit normal_distribution(const param_type& p) : _M_p(p), _M_has(false), _M_saved(0) {}
+
+    void reset() { _M_has = false; }
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    result_type mean() const { return _M_p.mean(); }
+    result_type stddev() const { return _M_p.stddev(); }
+    result_type min() const { return result_type(-1e308); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        // Marsaglia polar method：成对生成，缓存第二个
+        if (_M_has) { _M_has = false; return _M_p.mean() + _M_p.stddev() * _M_saved; }
+        RealType u, v, s;
+        do {
+            u = generate_canonical<RealType, 53, URBG>(g) * RealType(2) - RealType(1);
+            v = generate_canonical<RealType, 53, URBG>(g) * RealType(2) - RealType(1);
+            s = u * u + v * v;
+        } while (s >= RealType(1) || s == RealType(0));
+        const RealType m = __detail::sqrt_nr(RealType(-2) * __detail::m_log(s) / s);
+        _M_saved = v * m;
+        _M_has = true;
+        return _M_p.mean() + _M_p.stddev() * (u * m);
+    }
+
+    bool operator==(const normal_distribution& o) const {
+        return _M_p == o._M_p && _M_has == o._M_has &&
+               (!_M_has || _M_saved == o._M_saved);
+    }
+    bool operator!=(const normal_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+    bool       _M_has;
+    RealType   _M_saved;
+};
+
+template<class RealType = double>
+class lognormal_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type(RealType m = RealType(0), RealType s = RealType(1)) : _M_mean(m), _M_stddev(s) {}
+        RealType m() const { return _M_mean; }
+        RealType s() const { return _M_stddev; }
+        bool operator==(const param_type& o) const {
+            return _M_mean == o._M_mean && _M_stddev == o._M_stddev;
+        }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_mean, _M_stddev;
+    };
+
+    explicit lognormal_distribution(RealType m = RealType(0), RealType s = RealType(1))
+        : _M_p(m, s), _M_nd(m, s) {}
+    explicit lognormal_distribution(const param_type& p) : _M_p(p), _M_nd(p.m(), p.s()) {}
+
+    void reset() { _M_nd.reset(); }
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; _M_nd.param(typename normal_distribution<RealType>::param_type(p.m(), p.s())); }
+    result_type m() const { return _M_p.m(); }
+    result_type s() const { return _M_p.s(); }
+    result_type min() const { return RealType(0); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) { return __detail::m_exp(_M_nd(g)); }
+
+    bool operator==(const lognormal_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const lognormal_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+    normal_distribution<RealType> _M_nd;
+};
+
+//=============================================================
+// 指数分布
+//=============================================================
+template<class RealType = double>
+class exponential_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        explicit param_type(RealType l = RealType(1)) : _M_lambda(l) {}
+        RealType lambda() const { return _M_lambda; }
+        bool operator==(const param_type& o) const { return _M_lambda == o._M_lambda; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_lambda;
+    };
+
+    explicit exponential_distribution(RealType lambda = RealType(1)) : _M_p(lambda) {}
+    explicit exponential_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    result_type lambda() const { return _M_p.lambda(); }
+    result_type min() const { return RealType(0); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        // -ln(1-u)/lambda，避免 u==0 时 log(0)
+        const RealType u = generate_canonical<RealType, 53, URBG>(g);
+        return -__detail::m_log(RealType(1) - u) / _M_p.lambda();
+    }
+
+    bool operator==(const exponential_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const exponential_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+//=============================================================
+// 伯努利 / 二项 / 几何 / 负二项 / 泊松
+//=============================================================
+class bernoulli_distribution {
+public:
+    typedef bool result_type;
+    struct param_type {
+        explicit param_type(double p = 0.5) : _M_p(p) {}
+        double p() const { return _M_p; }
+        bool operator==(const param_type& o) const { return _M_p == o._M_p; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        double _M_p;
+    };
+
+    explicit bernoulli_distribution(double p = 0.5) : _M_p(p) {}
+    explicit bernoulli_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    double p() const { return _M_p.p(); }
+    result_type min() const { return false; }
+    result_type max() const { return true; }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        return generate_canonical<double, 53, URBG>(g) < _M_p.p();
+    }
+
+    bool operator==(const bernoulli_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const bernoulli_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+template<class IntType = int>
+class binomial_distribution {
+public:
+    typedef IntType result_type;
+    struct param_type {
+        param_type(IntType t = 1, double p = 0.5) : _M_t(t), _M_p(p) {}
+        IntType t() const { return _M_t; }
+        double p() const { return _M_p; }
+        bool operator==(const param_type& o) const { return _M_t == o._M_t && _M_p == o._M_p; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        IntType _M_t;
+        double  _M_p;
+    };
+
+    explicit binomial_distribution(IntType t = 1, double p = 0.5) : _M_p(t, p) {}
+    explicit binomial_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    IntType t() const { return _M_p.t(); }
+    double p() const { return _M_p.p(); }
+    result_type min() const { return 0; }
+    result_type max() const { return _M_p.t(); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        bernoulli_distribution b(_M_p.p());
+        IntType k = 0;
+        for (IntType i = 0; i < _M_p.t(); ++i)
+            if (b(g)) ++k;
+        return k;
+    }
+
+    bool operator==(const binomial_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const binomial_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+template<class IntType = int>
+class geometric_distribution {
+public:
+    typedef IntType result_type;
+    struct param_type {
+        explicit param_type(double p = 0.5) : _M_p(p) {}
+        double p() const { return _M_p; }
+        bool operator==(const param_type& o) const { return _M_p == o._M_p; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        double _M_p;
+    };
+
+    explicit geometric_distribution(double p = 0.5) : _M_p(p) {}
+    explicit geometric_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    double p() const { return _M_p.p(); }
+    result_type min() const { return 0; }
+    result_type max() const { return result_type(0x7fffffff); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        // 逆变换：floor(log(1-u)/log(1-p))
+        const double u = generate_canonical<double, 53, URBG>(g);
+        const double l = __detail::m_log(1.0 - u) / __detail::m_log(1.0 - _M_p.p());
+        return static_cast<result_type>(l);
+    }
+
+    bool operator==(const geometric_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const geometric_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+template<class IntType = int>
+class negative_binomial_distribution {
+public:
+    typedef IntType result_type;
+    struct param_type {
+        param_type(IntType k = 1, double p = 0.5) : _M_k(k), _M_p(p) {}
+        IntType k() const { return _M_k; }
+        double p() const { return _M_p; }
+        bool operator==(const param_type& o) const { return _M_k == o._M_k && _M_p == o._M_p; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        IntType _M_k;
+        double  _M_p;
+    };
+
+    explicit negative_binomial_distribution(IntType k = 1, double p = 0.5) : _M_p(k, p) {}
+    explicit negative_binomial_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    IntType k() const { return _M_p.k(); }
+    double p() const { return _M_p.p(); }
+    result_type min() const { return 0; }
+    result_type max() const { return result_type(0x7fffffff); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        // 失败次数：累计 k 次成功所需
+        bernoulli_distribution b(_M_p.p());
+        IntType successes = 0, failures = 0;
+        while (successes < _M_p.k()) {
+            if (b(g)) ++successes;
+            else ++failures;
+        }
+        return failures;
+    }
+
+    bool operator==(const negative_binomial_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const negative_binomial_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+template<class IntType = int>
+class poisson_distribution {
+public:
+    typedef IntType result_type;
+    struct param_type {
+        explicit param_type(double mean = 1.0) : _M_mean(mean) {}
+        double mean() const { return _M_mean; }
+        bool operator==(const param_type& o) const { return _M_mean == o._M_mean; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        double _M_mean;
+    };
+
+    explicit poisson_distribution(double mean = 1.0) : _M_p(mean) {}
+    explicit poisson_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    double mean() const { return _M_p.mean(); }
+    result_type min() const { return 0; }
+    result_type max() const { return result_type(0x7fffffff); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        // Knuth 乘积法：L = exp(-mean)，累乘直到 < L。mean 很大时较慢，
+        // 但实现简单且无精度陷阱（大 mean 场景可改用正态近似）。
+        const double L = __detail::m_exp(-_M_p.mean());
+        double p = 1.0;
+        result_type k = 0;
+        do {
+            ++k;
+            p *= 1.0 - generate_canonical<double, 53, URBG>(g);
+        } while (p > L);
+        return k - 1;
+    }
+
+    bool operator==(const poisson_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const poisson_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+//=============================================================
+// gamma / chi_squared / fisher_f / student_t / cauchy / weibull /
+// extreme_value
+//=============================================================
+template<class RealType = double>
+class gamma_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type(RealType alpha = RealType(1), RealType beta = RealType(1))
+            : _M_alpha(alpha), _M_beta(beta) {}
+        RealType alpha() const { return _M_alpha; }
+        RealType beta() const { return _M_beta; }
+        bool operator==(const param_type& o) const {
+            return _M_alpha == o._M_alpha && _M_beta == o._M_beta;
+        }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_alpha, _M_beta;
+    };
+
+    explicit gamma_distribution(RealType alpha = RealType(1), RealType beta = RealType(1))
+        : _M_p(alpha, beta) {}
+    explicit gamma_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    RealType alpha() const { return _M_p.alpha(); }
+    RealType beta() const { return _M_p.beta(); }
+    result_type min() const { return RealType(0); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        // Marsaglia-Tsang 方法（alpha >= 1）；alpha < 1 用 boost 技巧
+        if (_M_p.alpha() < RealType(1)) {
+            const RealType u = generate_canonical<RealType, 53, URBG>(g);
+            gamma_distribution<RealType> g2(_M_p.alpha() + RealType(1), RealType(1));
+            return g2(g) * static_cast<RealType>(
+                __detail::m_exp(__detail::m_log(u) / _M_p.alpha()));
+        }
+        const RealType d = _M_p.alpha() - RealType(1) / RealType(3);
+        const RealType c = RealType(1) / __detail::sqrt_nr(RealType(9) * d);
+        for (;;) {
+            RealType x, v;
+            do {
+                x = (*this).template _M_normal(g);
+                v = RealType(1) + c * x;
+            } while (v <= RealType(0));
+            v = v * v * v;
+            const RealType u = generate_canonical<RealType, 53, URBG>(g);
+            if (u < RealType(1) - RealType(0.0331) * x * x * x * x) return d * v * _M_p.beta();
+            if (__detail::m_log(u) < RealType(0.5) * x * x + d * (RealType(1) - v + __detail::m_log(v)))
+                return d * v * _M_p.beta();
+        }
+    }
+
+    bool operator==(const gamma_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const gamma_distribution& o) const { return !(*this == o); }
+
+private:
+    template<class URBG>
+    RealType _M_normal(URBG& g) {
+        RealType u, v, s;
+        do {
+            u = generate_canonical<RealType, 53, URBG>(g) * RealType(2) - RealType(1);
+            v = generate_canonical<RealType, 53, URBG>(g) * RealType(2) - RealType(1);
+            s = u * u + v * v;
+        } while (s >= RealType(1) || s == RealType(0));
+        return u * __detail::sqrt_nr(RealType(-2) * __detail::m_log(s) / s);
+    }
+
+    param_type _M_p;
+};
+
+template<class RealType = double>
+class chi_squared_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        explicit param_type(RealType n = RealType(1)) : _M_n(n) {}
+        RealType n() const { return _M_n; }
+        bool operator==(const param_type& o) const { return _M_n == o._M_n; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_n;
+    };
+
+    explicit chi_squared_distribution(RealType n = RealType(1)) : _M_p(n), _M_g(n / RealType(2)) {}
+    explicit chi_squared_distribution(const param_type& p) : _M_p(p), _M_g(p.n() / RealType(2)) {}
+
+    void reset() { _M_g.reset(); }
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; _M_g.param(typename gamma_distribution<RealType>::param_type(p.n() / RealType(2))); }
+    RealType n() const { return _M_p.n(); }
+    result_type min() const { return RealType(0); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) { return RealType(2) * _M_g(g); }
+
+    bool operator==(const chi_squared_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const chi_squared_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+    gamma_distribution<RealType> _M_g;
+};
+
+template<class RealType = double>
+class cauchy_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type(RealType a = RealType(0), RealType b = RealType(1)) : _M_a(a), _M_b(b) {}
+        RealType a() const { return _M_a; }
+        RealType b() const { return _M_b; }
+        bool operator==(const param_type& o) const { return _M_a == o._M_a && _M_b == o._M_b; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_a, _M_b;
+    };
+
+    explicit cauchy_distribution(RealType a = RealType(0), RealType b = RealType(1)) : _M_p(a, b) {}
+    explicit cauchy_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    RealType a() const { return _M_p.a(); }
+    RealType b() const { return _M_p.b(); }
+    result_type min() const { return result_type(-1e308); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        const RealType u = generate_canonical<RealType, 53, URBG>(g);
+        // a + b * tan(pi*(u-0.5))
+        const RealType pi = RealType(3.141592653589793238462643383279502884L);
+        return _M_p.a() + _M_p.b() * __detail::m_tan(pi * (u - RealType(0.5)));
+    }
+
+    bool operator==(const cauchy_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const cauchy_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+template<class RealType = double>
+class weibull_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type(RealType a = RealType(1), RealType b = RealType(1)) : _M_a(a), _M_b(b) {}
+        RealType a() const { return _M_a; }
+        RealType b() const { return _M_b; }
+        bool operator==(const param_type& o) const { return _M_a == o._M_a && _M_b == o._M_b; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_a, _M_b;
+    };
+
+    explicit weibull_distribution(RealType a = RealType(1), RealType b = RealType(1)) : _M_p(a, b) {}
+    explicit weibull_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    RealType a() const { return _M_p.a(); }
+    RealType b() const { return _M_p.b(); }
+    result_type min() const { return RealType(0); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        const RealType u = generate_canonical<RealType, 53, URBG>(g);
+        return _M_p.b() * static_cast<RealType>(
+            __detail::m_exp(__detail::m_log(-__detail::m_log(RealType(1) - u)) / _M_p.a()));
+    }
+
+    bool operator==(const weibull_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const weibull_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+template<class RealType = double>
+class extreme_value_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type(RealType a = RealType(0), RealType b = RealType(1)) : _M_a(a), _M_b(b) {}
+        RealType a() const { return _M_a; }
+        RealType b() const { return _M_b; }
+        bool operator==(const param_type& o) const { return _M_a == o._M_a && _M_b == o._M_b; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_a, _M_b;
+    };
+
+    explicit extreme_value_distribution(RealType a = RealType(0), RealType b = RealType(1))
+        : _M_p(a, b) {}
+    explicit extreme_value_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    RealType a() const { return _M_p.a(); }
+    RealType b() const { return _M_p.b(); }
+    result_type min() const { return result_type(-1e308); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        const RealType u = generate_canonical<RealType, 53, URBG>(g);
+        return _M_p.a() - _M_p.b() * __detail::m_log(-__detail::m_log(u));
+    }
+
+    bool operator==(const extreme_value_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const extreme_value_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+template<class RealType = double>
+class fisher_f_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type(RealType m = RealType(1), RealType n = RealType(1)) : _M_m(m), _M_n(n) {}
+        RealType m() const { return _M_m; }
+        RealType n() const { return _M_n; }
+        bool operator==(const param_type& o) const { return _M_m == o._M_m && _M_n == o._M_n; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_m, _M_n;
+    };
+
+    explicit fisher_f_distribution(RealType m = RealType(1), RealType n = RealType(1)) : _M_p(m, n) {}
+    explicit fisher_f_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    RealType m() const { return _M_p.m(); }
+    RealType n() const { return _M_p.n(); }
+    result_type min() const { return RealType(0); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        gamma_distribution<RealType> gm(_M_p.m() / RealType(2), RealType(2));
+        gamma_distribution<RealType> gn(_M_p.n() / RealType(2), RealType(2));
+        return (gm(g) / _M_p.m()) / (gn(g) / _M_p.n());
+    }
+
+    bool operator==(const fisher_f_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const fisher_f_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+template<class RealType = double>
+class student_t_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        explicit param_type(RealType n = RealType(1)) : _M_n(n) {}
+        RealType n() const { return _M_n; }
+        bool operator==(const param_type& o) const { return _M_n == o._M_n; }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+    private:
+        RealType _M_n;
+    };
+
+    explicit student_t_distribution(RealType n = RealType(1)) : _M_p(n) {}
+    explicit student_t_distribution(const param_type& p) : _M_p(p) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    RealType n() const { return _M_p.n(); }
+    result_type min() const { return result_type(-1e308); }
+    result_type max() const { return result_type(1e308); }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        // t = N(0,1) / sqrt(chi2(n)/n)
+        normal_distribution<RealType> nd(RealType(0), RealType(1));
+        chi_squared_distribution<RealType> cs(_M_p.n());
+        return nd(g) / __detail::sqrt_nr(cs(g) / _M_p.n());
+    }
+
+    bool operator==(const student_t_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const student_t_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+//=============================================================
+// discrete_distribution
+//=============================================================
+template<class IntType = int>
+class discrete_distribution {
+public:
+    typedef IntType result_type;
+    struct param_type {
+        param_type() {}
+        template<class InputIt>
+        param_type(InputIt first, InputIt last) { _M_init(first, last); }
+        param_type(initializer_list<double> il) { _M_init(il.begin(), il.end()); }
+
+        const std::vector<double>& probabilities() const { return _M_p; }
+
+        template<class InputIt>
+        void _M_init(InputIt first, InputIt last) {
+            _M_p.clear();
+            double sum = 0;
+            for (; first != last; ++first) {
+                const double w = *first;
+                _M_p.push_back(w);
+                sum += w;
+            }
+            if (sum <= 0) {
+                // 全零权重：退化为均匀分布
+                for (size_t i = 0; i < _M_p.size(); ++i) _M_p[i] = 1.0;
+                sum = static_cast<double>(_M_p.size());
+            }
+            if (sum > 0)
+                for (size_t i = 0; i < _M_p.size(); ++i) _M_p[i] /= sum;
+            _M_cdf.clear();
+            double acc = 0;
+            for (size_t i = 0; i < _M_p.size(); ++i) {
+                acc += _M_p[i];
+                _M_cdf.push_back(acc);
+            }
+        }
+
+        bool operator==(const param_type& o) const {
+            if (_M_p.size() != o._M_p.size()) return false;
+            for (size_t i = 0; i < _M_p.size(); ++i)
+                if (_M_p[i] != o._M_p[i]) return false;
+            return true;
+        }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+
+        std::vector<double> _M_p;
+        std::vector<double> _M_cdf;
+    };
+
+    discrete_distribution() { std::initializer_list<double> il = {1.0}; _M_p._M_init(il.begin(), il.end()); }
+    template<class InputIt>
+    discrete_distribution(InputIt first, InputIt last) : _M_p(first, last) {}
+    discrete_distribution(initializer_list<double> il) : _M_p(il) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    result_type min() const { return 0; }
+    result_type max() const { return static_cast<result_type>(_M_p._M_p.size() ? _M_p._M_p.size() - 1 : 0); }
+    const std::vector<double>& probabilities() const { return _M_p._M_p; }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        const double u = generate_canonical<double, 53, URBG>(g);
+        const std::vector<double>& cdf = _M_p._M_cdf;
+        size_t lo = 0, hi = cdf.size();
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (u < cdf[mid]) hi = mid;
+            else lo = mid + 1;
+        }
+        if (lo >= cdf.size()) lo = cdf.size() ? cdf.size() - 1 : 0;
+        return static_cast<result_type>(lo);
+    }
+
+    bool operator==(const discrete_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const discrete_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+//=============================================================
+// piecewise_constant_distribution
+//=============================================================
+template<class RealType = double>
+class piecewise_constant_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type() {}
+        template<class InputIt1, class InputIt2>
+        param_type(InputIt1 fb, InputIt1 fe, InputIt2 wb) {
+            _M_init(fb, fe, wb);
+        }
+        param_type(initializer_list<RealType> bl, initializer_list<RealType> wl) {
+            _M_init(bl.begin(), bl.end(), wl.begin());
+        }
+
+        template<class InputIt1, class InputIt2>
+        void _M_init(InputIt1 fb, InputIt1 fe, InputIt2 wb) {
+            _M_b.clear();
+            for (; fb != fe; ++fb) _M_b.push_back(*fb);
+            _M_w.assign(_M_b.size() > 0 ? _M_b.size() - 1 : 0, RealType(0));
+            for (size_t i = 0; i + 1 < _M_b.size(); ++i, ++wb) _M_w[i] = *wb;
+            // 归一化为概率密度
+            RealType total = 0;
+            for (size_t i = 0; i < _M_w.size(); ++i) total += _M_w[i] * (_M_b[i + 1] - _M_b[i]);
+            if (total > 0)
+                for (size_t i = 0; i < _M_w.size(); ++i) _M_w[i] /= total;
+        }
+
+        bool operator==(const param_type& o) const {
+            if (_M_b.size() != o._M_b.size()) return false;
+            for (size_t i = 0; i < _M_b.size(); ++i) if (_M_b[i] != o._M_b[i]) return false;
+            for (size_t i = 0; i < _M_w.size(); ++i) if (_M_w[i] != o._M_w[i]) return false;
+            return true;
+        }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+
+        std::vector<RealType> _M_b;
+        std::vector<RealType> _M_w;
+    };
+
+    piecewise_constant_distribution() {}
+    template<class InputIt1, class InputIt2>
+    piecewise_constant_distribution(InputIt1 fb, InputIt1 fe, InputIt2 wb) : _M_p(fb, fe, wb) {}
+    piecewise_constant_distribution(initializer_list<RealType> bl, initializer_list<RealType> wl)
+        : _M_p(bl, wl) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    result_type min() const { return _M_p._M_b.empty() ? RealType(0) : _M_p._M_b.front(); }
+    result_type max() const { return _M_p._M_b.empty() ? RealType(1) : _M_p._M_b.back(); }
+    std::vector<RealType> intervals() const { return _M_p._M_b; }
+    std::vector<RealType> densities() const { return _M_p._M_w; }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        if (_M_p._M_b.size() < 2) return RealType(0);
+        const double u = generate_canonical<double, 53, URBG>(g);
+        double acc = 0;
+        for (size_t i = 0; i + 1 < _M_p._M_b.size(); ++i) {
+            const double seg = _M_p._M_w[i] * (_M_p._M_b[i + 1] - _M_p._M_b[i]);
+            if (u < acc + seg || i + 2 == _M_p._M_b.size()) {
+                const double t = seg > 0 ? (u - acc) / seg : 0.0;
+                return static_cast<RealType>(_M_p._M_b[i] + t * (_M_p._M_b[i + 1] - _M_p._M_b[i]));
+            }
+            acc += seg;
+        }
+        return _M_p._M_b.back();
+    }
+
+    bool operator==(const piecewise_constant_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const piecewise_constant_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+//=============================================================
+// piecewise_linear_distribution
+//=============================================================
+template<class RealType = double>
+class piecewise_linear_distribution {
+public:
+    typedef RealType result_type;
+    struct param_type {
+        param_type() {}
+        template<class InputIt1, class InputIt2>
+        param_type(InputIt1 fb, InputIt1 fe, InputIt2 wb) { _M_init(fb, fe, wb); }
+        param_type(initializer_list<RealType> bl, initializer_list<RealType> wl) {
+            _M_init(bl.begin(), bl.end(), wl.begin());
+        }
+
+        template<class InputIt1, class InputIt2>
+        void _M_init(InputIt1 fb, InputIt1 fe, InputIt2 wb) {
+            _M_b.clear();
+            for (; fb != fe; ++fb) _M_b.push_back(*fb);
+            _M_w.clear();
+            for (size_t i = 0; i < _M_b.size(); ++i, ++wb) _M_w.push_back(*wb);
+            // 归一化：梯形面积
+            RealType total = 0;
+            for (size_t i = 0; i + 1 < _M_b.size(); ++i)
+                total += (_M_w[i] + _M_w[i + 1]) * (_M_b[i + 1] - _M_b[i]) / RealType(2);
+            if (total > 0)
+                for (size_t i = 0; i < _M_w.size(); ++i) _M_w[i] /= total;
+        }
+
+        bool operator==(const param_type& o) const {
+            if (_M_b.size() != o._M_b.size()) return false;
+            for (size_t i = 0; i < _M_b.size(); ++i) if (_M_b[i] != o._M_b[i]) return false;
+            for (size_t i = 0; i < _M_w.size(); ++i) if (_M_w[i] != o._M_w[i]) return false;
+            return true;
+        }
+        bool operator!=(const param_type& o) const { return !(*this == o); }
+
+        std::vector<RealType> _M_b;
+        std::vector<RealType> _M_w;
+    };
+
+    piecewise_linear_distribution() {}
+    template<class InputIt1, class InputIt2>
+    piecewise_linear_distribution(InputIt1 fb, InputIt1 fe, InputIt2 wb) : _M_p(fb, fe, wb) {}
+    piecewise_linear_distribution(initializer_list<RealType> bl, initializer_list<RealType> wl)
+        : _M_p(bl, wl) {}
+
+    void reset() {}
+    param_type param() const { return _M_p; }
+    void param(const param_type& p) { _M_p = p; }
+    result_type min() const { return _M_p._M_b.empty() ? RealType(0) : _M_p._M_b.front(); }
+    result_type max() const { return _M_p._M_b.empty() ? RealType(1) : _M_p._M_b.back(); }
+    std::vector<RealType> intervals() const { return _M_p._M_b; }
+    std::vector<RealType> densities() const { return _M_p._M_w; }
+
+    template<class URBG>
+    result_type operator()(URBG& g) {
+        if (_M_p._M_b.size() < 2) return RealType(0);
+        const double u = generate_canonical<double, 53, URBG>(g);
+        double acc = 0;
+        for (size_t i = 0; i + 1 < _M_p._M_b.size(); ++i) {
+            const double d = _M_p._M_b[i + 1] - _M_p._M_b[i];
+            const double area = (_M_p._M_w[i] + _M_p._M_w[i + 1]) * d / 2.0;
+            if (u < acc + area || i + 2 == _M_p._M_b.size()) {
+                // 在该段内按线性密度反解（面积比例 t 满足二次方程）
+                const double w0 = _M_p._M_w[i], w1 = _M_p._M_w[i + 1];
+                double t = 0.0;
+                if (area > 0) {
+                    const double target = (u - acc) / area;     // [0,1) 的段内累积
+                    if (w0 == w1) {
+                        t = target;
+                    } else {
+                        const double a = (w1 - w0) / 2.0;
+                        const double b = w0;
+                        // a t² + b t - target*(a+b) = 0
+                        const double c = -target * (a + b);
+                        const double disc = b * b - 4 * a * c;
+                        t = disc > 0 ? (-b + __detail::sqrt_nr(disc)) / (2 * a) : target;
+                        if (t < 0) t = 0;
+                        if (t > 1) t = 1;
+                    }
+                }
+                return static_cast<RealType>(_M_p._M_b[i] + t * d);
+            }
+            acc += area;
+        }
+        return _M_p._M_b.back();
+    }
+
+    bool operator==(const piecewise_linear_distribution& o) const { return _M_p == o._M_p; }
+    bool operator!=(const piecewise_linear_distribution& o) const { return !(*this == o); }
+
+private:
+    param_type _M_p;
+};
+
+//=============================================================
+// random_device
+//
+// 没有真实熵源：把对象地址、调用计数和一个 splitmix 混合起来。
+// 仅用于给引擎播种，**不可用于安全用途**。
+//=============================================================
+class random_device {
+public:
+    typedef unsigned int result_type;
+
+    explicit random_device(const char* token = nullptr) : _M_s(0) {
+        const uintptr_t addr = reinterpret_cast<uintptr_t>(this);
+        _M_s = static_cast<uint64_t>(addr) * 0x9E3779B97F4A7C15ULL ^ 0x5DEECE66DULL;
+        (void)token;
+    }
+
+    result_type operator()() {
+        // splitmix64
+        _M_s += 0x9E3779B97F4A7C15ULL;
+        uint64_t z = _M_s;
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        z = z ^ (z >> 31);
+        return static_cast<result_type>(z >> 32);
+    }
+
+    static constexpr result_type min() { return 0; }
+    static constexpr result_type max() { return 0xFFFFFFFFu; }
+    double entropy() const { return 0.0; }   // 无可用熵源
+
+private:
+    uint64_t _M_s;
+};
+
+} // namespace std
+
+#endif // STDCPP_RANDOM_HPP

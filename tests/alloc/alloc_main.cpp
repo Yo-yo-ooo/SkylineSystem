@@ -1,4 +1,4 @@
-// tests/alloc/alloc_main.cpp — P4-86: 用户态分配器宿主混沌 + 多线程测试
+// tests/alloc/alloc_main.cpp — 用户态分配器宿主混沌 + 多线程测试
 // 桩: sys_mmap → 宿主 mmap, sys_munmap → munmap, sys_exit → exit。
 // 覆盖: 大小类全谱分配/释放、随机混沌、多线程并发 malloc/free、
 // QSBR 延迟回收路径 (强制 try_gc 通过分配压力触发)。
@@ -74,8 +74,8 @@ static void chaos(uint32_t seed) {
 }
 
 struct ThreadArg { uint32_t seed; uint32_t id; };
-/* P4-86 发现 (round 72/74 调查收敛, 审计卫生 round 16): 多线程相位在
-   宿主上挂起 —— round 74 strace 定位为 pthread_create 完成栈 mmap 后
+/* 发现: 多线程相位在
+   宿主上挂起 —— strace 定位为 pthread_create 完成栈 mmap 后
    无后续 syscall 即自旋在分配器内部 (glibc TCB 分配走替换后 malloc,
    新线程 TLS 未建立 → __thread tls_data 未初始化上下文)。真实内核
    无此问题 (线程 TLS 由内核建立)。MT 相位不纳入门禁; 若未来要宿主
@@ -86,8 +86,8 @@ int main() {
     chaos(1);
     chaos(0xDEADBEEF);
 
-    /* P4-86 发现 (round 72/74 调查收敛): 多线程相位在宿主上挂起。
-       round 74 strace 定位: pthread_create 完成栈 mmap/mprotect 后
+    /* 发现: 多线程相位在宿主上挂起。
+       strace 定位: pthread_create 完成栈 mmap/mprotect 后
        无任何后续 syscall 即挂死 —— 纯自旋在分配器内部 (glibc 创建
        线程时的 TCB 分配走替换后 malloc, 此时新线程的 TLS 尚未建立,
        分配器的 __thread tls_data 访问进入未初始化上下文 → 自旋)。

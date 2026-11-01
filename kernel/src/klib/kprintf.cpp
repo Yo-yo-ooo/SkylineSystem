@@ -862,7 +862,7 @@ static int32_t __ffunc _vsnprintf(out_fct_type out, char* buffer, const size_t m
         break;
 
       default :
-        /* Proven by round 93 fuzzing: when a format string ends in "%0"/
+        /* Proven by fuzzing: when a format string ends in "%0"/
            "%<flag>", spec parsing lands on the NUL -- the old code called
            out(0) then format++ stepping past the terminator, and the outer
            while (*format) read out of bounds (ASAN heap-buffer-overflow,

@@ -63,7 +63,7 @@
 #define PAGE_EXISTS(x) ((uint64_t)x & MM_READ)
 
 static inline bool is_user_address(uint64_t addr){
-    /* P1-19: 收紧到用户半区上界 (原 0xFFFF800000000000 放行非规范
+    /* 收紧到用户半区上界 (原 0xFFFF800000000000 放行非规范
        地址 0x800000000000..0xFFFF7FFFFFFFFFFF → iretq #GP → hcf,
        非特权 DoS)。注意宏 USER_SPACE_END_* 定义在本文件下方,
        此处用字面量。 */

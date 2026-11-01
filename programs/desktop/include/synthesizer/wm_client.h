@@ -76,7 +76,9 @@ void      wm_clients_sweep  (Compositor& comp, bool* dirty);
 /* Per-client frame ping: a client that renders continuously (DOOM) bumps
    OUT_SEQ in its protocol page; poll it every loop turn and mark the scene
    dirty so the compositor picks the new frame up immediately. */
-void      wm_clients_poll_output(bool* dirty);
+/* py0/py1: 变了内容的客户端所占的**行带并集** (供局部合成);
+   无变化时保持原值不变。 */
+void      wm_clients_poll_output(bool* dirty, int32_t* py0, int32_t* py1);
 void      wm_client_close   (Compositor& comp, WmClient* c);
 void      wm_client_minimize(Compositor& comp, WmClient* c);
 void      wm_client_restore (Compositor& comp, WmClient* c);

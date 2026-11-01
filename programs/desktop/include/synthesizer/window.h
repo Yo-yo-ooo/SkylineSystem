@@ -61,8 +61,20 @@ public:
     bool Init(FrameBuffer* screen);
     void SetBackground(const uint32_t* bg);
 
+    /* 永远要重画的屏幕行带 (任务栏): 壁纸缓冲被 wm_draw_taskbar 就地改写的
+       区域。其它行在"没有内容窗口覆盖"时可以被跳过 —— 见 ComposeRangeToBack。 */
+    void SetDynamicRows(int32_t y0, int32_t y1);
+
+    /* 扫描出锁: 光标线程与主线程(合成/注册表变更) 互斥。
+       只有"会写扫描出缓冲或遍历图层/窗口链表"的入口需要拿它。 */
+    void LockScan();
+    void UnlockScan();
+
     void StartWorkers();
     void Compose();
+    /* 只重绘 [y0,y1) 行带 (损伤区域合成)。窗口内容变化普遍只涉及
+       几百行, 整屏 1280x800 全量重绘要 10~19ms, 局部带只要 1~6ms。 */
+    void ComposeRows(int32_t y0, int32_t y1);
     void Shutdown();
 
     /* ---- layer/window registry ---- */
@@ -86,6 +98,10 @@ public:
     /* ---- cursor ---- */
     void SetCursor(int32_t x, int32_t y, bool visible);
     void CursorMoveTo(int32_t x, int32_t y);
+    /* 光标线程专用: 抢不到扫描出锁就立刻返回 false (丢掉这次采样),
+       绝不在原地自旋 —— 自旋占核会让持锁的主线程拿不到 CPU, 形成活锁
+       (DOOM 重负载时"鼠标卡死"的成因)。 */
+    bool CursorMoveToTry(int32_t x, int32_t y);
     /* Shape the pointer takes: arrow by default, resize glyphs while the
        pointer is over (or dragging) a window edge/corner band. */
     void SetCursorShape(uint32_t shape);
@@ -96,24 +112,29 @@ public:
 private:
     void LockList();
     void UnlockList();
+    /* 有界尝试取扫描出锁 (成功返回 true); LockScan 则是"自旋+让出"的阻塞版 */
+    bool TryLockScan(uint32_t budget);
+    /* 已持锁时的光标重绘实现 */
+    void CursorMoveLocked(int32_t x, int32_t y);
     void InsertLayerOrdered(CompLayer* layer);
     CompWinNode* FindNode(Window* w);
 
     void ComposeStripToBack(uint32_t id);
-    void ComposeRangeToBack(uint32_t ry0, uint32_t ry1, uint32_t* stage);
+    /*        allow_skip: 允许跳过"两帧都没有窗口、也没有光标"的静态背景行 ——
+       那些行在帧缓冲里本来就是壁纸, 重写一遍纯属浪费。
+       光标行带必须传 false: 光标擦除时 cur_visible_ 已置 0, 一旦被当成
+       "静态背景行"跳过, 旧箭头就留在屏上了。 */
+    void ComposeRangeToBack(uint32_t ry0, uint32_t ry1, uint32_t* stage,
+                            bool allow_skip);
+    /* 当前所有可见窗口覆盖的屏幕行带 (无窗口时 y0>=y1) */
+    void ComputeCoverSpan(uint32_t* y0, uint32_t* y1) const;
+    /* 只重组覆盖光标的那几行 (光标是图层, 移动 = 局部重绘) */
+    void ComposeCursorBand(int32_t y0, int32_t y1);
     void ComposeSingleThreaded();
-    void blitSceneAvoidCursor(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
-                              int32_t ox, int32_t oy, int32_t nx, int32_t ny);
-    void paintSquareFromBack(int32_t x, int32_t y);
-    void eraseCursor();
-    void blendCursorSquare(int32_t x, int32_t y);
-    void overlayCursorFinal(int32_t ox, int32_t oy, int32_t nx, int32_t ny);
-    void commitScene(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
-                     int32_t ox, int32_t oy, int32_t nx, int32_t ny,
-                      bool cursor_in_frame = false);
 
     FrameBuffer      screen_;
     const uint32_t*  background_;
+    uint32_t         bg_pitch_;       /* 背景缓冲每行像素数 (壁纸是紧凑排布) */
     uint32_t         ncpus_;
     uint32_t         launched_;
     int              shutdown_;
@@ -125,6 +146,7 @@ private:
     CompLayer*       layer_head_;
     CompLayer*       layer_tail_;
     unsigned char    list_lock_;
+    volatile int     scan_lock_;   /* 扫描出/图层链表互斥 (光标线程) */
     uint64_t         frame_seq_;
     uint32_t         started_cnt_;
     uint32_t         done_compose_;
@@ -137,17 +159,12 @@ private:
     uint8_t          dirty_;
     uint32_t         back_bytes_;
     uint32_t*        back_;           /* == 帧缓冲首地址 (直写, 不再单独分配) */
+    /* 静态背景行跳过 (见 ComposeRangeToBack): 上一帧被"内容窗口"覆盖的行带,
+       以及"必须整帧重画"的一次性标志 (初始化 / 换壁纸 / 降级)。 */
+    uint32_t         cov_y0_, cov_y1_;
+    int32_t          dyn_y0_, dyn_y1_;   /* 永远重画的行带 (任务栏) */
+    uint8_t          force_full_;
 
-    /* 光标下方的 16x16 干净像素快照。
-       去掉离屏 back_ 之后, 没有"无光标的场景副本"可以取, 于是改成经典做法:
-       画光标前先把那块像素存下来, 需要擦除时再贴回去。
-       快照只在"场景本帧没有被重绘"时有效; Compose 开始时先擦除光标并作废快照,
-       合成完再重新保存。 */
-    static const int COMP_CURSOR_SAVE_MAX = 32;   /* >= SKY_CURS (16) */
-    uint32_t         cursor_save_[COMP_CURSOR_SAVE_MAX * COMP_CURSOR_SAVE_MAX];
-    int32_t          cursor_save_x_, cursor_save_y_;
-    uint8_t          cursor_save_valid_;
-    uint8_t          cursor_save_len_;            /* 实际边长 (16) */
 };
 
 #endif /* SYNTHESIZER_WINDOW_H */

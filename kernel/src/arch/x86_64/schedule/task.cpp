@@ -81,7 +81,7 @@ static inline void wait_for_transfer(thread_t *t) {
                      (uint64_t)t->id);
             last_log = now;
         }
-        /* P1-22: 超时升级 —— 对端卡死时不再永转; 5 个周期后强制清除
+        /* 超时升级 —— 对端卡死时不再永转; 5 个周期后强制清除
            (本核继续推进; UAF 风险由调用方的回收语义兜底) */
         if (now - t0 > WAIT_THREAD_TIMEOUT_MS * 5) {
             kerrorln("Thread %lu stuck in TRANSFER for %lums, force-clearing",
@@ -104,10 +104,10 @@ static inline void wait_for_transfer(thread_t *t) {
 static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait) {
     /* 修复: 重试循环加超时 —— THREAD_ZOMBIE==5 (sched.h), 构造中的线程
        (memset 后 state==0) 不属于任何分支, 若对端恰在构造窗口会让
-       等待无限自旋, 故加墙钟超时兜底 (P3-83: 原注释 "ZOMBIE==0" 过时) */
+       等待无限自旋, 故加墙钟超时兜底 */
     uint64_t batch_start = PIT::MonotonicMS();
     uint64_t spins = 0;
-    /* 审计 #14 (round 4 修复): 原超时仅重置计时器无限重试 —— 对端
+    /* 原超时仅重置计时器无限重试 —— 对端
        永久卡死时本核永转。改有界: 3 个超时窗口后放弃 (target 的
        CPU 不配合 = 该线程的资源由其对端 CPU 的收割兜底, 本核不再
        永转), 记错误返回 */
@@ -358,7 +358,7 @@ namespace Schedule {
                 child = next_child;
             }
             p->children = nullptr;
-            /* round 91 (P1-23 收敛): FDMan 回收移入 PROC_LIST_LOCK 临界区
+            /* FDMan 回收移入 PROC_LIST_LOCK 临界区
                —— 与 ProcessAddThread 的锁内 exiting 重检配对, 闭合
                "spawn 检查通过 → FDMan 回收 → 线程挂链" 的窗口。
                fd_manager_destroy 的 rb 锁/close 均为无睡眠路径, 锁内安全 */
@@ -374,11 +374,9 @@ namespace Schedule {
                 p->pagemap = nullptr;
             }
 
-            /* B4 (round 17/21): 引用计数归零才释放结构体 —— 跨锁/跨上下文
+            /* 引用计数归零才释放结构体 —— 跨锁/跨上下文
                的持引用方 (children 遍历、kill 对端) 通过 proc_get/proc_put
-               配对; 此处递减进程表引用, 归零即最终释放。
-               round 19 隔离回退过; round 20 证明 Page fault 根因是 D7
-               (const 分派指针), 与本门控无关, 现恢复 */
+               配对; 此处递减进程表引用, 归零即最终释放。 */
             if (__atomic_sub_fetch(&p->refcount, 1, __ATOMIC_ACQ_REL) == 0) {
                 kfree(p);
             }
@@ -621,6 +619,19 @@ namespace Schedule {
 
     void Exit(int32_t code) {
         asm volatile("cli"); LAPIC::StopTimer();
+        /* 抢占计数在**线程死亡**时必须作废。
+           preempt_count 是每核计数器, 而异常入口是 "++ → 处理 → --" 配对;
+           一旦处理路径直接走向 Exit (用户态崩溃回收), 那份 ++ 就再也没人
+           归还。之后这个核每次 SCHED_VEC 都会因 "preempt_count > 1" 只重装
+           定时器、拒绝切换 —— 表现就是某个线程永久占满该核, 桌面/鼠标冻死。
+           线程既然要销毁, 它遗留在本核上的临界区计数一并清零。 */
+        {
+            cpu_t *ec = this_cpu();
+            if (likely(ec != nullptr) && ec->preempt_count != 0) {
+                ec->preempt_count = 0;
+                ec->preempt_leak_streak = 0;
+            }
+        }
         proc_t *curr_proc = Schedule::this_proc();
         /* 每一次进程退出都必须有日志 —— 否则"桌面怎么自己退了"只能靠猜。
            caller 用 __builtin_return_address(0) 指出是谁触发的:
@@ -639,8 +650,8 @@ namespace Schedule {
 
     /* ================= 进程与线程创建接口 ================= */
     namespace Internal {
-        /* round 91 (P1-23 收敛): 锁内重检 exiting —— 关闭"顶层检查 →
-           进程退出 → FDMan 回收 → 线程挂链"的 TOCTOU 窗口 (round 33/40
+        /* 锁内重检 exiting —— 关闭"顶层检查 →
+           进程退出 → FDMan 回收 → 线程挂链"的 TOCTOU 窗口 (
            的 UAF 根因的根治性收敛; 失败返回 false, 调用方清理 thread) */
         bool ProcessAddThread(proc_t *parent, thread_t *thread) {
             uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
@@ -667,7 +678,7 @@ namespace Schedule {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
-        proc->refcount = 1;                     /* B4 (round 16): 进程表引用 */
+        proc->refcount = 1;                     /* 进程表引用 */
         proc->id = atomic_add_fetch_8(&sched_pid, 1, ATOMIC_RELAXED);
         proc->pagemap = (user ? VMM::NewPM() : kernel_pagemap);
         if (user && !proc->pagemap) { kfree(proc); return nullptr; }
@@ -741,7 +752,7 @@ namespace Schedule {
         restore = VMM::SwitchPageMap(thread->pagemap);
         {
         SmapGuard stack_ug;   // below we write argv/envp into the live user stack
-        /* P1-21: 参数串总量上限 —— 无上限时 argv/envp 可写穿 32KB 用户栈 */
+        /* 参数串总量上限 —— 无上限时 argv/envp 可写穿 32KB 用户栈 */
         const int32_t ARG_STACK_LIMIT = 16 * 1024;
         for (int32_t i = 0; i < argc; i++) {
             int32_t size = strlen(kernel_argv[i]) + 1;
@@ -785,7 +796,7 @@ namespace Schedule {
 
     thread_t *NewKernelThreadEx(proc_t *parent, uint32_t cpu_num, int32_t priority, void *entry, uint32_t stack_pages) {
         if (stack_pages < 2 || stack_pages > 64) stack_pages = 4;
-        /* 防御纵深 (round 40 根因): 向退出中的 proc spawn 线程必须显式失败
+        /* 防御纵深: 向退出中的 proc spawn 线程必须显式失败
            —— 并发终结的 proc 结构 (FDMan 等) 可能已被回收, 曾致自旋锁 UAF */
         if (unlikely(!parent || __atomic_load_n(&parent->exiting, __ATOMIC_ACQUIRE) != 0))
             return nullptr;
@@ -799,7 +810,7 @@ namespace Schedule {
         thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
         thread->cpu_num = cpu_num; thread->parent = parent;
         thread->pagemap = parent->pagemap;
-        /* P0-8: 钳到 [0,15] (负值会越界读 sched_prio_to_weight[]) */
+        /* 钳到 [0,15] (负值会越界读 sched_prio_to_weight[]) */
         thread->priority = (priority < 0) ? 0 : (priority > 15 ? 15 : priority);
         thread->weight = sched_prio_to_weight[thread->priority];
         thread->state = THREAD_RUNNING;   // 修复: 提前 —— 不依赖后续路径补设
@@ -844,7 +855,7 @@ namespace Schedule {
         thread->timer_cpu = cpu_num;
         thread->id = atomic_add_fetch_8(&sched_tid, 1, ATOMIC_RELAXED);
         thread->cpu_num = cpu_num; thread->parent = parent; thread->pagemap = parent->pagemap;
-        /* P0-8: 钳到 [0,15] (负值会越界读 sched_prio_to_weight[]) */
+        /* 钳到 [0,15] (负值会越界读 sched_prio_to_weight[]) */
         thread->priority = (priority < 0) ? 0 : (priority > 15 ? 15 : priority);
         thread->weight = sched_prio_to_weight[thread->priority];
         thread->state = THREAD_RUNNING;   // 修复: 提前
@@ -960,7 +971,7 @@ namespace Schedule {
 
         kfree(buffer);
         if (!Schedule::Internal::ProcessAddThread(parent, thread)) {
-            /* round 91: 锁内重检失败 —— 进程已退出, 归还已分配资源 */
+            /* 锁内重检失败 —— 进程已退出, 归还已分配资源 */
             VMM::Free(kernel_pagemap, (void*)thread->fx_area);
             VMM::Free(kernel_pagemap, (void*)kernel_stack);
             kfree(thread);
@@ -983,7 +994,7 @@ namespace Schedule {
         thread->last_run_time = PIT::TimeSinceBootMS();
         /* 修复: state 必须在 ProcessAddThread 之前设置 ——
            构造窗口的 state==0 不属于任何分支, 挂链后再补设会让并发
-           SyncKillProcThreads 命中窗口 (P3-83: 原注释 "ZOMBIE==0"
+           SyncKillProcThreads 命中窗口 (原注释 "ZOMBIE==0"
            过时, 实际 THREAD_ZOMBIE==5) */
         thread->state = THREAD_RUNNING;
         cpu_t *parent_cpu = get_cpu(parent->cpu_num);
@@ -1009,7 +1020,7 @@ namespace Schedule {
         thread->tls_base = parent->tls_base; thread->tls_pages = parent->tls_pages;
         thread->timer_cpu = cpu->id;
         if (!Schedule::Internal::ProcessAddThread(proc, thread)) {
-            /* round 91: fork 自身的 proc 不可能 exiting (调用者即其线程),
+            /* fork 自身的 proc 不可能 exiting (调用者即其线程),
                但保持防御 —— 失败归还资源 */
             VMM::Free(kernel_pagemap, (void*)kernel_stack);
             kfree(thread);
@@ -1040,7 +1051,7 @@ namespace Schedule {
         proc_t *proc = (proc_t*)kmalloc(sizeof(proc_t));
         if (!proc) return nullptr;
         _memset(proc, 0, sizeof(proc_t));
-        proc->refcount = 1;                     /* B4 (round 16): 子进程表引用 */
+        proc->refcount = 1;                     /* 子进程表引用 */
         proc->id = atomic_add_fetch_8(&sched_pid,1,ATOMIC_RELAXED); proc->parent = parent;
         proc->IsTrusted = parent->IsTrusted;   // 修复: 原实现漏设, memset 后恒为 false
         proc->pagemap = VMM::Fork(parent->pagemap);
@@ -1049,13 +1060,13 @@ namespace Schedule {
         if (!proc->FDMan) { VMM::DestroyPM(proc->pagemap); kfree(proc); return nullptr; }
 
         uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
-        /* P0-6 路线图 #7 (round 90): 原整结构 memcpy = 浅拷贝 → 父子
+        /* 路线图 原整结构 memcpy = 浅拷贝 → 父子
            双释放; 曾改为深拷贝空表 (不自继承)。现实施 fd_manager_dup:
            快照式深拷贝 (filedesc 逐字节复制 + path 深拷贝), 子进程
            继承父的全部打开 FD, 关闭互不干扰。 */
         fd_manager_init(proc->FDMan);
         int32_t inherited = fd_manager_dup(proc->FDMan, parent->FDMan);
-        /* 审计 #16: dup 的 OOM 中止 → fork 整体回滚 (释放子 FDMan +
+        /* dup 的 OOM 中止 → fork 整体回滚 (释放子 FDMan +
            地址空间), 不再产出带空 filedesc 的半成品进程 */
         if (unlikely(inherited < 0)) {
             spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);

@@ -9,6 +9,9 @@
 #include <type_traits>
 #include <utility>
 #include <iterator>
+#include <stdexcept>
+#include "detail/config.h"
+#include "detail/throw.h"
 
 #define STDCPP_FN_CXX11 (__cplusplus >= 201103L)
 #define STDCPP_FN_CXX14 (__cplusplus >= 201402L)
@@ -301,6 +304,22 @@ void cref(const T&&) = delete;
 #if STDCPP_FN_CXX11
 template<class> class function;
 
+//-------------------------------------------------------------
+// bad_function_call：空 std::function 被调用时抛出
+//-------------------------------------------------------------
+class bad_function_call : public exception {
+public:
+    bad_function_call() noexcept {}
+    const char* what() const noexcept override { return "std::bad_function_call"; }
+};
+
+namespace __detail {
+[[noreturn]] inline void throw_bad_function_call() {
+    STDCPP_THROW(bad_function_call());
+    STDCPP_FAIL("stdcpp: bad_function_call");
+}
+} // namespace __detail
+
 template<class R, class... Args>
 class function<R(Args...)> {
     struct _base {
@@ -332,8 +351,11 @@ public:
 
     function& operator=(const function& other) {
         if (this != &other) {
+            // 先拷贝再释放：拷贝构造若抛 bad_alloc，旧对象必须保持可用
+            // （旧实现先 delete 后 copy，失败时留下悬垂指针 -> 二次释放）
+            _base* p = other._M_ptr ? other._M_ptr->_M_copy() : nullptr;
             delete _M_ptr;
-            _M_ptr = other._M_ptr ? other._M_ptr->_M_copy() : nullptr;
+            _M_ptr = p;
         }
         return *this;
     }
@@ -357,6 +379,9 @@ public:
     explicit operator bool() const noexcept { return _M_ptr != nullptr; }
 
     R operator()(Args... args) const {
+        // 空 function 调用在标准里抛 bad_function_call；无异常构建下
+        // 走 STDCPP_FAIL，避免空指针解引用。
+        if (!_M_ptr) __detail::throw_bad_function_call();
         return _M_ptr->_M_call(std::forward<Args>(args)...);
     }
 

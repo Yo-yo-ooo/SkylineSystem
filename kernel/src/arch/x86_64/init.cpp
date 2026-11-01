@@ -25,16 +25,11 @@
 #include <arch/x86_64/pit/pit.h>
 #include <drivers/net/e1000.h>
 /* 诊断门控: 1 = 启动时由专用内核线程在 cpu 1 后台跑 SchedBench。
-   进展 (round 23): init 等待是挂点根因 (bootstrap 上下文不能睡眠/忙等),
-   已改为不等待+网络延后; 报告已可完整打印 (污染环境下 step/osc 通过)。
-   剩余: 相位2 之后挂起 (疑 step 线程死亡持 stats 锁) —— 采集后置 0。 */
-/* 诊断门控: 1 = 启动时由专用内核线程在 cpu 1 后台跑 SchedBench。
-   进展 (round 24): 四相位全部跑通, 报告完整 (step t90=4ms ✓, osc 迟滞 ✓,
-   pollute/shortwin 未过 = 真内核与模型的真实差异, 见 scheduler.md);
-   init 等待挂点已解 (不等待 + wrapper 尾部起网络)。采集后置 0。 */
+   注意: init 处于 bootstrap 上下文, 不能睡眠/忙等, 因此启动后不等待,
+   网络初始化延后到 wrapper 尾部。 */
 #define SCHED_BENCH_AUTO 0
-#if SCHED_BENCH_AUTO   /* P5-92: 原为 #if 1 架空门控; 现与门控一致 */
-/* 调度器真实内核画像实验代码 (round 23 调试中): 相位探针定位挂点 */
+#if SCHED_BENCH_AUTO   
+/* 调度器真实内核画像实验代码: 相位探针定位挂点 */
 static volatile uint32_t g_bench_done = 0;
 static void bench_wrapper(void) {
     bool ok = SchedBench::Run(1);
@@ -216,7 +211,7 @@ void __init x86_64_init(void){
     InitFunc("KEYBOARD(x86)",keyboard_init());
     
 
-    /* P1-50: 根文件系统设备探测列表 (原硬编码 "sata0" —— 纯 NVMe
+    /* 根文件系统设备探测列表 (原硬编码 "sata0" —— 纯 NVMe
        机器直接 hcf)。依次尝试常见块设备名, 全部失败才停机。 */
     {
         static const char *kRootCandidates[] = {"sata0", "nvme0", "usb0", "sata1", nullptr};
@@ -269,8 +264,6 @@ void __init x86_64_init(void){
     proc_t *proc = Schedule::NewProcess(true);
 
     kinfoln("Creating desktop process...");
-    /* 审计卫生 (round 19): 原 VMM::Alloc(1000)+Free 为无消费者的
-       疑似调试遗留 (4MB 引导开销), 删除 */
     char *argv[] = {(char*)"Test Main Thread"};
     char *envp[] = {nullptr};
     thread_t *desktop = Schedule::NewThread(proc, 0, 0, 

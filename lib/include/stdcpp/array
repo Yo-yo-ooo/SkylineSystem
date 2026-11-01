@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <type_traits>
 #include <iterator>
+#include <utility>
 #include <stdexcept>
 
 #define STDCPP_ARR_CXX11 (__cplusplus >= 201103L)
@@ -39,8 +40,8 @@ struct array {
 
     reference operator[](size_type i) { return _M_elems[i]; }
     const_reference operator[](size_type i) const { return _M_elems[i]; }
-    reference at(size_type i) { if (i >= N) throw out_of_range("array::at"); return _M_elems[i]; }
-    const_reference at(size_type i) const { if (i >= N) throw out_of_range("array::at"); return _M_elems[i]; }
+    reference at(size_type i) { if (i >= N) __detail::throw_out_of_range("array::at"); return _M_elems[i]; }
+    const_reference at(size_type i) const { if (i >= N) __detail::throw_out_of_range("array::at"); return _M_elems[i]; }
     reference front() { return _M_elems[0]; }
     const_reference front() const { return _M_elems[0]; }
     reference back() { return _M_elems[N - 1]; }
@@ -76,8 +77,20 @@ template<class T, size_t N>
 bool operator!=(const array<T, N>& a, const array<T, N>& b) { return !(a == b); }
 template<class T, size_t N>
 bool operator<(const array<T, N>& a, const array<T, N>& b) {
-    return lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
+    // 不依赖 <algorithm>：<array> 应保持轻量，且避免 array<->algorithm
+    // 的包含顺序问题（algorithm 会在实例化点找不到 lexicographical_compare）
+    for (size_t i = 0; i < N; ++i) {
+        if (a[i] < b[i]) return true;
+        if (b[i] < a[i]) return false;
+    }
+    return false;
 }
+template<class T, size_t N>
+bool operator>(const array<T, N>& a, const array<T, N>& b) { return b < a; }
+template<class T, size_t N>
+bool operator<=(const array<T, N>& a, const array<T, N>& b) { return !(b < a); }
+template<class T, size_t N>
+bool operator>=(const array<T, N>& a, const array<T, N>& b) { return !(a < b); }
 
 template<class T, size_t N>
 void swap(array<T, N>& a, array<T, N>& b) { a.swap(b); }

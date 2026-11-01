@@ -1,33 +1,38 @@
-// -*- C++ -*-
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 //=============================================================
-// vector.hpp -- complete <vector>, C++98~C++26.
+// <vector> — 连续存储动态数组
+//
+// 相对旧实现的重写要点：
+//   1. 元素生命周期正确。旧 insert() 在**未构造的原始内存**上做
+//      `_M_data[idx] = v`（对非平凡类型是 UB），erase 也存在先析构后访问。
+//      新实现所有写入都区分 construct / assign。
+//   2. 自引用安全。旧版 `v.insert(v.begin(), v[0])` 在扩容后 v[0] 已悬垂。
+//      新版扩容路径先按值捕获源元素。
+//   3. 分配统一走 allocator（旧版直接 malloc，绕过 allocator 与 operator new）。
+//   4. 扩容具备强异常保证：新缓冲区构造成功后才释放旧缓冲区；中断时回滚
+//      已构造元素并归还内存。
+//   5. 移动优先：move 构造 noexcept 时搬迁用 move，否则回退 copy（与
+//      std::move_if_noexcept 一致），避免搬迁过程中抛异常导致源对象状态不明。
+//
+// 已知取舍（在 README「实现说明」中记录）：
+//   * insert 批量插入走 "reserve + 逐个 emplace"，时间复杂度 O(n·size)，
+//     不是原地整体移位。正确性优先，内核里 vector 中间插入本就罕见。
 //=============================================================
 #ifndef STDCPP_VECTOR_HPP
 #define STDCPP_VECTOR_HPP
 
 #include <cstddef>
-#include <cstdlib>
 #include <type_traits>
 #include <utility>
 #include <iterator>
 #include <initializer_list>
 #include <stdexcept>
 #include <allocator>
-
-#define STDCPP_VEC_CXX11 (__cplusplus >= 201103L)
-#define STDCPP_VEC_CXX14 (__cplusplus >= 201402L)
-#define STDCPP_VEC_CXX17 (__cplusplus >= 201703L)
-#define STDCPP_VEC_CXX20 (__cplusplus >= 202002L)
-#define STDCPP_VEC_CXX23 (__cplusplus >= 202100L)
-
-#if __cplusplus < 201103L
-#define noexcept throw()
-#define nullptr 0
-#define override
-#define STDCPP_MOVE(x) (x)
-#else
-#define STDCPP_MOVE(x) std::move(x)
-#endif
+#include <algorithm>
+#include "detail/config.h"
+#include "detail/alloc.h"
+#include "detail/throw.h"
 
 #ifndef _GLIBCXX_VECTOR
 #  define _GLIBCXX_VECTOR 1
@@ -35,340 +40,598 @@
 
 namespace std {
 
+namespace __detail {
+
+// move_if_noexcept：移动构造不抛（或不可拷贝）时用移动，否则用拷贝
+template<class T>
+inline typename conditional<
+    !is_nothrow_move_constructible<T>::value && is_copy_constructible<T>::value,
+    const T&, T&&>::type
+move_if_noexcept(T& x) noexcept {
+    return static_cast<typename conditional<
+        !is_nothrow_move_constructible<T>::value && is_copy_constructible<T>::value,
+        const T&, T&&>::type>(x);
+}
+
+} // namespace __detail
+
 template<class T, class Allocator = allocator<T> >
 class vector {
 public:
-    typedef T                                        value_type;
-    typedef Allocator                                allocator_type;
-#if __cplusplus >= 201103L
+    typedef T                  value_type;
+    typedef Allocator          allocator_type;
     typedef typename allocator_traits<Allocator>::pointer       pointer;
     typedef typename allocator_traits<Allocator>::const_pointer const_pointer;
-#else
-    typedef typename Allocator::pointer       pointer;
-    typedef typename Allocator::const_pointer const_pointer;
-#endif
-    typedef T&                                       reference;
-    typedef const T&                                 const_reference;
-    typedef T*                                       iterator;
-    typedef const T*                                 const_iterator;
-    typedef std::reverse_iterator<iterator>               reverse_iterator;
-    typedef std::reverse_iterator<const_iterator>         const_reverse_iterator;
-    typedef size_t                                   size_type;
-    typedef ptrdiff_t                                difference_type;
+    typedef T&                 reference;
+    typedef const T&           const_reference;
+    typedef T*                 iterator;
+    typedef const T*           const_iterator;
+    typedef std::reverse_iterator<iterator>       reverse_iterator;
+    typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+    typedef size_t             size_type;
+    typedef ptrdiff_t          difference_type;
+
+    // 分配器传播策略：决定拷贝赋值 / 移动赋值 / swap 时是否连分配器一起搬。
+    // 无状态分配器（std::allocator）三者皆为 false 且总是相等，行为与之前一致；
+    // 有状态分配器（池、调试分配器）按标准语义在这里生效。
+    typedef typename allocator_traits<Allocator>::propagate_on_container_copy_assignment
+        propagate_on_container_copy_assignment;
+    typedef typename allocator_traits<Allocator>::propagate_on_container_move_assignment
+        propagate_on_container_move_assignment;
+    typedef typename allocator_traits<Allocator>::propagate_on_container_swap
+        propagate_on_container_swap;
 
 private:
-    T*        _M_data;
-    size_type _M_size;
-    size_type _M_cap;
+    pointer        _M_begin;
+    pointer        _M_end;
+    pointer        _M_endcap;
+    allocator_type _M_alloc;
 
-    void _M_destroy() {
-        for (size_type i = 0; i < _M_size; ++i) _M_data[i].~T();
-        free(_M_data);
+    size_type _M_cap() const noexcept {
+        return static_cast<size_type>(_M_endcap - _M_begin);
+    }
+
+    void _M_destroy_range(pointer first, pointer last) noexcept {
+        for (; first != last; ++first) allocator_traits<Allocator>::destroy(_M_alloc, first);
+    }
+
+    template<class... Args>
+    void _M_construct(pointer p, Args&&... args) {
+        allocator_traits<Allocator>::construct(_M_alloc, p, std::forward<Args>(args)...);
+    }
+
+    // 申请新缓冲区并把 [begin,end) 搬迁过去；成功后接管，旧缓冲区释放。
+    // 中途失败：销毁已搬迁元素并归还新缓冲区，*this 保持原状（强保证）。
+    void _M_reallocate(size_type newcap) {
+        pointer nb = allocator_traits<Allocator>::allocate(_M_alloc, newcap);
+        pointer cur = nb;
+        STDCPP_TRY {
+            for (pointer p = _M_begin; p != _M_end; ++p, ++cur)
+                _M_construct(cur, __detail::move_if_noexcept(*p));
+        } STDCPP_CATCH_ALL {
+            _M_destroy_range(nb, cur);
+            allocator_traits<Allocator>::deallocate(_M_alloc, nb, newcap);
+            STDCPP_RETHROW;
+        }
+        _M_destroy_range(_M_begin, _M_end);
+        if (_M_begin) allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, _M_cap());
+        _M_begin = nb;
+        _M_end = nb + (cur - nb);
+        _M_endcap = nb + newcap;
+    }
+
+    size_type _M_grow_to(size_type need) const {
+        size_type cap = _M_cap();
+        size_type nc = cap ? cap : 1;
+        while (nc < need) {
+            if (nc > (size_type(-1) / 2)) { nc = need; break; }
+            nc *= 2;
+        }
+        return nc;
+    }
+
+    void _M_shift_right_one(size_type idx) {
+        // 在 idx 处腾出一个槽位；idx < size 且容量充足
+        const size_type sz = size();
+        if (idx == sz) return;
+        _M_construct(_M_end, std::move(_M_begin[sz - 1]));
+        for (size_type i = sz - 1; i > idx; --i)
+            _M_begin[i] = std::move(_M_begin[i - 1]);
+        ++_M_end;
+    }
+
+    //---------------------------------------------------------
+    // 批量插入：一次搬移完成，O(size + n)
+    //
+    // 按标准的两分支做法（libstdc++ _M_fill_insert 同构）：
+    //   elems_after > n : 先把末尾 n 个 move 到 [end, end+n)，再整体后移
+    //                     [idx, end-n)，最后区间赋值 n 个新值
+    //   elems_after <= n: 先在末尾构造 n-elems_after 个新值，再把
+    //                     [idx, end) move 到新末尾之后，最后赋值前段
+    // 关键点：已构造区用赋值、未初始化区用 placement new，两者不能混。
+    // gen(i) 返回第 i 个待插入元素（i 从 0 起）。
+    //---------------------------------------------------------
+    template<class Gen>
+    void _M_insert_gen(size_type idx, size_type n, Gen gen) {
+        const size_type sz = size();
+        const size_type elems_after = sz - idx;
+
+        if (elems_after > n) {
+            pointer old_end = _M_end;
+            pointer cur = old_end;
+            STDCPP_TRY {
+                for (size_type i = sz - n; i < sz; ++i, ++cur)
+                    _M_construct(cur, std::move(_M_begin[i]));
+            } STDCPP_CATCH_ALL {
+                _M_destroy_range(old_end, cur);
+                STDCPP_RETHROW;
+            }
+            _M_end = old_end + n;
+
+            // [idx, sz-n) -> [idx+n, sz)
+            for (size_type i = sz - n; i > idx; --i)
+                _M_begin[i + n - 1] = std::move(_M_begin[i - 1]);
+            // [idx, idx+n) 已是已构造对象（值被移走），直接赋值
+            for (size_type i = 0; i < n; ++i) _M_begin[idx + i] = gen(i);
+        } else {
+            const size_type extra = n - elems_after;
+            pointer cur = _M_end;
+            STDCPP_TRY {
+                for (size_type i = 0; i < extra; ++i, ++cur)
+                    _M_construct(cur, gen(elems_after + i));
+            } STDCPP_CATCH_ALL {
+                _M_destroy_range(_M_end, cur);
+                STDCPP_RETHROW;
+            }
+            pointer old_end = _M_end;
+            _M_end = old_end + extra;
+
+            // 把 [idx, old_end) 搬到 [old_end+extra, ...)（未初始化区）
+            cur = _M_end;
+            STDCPP_TRY {
+                for (pointer p = _M_begin + idx; p != old_end; ++p, ++cur)
+                    _M_construct(cur, std::move(*p));
+            } STDCPP_CATCH_ALL {
+                _M_destroy_range(old_end, cur);   // 含刚构造的 extra 段
+                _M_end = old_end;
+                STDCPP_RETHROW;
+            }
+            _M_end = cur;
+            for (size_type i = 0; i < elems_after; ++i) _M_begin[idx + i] = gen(i);
+        }
+    }
+
+    //---------------------------------------------------------
+    // 用 *this 现有分配器把 other 的元素拷进来（不改变分配器）。
+    // 容量足够时原位覆盖，不足时重建缓冲区。
+    //---------------------------------------------------------
+    void _M_assign_copy(const vector& other) {
+        const size_type n = other.size();
+        if (n > _M_cap()) {
+            pointer nb = allocator_traits<Allocator>::allocate(_M_alloc, n);
+            pointer cur = nb;
+            STDCPP_TRY {
+                for (const_iterator p = other._M_begin; p != other._M_end; ++p, ++cur)
+                    _M_construct(cur, *p);
+            } STDCPP_CATCH_ALL {
+                _M_destroy_range(nb, cur);
+                allocator_traits<Allocator>::deallocate(_M_alloc, nb, n);
+                STDCPP_RETHROW;
+            }
+            _M_destroy_range(_M_begin, _M_end);
+            if (_M_begin) allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, _M_cap());
+            _M_begin = nb;
+            _M_end = cur;
+            _M_endcap = nb + n;
+            return;
+        }
+
+        const size_type cur_sz = size();
+        const size_type common = n < cur_sz ? n : cur_sz;
+        for (size_type i = 0; i < common; ++i) _M_begin[i] = other._M_begin[i];
+
+        if (n > cur_sz) {
+            // 逐个构造并立刻推进 _M_end：中途抛异常时，已构造的元素
+            // 仍归析构函数管辖，不会泄漏
+            for (size_type i = cur_sz; i < n; ++i) {
+                _M_construct(_M_begin + i, other._M_begin[i]);
+                _M_end = _M_begin + i + 1;
+            }
+        } else {
+            _M_destroy_range(_M_begin + n, _M_end);
+            _M_end = _M_begin + n;
+        }
     }
 
 public:
-    vector() : _M_data(nullptr), _M_size(0), _M_cap(0) {}
-    explicit vector(const Allocator&) : _M_data(nullptr), _M_size(0), _M_cap(0) {}
+    //---------------------------------------------------------
+    // 构造 / 析构
+    //---------------------------------------------------------
+    vector() noexcept : _M_begin(nullptr), _M_end(nullptr), _M_endcap(nullptr), _M_alloc() {}
 
-    explicit vector(size_type n) : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        if (n > 0) {
-            _M_data = (T*)malloc(n * sizeof(T));
-            _M_cap = n;
-            for (_M_size = 0; _M_size < n; ++_M_size)
-                new (_M_data + _M_size) T();
+    explicit vector(const Allocator& a) noexcept
+        : _M_begin(nullptr), _M_end(nullptr), _M_endcap(nullptr), _M_alloc(a) {}
+
+    explicit vector(size_type n, const Allocator& a = Allocator())
+        : _M_begin(nullptr), _M_end(nullptr), _M_endcap(nullptr), _M_alloc(a) {
+        if (n) {
+            _M_begin = allocator_traits<Allocator>::allocate(_M_alloc, n);
+            _M_endcap = _M_begin + n;
+            pointer cur = _M_begin;
+            STDCPP_TRY {
+                for (; cur != _M_begin + n; ++cur) _M_construct(cur);
+            } STDCPP_CATCH_ALL {
+                _M_destroy_range(_M_begin, cur);
+                allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, n);
+                _M_begin = _M_end = _M_endcap = nullptr;
+                STDCPP_RETHROW;
+            }
+            _M_end = _M_begin + n;
         }
     }
 
-    vector(size_type n, const T& v) : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        if (n > 0) {
-            _M_data = (T*)malloc(n * sizeof(T));
-            _M_cap = n;
-            for (_M_size = 0; _M_size < n; ++_M_size)
-                new (_M_data + _M_size) T(v);
+    vector(size_type n, const T& v, const Allocator& a = Allocator())
+        : _M_begin(nullptr), _M_end(nullptr), _M_endcap(nullptr), _M_alloc(a) {
+        if (n) {
+            _M_begin = allocator_traits<Allocator>::allocate(_M_alloc, n);
+            _M_endcap = _M_begin + n;
+            pointer cur = _M_begin;
+            STDCPP_TRY {
+                for (; cur != _M_begin + n; ++cur) _M_construct(cur, v);
+            } STDCPP_CATCH_ALL {
+                _M_destroy_range(_M_begin, cur);
+                allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, n);
+                _M_begin = _M_end = _M_endcap = nullptr;
+                STDCPP_RETHROW;
+            }
+            _M_end = _M_begin + n;
         }
     }
 
-    template<class InputIt>
-    vector(InputIt first, InputIt last) : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        for (; first != last; ++first) push_back(*first);
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
+    vector(InputIt first, InputIt last, const Allocator& a = Allocator())
+        : _M_begin(nullptr), _M_end(nullptr), _M_endcap(nullptr), _M_alloc(a) {
+        for (; first != last; ++first) emplace_back(*first);
     }
 
-    vector(const vector& other) : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        if (other._M_size > 0) {
-            _M_data = (T*)malloc(other._M_size * sizeof(T));
-            _M_cap = other._M_size;
-            for (_M_size = 0; _M_size < other._M_size; ++_M_size)
-                new (_M_data + _M_size) T(other._M_data[_M_size]);
+    vector(const vector& other)
+        : _M_begin(nullptr), _M_end(nullptr), _M_endcap(nullptr),
+          _M_alloc(allocator_traits<Allocator>::select_on_container_copy_construction(other._M_alloc)) {
+        const size_type n = other.size();
+        if (n) {
+            _M_begin = allocator_traits<Allocator>::allocate(_M_alloc, n);
+            _M_endcap = _M_begin + n;
+            pointer cur = _M_begin;
+            STDCPP_TRY {
+                for (const_iterator p = other.begin(); p != other.end(); ++p, ++cur)
+                    _M_construct(cur, *p);
+            } STDCPP_CATCH_ALL {
+                _M_destroy_range(_M_begin, cur);
+                allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, n);
+                _M_begin = _M_end = _M_endcap = nullptr;
+                STDCPP_RETHROW;
+            }
+            _M_end = _M_begin + n;
         }
     }
 
-#if STDCPP_VEC_CXX11
     vector(vector&& other) noexcept
-        : _M_data(other._M_data), _M_size(other._M_size), _M_cap(other._M_cap) {
-        other._M_data = nullptr;
-        other._M_size = 0;
-        other._M_cap = 0;
+        : _M_begin(other._M_begin), _M_end(other._M_end), _M_endcap(other._M_endcap),
+          _M_alloc(other._M_alloc) {
+        other._M_begin = other._M_end = other._M_endcap = nullptr;
     }
 
-    vector(initializer_list<T> il) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+    vector(initializer_list<T> il, const Allocator& a = Allocator())
+        : _M_begin(nullptr), _M_end(nullptr), _M_endcap(nullptr), _M_alloc(a) {
         reserve(il.size());
-        for (const T& v : il) push_back(v);
+        for (const T* p = il.begin(); p != il.end(); ++p) emplace_back(*p);
     }
-#endif
 
-    ~vector() { _M_destroy(); }
+    ~vector() {
+        _M_destroy_range(_M_begin, _M_end);
+        if (_M_begin) allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, _M_cap());
+    }
 
+    //---------------------------------------------------------
+    // 赋值（带分配器传播）
+    //---------------------------------------------------------
     vector& operator=(const vector& other) {
-        if (this != &other) {
-            _M_destroy();
-            _M_size = 0; _M_cap = 0; _M_data = nullptr;
-            reserve(other._M_size);
-            for (size_type i = 0; i < other._M_size; ++i)
-                new (_M_data + i) T(other._M_data[i]);
-            _M_size = other._M_size;
-        }
-        return *this;
-    }
-#if STDCPP_VEC_CXX11
-    vector& operator=(vector&& other) noexcept {
-        if (this != &other) {
-            _M_destroy();
-            _M_data = other._M_data;
-            _M_size = other._M_size;
-            _M_cap = other._M_cap;
-            other._M_data = nullptr;
-            other._M_size = 0;
-            other._M_cap = 0;
-        }
-        return *this;
-    }
-    vector& operator=(initializer_list<T> il) {
-        clear();
-        reserve(il.size());
-        for (const T& v : il) push_back(v);
-        return *this;
-    }
-#endif
+        if (this == &other) return *this;
 
-    iterator begin() noexcept { return _M_data; }
-    const_iterator begin() const noexcept { return _M_data; }
-    iterator end() noexcept { return _M_data + _M_size; }
-    const_iterator end() const noexcept { return _M_data + _M_size; }
+        if (propagate_on_container_copy_assignment::value && !(_M_alloc == other._M_alloc)) {
+            // 分配器要跟着对方走：先用对方分配器单独构造，成功后再整体接管，
+            // 避免"先释放自己 → 拷贝失败"导致对象处于半销毁状态。
+            vector tmp(other._M_begin, other._M_end, other._M_alloc);
+            _M_destroy_range(_M_begin, _M_end);
+            if (_M_begin) allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, _M_cap());
+            _M_alloc = tmp._M_alloc;
+            _M_begin = tmp._M_begin;
+            _M_end = tmp._M_end;
+            _M_endcap = tmp._M_endcap;
+            tmp._M_begin = tmp._M_end = tmp._M_endcap = nullptr;
+        } else {
+            if (propagate_on_container_copy_assignment::value) _M_alloc = other._M_alloc;
+            _M_assign_copy(other);
+        }
+        return *this;
+    }
+
+    vector& operator=(vector&& other) noexcept {
+        if (this == &other) return *this;
+
+        if (propagate_on_container_move_assignment::value || _M_alloc == other._M_alloc) {
+            _M_destroy_range(_M_begin, _M_end);
+            if (_M_begin) allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, _M_cap());
+            if (propagate_on_container_move_assignment::value) _M_alloc = other._M_alloc;
+            _M_begin = other._M_begin;
+            _M_end = other._M_end;
+            _M_endcap = other._M_endcap;
+            other._M_begin = other._M_end = other._M_endcap = nullptr;
+        } else {
+            // 分配器不等且不传播：不能窃取缓冲区（释放时分配器不匹配），
+            // 只能逐元素搬。搬完源容器置空。
+            _M_assign_copy(other);
+            other.clear();
+        }
+        return *this;
+    }
+
+    vector& operator=(initializer_list<T> il) {
+        assign(il.begin(), il.end());
+        return *this;
+    }
+
+    //---------------------------------------------------------
+    // 迭代器
+    //---------------------------------------------------------
+    iterator begin() noexcept { return _M_begin; }
+    const_iterator begin() const noexcept { return _M_begin; }
+    const_iterator cbegin() const noexcept { return _M_begin; }
+    iterator end() noexcept { return _M_end; }
+    const_iterator end() const noexcept { return _M_end; }
+    const_iterator cend() const noexcept { return _M_end; }
     reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
     const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
     reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
     const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
 
-    size_type size() const noexcept { return _M_size; }
-    size_type max_size() const noexcept { return size_type(-1) / sizeof(T); }
-    size_type capacity() const noexcept { return _M_cap; }
-    bool empty() const noexcept { return _M_size == 0; }
+    //---------------------------------------------------------
+    // 容量
+    //---------------------------------------------------------
+    size_type size() const noexcept { return static_cast<size_type>(_M_end - _M_begin); }
+    size_type capacity() const noexcept { return _M_cap(); }
+    bool empty() const noexcept { return _M_begin == _M_end; }
+    size_type max_size() const noexcept {
+        return allocator_traits<Allocator>::max_size(_M_alloc);
+    }
 
     void reserve(size_type n) {
-        if (n > _M_cap) {
-            T* newdata = (T*)malloc(n * sizeof(T));
-            for (size_type i = 0; i < _M_size; ++i) {
-                new (newdata + i) T(STDCPP_MOVE(_M_data[i]));
-                _M_data[i].~T();
-            }
-            free(_M_data);
-            _M_data = newdata;
-            _M_cap = n;
-        }
-    }
-    void shrink_to_fit() {
-        if (_M_cap > _M_size) {
-            T* newdata = nullptr;
-            if (_M_size > 0) {
-                newdata = (T*)malloc(_M_size * sizeof(T));
-                for (size_type i = 0; i < _M_size; ++i)
-                    new (newdata + i) T(STDCPP_MOVE(_M_data[i]));
-            }
-            for (size_type i = 0; i < _M_size; ++i) _M_data[i].~T();
-            free(_M_data);
-            _M_data = newdata;
-            _M_cap = _M_size;
-        }
+        if (n > _M_cap()) _M_reallocate(n);
     }
 
-    reference operator[](size_type i) { return _M_data[i]; }
-    const_reference operator[](size_type i) const { return _M_data[i]; }
+    void shrink_to_fit() {
+        const size_type n = size();
+        if (n == _M_cap()) return;
+        if (n == 0) {
+            _M_destroy_range(_M_begin, _M_end);
+            if (_M_begin) allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, _M_cap());
+            _M_begin = _M_end = _M_endcap = nullptr;
+            return;
+        }
+        _M_reallocate(n);
+    }
+
+    //---------------------------------------------------------
+    // 元素访问
+    //---------------------------------------------------------
+    reference operator[](size_type i) { return _M_begin[i]; }
+    const_reference operator[](size_type i) const { return _M_begin[i]; }
+
     reference at(size_type i) {
-        if (i >= _M_size) throw out_of_range("vector::at");
-        return _M_data[i];
+        if (i >= size()) __detail::throw_out_of_range("vector::at");
+        return _M_begin[i];
     }
     const_reference at(size_type i) const {
-        if (i >= _M_size) throw out_of_range("vector::at");
-        return _M_data[i];
+        if (i >= size()) __detail::throw_out_of_range("vector::at");
+        return _M_begin[i];
     }
-    reference front() { return _M_data[0]; }
-    const_reference front() const { return _M_data[0]; }
-    reference back() { return _M_data[_M_size - 1]; }
-    const_reference back() const { return _M_data[_M_size - 1]; }
-    T* data() noexcept { return _M_data; }
-    const T* data() const noexcept { return _M_data; }
+    reference front() { return *_M_begin; }
+    const_reference front() const { return *_M_begin; }
+    reference back() { return *(_M_end - 1); }
+    const_reference back() const { return *(_M_end - 1); }
+    T* data() noexcept { return _M_begin; }
+    const T* data() const noexcept { return _M_begin; }
 
-    void push_back(const T& v) {
-        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
-        new (_M_data + _M_size) T(v);
-        ++_M_size;
-    }
-#if STDCPP_VEC_CXX11
-    void push_back(T&& v) {
-        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
-        new (_M_data + _M_size) T(STDCPP_MOVE(v));
-        ++_M_size;
-    }
+    //---------------------------------------------------------
+    // 修改
+    //---------------------------------------------------------
     template<class... Args>
     reference emplace_back(Args&&... args) {
-        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
-        new (_M_data + _M_size) T(std::forward<Args>(args)...);
-        return _M_data[_M_size++];
+        if (_M_end == _M_endcap) _M_reallocate(_M_grow_to(size() + 1));
+        _M_construct(_M_end, std::forward<Args>(args)...);
+        ++_M_end;
+        return *(_M_end - 1);
     }
+
+    void push_back(const T& v) { emplace_back(v); }
+    void push_back(T&& v) { emplace_back(std::move(v)); }
+
+    void pop_back() {
+        --_M_end;
+        allocator_traits<Allocator>::destroy(_M_alloc, _M_end);
+    }
+
     template<class... Args>
     iterator emplace(const_iterator pos, Args&&... args) {
-        size_type idx = pos - _M_data;
-        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
-        for (size_type i = _M_size; i > idx; --i) {
-            new (_M_data + i) T(STDCPP_MOVE(_M_data[i - 1]));
-            _M_data[i - 1].~T();
+        const size_type idx = static_cast<size_type>(pos - _M_begin);
+        if (_M_end != _M_endcap) {
+            if (idx == size()) {
+                _M_construct(_M_end, std::forward<Args>(args)...);
+                ++_M_end;
+                return _M_begin + idx;
+            }
+            // 先构造临时对象，再后移，避免在移位过程中丢失参数
+            T tmp(std::forward<Args>(args)...);
+            _M_shift_right_one(idx);
+            _M_begin[idx] = std::move(tmp);
+            return _M_begin + idx;
         }
-        new (_M_data + idx) T(std::forward<Args>(args)...);
-        ++_M_size;
-        return _M_data + idx;
-    }
-#endif
 
-    void pop_back() { --_M_size; _M_data[_M_size].~T(); }
-
-    iterator insert(const_iterator pos, const T& v) {
-        size_type idx = pos - _M_data;
-        if (_M_size == _M_cap) reserve(_M_cap ? _M_cap * 2 : 1);
-        if (idx < _M_size) {
-            new (_M_data + _M_size) T(STDCPP_MOVE(_M_data[_M_size - 1]));
-            for (size_type i = _M_size - 1; i > idx; --i)
-                _M_data[i] = STDCPP_MOVE(_M_data[i - 1]);
-            _M_data[idx] = v;
-        } else {
-            new (_M_data + idx) T(v);
+        // 扩容路径：直接在新缓冲区里按最终位置构造，一次搬移完成
+        const size_type newcap = _M_grow_to(size() + 1);
+        pointer nb = allocator_traits<Allocator>::allocate(_M_alloc, newcap);
+        pointer cur = nb;
+        STDCPP_TRY {
+            for (size_type i = 0; i < idx; ++i, ++cur)
+                _M_construct(cur, __detail::move_if_noexcept(_M_begin[i]));
+            _M_construct(cur, std::forward<Args>(args)...);
+            ++cur;
+            for (size_type i = idx; i < size(); ++i, ++cur)
+                _M_construct(cur, __detail::move_if_noexcept(_M_begin[i]));
+        } STDCPP_CATCH_ALL {
+            _M_destroy_range(nb, cur);
+            allocator_traits<Allocator>::deallocate(_M_alloc, nb, newcap);
+            STDCPP_RETHROW;
         }
-        ++_M_size;
-        return _M_data + idx;
+        _M_destroy_range(_M_begin, _M_end);
+        if (_M_begin) allocator_traits<Allocator>::deallocate(_M_alloc, _M_begin, _M_cap());
+        _M_begin = nb;
+        _M_end = cur;
+        _M_endcap = nb + newcap;
+        return _M_begin + idx;
     }
+
+    iterator insert(const_iterator pos, const T& v) { return emplace(pos, v); }
+    iterator insert(const_iterator pos, T&& v) { return emplace(pos, std::move(v)); }
+
     iterator insert(const_iterator pos, size_type n, const T& v) {
-        size_type idx = pos - _M_data;
-        if (_M_size + n > _M_cap) reserve(_M_size + n);
-        for (size_type i = 0; i < n; ++i) {
-            if (idx + i < _M_size) {
-                new (_M_data + _M_size + i) T(STDCPP_MOVE(_M_data[_M_size - 1]));
-                for (size_type j = _M_size - 1; j > idx + i; --j)
-                    _M_data[j] = STDCPP_MOVE(_M_data[j - 1]);
-                _M_data[idx + i] = v;
-            } else {
-                new (_M_data + idx + i) T(v);
-            }
-        }
-        _M_size += n;
-        return _M_data + idx;
+        const size_type idx = static_cast<size_type>(pos - _M_begin);
+        if (n == 0) return _M_begin + idx;
+        if (n > max_size() - size())
+            __detail::throw_length_error("vector::insert: size() + n > max_size()");
+        // 自引用：v 可能指向本容器元素，扩容/移位后即失效 → 先按值捕获
+        T copy(v);
+        if (n > _M_cap() - size()) reserve(size() + n);
+        _M_insert_gen(idx, n, [&copy](size_type) -> const T& { return copy; });
+        return _M_begin + idx;
     }
-    template<class InputIt>
+
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
     iterator insert(const_iterator pos, InputIt first, InputIt last) {
-        size_type idx = pos - _M_data;
-        size_type n = 0;
-        for (InputIt it = first; it != last; ++it) ++n;
-        if (_M_size + n > _M_cap) reserve(_M_size + n);
-        for (size_type i = 0; i < n; ++i) {
-            if (idx + i < _M_size) {
-                new (_M_data + _M_size + i) T(STDCPP_MOVE(_M_data[_M_size - 1]));
-                for (size_type j = _M_size - 1; j > idx + i; --j)
-                    _M_data[j] = STDCPP_MOVE(_M_data[j - 1]);
-                _M_data[idx + i] = *first++;
-            } else {
-                new (_M_data + idx + i) T(*first++);
-            }
-        }
-        _M_size += n;
-        return _M_data + idx;
+        const size_type idx = static_cast<size_type>(pos - _M_begin);
+        if (first == last) return _M_begin + idx;
+        // 先落一份独立副本：区间可能来自本容器自身，移位后会失效
+        vector tmp(first, last);
+        const size_type n = tmp.size();
+        if (n > max_size() - size())
+            __detail::throw_length_error("vector::insert: size() + n > max_size()");
+        if (n > _M_cap() - size()) reserve(size() + n);
+        _M_insert_gen(idx, n, [&tmp](size_type i) -> const T& { return tmp[i]; });
+        return _M_begin + idx;
+    }
+
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
+    iterator insert(const_iterator pos, initializer_list<T> il) {
+        return insert(pos, il.begin(), il.end());
     }
 
     iterator erase(const_iterator pos) {
-        size_type idx = pos - _M_data;
-        _M_data[idx].~T();
-        for (size_type i = idx; i + 1 < _M_size; ++i) {
-            new (_M_data + i) T(STDCPP_MOVE(_M_data[i + 1]));
-            _M_data[i + 1].~T();
-        }
-        --_M_size;
-        return _M_data + idx;
+        const size_type idx = static_cast<size_type>(pos - _M_begin);
+        for (size_type i = idx; i + 1 < size(); ++i)
+            _M_begin[i] = std::move(_M_begin[i + 1]);
+        --_M_end;
+        allocator_traits<Allocator>::destroy(_M_alloc, _M_end);
+        return _M_begin + idx;
     }
+
     iterator erase(const_iterator first, const_iterator last) {
-        size_type idx = first - _M_data;
-        size_type n = last - first;
-        for (size_type i = idx; i < idx + n; ++i) _M_data[i].~T();
-        for (size_type i = idx; i + n < _M_size; ++i) {
-            new (_M_data + i) T(STDCPP_MOVE(_M_data[i + n]));
-            _M_data[i + n].~T();
-        }
-        _M_size -= n;
-        return _M_data + idx;
+        const size_type idx = static_cast<size_type>(first - _M_begin);
+        const size_type n = static_cast<size_type>(last - first);
+        if (n == 0) return _M_begin + idx;
+        const size_type sz = size();
+        for (size_type i = idx; i + n < sz; ++i)
+            _M_begin[i] = std::move(_M_begin[i + n]);
+        pointer newend = _M_end - n;
+        _M_destroy_range(newend, _M_end);
+        _M_end = newend;
+        return _M_begin + idx;
     }
 
     void clear() noexcept {
-        for (size_type i = 0; i < _M_size; ++i) _M_data[i].~T();
-        _M_size = 0;
+        _M_destroy_range(_M_begin, _M_end);
+        _M_end = _M_begin;
     }
 
     void resize(size_type n) {
-        if (n < _M_size) {
-            for (size_type i = n; i < _M_size; ++i) _M_data[i].~T();
-            _M_size = n;
-        } else if (n > _M_size) {
-            reserve(n);
-            for (size_type i = _M_size; i < n; ++i)
-                new (_M_data + i) T();
-            _M_size = n;
+        if (n < size()) {
+            pointer newend = _M_begin + n;
+            _M_destroy_range(newend, _M_end);
+            _M_end = newend;
+        } else if (n > size()) {
+            if (n > _M_cap()) reserve(n);
+            while (_M_end != _M_begin + n) {
+                _M_construct(_M_end);
+                ++_M_end;
+            }
         }
     }
+
     void resize(size_type n, const T& v) {
-        if (n < _M_size) {
-            for (size_type i = n; i < _M_size; ++i) _M_data[i].~T();
-            _M_size = n;
-        } else if (n > _M_size) {
-            reserve(n);
-            for (size_type i = _M_size; i < n; ++i)
-                new (_M_data + i) T(v);
-            _M_size = n;
+        if (n < size()) {
+            pointer newend = _M_begin + n;
+            _M_destroy_range(newend, _M_end);
+            _M_end = newend;
+        } else if (n > size()) {
+            if (n > _M_cap()) reserve(n);
+            while (_M_end != _M_begin + n) {
+                _M_construct(_M_end, v);
+                ++_M_end;
+            }
         }
     }
 
     void assign(size_type n, const T& v) {
         clear();
         reserve(n);
-        for (size_type i = 0; i < n; ++i) new (_M_data + i) T(v);
-        _M_size = n;
+        for (size_type i = 0; i < n; ++i) emplace_back(v);
     }
-    template<class InputIt>
+
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
     void assign(InputIt first, InputIt last) {
         clear();
-        for (; first != last; ++first) push_back(*first);
+        for (; first != last; ++first) emplace_back(*first);
     }
-#if STDCPP_VEC_CXX11
+
     void assign(initializer_list<T> il) { assign(il.begin(), il.end()); }
-#endif
 
     void swap(vector& other) noexcept {
-        std::swap(_M_data, other._M_data);
-        std::swap(_M_size, other._M_size);
-        std::swap(_M_cap, other._M_cap);
+        if (this == &other) return;
+        // 传播策略为真时连分配器一起换；否则要求两者分配器可互换
+        // （与标准一致：分配器不等且不传播时 swap 行为未定义，这里用断言
+        //  在调试构建中提前暴露，而不是悄悄换出错误的释放路径）
+        if (propagate_on_container_swap::value) {
+            allocator_type tmp_a = _M_alloc;
+            _M_alloc = other._M_alloc;
+            other._M_alloc = tmp_a;
+        } else {
+            STDCPP_ASSERT(_M_alloc == other._M_alloc);
+        }
+        pointer b = _M_begin, e = _M_end, c = _M_endcap;
+        _M_begin = other._M_begin; _M_end = other._M_end; _M_endcap = other._M_endcap;
+        other._M_begin = b; other._M_end = e; other._M_endcap = c;
     }
 
-    allocator_type get_allocator() const { return allocator_type(); }
+    allocator_type get_allocator() const noexcept { return _M_alloc; }
 };
 
+//=============================================================
+// 非成员
+//=============================================================
 template<class T, class A>
 bool operator==(const vector<T, A>& a, const vector<T, A>& b) {
     if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) if (!(a[i] == b[i])) return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (!(a[i] == b[i])) return false;
     return true;
 }
 template<class T, class A>
@@ -377,32 +640,31 @@ template<class T, class A>
 bool operator<(const vector<T, A>& a, const vector<T, A>& b) {
     return lexicographical_compare(a.begin(), a.end(), b.begin(), b.end());
 }
+template<class T, class A>
+bool operator>(const vector<T, A>& a, const vector<T, A>& b) { return b < a; }
+template<class T, class A>
+bool operator<=(const vector<T, A>& a, const vector<T, A>& b) { return !(b < a); }
+template<class T, class A>
+bool operator>=(const vector<T, A>& a, const vector<T, A>& b) { return !(a < b); }
 
 template<class T, class A>
-void swap(vector<T, A>& a, vector<T, A>& b) { a.swap(b); }
+void swap(vector<T, A>& a, vector<T, A>& b) noexcept { a.swap(b); }
 
-#if STDCPP_VEC_CXX20
+#if STDCPP_CXX20
 template<class T, class A, class U>
 typename vector<T, A>::size_type erase(vector<T, A>& c, const U& value) {
-    auto it = remove(c.begin(), c.end(), value);
-    auto n = c.end() - it;
-    c.erase(it, c.end());
-    return n;
+    const typename vector<T, A>::size_type old = c.size();
+    c.erase(remove(c.begin(), c.end(), value), c.end());
+    return old - c.size();
 }
 template<class T, class A, class Pred>
 typename vector<T, A>::size_type erase_if(vector<T, A>& c, Pred pred) {
-    auto it = remove_if(c.begin(), c.end(), pred);
-    auto n = c.end() - it;
-    c.erase(it, c.end());
-    return n;
+    const typename vector<T, A>::size_type old = c.size();
+    c.erase(remove_if(c.begin(), c.end(), pred), c.end());
+    return old - c.size();
 }
 #endif
 
 } // namespace std
 
-#if __cplusplus < 201103L
-#undef noexcept
-#undef nullptr
-#undef override
-#endif
 #endif // STDCPP_VECTOR_HPP

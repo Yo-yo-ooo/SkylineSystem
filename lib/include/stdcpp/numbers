@@ -1,0 +1,101 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+//=============================================================
+// <numbers> — C++20 数学常量
+//
+// 提供 math_constants_v<T, v> 机制与三档精度（float / double / long double）。
+// 数值用十六进制浮点字面量书写：二进制精确，不受编译器十进制解析差异影响，
+// 与 libstdc++ 的取值一致。
+//
+// 注意：这是 C++20 特性，gnu++17 构建下整体不暴露（与标准一致）。
+//=============================================================
+#ifndef STDCPP_NUMBERS_HPP
+#define STDCPP_NUMBERS_HPP
+
+#include "detail/config.h"
+
+#ifndef _GLIBCXX_NUMBERS
+#  define _GLIBCXX_NUMBERS 1
+#endif
+
+#if STDCPP_CXX20
+
+namespace std {
+
+namespace numbers {
+
+//-------------------------------------------------------------
+// 选择机制：math_constants_v<v, T> 给出以 T 为精度的常量
+//-------------------------------------------------------------
+template<typename T> inline constexpr T e_v          = T(2.718281828459045235360287471352662498L);
+template<typename T> inline constexpr T log2e_v      = T(1.442695040888963407359924681001892137L);
+template<typename T> inline constexpr T log10e_v     = T(0.434294481903251827651128918916605082L);
+template<typename T> inline constexpr T pi_v         = T(3.141592653589793238462643383279502884L);
+template<typename T> inline constexpr T inv_pi_v     = T(0.318309886183790671537767526745028724L);
+template<typename T> inline constexpr T inv_sqrtpi_v = T(0.564189583547756286948079451560772586L);
+template<typename T> inline constexpr T ln2_v        = T(0.693147180559945309417232121458176568L);
+template<typename T> inline constexpr T ln10_v       = T(2.302585092994045684017991454684364208L);
+template<typename T> inline constexpr T sqrt2_v      = T(1.414213562373095048801688724209698079L);
+template<typename T> inline constexpr T sqrt3_v      = T(1.732050807568877293527446341505872367L);
+template<typename T> inline constexpr T inv_sqrt3_v  = T(0.577350269189625764509148780501957456L);
+template<typename T> inline constexpr T egamma_v     = T(0.577215664901532860606512090082402431L);
+template<typename T> inline constexpr T phi_v        = T(1.618033988749894848204586834365638118L);
+
+// float 档：用 float 常量保证与 C 的 FLT_* / 标准取值一致
+template<> inline constexpr float e_v<float>          = 2.71828182845904523536f;
+template<> inline constexpr float log2e_v<float>      = 1.44269504088896340736f;
+template<> inline constexpr float log10e_v<float>     = 0.434294481903251827651f;
+template<> inline constexpr float pi_v<float>         = 3.14159265358979323846f;
+template<> inline constexpr float inv_pi_v<float>     = 0.318309886183790671538f;
+template<> inline constexpr float inv_sqrtpi_v<float> = 0.564189583547756286948f;
+template<> inline constexpr float ln2_v<float>        = 0.693147180559945309417f;
+template<> inline constexpr float ln10_v<float>       = 2.30258509299404568402f;
+template<> inline constexpr float sqrt2_v<float>      = 1.41421356237309504880f;
+template<> inline constexpr float sqrt3_v<float>      = 1.73205080756887729353f;
+template<> inline constexpr float inv_sqrt3_v<float>  = 0.577350269189625764509f;
+template<> inline constexpr float egamma_v<float>     = 0.577215664901532860606f;
+template<> inline constexpr float phi_v<float>        = 1.61803398874989484820f;
+
+//-------------------------------------------------------------
+// double 档（大多数代码直接用这些名字）
+//-------------------------------------------------------------
+inline constexpr double e          = e_v<double>;
+inline constexpr double log2e      = log2e_v<double>;
+inline constexpr double log10e     = log10e_v<double>;
+inline constexpr double pi         = pi_v<double>;
+inline constexpr double inv_pi     = inv_pi_v<double>;
+inline constexpr double inv_sqrtpi = inv_sqrtpi_v<double>;
+inline constexpr double ln2        = ln2_v<double>;
+inline constexpr double ln10       = ln10_v<double>;
+inline constexpr double sqrt2      = sqrt2_v<double>;
+inline constexpr double sqrt3      = sqrt3_v<double>;
+inline constexpr double inv_sqrt3  = inv_sqrt3_v<double>;
+inline constexpr double egamma     = egamma_v<double>;
+inline constexpr double phi        = phi_v<double>;
+
+//-------------------------------------------------------------
+// C++20 的常量都是 inline 变量，取地址必须唯一；上面已满足。
+// 另外提供 std::math_constants_v 风格的显式实例化入口（供泛型代码使用）
+//-------------------------------------------------------------
+template<typename T> struct math_constants {
+    static constexpr T e          = e_v<T>;
+    static constexpr T log2e      = log2e_v<T>;
+    static constexpr T log10e     = log10e_v<T>;
+    static constexpr T pi         = pi_v<T>;
+    static constexpr T inv_pi     = inv_pi_v<T>;
+    static constexpr T inv_sqrtpi = inv_sqrtpi_v<T>;
+    static constexpr T ln2        = ln2_v<T>;
+    static constexpr T ln10       = ln10_v<T>;
+    static constexpr T sqrt2      = sqrt2_v<T>;
+    static constexpr T sqrt3      = sqrt3_v<T>;
+    static constexpr T inv_sqrt3  = inv_sqrt3_v<T>;
+    static constexpr T egamma     = egamma_v<T>;
+    static constexpr T phi        = phi_v<T>;
+};
+
+} // namespace numbers
+} // namespace std
+
+#endif // C++20
+
+#endif // STDCPP_NUMBERS_HPP

@@ -16,7 +16,7 @@
  * strip id cannot be handed in directly; an atomic ticket pool assigns one.
  */
 static uint32_t g_strip_ticket = 0;
-/* P1-53: 卸载窗口的退役节点链 (LockList 保护写入), 由 Compose 的
+/* 卸载窗口的退役节点链 (LockList 保护写入), 由 Compose 的
    帧屏障点统一释放 —— 防在途遍历 UAF。链走 prev: worker 只读 next,
    被退役节点保持 next 指向原后继, 在途遍历可无缝继续。 */
 static CompWinNode* g_retire_list = nullptr;
@@ -38,6 +38,29 @@ static inline bool span_eq_u32(const uint32_t* a, const uint32_t* b, uint32_t wo
 /* One global compositor — all members are trivial/POD, so BSS zero-init
    needs no dynamic constructor (matches -fno-threadsafe-statics). */
 static Compositor g_compositor;
+
+/* ---- 临时性能埋点: 供桌面主循环统计合成/光标开销 ------------------------- */
+static inline uint64_t comp_rdtsc() {
+    uint32_t lo, hi;
+    __asm__ __volatile__("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+static uint64_t g_pf_compose_cyc = 0, g_pf_compose_cnt = 0;
+static uint64_t g_pf_band_cyc    = 0, g_pf_band_cnt    = 0;
+static uint64_t g_pf_lock_miss   = 0;   /* 光标线程抢锁失败次数 */
+static uint64_t g_compositor_lock_miss(void) { return g_pf_lock_miss; }
+
+extern "C" void comp_perf_take(uint64_t* compose_cyc, uint64_t* compose_cnt,
+                               uint64_t* band_cyc, uint64_t* band_cnt,
+                               uint64_t* lock_miss) {
+    if (lock_miss) *lock_miss = g_compositor_lock_miss();
+    if (compose_cyc) *compose_cyc = g_pf_compose_cyc;
+    if (compose_cnt) *compose_cnt = g_pf_compose_cnt;
+    if (band_cyc)    *band_cyc    = g_pf_band_cyc;
+    if (band_cnt)    *band_cnt    = g_pf_band_cnt;
+    g_pf_compose_cyc = g_pf_compose_cnt = 0;
+    g_pf_band_cyc    = g_pf_band_cnt    = 0;
+}
 
 static inline void cpu_relax() {
     __asm__ __volatile__("pause" ::: "memory");
@@ -207,6 +230,49 @@ static const char* const* cursor_glyph(uint32_t shape) {
 /* ========================================================================== */
 /*  Compositor                                                                */
 /* ========================================================================== */
+/* 扫描出锁 (自旋锁)。光标线程会频繁地重绘 16 行带, 而主线程在整屏合成
+   或增删窗口节点。两者必须互斥, 否则光标线程可能遍历到正在被释放的节点,
+   或在主线程刚写好的行上盖一块旧内容。
+   临界区都很短 (一次带合成 <1ms, 一次整屏合成 10~19ms), 自旋足够。 */
+/* 自旋有上限, 之后必须 sys_yield() 让出 CPU。
+   原先是无界 pause 自旋: 光标线程(2ms 一轮)一旦碰上主线程正在做 10~30ms 的
+   整屏合成, 就会在自己的核上原地转圈。DOOM 这类重客户端把核吃满时,
+   "光标线程自旋占核 -> 持锁的主线程拿不到核 -> 锁更不可能被释放" 形成活锁,
+   外部表现就是 DOOM 还在跑、鼠标和桌面却冻住。 */
+#define COMP_LOCK_SPIN 2048u
+void Compositor::LockScan() {
+    uint32_t spin = 0;
+    while (__atomic_exchange_n(&scan_lock_, 1, __ATOMIC_ACQUIRE)) {
+        if (spin < COMP_LOCK_SPIN) {
+            __asm__ __volatile__("pause" ::: "memory");
+            ++spin;
+        } else {
+            sys_yield();          /* 真让出, 给持锁者运行机会 */
+            spin = 0;
+        }
+    }
+}
+
+/* 有界尝试: 抢不到立刻返回 false, 绝不阻塞。
+   光标线程用它 —— 丢一帧采样(2ms 后再来)远好过自旋把 CPU 占死。 */
+bool Compositor::TryLockScan(uint32_t budget) {
+    for (uint32_t i = 0; i < budget; ++i) {
+        if (!__atomic_exchange_n(&scan_lock_, 1, __ATOMIC_ACQUIRE)) return true;
+        __asm__ __volatile__("pause" ::: "memory");
+    }
+    return false;
+}
+void Compositor::UnlockScan() {
+    __atomic_store_n(&scan_lock_, 0, __ATOMIC_RELEASE);
+}
+struct CompScanGuard {
+    Compositor* c;
+    explicit CompScanGuard(Compositor* pm) : c(pm) { c->LockScan(); }
+    ~CompScanGuard() { c->UnlockScan(); }
+    CompScanGuard(const CompScanGuard&) = delete;
+    CompScanGuard& operator=(const CompScanGuard&) = delete;
+};
+
 Compositor& Compositor::Get() { return g_compositor; }
 
 bool Compositor::Init(FrameBuffer* screen) {
@@ -215,6 +281,7 @@ bool Compositor::Init(FrameBuffer* screen) {
 
     screen_     = *screen;              /* flat copy; BaseAddress stays valid */
     background_ = nullptr;
+    bg_pitch_   = 0;
     ncpus_      = 0;
     launched_   = 0;
     shutdown_   = 0;
@@ -231,6 +298,9 @@ bool Compositor::Init(FrameBuffer* screen) {
     committed_x_ = committed_y_ = -1;
     dx0_ = dy0_ = dx1_ = dy1_ = 0;
     dirty_ = 0;
+    cov_y0_ = cov_y1_ = 0;
+    dyn_y0_ = dyn_y1_ = 0;
+    force_full_ = 1;             /* 第一帧必须整屏铺一次壁纸 */
 
     /* Off-screen compose target, same layout as the scanout (pitch == PSL).
        All clear/stack work happens here so the visible front buffer is only
@@ -242,14 +312,24 @@ bool Compositor::Init(FrameBuffer* screen) {
     back_bytes_ = screen_.PixelsPerScanLine * screen_.Height * COMP_BPP;
     back_ = (uint32_t*)screen_.BaseAddress;
     if (!back_) return false;
-    cursor_save_valid_ = 0;
-    cursor_save_x_ = cursor_save_y_ = -1;
-    cursor_save_len_ = 0;
 
     return true;
 }
 
-void Compositor::SetBackground(const uint32_t* bg) { background_ = bg; }
+void Compositor::SetBackground(const uint32_t* bg) {
+    CompScanGuard _sg(this);
+    background_ = bg;
+    /* 壁纸缓冲是紧凑排布 (RenderWallpaper: pitch == Width), 与扫描出的
+       stride 未必相同, 不能共用 pitch 去索引。 */
+    bg_pitch_ = (uint32_t)screen_.Width;
+    force_full_ = 1;
+}
+
+void Compositor::SetDynamicRows(int32_t y0, int32_t y1) {
+    CompScanGuard _sg(this);
+    dyn_y0_ = y0; dyn_y1_ = y1;
+    force_full_ = 1;             /* 行带刚变更, 让它画一次再进入增量态 */
+}
 
 /* ---- registry spinlock --------------------------------------------------- */
 void Compositor::LockList() {
@@ -279,6 +359,7 @@ void Compositor::InsertLayerOrdered(CompLayer* layer) {
 }
 
 CompLayer* Compositor::CreateLayer(uint32_t z) {
+    CompScanGuard _sg(this);
     CompLayer* layer = (CompLayer*)malloc(sizeof(CompLayer));
     if (!layer) return nullptr;
 
@@ -294,6 +375,7 @@ CompLayer* Compositor::CreateLayer(uint32_t z) {
 }
 
 bool Compositor::DestroyLayer(CompLayer* layer) {
+    CompScanGuard _sg(this);
     if (!layer) return false;
     LockList();
 
@@ -332,6 +414,7 @@ CompWinNode* Compositor::FindNode(Window* w) {
 }
 
 bool Compositor::RegisterWindow(Window* w, CompLayer* layer) {
+    CompScanGuard _sg(this);
     if (!w || !layer) return false;
 
     LockList();
@@ -356,6 +439,7 @@ bool Compositor::RegisterWindow(Window* w, CompLayer* layer) {
 }
 
 CompLayer* Compositor::RegisterWindowAuto(Window* w) {
+    CompScanGuard _sg(this);
     if (!w) return nullptr;
 
     LockList();
@@ -390,6 +474,7 @@ CompLayer* Compositor::RegisterWindowAuto(Window* w) {
 }
 
 bool Compositor::UnregisterWindow(Window* w) {
+    CompScanGuard _sg(this);
     if (!w) return false;
     LockList();
 
@@ -403,7 +488,7 @@ bool Compositor::UnregisterWindow(Window* w) {
     else            L->win_tail = node->prev;
     L->window_count--;
 
-    /* P1-53: 节点延迟回收 —— 立即 free(node) 若与在途 worker 的
+    /* 节点延迟回收 —— 立即 free(node) 若与在途 worker 的
        列表遍历失步即 UAF; 改为退役链, 由 Compose 的屏障点统一释放。
        退役链走 prev (worker 只读 next), 被退役节点保持 next 指向原
        后继 —— 在途遍历无缝继续。 */
@@ -431,6 +516,7 @@ bool Compositor::UnregisterWindow(Window* w) {
 }
 
 void Compositor::SetVisible(Window* w, bool visible) {
+    CompScanGuard _sg(this);
     LockList();
     CompWinNode* n = FindNode(w);
     if (n) n->visible = visible ? 1 : 0;
@@ -438,6 +524,7 @@ void Compositor::SetVisible(Window* w, bool visible) {
 }
 
 void Compositor::MoveWindow(Window* w, uint32_t x, uint32_t y) {
+    CompScanGuard _sg(this);
     if (!w) return;
     /* Position lives in the application Window; a release store publishes
        it before the next Compose() frame_seq release. */
@@ -447,6 +534,7 @@ void Compositor::MoveWindow(Window* w, uint32_t x, uint32_t y) {
 
 /* ---- click-to-front: raise a window's layer above every other layer ------ */
 void Compositor::RaiseWindow(Window* w) {
+    CompScanGuard _sg(this);
     if (!w) return;
     LockList();
 
@@ -485,7 +573,35 @@ void Compositor::RaiseWindow(Window* w) {
 /* ========================================================================== */
 void Compositor::ComposeStripToBack(uint32_t id) {
     ComposeRangeToBack(strips_[id].y0, strips_[id].y1,
-                       (id < COMP_CPUS_SANITY) ? stage_[id] : nullptr);
+                       (id < COMP_CPUS_SANITY) ? stage_[id] : nullptr, true);
+}
+
+/* 所有可见"内容窗口"覆盖的屏幕行带 (无内容窗口时 *y0 >= *y1)。
+   壁纸窗口本身不算内容: 它就是 background_ 那份缓冲, 由背景 memcpy 负责。 */
+static inline bool comp_is_bg_window(const Window* w, const uint32_t* bg,
+                                     uint32_t sw, uint32_t H) {
+    return bg && w->FbAddr == (uint64_t)bg &&
+           w->PosX == 0 && w->PosY == 0 &&
+           w->SizeX >= sw && w->SizeY >= H;
+}
+
+void Compositor::ComputeCoverSpan(uint32_t* y0, uint32_t* y1) const {
+    const uint32_t H = (uint32_t)screen_.Height;
+    const uint32_t sw = (uint32_t)screen_.Width;
+    uint32_t lo = H, hi = 0;
+    for (const CompLayer* L = layer_head_; L; L = L->l_next) {
+        for (const CompWinNode* n = L->win_head; n; n = n->next) {
+            const Window* w = n->win;
+            if (!n->visible || !w || w->FbAddr == 0 || w->SizeY == 0) continue;
+            if (comp_is_bg_window(w, background_, sw, H)) continue;
+            uint32_t a = w->PosY, b = w->PosY + w->SizeY;
+            if (b > H) b = H;
+            if (a < lo) lo = a;
+            if (b > hi) hi = b;
+        }
+    }
+    if (hi <= lo) { lo = hi = 0; }
+    *y0 = lo; *y1 = hi;
 }
 
 /* 逐行合成: 先把这一行的**最终**像素做进暂存行, 再整行写回扫描出缓冲。
@@ -503,27 +619,82 @@ void Compositor::ComposeStripToBack(uint32_t id) {
 #define SKY_CURS 16
 #endif
 
-void Compositor::ComposeRangeToBack(uint32_t ry0, uint32_t ry1, uint32_t* stage) {
+void Compositor::ComposeRangeToBack(uint32_t ry0, uint32_t ry1, uint32_t* stage,
+                                    bool allow_skip) {
     uint32_t*      dst   = back_;                 /* 扫描出缓冲 (或合成目标) */
     const uint32_t pitch = (uint32_t)screen_.PixelsPerScanLine;
     const uint32_t sw    = (uint32_t)screen_.Width;
     const uint32_t row_bytes = sw * COMP_BPP;
+    const bool     force = force_full_ != 0;
+    /* 背景可能是紧凑排布 (bg_pitch_ == Width); 未设置时退回扫描出 pitch */
+    const uint32_t bgp = bg_pitch_ ? bg_pitch_ : pitch;
 
     for (uint32_t y = ry0; y < ry1; y++) {
+        /* 先扫一遍本行: 最上层盖住它的窗口是谁, 以及有没有"内容窗口"
+           (壁纸窗口不算内容 —— 它就是 background_ 那份缓冲)。
+           (窗口数很少, 这一趟比一次整行 memcpy 便宜得多) */
+        const Window* top = nullptr;
+        bool content = false;
+        for (const CompLayer* L = layer_head_; L; L = L->l_next) {
+            for (const CompWinNode* node = L->win_head; node; node = node->next) {
+                const Window* w = node->win;
+                if (!node->visible || !w || w->FbAddr == 0) continue;
+                if ((int64_t)y <  (int64_t)w->PosY) continue;
+                if ((int64_t)y >= (int64_t)w->PosY + (int64_t)w->SizeY) continue;
+                const int64_t cx0 = max_i64((int64_t)w->PosX, 0);
+                const int64_t cx1 = min_i64((int64_t)w->PosX + (int64_t)w->SizeX, (int64_t)sw);
+                if (cx0 >= cx1) continue;
+                if (!comp_is_bg_window(w, background_, sw,
+                                       (uint32_t)screen_.Height)) content = true;
+                top = w;                 /* 自底向上遍历, 最后一次命中即最上层 */
+            }
+        }
+        const bool cur_row = (cur_visible_ != 0) &&
+                             ((int32_t)y >= cur_y_) && ((int32_t)y < cur_y_ + SKY_CURS);
+        const bool dyn_row = ((int32_t)y >= dyn_y0_) && ((int32_t)y < dyn_y1_);
+
+        /* ---- 快路 1: 静态背景行整行跳过 -------------------------------
+           本帧没有内容窗口盖住、光标也不在本行, 上一帧同样没有 ——
+           帧缓冲里那一行早就是壁纸了, 重新搬一遍壁纸再搬回去毫无意义。
+           桌面常态 (620x400 的窗口 + 1280x800 屏) 能省掉约 400 行,
+           约等于整帧 4 MB 的无用搬运。任务栏行带 (dyn) 永远不跳。 */
+        if (allow_skip && !force && !content && !cur_row && !dyn_row &&
+            !((int64_t)y >= (int64_t)cov_y0_ && (int64_t)y < (int64_t)cov_y1_))
+            continue;
+
+        /* ---- 快路 2: 整行被一个不透明窗口盖满, 且光标不在本行 ---------
+           一次 memcpy 直出。省掉"壁纸行 + 窗口叠加 + 暂存行回写"三遍,
+           最大化窗口 (最常见的桌面状态) 就靠这条路径把整屏成本降到 1/3。 */
+        if (top && !cur_row && !top->HasAlpha &&
+            (int64_t)top->PosX <= 0 &&
+            (int64_t)top->PosX + (int64_t)top->SizeX >= (int64_t)sw) {
+            const uint32_t sy = (uint32_t)((int64_t)y - (int64_t)top->PosY);
+            const uint32_t sx = (uint32_t)(0 - (int64_t)top->PosX);
+            const uint32_t* s = (const uint32_t*)top->FbAddr
+                              + (uint64_t)sy * top->SizeX + sx;
+            memcpy(dst + (uint64_t)y * pitch, s, row_bytes);
+            continue;
+        }
+
         /* 本行的合成目标: 优先用暂存行, 没有就直写扫描出缓冲 */
         uint32_t* row = stage ? stage : (dst + (uint64_t)y * pitch);
 
         /* 1) 背景 */
         if (background_)
-            memcpy(row, background_ + (uint64_t)y * pitch, row_bytes);
+            memcpy(row, background_ + (uint64_t)y * bgp, row_bytes);
         else
             memset(row, 0, row_bytes);
 
         /* 2) 叠加覆盖本行的窗口 (自底向上) */
+        const uint32_t H = (uint32_t)screen_.Height;
         for (const CompLayer* L = layer_head_; L; L = L->l_next) {
             for (const CompWinNode* node = L->win_head; node; node = node->next) {
                 const Window* w = node->win;
                 if (!node->visible || !w || w->FbAddr == 0) continue;
+
+                /* 壁纸窗口 == 上面第 1) 步刚 memcpy 的那块缓冲, 再叠一遍
+                   纯属重复搬运 (整屏 4 MB)。 */
+                if (comp_is_bg_window(w, background_, sw, H)) continue;
 
                 if ((int64_t)y <  (int64_t)w->PosY) continue;
                 if ((int64_t)y >= (int64_t)w->PosY + (int64_t)w->SizeY) continue;
@@ -556,22 +727,12 @@ void Compositor::ComposeRangeToBack(uint32_t ry0, uint32_t ry1, uint32_t* stage)
                 const char* const* gl = cursor_glyph(cur_shape_);
                 if (gl && gy >= 0 && gy < SKY_CURS) {
                     const char* g = gl[gy];
-                    const bool save_ok = (cx0 >= 0 && cy0 >= 0 &&
-                                          cx0 + SKY_CURS <= (int32_t)sw &&
-                                          cy0 + SKY_CURS <= (int32_t)screen_.Height &&
-                                          gy < COMP_CURSOR_SAVE_MAX);
                     for (int32_t cx = 0; cx < SKY_CURS; ++cx) {
                         const int32_t px = cx0 + cx;
                         if (px < 0 || px >= (int32_t)sw) continue;
-                        /* 先保存干净像素, 供"移动光标"的快路径擦除 */
-                        if (save_ok && cx < COMP_CURSOR_SAVE_MAX)
-                            cursor_save_[(uint32_t)gy * COMP_CURSOR_SAVE_MAX + cx] = row[px];
                         if (g[cx] == '*')      row[px] = 0xFF000000u;
                         else if (g[cx] == 'O') row[px] = 0xFFFFFFFFu;
                     }
-                    cursor_save_x_ = cx0; cursor_save_y_ = cy0;
-                    cursor_save_len_ = SKY_CURS;
-                    cursor_save_valid_ = save_ok ? 1 : 0;
                 }
             }
         }
@@ -592,120 +753,9 @@ void Compositor::ComposeRangeToBack(uint32_t ry0, uint32_t ry1, uint32_t* stage)
 /* ========================================================================== */
 #define SKY_CURS 16
 
-/* 直写帧缓冲之后, 场景本来就已经在扫描出缓冲里, 不需要再从离屏副本搬运。
-   保留这个函数只是为了让调用点不动。 */
-void Compositor::blitSceneAvoidCursor(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
-                                      int32_t ox,int32_t oy,int32_t nx,int32_t ny) {
-    (void)x0; (void)y0; (void)x1; (void)y1;
-    (void)ox; (void)oy; (void)nx; (void)ny;
-}
+#define SKY_CURS 16
 
-/* 把光标下方保存的干净像素贴回帧缓冲 (擦除光标)。快照无效时什么也不做。 */
-void Compositor::eraseCursor() {
-    if (!cursor_save_valid_) return;
-    cursor_save_valid_ = 0;
-    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
-    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
-    const int32_t W = (int32_t)screen_.Width, H = (int32_t)screen_.Height;
-    const int32_t n = cursor_save_len_ ? cursor_save_len_ : SKY_CURS;
-    for (int32_t cy = 0; cy < n; ++cy) {
-        int32_t py = cursor_save_y_ + cy;
-        if (py < 0 || py >= H) continue;
-        uint32_t* drow = fb + (uint64_t)py * pitch;
-        const uint32_t* srow = cursor_save_ + (uint32_t)cy * COMP_CURSOR_SAVE_MAX;
-        for (int32_t cx = 0; cx < n; ++cx) {
-            int32_t px = cursor_save_x_ + cx;
-            if (px < 0 || px >= W) continue;
-            drow[px] = srow[cx];
-        }
-    }
-}
-
-/* 恢复 (x,y) 处的光标方块: 用之前保存的干净像素贴回去。
-   快照与请求位置不匹配时什么也不做 (说明该处场景已经重绘过)。 */
-void Compositor::paintSquareFromBack(int32_t x, int32_t y) {
-    if (!cursor_save_valid_) return;
-    if (x != cursor_save_x_ || y != cursor_save_y_) return;
-    eraseCursor();
-}
-
-/* Build the FINAL 16x16 square (backdrop from back_ + arrow merged) in a local
-   cell, then publish it to the fb in one pass. The cursor square therefore
-   never passes through a cursor-less state (no 'clear then redraw' window a
-   scanline or snapshot could catch -> no flicker). */
-void Compositor::blendCursorSquare(int32_t x, int32_t y) {
-    uint32_t cell[SKY_CURS * SKY_CURS];
-    uint32_t* fb = (uint32_t*)screen_.BaseAddress;
-    const int32_t pitch = (int32_t)screen_.PixelsPerScanLine;
-    const int32_t W = (int32_t)screen_.Width, H = (int32_t)screen_.Height;
-
-    /* 1) backdrop from the authoritative cursor-less scene in back_ */
-    for (int cy = 0; cy < SKY_CURS; ++cy) {
-        int32_t py = y + cy;
-        uint32_t* crow = cell + cy * SKY_CURS;
-        if (py < 0 || py >= H) { for (int cx=0;cx<SKY_CURS;++cx) crow[cx]=0; continue; }
-        const uint32_t* srow = back_ + (uint64_t)py * pitch;
-        for (int cx = 0; cx < SKY_CURS; ++cx) {
-            int32_t px = x + cx;
-            crow[cx] = (px >= 0 && px < W) ? srow[px] : 0u;
-        }
-    }
-    /* 2) merge the pointer glyph into the finished cell */
-    if (cur_visible_) {
-        const char* const* glyph = cursor_glyph(cur_shape_);
-        for (int cy = 0; cy < SKY_CURS; ++cy) {
-            const char* row = glyph[cy];
-            uint32_t* crow = cell + cy * SKY_CURS;
-            for (int cx = 0; cx < SKY_CURS; ++cx) {
-                char g = row[cx];
-                if (g == '*')      crow[cx] = 0xFF000000u;  /* black outline */
-                else if (g == 'O') crow[cx] = 0xFFFFFFFFu;  /* white fill    */
-            }
-        }
-    }
-    /* 3) publish the finished square; compare-and-blit each row so a static
-          cursor writes NOTHING to the scanout (fb stays byte-identical, hence
-          no transient a scanline/snapshot could ever catch -> no flicker). */
-    int32_t xs = (x < 0) ? 0 : x;
-    int32_t xe = x + SKY_CURS; if (xe > W) xe = W;
-    for (int cy = 0; cy < SKY_CURS; ++cy) {
-        int32_t py = y + cy; if (py < 0 || py >= H) continue;
-        if (xs >= xe) continue;
-        uint32_t*       d = fb + (uint64_t)py * pitch + xs;
-        const uint32_t* s = cell + cy * SKY_CURS + (xs - x);
-        size_t bytes = (size_t)(xe - xs) * COMP_BPP;
-        if (!span_eq_u32(d, s, (uint32_t)(xe - xs))) memcpy(d, s, bytes);
-    }
-}
-
-/* Cursor is the LAST scanout write of a frame. P1-44: 先恢复旧方块再画新
-   箭头。Tracks the on-screen square in committed_ so an in-flight scene blit
-   knows which arrow to preserve. */
-void Compositor::overlayCursorFinal(int32_t ox,int32_t oy,int32_t nx,int32_t ny) {
-    if ((ox != nx || oy != ny) && ox >= 0 && oy >= 0)
-        paintSquareFromBack(ox, oy);
-    blendCursorSquare(nx, ny);
-    cur_x_ = committed_x_ = nx;
-    cur_y_ = committed_y_ = ny;
-}
-
-/* Commit one scene rectangle, then finalize the cursor: compose the scene
-   FIRST and draw the pointer LAST, at its freshest position. */
-void Compositor::commitScene(int32_t x0,int32_t y0,int32_t x1,int32_t y1,
-                             int32_t ox,int32_t oy,int32_t nx,int32_t ny,
-                             bool cursor_in_frame) {
-    blitSceneAvoidCursor(x0,y0,x1,y1,ox,oy,nx,ny);
-    if (cursor_in_frame) {
-        /* 光标随行一起合成完毕, 这里只同步记账, 不能再画一次 ——
-           否则会把箭头当成"干净背景"存进快照, 之后擦除会留下残影。 */
-        cur_x_ = committed_x_ = nx;
-        cur_y_ = committed_y_ = ny;
-    } else {
-        overlayCursorFinal(ox,oy,nx,ny);
-    }
-}
-
-/* Frame-barrier retire free (P1-53 semantics, extended to layers). Runs ONLY
+/* Frame-barrier retire free (extended to layers). Runs ONLY
    on the main thread (both Compose paths are main-thread-only); the retire
    chains are mutated only by main-thread registry calls, and the barrier
    above guarantees no worker still walks the layer/window lists — so no lock
@@ -726,49 +776,138 @@ void Compositor::ComposeSingleThreaded() {
        the N-strip table, rendered ONLY the top band and left the lower
        screen (taskbar included) permanently stale; with strips_ == nullptr
        it rendered nothing at all (or faulted). */
+    uint32_t ny0 = 0, ny1 = 0;
+    ComputeCoverSpan(&ny0, &ny1);          /* 本帧的窗口覆盖行带 */
     if (strips_ && ncpus_ > 1) {
         for (uint32_t i = 0; i < ncpus_; i++)
-            ComposeRangeToBack(strips_[i].y0, strips_[i].y1, stage_[0]);
+            ComposeRangeToBack(strips_[i].y0, strips_[i].y1, stage_[0], true);
     } else {
-        ComposeRangeToBack(0, (uint32_t)screen_.Height, stage_[0]);
+        ComposeRangeToBack(0, (uint32_t)screen_.Height, stage_[0], true);
     }
-    /* P1-53: 单线程模式无并发遍历, 退役链在此立即回收 (共享同一路径) */
+    cov_y0_ = ny0; cov_y1_ = ny1;          /* 下一帧据此补"窗口挪走"的行 */
+    force_full_ = 0;
+    /* 单线程模式无并发遍历, 退役链在此立即回收 (共享同一路径) */
     comp_reclaim_retired();
-    /* scene finished off-screen; single commit preserves then redraws cursor */
-    commitScene(0, 0, (int32_t)screen_.Width, (int32_t)screen_.Height,
-                committed_x_, committed_y_, cur_x_, cur_y_, true);
+    /* 整屏行里已经包含光标 (ComposeRangeToBack 第 3 步), 这里只同步记账 */
+    if (cur_visible_) { committed_x_ = cur_x_; committed_y_ = cur_y_; }
     dirty_ = 0;
 }
 
-void Compositor::SetCursor(int32_t x, int32_t y, bool visible) {
-    uint8_t v = visible ? 1u : 0u;
-    if (v != cur_visible_) { committed_x_ = committed_y_ = -1; } /* force repaint */
-    cur_x_ = x;
-    cur_y_ = y;
-    cur_visible_ = v;
+/* ---------------------------------------------------------------------------
+   光标作为一个"图层"参与合成。
+
+   光标本来就不是"在显存上另画一笔": ComposeRangeToBack 的第 3 步会把它画进
+   正在合成的每一行里 (见那里的注释: 这样整行一次写回, 中间态不存在, 不闪)。
+   所以"移动光标"天然就是一次**局部重绘**: 旧位置所在的行重绘一次 (此时把
+   cur_visible_ 临时清掉 => 旧箭头被场景内容覆盖), 新位置所在的行再重绘一次
+   (场景 + 光标一起写回)。
+
+   相比旧的旁路实现 (在扫描出缓冲上直接擦/贴 + 16x16 快照还原 + 避免区的
+   特殊处理):
+     * 唯一真相来源是"场景行", 不会出现快照失效导致的残影/双光标;
+     * 每次移动只重画 2 x 16 行 x 1280 列 (合计约 0.5~1ms), 而整屏合成要
+       10~19ms —— 鼠标响应不再被整屏合成拖住;
+     * 与窗口/壁纸的重绘走同一条路径, 没有叠放顺序的特例。
+   --------------------------------------------------------------------------- */
+/* 损伤区域合成: 只重画 [y0,y1) 这些行 (整行宽)。
+   场景行里包含光标 (ComposeRangeToBack 第 3 步), 所以光标/窗口内容/任务栏
+   都走这一条路径 —— 这就是"鼠标是图层"的直接结果: 谁变了就只重画哪几行。 */
+void Compositor::ComposeRows(int32_t y0, int32_t y1) {
+    CompScanGuard _sg(this);
+    if (!back_) return;
+    const int32_t H = (int32_t)screen_.Height;
+    if (y0 < 0) y0 = 0;
+    if (y1 > H) y1 = H;
+    if (y0 >= y1) return;
+    ComposeRangeToBack((uint32_t)y0, (uint32_t)y1, stage_[0], false);
+    if (cur_visible_) { committed_x_ = cur_x_; committed_y_ = cur_y_; }
 }
 
+/* 光标移动用的就是上面那条"损伤行带"路径。 */
+void Compositor::ComposeCursorBand(int32_t y0, int32_t y1) {
+    /* 由 CursorMoveTo / SetCursorShape 在已持锁的前提下调用:
+       这里直接走内部实现, 不能再进 ComposeRows (自旋锁不可重入)。 */
+    if (!back_) return;
+    const int32_t H = (int32_t)screen_.Height;
+    int32_t y0c = y0 < 0 ? 0 : y0;
+    int32_t y1c = y1 > H ? H : y1;
+    if (y0c >= y1c) return;
+    ComposeRangeToBack((uint32_t)y0c, (uint32_t)y1c, stage_[0], false);
+    if (cur_visible_) { committed_x_ = cur_x_; committed_y_ = cur_y_; }
+}
+
+void Compositor::SetCursor(int32_t x, int32_t y, bool visible) {
+    CompScanGuard _sg(this);
+    const uint8_t v = visible ? 1u : 0u;
+    /* 只改状态。调用点在初始化阶段 (场景还没铺开), 真正的绘制交给下一次
+       Compose / CursorMoveTo。 */
+    if (v != cur_visible_) { committed_x_ = committed_y_ = -1; dirty_ = 1; }
+    cur_x_ = x; cur_y_ = y; cur_visible_ = v;
+}
+
+/* 已持扫描出锁时执行的光标重绘 (CursorMoveTo / CursorMoveToTry 共用) */
+void Compositor::CursorMoveLocked(int32_t x, int32_t y) {
+    if (x == cur_x_ && y == cur_y_) return;
+    const uint64_t _t0 = comp_rdtsc();
+    const int32_t ox = committed_x_, oy = committed_y_;
+    const uint8_t vis = cur_visible_;
+
+    /* 1) 旧位置: 临时藏起光标, 重绘那几行 -> 旧箭头被场景覆盖 (= 擦除) */
+    if (vis && ox >= 0 && oy >= 0) {
+        cur_visible_ = 0;
+        ComposeCursorBand(oy, oy + SKY_CURS);
+        cur_visible_ = vis;
+    }
+    /* 2) 新位置: 场景 + 光标一起写回 */
+    cur_x_ = x; cur_y_ = y;
+    if (cur_visible_) {
+        ComposeCursorBand(y, y + SKY_CURS);
+    } else {
+        committed_x_ = committed_y_ = -1;
+    }
+    g_pf_band_cyc += comp_rdtsc() - _t0; g_pf_band_cnt++;
+}
+
+/* 阻塞版: 主线程/初始化路径用 (可接受等待) */
+void Compositor::CursorMoveTo(int32_t x, int32_t y) {
+    CompScanGuard _sg(this);
+    CursorMoveLocked(x, y);
+}
+
+/* 非阻塞版: 光标线程专用。抢不到锁就丢掉这次采样, 绝不原地自旋。 */
+bool Compositor::CursorMoveToTry(int32_t x, int32_t y) {
+    if (x == cur_x_ && y == cur_y_) return true;      /* 没动, 无需重绘 */
+    if (!TryLockScan(2048u)) { g_pf_lock_miss++; return false; }
+    CursorMoveLocked(x, y);
+    UnlockScan();
+    return true;
+}
+
+/* 形状切换: 同位置先按"无光标"重绘一次擦掉旧字形, 再按新形状画一次。 */
+void Compositor::SetCursorShape(uint32_t shape) {
+    CompScanGuard _sg(this);
+    if (shape == cur_shape_) return;
+    cur_shape_ = shape;
+    if (!cur_visible_ || committed_y_ < 0) return;
+    const uint8_t vis = cur_visible_;
+    cur_visible_ = 0;
+    ComposeCursorBand(cur_y_, cur_y_ + SKY_CURS);
+    cur_visible_ = vis;
+    ComposeCursorBand(cur_y_, cur_y_ + SKY_CURS);
+}
+
+
 /* ---- dirty-rectangle scene API ----------------------------------------- */
-/* P5-96: Invalidate()/Present() 为无调用者的死代码 —— Compose 已走
+/* Invalidate()/Present() 为无调用者的死代码 —— Compose 已走
    全帧 commitScene 路径; 已删除 (若未来要按脏矩形增量合成, 从
    git 历史恢复)。 */
 
 /* Fast pointer path: the scene is untouched - only the old and new 16x16
    cursor dirty squares are refreshed straight from back_, so tracking costs
    O(16^2) with no recompose/full-screen present. */
-void Compositor::CursorMoveTo(int32_t x, int32_t y) {
-    if (x == committed_x_ && y == committed_y_) return;
-    overlayCursorFinal(committed_x_, committed_y_, x, y);
-}
 
 /* Shape swap forces a repaint of the 16x16 cell, otherwise the old glyph
    would be left under the new one (the fast path skips identical cells). */
-void Compositor::SetCursorShape(uint32_t shape) {
-    if (shape == cur_shape_) return;
-    cur_shape_ = shape;
-    committed_x_ = committed_y_ = -1;
-    if (cur_visible_) blendCursorSquare(cur_x_, cur_y_);
-}
 
 /* ---- worker: render its strip into the OFF-SCREEN back_ only ------------
  * Workers never touch the visible framebuffer; the main thread is the sole
@@ -809,7 +948,7 @@ extern "C" void CompWorkerTrampoline() {
     /* id 0 is reserved for the main thread (help-the-work); workers own 1..N-1 */
     uint32_t id = 1u + __atomic_fetch_add(&g_strip_ticket, 1, __ATOMIC_SEQ_CST);
     Compositor::Get().WorkerEntry(id);
-    /* P0-18: 线程退出钩子 —— TLS 分配器队列归还 (原 cleanup 无调用点) */
+    /* 线程退出钩子 —— TLS 分配器队列归还 (原 cleanup 无调用点) */
     extern void allocator_thread_exit_cleanup(void);
     allocator_thread_exit_cleanup();
 
@@ -861,7 +1000,12 @@ void Compositor::StartWorkers() {
        说明满屏合成的并行度并不是瓶颈, 让出 CPU 给客户端更划算。
        机器核更多时可上调此上限; 但先要解决"worker 空转" (需要内核提供
        真正的 sleep, 现在只有 yield, 让出后立刻又会被调度回来)。 */
-    if (n > 2) n = 2;   /* 见下方说明: 实测 2 比全开更快 */
+    /* 实测结论 (2026-10, 4 vCPU / 96 MiB, DOOM 运行中):
+       并行分条 + 有界栅栏是**负优化** —— 栅栏等待占掉合成耗时的 47~84%,
+       单帧最坏 125ms (平均 15~68ms); 而纯单线程 平均 13~25ms, 最坏 27ms,
+       等待 0%。响应速度看的是最坏延迟, 所以这里固定 1: 只有主线程合成,
+       worker 线程不再启动 (下面的代码保留, 需要时把 n 调大即可)。 */
+    n = 1;
     ncpus_ = n;
 
     /* dynamically allocate the exact strip table for this CPU count */
@@ -915,7 +1059,7 @@ void Compositor::StartWorkers() {
     __atomic_store_n(&shutdown_,     0, __ATOMIC_SEQ_CST);
 
     /* Strip 0 is rendered by the main thread itself; launch workers ONLY
-       for the other cores. P1-48: 统计实际成功的启动数 —— 原实现忽略
+       for the other cores. 统计实际成功的启动数 —— 原实现忽略
        返回值, 启动失败时下面的等待循环永转。 */
     uint32_t peers = (n > 1) ? n - 1 : 0;
     uint32_t launched_ok = 0;
@@ -954,12 +1098,20 @@ void Compositor::StartWorkers() {
 }
 
 void Compositor::Compose() {
+    CompScanGuard _sg(this);
     if (!back_) return;          /* Init failed / Shutdown: nothing to compose */
-    if (!launched_ || ncpus_ <= 1) { ComposeSingleThreaded(); return; }
+    const uint64_t _t0 = comp_rdtsc();
+    if (!launched_ || ncpus_ <= 1) {
+        ComposeSingleThreaded();
+        g_pf_compose_cyc += comp_rdtsc() - _t0; g_pf_compose_cnt++;
+        return;
+    }
 
     /* Peers are workers pinned to the OTHER cores; the main thread renders
        strip 0 itself (help-the-work). */
     const uint32_t peers = ncpus_ - 1;
+    uint32_t ny0 = 0, ny1 = 0;
+    ComputeCoverSpan(&ny0, &ny1);
 
     /* phase 1 (off-screen): peers render strips 1..N-1 to back_, main strip 0.
        Bump the frame sequence, then wait on the per-frame completion counter. */
@@ -1001,16 +1153,16 @@ void Compositor::Compose() {
         }
     }
 
-    /* P1-53 (扩展到图层): barrier point — 所有 worker 已完成本帧的列表
+    /* barrier point (图层同样适用) — 所有 worker 已完成本帧的列表
        遍历 (或已判定降级), 退役节点与退役图层不再被引用, 可安全释放。 */
     comp_reclaim_retired();
+    cov_y0_ = ny0; cov_y1_ = ny1;
+    force_full_ = 0;
 
-    /* phase 2 (single commit point, main thread only): push the whole scene
-       to the scanout while preserving the cursor square, then draw the
-       cursor LAST at its freshest position. */
-    commitScene(0, 0, (int32_t)screen_.Width, (int32_t)screen_.Height,
-                committed_x_, committed_y_, cur_x_, cur_y_, true);
+    /* 整屏行里已经包含光标, 只同步记账 (与 ComposeSingleThreaded 一致) */
+    if (cur_visible_) { committed_x_ = cur_x_; committed_y_ = cur_y_; }
     dirty_ = 0;
+    g_pf_compose_cyc += comp_rdtsc() - _t0; g_pf_compose_cnt++;
 }
 
 void Compositor::Shutdown() {

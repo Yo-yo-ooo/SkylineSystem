@@ -3,7 +3,7 @@
 #include <base/arch/x86_64/syscalln.h>
 #include <graphic/devtype.h>
 
-#define FB_TYPE_IDX         DEV_TYPE_FRAMEBUFFER   /* P5-97: 权威在 devtype.h */
+#define FB_TYPE_IDX         DEV_TYPE_FRAMEBUFFER   /* 权威在 devtype.h */
 
 FrameBuffer GetFBInfo() {
     FrameBuffer fb;
@@ -111,7 +111,7 @@ void DrawCircle(
         // 绘制八对称点
         PutPixel(FB, center_x + x, center_y + y, color);
         PutPixel(FB, center_x + y, center_y + x, color);
-        PutPixel(FB, center_x - y, center_y + x, color);  /* P5-105: 原 center_y 当 x 用 */
+        PutPixel(FB, center_x - y, center_y + x, color);  /* 原 center_y 当 x 用 */
         PutPixel(FB, center_x - x, center_y + y, color);
         PutPixel(FB, center_x - x, center_y - y, color);
         PutPixel(FB, center_x - y, center_y - x, color);

@@ -19,10 +19,10 @@ extern "C" {
 #define VMM_FLAG_CACHE_DISABLE  (1 << 4)        /* PCD */
 #define VMM_FLAG_PAT            (1 << 7)        /* PAT */
 
-/* P5-97: syscall 编号命名宏 —— 与内核 syscalln.h 保持单一权威
+/* syscall 编号命名宏 —— 与内核 syscalln.h 保持单一权威
    (用户态不再散落裸数字 9/24 等) */
 #define SYS_EXIT                9
-/* D13 (round 9): 补 18/20/25 宏 (与内核 syscalln.h 对齐) */
+/* 补 18/20/25 宏 (与内核 syscalln.h 对齐) */
 #define SYS_ARCH_PRCTL          18
 #define SYS_GETRANDOM           20
 #define SYS_DBGSOUT             24

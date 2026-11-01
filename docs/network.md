@@ -23,12 +23,12 @@
 
 ## Performance profile snapshots (QEMU TCG, wall clock ~3x inflation —— see boundaries below)
 
-| Round | Scenario | Result |
+| Run | Scenario | Result |
 |---|---|---|
-| round 89 | 30min soak (post-milestone) | tx=1,169,054 frames / 74.8MB, sustained 2815/s; loss=0 errors=0 full=0; ping 144 consecutive |
-| round 95 | 5min collection | tx=199,935 frames / 12.8MB, climbs 2441→2510/s then stable; loss=0 errors=0 full=0 |
+| 1 | 30min soak | tx=1,169,054 frames / 74.8MB, sustained 2815/s; loss=0 errors=0 full=0; ping 144 consecutive |
+| 2 | 5min collection | tx=199,935 frames / 12.8MB, climbs 2441→2510/s then stable; loss=0 errors=0 full=0 |
 
-Multi-round trend: rate stable in the 2400-2800 frames/s band (TCG jitter range), zero loss / zero ring-full consistent across rounds.
+Trend across runs: rate stable in the 2400-2800 frames/s band (TCG jitter range), zero loss / zero ring-full consistent across runs.
 Finer RTT min/P50/P90/P99 see the dedicated ping profiling mode (percentile output every 5 minutes).
 
 ## Porting fixes (all have bug→fix records)
@@ -48,11 +48,11 @@ Finer RTT min/P50/P90/P99 see the dedicated ping profiling mode (percentile outp
 - **RX receive-side checksum verification disabled** (lwipopts.h comment): transmit-side checksums fully on, receive-side verification path
   drops slirp's legal frames, pending verification against the lwIP version
 - **Zero-copy = experimental** (NET_ZEROCOPY=0): production path is copy-based, stably verified
-- **IRQ mode now enabled** (P3-80 fix: e1000.cpp's INTx interrupt line + IOAPIC remapping
+- **IRQ mode now enabled** (e1000.cpp's INTx interrupt line + IOAPIC remapping
   wired up, IRQ drives packet reception; the old "not enabled / polling mode" account is outdated); MSI-X multi-queue =
   blocked on 82574 datasheet verification
 - **No IPv6/TCP real-traffic test**: default port config compiles in TCP/IPv6, not verified with real traffic
-- All rate/latency numbers = QEMU TCG guest virtual time (wall clock ~3x inflation, see round 16 records)
+- All rate/latency numbers = QEMU TCG guest virtual time (wall clock ~3x inflation)
 
 ## Related docs
 

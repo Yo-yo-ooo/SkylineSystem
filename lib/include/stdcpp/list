@@ -6,7 +6,7 @@
 #define STDCPP_LIST_HPP
 
 #include <cstddef>
-#include <cstdlib>
+#include "detail/alloc.h"
 #include <type_traits>
 #include <utility>
 #include <iterator>
@@ -50,7 +50,7 @@ class list {
     size_t _M_size;
 
     void _M_init() {
-        _M_head = (_node*)malloc(sizeof(_node));
+        _M_head = (_node*)std::__detail::alloc_bytes(sizeof(_node));
         _M_head->_M_next = _M_head;
         _M_head->_M_prev = _M_head;
         _M_size = 0;
@@ -112,7 +112,7 @@ public:
     list(list&& other) noexcept : _M_head(other._M_head), _M_size(other._M_size) { other._M_init(); }
     list(initializer_list<T> il) { _M_init(); for (const T& v : il) push_back(v); }
 #endif
-    ~list() { clear(); free(_M_head); }
+    ~list() { clear(); std::__detail::dealloc_bytes(_M_head); }
 
     list& operator=(const list& other) {
         if (this != &other) { clear(); for (const T& v : other) push_back(v); }
@@ -120,7 +120,7 @@ public:
     }
 #if STDCPP_LST_CXX11
     list& operator=(list&& other) noexcept {
-        if (this != &other) { clear(); free(_M_head); _M_head = other._M_head; _M_size = other._M_size; other._M_init(); }
+        if (this != &other) { clear(); std::__detail::dealloc_bytes(_M_head); _M_head = other._M_head; _M_size = other._M_size; other._M_init(); }
         return *this;
     }
     list& operator=(initializer_list<T> il) { clear(); for (const T& v : il) push_back(v); return *this; }

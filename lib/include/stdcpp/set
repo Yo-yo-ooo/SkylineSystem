@@ -208,6 +208,9 @@ public:
     iterator lower_bound(const Key& k) { return _M_tree.lower_bound(k); }
     iterator upper_bound(const Key& k) { return _M_tree.upper_bound(k); }
     pair<iterator, iterator> equal_range(const Key& k) { return _M_tree.equal_range(k); }
+    const_iterator lower_bound(const Key& k) const { return _M_tree.lower_bound(k); }
+    const_iterator upper_bound(const Key& k) const { return _M_tree.upper_bound(k); }
+    pair<const_iterator, const_iterator> equal_range(const Key& k) const { return _M_tree.equal_range(k); }
 
 #if STDCPP_SET_CXX20
     bool contains(const Key& k) const { return find(k) != end(); }

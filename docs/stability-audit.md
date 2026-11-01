@@ -25,7 +25,7 @@
 | Five overstated claims | ✅ | report has downgraded/corrected all of them (see §5 handling column) |
 | **Not completed** | ⏳ | S6/F5 multithreaded concurrency (partially done, see below), QEMU sched trace, before/after fix performance comparison, golden-sample diff, evictions counter trigger-condition verification |
 
-## 0''. SMP Retest Progress (Multithreading + TSAN, 2026-09-27 Round 2)
+## 0''. SMP Retest Progress (Multithreading + TSAN, 2026-09-27)
 
 **Kernel-side fixes ultimately kept** (all verified no-regression by QEMU boot):
 

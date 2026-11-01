@@ -1,0 +1,398 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+//=============================================================
+// <complex> — 复数
+//
+// 实现要点：
+//   1. abs() 用「按模较大分量缩放」的写法，避免 re²+im² 上溢/下溢；
+//      开方走 detail/math.h 的牛顿迭代，**不需要 libm**，所以内核里
+//      std::abs(std::complex<double>) 也能直接用。
+//   2. 除法用 Smith 算法（按分母较大分量缩放），大数/小数都不溢出。
+//   3. exp/log/三角/反三角等超越函数转发到 sin/cos/atan2/exp/log，
+//      这些会落到 libm 符号（用户态 lib/stdc/math.c 已提供；内核不用则不产生符号）。
+//   4. 保留 C++20 前才有的 real(T)/imag(T) 设值接口（内核用 gnu++17）。
+//=============================================================
+#ifndef STDCPP_COMPLEX_HPP
+#define STDCPP_COMPLEX_HPP
+
+#include <cstddef>
+#include "detail/config.h"
+#include "detail/math.h"
+
+#ifndef _GLIBCXX_COMPLEX
+#  define _GLIBCXX_COMPLEX 1
+#endif
+
+namespace std {
+
+template<class T> class complex;
+
+//=============================================================
+// complex
+//=============================================================
+template<class T>
+class complex {
+public:
+    typedef T value_type;
+
+    constexpr complex(const T& re = T(), const T& im = T()) : _M_re(re), _M_im(im) {}
+
+    template<class X>
+    constexpr complex(const complex<X>& other)
+        : _M_re(static_cast<T>(other.real())), _M_im(static_cast<T>(other.imag())) {}
+
+    constexpr T real() const { return _M_re; }
+    constexpr T imag() const { return _M_im; }
+
+    // C++20 起被移除；保留以供 gnu++17 代码与老接口使用
+    void real(T v) { _M_re = v; }
+    void imag(T v) { _M_im = v; }
+
+    complex& operator=(const T& v) { _M_re = v; _M_im = T(); return *this; }
+
+    complex& operator+=(const T& v) { _M_re += v; return *this; }
+    complex& operator-=(const T& v) { _M_re -= v; return *this; }
+    complex& operator*=(const T& v) { _M_re *= v; _M_im *= v; return *this; }
+    complex& operator/=(const T& v) { _M_re /= v; _M_im /= v; return *this; }
+
+    complex& operator+=(const complex& o) { _M_re += o._M_re; _M_im += o._M_im; return *this; }
+    complex& operator-=(const complex& o) { _M_re -= o._M_re; _M_im -= o._M_im; return *this; }
+    complex& operator*=(const complex& o) {
+        const T re = _M_re * o._M_re - _M_im * o._M_im;
+        const T im = _M_re * o._M_im + _M_im * o._M_re;
+        _M_re = re;
+        _M_im = im;
+        return *this;
+    }
+    complex& operator/=(const complex& o) {
+        // Smith 算法：按分母较大分量缩放，避免中间量溢出
+        if (__detail::m_fabs(o._M_re) >= __detail::m_fabs(o._M_im)) {
+            const T r = o._M_im / o._M_re;
+            const T den = o._M_re + o._M_im * r;
+            const T re = (_M_re + _M_im * r) / den;
+            const T im = (_M_im - _M_re * r) / den;
+            _M_re = re; _M_im = im;
+        } else {
+            const T r = o._M_re / o._M_im;
+            const T den = o._M_re * r + o._M_im;
+            const T re = (_M_re * r + _M_im) / den;
+            const T im = (_M_im * r - _M_re) / den;
+            _M_re = re; _M_im = im;
+        }
+        return *this;
+    }
+
+private:
+    T _M_re;
+    T _M_im;
+};
+
+//=============================================================
+// 一元 / 二元运算符
+//=============================================================
+template<class T>
+inline constexpr complex<T> operator+(const complex<T>& z) { return z; }
+
+template<class T>
+inline constexpr complex<T> operator-(const complex<T>& z) {
+    return complex<T>(-z.real(), -z.imag());
+}
+
+template<class T>
+inline constexpr complex<T> operator+(const complex<T>& a, const complex<T>& b) {
+    return complex<T>(a.real() + b.real(), a.imag() + b.imag());
+}
+template<class T>
+inline constexpr complex<T> operator+(const complex<T>& a, const T& b) {
+    return complex<T>(a.real() + b, a.imag());
+}
+template<class T>
+inline constexpr complex<T> operator+(const T& a, const complex<T>& b) {
+    return complex<T>(a + b.real(), b.imag());
+}
+
+template<class T>
+inline constexpr complex<T> operator-(const complex<T>& a, const complex<T>& b) {
+    return complex<T>(a.real() - b.real(), a.imag() - b.imag());
+}
+template<class T>
+inline constexpr complex<T> operator-(const complex<T>& a, const T& b) {
+    return complex<T>(a.real() - b, a.imag());
+}
+template<class T>
+inline constexpr complex<T> operator-(const T& a, const complex<T>& b) {
+    return complex<T>(a - b.real(), -b.imag());
+}
+
+template<class T>
+inline complex<T> operator*(const complex<T>& a, const complex<T>& b) {
+    return complex<T>(a.real() * b.real() - a.imag() * b.imag(),
+                      a.real() * b.imag() + a.imag() * b.real());
+}
+template<class T>
+inline complex<T> operator*(const complex<T>& a, const T& b) {
+    return complex<T>(a.real() * b, a.imag() * b);
+}
+template<class T>
+inline complex<T> operator*(const T& a, const complex<T>& b) {
+    return complex<T>(a * b.real(), a * b.imag());
+}
+
+template<class T>
+inline complex<T> operator/(const complex<T>& a, const complex<T>& b) {
+    complex<T> r(a);
+    r /= b;
+    return r;
+}
+template<class T>
+inline complex<T> operator/(const complex<T>& a, const T& b) {
+    return complex<T>(a.real() / b, a.imag() / b);
+}
+template<class T>
+inline complex<T> operator/(const T& a, const complex<T>& b) {
+    return complex<T>(a) / b;
+}
+
+template<class T>
+inline constexpr bool operator==(const complex<T>& a, const complex<T>& b) {
+    return a.real() == b.real() && a.imag() == b.imag();
+}
+template<class T>
+inline constexpr bool operator==(const complex<T>& a, const T& b) {
+    return a.real() == b && a.imag() == T();
+}
+template<class T>
+inline constexpr bool operator==(const T& a, const complex<T>& b) { return b == a; }
+
+template<class T>
+inline constexpr bool operator!=(const complex<T>& a, const complex<T>& b) { return !(a == b); }
+template<class T>
+inline constexpr bool operator!=(const complex<T>& a, const T& b) { return !(a == b); }
+template<class T>
+inline constexpr bool operator!=(const T& a, const complex<T>& b) { return !(b == a); }
+
+//=============================================================
+// 分量访问 / 基本函数
+//=============================================================
+template<class T>
+inline constexpr T real(const complex<T>& z) { return z.real(); }
+template<class T>
+inline constexpr T imag(const complex<T>& z) { return z.imag(); }
+
+template<class T>
+inline constexpr T norm(const complex<T>& z) {
+    return z.real() * z.real() + z.imag() * z.imag();
+}
+
+// |z|：按较大分量缩放，避免平方溢出
+template<class T>
+inline T abs(const complex<T>& z) {
+    const T x = __detail::m_fabs(z.real());
+    const T y = __detail::m_fabs(z.imag());
+    if (x > y) {
+        const T r = y / x;
+        return x * __detail::sqrt_nr(T(1) + r * r);
+    }
+    if (y > x) {
+        const T r = x / y;
+        return y * __detail::sqrt_nr(T(1) + r * r);
+    }
+    // x == y（含 0、inf、NaN）
+    return x * __detail::sqrt_nr(T(2));
+}
+
+template<class T>
+inline T arg(const complex<T>& z) { return __detail::m_atan2(z.imag(), z.real()); }
+
+template<class T>
+inline constexpr complex<T> conj(const complex<T>& z) {
+    return complex<T>(z.real(), -z.imag());
+}
+
+// proj：无穷远点投影到 (inf, ±0)
+template<class T>
+inline complex<T> proj(const complex<T>& z) {
+    if (__detail::is_inf_f(z.real()) || __detail::is_inf_f(z.imag()))
+        return complex<T>(__builtin_huge_val(), __builtin_copysign(T(0), z.imag()));
+    return z;
+}
+
+template<class T>
+inline complex<T> polar(const T& rho, const T& theta = T()) {
+    return complex<T>(rho * __detail::m_cos(theta), rho * __detail::m_sin(theta));
+}
+
+//=============================================================
+// 指数 / 对数 / 幂
+//=============================================================
+template<class T>
+inline complex<T> exp(const complex<T>& z) {
+    const T m = __detail::m_exp(z.real());
+    return complex<T>(m * __detail::m_cos(z.imag()), m * __detail::m_sin(z.imag()));
+}
+
+template<class T>
+inline complex<T> log(const complex<T>& z) {
+    return complex<T>(__detail::m_log(abs(z)), arg(z));
+}
+
+template<class T>
+inline complex<T> log10(const complex<T>& z) {
+    // log10(z) = log(z) / ln(10)
+    const T ln10 = T(2.302585092994045684017991454684364208L);
+    const complex<T> l = log(z);
+    return complex<T>(l.real() / ln10, l.imag() / ln10);
+}
+
+template<class T>
+inline complex<T> sqrt(const complex<T>& z) {
+    const T x = z.real();
+    const T y = z.imag();
+    if (x == T() && y == T()) return complex<T>(T(), y);   // 保留 ±0
+    const T r = abs(z);
+    if (x >= T()) {
+        const T re = __detail::sqrt_nr((r + x) / T(2));
+        return complex<T>(re, y / (T(2) * re));
+    }
+    const T im = __detail::sqrt_nr((r - x) / T(2));
+    const T s = (y >= T()) ? T(1) : T(-1);
+    return complex<T>(y / (T(2) * im * s), im * s);
+}
+
+// 整数次幂：平方求幂，n 为负时取倒数
+template<class T>
+inline complex<T> pow(const complex<T>& x, int n) {
+    if (n == 0) return complex<T>(T(1), T());
+    unsigned int m = (n < 0) ? (unsigned int)(-(long long)n) : (unsigned int)n;
+    complex<T> base = x;
+    complex<T> r(T(1), T());
+    while (m) {
+        if (m & 1u) r *= base;
+        base *= base;
+        m >>= 1;
+    }
+    return (n < 0) ? complex<T>(T(1), T()) / r : r;
+}
+
+template<class T>
+inline complex<T> pow(const complex<T>& x, const complex<T>& y) {
+    if (x == complex<T>(T(), T()) && y.real() > T()) return complex<T>(T(), T());
+    return exp(y * log(x));
+}
+template<class T>
+inline complex<T> pow(const complex<T>& x, const T& y) {
+    return pow(x, complex<T>(y));
+}
+template<class T>
+inline complex<T> pow(const T& x, const complex<T>& y) {
+    return pow(complex<T>(x), y);
+}
+
+// 实数域的双曲函数（complex 内部要用，避免依赖 <cmath>）
+template<class T>
+inline T sinh(const T& x) {
+    const T ex = __detail::m_exp(x);
+    return (ex - T(1) / ex) / T(2);
+}
+template<class T>
+inline T cosh(const T& x) {
+    const T ex = __detail::m_exp(x);
+    return (ex + T(1) / ex) / T(2);
+}
+template<class T>
+inline T tanh(const T& x) {
+    const T e2 = __detail::m_exp(T(2) * x);
+    return (e2 - T(1)) / (e2 + T(1));
+}
+template<class T>
+inline T asinh(const T& x) { return __detail::m_log(x + __detail::sqrt_nr(x * x + T(1))); }
+template<class T>
+inline T acosh(const T& x) { return __detail::m_log(x + __detail::sqrt_nr(x * x - T(1))); }
+template<class T>
+inline T atanh(const T& x) { return T(0.5) * __detail::m_log((T(1) + x) / (T(1) - x)); }
+
+//=============================================================
+// 三角 / 双曲 / 反三角
+//=============================================================
+template<class T>
+inline complex<T> sin(const complex<T>& z) {
+    const T x = z.real(), y = z.imag();
+    return complex<T>(__detail::m_sin(x) * cosh(y), __detail::m_cos(x) * sinh(y));
+}
+template<class T>
+inline complex<T> cos(const complex<T>& z) {
+    const T x = z.real(), y = z.imag();
+    return complex<T>(__detail::m_cos(x) * cosh(y), -__detail::m_sin(x) * sinh(y));
+}
+template<class T>
+inline complex<T> tan(const complex<T>& z) { return sin(z) / cos(z); }
+
+template<class T>
+inline complex<T> sinh(const complex<T>& z) {
+    const T x = z.real(), y = z.imag();
+    return complex<T>(sinh(x) * __detail::m_cos(y), cosh(x) * __detail::m_sin(y));
+}
+template<class T>
+inline complex<T> cosh(const complex<T>& z) {
+    const T x = z.real(), y = z.imag();
+    return complex<T>(cosh(x) * __detail::m_cos(y), sinh(x) * __detail::m_sin(y));
+}
+template<class T>
+inline complex<T> tanh(const complex<T>& z) { return sinh(z) / cosh(z); }
+
+template<class T>
+inline complex<T> asin(const complex<T>& z) {
+    // asin(z) = -i * log(iz + sqrt(1 - z*z))
+    const complex<T> i(T(), T(1));
+    const complex<T> t = i * z + sqrt(complex<T>(T(1), T()) - z * z);
+    const complex<T> l = log(t);
+    return complex<T>(l.imag(), -l.real());
+}
+
+template<class T>
+inline complex<T> acos(const complex<T>& z) {
+    const T half_pi = T(1.570796326794896619231321691639751442L);
+    const complex<T> a = asin(z);
+    return complex<T>(half_pi - a.real(), -a.imag());
+}
+
+template<class T>
+inline complex<T> atan(const complex<T>& z) {
+    // atan(z) = (i/2) * (log(1 - iz) - log(1 + iz))
+    const complex<T> i(T(), T(1));
+    const complex<T> one(T(1), T());
+    const complex<T> a = log(one - i * z);
+    const complex<T> b = log(one + i * z);
+    const complex<T> d = a - b;
+    return complex<T>(-d.imag() / T(2), d.real() / T(2));
+}
+
+//=============================================================
+// 字面量
+//=============================================================
+inline namespace literals {
+inline namespace complex_literals {
+
+// 标准库保留后缀（"i"），GCC 在不认识 std 上下文时会给出 -Wliteral-suffix
+#if defined(__GNUC__) && !defined(__clang__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wliteral-suffix"
+#endif
+
+constexpr complex<double> operator""i(unsigned long long im) {
+    return complex<double>(0.0, static_cast<double>(im));
+}
+constexpr complex<double> operator""i(long double im) {
+    return complex<double>(0.0, static_cast<double>(im));
+}
+
+#if defined(__GNUC__) && !defined(__clang__)
+#  pragma GCC diagnostic pop
+#endif
+
+} // namespace complex_literals
+} // namespace literals
+
+} // namespace std
+
+#endif // STDCPP_COMPLEX_HPP

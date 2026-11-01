@@ -23,13 +23,13 @@
 .global _start
 .extern main
 .extern _init_runtime_and_global_variables
-.extern allocator_thread_exit_cleanup   /* 审计 #23: 主线程退出钩子 */
+.extern allocator_thread_exit_cleanup   /* 主线程退出钩子 */
 .type _start,@function
 .section .text
 _start:
     # ----------------------------------------------------
     # 1. 阶段一：从内核摆好的 RSP 中提取 argc 和 argv
-    #    (P5-104: 恢复显式约定 —— 原实现注释掉了提取与对齐,
+    #    (恢复显式约定 —— 原实现注释掉了提取与对齐,
     #     但阶段三的 pop rdi/pop rsi 仍在执行, 弹走的是从未压入
     #     的栈槽 → 垃圾参数 + 栈错位)
     # ----------------------------------------------------
@@ -60,9 +60,9 @@ _start:
     # 4. 阶段四：安全退出
     # ----------------------------------------------------
     mov rdi, rax          # RAX 里是 main 的返回值
-    # 审计 #23 (round 10): 主线程退出同样归还 TLS 队列 —— 原只有
+    # 主线程退出同样归还 TLS 队列 —— 原只有
     # 合成器 worker 的 trampoline 一处调用, 主线程的分配器 TLS 队列
     # 随进程消亡泄漏 (进程内不回收, 但钩子语义应完整)
     call allocator_thread_exit_cleanup
-    mov rax, 9            # SYS_EXIT (P5-97: 见 syscall.h; 汇编无法用宏, 编号权威在内核 syscalln.h)
+    mov rax, 9            # SYS_EXIT (见 syscall.h; 汇编无法用宏, 编号权威在内核 syscalln.h)
     syscall                 # 陷入内核，安乐死

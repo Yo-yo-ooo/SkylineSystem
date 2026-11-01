@@ -167,7 +167,21 @@ static void wm_body(const WmClient* c, int32_t* x, int32_t* y,
 /* Drop a client's window without touching the process: unregister (the
    auto-created layer is retired with its last window and freed at the next
    Compose() barrier) and free the slot. Callers must null any handle. */
+
+/* ---- 临时诊断: 窗口生命周期 (不用 snprintf, 本文件没有 stdio) ---- */
+static void wm_diag_str(const char* what, const char* title) {
+    char m[96]; size_t o = 0;
+    const char* p = "[wm] ";
+    while (*p) m[o++] = *p++;
+    p = what;
+    while (*p && o < 40) m[o++] = *p++;
+    if (title) { m[o++] = ' '; while (*title && o < 84) m[o++] = *title++; }
+    m[o++] = '\n';
+    syscall(SYS_DBGSOUT, (uint64_t)m, (uint64_t)o, 0, 0, 0, 0);
+}
+
 static void wm_drop(Compositor& comp, WmClient* c) {
+    wm_diag_str("drop", c->title);
     comp.UnregisterWindow(&c->win);
     free(c->rzSurf);
     c->rzSurf = nullptr;
@@ -181,6 +195,7 @@ static void wm_drop(Compositor& comp, WmClient* c) {
     c->pressMin = false;
     c->minimized = false;
     if (g_press == c) g_press = nullptr;
+    wm_diag_str("drop", c->title);
 }
 
 void wm_client_close(Compositor& comp, WmClient* c) {
@@ -288,7 +303,9 @@ WmClient* wm_client_spawn(Compositor& comp, FrameBuffer* fb, const char* elf,
         c->used = false;
         return nullptr;
     }
+    wm_diag_str("spawn", title);
     return c;
+    wm_diag_str("spawn", title);
 }
 
 WmClient* wm_client_hit(int32_t x, int32_t y) {
@@ -545,7 +562,7 @@ void wm_clients_sweep(Compositor& comp, bool* dirty) {
     }
 }
 
-void wm_clients_poll_output(bool* dirty) {
+void wm_clients_poll_output(bool* dirty, int32_t* py0, int32_t* py1) {
     for (int i = 0; i < WM_MAX_CLIENTS; i++) {
         WmClient* c = &g_clients[i];
         if (!c->used || !c->place.proto) continue;
@@ -554,5 +571,12 @@ void wm_clients_poll_output(bool* dirty) {
         if (seq == c->last_seq) continue;
         c->last_seq = seq;
         if (dirty) *dirty = true;
+        /* 该客户端的行带 (含标题栏与投影余量) 并入损伤区 */
+        if (py0 && py1) {
+            const int32_t top    = c->bodyY - 48;
+            const int32_t bottom = c->bodyY + (int32_t)c->bodyH + 32;
+            if (top < *py0) *py0 = top;
+            if (bottom > *py1) *py1 = bottom;
+        }
     }
 }

@@ -1,25 +1,25 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
-//
+
 // TLoad: spawn the userspace console process (hw2.elf) and hand it a
 // FIXED-SIZE modern (Win11-style) rounded ARGB surface to render into, WITHOUT mapping
 // the real MMIO scanout into it.
-//
+
 //   share 1 (window surface)   src = hw2 (fresh zero pages, SKYWIN_W x H),
 //                              dst = desktop (alias VA used to present it)
 //     the DESKTOP rasterizes the window chrome (soft shadow, rounded body,
 //     on its alias before launching the client; hw2 then ONLY runs its libc
 //     flanterm printf into the inner content area. The desktop mounts the
 //     SAME physical pages as one centered, non-fullscreen compositor window.
-//
+
 //   share 2 (4 KiB protocol page)  src = hw2 fixed 0x400000 (.prepad),
 //                                  dst = desktop alias VA for writing.
-//
+
 // The protocol (see graphic/winstyle.h) carries TWO geometries:
 //   [0..4] inner text area -> consumed verbatim by the libc console
 //   [5..7] whole window    -> whole-surface geometry (chrome is owned by the
 //                             desktop WM; kept for protocol completeness)
-//
+
 // The desktop-side alias + centered placement is returned through *place.
 
 #include <stdint.h>
@@ -209,7 +209,7 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     uint64_t client_whole = 0, desk_whole = 0;
     read_sideband(&client_whole, &desk_whole);
     if ((int64_t)r1 < 0 || client_whole == 0 || desk_whole == 0) {
-        /* P1-49: 失败回滚 —— 击杀已加载的客户端进程 */
+        /* 失败回滚 —— 击杀已加载的客户端进程 */
         sys_kill(pid, 9);
         return 0;
     }
@@ -221,7 +221,7 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     read_sideband(&proto_src, &proto);
     (void)proto_src;
     if ((int64_t)r2 < 0 || proto == 0) {
-        /* P1-49: 失败回滚 —— share 1 桌面别名归还 + 进程击杀兜底 */
+        /* 失败回滚 —— share 1 桌面别名归还 + 进程击杀兜底 */
         sys_munmap(desk_whole, winBytes);
         sys_kill(pid, 9);
         return 0;
@@ -257,7 +257,7 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
                         (int32_t)bodyW, (int32_t)bodyH, 0, title, paperRGB);
 
     if ((int64_t)sys_launch(pid) < 0) {
-        /* P1-49: 启动失败回滚 —— 归还 share 1 桌面别名 + 击杀进程 */
+        /* 启动失败回滚 —— 归还 share 1 桌面别名 + 击杀进程 */
         sys_munmap(desk_whole, winBytes);
         sys_kill(pid, 9);
         return 0;

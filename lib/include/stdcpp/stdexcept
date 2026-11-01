@@ -1,19 +1,23 @@
-// -*- C++ -*-
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 //=============================================================
-// stdexcept.hpp -- complete <stdexcept>, C++98~C++26.
+// <stdexcept> — 标准异常类
+//
+// 旧实现有两个问题：
+//   1. 依赖 `#define noexcept throw()` 兼容 C++98（会污染关键字）；
+//   2. 只有异常类，没有 __throw_* 出口，容器只能自己写 `throw`，
+//      在 -fno-exceptions 的内核里直接编译失败。
+// 现在所有抛出动作统一经 detail/throw.h 的 STDCPP_THROW 宏。
 //=============================================================
 #ifndef STDCPP_STDEXCEPT_HPP
 #define STDCPP_STDEXCEPT_HPP
 
 #include <cstddef>
+#include "detail/config.h"
+#include "detail/throw.h"
 
 #ifndef _GLIBCXX_STDEXCEPT
 #  define _GLIBCXX_STDEXCEPT 1
-#endif
-
-#if __cplusplus < 201103L
-#define noexcept throw()
-#define override
 #endif
 
 namespace std {
@@ -21,65 +25,89 @@ namespace std {
 class exception {
 public:
     exception() noexcept {}
-    virtual ~exception();
+    exception(const exception&) noexcept {}
+    exception& operator=(const exception&) noexcept { return *this; }
+    virtual ~exception() noexcept {}
     virtual const char* what() const noexcept { return "std::exception"; }
 };
-inline exception::~exception() {}
 
 class logic_error : public exception {
     const char* _M_msg;
 public:
-    explicit logic_error(const char* msg) : _M_msg(msg) {}
+    explicit logic_error(const char* msg) noexcept : _M_msg(msg) {}
     const char* what() const noexcept override { return _M_msg; }
 };
 
 class domain_error : public logic_error {
 public:
-    explicit domain_error(const char* msg) : logic_error(msg) {}
+    explicit domain_error(const char* msg) noexcept : logic_error(msg) {}
 };
 
 class invalid_argument : public logic_error {
 public:
-    explicit invalid_argument(const char* msg) : logic_error(msg) {}
+    explicit invalid_argument(const char* msg) noexcept : logic_error(msg) {}
 };
 
 class length_error : public logic_error {
 public:
-    explicit length_error(const char* msg) : logic_error(msg) {}
+    explicit length_error(const char* msg) noexcept : logic_error(msg) {}
 };
 
 class out_of_range : public logic_error {
 public:
-    explicit out_of_range(const char* msg) : logic_error(msg) {}
+    explicit out_of_range(const char* msg) noexcept : logic_error(msg) {}
 };
 
 class runtime_error : public exception {
     const char* _M_msg;
 public:
-    explicit runtime_error(const char* msg) : _M_msg(msg) {}
+    explicit runtime_error(const char* msg) noexcept : _M_msg(msg) {}
     const char* what() const noexcept override { return _M_msg; }
 };
 
 class range_error : public runtime_error {
 public:
-    explicit range_error(const char* msg) : runtime_error(msg) {}
+    explicit range_error(const char* msg) noexcept : runtime_error(msg) {}
 };
 
 class overflow_error : public runtime_error {
 public:
-    explicit overflow_error(const char* msg) : runtime_error(msg) {}
+    explicit overflow_error(const char* msg) noexcept : runtime_error(msg) {}
 };
 
 class underflow_error : public runtime_error {
 public:
-    explicit underflow_error(const char* msg) : runtime_error(msg) {}
+    explicit underflow_error(const char* msg) noexcept : runtime_error(msg) {}
 };
 
-} // namespace std
+//-------------------------------------------------------------
+// __throw_* 出口：容器/字符串统一从这里抛出
+//   无异常构建下等价于 STDCPP_FAIL()（默认 trap），不会静默越界。
+//-------------------------------------------------------------
+namespace __detail {
 
-#if __cplusplus < 201103L
-#undef noexcept
-#undef override
-#endif
+[[noreturn]] inline void throw_out_of_range(const char* msg) {
+    STDCPP_THROW(out_of_range(msg));
+    (void)msg;
+    STDCPP_FAIL(msg);
+}
+[[noreturn]] inline void throw_length_error(const char* msg) {
+    STDCPP_THROW(length_error(msg));
+    (void)msg;
+    STDCPP_FAIL(msg);
+}
+[[noreturn]] inline void throw_invalid_argument(const char* msg) {
+    STDCPP_THROW(invalid_argument(msg));
+    (void)msg;
+    STDCPP_FAIL(msg);
+}
+[[noreturn]] inline void throw_range_error(const char* msg) {
+    STDCPP_THROW(range_error(msg));
+    (void)msg;
+    STDCPP_FAIL(msg);
+}
+
+} // namespace __detail
+} // namespace std
 
 #endif // STDCPP_STDEXCEPT_HPP

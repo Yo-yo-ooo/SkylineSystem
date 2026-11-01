@@ -100,6 +100,9 @@ static uint16_t next_key(void) {
             if (g_slot >= 0) kbd_reader_setpos(k, g_slot, g_pos);
             if (allowed && e.action == KBD_ACTION_DOWN) return e.key;
         }
+        /* 让出 CPU 等下一个键。
+           **不要**换成 SYSCALL_SLEEP_MS: QEMU 实测本内核的短睡眠唤醒不可靠,
+           客户端会整体睡死 (输入彻底无响应, 且不触发 STALL WATCHDOG)。 */
         sys_yield();
     }
 }

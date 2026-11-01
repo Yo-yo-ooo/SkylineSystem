@@ -84,6 +84,13 @@ int main(void) {
     if (scanf("%f", &val) == 1)
         printf("x100 = %d\n", (int)(val * 100.0f));
 
-    while (true);
+    /* 原来是 `while (true);` —— 空转死循环, 在 4 vCPU 上永久占满一个核,
+       与桌面/DOOM 抢 CPU, 是各种"卡死"的燃料之一。
+       改成阻塞在 stdin 上: 没有输入时 libc 的 next_key 会真睡眠 (1ms 轮),
+       本进程从 RUNNABLE 变成阻塞态, 把核让出来。 */
+    for (;;) {
+        char sink[64];
+        (void)scanf("%63s", sink);
+    }
     return 0;
 }

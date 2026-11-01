@@ -33,7 +33,17 @@ uint64_t sys_dbgsout(uint64_t CharsAddr,uint64_t OutSize,GENERATE_IGN4()){
     for(size_t i = 0;i < OutSize;i++){
         char c = *(buf + i);
         if (at_line_start) {
-            kprintf("App Serial Output: ");
+            /* 行首前缀**必须绕开 kprintf**。
+               kprintf 要抢 ptf_lock, 而本函数此刻已持有 dbgout_lock;
+               另一侧 printf_ 在写串口时又会去抢 dbgout_lock ——
+               两条路径加锁顺序相反, 构成 AB-BA 交叉死锁。
+               QEMU 实测现场: 4 个核全部停在 spinlock_lock,
+               CPU0/1/2 争 ptf_lock、CPU3 争 dbgout_lock, 持锁者在等对方,
+               连 stall watchdog 所在的核也卡在里面 => 整机无声停摆,
+               串口一行都不再输出 (这就是"运行到一半卡死")。
+               改为一字节一字节直接写串口, 不触碰 printf 的任何状态。 */
+            static const char kPfx[] = "App Serial Output: ";
+            for (size_t k = 0; k < sizeof(kPfx) - 1u; k++) Serial::_Write(kPfx[k]);
             at_line_start = false;
         }
         Serial::_Write(c);

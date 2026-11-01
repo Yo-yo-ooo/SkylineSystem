@@ -1,23 +1,27 @@
-// -*- C++ -*-
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 //=============================================================
-// allocator.hpp -- complete <memory> allocator pieces, C++98~C++26.
+// <allocator> — std::allocator / allocator_traits / pointer_traits
+//
+// 与旧实现的差异：
+//   1. 去掉 <cstdlib>：内部统一走 detail/alloc.h → ::operator new，
+//      内核（无 malloc）与用户态都能用；
+//   2. allocate 做长度溢出检查（n > max_size 时抛 length_error / 停机）；
+//   3. allocator_traits 补 propagate_on_container_* 与 is_always_equal，
+//      否则容器无法判断是否该在 swap/拷贝赋值时搬运分配器；
+//   4. 去掉 C++98 的 `#define noexcept throw()`。
 //=============================================================
 #ifndef STDCPP_ALLOCATOR_HPP
 #define STDCPP_ALLOCATOR_HPP
 
 #include <cstddef>
-#include <cstdlib>
 #include <type_traits>
+#include <utility>
 #include <new>
-
-#define STDCPP_ALC_CXX11 (__cplusplus >= 201103L)
-#define STDCPP_ALC_CXX17 (__cplusplus >= 201703L)
-#define STDCPP_ALC_CXX20 (__cplusplus >= 202002L)
-#define STDCPP_ALC_CXX23 (__cplusplus >= 202100L)
-
-#if !STDCPP_ALC_CXX11
-#define noexcept throw()
-#endif
+#include "detail/config.h"
+#include "detail/alloc.h"
+#include "detail/throw.h"
+#include <stdexcept>
 
 #ifndef _GLIBCXX_ALLOCATOR
 #  define _GLIBCXX_ALLOCATOR 1
@@ -26,9 +30,48 @@
 namespace std {
 
 //=============================================================
-// allocator_traits (C++11)
+// 传播策略探测
+//
+// 旧实现把 propagate_on_container_* 与 is_always_equal 直接写死成
+// false_type/true_type，等于**无视**分配器自己声明的策略——有状态分配器
+// 因此永不走传播路径（用 A 分配、B 释放）。这里按标准做法探测：
+// 分配器声明了就用它的，没声明才用默认值。
 //=============================================================
-#if STDCPP_ALC_CXX11
+namespace __alloc_detail {
+
+template<class A, class = void>
+struct pocca_or_default { typedef false_type type; };
+template<class A>
+struct pocca_or_default<A, void_t<typename A::propagate_on_container_copy_assignment> > {
+    typedef typename A::propagate_on_container_copy_assignment type;
+};
+
+template<class A, class = void>
+struct pocma_or_default { typedef false_type type; };
+template<class A>
+struct pocma_or_default<A, void_t<typename A::propagate_on_container_move_assignment> > {
+    typedef typename A::propagate_on_container_move_assignment type;
+};
+
+template<class A, class = void>
+struct pocs_or_default { typedef false_type type; };
+template<class A>
+struct pocs_or_default<A, void_t<typename A::propagate_on_container_swap> > {
+    typedef typename A::propagate_on_container_swap type;
+};
+
+template<class A, class = void>
+struct always_equal_or_default { typedef false_type type; };
+template<class A>
+struct always_equal_or_default<A, void_t<typename A::is_always_equal> > {
+    typedef typename A::is_always_equal type;
+};
+
+} // namespace __alloc_detail
+
+//=============================================================
+// allocator_traits
+//=============================================================
 template<class Alloc>
 struct allocator_traits {
     typedef Alloc allocator_type;
@@ -38,26 +81,41 @@ struct allocator_traits {
     typedef typename Alloc::size_type size_type;
     typedef typename Alloc::difference_type difference_type;
 
+    typedef typename __alloc_detail::pocca_or_default<Alloc>::type
+        propagate_on_container_copy_assignment;
+    typedef typename __alloc_detail::pocma_or_default<Alloc>::type
+        propagate_on_container_move_assignment;
+    typedef typename __alloc_detail::pocs_or_default<Alloc>::type
+        propagate_on_container_swap;
+    typedef typename __alloc_detail::always_equal_or_default<Alloc>::type
+        is_always_equal;
+
     template<class T>
     using rebind_alloc = typename Alloc::template rebind<T>::other;
 
     static pointer allocate(Alloc& a, size_type n) { return a.allocate(n); }
+    static pointer allocate(Alloc& a, size_type n, const void* hint) { return a.allocate(n, hint); }
     static void deallocate(Alloc& a, pointer p, size_type n) { a.deallocate(p, n); }
 
     template<class T, class... Args>
     static void construct(Alloc&, T* p, Args&&... args) {
-        ::new ((void*)p) T(std::forward<Args>(args)...);
+        ::new (static_cast<void*>(p)) T(std::forward<Args>(args)...);
     }
 
     template<class T>
     static void destroy(Alloc&, T* p) { p->~T(); }
 
     static size_type max_size(const Alloc&) noexcept { return size_type(-1) / sizeof(value_type); }
+
+    // 拷贝构造容器时如何得到新分配器：默认原样拷贝（有状态分配器可特化
+    // allocator_traits 或提供成员函数来改变这一行为）
+    static Alloc select_on_container_copy_construction(const Alloc& a) {
+        return a;
+    }
 };
-#endif
 
 //=============================================================
-// allocator primary template
+// allocator
 //=============================================================
 template<class T>
 class allocator {
@@ -70,11 +128,19 @@ public:
     typedef const T&  const_reference;
     typedef T         value_type;
 
+    typedef false_type propagate_on_container_copy_assignment;
+    typedef false_type propagate_on_container_move_assignment;
+    typedef false_type propagate_on_container_swap;
+    typedef true_type  is_always_equal;
+
     template<class U>
     struct rebind { typedef allocator<U> other; };
 
     allocator() noexcept {}
     allocator(const allocator&) noexcept {}
+    // 显式默认拷贝赋值：只声明了拷贝构造时，-Wdeprecated-copy 会在容器
+    // 里每次给分配器赋值时报错（GCC 视为弃用的隐式生成）
+    allocator& operator=(const allocator&) noexcept = default;
     template<class U>
     allocator(const allocator<U>&) noexcept {}
     ~allocator() {}
@@ -82,41 +148,30 @@ public:
     pointer address(reference x) const noexcept { return &x; }
     const_pointer address(const_reference x) const noexcept { return &x; }
 
-#if STDCPP_ALC_CXX11
     pointer allocate(size_type n, const void* = nullptr) {
-#else
-    pointer allocate(size_type n, const void* = 0) {
-#endif
-        void* p = malloc(n * sizeof(T));
-        if (!p) throw bad_alloc();
-        return static_cast<pointer>(p);
+        if (n > max_size()) __detail::throw_length_error("allocator<T>::allocate: n > max_size()");
+        return static_cast<pointer>(__detail::alloc_bytes_aligned(n * sizeof(T), alignof(T)));
     }
 
-    void deallocate(pointer p, size_type) { free(p); }
+    void deallocate(pointer p, size_type) noexcept {
+        __detail::dealloc_bytes_aligned(p, alignof(T));
+    }
 
     size_type max_size() const noexcept { return size_type(-1) / sizeof(T); }
 
-#if STDCPP_ALC_CXX11
     template<class U, class... Args>
     void construct(U* p, Args&&... args) {
-        ::new ((void*)p) U(std::forward<Args>(args)...);
+        ::new (static_cast<void*>(p)) U(std::forward<Args>(args)...);
     }
-#else
-    void construct(pointer p, const T& v) { ::new ((void*)p) T(v); }
-#endif
 
-#if STDCPP_ALC_CXX11
     template<class U>
     void destroy(U* p) { p->~U(); }
-#else
-    void destroy(pointer p) { p->~T(); }
-#endif
 };
 
 //=============================================================
-// allocator<void> specialization (deprecated C++17, removed C++20)
+// allocator<void>（C++17 起弃用，保留以便老代码编译）
 //=============================================================
-#if !STDCPP_ALC_CXX20
+#if !STDCPP_CXX20
 template<>
 class allocator<void> {
 public:
@@ -133,21 +188,23 @@ template<class T1, class T2>
 bool operator!=(const allocator<T1>&, const allocator<T2>&) noexcept { return false; }
 
 //=============================================================
-// allocator_arg_t (C++11)
+// allocator_arg_t / uses_allocator
 //=============================================================
-#if STDCPP_ALC_CXX11
 struct allocator_arg_t { explicit allocator_arg_t() = default; };
-constexpr allocator_arg_t allocator_arg{};
+STDCPP_INLINE_VAR constexpr allocator_arg_t allocator_arg{};
 
-// uses_allocator
 template<class T, class Alloc>
 struct uses_allocator : false_type {};
-#endif
+
+template<class T, class Alloc>
+struct uses_allocator<const T, Alloc> : uses_allocator<T, Alloc> {};
+
+template<class T, class Alloc>
+struct uses_allocator<T&, Alloc> : uses_allocator<T, Alloc> {};
 
 //=============================================================
-// pointer_traits (C++11)
+// pointer_traits
 //=============================================================
-#if STDCPP_ALC_CXX11
 template<class Ptr>
 struct pointer_traits {
     typedef typename Ptr::difference_type difference_type;
@@ -172,12 +229,7 @@ struct pointer_traits<T*> {
 
     static pointer pointer_to(T& r) noexcept { return &r; }
 };
-#endif
 
 } // namespace std
-
-#if !STDCPP_ALC_CXX11
-#undef noexcept
-#endif
 
 #endif // STDCPP_ALLOCATOR_HPP

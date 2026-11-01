@@ -363,7 +363,7 @@ static file_cache_entry_t *fc_pick_and_unlink_victim(file_cache_cpu_t *s) {
             /* 原实现不做 art_delete —— CRC 校验失败的条目仍挂在 ART 中,
                此处释放后 ART 残留悬垂指针。补上 art_delete (幂等, 不在树中返回 NULL) */
             void *av = art_delete(&s->index, cur->key, cur->key_len);
-            if (unlikely(av == NULL)) { continue; } /* 修复(#GP): 已摘除, 勿双删 —— round 98 静态分析: 原 cur=cur->lru_next 与循环步进重复前进, 跳过一节点且尾端可 NULL 解引用 */
+            if (unlikely(av == NULL)) { continue; } /* 修复(#GP): 已摘除, 勿双删 —— 静态分析: 原 cur=cur->lru_next 与循环步进重复前进, 跳过一节点且尾端可 NULL 解引用 */
             fc_lru_remove(s, cur);
             s->total_cache_bytes -= cur->data_len;
             if (cur->data_len < FC_TINY_FILE_THRESHOLD) s->tiny_cache_bytes -= cur->data_len;
@@ -569,7 +569,7 @@ static void fc_broadcast_invalidate(file_cache_cpu_t *src_s, const uint8_t *key,
                 e->state = FC_STATE_INVALID;
             } else if (e->is_dirty && s->writeback_cb &&
                        e->state != FC_STATE_WRITEBACK_FAILED) {
-                /* P1-34: 脏条目先写回再摘除 (原实现直接删除 = 静默丢
+                /* 脏条目先写回再摘除 (原实现直接删除 = 静默丢
                    脏页)。writeback_cb 做磁盘 I/O, 不得持锁调用 ——
                    借用 fsync 的 FLUSHING + pin 模式。 */
                 e->state = FC_STATE_FLUSHING; e->pin_count++;
@@ -577,7 +577,7 @@ static void fc_broadcast_invalidate(file_cache_cpu_t *src_s, const uint8_t *key,
                 int32_t wb_rc = s->writeback_cb(e->file_id, e->key, e->key_len, e->data, e->data_len);
                 spinlock_lock(&s->lock);
                 e->pin_count--;
-                /* 审计 #3 (round 1 修复): 原实现丢弃写回返回值, 失败也删
+                /* 原实现丢弃写回返回值, 失败也删
                    条目 = 静默丢脏数据。失败 → 转 WRITEBACK_FAILED
                    (30s 冷却重试机制接管), 不删脏页 */
                 if (unlikely(wb_rc != 0)) {
@@ -1323,7 +1323,7 @@ int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t 
     return 0;
 }
 
-/* ---- 块级缓存实现 (Step 1, round 26): 键 = (file_id, block#) ----
+/* ---- 块级缓存实现 (Step 1, ): 键 = (file_id, block#) ----
    本阶段为整条目语义的键构造层 (fc-block-cache-design.md); fops 尚未
    逐块调用, 行为与 path 版等价, 后续 Step 2/3 切换调用点后获得块粒度 */
 static inline void fc_block_key(uint64_t file_id, uint64_t block,
@@ -1358,11 +1358,11 @@ void file_cache_invalidate_block(file_cache_cpu_t *s, uint64_t file_id, uint64_t
     fc_broadcast_invalidate(s, key, 16);
 }
 
-/* Step 4 (round 29/30): 按 file_id 失效整个文件的块级条目 ——
+/* Step 4: 按 file_id 失效整个文件的块级条目 ——
    O_TRUNC/文件删除时调用 (设计 §4: 区间前缀删除; 本实现按已知
    文件块数逐块失效, 块数 = ceil(file_size/4096), 有界)。
    fc_broadcast_invalidate 跳过 src (调用方语义为"其他核"), 本机
-   条目在此显式删除 —— round 30 宿主回归实锤该缺口 */
+   条目在此显式删除 —— 宿主回归实锤该缺口 */
 void file_cache_invalidate_file(file_cache_cpu_t *s, uint64_t file_id,
                                 uint64_t file_size) {
     if (unlikely(!s || file_id == 0)) return;

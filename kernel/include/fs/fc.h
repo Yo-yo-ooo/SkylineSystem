@@ -119,7 +119,7 @@ typedef struct file_cache_cpu {
     uint32_t io_congestion;
     uint64_t total_writeback_failures;
 
-    /* 审计 #5 (round 5): 回调签名补 file_id —— 写回必须经原始 filedesc
+    /* 回调签名补 file_id —— 写回必须经原始 filedesc
        直写 (消除路径重开 + O_TRUNC 截断同名新文件的风险) */
     int32_t (*writeback_cb)(uint64_t file_id, const uint8_t *key, uint32_t key_len, void *data, size_t data_len);
 } file_cache_cpu_t;
@@ -151,7 +151,7 @@ int32_t file_cache_readahead(file_cache_cpu_t *s, const uint8_t *key, uint32_t k
 
 int32_t file_cache_invalidate(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len);
 
-/* ---- 块级缓存 API (fc-block-cache-design.md Step 1, round 26) ----
+/* ---- 块级缓存 API (fc-block-cache-design.md Step 1, ) ----
    键 = (file_id, block#) 16 字节; 与 path 版并存, 语义相同 (本阶段
    仍为整条目语义, 键构造先行 —— 后续 Step 2/3 由 fops 逐块调用后
    自然获得块粒度)

@@ -6,7 +6,7 @@
 
 #include <klib/klib.h>
 #include <mem/heap.h>
-#include <arch/x86_64/smp/smp.h>   /* round 94: this_cpu + cpu_t (fsync 激活) */
+#include <arch/x86_64/smp/smp.h>   /* this_cpu + cpu_t (fsync 激活) */
 
 extern "C" char* GetMountPointName(const char* path) {
     if (!path || path[0] != '/' || path[1] == '/') 
@@ -124,8 +124,8 @@ void fd_manager_init(fd_manager_t* manager) {
 int32_t fd_alloc(fd_manager_t* manager, fd_t** out_fd_ptr) {
     if (!manager) return -1;
 
-    // 寻找最小的可用 FD (P0-16: 分片写锁跨越 search+insert, 消除 TOCTOU 双插入)
-    // 审计 #1 (round 1 修复): 原实现只对初始 hint 计算一次分片, new_fd 递增后
+    // 寻找最小的可用 FD
+    // 原实现只对初始 hint 计算一次分片, new_fd 递增后
     // 不重算 —— 锁/搜索/插入都在陈旧分片上, 条目插入与 fd_get 的分片计算
     // 错位 → FD 重复或不可见。修复: 每次递增后重取分片并重锁。
     int32_t new_fd = manager->next_fd_hint;
@@ -210,7 +210,7 @@ void fd_free(fd_manager_t* manager, int32_t fd) {
 // 红黑树节点释放回调，用于 fd_manager_destroy
 static void fd_destroy_cb(rb_node_t* node, void* arg) {
     fd_t* entry = container_of(node, fd_t, node);
-    /* round 94: 进程退出 = 隐式关闭全部 FD —— 同样先冲刷脏缓存页
+    /* 进程退出 = 隐式关闭全部 FD —— 同样先冲刷脏缓存页
        (与 sys_fclose 对称; file_id = filedesc 指针, 键一致) */
     cpu_t *cpu = this_cpu();
     if (cpu->file_cache && entry->filedesc)
@@ -225,7 +225,7 @@ static void fd_destroy_cb(rb_node_t* node, void* arg) {
 void fd_manager_destroy(fd_manager_t* manager) {
     if (!manager) return;
     
-    /* round 90: 原 rb_sharded_clear 走 rb_postorder_iter —— 回调后读
+    /* 原 rb_sharded_clear 走 rb_postorder_iter —— 回调后读
        tmp->right, fd_destroy_cb 若释放节点即 UAF (0xFFFFFFFF80024D18)。
        此前 FD 树恒空, 缺陷潜伏; fd_manager_dup 引入继承后引爆。
        改为 rb_erase_range 的"先取 next 再回调"模式 (全范围擦除) */
@@ -249,12 +249,12 @@ void fd_manager_destroy(fd_manager_t* manager) {
     manager->next_fd_hint = 0;
 }
 
-/* P0-6 路线图 #7: fork 时 FD 继承 —— 快照式深拷贝。
+/* 路线图 fork 时 FD 继承 —— 快照式深拷贝。
    filedesc 按 FSOPS->SIZEOF_FILE_DESC 逐字节复制 (ext4_file 为纯句柄,
    复制后父子各持独立快照, 关闭互不干扰); 文件偏移 = fork 时刻快照,
    后续父子各自独立推进 (与 POSIX 共享偏移的偏差已文档化)。
    path 深拷贝; FSOPS/MP 为全局表指针, 直接共享。
-   审计 #16 (round 7 修复): 同进程的其他线程可并发 fopen/fclose ——
+   同进程的其他线程可并发 fopen/fclose ——
    遍历持源分片读锁; OOM 不再静默跳过 (空 filedesc 会让子进程的
    close 崩溃), 中止并返回 -1, 调用方 (Fork) 整体回滚 */
 int32_t fd_manager_dup(fd_manager_t* dst, fd_manager_t* src) {
@@ -317,7 +317,7 @@ int32_t file_cache_writeback_callback(
 ) {
     if (!key || key_len == 0 || !data || data_len == 0) return -1; /* 修复: 原为无值 return(UB) */
 
-    /* 审计 #5 (round 5 修复): 原实现按 key(路径) 重新 open + O_TRUNC ——
+    /* 原实现按 key(路径) 重新 open + O_TRUNC ——
        文件被删除后同名新文件会被截断 (数据写到错误文件)。现经
        file_id (= (uint64_t)filedesc, promote 时的原始句柄) 直写:
        同一 inode, 不重开路径 */

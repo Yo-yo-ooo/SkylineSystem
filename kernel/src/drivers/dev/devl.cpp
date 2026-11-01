@@ -164,8 +164,8 @@ namespace Dev {
         } else if (dev.ops.Read == nullptr) {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
-            /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-            /* A4 (round 1): 溢出安全边界 + 扇区级双保险 (4 处统一) */
+            /* 边界收紧 —— 最后扇区必须 < 容量 */
+            /* 溢出安全边界 + 扇区级双保险 (4 处统一) */
             if (offset > dev.MaxSectorCount * 512 ||
                 nbytes > dev.MaxSectorCount * 512 - offset) return false;
             
@@ -191,8 +191,8 @@ namespace Dev {
         } else if (dev.ops.Read_ == nullptr) {
             //VDL dev = FindDevice(DeviceType, DevIDX);
             if (nbytes == 0) return true;
-            /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-            /* A4 (round 1): 溢出安全边界 + 扇区级双保险 (4 处统一) */
+            /* 边界收紧 —— 最后扇区必须 < 容量 */
+            /* 溢出安全边界 + 扇区级双保险 (4 处统一) */
             if (offset > dev.MaxSectorCount * 512 ||
                 nbytes > dev.MaxSectorCount * 512 - offset) return false;
             
@@ -245,8 +245,8 @@ namespace Dev {
         } else if (dev.ops.Read_ != nullptr) {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
-            /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-            /* A4 (round 1): 溢出安全边界 + 扇区级双保险 (4 处统一) */
+            /* 边界收紧 —— 最后扇区必须 < 容量 */
+            /* 溢出安全边界 + 扇区级双保险 (4 处统一) */
             if (offset > dev.MaxSectorCount * 512 ||
                 nbytes > dev.MaxSectorCount * 512 - offset) return false;
             
@@ -328,8 +328,8 @@ namespace Dev {
         } else if (dev.ops.Read != nullptr) {
             if (nbytes == 0) return true;
             //VDL dev = FindDevice(DeviceType, DevIDX);
-            /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
-            /* A4 (round 1): 溢出安全边界 + 扇区级双保险 (4 处统一) */
+            /* 边界收紧 —— 最后扇区必须 < 容量 */
+            /* 溢出安全边界 + 扇区级双保险 (4 处统一) */
             if (offset > dev.MaxSectorCount * 512 ||
                 nbytes > dev.MaxSectorCount * 512 - offset) return false;
             

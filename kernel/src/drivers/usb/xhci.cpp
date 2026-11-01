@@ -84,15 +84,15 @@ static OpRegs* g_op = nullptr;
 static IntRegSet* g_intRegs = nullptr;
 static uint32_t* g_doorbells = nullptr;
 static uint8_t g_maxSlots = 0, g_maxPorts = 0;
-/* P2-60 文档化设计限制: xHCI 驱动为全局单实例 (g_* 静态), 仅支持
+/* 设计限制: xHCI 驱动为全局单实例 (g_* 静态), 仅支持
    一个控制器; 多控制器需要把全部 g_* 迁入实例结构。 */
 
 static uint64_t* g_dcbaap = nullptr;
 static uint64_t* g_scratchpadBufArray = nullptr;
-/* P1-32: 端口状态变更延迟处理标志 (IRQ 置位, 工作线程消费) */
+/* 端口状态变更延迟处理标志 (IRQ 置位, 工作线程消费) */
 static volatile uint32_t g_port_change_pending = 0;
 
-/* P1-32: 端口变更工作线程 —— 阻塞枚举移出 IRQ 上下文 */
+/* 端口变更工作线程 —— 阻塞枚举移出 IRQ 上下文 */
 static void xhci_port_worker(void) {
     for (;;) {
         if (__atomic_exchange_n(&g_port_change_pending, 0, __ATOMIC_ACQUIRE)) {
@@ -181,7 +181,7 @@ static inline void writeOp(uint32_t off, uint32_t v) { *((volatile uint32_t*)((u
 static inline uint32_t readOp(uint32_t off) { return *((volatile uint32_t*)((uint64_t)g_op + off)); }
 static inline void ringDoorbell(uint8_t slot, uint8_t target) { *((volatile uint32_t*)((uint64_t)g_doorbells + (slot * 4))) = target; }
 
-/* P1-33: 链式 TRB 入队 (多页传输的 SG) —— 末条 TRB 记账 + 单次门铃 */
+/* 链式 TRB 入队 (多页传输的 SG) —— 末条 TRB 记账 + 单次门铃 */
 static bool EnqueueChainAndTrack(TRBRingState* ring, uint8_t slotID, uint8_t dbTarget,
                                  const TRB* trbs, uint32_t n, PendingTransfer* pt) {
     uint64_t flags;
@@ -311,7 +311,7 @@ static void processEvent(volatile TRB* evt) {
         }
         case TRB_PORT_STATUS_CHANGE: {
             uint8_t port = (evt->parameter >> 24) & 0xFF;
-            /* P1-32: 不在 IRQ 上下文做阻塞枚举 (HandlePortChange 内
+            /* 不在 IRQ 上下文做阻塞枚举 (HandlePortChange 内
                SubmitCommandBlocking 最长 100s 忙等) —— 置标志由工作
                线程延迟处理 */
             (void)port;
@@ -530,7 +530,7 @@ void InitXHCIFromPCI(PCI::PCIHeader0* hdr) {
         if (psc & PORTSC_CCS) HandlePortChange(p);
     }
 
-    /* P1-32: 端口变更工作线程 —— 调度器可能尚未 Install (PCI 探测期),
+    /* 端口变更工作线程 —— 调度器可能尚未 Install (PCI 探测期),
        此时线程入队待调度器启动后运行; 引导期的初始端口扫描已在上方
        内联完成, 热插拔事件由 IRQ 置标志 → 本线程消费 */
     Schedule::NewKernelThread(Schedule::NewProcess(false), 0, 8,
@@ -567,7 +567,7 @@ void HandlePortChange(uint8_t port) {
 
     // Acknowledge the change bits up front. If enumeration is already running
     // for this port, drop the event instead of re-entering the state machine.
-    // P1-24: W1C 用 | 写回 (整体赋值会清掉 PP/PLS/CCS → 真机端口断电)
+    // W1C 用 | 写回 (整体赋值会清掉 PP/PLS/CCS → 真机端口断电)
     bool alreadyBusy = g_portBusy[port];
     if (portsc & (PORTSC_CSC | PORTSC_PRC | PORTSC_PEC))
         portReg->portsc = portsc | (PORTSC_CSC | PORTSC_PRC | PORTSC_PEC);
@@ -637,7 +637,7 @@ bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed) {
 
     TRB addrCmd = {}; addrCmd.parameter = virt_to_phys(inputCtx); addrCmd.control = (TRB_ADDRESS_DEVICE << 10) | (slot << 24) | (1u << 5);
     bool input_freed = false;
-    /* P1-31: 变量声明提前 —— goto enum_fail 不得跨越初始化 */
+    /* 变量声明提前 —— goto enum_fail 不得跨越初始化 */
     USB::DeviceDescriptor devDesc = {};
     uint8_t cfgBuf[1024] = {};
     uint16_t totalLen = 0;
@@ -661,7 +661,7 @@ bool EnumerateDevice(uint8_t port, USB::USB_SPEED speed) {
     return true;
 
 enum_fail:
-    /* P1-31: 枚举失败路径统一清理 (原实现直接 return, 泄漏 devCtx/
+    /* 枚举失败路径统一清理 (原实现直接 return, 泄漏 devCtx/
        ep0Ring/inputCtx 且 slot 残留占用) */
     if (!input_freed) freeDMA(inputCtx);
     freeDMA((void*)ep0Ring);
@@ -819,7 +819,7 @@ bool SubmitControlTransfer(uint8_t slotID, USB::SetupPacket* setup, void* buf, u
     }
     
     if (len > 0) {
-        /* P1-33: 多页传输按页链式 TRB —— 原实现单 TRB 只填首頁物理
+        /* 多页传输按页链式 TRB —— 原实现单 TRB 只填首頁物理
            地址, 跨页 DMA 读错物理内存; CH 位 (bit 6) 链接 TD 链
            (xHCI 1.0+ 忽略 TD Size, QEMU 亦然) */
         uint32_t remaining = len;
@@ -907,7 +907,7 @@ bool SubmitNormalTransfer(uint8_t slotID, uint8_t epAddr, void* buf, uint32_t le
         if (!inDir) __memcpy(dmaBuf, buf, len); // OUT: stage host->device data
     }
 
-    /* P1-33: 多页传输按页链式 TRB (SG) —— 每页一个 TRB + CH 位链接 */
+    /* 多页传输按页链式 TRB (SG) —— 每页一个 TRB + CH 位链接 */
     uint32_t nTrbs = (len + 0xFFF) >> 12;
     if (nTrbs == 0) nTrbs = 1;
     TRB* chain = (TRB*)kmalloc(sizeof(TRB) * nTrbs);

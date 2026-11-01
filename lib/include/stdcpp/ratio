@@ -1,0 +1,198 @@
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
+//=============================================================
+// <ratio> — 编译期有理数
+//
+// 关键点：
+//   * ratio<N, D> 在实例化时就约分，且把符号统一放到分子（den 恒正）；
+//   * 四则运算用 128 位中间量计算，约分后再检查能否落回 intmax_t，
+//     溢出时给出明确的 static_assert 信息（而不是静默截断）；
+//   * 不依赖运行期库，全部 constexpr。
+//=============================================================
+#ifndef STDCPP_RATIO_HPP
+#define STDCPP_RATIO_HPP
+
+#include <cstdint>
+#include <type_traits>
+#include "detail/config.h"
+
+#ifndef _GLIBCXX_RATIO
+#  define _GLIBCXX_RATIO 1
+#endif
+
+namespace std {
+
+namespace __ratio_detail {
+
+constexpr intmax_t abs_i(intmax_t x) { return x < 0 ? -x : x; }
+
+constexpr intmax_t gcd_i(intmax_t a, intmax_t b) {
+    a = abs_i(a);
+    b = abs_i(b);
+    while (b != 0) {
+        const intmax_t t = a % b;
+        a = b;
+        b = t;
+    }
+    return a ? a : 1;
+}
+
+#if defined(__SIZEOF_INT128__)
+typedef __int128 wide_t;
+#else
+typedef intmax_t wide_t;
+#endif
+
+constexpr wide_t abs_w(wide_t x) { return x < 0 ? -x : x; }
+
+constexpr wide_t gcd_w(wide_t a, wide_t b) {
+    a = abs_w(a);
+    b = abs_w(b);
+    while (b != 0) {
+        const wide_t t = a % b;
+        a = b;
+        b = t;
+    }
+    return a ? a : 1;
+}
+
+} // namespace __ratio_detail
+
+//=============================================================
+// ratio
+//=============================================================
+template<intmax_t N, intmax_t D = 1>
+struct ratio {
+    static_assert(D != 0, "std::ratio: denominator must not be zero");
+
+private:
+    static constexpr intmax_t _S_g = __ratio_detail::gcd_i(N, D);
+
+public:
+    // 约分 + 符号归一（分母恒正）
+    static constexpr intmax_t num =
+        (N / _S_g) * ((D < 0) ? -1 : 1);
+    static constexpr intmax_t den = __ratio_detail::abs_i(D) / _S_g;
+
+    typedef ratio<num, den> type;
+};
+
+//=============================================================
+// 四则运算
+//=============================================================
+namespace __ratio_detail {
+
+template<class R1, class R2>
+struct add_impl {
+    static constexpr wide_t n =
+        (wide_t)R1::num * R2::den + (wide_t)R2::num * R1::den;
+    static constexpr wide_t d = (wide_t)R1::den * R2::den;
+    static constexpr wide_t g = gcd_w(n, d);
+    static constexpr wide_t rn = n / g;
+    static constexpr wide_t rd = d / g;
+    static_assert(rn >= (wide_t)INTMAX_MIN && rn <= (wide_t)INTMAX_MAX,
+                  "std::ratio_add: numerator overflow");
+    static_assert(rd >= (wide_t)INTMAX_MIN && rd <= (wide_t)INTMAX_MAX,
+                  "std::ratio_add: denominator overflow");
+    typedef ratio<(intmax_t)rn, (intmax_t)rd> type;
+};
+
+template<class R1, class R2>
+struct sub_impl {
+    static constexpr wide_t n =
+        (wide_t)R1::num * R2::den - (wide_t)R2::num * R1::den;
+    static constexpr wide_t d = (wide_t)R1::den * R2::den;
+    static constexpr wide_t g = gcd_w(n, d);
+    static constexpr wide_t rn = n / g;
+    static constexpr wide_t rd = d / g;
+    static_assert(rn >= (wide_t)INTMAX_MIN && rn <= (wide_t)INTMAX_MAX,
+                  "std::ratio_subtract: numerator overflow");
+    static_assert(rd >= (wide_t)INTMAX_MIN && rd <= (wide_t)INTMAX_MAX,
+                  "std::ratio_subtract: denominator overflow");
+    typedef ratio<(intmax_t)rn, (intmax_t)rd> type;
+};
+
+template<class R1, class R2>
+struct mul_impl {
+    static constexpr wide_t n = (wide_t)R1::num * R2::num;
+    static constexpr wide_t d = (wide_t)R1::den * R2::den;
+    static constexpr wide_t g = gcd_w(n, d);
+    static constexpr wide_t rn = n / g;
+    static constexpr wide_t rd = d / g;
+    static_assert(rn >= (wide_t)INTMAX_MIN && rn <= (wide_t)INTMAX_MAX,
+                  "std::ratio_multiply: numerator overflow");
+    static_assert(rd >= (wide_t)INTMAX_MIN && rd <= (wide_t)INTMAX_MAX,
+                  "std::ratio_multiply: denominator overflow");
+    typedef ratio<(intmax_t)rn, (intmax_t)rd> type;
+};
+
+template<class R1, class R2>
+struct div_impl {
+    static_assert(R2::num != 0, "std::ratio_divide: division by zero");
+    static constexpr wide_t n = (wide_t)R1::num * R2::den;
+    static constexpr wide_t d = (wide_t)R1::den * R2::num;
+    static constexpr wide_t g = gcd_w(n, d);
+    static constexpr wide_t rn = n / g;
+    static constexpr wide_t rd = d / g;
+    static_assert(rn >= (wide_t)INTMAX_MIN && rn <= (wide_t)INTMAX_MAX,
+                  "std::ratio_divide: numerator overflow");
+    static_assert(rd >= (wide_t)INTMAX_MIN && rd <= (wide_t)INTMAX_MAX,
+                  "std::ratio_divide: denominator overflow");
+    typedef ratio<(intmax_t)rn, (intmax_t)rd> type;
+};
+
+} // namespace __ratio_detail
+
+template<class R1, class R2> using ratio_add      = typename __ratio_detail::add_impl<R1, R2>::type;
+template<class R1, class R2> using ratio_subtract = typename __ratio_detail::sub_impl<R1, R2>::type;
+template<class R1, class R2> using ratio_multiply = typename __ratio_detail::mul_impl<R1, R2>::type;
+template<class R1, class R2> using ratio_divide   = typename __ratio_detail::div_impl<R1, R2>::type;
+
+//=============================================================
+// 比较（交叉相乘；128 位中间量避免过早溢出）
+//=============================================================
+template<class R1, class R2>
+struct ratio_equal
+    : integral_constant<bool, R1::num == R2::num && R1::den == R2::den> {};
+
+template<class R1, class R2>
+struct ratio_not_equal : integral_constant<bool, !ratio_equal<R1, R2>::value> {};
+
+template<class R1, class R2>
+struct ratio_less
+    : integral_constant<bool,
+          ((__ratio_detail::wide_t)R1::num * R2::den <
+           (__ratio_detail::wide_t)R2::num * R1::den)> {};
+
+template<class R1, class R2>
+struct ratio_less_equal : integral_constant<bool, !ratio_less<R2, R1>::value> {};
+
+template<class R1, class R2>
+struct ratio_greater : integral_constant<bool, ratio_less<R2, R1>::value> {};
+
+template<class R1, class R2>
+struct ratio_greater_equal : integral_constant<bool, !ratio_less<R1, R2>::value> {};
+
+//=============================================================
+// SI 词头
+//=============================================================
+typedef ratio<1, 1000000000000000000LL> atto;
+typedef ratio<1,    1000000000000000LL> femto;
+typedef ratio<1,       1000000000000LL> pico;
+typedef ratio<1,          1000000000LL> nano;
+typedef ratio<1,             1000000LL> micro;
+typedef ratio<1,                1000LL> milli;
+typedef ratio<1,                 100LL> centi;
+typedef ratio<1,                  10LL> deci;
+typedef ratio<                 10, 1LL> deca;
+typedef ratio<                100, 1LL> hecto;
+typedef ratio<               1000, 1LL> kilo;
+typedef ratio<            1000000, 1LL> mega;
+typedef ratio<         1000000000, 1LL> giga;
+typedef ratio<      1000000000000, 1LL> tera;
+typedef ratio<   1000000000000000, 1LL> peta;
+typedef ratio<1000000000000000000LL, 1LL> exa;
+
+} // namespace std
+
+#endif // STDCPP_RATIO_HPP

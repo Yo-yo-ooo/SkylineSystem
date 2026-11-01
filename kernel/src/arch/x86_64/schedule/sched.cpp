@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
 // sched.cpp - Rate-aware EEVDF (REEVDF) Schedule ALGO IMPL
-//
+
 // 结构总览:
 //   公平层  每CPU运行队列 (deadline 排序 rb-tree + 子树最小 vruntime
 //           增广); vruntime/虚拟时钟/资格判定; lag 钳位
@@ -25,8 +25,12 @@
 #include <arch/x86_64/interrupt/gdt.h>
 #include <pdef.h>
 #include <klib/stallwatch.h>
+#include <klib/kprintf.h>
 
 #include <arch/x86_64/schedule/sched_internal.h>
+
+/* 用户态被中断却连续这么多次看到 preempt_count>1 -> 判定泄漏 (见 Switch) */
+#define PREEMPT_LEAK_STREAK_LIMIT 1024u
 
 #define SCHED_STEAL_BATCH 8
 #define ZOMBIE_RECLAIM_THRESHOLD 8
@@ -125,7 +129,7 @@ cpu_t *get_lw_cpu(cpu_t *ref_cpu) {
     cpu_t *lw_cpu = nullptr;
     uint32_t ref_mask = ref_cpu ? cpu_simd_mask(ref_cpu) : 0;
     const int32_t last = smp_last_cpu;
-    /* C7 (round 15): 跨核 total_weight 为咨询式裸读 —— x86_64 对齐
+    /* 跨核 total_weight 为咨询式裸读 —— x86_64 对齐
        64 位读无撕裂; 读到的可能是瞬间旧值, 只用于负载均衡启发式
        (选最轻核), 陈旧偏差在下次再平衡自愈, 不加原子/锁 (热路径
        成本不划算, 语义上也不需要精确快照) */
@@ -455,7 +459,7 @@ namespace Schedule {
                 if (unlikely(to_push == my_curr)) { node = prev_node; continue; }
                 if (unlikely(to_push == my_idle)) { node = prev_node; continue; }
                 if (unlikely(to_push->timer_bucket != nullptr)) { node = prev_node; continue; }
-                /* B2 (round 5): pinned 线程不参与跨核推送 —— 依赖
+                /* pinned 线程不参与跨核推送 —— 依赖
                    同核前提的驱动状态机 (lwIP RX FIFO) 不被迁核 */
                 if (unlikely(to_push->pinned)) { node = prev_node; continue; }
 
@@ -561,6 +565,28 @@ namespace Schedule {
                 return;
             }
 
+            /* ---- 抢占计数泄漏自愈 (保证"没有线程能永久占满一个核") ----
+             * preempt_count 是**每核**计数器。若某条路径 ++ 之后没有配对
+             * 的 -- (历史缺陷: 异常入口 ++ 后直接 Schedule::Exit 跳走),
+             * 这个核此后每次 SCHED_VEC 都会走下面那条 "> 1 只重臂" 分支,
+             * 永远不切换 —— 正在跑的线程就把这个核永久占住了。
+             *
+             * 判定依据: 被中断的上下文是**用户态** (cs&3==3) 时, 内核临界
+             * 区必为空, 计数只应包含本次中断自己加的那一次。连续
+             * PREEMPT_LEAK_STREAK_LIMIT 次仍然 >1, 就是泄漏: 就地修掉。
+             * 在用户态上下文里切换是安全的 —— 没有正在持有的内核锁。 */
+            if (likely(ctx != nullptr) && ((ctx->cs & 3u) == 3u) &&
+                cpu->preempt_count > 1) {
+                if (++cpu->preempt_leak_streak > PREEMPT_LEAK_STREAK_LIMIT) {
+                    cpu->preempt_leak_streak = 0;
+                    kerrorln("sched: cpu %d preempt_count leak (%d) repaired, rip=%p",
+                             (int)cpu->id, (int)cpu->preempt_count, (void*)ctx->rip);
+                    cpu->preempt_count = 1;   /* 只保留本次中断的那一次 */
+                }
+            } else if (likely(cpu->preempt_leak_streak != 0)) {
+                cpu->preempt_leak_streak = 0;
+            }
+
             /* 抢占被禁: 只重臂返回. 不消费 need_resched/yield 标志 —
              * 在此处清掉的话请求会被无声吞掉; 标志保持锁存,
              * CheckPreempt 在计数归零后重新触发 SCHED_VEC. */
@@ -660,7 +686,7 @@ namespace Schedule {
                    is truly no competitor. A count of 1 means one waiter is
                    ready: the timer tick MUST take the slow path so EEVDF can
                    preempt (==1 as lockless starved the sole peer ~14s). */
-                /* P2-56: 免锁读 thread_count 用原子加载 (volatile 仅防
+                /* 免锁读 thread_count 用原子加载 (volatile 仅防
                    编译器重排, 跨核需 acquire 语义) */
                 if (unlikely(__atomic_load_n(&cpu->thread_count, __ATOMIC_ACQUIRE) == 0)) {
                     need_lock = false;

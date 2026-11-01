@@ -15,7 +15,7 @@ extern volatile uint64_t SizeClassTable[75][3];
 // ============================================================================
 // 常量宏定义
 // ============================================================================
-/* P2-61: 槽位 32 → 64 (桌面 4 核场景余量大)。>64 线程时槽位共享的
+/* 槽位 32 → 64 (桌面 4 核场景余量大)。>64 线程时槽位共享的
    语义是安全的: 共享槽的 count = 各线程净活跃数之和, 静默判定 =
    全体空闲 (保守, 只会延迟回收, 不会误回收); 若未来线程数超 64,
    可再翻倍或改动态分配。 */
@@ -282,7 +282,7 @@ static inline int32_t qsbr_enter() {
 }
 
 static inline void qsbr_leave(int32_t slot) {
-    /* P0-17 重写: leave 也确认当前纪元 —— 线程退出临界区即静默。
+    /* 重写: leave 也确认当前纪元 —— 线程退出临界区即静默。
        原实现只减 count, 纪元只由 enter 更新 → 空闲线程 last 停留在
        远古, 判定反转 (空闲=不静默 / 活跃=静默) */
     atomic_store_n(&qsbr_counters[slot].last_epoch,
@@ -294,7 +294,7 @@ static inline int32_t is_quiescent(uint64_t pending_depth) {
     uint64_t generation = atomic_load_n(&gc_generation, ATOMIC_ACQUIRE);
     uint64_t slots_in_use = atomic_load_n(&global_qsbr_slot_alloc, ATOMIC_RELAXED);
 
-    /* B8 (round 7 口径修正): 老化判定已并入静默判定 ——
+    /* 老化判定已并入静默判定 ——
        ① count>0 (临界区内)      → 不静默, return 0;
        ② count==0                → 静默 (无论纪元久远与否, 循环
          检查下一槽位)。aged_out 分支的 continue 与自然落空等价,
@@ -359,7 +359,7 @@ static inline void try_gc() {
 
     uint64_t total_pending = n_small + n_large;
 
-    /* P0-17: 阈值 16 的强制回收已删除 —— 原实现绕过静默判定直接
+    /* 阈值 16 的强制回收已删除 —— 原实现绕过静默判定直接
        munmap, 在途跨线程 free 的 UAF 窗口; 压力自适应改由
        is_quiescent 的积压老化阈值承担 (积压越深老化越快) */
     int32_t gc_success = is_quiescent(total_pending);
@@ -534,7 +534,7 @@ static void* _skyline_malloc_internal(size_t size) {
         }
 
         if (!mcb) {
-            /* P4-86 宿主测试实锤: MoreCore(4) = 16KB 不够 MCB
+            /* 宿主测试实锤: MoreCore(4) = 16KB 不够 MCB
                (list_base[2014]=16112B + bitmap 256B + 头 ≈ 16.5KB),
                越界写入相邻页 —— 按结构体实际尺寸取整分配 */
             MainControlBlock_t* new_mcb = (MainControlBlock_t*)MoreCore(
@@ -837,7 +837,7 @@ static void* _skyline_malloc_internal(size_t size) {
 // 释放路径
 // ============================================================================
 /* SKYLINE_MAX_LEGAL_ADDR / SCB 链表校验见文件前部 (deferred-free 部分) */
-/* P1-46: 元数据校验失败 = 堆损坏, 立即终止本进程 (原静默 return 让
+/* 元数据校验失败 = 堆损坏, 立即终止本进程 (原静默 return 让
    伪 header 继续驱动进程内任意写/位操作); sys_exit 不会返回 */
 #define ALLOCTOR_SECURITY_ASSERT(cond) do { \
     if (!(cond)) { sys_exit(0xBAADF00D); __builtin_unreachable(); } \

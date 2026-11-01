@@ -1,6 +1,6 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
-//
+
 // kbdshare.h - shared keyboard event-ring ABI between the kernel input core
 // and userspace GUI clients (desktop WM, notepad). The kernel is the single
 // producer (advances head). Each reader acquires one consumer slot, publishes
@@ -10,7 +10,7 @@
 #pragma once
 
 #include <stdint.h>
-#include <graphic/devtype.h>   /* P5-97 */
+#include <graphic/devtype.h>   
 
 #ifdef __cplusplus
 extern "C" {
@@ -20,7 +20,7 @@ extern "C" {
 #define KBD_MAX_READERS 8u  /* concurrent GUI consumers of the event page */
 
 /* dev_mmap (syscall 21) first argument that maps the keyboard event page;
-   P5-97: 权威在 graphic/devtype.h (DEV_TYPE_KEYBOARD), 此处别名保持
+   权威在 graphic/devtype.h (DEV_TYPE_KEYBOARD), 此处别名保持
    兼容 —— 两个定义若漂移即 ABI 错位, 用户态引用一律走 devtype.h。 */
 #define KBD_DEV_TYPE DEV_TYPE_KEYBOARD
 

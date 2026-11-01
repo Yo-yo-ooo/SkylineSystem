@@ -1,145 +1,111 @@
-// -*- C++ -*-
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 //=============================================================
-// new.hpp -- complete <new>, C++98~C++26.
+// <new> — placement / nothrow / bad_alloc / align_val_t
+//
+// 与旧实现的差异：
+//   1. 不再包含 <cstdlib>：freestanding（-nostdinc）下根本没有该头，
+//      原来靠宿主 glibc 才编得过，内核里必然失败。
+//   2. nothrow 版 operator new/delete 改为 inline。原实现是头文件里的
+//      非内联定义，被两个 TU 包含即 multiple definition。
+//   3. 只声明 replaceable 的普通 operator new/delete，不提供定义：
+//      内核已有 mem/new.cpp，用户态由 lib/stdc/stdcpp_new.cpp 提供。
+//   4. `extern const nothrow_t nothrow;` 只有声明没有定义，改为 inline 变量。
 //=============================================================
 #ifndef STDCPP_NEW_HPP
 #define STDCPP_NEW_HPP
 
 #include <cstddef>
-#include <cstdlib>
-
-#define STDCPP_NEW_CXX11 (__cplusplus >= 201103L)
-#define STDCPP_NEW_CXX14 (__cplusplus >= 201402L)
-#define STDCPP_NEW_CXX17 (__cplusplus >= 201703L)
-#define STDCPP_NEW_CXX20 (__cplusplus >= 202002L)
+#include "detail/config.h"
+#include "detail/throw.h"
 
 #ifndef _GLIBCXX_NEW
 #  define _GLIBCXX_NEW 1
 #endif
 
-//=============================================================
+//-------------------------------------------------------------
+// replaceable 全局分配函数：仅声明，定义由平台提供
+//-------------------------------------------------------------
+void* operator new(std::size_t);
+void* operator new[](std::size_t);
+void operator delete(void*) noexcept;
+void operator delete[](void*) noexcept;
+void operator delete(void*, std::size_t) noexcept;
+void operator delete[](void*, std::size_t) noexcept;
+
+//-------------------------------------------------------------
 // placement new / delete
-//=============================================================
-#if STDCPP_NEW_CXX11
-inline void* operator new(size_t, void* p) noexcept { return p; }
-inline void* operator new[](size_t, void* p) noexcept { return p; }
+//-------------------------------------------------------------
+inline void* operator new(std::size_t, void* p) noexcept { return p; }
+inline void* operator new[](std::size_t, void* p) noexcept { return p; }
 inline void operator delete(void*, void*) noexcept {}
 inline void operator delete[](void*, void*) noexcept {}
-#else
-inline void* operator new(size_t, void* p) throw() { return p; }
-inline void* operator new[](size_t, void* p) throw() { return p; }
-inline void operator delete(void*, void*) throw() {}
-inline void operator delete[](void*, void*) throw() {}
-#endif
 
 namespace std {
 
-//=============================================================
+//-------------------------------------------------------------
 // nothrow_t
-//=============================================================
-#if STDCPP_NEW_CXX11
+//-------------------------------------------------------------
 struct nothrow_t { explicit nothrow_t() = default; };
-#else
-struct nothrow_t {};
-#endif
-extern const nothrow_t nothrow;
+STDCPP_INLINE_VAR const nothrow_t nothrow{};
 
-//=============================================================
+//-------------------------------------------------------------
 // new_handler
-//=============================================================
+//-------------------------------------------------------------
 typedef void (*new_handler)();
-#if STDCPP_NEW_CXX11
-new_handler set_new_handler(new_handler new_p) noexcept;
+new_handler set_new_handler(new_handler) noexcept;
 new_handler get_new_handler() noexcept;
-#else
-new_handler set_new_handler(new_handler new_p) throw();
-new_handler get_new_handler() throw();
-#endif
 
-//=============================================================
-// bad_alloc
-//=============================================================
+//-------------------------------------------------------------
+// bad_alloc / bad_array_new_length
+//-------------------------------------------------------------
 class bad_alloc {
 public:
-#if STDCPP_NEW_CXX11
     bad_alloc() noexcept {}
-    virtual ~bad_alloc();
+    bad_alloc(const bad_alloc&) noexcept {}
+    bad_alloc& operator=(const bad_alloc&) noexcept { return *this; }
+    virtual ~bad_alloc() noexcept {}
     virtual const char* what() const noexcept { return "std::bad_alloc"; }
-#else
-    bad_alloc() {}
-    virtual ~bad_alloc();
-    virtual const char* what() const { return "std::bad_alloc"; }
-#endif
 };
-inline bad_alloc::~bad_alloc() {}
 
-//=============================================================
-// bad_array_new_length (C++11)
-//=============================================================
-#if STDCPP_NEW_CXX11
 class bad_array_new_length : public bad_alloc {
 public:
     bad_array_new_length() noexcept {}
     const char* what() const noexcept override { return "std::bad_array_new_length"; }
 };
+
+#if STDCPP_CXX17
+enum class align_val_t : std::size_t {};
 #endif
 
-//=============================================================
-// align_val_t (C++17)
-//=============================================================
-#if STDCPP_NEW_CXX17
-enum class align_val_t : size_t {};
-#endif
-
-//=============================================================
-// destroying_delete_t (C++20)
-//=============================================================
-#if STDCPP_NEW_CXX20
-struct destroying_delete_t { explicit destroying_delete_t() = default; };
-inline constexpr destroying_delete_t destroying_delete{};
-#endif
-
-//=============================================================
-// hardware_*interference_size (C++17)
-//=============================================================
-#if STDCPP_NEW_CXX17
-inline constexpr size_t hardware_destructive_interference_size = 64;
-inline constexpr size_t hardware_constructive_interference_size = 64;
-#endif
-
-//=============================================================
-// launder (C++17)
-//=============================================================
-#if STDCPP_NEW_CXX17
+//-------------------------------------------------------------
+// launder
+//-------------------------------------------------------------
 template<class T>
-constexpr T* launder(T* p) noexcept {
-    return __builtin_launder(p);
-}
-#endif
+constexpr T* launder(T* p) noexcept { return __builtin_launder(p); }
+
+//-------------------------------------------------------------
+// 干扰尺寸（仅供 API 兼容，非真实测量值）
+//-------------------------------------------------------------
+STDCPP_INLINE_VAR constexpr std::size_t hardware_destructive_interference_size = 64;
+STDCPP_INLINE_VAR constexpr std::size_t hardware_constructive_interference_size = 64;
 
 } // namespace std
 
-//=============================================================
-// non-throwing allocation operators
-//=============================================================
-#if STDCPP_NEW_CXX11
-void* operator new(size_t size, const std::nothrow_t&) noexcept {
-    void* p = nullptr;
-    try { p = malloc(size); } catch (...) {}
-    return p;
-}
-void* operator new[](size_t size, const std::nothrow_t&) noexcept {
-    void* p = nullptr;
-    try { p = malloc(size); } catch (...) {}
-    return p;
-}
-void operator delete(void* ptr, const std::nothrow_t&) noexcept { free(ptr); }
-void operator delete[](void* ptr, const std::nothrow_t&) noexcept { free(ptr); }
+//-------------------------------------------------------------
+// nothrow 版分配：失败返回 nullptr（不抛异常）
+//-------------------------------------------------------------
+inline void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
+#if STDCPP_HAS_EXCEPTIONS
+    try { return ::operator new(size); } catch (...) { return nullptr; }
 #else
-void* operator new(size_t size, const std::nothrow_t&) throw() { return malloc(size); }
-void* operator new[](size_t size, const std::nothrow_t&) throw() { return malloc(size); }
-void operator delete(void* ptr, const std::nothrow_t&) throw() { free(ptr); }
-void operator delete[](void* ptr, const std::nothrow_t&) throw() { free(ptr); }
+    return ::operator new(size);
 #endif
+}
+inline void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
+    return ::operator new(size, std::nothrow);
+}
+inline void operator delete(void* p, const std::nothrow_t&) noexcept { ::operator delete(p); }
+inline void operator delete[](void* p, const std::nothrow_t&) noexcept { ::operator delete[](p); }
 
 #endif // STDCPP_NEW_HPP

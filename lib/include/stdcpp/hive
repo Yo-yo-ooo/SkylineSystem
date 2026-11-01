@@ -1,194 +1,345 @@
-// -*- C++ -*-
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 //=============================================================
-// hive.hpp -- complete <hive>, C++26 (proposed).
+// <hive> — C++26 分块容器（稳定地址 + 空洞 O(1) 复用）
+//
+// 数据布局：
+//   块（_block）内是连续槽位，每块自带：
+//     * used[]       槽位是否存活
+//     * next_free[]  块内空闲槽链（uint32 索引）
+//     * free_head    空闲链头
+//     * hi           已用过的高水位（[hi, BlockSize) 是从未构造过的原始槽）
+//   全局再维护一条“有空闲槽的块”双向链表，于是：
+//     insert(v)      O(1) —— 直接取全局空闲链头那一块的首个空洞
+//     emplace_back   O(1) —— 优先复用尾块空洞，否则尾块高水位槽，否则新块
+//     erase(it)      O(1) —— 槽位入块内空闲链；块变空则整块摘链释放
+//
+// 关键点：erase 释放空块时，返回值必须取“解链后”的后继块，否则返回的
+// 迭代器指向已释放内存（旧实现正是先算 next 再 delete 块）。
 //=============================================================
 #ifndef STDCPP_HIVE_HPP
 #define STDCPP_HIVE_HPP
 
 #include <cstddef>
-#include <cstdlib>
+#include <cstdint>
+#include <initializer_list>
+#include <iterator>
 #include <type_traits>
 #include <utility>
-#include <iterator>
-#include <initializer_list>
-#include <algorithm>
-
-#define STDCPP_HIVE_CXX26 (__cplusplus >= 202400L)
+#include "detail/config.h"
+#include "detail/alloc.h"
 
 #ifndef _GLIBCXX_HIVE
 #  define _GLIBCXX_HIVE 1
 #endif
 
-#if STDCPP_HIVE_CXX26
+#if __cplusplus >= 202400L
 
 namespace std {
 
-//=============================================================
-// hive -- a linked-list of blocks with free-list reuse.
-// Simplified implementation using linked blocks.
-//=============================================================
 template<class T, size_t BlockSize = 64>
 class hive {
+    static_assert(BlockSize > 0, "hive BlockSize must be positive");
+    static_assert(BlockSize <= 0xFFFFFFFEu, "hive BlockSize too large");
+
+    static constexpr uint32_t kNone = 0xFFFFFFFFu;
+
     struct _block {
-        T* data;
-        size_t count;
-        bool* used;
-        _block* next;
-        _block* prev;
-        _block() : count(0), next(nullptr), prev(nullptr) {
-            data = (T*)malloc(BlockSize * sizeof(T));
-            used = (bool*)calloc(BlockSize, sizeof(bool));
+        _block*  next;       // 顺序链
+        _block*  prev;
+        _block*  free_next;  // "有空闲槽" 块链
+        _block*  free_prev;
+        uint32_t free_head;  // 块内空闲槽链头
+        uint32_t hi;         // 高水位：>= hi 的槽从未构造过
+        uint32_t count;      // 存活元素数（判空 O(1)）
+        bool     in_free;    // 是否挂在全局空闲块链上
+        bool     used[BlockSize];
+        uint32_t next_free[BlockSize];
+        // 数据放最后：块头与数据一次分配
+        alignas(T) unsigned char storage[sizeof(T) * BlockSize];
+
+        _block() : next(nullptr), prev(nullptr), free_next(nullptr), free_prev(nullptr),
+                   free_head(kNone), hi(0), count(0), in_free(false) {
+            for (size_t i = 0; i < BlockSize; ++i) used[i] = false;
         }
         ~_block() {
             for (size_t i = 0; i < BlockSize; ++i)
-                if (used[i]) data[i].~T();
-            free(data);
-            free(used);
+                if (used[i]) data_at(i)->~T();
+        }
+
+        T* data_at(size_t i) { return reinterpret_cast<T*>(storage + i * sizeof(T)); }
+        const T* data_at(size_t i) const {
+            return reinterpret_cast<const T*>(storage + i * sizeof(T));
         }
     };
 
     _block* _M_head;
-    size_t _M_size;
+    _block* _M_tail;
+    _block* _M_free_head;   // 有空闲槽的块链头
+    size_t  _M_size;
+
+    //---- 全局空闲块链 ------------------------------------------
+    void _M_free_add(_block* b) {
+        if (b->in_free) return;
+        b->free_prev = nullptr;
+        b->free_next = _M_free_head;
+        if (_M_free_head) _M_free_head->free_prev = b;
+        _M_free_head = b;
+        b->in_free = true;
+    }
+    void _M_free_remove(_block* b) {
+        if (!b->in_free) return;
+        if (b->free_prev) b->free_prev->free_next = b->free_next;
+        else _M_free_head = b->free_next;
+        if (b->free_next) b->free_next->free_prev = b->free_prev;
+        b->free_next = b->free_prev = nullptr;
+        b->in_free = false;
+    }
+
+    //---- 槽位空闲链 --------------------------------------------
+    void _M_push_slot(_block* b, uint32_t i) {
+        b->next_free[i] = b->free_head;
+        b->free_head = i;
+        _M_free_add(b);
+    }
+    uint32_t _M_pop_slot(_block* b) {
+        const uint32_t i = b->free_head;
+        b->free_head = b->next_free[i];
+        if (b->free_head == kNone) _M_free_remove(b);
+        return i;
+    }
+
+    _block* _M_new_block() {
+        _block* b = static_cast<_block*>(
+            __detail::alloc_bytes_aligned(sizeof(_block), alignof(_block)));
+        new (b) _block();
+        if (_M_tail) { _M_tail->next = b; b->prev = _M_tail; _M_tail = b; }
+        else { _M_head = _M_tail = b; }
+        return b;
+    }
+
+    void _M_unlink(_block* b) {
+        if (b->prev) b->prev->next = b->next;
+        else _M_head = b->next;
+        if (b->next) b->next->prev = b->prev;
+        else _M_tail = b->prev;
+        b->next = b->prev = nullptr;
+    }
+
+    void _M_destroy_block(_block* b) {
+        b->~_block();
+        __detail::dealloc_bytes_aligned(b, alignof(_block));
+    }
+
+    template<class... Args>
+    T* _M_create(_block* b, uint32_t i, Args&&... args) {
+        T* p = b->data_at(i);
+        ::new (static_cast<void*>(p)) T(std::forward<Args>(args)...);
+        b->used[i] = true;
+        ++b->count;
+        ++_M_size;
+        return p;
+    }
 
 public:
-    typedef T value_type;
-    typedef size_t size_type;
-    typedef T& reference;
+    typedef T        value_type;
+    typedef size_t   size_type;
+    typedef T&       reference;
     typedef const T& const_reference;
-    typedef T* pointer;
+    typedef T*       pointer;
 
-    class iterator {
-    public:
-        typedef bidirectional_iterator_tag iterator_category;
-        typedef T value_type;
-        typedef ptrdiff_t difference_type;
-        typedef T* pointer;
-        typedef T& reference;
-        _block* _M_block;
-        size_t _M_idx;
-        hive* _M_hive;
+    //---------------------------------------------------------
+    // 迭代器（跳过空洞）
+    //---------------------------------------------------------
+    template<bool Const>
+    class _iter {
+        typedef typename conditional<Const, const _block*, _block*>::type block_ptr;
+        block_ptr _M_block;
+        size_t    _M_idx;
 
-        iterator(_block* b, size_t i, hive* h) : _M_block(b), _M_idx(i), _M_hive(h) {}
-        T& operator*() const { return _M_block->data[_M_idx]; }
-        T* operator->() const { return &_M_block->data[_M_idx]; }
-        iterator& operator++() {
-            do {
-                ++_M_idx;
-                while (_M_idx >= BlockSize && _M_block->next) {
-                    _M_block = _M_block->next;
-                    _M_idx = 0;
+        void _M_skip() {
+            while (_M_block) {
+                while (_M_idx < BlockSize) {
+                    if (_M_block->used[_M_idx]) return;
+                    ++_M_idx;
                 }
-            } while (_M_block && _M_idx < BlockSize && !_M_block->used[_M_idx]);
-            if (_M_block && _M_idx >= BlockSize) { _M_block = nullptr; _M_idx = 0; }
-            return *this;
-        }
-        iterator operator++(int) { iterator t = *this; ++*this; return t; }
-        iterator& operator--() {
-            if (!_M_block) {
-                _M_block = _M_hive->_M_head;
-                while (_M_block->next) _M_block = _M_block->next;
-                _M_idx = BlockSize;
+                _M_block = _M_block->next;
+                _M_idx = 0;
             }
-            do {
-                if (_M_idx == 0) {
-                    _M_block = _M_block->prev;
-                    _M_idx = BlockSize;
-                }
-                --_M_idx;
-            } while (_M_block && !_M_block->used[_M_idx]);
-            return *this;
         }
-        iterator operator--(int) { iterator t = *this; --*this; return t; }
-        bool operator==(const iterator& o) const { return _M_block == o._M_block && _M_idx == o._M_idx; }
-        bool operator!=(const iterator& o) const { return !(*this == o); }
+    public:
+        typedef std::bidirectional_iterator_tag iterator_category;
+        typedef T         value_type;
+        typedef ptrdiff_t difference_type;
+        typedef typename conditional<Const, const T*, T*>::type pointer;
+        typedef typename conditional<Const, const T&, T&>::type reference;
+
+        _iter() : _M_block(nullptr), _M_idx(0) {}
+        _iter(block_ptr b, size_t i) : _M_block(b), _M_idx(i) { _M_skip(); }
+
+        reference operator*() const { return *_M_block->data_at(_M_idx); }
+        pointer operator->() const { return _M_block->data_at(_M_idx); }
+        _iter& operator++() { ++_M_idx; _M_skip(); return *this; }
+        _iter operator++(int) { _iter t = *this; ++*this; return t; }
+        bool operator==(const _iter& o) const {
+            return _M_block == o._M_block && _M_idx == o._M_idx;
+        }
+        bool operator!=(const _iter& o) const { return !(*this == o); }
+
+        block_ptr block() const { return _M_block; }
+        size_t index() const { return _M_idx; }
     };
 
-    hive() : _M_head(nullptr), _M_size(0) {}
-    hive(const hive& other) : _M_head(nullptr), _M_size(0) {
-        for (auto it = other.begin(); it != other.end(); ++it) insert(*it);
-    }
-    hive(initializer_list<T> il) : _M_head(nullptr), _M_size(0) {
-        for (const T& v : il) insert(v);
-    }
-    ~hive() {
-        while (_M_head) {
-            _block* n = _M_head->next;
-            delete _M_head;
-            _M_head = n;
-        }
+    typedef _iter<false>       iterator;
+    typedef _iter<true>        const_iterator;
+
+    //---------------------------------------------------------
+    // 构造 / 析构
+    //---------------------------------------------------------
+    hive() : _M_head(nullptr), _M_tail(nullptr), _M_free_head(nullptr), _M_size(0) {}
+
+    hive(const hive& other) : _M_head(nullptr), _M_tail(nullptr), _M_free_head(nullptr), _M_size(0) {
+        for (const_iterator it = other.begin(); it != other.end(); ++it) push_back(*it);
     }
 
-    iterator begin() {
-        _block* b = _M_head;
-        while (b) {
-            for (size_t i = 0; i < BlockSize; ++i)
-                if (b->used[i]) return iterator(b, i, this);
-            b = b->next;
-        }
-        return end();
+    hive(hive&& other) noexcept
+        : _M_head(other._M_head), _M_tail(other._M_tail),
+          _M_free_head(other._M_free_head), _M_size(other._M_size) {
+        other._M_head = other._M_tail = other._M_free_head = nullptr;
+        other._M_size = 0;
     }
-    iterator end() { return iterator(nullptr, 0, this); }
 
-    bool empty() const { return _M_size == 0; }
-    size_type size() const { return _M_size; }
-    size_type capacity() const {
+    explicit hive(initializer_list<T> il)
+        : _M_head(nullptr), _M_tail(nullptr), _M_free_head(nullptr), _M_size(0) {
+        for (const T& v : il) push_back(v);
+    }
+
+    ~hive() { clear(); }
+
+    hive& operator=(const hive& other) {
+        if (this != &other) { hive tmp(other); swap(tmp); }
+        return *this;
+    }
+    hive& operator=(hive&& other) noexcept {
+        if (this != &other) {
+            clear();
+            _M_head = other._M_head; _M_tail = other._M_tail;
+            _M_free_head = other._M_free_head; _M_size = other._M_size;
+            other._M_head = other._M_tail = other._M_free_head = nullptr;
+            other._M_size = 0;
+        }
+        return *this;
+    }
+
+    //---------------------------------------------------------
+    // 迭代 / 容量
+    //---------------------------------------------------------
+    iterator begin() { return iterator(_M_head, 0); }
+    iterator end() { return iterator(nullptr, 0); }
+    const_iterator begin() const { return const_iterator(_M_head, 0); }
+    const_iterator end() const { return const_iterator(nullptr, 0); }
+
+    bool empty() const noexcept { return _M_size == 0; }
+    size_type size() const noexcept { return _M_size; }
+    size_type capacity() const noexcept {
         size_type n = 0;
         for (_block* b = _M_head; b; b = b->next) n += BlockSize;
         return n;
     }
 
-    pair<iterator, bool> insert(const T& v) {
-        _block* b = _M_head;
-        while (b) {
-            for (size_t i = 0; i < BlockSize; ++i) {
-                if (!b->used[i]) {
-                    new (b->data + i) T(v);
-                    b->used[i] = true;
-                    ++b->count;
-                    ++_M_size;
-                    return pair<iterator, bool>(iterator(b, i, this), true);
-                }
+    //---------------------------------------------------------
+    // 追加：优先复用尾块空洞，其次尾块高水位槽，最后开新块
+    //---------------------------------------------------------
+    template<class... Args>
+    reference emplace_back(Args&&... args) {
+        _block* b = _M_tail;
+        if (b) {
+            if (b->free_head != kNone) {
+                const uint32_t i = _M_pop_slot(b);
+                return *_M_create(b, i, std::forward<Args>(args)...);
             }
-            b = b->next;
+            if (b->hi < BlockSize) {
+                const uint32_t i = b->hi++;
+                return *_M_create(b, i, std::forward<Args>(args)...);
+            }
         }
-        _block* nb = new _block();
-        nb->next = _M_head;
-        if (_M_head) _M_head->prev = nb;
-        _M_head = nb;
-        new (nb->data) T(v);
-        nb->used[0] = true;
-        nb->count = 1;
-        ++_M_size;
-        return pair<iterator, bool>(iterator(nb, 0, this), true);
+        b = _M_new_block();
+        const uint32_t i = b->hi++;
+        return *_M_create(b, i, std::forward<Args>(args)...);
     }
 
-    iterator erase(iterator pos) {
-        pos._M_block->data[pos._M_idx].~T();
-        pos._M_block->used[pos._M_idx] = false;
-        --pos._M_block->count;
-        --_M_size;
-        iterator next = pos;
-        ++next;
-        if (pos._M_block->count == 0) {
-            if (pos._M_block->prev) pos._M_block->prev->next = pos._M_block->next;
-            else _M_head = pos._M_block->next;
-            if (pos._M_block->next) pos._M_block->next->prev = pos._M_block->prev;
-            delete pos._M_block;
+    void push_back(const T& v) { emplace_back(v); }
+    void push_back(T&& v) { emplace_back(static_cast<T&&>(v)); }
+
+    // 任意空洞 O(1) 复用
+    iterator insert(const T& v) {
+        if (_M_free_head) {
+            _block* b = _M_free_head;
+            const uint32_t i = _M_pop_slot(b);
+            _M_create(b, i, v);
+            return iterator(b, i);
         }
-        return next;
+        emplace_back(v);
+        // 新块/高水位槽：它一定是当前最后一个元素
+        iterator it(_M_tail, _M_tail->hi - 1);
+        return it;
+    }
+
+    //---------------------------------------------------------
+    // 删除
+    //---------------------------------------------------------
+    iterator erase(iterator pos) {
+        _block* b = pos.block();
+        if (!b) return end();
+        const size_t i = pos.index();
+
+        b->data_at(i)->~T();
+        b->used[i] = false;
+        --b->count;
+        --_M_size;
+        _M_push_slot(b, static_cast<uint32_t>(i));
+
+        if (_M_size == 0) {                 // 全空：直接回收所有块
+            clear();
+            return end();
+        }
+        // 块内已无存活元素：整块摘链释放（O(1)，靠 count 判定）
+        if (b->count == 0) {
+            _block* nxt = b->next;
+            _M_free_remove(b);
+            _M_unlink(b);
+            _M_destroy_block(b);
+            return iterator(nxt, 0);
+        }
+
+        // i 已标记为空闲，迭代器构造时会自动跳过它指向下一个存活元素；
+        // 这里绝不能再 ++（旧实现就这样多跳了一个）
+        return iterator(b, i);
     }
 
     void clear() {
-        while (_M_head) {
-            _block* n = _M_head->next;
-            delete _M_head;
-            _M_head = n;
+        _block* b = _M_head;
+        while (b) {
+            _block* n = b->next;
+            _M_destroy_block(b);
+            b = n;
         }
+        _M_head = _M_tail = _M_free_head = nullptr;
         _M_size = 0;
+    }
+
+    void swap(hive& other) noexcept {
+        _block* h = _M_head; _block* t = _M_tail;
+        _block* f = _M_free_head; size_t s = _M_size;
+        _M_head = other._M_head; _M_tail = other._M_tail;
+        _M_free_head = other._M_free_head; _M_size = other._M_size;
+        other._M_head = h; other._M_tail = t;
+        other._M_free_head = f; other._M_size = s;
     }
 };
 
 } // namespace std
 
-#endif // STDCPP_HIVE_CXX26
+#endif // C++26
+
 #endif // STDCPP_HIVE_HPP

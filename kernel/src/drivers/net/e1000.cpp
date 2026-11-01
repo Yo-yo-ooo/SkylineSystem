@@ -3,7 +3,7 @@
 /* e1000.cpp — Intel 82540EM/82574L 网卡驱动 (legacy 收发环)
  * 结构: PCI 探测 → MMIO 映射 → 复位 → EEPROM 读 MAC → 收发环 → 中断。
  * 中断走传统 INTx (BSP), 多队列/MSI-X 后续扩展。
- * P1-51 前提文档化: RX 状态机 (g_rx_tail/g_rx_armed/g_rx_desc_state)
+ * RX 状态机 (g_rx_tail/g_rx_armed/g_rx_desc_state)
  * 是全局状态, 依赖「收包线程与 IRQ 同核」的隐式前提 —— INTx 绑 BSP,
  * lwIP 收包线程 (PollRX) 也运行在 BSP, IrqSave 关中断保护读写;
  * 若未来把收包线程迁到其他核, 必须加锁或迁移状态到 per-CPU。 */
@@ -27,7 +27,7 @@ static volatile uint32_t *g_regs = nullptr;      // MMIO 基址 (HHDM)
 static rx_desc *g_rx_ring = nullptr;
 static tx_desc *g_tx_ring = nullptr;
 static uint8_t *g_rx_bufs[E1000_RX_RING_LEN];   // 每缓冲独立一页 (GetPhysics 可靠)
-/* 审计 #2 (round 1 修复): 单共享 TX bounce → 每描述符独立缓冲。
+/* 单共享 TX bounce → 每描述符独立缓冲。
    在飞帧由硬件异步 DMA 读取, 下一发送覆写同一 bounce 会撕坏在飞帧;
    现每槽位独立页 (256×2KB=512KB), 环满才复用该槽 (硬件必已完成) */
 static uint8_t *g_tx_bufs[E1000_TX_RING_LEN];
@@ -49,8 +49,8 @@ static volatile uint64_t g_stat_tx_bytes = 0;
 static volatile uint32_t g_stat_rx_dropped = 0;  // 环满/分配失败
 static volatile uint32_t g_stat_rx_err = 0;      // 描述符错误
 static volatile uint32_t g_stat_tx_full = 0;     // 发送环满次数
-static volatile uint64_t g_stat_rx_burst_sum = 0;     // round 97: Σ 每轮轮询帧数
-static volatile uint64_t g_stat_rx_burst_calls = 0;  // round 97: 轮询次数
+static volatile uint64_t g_stat_rx_burst_sum = 0;     // Σ 每轮轮询帧数
+static volatile uint64_t g_stat_rx_burst_calls = 0;  // 轮询次数
 static spinlock_t g_tx_lock = 0;                 // 多核 TX 串行化 (共享 bounce + TDT)
 
 uint32_t DiagIRQCount() { return g_irq_count; }
@@ -97,7 +97,7 @@ static uint16_t eeprom_read(uint8_t addr) {
     for (int i = 0; i < 100000; i++) {
         if (rd(EERD) & (1u << 4)) break;
     }
-    /* P1-27: 超时显式失败 (不再静默返回垃圾值) */
+    /* 超时显式失败 (不再静默返回垃圾值) */
     if (!(rd(EERD) & (1u << 4))) return 0xFFFF;
     return (uint16_t)(rd(EERD) >> 16);
 }
@@ -110,7 +110,7 @@ static void irq_handler(registers *r) {
     uint32_t icr = rd(ICR);
     if (!icr) { LAPIC::EOI(); return; }
 
-    /* P1-108: 接线死计数器 —— RXO (接收器溢出) = 环满丢帧事件 */
+    /* 接线死计数器 —— RXO (接收器溢出) = 环满丢帧事件 */
     if (icr & E1000_ICR_RXO)
         __atomic_add_fetch(&g_stat_rx_dropped, 1, __ATOMIC_RELAXED);
 
@@ -139,7 +139,7 @@ void PollRX(void) {
     if (!g_inited) return;
     IrqSave guard_irq;
     uint32_t guard = 0;
-    uint32_t burst = 0;   /* round 97: 单次轮询的帧数 (DPDK rx_burst 口径) */
+    uint32_t burst = 0;   /* 单次轮询的帧数 (DPDK rx_burst 口径) */
     while ((g_rx_ring[g_rx_tail].status & 1) && guard < E1000_RX_RING_LEN) {
         rx_desc *d = &g_rx_ring[g_rx_tail];
         uint16_t len = d->length;
@@ -195,7 +195,7 @@ void Init(PCI::PCIHeader0 *header) {
     g_regs = (volatile uint32_t *)(phys + hhdm_offset);
 
     /* 复位: CTRL.RST 自清 (纯忙等, 同 eeprom_read 的原因)。
-       P1-27: 超时显式失败 */
+       超时显式失败 */
     wr(CTRL, rd(CTRL) | E1000_CTRL_RST);
     for (int i = 0; i < 100000; i++) {
         if (!(rd(CTRL) & E1000_CTRL_RST)) break;
@@ -209,7 +209,7 @@ void Init(PCI::PCIHeader0 *header) {
     bool mac_valid = true;
     for (int i = 0; i < 3; i++) {
         uint16_t w = eeprom_read((uint8_t)i);
-        if (w == 0xFFFF) mac_valid = false;   /* P1-27: 超时失败标记 */
+        if (w == 0xFFFF) mac_valid = false;   /* 超时失败标记 */
         g_mac[i * 2]     = (uint8_t)(w & 0xFF);
         g_mac[i * 2 + 1] = (uint8_t)(w >> 8);
     }
@@ -226,7 +226,7 @@ void Init(PCI::PCIHeader0 *header) {
     for (uint32_t i = 0; i < E1000_RX_RING_LEN; i++)
         g_rx_bufs[i] = (uint8_t *)VMM::Alloc((pagemap_t *)kernel_pagemap, 1, false);
     g_tx_ring = (tx_desc *)VMM::Alloc((pagemap_t *)kernel_pagemap, 1, false);
-    /* 审计 #2: 每槽位独立 TX 缓冲页 (256×2KB) */
+    /* 每槽位独立 TX 缓冲页 (256×2KB) */
     for (uint32_t i = 0; i < E1000_TX_RING_LEN; i++)
         g_tx_bufs[i] = (uint8_t *)VMM::Alloc((pagemap_t *)kernel_pagemap, 1, false);
     bool ok = g_rx_ring && g_tx_ring;
@@ -268,7 +268,7 @@ void Init(PCI::PCIHeader0 *header) {
     wr(TIPG, 0x0060200A);
 
     /* RX: 混杂(广播必收) + 2048B 缓冲 + 剥 CRC。
-       P1-26: 关闭 LPE —— 2KB 缓冲 + LPE 会接受巨帧越界写 */
+       关闭 LPE —— 2KB 缓冲 + LPE 会接受巨帧越界写 */
     wr(RCTL, E1000_RCTL_EN | E1000_RCTL_SBP | E1000_RCTL_UPE | E1000_RCTL_MPE |
              E1000_RCTL_BAM | E1000_RCTL_SECRC | E1000_RCTL_BSIZE_2048);
     /* TX: 使能 + 填充短帧 + 全双工碰撞阈值 */
@@ -281,8 +281,8 @@ void Init(PCI::PCIHeader0 *header) {
     wr(IMS, E1000_ICR_RXT0 | E1000_ICR_RXO | E1000_ICR_RXDMT0 | E1000_ICR_LSC | E1000_ICR_TXQE);
 
     /* 传统 INTx: PCI 中断线给出 ISA IRQ。
-       P1-28: 魔法数回退显式告警。
-       #19 (round 12 复核): 曾改走 RequestFreeIRQPerCPU —— 但 e1000 的
+       魔法数回退显式告警。
+       曾改走 RequestFreeIRQPerCPU —— 但 e1000 的
        PCI 探测早于 PIT/键盘等固定向量注册, 分配器返回的 32 与 PIT
        冲突 (boot 实测 ping=0), 回退固定 irq+32。接入分配器需先把
        固定向量 (32-47) 在启动早期预留进位图, 列为路线图 */

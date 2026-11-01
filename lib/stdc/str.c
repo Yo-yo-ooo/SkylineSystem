@@ -84,7 +84,7 @@ int strcmp(const char *cs, const char *ct)
     }
 }
 
-/* D5 (round 2 诊断): 临时回退为 static 状态 (对照桌面挂点) */
+/* 临时回退为 static 状态 (对照桌面挂点) */
 char *strtok(char *str, const char *delim)
 {
     static char *p = 0;
@@ -159,7 +159,7 @@ int32_t strncmp(const char* a, const char* b, size_t n) {
 
 char *strncpy(char *dest, const char *src, size_t n) {
     char *tmp = dest;
-    /* P5-102: C 标准语义 —— src 短于 n 时余下字节必须补零
+    /* C 标准语义 —— src 短于 n 时余下字节必须补零
        (原实现不补零, 调用方读未初始化字节) */
     while (n > 0 && (*dest++ = *src++) != '\0') n--;
     while (n-- > 0) *dest++ = '\0';
@@ -241,7 +241,7 @@ size_t	strlen(const char *__restrict__  s)
 }
 
 int32_t atoi(char *str) {
-    /* D5 (round 9): 溢出防护 —— 原无界累加在超 int32 时回绕为 UB;
+    /* 溢出防护 —— 原无界累加在超 int32 时回绕为 UB;
        按 C 标准 atoi 溢出行为未定义, 此处钳制饱和返回 */
     int64_t result = 0;
     int32_t neg_multiplier = 1;

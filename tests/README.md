@@ -22,6 +22,10 @@ cd tests && bash ci.sh          # Ubuntu 24.04, g++ ≥ 13
 | `memops` | ablib x86mem 四 tier：小尺寸穷举 + 重叠 + 越界哨兵 + 跨 NT 阈值大块 | ✅ 真实源码 |
 | `memops-bench` | 与 libc 及各 tier 对照的 GB/s 吞吐基准（见 `memops/README.md`） | ✅ 真实源码 |
 
+> **`stdcpp/` 不在此列。** `tests/stdcpp/` 是 STL 的独立验收工程，
+> 有自己的一键入口（`cd tests/stdcpp && make`），**不参与**本目录的
+> `all`、`ci.sh` 与 GitHub Actions 门禁，原因见 `stdcpp/README.md`。
+
 ## 随机种子（全部硬编码，失败可重放）
 
 | 套件 | 种子 |

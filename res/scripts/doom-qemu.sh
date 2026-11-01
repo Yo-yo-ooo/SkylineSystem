@@ -38,7 +38,11 @@ ISO=$(wslpath -w SkylineSystem-x86_64.iso)
 DISK=$(wslpath -w disk.img)
 echo "ISO: $ISO"
 echo "run from a Windows console for SDL output, or let it open its own window:"
-"$QEMU" -machine q35 -cpu max \
+# 加速器: 默认 tcg。本机实测 whpx 跑不动这个 guest (VP exit code 4 /
+# x2APIC #GP / AHCI 卡死), 详见 res/scripts/0run-x86_64.bat 的注释。
+# 若在支持 KVM 的 Linux 主机上跑, 用 ACCEL=kvm 会快一个数量级。
+ACCEL="${ACCEL:-tcg}"
+"$QEMU" -machine q35,accel="$ACCEL" -cpu max \
     -cdrom "$ISO" -m 2G -smp 4 \
     -serial stdio \
     -netdev user,id=n0 -device e1000,netdev=n0 -device AC97 \

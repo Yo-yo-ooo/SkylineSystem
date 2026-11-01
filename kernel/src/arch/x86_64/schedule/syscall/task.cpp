@@ -53,15 +53,15 @@ uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
 
     spinlock_lock(&PID2PROC_TREE_LOCK);
     proc_t *proc = (proc_t*)art_search(pid2proc_tree,(const uint8_t*)&pid,8);
-    /* B4 (round 18/21): 树锁内取引用 —— 解锁后 zombie 回收器可能已
-       摘除该 proc, 引用保证 DeleteProc 前的使用安全。round 19 曾
-       隔离回退; round 20 证明 fault 根因是 D7, 本接线恢复 */
+    /* 树锁内取引用 —— 解锁后 zombie 回收器可能已
+       摘除该 proc, 引用保证 DeleteProc 前的使用安全。 曾
+       隔离回退; 证明 fault 根因是 D7, 本接线恢复 */
     if (proc) proc_get(proc);
     spinlock_unlock(&PID2PROC_TREE_LOCK);
     if (!proc || proc->exiting) { if (proc) proc_put(proc); return -ESRCH; }
     if (proc->pagemap == kernel_pagemap) { proc_put(proc); return -EPERM; }  /* never kill a kernel proc */
 
-    /* P1-47: sig==0 = 存活探测 (POSIX kill(pid,0)) —— WM 用于死窗口
+    /* sig==0 = 存活探测 (POSIX kill(pid,0)) —— WM 用于死窗口
        回收轮询, 不击杀 */
     if (sig == 0) { proc_put(proc); return 0; }
 
@@ -71,7 +71,7 @@ uint64_t sys_kill(uint64_t pid,uint64_t sig, GENERATE_IGN4()) {
        pull every thread off all CPUs, close its FDs, and queue the body for
        asynchronous reclaim. The caller keeps running (PROC_KILL is self-kill). */
     Schedule::DeleteProc(proc);
-    proc_put(proc);                    /* B4: 释放 kill 路径引用 */
+    proc_put(proc);                    /* 释放 kill 路径引用 */
     return 0;
 }
 
@@ -267,7 +267,7 @@ uint64_t sys_pmmapSHARE(
             VMM::Map1G(dst_pm, dv, phys, map_flags);
             ok = true;
             for (uint64_t k = 0; k < PAGE_1GB / PAGE_SIZE && ok; k++)
-                if (!RefSharedPhys(phys + k * PAGE_SIZE)) ok = false;   /* P0-7 */
+                if (!RefSharedPhys(phys + k * PAGE_SIZE)) ok = false;   
             if (!ok) { VMM::Unmap(dst_pm, dv); goto unlock; }
         } else if (si.size >= PAGE_2MB &&
                    (sv & (PAGE_2MB - 1)) == 0 && (dv & (PAGE_2MB - 1)) == 0 &&
@@ -276,12 +276,12 @@ uint64_t sys_pmmapSHARE(
             VMM::Map2M(dst_pm, dv, phys, map_flags);
             ok = true;
             for (uint64_t k = 0; k < PMM_2M_PAGES && ok; k++)
-                if (!RefSharedPhys(phys + k * PAGE_SIZE)) ok = false;   /* P0-7 */
+                if (!RefSharedPhys(phys + k * PAGE_SIZE)) ok = false;   
             if (!ok) { VMM::Unmap(dst_pm, dv); goto unlock; }
         } else {
             chunk = PAGE_SIZE; phys = si.phys + (sv & (si.size - 1));
             VMM::Map4K(dst_pm, dv, phys, map_flags);
-            if (!RefSharedPhys(phys)) { VMM::Unmap(dst_pm, dv); ok = false; goto unlock; }   /* P0-7 */
+            if (!RefSharedPhys(phys)) { VMM::Unmap(dst_pm, dv); ok = false; goto unlock; }   
         }
         off += chunk;
     }
@@ -429,7 +429,7 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
 
     /* ---- 一切就绪, 最后一刻发射 (此后 t 不可再碰) ---- */
     if (!Schedule::Internal::ProcessAddThread(me, t)) {
-        /* round 91: 锁内重检失败 —— me 已退出, 归还已分配资源 */
+        /* 锁内重检失败 —— me 已退出, 归还已分配资源 */
         if (t->kernel_stack) VMM::Free(kernel_pagemap, (void*)t->kernel_stack);
         kfree(t);
         return (uint64_t)-1;

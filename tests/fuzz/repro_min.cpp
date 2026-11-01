@@ -1,4 +1,4 @@
-// tests/fuzz/repro_min.cpp — 崩溃格式最小复现 (round 93 调查)
+// tests/fuzz/repro_min.cpp — 崩溃格式最小复现
 #include <cstdio>
 #include <cstdint>
 #include <cstdarg>

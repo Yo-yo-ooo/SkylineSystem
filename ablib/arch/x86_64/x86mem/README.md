@@ -1,4 +1,4 @@
-# x86mem (P5-100 许可记录)
+# x86mem（许可记录）
 
 本目录为上游 x86mem (https://github.com/.../x86mem) 的移植副本:
 `memcpy.c / memmove.c / memcmp.c / memset.c` 及其 intrinsic 头。

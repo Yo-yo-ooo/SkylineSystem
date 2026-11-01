@@ -6,7 +6,7 @@
 #define STDCPP_TREE_HPP
 
 #include <cstddef>
-#include <cstdlib>
+#include "detail/alloc.h"
 #include <type_traits>
 #include <utility>
 #include <iterator>

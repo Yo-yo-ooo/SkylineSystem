@@ -39,7 +39,7 @@ uint64_t devm_hash(const void* item, uint64_t seed0, uint64_t seed1) {
 int devtim_compare(const void *a,const void*b,void* udata){
     const DevManKey* ea = (const DevManKey*)a;
     const DevManKey* eb = (const DevManKey*)b;
-    /* P1-39: 与 devtim_hash 同字段 (整个 key) —— 原实现只比 index,
+    /* 与 devtim_hash 同字段 (整个 key) —— 原实现只比 index,
        不同 type 同 index 的条目在桶内被判相等 → 多盘重名覆盖首盘 */
     return _memcmp(ea, eb, sizeof(DevManKey));
 }
@@ -73,7 +73,7 @@ namespace Dev{
 
         spinlock_lock(&dev_manager_lock); // 开启大锁，保证 Index 和 Map 的原子同步
 
-        // 1. 获取并更新索引 (P1-39: 原实现查 {type,0} 恒得首条 → 之后
+        // 1. 获取并更新索引 (原实现查 {type,0} 恒得首条 → 之后
         //    全部撞 index 1 覆盖; 现遍历取该 type 的最大 index + 1)
         uint32_t TypeIndex = 0;
         {
@@ -159,7 +159,7 @@ namespace Dev{
             else {
                 if (Count == 0)
                     return true;
-                /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+                /* 边界收紧 —— 最后扇区必须 < 容量 */
                 if (address + Count - 1 >= dev->MaxSectorCount * 512)
                     return false;
                 
@@ -168,7 +168,7 @@ namespace Dev{
                 if (!buffer2) return false;   /* OOM 显式失败 */
                 _memset(buffer2, 0, tempSectorCount * 512);
 
-                /* P1-38: 读失败不得拷贝未填充缓冲 (原实现污染调用者) */
+                /* 读失败不得拷贝未填充缓冲 (原实现污染调用者) */
                 if (!dev->ops.Read(dev->classp,(address / 512), tempSectorCount, buffer2))
                 {
                     kfree(buffer2);
@@ -195,7 +195,7 @@ namespace Dev{
             else{
                 if (Count == 0)
                     return true;
-                /* P1-37: 边界收紧 —— 最后扇区必须 < 容量 */
+                /* 边界收紧 —— 最后扇区必须 < 容量 */
                 if (address + Count - 1 >= dev->MaxSectorCount * 512)
                     return false;
                 

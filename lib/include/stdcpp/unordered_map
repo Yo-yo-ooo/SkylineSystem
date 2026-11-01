@@ -6,7 +6,7 @@
 #define STDCPP_UNORDERED_MAP_HPP
 
 #include <cstddef>
-#include <cstdlib>
+#include "detail/alloc.h"
 #include <type_traits>
 #include <utility>
 #include <iterator>
@@ -121,7 +121,7 @@ private:
         size_type old_count = _M_bucket_count;
         node_type** old_buckets = _M_buckets;
         _M_bucket_count = n;
-        _M_buckets = (node_type**)calloc(n, sizeof(node_type*));
+        _M_buckets = std::__detail::alloc_array_zero<node_type*>(n);
         for (size_type i = 0; i < old_count; ++i) {
             node_type* cur = old_buckets[i];
             while (cur) {
@@ -132,7 +132,7 @@ private:
                 cur = next;
             }
         }
-        free(old_buckets);
+        std::__detail::dealloc_bytes(old_buckets);
     }
 
     void _M_check_rehash() {
@@ -143,17 +143,17 @@ private:
 public:
     _hash_table() : _M_buckets(nullptr), _M_bucket_count(0), _M_size(0),
                     _M_hash(Hash()), _M_eq(KeyEqual()), _M_max_load_factor(1.0f) {
-        _M_buckets = (node_type**)calloc(kInitialBuckets, sizeof(node_type*));
+        _M_buckets = std::__detail::alloc_array_zero<node_type*>(kInitialBuckets);
         _M_bucket_count = kInitialBuckets;
     }
     explicit _hash_table(size_type n, const Hash& hf = Hash(), const KeyEqual& eql = KeyEqual())
         : _M_size(0), _M_hash(hf), _M_eq(eql), _M_max_load_factor(1.0f) {
         size_type bc = kInitialBuckets;
         while (bc < n) bc *= 2;
-        _M_buckets = (node_type**)calloc(bc, sizeof(node_type*));
+        _M_buckets = std::__detail::alloc_array_zero<node_type*>(bc);
         _M_bucket_count = bc;
     }
-    ~_hash_table() { clear(); free(_M_buckets); }
+    ~_hash_table() { clear(); std::__detail::dealloc_bytes(_M_buckets); }
 
     iterator begin() {
         for (size_type i = 0; i < _M_bucket_count; ++i)
@@ -379,12 +379,12 @@ public:
     }
     T& at(const key_type& k) {
         iterator it = find(k);
-        if (it == end()) throw out_of_range("unordered_map::at");
+        if (it == end()) __detail::throw_out_of_range("unordered_map::at");
         return it->second;
     }
     const T& at(const key_type& k) const {
         const_iterator it = find(k);
-        if (it == end()) throw out_of_range("unordered_map::at");
+        if (it == end()) __detail::throw_out_of_range("unordered_map::at");
         return it->second;
     }
 

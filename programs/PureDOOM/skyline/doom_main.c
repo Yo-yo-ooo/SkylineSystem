@@ -481,7 +481,23 @@ int main(void) {
             int gs = 0, gu = 0;
             sky_gettime(&gs, &gu);
             int64_t now_us = (int64_t)gs * 1000000 + (int64_t)gu;
-            if (next_us && now_us < next_us) { sys_yield(); continue; }
+            if (next_us && now_us < next_us) {
+                /* **有界等待**: 时钟一旦停止前进 (跨核 TSC 偏差 / 时钟冻结),
+                   `while (now < next) yield;` 会永远等下去 —— 实测表现为
+                   "DOOM 跑一会就卡死": 心跳停止、进程还在、内核无恙。
+                   这里给等待加硬上限: 最多让出 DOOM_WAIT_MAX 次就放弃本帧的
+                   节拍限制继续渲染。宁可掉几帧, 绝不永久卡住。 */
+                static unsigned long wait_spins;
+                if (next_us - now_us > 200000) {
+                    next_us = now_us;              /* 时钟异常: 重置节拍 */
+                } else if (++wait_spins < 200000ul) {
+                    sys_yield();
+                    continue;
+                } else {
+                    wait_spins = 0;                /* 放弃本帧等待 */
+                    next_us = now_us;
+                }
+            }
             next_us = now_us + (1000000 / 35);
         }
 

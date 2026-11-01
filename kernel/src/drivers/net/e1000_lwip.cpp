@@ -147,8 +147,8 @@ static void build_flood_frame(void) {
 
 /* ---- RX FIFO: 生产者(轮询/IRQ) / lwIP 线程消费者 ---- */
 /* NET_ZEROCOPY=1: pbuf 直挂 DMA 缓冲。
-   历史: 双释放 (round 17) 与探测忙等 (round 18) 修复后, 长稳仍出现
-   "首 stat 后静默" (round 19 二分中); 拷贝路径为生产默认。 */
+   历史: 双释放 与探测忙等 修复后, 长稳仍出现
+   "首 stat 后静默"; 拷贝路径为生产默认。 */
 #define NET_ZEROCOPY 0
 #define RX_FIFO_SLOTS 64
 
@@ -386,7 +386,7 @@ void NetStackInit(void) {
 
     lwip_init();
     /* 静态配置 (slirp 默认网络 10.0.2.0/24, 网关 10.0.2.2);
-       DHCP 已实调 dhcp_start (P3-83 修正: 原注释"暂缓"过时 ——
+       DHCP 已实调 dhcp_start (修正: 原注释"暂缓"过时 ——
        ACD 检查关闭后 slirp OFFER 正常租赁, 静态 IP 为回退) */
     ip4_addr_t ip, mask, gw;
     ip4addr_aton("10.0.2.15", &ip);
@@ -413,8 +413,8 @@ void NetStackInit(void) {
         /* 网络线程深调用链 (lwIP 输入路径 + DHCP), 用 8 页=32KB 栈
            (默认 4 页在 DHCP 帧处理 + 调试打印下栈溢出, 实测线程静默死亡) */
         thread_t *nw = Schedule::NewKernelThreadEx(proc, 0, 12, (void *)lwip_thread, 8);
-        /* B2 (round 5): 钉扎在 CPU0 —— RX FIFO 依赖线程与 IRQ 同核
-           (P1-51 前提), 负载均衡不得迁核 */
+        /* 钉扎在 CPU0 —— RX FIFO 依赖线程与 IRQ 同核
+            负载均衡不得迁核 */
         if (nw) nw->pinned = true;
         /* 多核 TX 洪泛: 仅诊断构建 (NET_FLOOD_AUTO) 才在 CPU1..3 起无限
            数据面压力线程; 正常启动绝不运行 (启动窗口争锁/占核, 曾致间歇

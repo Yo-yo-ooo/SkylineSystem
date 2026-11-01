@@ -44,7 +44,7 @@ void hcf(void);
 #define ASSERT(CONDITION) \
 if (CONDITION){}else {Panic(#CONDITION);}
 extern "C" {
-/* P2-58 口径: 两套 memcpy 语义并存 —— 全部新代码用标准序 __memcpy(d,s,n);
+/* 口径: 两套 memcpy 语义并存 —— 全部新代码用标准序 __memcpy(d,s,n);
    _memcpy 为【历史转置】(src, dest, size), 已弃用, 机械迁移列入路线图
    (一次性 PR: 统一参数序 + 删转置版) */
 void _memcpy(void* src, void* dest, uint64_t size);   /* DEPRECATED: 转置序! */
@@ -55,6 +55,10 @@ void *__memcpy(void * d, const void * s, uint64_t n);  /* 标准序, 新代码�
 /* 修复: C 编译单元(art.c 等)也需调用自旋锁 → 统一 C 链接 */
 void spinlock_lock(int32_t* l);
 void spinlock_unlock(int32_t* l);
+/* 整机致命错误标志 (hcf 置位)。置位后任何核在**等锁**时立即就地停摆:
+   持锁者多半就是停机的那颗核, 继续等只会把"一个 CPU panic"变成
+   "整机假死 + 看门狗刷屏"。0 = 正常。 */
+extern volatile int g_kernel_panic;
 }
 
 void bitmap_set(u8* bitmap, u64 bit);

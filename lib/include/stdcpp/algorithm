@@ -11,6 +11,7 @@
 #include <iterator>
 #include <functional>
 #include <initializer_list>
+#include "detail/alloc.h"
 
 #define STDCPP_ALG_CXX11 (__cplusplus >= 201103L)
 #define STDCPP_ALG_CXX14 (__cplusplus >= 201402L)
@@ -409,7 +410,7 @@ void stable_sort(RandomIt first, RandomIt last, Compare comp) {
     typedef typename iterator_traits<RandomIt>::value_type T;
     diff_t n = last - first;
     if (n < 2) return;
-    T* tmp = (T*)malloc(n * sizeof(T));
+    T* tmp = (T*)std::__detail::alloc_bytes(n * sizeof(T));
     if (!tmp) { sort(first, last, comp); return; }
     for (diff_t width = 1; width < n; width *= 2) {
         for (diff_t i = 0; i < n; i += 2 * width) {
@@ -435,7 +436,7 @@ void stable_sort(RandomIt first, RandomIt last, Compare comp) {
             }
         }
     }
-    free(tmp);
+    std::__detail::dealloc_bytes(tmp);
 }
 
 template<class RandomIt>
@@ -461,7 +462,6 @@ template<class RandomIt, class Compare>
 void nth_element(RandomIt first, RandomIt nth, RandomIt last, Compare comp) {
     if (first == last || nth == last) return;
     typedef typename iterator_traits<RandomIt>::value_type val_t;
-    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
     while (last - first > 1) {
         val_t pivot = *(first + (last - first) / 2);
         RandomIt i = first, j = last - 1;
@@ -632,7 +632,7 @@ BidirIt stable_partition(BidirIt first, BidirIt last, Pred p) {
     typedef typename iterator_traits<BidirIt>::difference_type diff_t;
     diff_t n = distance(first, last);
     if (n == 0) return first;
-    T* tmp = (T*)malloc(n * sizeof(T));
+    T* tmp = (T*)std::__detail::alloc_bytes(n * sizeof(T));
     if (!tmp) return partition(first, last, p);
     BidirIt out = first;
     size_t k = 0;
@@ -643,7 +643,7 @@ BidirIt stable_partition(BidirIt first, BidirIt last, Pred p) {
     BidirIt result = out;
     for (size_t i = 0; i < k; ++i, ++out) *out = tmp[i];
     for (size_t i = 0; i < k; ++i) tmp[i].~T();
-    free(tmp);
+    std::__detail::dealloc_bytes(tmp);
     return result;
 }
 
@@ -690,6 +690,331 @@ ForwardIt shift_left(ForwardIt first, ForwardIt last,
     return move(mid, last, first);
 }
 #endif
+
+//=============================================================
+// 以下为补齐部分
+//
+// 旧版 <algorithm> 虽然 README 标为 Done，但缺少一批高频标准接口：
+//   min_element / max_element / minmax_element、is_sorted、堆的无比较器
+//   重载与 is_heap、next_permutation、四个集合运算 + includes、
+//   equal_range 的无比较器重载、adjacent_find / find_first_of / search_n、
+//   remove_copy_if / replace_copy_if / unique_copy / rotate_copy /
+//   partition_copy 等。
+// 这些是容器测试与常规业务代码的常用件，缺失会迫使用户手写循环。
+//=============================================================
+
+//-------------------------------------------------------------
+// 极值
+//-------------------------------------------------------------
+template<class ForwardIt>
+ForwardIt min_element(ForwardIt first, ForwardIt last) {
+    if (first == last) return last;
+    ForwardIt smallest = first;
+    for (++first; first != last; ++first)
+        if (*first < *smallest) smallest = first;
+    return smallest;
+}
+template<class ForwardIt, class Compare>
+ForwardIt min_element(ForwardIt first, ForwardIt last, Compare comp) {
+    if (first == last) return last;
+    ForwardIt smallest = first;
+    for (++first; first != last; ++first)
+        if (comp(*first, *smallest)) smallest = first;
+    return smallest;
+}
+template<class ForwardIt>
+ForwardIt max_element(ForwardIt first, ForwardIt last) {
+    if (first == last) return last;
+    ForwardIt largest = first;
+    for (++first; first != last; ++first)
+        if (*largest < *first) largest = first;
+    return largest;
+}
+template<class ForwardIt, class Compare>
+ForwardIt max_element(ForwardIt first, ForwardIt last, Compare comp) {
+    if (first == last) return last;
+    ForwardIt largest = first;
+    for (++first; first != last; ++first)
+        if (comp(*largest, *first)) largest = first;
+    return largest;
+}
+template<class ForwardIt>
+pair<ForwardIt, ForwardIt> minmax_element(ForwardIt first, ForwardIt last) {
+    if (first == last) return pair<ForwardIt, ForwardIt>(last, last);
+    ForwardIt mn = first, mx = first;
+    for (++first; first != last; ++first) {
+        if (*first < *mn) mn = first;
+        if (!(*first < *mx)) mx = first;
+    }
+    return pair<ForwardIt, ForwardIt>(mn, mx);
+}
+
+//-------------------------------------------------------------
+// 有序性
+//-------------------------------------------------------------
+template<class ForwardIt>
+bool is_sorted(ForwardIt first, ForwardIt last) {
+    if (first == last) return true;
+    ForwardIt next = first;
+    for (++next; next != last; ++first, ++next)
+        if (*next < *first) return false;
+    return true;
+}
+template<class ForwardIt, class Compare>
+bool is_sorted(ForwardIt first, ForwardIt last, Compare comp) {
+    if (first == last) return true;
+    ForwardIt next = first;
+    for (++next; next != last; ++first, ++next)
+        if (comp(*next, *first)) return false;
+    return true;
+}
+template<class ForwardIt>
+ForwardIt is_sorted_until(ForwardIt first, ForwardIt last) {
+    if (first == last) return last;
+    ForwardIt next = first;
+    for (++next; next != last; ++first, ++next)
+        if (*next < *first) return next;
+    return last;
+}
+
+//-------------------------------------------------------------
+// 相邻 / 子序列查找
+//-------------------------------------------------------------
+template<class ForwardIt>
+ForwardIt adjacent_find(ForwardIt first, ForwardIt last) {
+    if (first == last) return last;
+    ForwardIt next = first;
+    for (++next; next != last; ++first, ++next)
+        if (*first == *next) return first;
+    return last;
+}
+template<class ForwardIt, class Pred>
+ForwardIt adjacent_find(ForwardIt first, ForwardIt last, Pred p) {
+    if (first == last) return last;
+    ForwardIt next = first;
+    for (++next; next != last; ++first, ++next)
+        if (p(*first, *next)) return first;
+    return last;
+}
+template<class InputIt, class ForwardIt>
+InputIt find_first_of(InputIt first, InputIt last, ForwardIt s_first, ForwardIt s_last) {
+    for (; first != last; ++first)
+        for (ForwardIt it = s_first; it != s_last; ++it)
+            if (*first == *it) return first;
+    return last;
+}
+template<class InputIt, class ForwardIt, class Pred>
+InputIt find_first_of(InputIt first, InputIt last, ForwardIt s_first, ForwardIt s_last, Pred p) {
+    for (; first != last; ++first)
+        for (ForwardIt it = s_first; it != s_last; ++it)
+            if (p(*first, *it)) return first;
+    return last;
+}
+template<class ForwardIt, class Size, class T>
+ForwardIt search_n(ForwardIt first, ForwardIt last, Size count, const T& value) {
+    if (count <= 0) return first;
+    for (; first != last; ++first) {
+        if (!(*first == value)) continue;
+        ForwardIt it = first;
+        Size n = 1;
+        while (n < count) {
+            ++it;
+            if (it == last || !(*it == value)) break;
+            ++n;
+        }
+        if (n == count) return first;
+        if (it == last) return last;
+        first = it;
+    }
+    return last;
+}
+
+//-------------------------------------------------------------
+// 堆（补无比较器重载 + is_heap）
+//-------------------------------------------------------------
+template<class RandomIt>
+void make_heap(RandomIt first, RandomIt last) {
+    make_heap(first, last, less<typename iterator_traits<RandomIt>::value_type>());
+}
+template<class RandomIt>
+void push_heap(RandomIt first, RandomIt last) {
+    push_heap(first, last, less<typename iterator_traits<RandomIt>::value_type>());
+}
+template<class RandomIt>
+void pop_heap(RandomIt first, RandomIt last) {
+    pop_heap(first, last, less<typename iterator_traits<RandomIt>::value_type>());
+}
+template<class RandomIt>
+void sort_heap(RandomIt first, RandomIt last) {
+    sort_heap(first, last, less<typename iterator_traits<RandomIt>::value_type>());
+}
+template<class RandomIt>
+bool is_heap(RandomIt first, RandomIt last) {
+    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
+    diff_t n = last - first;
+    for (diff_t i = 1; i < n; ++i)
+        if (*(first + (i - 1) / 2) < *(first + i)) return false;
+    return true;
+}
+template<class RandomIt, class Compare>
+bool is_heap(RandomIt first, RandomIt last, Compare comp) {
+    typedef typename iterator_traits<RandomIt>::difference_type diff_t;
+    diff_t n = last - first;
+    for (diff_t i = 1; i < n; ++i)
+        if (comp(*(first + (i - 1) / 2), *(first + i))) return false;
+    return true;
+}
+
+//-------------------------------------------------------------
+// equal_range（无比较器版本；旧版只有带 comp 的重载）
+//-------------------------------------------------------------
+template<class ForwardIt, class T>
+pair<ForwardIt, ForwardIt> equal_range(ForwardIt first, ForwardIt last, const T& v) {
+    return pair<ForwardIt, ForwardIt>(lower_bound(first, last, v), upper_bound(first, last, v));
+}
+
+//-------------------------------------------------------------
+// 排列
+//-------------------------------------------------------------
+template<class BidirIt>
+bool next_permutation(BidirIt first, BidirIt last) {
+    if (first == last) return false;
+    BidirIt i = last;
+    --i;
+    for (;;) {
+        BidirIt i1 = i;
+        if (*--i < *i1) {
+            BidirIt i2 = last;
+            while (!(*i < *--i2)) {}
+            iter_swap(i, i2);
+            reverse(i1, last);
+            return true;
+        }
+        if (i == first) {
+            reverse(first, last);
+            return false;
+        }
+    }
+}
+template<class BidirIt>
+bool prev_permutation(BidirIt first, BidirIt last) {
+    if (first == last) return false;
+    BidirIt i = last;
+    --i;
+    for (;;) {
+        BidirIt i1 = i;
+        if (*i1 < *--i) {
+            BidirIt i2 = last;
+            while (!(*--i2 < *i)) {}
+            iter_swap(i, i2);
+            reverse(i1, last);
+            return true;
+        }
+        if (i == first) {
+            reverse(first, last);
+            return false;
+        }
+    }
+}
+
+//-------------------------------------------------------------
+// 集合运算（要求输入已排序）
+//-------------------------------------------------------------
+template<class InputIt1, class InputIt2, class OutputIt>
+OutputIt set_union(InputIt1 first1, InputIt1 last1,
+                   InputIt2 first2, InputIt2 last2, OutputIt out) {
+    while (first1 != last1 && first2 != last2) {
+        if (*first1 < *first2) { *out++ = *first1++; }
+        else if (*first2 < *first1) { *out++ = *first2++; }
+        else { *out++ = *first1++; ++first2; }
+    }
+    while (first1 != last1) *out++ = *first1++;
+    while (first2 != last2) *out++ = *first2++;
+    return out;
+}
+template<class InputIt1, class InputIt2, class OutputIt>
+OutputIt set_intersection(InputIt1 first1, InputIt1 last1,
+                          InputIt2 first2, InputIt2 last2, OutputIt out) {
+    while (first1 != last1 && first2 != last2) {
+        if (*first1 < *first2) { ++first1; }
+        else if (*first2 < *first1) { ++first2; }
+        else { *out++ = *first1++; ++first2; }
+    }
+    return out;
+}
+template<class InputIt1, class InputIt2, class OutputIt>
+OutputIt set_difference(InputIt1 first1, InputIt1 last1,
+                        InputIt2 first2, InputIt2 last2, OutputIt out) {
+    while (first1 != last1 && first2 != last2) {
+        if (*first1 < *first2) { *out++ = *first1++; }
+        else if (*first2 < *first1) { ++first2; }
+        else { ++first1; ++first2; }
+    }
+    while (first1 != last1) *out++ = *first1++;
+    return out;
+}
+template<class InputIt1, class InputIt2, class OutputIt>
+OutputIt set_symmetric_difference(InputIt1 first1, InputIt1 last1,
+                                  InputIt2 first2, InputIt2 last2, OutputIt out) {
+    while (first1 != last1 && first2 != last2) {
+        if (*first1 < *first2) { *out++ = *first1++; }
+        else if (*first2 < *first1) { *out++ = *first2++; }
+        else { ++first1; ++first2; }
+    }
+    while (first1 != last1) *out++ = *first1++;
+    while (first2 != last2) *out++ = *first2++;
+    return out;
+}
+template<class InputIt1, class InputIt2>
+bool includes(InputIt1 first1, InputIt1 last1, InputIt2 first2, InputIt2 last2) {
+    while (first2 != last2) {
+        if (first1 == last1) return false;
+        if (*first1 < *first2) { ++first1; continue; }
+        if (*first2 < *first1) return false;
+        ++first1; ++first2;
+    }
+    return true;
+}
+
+//-------------------------------------------------------------
+// 拷贝类补齐
+//-------------------------------------------------------------
+template<class InputIt, class OutputIt, class Pred>
+OutputIt remove_copy_if(InputIt first, InputIt last, OutputIt out, Pred p) {
+    for (; first != last; ++first)
+        if (!p(*first)) *out++ = *first;
+    return out;
+}
+template<class InputIt, class OutputIt, class Pred, class T>
+OutputIt replace_copy_if(InputIt first, InputIt last, OutputIt out, Pred p, const T& v) {
+    for (; first != last; ++first)
+        *out++ = p(*first) ? v : *first;
+    return out;
+}
+template<class InputIt, class OutputIt>
+OutputIt unique_copy(InputIt first, InputIt last, OutputIt out) {
+    if (first == last) return out;
+    typename iterator_traits<InputIt>::value_type last_val = *first;
+    *out++ = *first;
+    while (++first != last) {
+        if (!(*first == last_val)) { *out++ = *first; last_val = *first; }
+    }
+    return out;
+}
+template<class ForwardIt, class OutputIt>
+OutputIt rotate_copy(ForwardIt first, ForwardIt middle, ForwardIt last, OutputIt out) {
+    out = copy(middle, last, out);
+    return copy(first, middle, out);
+}
+template<class InputIt, class OutputIt1, class OutputIt2, class Pred>
+pair<OutputIt1, OutputIt2> partition_copy(InputIt first, InputIt last,
+                                          OutputIt1 out_true, OutputIt2 out_false, Pred p) {
+    for (; first != last; ++first) {
+        if (p(*first)) *out_true++ = *first;
+        else *out_false++ = *first;
+    }
+    return pair<OutputIt1, OutputIt2>(out_true, out_false);
+}
 
 } // namespace std
 

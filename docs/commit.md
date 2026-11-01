@@ -1,4 +1,4 @@
-# Commit Message Conventions (P3-82: aligned with the tag convention in docs/release.md)
+# Commit Message Conventions (aligned with the tag convention in docs/release.md)
 
 Tag format: `v<year>.<month>.<n>` (see docs/release.md). Commit messages are classified by the following prefixes,
 styles such as `fix/sched` and `fix(driver):` are all fine, but a **type prefix + short description** is required.

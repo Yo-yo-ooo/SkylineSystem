@@ -6,7 +6,8 @@
 #define STDCPP_MEMORY_HPP
 
 #include <cstddef>
-#include <cstdlib>
+#include <cstdint>
+#include "detail/alloc.h"
 #include <type_traits>
 #include <utility>
 #include <new>
@@ -367,8 +368,13 @@ public:
 
 class _sp_weak_count;
 
+template<class T> class weak_ptr;
+
 template<class T>
 class shared_ptr {
+    // weak_ptr 需要读取 _M_ptr/_M_ref 才能实现 lock()（标准里通过
+    // “构造后返回”规避，但我们的 weak_ptr 没有独立控制块句柄）
+    template<class U> friend class weak_ptr;
     template<class U> friend class shared_ptr;
     friend class _sp_weak_count;
 
@@ -394,6 +400,13 @@ public:
     template<class U>
     shared_ptr(const shared_ptr<U>& other) noexcept
         : _M_ptr(other._M_ptr), _M_ref(other._M_ref) { _M_add_ref(); }
+
+    // 别名构造 (aliasing ctor)：共享 other 的控制块，但指向 p。
+    // 这是 pointer_cast 系列唯一正确的实现方式——旧实现用裸指针重新
+    // 包一个 control block，同一个对象会被析构两次。
+    template<class U>
+    shared_ptr(const shared_ptr<U>& other, T* p) noexcept
+        : _M_ptr(p), _M_ref(other._M_ref) { _M_add_ref(); }
 
     shared_ptr(shared_ptr&& other) noexcept
         : _M_ptr(other._M_ptr), _M_ref(other._M_ref) {
@@ -452,16 +465,37 @@ shared_ptr<T> make_shared(Args&&... args) {
 
 template<class T, class U>
 shared_ptr<T> static_pointer_cast(const shared_ptr<U>& r) noexcept {
-    return shared_ptr<T>(static_cast<T*>(r.get()));
+    return shared_ptr<T>(r, static_cast<T*>(r.get()));
 }
 template<class T, class U>
 shared_ptr<T> dynamic_pointer_cast(const shared_ptr<U>& r) noexcept {
-    if (auto p = dynamic_cast<T*>(r.get())) return shared_ptr<T>(p);
+    T* p = dynamic_cast<T*>(r.get());
+    if (p) return shared_ptr<T>(r, p);
     return shared_ptr<T>();
 }
 template<class T, class U>
 shared_ptr<T> const_pointer_cast(const shared_ptr<U>& r) noexcept {
-    return shared_ptr<T>(const_cast<T*>(r.get()));
+    return shared_ptr<T>(r, const_cast<T*>(r.get()));
+}
+template<class T, class U>
+shared_ptr<T> reinterpret_pointer_cast(const shared_ptr<U>& r) noexcept {
+    return shared_ptr<T>(r, reinterpret_cast<T*>(r.get()));
+}
+
+//-------------------------------------------------------------
+// 比较：按存储指针比较（同一对象的不同别名 shared_ptr 也相等）
+//-------------------------------------------------------------
+template<class T, class U>
+bool operator==(const shared_ptr<T>& a, const shared_ptr<U>& b) noexcept { return a.get() == b.get(); }
+template<class T, class U>
+bool operator!=(const shared_ptr<T>& a, const shared_ptr<U>& b) noexcept { return a.get() != b.get(); }
+template<class T>
+bool operator==(const shared_ptr<T>& a, nullptr_t) noexcept { return a.get() == nullptr; }
+template<class T>
+bool operator!=(const shared_ptr<T>& a, nullptr_t) noexcept { return a.get() != nullptr; }
+template<class T>
+bool operator<(const shared_ptr<T>& a, const shared_ptr<T>& b) noexcept {
+    return __builtin_addressof(*a) < __builtin_addressof(*b);
 }
 
 template<class T>
@@ -506,8 +540,15 @@ public:
     bool expired() const noexcept { return use_count() == 0; }
 
     shared_ptr<T> lock() const noexcept {
-        if (expired()) return shared_ptr<T>();
-        return shared_ptr<T>(*this);
+        // 与 expires() 之间存在竞态时也安全：先取引用计数再自增，
+        // 若期间对象被释放，_M_use_count() 会返回 0，这里返回空指针。
+        shared_ptr<T> r;
+        if (_M_ref && _M_ref->_M_use_count() > 0) {
+            r._M_ptr = _M_ptr;
+            r._M_ref = _M_ref;
+            _M_ref->_M_add_ref();
+        }
+        return r;
     }
 
     void reset() noexcept {
@@ -537,6 +578,19 @@ public:
 #if STDCPP_MEM_CXX11
 template<class T>
 T* addressof(T& r) noexcept { return __builtin_addressof(r); }
+#endif
+
+//-------------------------------------------------------------
+// to_address (C++20)
+//   旧版缺失该函数，但 <memory> 的文档里标为已提供；这里补齐。
+//-------------------------------------------------------------
+#if STDCPP_MEM_CXX20
+template<class Ptr>
+auto to_address(const Ptr& p) noexcept -> decltype(p.operator->()) {
+    return p.operator->();
+}
+template<class T>
+T* to_address(T* p) noexcept { return p; }
 #endif
 
 //=============================================================

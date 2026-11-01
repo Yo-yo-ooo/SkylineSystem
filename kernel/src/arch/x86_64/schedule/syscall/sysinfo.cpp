@@ -4,6 +4,7 @@
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/schedule/syscall.h>
 #include <arch/x86_64/schedule/sysinfo.h>
+#include <arch/x86_64/schedule/sched_internal.h>
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/vmm/vmm.h>
@@ -101,6 +102,14 @@ void sys_sysinfo_init(void) {
 
     /* ---- CPU ---- */
     kinfo->ncpus = ncpus;
+
+    /* TSC 频率 (cycles/ms) 通过 reserved[0] 暴露给用户态。
+       内核已用 HPET 校准过 (启动日志 "tsc: calibrated N cycles/ms"),
+       用户态原先只能靠 CPUID 0x15/0x16 猜 —— QEMU 下这两片常常给出
+       垃圾值: 实测桌面算出 ~4 cycles/ms, 于是 scene_gap/clock_gap 全部
+       塌成 0, 任务栏每轮重绘 (圆角 pill + SDF 文本), 桌面把一个核烧满。
+       0 = 未校准, 用户态自行兜底。 */
+    kinfo->reserved[0] = sched_tsc_per_ms();
 
     uint32_t a, b, c, d;
     sysinfo_cpuid(1, &a, &b, &c, &d);

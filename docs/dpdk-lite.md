@@ -60,23 +60,23 @@ data plane. Blocking item same as checksum offload: register-layout verification
 - Target path: zero-copy + batching + offload → target "single-core 100Mbps line-rate direction" (under TCG
   judge by relative improvement; absolute numbers only hold on KVM/real hardware).
 
-## Zero-copy lifetime audit (finalized round 20)
+## Zero-copy lifetime audit
 
 Ownership chain analyzed segment by segment (`pbuf_alloced_custom(PBUF_RAW, len, PBUF_REF, &c->pc, data, len)`):
 
 1. **Ingress**: `ethernet_input` applies `pbuf_remove_header(14)` to the REF pbuf —— REF has no header reserve →
    slow path allocates a new PBUF_RAM head + links the original REF (ref 1 each) → chain complete.
 2. **Consume**: `ip_input` etc. free the chain head after consuming → chain walk frees the REF → triggers `custom_free_function`
-   → `kfree(container) + RecycleRx(idx)`. **Single free is correct** (double free fixed in round 17).
+   → `kfree(container) + RecycleRx(idx)`. **Single free is correct** (the earlier double free is fixed).
 3. **Return**: RecycleRx sets state=1 + `rx_arm_advance` advances RDT forward; the lent-out hole blocks the advance ✓.
 
-**Still unexplained observation** (round 19 bisect): after the double-free fix the zero-copy path still goes "silent after first stat"
+**Still unexplained observation**: after the double-free fix the zero-copy path still goes "silent after first stat"
 (copy path with same config stable at 21 ticks/10min). Ruled out: double free, probe hang, stack overflow, index back-derivation.
-round 21 audit increments (source line-by-line re-review):
+Audit increments (line-by-line source re-review):
 - `pbuf_alloced_custom`: PBUF_RAW's layer offset = 0 → payload = data exactly aligned ✓;
   `LWIP_PBUF_CUSTOM_DATA_INIT` is an empty macro → the preset custom_free_function is not overwritten ✓.
 - `ethernet_input` success path (L248) **does not free the pbuf** (dispatch targets ip_input/etharp free it) →
-  round 17's "free only on failure" fix direction was correct (the double free was indeed caused by round 11's dual branch).
+  the "free only on failure" direction was correct (the double free came from the earlier dual-branch path).
 - raw pcb contract: `recv` returning 1 = consumed (ping_recv self-frees + returns 1 ✓).
 - Remaining suspects narrowed to: the DHCP slow-path head pbuf chain's free counting (PBUF_RAM head + REF chain),
   or serial/thread interaction related to desktop process load timing (needs runtime tracing, deferred).

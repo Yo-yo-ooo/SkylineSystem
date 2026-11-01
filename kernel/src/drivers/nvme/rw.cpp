@@ -12,7 +12,7 @@
 #define NVME_CHUNK_PAGES        8    // DMA bounce chunk = 8 pages (32 KiB)
 #define NVME_MAX_PRP_PAGES      511  // PRP0 + one 510-entry PRP list
 
-/* P0-15: 槽位释放的 RMW 移入 dev->lck 临界区 (原实现在锁外 &= ~,
+/* 槽位释放的 RMW 移入 dev->lck 临界区 (原实现在锁外 &= ~,
    与 GetSpareReq 的 |= 竞态 → 请求槽永久泄漏/双用) */
 static void ReleaseReq(NVME::NVMEDev *dev, int32_t ri) {
     spinlock_lock(&dev->lck);

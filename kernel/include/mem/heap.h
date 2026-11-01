@@ -116,8 +116,10 @@ void *kcalloc(size_t numitems, size_t size);
 uint64_t GetPtrPointAreaSize(void *ptr);
 
 /* 修复: 原在头文件内联定义替换版 operator delete, clang 报 -Winline-new-delete;
-   改为声明于头文件、定义于 src/mem/new.cpp */
-void operator delete(void* p);
-void operator delete(void* ptr, unsigned long);
+   改为声明于头文件、定义于 src/mem/new.cpp
+   noexcept 与 C++ 标准 <new> 的声明保持一致：容器头（lib/include/stdcpp）
+   也会声明这些 replaceable 函数，异常规约不同会导致同一 TU 内重声明冲突。 */
+void operator delete(void* p) noexcept;
+void operator delete(void* ptr, unsigned long) noexcept;
 void operator delete[](void* ptr) noexcept;
 #include "new.hpp"

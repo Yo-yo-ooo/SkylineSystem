@@ -286,7 +286,7 @@ qemu-system-x86_64 -machine q35 -cpu max \
 ### In WSL (Windows Subsystem for Linux):
 see the ./res/scripts/ folder for the architecture you need to run.
 
-### Windows → WSL build guide (D4, round 11):
+### Windows → WSL build guide:
 
 1. Install WSL Ubuntu-24.04: run in an elevated PowerShell
    `wsl --install -d Ubuntu-24.04`, then reboot and enter Ubuntu to finish the initialization.

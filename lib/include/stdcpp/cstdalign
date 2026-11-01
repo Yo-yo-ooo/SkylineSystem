@@ -1,9 +1,16 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
+//=============================================================
+// <cstdalign> — C++11/14/17 的对齐宏转发
+//
+// C++20 起该头被移除（alignas/alignof 早已是关键字）。原实现直接在
+// C++20 下 #error，会打断"同一份源码同时被内核(gnu++17)与用户态(gnu++20)
+// 编译"的场景。这里改为：
+//   * C++11..17：转发 <stdalign.h>（提供 __alignas_is_defined 等宏）
+//   * C++20+   ：空实现（保留可包含性，不再提供任何宏）
+//=============================================================
 #pragma once
 
-#if (defined(__cplusplus) && __cplusplus >= 201103L && __cplusplus < 202002L)
-#include <stdalign.h>
-#elif (defined(__cplusplus) && (__cplusplus < 201103L || __cplusplus >= 202002L))
-#error "Your C++ Version Not Support You To Contain <stdalign>"
+#if defined(__cplusplus) && __cplusplus >= 201103L && __cplusplus < 202002L
+#  include <stdalign.h>
 #endif

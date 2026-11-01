@@ -21,7 +21,9 @@ include ./gdef.mk
 # $(call USER_VARIABLE,KARCH,x86_64)
 KARCH := $(BUILD_ARCH)
 # Default user QEMU flags. These are appended to the QEMU command calls.
-$(call USER_VARIABLE,QEMUFLAGS,-m 2G)
+# -smp 4: 桌面主循环 + 光标线程 + 客户端 + 内核 idle 各占一核。原来只有 1 个
+#   vCPU, 光标线程和合成线程只能互相抢时间片, 手感就是"指针跟不上手"。
+$(call USER_VARIABLE,QEMUFLAGS,-m 2G -smp 4)
 
 override IMAGE_NAME := SkylineSystem-$(KARCH)
 
@@ -40,7 +42,7 @@ run-hdd: run-hdd-$(KARCH)
 .PHONY: run-x86_64
 run-x86_64: edk2-ovmf $(IMAGE_NAME).iso
 	qemu-system-$(KARCH) \
-		-M q35 \
+		-M q35,accel=kvm:tcg \
 		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-x86_64.fd,readonly=on \
 		-cdrom $(IMAGE_NAME).iso \
 		$(QEMUFLAGS)
@@ -48,7 +50,7 @@ run-x86_64: edk2-ovmf $(IMAGE_NAME).iso
 .PHONY: run-hdd-x86_64
 run-hdd-x86_64: edk2-ovmf $(IMAGE_NAME).hdd
 	qemu-system-$(KARCH) \
-		-M q35 \
+		-M q35,accel=kvm:tcg \
 		-drive if=pflash,unit=0,format=raw,file=edk2-ovmf/ovmf-code-x86_64.fd,readonly=on \
 		-hda $(IMAGE_NAME).hdd \
 		$(QEMUFLAGS)
@@ -135,7 +137,7 @@ run-hdd-loongarch64: edk2-ovmf $(IMAGE_NAME).hdd
 .PHONY: run-bios
 run-bios: $(IMAGE_NAME).iso
 	qemu-system-$(KARCH) \
-		-M q35 \
+		-M q35,accel=kvm:tcg \
 		-cdrom $(IMAGE_NAME).iso \
 		-boot d \
 		$(QEMUFLAGS)
@@ -143,7 +145,7 @@ run-bios: $(IMAGE_NAME).iso
 .PHONY: run-hdd-bios
 run-hdd-bios: $(IMAGE_NAME).hdd
 	qemu-system-$(KARCH) \
-		-M q35 \
+		-M q35,accel=kvm:tcg \
 		-hda $(IMAGE_NAME).hdd \
 		$(QEMUFLAGS)
 

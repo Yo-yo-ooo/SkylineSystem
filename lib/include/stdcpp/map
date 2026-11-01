@@ -108,12 +108,12 @@ public:
 #endif
     T& at(const key_type& k) {
         iterator it = find(k);
-        if (it == end()) throw out_of_range("map::at");
+        if (it == end()) __detail::throw_out_of_range("map::at");
         return it->second;
     }
     const T& at(const key_type& k) const {
         const_iterator it = find(k);
-        if (it == end()) throw out_of_range("map::at");
+        if (it == end()) __detail::throw_out_of_range("map::at");
         return it->second;
     }
 
@@ -279,6 +279,9 @@ public:
     iterator lower_bound(const key_type& k) { return _M_tree.lower_bound(k); }
     iterator upper_bound(const key_type& k) { return _M_tree.upper_bound(k); }
     pair<iterator, iterator> equal_range(const key_type& k) { return _M_tree.equal_range(k); }
+    const_iterator lower_bound(const key_type& k) const { return _M_tree.lower_bound(k); }
+    const_iterator upper_bound(const key_type& k) const { return _M_tree.upper_bound(k); }
+    pair<const_iterator, const_iterator> equal_range(const key_type& k) const { return _M_tree.equal_range(k); }
 
 #if STDCPP_MAP_CXX20
     bool contains(const key_type& k) const { return find(k) != end(); }

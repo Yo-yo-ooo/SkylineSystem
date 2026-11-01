@@ -7,7 +7,7 @@ Source: `kernel/src/arch/x86_64/schedule/sched.cpp`, `task.cpp`, `timer.cpp`, `s
 
 ## 1. Actual Structure
 
-Each CPU has a **red-black tree** run queue keyed by **virtual deadline** (P3-74 correction:
+Each CPU has a **red-black tree** run queue keyed by **virtual deadline** (correction to an earlier draft:
 originally written "keyed by vruntime" — actually on enqueue `deadline = vruntime +
 base_quantum`, the queue is sorted by deadline; since deadline ≡ vruntime + constant, the order
 is equivalent to vruntime order, but the key field itself is deadline), nodes augmented with
@@ -44,7 +44,7 @@ This result is used only for **the LAPIC oneshot timer duration** (the call site
 
 - `calibrate_and_set_deadline()` clamps `vruntime` into `[avg−q, avg+2q]` on **every enqueue**
   and sets `deadline = vruntime + base_quantum`;
-- the time slice is **already weight-scaled** (P3-75 correction: the original document wrote
+- the time slice is **already weight-scaled** (correction to an earlier draft, which said
   "not weight-scaled" — actually `base_quantum` is scaled by `sched_prio_to_weight[priority]`
   and used as the deadline's constant term), deadline ≡ scaled vruntime + constant;
 - so this is a **subset of the EEVDF structure**, not the complete EEVDF. Both README and this
@@ -89,7 +89,7 @@ defensive check for `==0` at the accounting point. All thread creation sites ass
 
 ## 8. Test Status (Honest)
 
-**The real-kernel scheduling quality benchmark has run through (round 24).** `sched_bench`'s
+**The real-kernel scheduling quality benchmark has run end to end.** `sched_bench`'s
 four phases run completely on the real kernel (QEMU, cpu 1 dedicated thread, network stack
 delayed = quiet machine):
 
@@ -103,9 +103,9 @@ delayed = quiet machine):
 **The two failed phases = the real gap between the real-kernel implementation and the model
 tests** (model tests pass, real kernel fails → not a benchmark bug, but the RIP feedback
 implementation's behavioral difference in pollution/short-window scenarios), i.e. the entry
-point for the next round of scheduler debugging.
+point for the next stage of scheduler debugging.
 
-Round 25 root-cause-analysis increments:
+Root-cause analysis:
 - **shortwin failed (windows=0)**: `dynamic_adjust_quantum` dynamically clamps base_quantum
   to [2,15]ms and self-tunes by load; the bench's static assumption (base=5ms → prio15 weight
   288 → slice ~1.4ms < 3ms gate) breaks under the dynamic quantum (at base=15ms the slice is
@@ -118,7 +118,7 @@ Round 25 root-cause-analysis increments:
   `sched_tsc_per_ms` uncalibrated distorting the wall-clock denominator). **Needs retest after
   TSC calibration**, or investigate the feedback gain's stability under contention.
 
-Round 26 increments (TSC calibration + retest):
+TSC calibration and retest:
 - Implemented `sched_calibrate_tsc()` (tsc_cal.cpp, PIT baseline, busy-wait with millisecond-
   scale guard — the early version hung at boot when the guard was too large while the PIT
   wasn't running yet) + `sched_tsc_per_ms` strong symbol.
@@ -126,9 +126,8 @@ Round 26 increments (TSC calibration + retest):
   (base=[80,1322] mult=[979,2560]) → after eliminating the denominator-distortion candidate,
   points to **a real stability problem of the RIP feedback gain under contention** (the
   feedback loop itself oscillates, gain analysis pending).
-- shortwin still windows=0 (dynamic quantum mismatch, same conclusion as round 25).
-Round 28 root-cause closure (the complete mechanism of pollute oscillation, D1 round 23
-refiled):
+- shortwin still windows=0 (dynamic quantum mismatch, same conclusion as before).
+Root-cause closure for the pollute oscillation:
 - Sampling structure: sample per slice tick, `obs_rate = RIP delta / own slice length
   (last_slice_ms)` — the denominator is correct (the thread's own run duration, not the
   wall-clock gap).
@@ -141,7 +140,7 @@ refiled):
   accumulate RIP delta and duration by the thread's own run time (e.g. one obs_rate sample per
   4ms of own run time), variable-slice noise absorbed by the accumulator; the short-window
   defense (RIP_MIN_SAMPLE_MS) simplified along with it.
-Round 33 (accumulator landed + UAF confirmed):
+Accumulator sampling lands, UAF sighted:
 - Accumulator sampling implemented (thread_t gains rip_acc_progress/ms, 4ms window per
   sample); first test pollute base=[41,2057]→[51,724] (3x narrowing), after correcting the
   denominator to own slice length (wall_ms; exec_ms's tsc_dt spans gaps including other
@@ -152,7 +151,7 @@ Round 33 (accumulator landed + UAF confirmed):
   another thread still spins on its lock. A real scheduler defect; reclaim audit = follow-up
   task.
 
-Round 34 (retest + UAF suspicion):
+Retest and UAF narrowing:
 - wall_ms denominator-correction retest: pollute base=[51,724] same as before correction →
   remaining variance is on the numerator/phase-transition side (the 4ms window straddles the
   polluter switch point), needs per-sample instrumentation within the window — convergence
@@ -162,25 +161,25 @@ Round 34 (retest + UAF suspicion):
   the lock-word UAF; the fix needs a synchronization audit of fd_manager_destroy and the
   reclamation window.
 
-Round 40 (UAF fix) + round 41 (defense in depth):
+UAF fix and defense in depth:
 - Root cause: phase threads' `Schedule::Exit(0)` kills the entire bench-internal proc;
   subsequent phase threads spawn into the same concurrently-terminated proc → FDMan lock-word
-  UAF (symbolized in round 33).
+  UAF (symbolized earlier).
 - Fix: phase threads no longer Exit (changed to hlt idle-spin; wait_done already advances by
   timeout) + NewKernelThreadEx/NewThread gain an exiting guard (spawning into an exiting proc
   fails explicitly) → the UAF debt fully closed.
 
-Round 42 (full report after the UAF fix):
+Report after the UAF fix:
 - pollute **base phase passes** (base=[1067,1309], max deviation <25% — the first passing item
   from the accumulator fix); mult phase [962,1463] still exceeds the [820,1230] bound (mult
   target = the victim's multiplier when the polluter runs at multiplier, residual variance
   awaiting in-window instrumentation).
 - osc this run entered=0 (w stopped at 256, phase variant); step t90=176ms ✓.
-- **0 anomalies**: after the UAF fix the whole round had no faults (round 33's symbolized
+- **0 anomalies**: after the UAF fix the whole round had no faults (the symbolized
   problem closed).
 
-Round 44 (round 25 hypothesis falsified + new mechanism):
-- Measured `actual base_quantum=5 ms` — **round 25's "dynamic quantum mismatch" hypothesis is
+Falsifying the dynamic-quantum hypothesis:
+- Measured `actual base_quantum=5 ms` — **the earlier "dynamic quantum mismatch" hypothesis is
   falsified** (the quantum matches the bench's static assumption). The true cause of shortwin
   windows=0 is rerouted: same-phase stalled=11895 (progress==0 samples dominate) → the target
   thread's 1.4ms short slice rarely catches timer ticks (samples land on companion-thread
@@ -188,20 +187,20 @@ Round 44 (round 25 hypothesis falsified + new mechanism):
   short_windows/stalled are **CPU-level totals**, not target-thread-level (eval uses CPU-level
   delta criteria). Next round: sample-landing analysis / target-level counters.
 
-Round 45 (target-level counters confirm):
+Target-level counters:
 - Added thread_t-level rip_short_windows/rip_stalled + bench target self-sampling.
 - Measured: **target-thread target-level shortwin=0 stalled=0** — samples never land on the
   target's 1.4ms short slices (tick sampling is per slice boundary but the interval ~5ms >
-  slice length). Round 44's mechanism confirmed.
+  slice length). The mechanism is confirmed.
 - Fix direction finalized: move sampling from ticks to **switch points** (sample the current
   thread at each slice end), tick sampling is inherently blind to short slices; this change
   simultaneously affects the criteria validity of both pollute and shortwin phases — the last
   structural fix in the scheduler's profile.
 
-Round 47 (inline Exit slip-through + TSC timeout + full-chain explanation):
-- **Inline Exit slip-through**: round 40's replace_all only replaced the standalone-line form;
+Inline Exit slip-through, TSC timeout and the full chain:
+- **Inline Exit slip-through**: the earlier replace_all only replaced the standalone-line form;
   polluter/companion inline `Schedule::Exit(0)` remained → phase 2 kills the bench proc
-  (exiting=1) → phase 3 spawns rejected by the round 41 guard (companion=target=NULL) — all
+  (exiting=1) → phase 3 spawns rejected by the exiting guard (companion=target=NULL) — all
   the earlier "sampling blindness / target never ran" was a chain illusion caused by the spawn
   failure.
 - **TSC timeout**: under TCG the polluted phase's CPU saturation freezes the PIT virtual clock
@@ -210,7 +209,7 @@ Round 47 (inline Exit slip-through + TSC timeout + full-chain explanation):
 - After the fix: mf=823/msl=1056 (target sampled for the first time), dispatch=47 (EEVDF
   high-frequency selection ✓), slice length min=1 max=9ms (preemption truncation visible).
 
-Round 47b (the true stalled mechanism finally appears):
+The true stalled mechanism:
 - Loop-count randomization ineffective (stalled 72/57 didn't drop) → the "fast_body RIP
   rehoming" theory falsified.
 - **True mechanism**: `CheckPreempt`'s software trap `int SCHED_VEC` has the frame RIP = **the
@@ -220,28 +219,24 @@ Round 47b (the true stalled mechanism finally appears):
   constant RIP → stalled.
 - **Conclusion: switch-point sampling becomes necessary**: the outgoing thread's ctx.rip at
   switch is the real final RIP — move sampling to switch-out + deduplicate with ticks.
-  Implementation = next round.
+  Implementation = next step.
 
-Round 68 (P2-62 disclosure + P3-77):
-- D1 (round 10 record): the round 34/35 entries embedded in this section are cross-round
-  references (not duplicated paragraphs); the round 28 entry chronologically belongs after
-  round 26, currently located at the end of section 9's paragraph — a historical ordering
-  blemish, no content lost, to be refiled when tidying up next round.
-- ~~Schedule::Sleep + timer wheels (tv1/2/3) are dead code~~ **activated in round 96**:
+Timer-wheel activation and documentation corrections:
+- ~~Schedule::Sleep + timer wheels (tv1/2/3) are dead code~~ **activated**:
   PIT::Sleep now calls Schedule::Sleep (timer wheel + THREAD_SLEEPING + Yield, releasing this
   core) once the scheduler is ready (smp_started + thread context available), while the early
   boot probing path keeps busy-waiting. Verification: BUILD_EXIT=0 + golden PASS + QEMU ping 3
   + 0 anomalies.
-- ~~Switch-point sampling (round 47b conclusion) still not implemented~~ **round 102 review
+- ~~Switch-point sampling still not implemented~~ **review
   confirms it is implemented**: the sched.cpp Switch path calls riprate_update at every switch
   point (626-628), the shortwin criterion (elapsed < RIP_MIN_SAMPLE_MS → rip_short_windows++)
-  and slice-length distribution (rip_min/max_slice_ms) are all live — round 47b's conclusion
-  landed in later rounds, documentation lag corrected.
+  and slice-length distribution (rip_min/max_slice_ms) are all live — the conclusion
+  landed, and the documentation lag is corrected.
 - UAF suspicion narrowed: proc zombie reclamation (DrainProcZombieList) frees FDMan/pagemap
   without global synchronization, and FDMan contains a lock table — the most likely source of
   the lock-word UAF; the fix needs a synchronization audit of fd_manager_destroy and the
   reclamation window.
-- Round 35 increment: Exit → PROC_KILL path confirmed (the exiting thread itself goes through
+- Exit → PROC_KILL path confirmed (the exiting thread itself goes through
   the process-kill path, disabling interrupts + stopping the timer); there is a race window
   between the kill path's fd cleanup and DrainProcZombieList's FDMan release (triggered by
   dense bench Exits, not observed in production loads). Fix design: defer FDMan release until

@@ -13,7 +13,11 @@
 #include <new>
 #include <algorithm>
 
-#define STDCPP_IV_CXX26 (__cplusplus >= 202400L || defined(__cpp_inplace_vector))
+#if __cplusplus >= 202400L || defined(__cpp_inplace_vector)
+#  define STDCPP_IV_CXX26 1
+#else
+#  define STDCPP_IV_CXX26 0
+#endif
 
 #ifndef _GLIBCXX_INPLACE_VECTOR
 #  define _GLIBCXX_INPLACE_VECTOR 1
@@ -100,8 +104,8 @@ public:
 
     constexpr reference operator[](size_type i) { return _M_data()[i]; }
     constexpr const_reference operator[](size_type i) const { return _M_data()[i]; }
-    constexpr reference at(size_type i) { if (i >= _M_size) throw out_of_range("inplace_vector::at"); return _M_data()[i]; }
-    constexpr const_reference at(size_type i) const { if (i >= _M_size) throw out_of_range("inplace_vector::at"); return _M_data()[i]; }
+    constexpr reference at(size_type i) { if (i >= _M_size) __detail::throw_out_of_range("inplace_vector::at"); return _M_data()[i]; }
+    constexpr const_reference at(size_type i) const { if (i >= _M_size) __detail::throw_out_of_range("inplace_vector::at"); return _M_data()[i]; }
     constexpr reference front() { return _M_data()[0]; }
     constexpr const_reference front() const { return _M_data()[0]; }
     constexpr reference back() { return _M_data()[_M_size - 1]; }
@@ -109,42 +113,51 @@ public:
     constexpr T* data() noexcept { return _M_data(); }
     constexpr const T* data() const noexcept { return _M_data(); }
 
-    constexpr void push_back(const T& v) { new (_M_data() + _M_size) T(v); ++_M_size; }
-    constexpr void push_back(T&& v) { new (_M_data() + _M_size) T(std::move(v)); ++_M_size; }
+    // 容量上限是编译期常量；满了必须报错，不能越界写（旧实现直接写
+    // _M_data()[N]，越界破坏了相邻内存）
+    constexpr void _M_check_room() const {
+        if (_M_size >= N) __detail::throw_length_error("inplace_vector: full");
+    }
+    constexpr void push_back(const T& v) { _M_check_room(); new (_M_data() + _M_size) T(v); ++_M_size; }
+    constexpr void push_back(T&& v) { _M_check_room(); new (_M_data() + _M_size) T(std::move(v)); ++_M_size; }
     template<class... Args>
     constexpr reference emplace_back(Args&&... args) {
+        _M_check_room();
         new (_M_data() + _M_size) T(std::forward<Args>(args)...);
         return _M_data()[_M_size++];
     }
     constexpr void pop_back() { --_M_size; _M_data()[_M_size].~T(); }
 
     constexpr iterator insert(const_iterator pos, const T& v) {
-        size_type idx = pos - _M_data();
+        size_type idx = static_cast<size_type>(pos - _M_data());
+        _M_check_room();
+        if (idx == _M_size) { push_back(v); return _M_data() + idx; }
+        // v 可能指向本容器元素，移位后即失效 → 先按值捕获
+        T copy(v);
         new (_M_data() + _M_size) T(std::move(_M_data()[_M_size - 1]));
-        for (size_type i = _M_size; i > idx; --i)
+        for (size_type i = _M_size - 1; i > idx; --i)
             _M_data()[i] = std::move(_M_data()[i - 1]);
-        _M_data()[idx] = v;
+        _M_data()[idx] = copy;
         ++_M_size;
         return _M_data() + idx;
     }
     constexpr iterator erase(const_iterator pos) {
-        size_type idx = pos - _M_data();
-        _M_data()[idx].~T();
-        for (size_type i = idx; i + 1 < _M_size; ++i) {
-            new (_M_data() + i) T(std::move(_M_data()[i + 1]));
-            _M_data()[i + 1].~T();
-        }
+        const size_type idx = static_cast<size_type>(pos - _M_data());
+        // 用 move 赋值而不是"析构+placement new"：后者会让优化器误判
+        // 该槽位未初始化（-Wmaybe-uninitialized），也更容易踩重复构造
+        for (size_type i = idx; i + 1 < _M_size; ++i)
+            _M_data()[i] = std::move(_M_data()[i + 1]);
         --_M_size;
+        _M_data()[_M_size].~T();
         return _M_data() + idx;
     }
     constexpr iterator erase(const_iterator first, const_iterator last) {
-        size_type idx = first - _M_data();
-        size_type n = last - first;
-        for (size_type i = idx; i < idx + n; ++i) _M_data()[i].~T();
-        for (size_type i = idx; i + n < _M_size; ++i) {
-            new (_M_data() + i) T(std::move(_M_data()[i + n]));
-            _M_data()[i + n].~T();
-        }
+        const size_type idx = static_cast<size_type>(first - _M_data());
+        const size_type n = static_cast<size_type>(last - first);
+        if (n == 0) return _M_data() + idx;
+        for (size_type i = idx; i + n < _M_size; ++i)
+            _M_data()[i] = std::move(_M_data()[i + n]);
+        for (size_type i = _M_size - n; i < _M_size; ++i) _M_data()[i].~T();
         _M_size -= n;
         return _M_data() + idx;
     }

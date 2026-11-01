@@ -26,7 +26,7 @@ static int wrap(char* buf, size_t n, const char* fmt, ...) {
    指针, 覆盖 %s 的 NULL 守卫与普通路径) */
 static int run_fuzz(const std::string& fmt, uint64_t a0, uint64_t a1) {
     char buf[2048];
-    /* round 93 结论: 崩溃根因 = 生成器把 "%%" 与 "%-8d" 相邻, "-8d"
+    /* 结论: 崩溃根因 = 生成器把 "%%" 与 "%-8d" 相邻, "-8d"
        失去 % 前缀变为字面量 → 后续 spec 的 va_arg 槽位整体偏移 →
        %.0s 读到随机整数槽 (非内核 bug —— kprintf 的 %s 对任意指针
        无义务)。修正: 全部 12 槽 = 合法字符串指针, %d/%x 读其位型

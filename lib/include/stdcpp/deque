@@ -6,7 +6,7 @@
 #define STDCPP_DEQUE_HPP
 
 #include <cstddef>
-#include <cstdlib>
+#include "detail/alloc.h"
 #include <type_traits>
 #include <utility>
 #include <iterator>
@@ -42,10 +42,10 @@ class deque {
 
     void _M_init(size_t n = 0) {
         _M_map_size = 8;
-        _M_map = (T**)malloc(_M_map_size * sizeof(T*));
+        _M_map = (T**)std::__detail::alloc_bytes(_M_map_size * sizeof(T*));
         for (size_t i = 0; i < _M_map_size; ++i) _M_map[i] = nullptr;
         _M_start_block = _M_finish_block = _M_map_size / 2;
-        _M_map[_M_start_block] = (T*)malloc(kBlockSize * sizeof(T));
+        _M_map[_M_start_block] = (T*)std::__detail::alloc_bytes(kBlockSize * sizeof(T));
         _M_start_off = kBlockSize / 2;
         _M_finish_off = _M_start_off;
         _M_size = 0;
@@ -55,35 +55,35 @@ class deque {
     void _M_push_map_front() {
         if (_M_start_block == 0) {
             size_t ns = _M_map_size * 2;
-            T** nm = (T**)malloc(ns * sizeof(T*));
+            T** nm = (T**)std::__detail::alloc_bytes(ns * sizeof(T*));
             for (size_t i = 0; i < ns; ++i) nm[i] = nullptr;
             size_t off = ns / 4;
             for (size_t i = 0; i < _M_map_size; ++i) nm[i + off] = _M_map[i];
-            free(_M_map);
+            std::__detail::dealloc_bytes(_M_map);
             _M_map = nm;
             _M_start_block += off;
             _M_finish_block += off;
             _M_map_size = ns;
         }
         --_M_start_block;
-        _M_map[_M_start_block] = (T*)malloc(kBlockSize * sizeof(T));
+        _M_map[_M_start_block] = (T*)std::__detail::alloc_bytes(kBlockSize * sizeof(T));
         _M_start_off = kBlockSize - 1;
     }
     void _M_push_map_back() {
         if (_M_finish_block + 1 >= _M_map_size) {
             size_t ns = _M_map_size * 2;
-            T** nm = (T**)malloc(ns * sizeof(T*));
+            T** nm = (T**)std::__detail::alloc_bytes(ns * sizeof(T*));
             for (size_t i = 0; i < ns; ++i) nm[i] = nullptr;
             size_t off = ns / 4;
             for (size_t i = 0; i < _M_map_size; ++i) nm[i + off] = _M_map[i];
-            free(_M_map);
+            std::__detail::dealloc_bytes(_M_map);
             _M_map = nm;
             _M_start_block += off;
             _M_finish_block += off;
             _M_map_size = ns;
         }
         ++_M_finish_block;
-        _M_map[_M_finish_block] = (T*)malloc(kBlockSize * sizeof(T));
+        _M_map[_M_finish_block] = (T*)std::__detail::alloc_bytes(kBlockSize * sizeof(T));
         _M_finish_off = 0;
     }
 
@@ -144,7 +144,7 @@ public:
     deque(deque&& other) noexcept { _M_map = other._M_map; _M_map_size = other._M_map_size; _M_start_block = other._M_start_block; _M_start_off = other._M_start_off; _M_finish_block = other._M_finish_block; _M_finish_off = other._M_finish_off; _M_size = other._M_size; other._M_init(); }
     deque(initializer_list<T> il) { _M_init(); for (const T& v : il) push_back(v); }
 #endif
-    ~deque() { clear(); for (size_t i = 0; i < _M_map_size; ++i) if (_M_map[i]) free(_M_map[i]); free(_M_map); }
+    ~deque() { clear(); for (size_t i = 0; i < _M_map_size; ++i) if (_M_map[i]) std::__detail::dealloc_bytes(_M_map[i]); std::__detail::dealloc_bytes(_M_map); }
 
     deque& operator=(const deque& other) {
         if (this != &other) { clear(); for (const T& v : other) push_back(v); }
@@ -152,7 +152,7 @@ public:
     }
 #if STDCPP_DEQ_CXX11
     deque& operator=(deque&& other) noexcept {
-        if (this != &other) { clear(); for (size_t i = 0; i < _M_map_size; ++i) if (_M_map[i]) free(_M_map[i]); free(_M_map);
+        if (this != &other) { clear(); for (size_t i = 0; i < _M_map_size; ++i) if (_M_map[i]) std::__detail::dealloc_bytes(_M_map[i]); std::__detail::dealloc_bytes(_M_map);
             _M_map = other._M_map; _M_map_size = other._M_map_size; _M_start_block = other._M_start_block; _M_start_off = other._M_start_off; _M_finish_block = other._M_finish_block; _M_finish_off = other._M_finish_off; _M_size = other._M_size; other._M_init(); }
         return *this;
     }
@@ -169,8 +169,8 @@ public:
     size_type max_size() const { return size_type(-1) / sizeof(T); }
     reference operator[](size_type i) { return *(begin() + i); }
     const_reference operator[](size_type i) const { return *(begin() + i); }
-    reference at(size_type i) { if (i >= _M_size) throw out_of_range("deque::at"); return (*this)[i]; }
-    const_reference at(size_type i) const { if (i >= _M_size) throw out_of_range("deque::at"); return (*this)[i]; }
+    reference at(size_type i) { if (i >= _M_size) __detail::throw_out_of_range("deque::at"); return (*this)[i]; }
+    const_reference at(size_type i) const { if (i >= _M_size) __detail::throw_out_of_range("deque::at"); return (*this)[i]; }
     reference front() { return _M_map[_M_start_block][_M_start_off]; }
     const_reference front() const { return _M_map[_M_start_block][_M_start_off]; }
     reference back() { iterator it = end(); --it; return *it; }
@@ -254,9 +254,13 @@ public:
         return begin() + idx;
     }
     iterator erase(const_iterator first, const_iterator last) {
-        size_t n = last - first;
-        for (size_t i = 0; i < n; ++i) erase(first);
-        return begin() + (first - begin());
+        // 按下标删除：deque 的 iterator 是裸指针，pop_front 会让“同一地址”
+        // 对应的逻辑下标整体前移，直接用 first 反复 erase 会漏删/错删
+        // （实测 [0,1,2,3,4,5] 删 [1,3) 得到 [2,3,4,5]）。
+        const size_t idx = static_cast<size_t>(first - begin());
+        const size_t n = static_cast<size_t>(last - first);
+        for (size_t i = 0; i < n; ++i) erase(begin() + idx);
+        return begin() + idx;
     }
 
     void clear() { while (_M_size) pop_back(); }

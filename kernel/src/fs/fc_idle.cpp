@@ -102,7 +102,15 @@ typedef struct {
 
 static int fc_free_file_stat_cb(void *data, const uint8_t *key, uint32_t key_len, void *value) {
     (void)data; (void)key; (void)key_len;
-    if (value) kfree(value);
+    /* 只释放"确实由本函数所在配额路径 kmalloc 出来的" stat 对象。
+       QEMU 实测抓到 value=0x3 被丢进 kfree —— 那是树里读出了非指针值
+       (叶子的 value 字段被踩或树本身已损坏)。无条件 kfree 会把它推进
+       页头 magic 校验, 进而 Panic 在**持有文件缓存锁**的临界区里, 其余
+       核在 spinlock_lock 永久自旋 => 整机假死。
+       这里做规范地址闸门, 异常值只报不释放。 */
+    /* 注意: 此处持有文件缓存锁 s->lock, **不能打印** —— kerrorln 抢
+       ptf_lock/dbgout_lock 会与其它持锁路径构成 AB-BA 死锁 (已实测踩到)。 */
+    if (value && (((uint64_t)value) >> 48) == 0xFFFFull) kfree(value);
     return 0;
 }
 
@@ -178,11 +186,11 @@ void file_cache_idle_handler(file_cache_cpu_t *s) {
 
         spinlock_lock(&s->lock);
         cur = s->lru_head;
-        uint64_t now_tick = fc_wall_ms();   /* P1-35: 冷却重试时间戳 */
+        uint64_t now_tick = fc_wall_ms();   /* 冷却重试时间戳 */
         while (cur && flush_cnt < max_flush) {
             file_cache_entry_t *next = cur->lru_next;
             if (likely(next)) PREFETCH_R(next);   // 优化
-            /* P1-35: WRITEBACK_FAILED 条目按冷却期重试 —— 原过滤条件
+            /* WRITEBACK_FAILED 条目按冷却期重试 —— 原过滤条件
                writeback_retries<5 让 FAILED 条目永久不再尝试 (条目滞留
                且脏数据永远写不回)。30s 冷却后重试, 成功即清零重试计数。 */
             bool failed_retry = (cur->state == FC_STATE_WRITEBACK_FAILED &&

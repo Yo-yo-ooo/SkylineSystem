@@ -196,7 +196,7 @@ static int test_disk_error_writeback() {
     return fail;
 }
 
-// ---------- 5. 写回内容校验 (P4-90): fsync 落盘的字节必须与缓存一致 ----------
+// ---------- 5. 写回内容校验: fsync 落盘的字节必须与缓存一致 ----------
 static uint8_t g_disk[256];
 static uint32_t g_disk_len = 0;
 static int32_t wb_capture(uint64_t fid, const uint8_t *k, uint32_t kl, void *d, size_t dl) {
@@ -235,7 +235,7 @@ static int test_flush_writeback_content() {
     return fail;
 }
 
-// ---------- 6. 块级缓存回归 (fc-block-cache-design §6, round 30) ----------
+// ---------- 6. 块级缓存回归 (fc-block-cache-design §6, ) ----------
 static int test_block_cache_basics() {
     printf("== test_block_cache_basics ==\n");
     int fail = 0;

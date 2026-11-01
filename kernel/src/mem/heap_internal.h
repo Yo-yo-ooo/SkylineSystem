@@ -70,6 +70,14 @@ static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags) {
     irq_restore(flags);
 }
 
+/* ---- kfree 历史环 (诊断) ------------------------------------------------
+   记录最近 16 次释放的 (ptr, caller)。当 SLUB 发现 freelist 里出现野指针
+   (有人把非堆对象丢进了 kfree) 时, 用它反查"是谁放的" —— 否则现场只剩
+   一串被截断的地址, 根本无从下手。 */
+#define KFREE_HIST_N 16
+extern "C" void kfree_hist_record(void *p, void *caller);
+extern "C" void kfree_hist_dump(const char *why);
+
 static void slab_fatal(const char *msg) __attribute__((noreturn));
 static void slab_fatal(const char *msg) {
     Panic(msg);

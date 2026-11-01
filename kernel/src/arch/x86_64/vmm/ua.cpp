@@ -41,7 +41,7 @@ namespace VMM {
             if (user_space_end - u_dest + 1 < len)             return false;
 
             spinlock_lock(&pagemap->vma_lock);
-            /* A2 (round 1 修复): 页表操作段补持 pt_lock —— 原仅 vma_lock,
+            /* 页表操作段补持 pt_lock —— 原仅 vma_lock,
                Map4K/GetPageInfo 与 HandlePF/Fork/Free 的页表修改竞态。
                锁序与 Fork 一致 (vma_lock → pt_lock) */
             spinlock_lock(&pagemap->pt_lock);
@@ -54,7 +54,7 @@ namespace VMM {
 
                                 Internal::PageInfo info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr);
                 if (info.size == 0) {
-                    /* P0-4: 按需映射前校验 VMA —— 任意地址不得被映射
+                    /* 按需映射前校验 VMA —— 任意地址不得被映射
                        (原实现无 FindRegion: 任意用户地址即分配物理页 +
                        页泄漏 + 竞态) */
                     if (!VMM::VMA::FindRegion(pagemap, curr_u_vaddr)) {
@@ -101,7 +101,7 @@ namespace VMM {
 
                     // 必须对齐到页边界
                     uint64_t page_start = curr_u_vaddr & ~(info.size - 1);
-                    uint64_t old_phys = info.phys;   // P0-5: 拷贝后递减旧引用
+                    uint64_t old_phys = info.phys;   // 拷贝后递减旧引用
 
                     if (info.size == PAGE_1GB) {
                         VMM::Unmap(pagemap, page_start);
@@ -110,7 +110,7 @@ namespace VMM {
                             uint64_t v = page_start + j * PAGE_2MB;
                             uint64_t p = info.phys + j * PAGE_2MB;
                             uint64_t new_phys = (uint64_t)PMM::Request2MB();
-                            /* 审计 #7 (round 3 修复): OOM 检查 —— 原实现
+                            /* OOM 检查 —— 原实现
                                Request2MB 失败即对 NULL 做 2MB memcpy (崩溃) */
                             if (!new_phys) {
                                 /* 已拆分的部分页映射保留 (权限已恢复可写,
@@ -125,7 +125,7 @@ namespace VMM {
                             VMM::Map2M(pagemap, v, new_phys, new_flags);
                         }
                         info = VMM::Internal::GetPageInfo(pagemap, curr_u_vaddr); // 重新获取信息
-                        /* 审计 #7: 粒度修正 —— fork 按 4K 粒度递增了
+                        /* 粒度修正 —— fork 按 4K 粒度递增了
                            262144 次 (vmm.cpp), 这里必须同样按 4K 递减,
                            原实现只递减 1 次 → 262143 页引用泄漏 */
                         for (uint64_t k = 0; k < PAGE_1GB/PAGE_SIZE; k++)
@@ -137,14 +137,14 @@ namespace VMM {
                         VMM::Map2M(pagemap, page_start, new_phys, new_flags);
                         info.phys = new_phys;
                         for (uint64_t k = 0; k < PAGE_2MB/PAGE_SIZE; k++)
-                            UnrefSharedPhys(old_phys + k * PAGE_SIZE);   /* 审计 #7: 同粒度 */
+                            UnrefSharedPhys(old_phys + k * PAGE_SIZE);   /* 同粒度 */
                     } else {
                         uint64_t new_phys = (uint64_t)PMM::Request();
                         if (!new_phys) { spinlock_unlock(&pagemap->pt_lock); spinlock_unlock(&pagemap->vma_lock); return false; }
                         __memcpy(HIGHER_HALF((void*)new_phys), HIGHER_HALF((void*)info.phys), PAGE_SIZE);
                         VMM::Map4K(pagemap, page_start, new_phys, new_flags);
                         info.phys = new_phys;
-                        UnrefSharedPhys(old_phys);   /* P0-5: 4K 共享页引用递减 */
+                        UnrefSharedPhys(old_phys);   /* 4K 共享页引用递减 */
                     }
 
                     __asm__ volatile ("invlpg (%0)" : : "r"(curr_u_vaddr) : "memory");

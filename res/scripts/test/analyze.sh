@@ -1,5 +1,5 @@
 #!/bin/bash
-# res/scripts/test/analyze.sh — 静态分析: clang --analyze 核心文件 (round 98)
+# res/scripts/test/analyze.sh — 静态分析: clang --analyze 核心文件
 # 迁移 (用户清理): 原根目录 _tmp_analyze.sh → 此处, 硬编码路径改为相对解析
 cd "$(dirname "$0")/../../.."
 ANALYZE_DIRS="kernel/src/klib kernel/src/mem kernel/src/fs"

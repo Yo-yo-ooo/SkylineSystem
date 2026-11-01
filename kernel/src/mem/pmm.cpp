@@ -153,6 +153,29 @@ static inline void bit_clear_atomic(uint64_t* map, uint64_t i) {
     __atomic_fetch_and(&map[i >> 6], ~(1ULL << (i & 63)), __ATOMIC_RELAXED);
 }
 
+// ---------------------------------------------------------------------------
+// 二级/三级模式
+//   物理内存 < 1 GiB 时只有 1 个 L3 块 (< 2 GiB 必然如此), L3 这一级退化成
+//   "1 个 bit 的心跳": 它仍要占一页元数据、每次 mark_free 做一次原子 RMW、
+//   扫描循环里多一次判断, 却没有任何选择能力。于是这种机器直接退化为
+//   **二级位图** (L1 页 + L2 2MiB), 把 L3 全部操作变成 no-op。
+//
+//   所有 L3 访问必须走下面三个助手 —— 二级模式下 l3_map 会被置为 nullptr,
+//   任何漏改的裸访问都会立刻崩 (而不是静默读到相邻的别的位图表)。
+// ---------------------------------------------------------------------------
+static constexpr uint64_t PMM_TWO_LEVEL_MAX_PHYS = 1ull << 30;   // 1 GiB
+static bool two_level = false;      // Init 里按 max_phys 定, 之后只读
+
+static inline void pmm_l3_set(uint64_t bit) {
+    if (!two_level) bit_set_atomic(l3_map, bit);
+}
+static inline void pmm_l3_clear(uint64_t bit) {
+    if (!two_level) bit_clear_atomic(l3_map, bit);
+}
+static inline bool pmm_l3_full(uint64_t bit) {
+    return !two_level && bit_test(l3_map, bit);
+}
+
 void Stats(uint64_t* out /* [4] */) {
     out[0] = __atomic_load_n(&stat_req2m_ok,   __ATOMIC_RELAXED);
     out[1] = __atomic_load_n(&stat_req2m_fail, __ATOMIC_RELAXED);
@@ -228,13 +251,14 @@ static inline bool l2_block_full(uint64_t l2_bit) {
     return true;
 }
 
-// L2 块变满后向上传播。l3 位跨片共享 → 原子置位。
+// L2 块变满后向上传播。l3 位跨片共享 → 原子置位 (二级模式下 no-op)。
 static inline void l2_full_propagate(uint64_t l2_bit) {
+    if (two_level) return;                  /* 没有 L3 可传播 */
     uint64_t l3_bit = l2_bit / L2_PER_L3;
     uint64_t wb = l3_bit * L3_L2_WORDS;
     for (uint64_t i = 0; i < L3_L2_WORDS; i++)
         if (l2_map[wb + i] != ~0ULL) return;
-    bit_set_atomic(l3_map, l3_bit);
+    pmm_l3_set(l3_bit);
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +293,7 @@ static void mark_free(uint64_t start, uint64_t n) {
         uint64_t b1 = (l2 == last_l2)  ? end   : (l2 + 1) * L2_PAGES;
         bits_clear(l1_map, b0, b1);
         bit_clear(l2_map, l2);
-        bit_clear_atomic(l3_map, l2 / L2_PER_L3);   // 跨片共享字 → 原子
+        pmm_l3_clear(l2 / L2_PER_L3);   /* 跨片共享字 → 原子 (二级模式 no-op) */
     }
 }
 
@@ -288,7 +312,7 @@ static uint64_t scan_for_run(uint64_t from, uint64_t to, uint64_t n) {
         if (run == 0) {
             if ((bit & (L3_PAGES - 1)) == 0) {            // 2GiB skip
                 uint64_t l3 = bit / L3_PAGES;
-                if (l3 < total_l3_bits && bit_test(l3_map, l3)) {
+                if (l3 < total_l3_bits && pmm_l3_full(l3)) {
                     bit += L3_PAGES;
                     continue;
                 }
@@ -382,12 +406,20 @@ static void free_in_shard_locked(uint64_t si, uint64_t start, uint64_t n) {
 // ---------------------------------------------------------------------------
 struct AllShardsGuard {
     IrqSpinGuard gate;                     // pmm_lock: 串行化慢路径
+    /* 只需锁到实际用到的条带: shard_lock(si) = si & (PMM_NUM_LOCKS-1),
+       si < shard_count ≤ PMM_NUM_LOCKS, 所以 [0, nl) 已覆盖全部分片。
+       二级模式 (shard_count==1) 慢路径因此从 32 把锁降到 1 把。 */
+    static uint32_t n_locks() {
+        return shard_count < PMM_NUM_LOCKS ? (uint32_t)shard_count
+                                           : (uint32_t)PMM_NUM_LOCKS;
+    }
     AllShardsGuard() : gate(&pmm_lock) {
-        for (unsigned i = 0; i < PMM_NUM_LOCKS; i++)
+        const uint32_t n = n_locks();
+        for (uint32_t i = 0; i < n; i++)
             spinlock_lock(&shard_locks[i].lock);
     }
     ~AllShardsGuard() {
-        for (unsigned i = PMM_NUM_LOCKS; i-- > 0; )
+        for (uint32_t i = n_locks(); i-- > 0; )
             spinlock_unlock(&shard_locks[i].lock);
     }
     AllShardsGuard(const AllShardsGuard&) = delete;
@@ -528,12 +560,16 @@ void Init() {
 
     uint64_t l1_bits = pmm_bitmap_pages;
     total_l2_bits = (l1_bits + L2_PAGES - 1) / L2_PAGES;
-    total_l3_bits = (total_l2_bits + L2_PER_L3 - 1) / L2_PER_L3;
+    /* 二级模式: 物理内存 < 1 GiB → 只有 1 个 L3 块, 该级没有选择能力,
+       直接不建表 (见文件上方 pmm_l3_* 的说明)。 */
+    two_level     = (max_phys < PMM_TWO_LEVEL_MAX_PHYS);
+    total_l3_bits = two_level ? 1 : (total_l2_bits + L2_PER_L3 - 1) / L2_PER_L3;
     shard_count   = total_l3_bits;
 
     l1_map_size   = ALIGN_UP(total_l2_bits * L2_L1_WORDS * 8, PAGE_SIZE);
     l2_map_size   = ALIGN_UP(total_l3_bits * L3_L2_WORDS * 8, PAGE_SIZE);
-    l3_map_size   = ALIGN_UP((total_l3_bits + 63) / 64 * 8, PAGE_SIZE);
+    l3_map_size   = two_level ? 0
+                             : ALIGN_UP((total_l3_bits + 63) / 64 * 8, PAGE_SIZE);
     init_map_size = ALIGN_UP((total_l2_bits + 63) / 64 * 8, PAGE_SIZE);
     uint64_t shards_size = ALIGN_UP(shard_count * sizeof(pmm_shard), PAGE_SIZE);
 
@@ -556,7 +592,8 @@ void Init() {
 
         memset_fscpuf(l1_map,   0xFF, l1_map_size);
         memset_fscpuf(l2_map,   0xFF, l2_map_size);
-        memset_fscpuf(l3_map,   0xFF, l3_map_size);
+        if (!two_level) memset_fscpuf(l3_map, 0xFF, l3_map_size);
+        else            l3_map = nullptr;   /* 故意的: 漏改的裸访问立刻崩 */
         memset_fscpuf(init_map, 0x00, init_map_size);
         memset_fscpuf(shards,   0x00, shards_size);
         placed = true;
@@ -580,6 +617,7 @@ void Init() {
         bits_clear(l2_map, e->base / L2_SIZE, (end - 1) / L2_SIZE + 1);
     }
 
+    if (!two_level)
     for (uint64_t l3 = 0; l3 < total_l3_bits; l3++) {
         uint64_t wb = l3 * L3_L2_WORDS;
         for (uint64_t i = 0; i < L3_L2_WORDS; i++) {
@@ -614,6 +652,7 @@ void Init() {
         if (l2_block_full(l2)) bit_set(l2_map, l2);
         else                   bit_clear(l2_map, l2);
     }
+    if (!two_level)
     for (uint64_t l3 = 0; l3 < total_l3_bits; l3++) {
         uint64_t wb = l3 * L3_L2_WORDS;
         bool all_full = true;
@@ -651,13 +690,15 @@ void Init() {
             if (e->type == LIMINE_MEMMAP_USABLE) usable_bytes += e->length;
         }
         kinfoln("PMM: max_phys=0x%lx (%lu MiB), usable=%lu MiB, pages=%lu, "
-                "meta=%lu KiB, free=%lu MiB",
+                "meta=%lu KiB, free=%lu MiB, mode=%s, shards=%lu",
                 (unsigned long)max_phys,
                 (unsigned long)(max_phys >> 20),
                 (unsigned long)(usable_bytes >> 20),
                 (unsigned long)pmm_bitmap_pages,
                 (unsigned long)(total_meta >> 10),
-                (unsigned long)((free_pages << 12) >> 20));
+                (unsigned long)((free_pages << 12) >> 20),
+                two_level ? "2lvl" : "3lvl",
+                (unsigned long)shard_count);
 
     }
 }
@@ -798,6 +839,12 @@ void* Request2MB() {
 
 // --- 2GiB allocation --- (恰为一个分片 → 单锁)
 void* Request2GB() {
+    /* 二级模式 (<1 GiB 物理内存) 下不可能存在 2 GiB 连续块 —— 显式拒绝,
+       而不是依赖下面 `npages < L3_PAGES` 的间接守卫。 */
+    if (two_level) {
+        stat_inc(&stat_req2gb_fail);
+        return nullptr;
+    }
     uint64_t first = shard_rr_first();
     for (uint64_t t = 0; t < shard_count; t++) {
         uint64_t si = first + t;

@@ -19,11 +19,16 @@
 #include <mouse/ps2.h>
 #include <synthesizer/window.h>
 #include <synthesizer/wm_client.h>
-/* P5-105: __thread 消除全局缓冲的非重入问题 (合成器 worker 线程
+/* __thread 消除全局缓冲的非重入问题 (合成器 worker 线程
    并行调用 to_string 时互不踩踏) */
 static __thread char intTo_stringOutput[128];
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place);
+
+/* 临时性能埋点 (synthesizer/window.cpp 提供) */
+extern "C" void comp_perf_take(uint64_t* compose_cyc, uint64_t* compose_cnt,
+                               uint64_t* band_cyc, uint64_t* band_cnt,
+                               uint64_t* lock_miss);
 
 /* Caption glyph painter + sized chrome rasterizer, both defined in loader.cpp */
 void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
@@ -83,7 +88,7 @@ const char *to_string(int64_t value)
     return to_string((uint64_t)value);
 }
 
-/* P5-96: DrawMousePointer extern 已随 bd.cpp 死函数一并删除 */
+/* DrawMousePointer extern 已随 bd.cpp 死函数一并删除 */
 
 /* ---- monotonic TSC frame-pacing helpers -----------------------------------
  * The kernel's uptime_ms is only refreshed by the idle thread, which does
@@ -97,6 +102,19 @@ static inline uint64_t rdtsc64() {
 }
 
 static uint64_t probe_tsc_per_ms() {
+    /* 首选**内核用 HPET 校准过**的值 (SysInfo.reserved[0])。
+       原来只靠 CPUID 0x15/0x16 猜: QEMU 下这两片经常给出垃圾值, 实测算出
+       ~4 cycles/ms (真实 2610428), 于是 scene_gap/clock_gap/idle_gap 全部
+       塌成 0 —— 任务栏 (圆角 pill + SDF 文本) 每一轮重活都重绘一遍, 桌面
+       直接把一个核烧满, 表现就是"进桌面后整机卡"。 */
+    {
+        SysInfo* si = (SysInfo*)sys_sysinfo(0);
+        if ((int64_t)si >= 0) {
+            const uint64_t v = si->reserved[0];
+            sys_sysinfo((uint64_t)si);        /* 把映射还给内核 */
+            if (v >= 100000ull && v <= 100000000ull) return v;
+        }
+    }
     uint32_t a, b, c, d;
     a = 0x15; c = 0;                                   /* TSC / crystal ratio */
     __asm__ __volatile__("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d)
@@ -502,7 +520,65 @@ static void wm_paint_chrome_live(uint32_t* rzSurf, int32_t rzPitch,
 }
 
 
+/* ==========================================================================
+   光标线程 (鼠标即图层: 由它独立服务)
+   为什么单独开线程: 主循环一次"重活"(整屏合成 10~19ms + 窗口交互/轮询 ~17ms)
+   期间完全无法采样鼠标, 指针就会一顿一顿。光标本身只需要重绘它覆盖的那 16 行
+   (Compositor::CursorMoveTo), 亚毫秒级 —— 交给独立线程后, 鼠标响应不再取决于
+   主线程何时有空。
+   并发安全: 所有会写扫描出缓冲或遍历图层/窗口链表的入口都在 Compositor 里
+   加了扫描出锁 (CompScanGuard), 光标线程与主线程互斥。
+   ========================================================================== */
+static volatile ps2_mouse_state_t* g_mouse_page;
+
+extern "C" void CursorThreadEntry() {
+    int32_t lx = -100000, ly = -100000;
+    Compositor& comp = Compositor::Get();
+    /* 连续抢锁失败计数。
+       "非阻塞丢帧"是对的 (不能自旋占核), 但**不能无限丢**: 主线程一次整屏
+       合成要 ~20ms, TryLockScan 只有几微秒的窗口, 密集移动时几乎每帧都失败,
+       结果就是光标画不上去 —— 用户看到"鼠标卡死"。
+       连续失败到阈值就退化为阻塞版 CursorMoveTo: 它走 LockScan (有界自旋
+       + sys_yield 让出), 既不会把核占死, 也保证光标一定被画出来。 */
+    uint32_t miss_run = 0;
+    for (;;) {
+        volatile ps2_mouse_state_t* mp = g_mouse_page;
+        if (mp) {
+            uint32_t s1, s2;
+            int32_t x = 0, y = 0;
+            do {
+                s1 = __atomic_load_n(&mp->seq, __ATOMIC_ACQUIRE);
+                if (s1 & 1) continue;
+                x = mp->x; y = mp->y;
+                s2 = __atomic_load_n(&mp->seq, __ATOMIC_ACQUIRE);
+            } while (s1 != s2);
+
+            if (x < 0) x = 0;
+            if (y < 0) y = 0;
+            if (x > 16000) x = 16000;
+            if (y > 16000) y = 16000;
+            if (x != lx || y != ly) {
+                /* 非阻塞: 主线程正在整屏合成时抢不到锁就丢掉这次采样,
+                   2ms 后自然重试。**不能**在这里阻塞等锁 —— 自旋会把本核
+                   占死, 持锁的主线程反而上不了 CPU, 就是"DOOM 跑一半鼠标
+                   卡死"的成因。lx/ly 只在真正画成后推进, 丢采样不会丢位置。 */
+                if (comp.CursorMoveToTry(x, y)) {
+                    lx = x; ly = y; miss_run = 0;
+                } else if (++miss_run >= 4u) {
+                    /* 连续 4 次 (≈8ms) 都没抢到 —— 主线程正在长合成。
+                       退化为阻塞版, 保证这一次移动被真正画出来。 */
+                    comp.CursorMoveTo(x, y);
+                    lx = x; ly = y; miss_run = 0;
+                }
+            }
+        }
+        /* 2ms 采样 (=500Hz); 真正的上限是鼠标 200Hz 采样率 */
+        syscall(SYSCALL_SLEEP_MS, 2, 0, 0, 0, 0, 0);
+    }
+}
+
 int main(){
+    const uint64_t boot_t0 = rdtsc64();
     /* 第一件事: 打开串口自检通道。用固定字符串 (不经过 snprintf), 排除
        "格式化函数本身出问题"导致日志缺失的可能。 */
     {
@@ -589,6 +665,15 @@ int main(){
         return boot_fatal("Compositor::Init",
                           (unsigned long long)((uint64_t)scrW * scrH * 4u));
     }
+
+    /* 把壁纸交给合成器当背景层。原来没人调用 SetBackground, 于是每一行都
+       先 memset 成黑色、再把壁纸窗口整行 memcpy 上去 —— 每帧白扔一整屏
+       (1280x800x4 ≈ 4 MB) 的黑写 + 一次多余拷贝。 */
+    comp.SetBackground(wallBuf);
+
+    /* 任务栏行带永远重画: wm_draw_taskbar 是就地改写壁纸缓冲, 增量合成
+       必须知道这块区域每帧都可能变 (否则时钟停在旧时间)。 */
+    comp.SetDynamicRows((int32_t)(scrH - barH), (int32_t)scrH);
 
     /* Start compositor workers BEFORE spawning any client app: the other
        cores are idle now, so the pinned workers execute their entry ack
@@ -761,11 +846,23 @@ int main(){
     uint64_t wmKbdCursor = wmKbdSlot >= 0 ? kbd_reader_pos(wmKbd, wmKbdSlot) : 0;
 
     const uint64_t tsc_per_ms = probe_tsc_per_ms();
-    const uint64_t move_gap   = 16u  * tsc_per_ms;   /* pointer overlay ~60Hz */
+    const uint64_t move_gap   = 8u   * tsc_per_ms;   /* pointer overlay ~120Hz */
     const uint64_t scene_gap  = 33u  * tsc_per_ms;   /* recompose scene ~30Hz */
     const uint64_t idle_gap   = 50u  * tsc_per_ms;   /* scene refresh, still  */
     const uint64_t chrome_gap = 16u  * tsc_per_ms;   /* live-resize repaint  */
-    const uint64_t clock_gap  = 500u * tsc_per_ms;   /* poll RTC at 2 Hz (P5-110) */
+    const uint64_t clock_gap  = 500u * tsc_per_ms;   /* poll RTC at 2 Hz */
+
+    /* 进桌面耗时 (main 入口 -> 主循环就绪): 把"卡"的入口段单独量化 */
+    {
+        char pm[160];
+        int pn = snprintf(pm, sizeof(pm),
+                          "[perf] desktop ready in %llums (fb %llux%llu, barH=%llu)\n",
+                          (unsigned long long)((rdtsc64() - boot_t0) / tsc_per_ms),
+                          (unsigned long long)scrW, (unsigned long long)scrH,
+                          (unsigned long long)barH);
+        if (pn > 0) syscall(SYS_DBGSOUT, (uint64_t)pm, (uint64_t)pn, 0, 0, 0, 0);
+    }
+    uint64_t pf_loops = 0, pf_last_report = 0;
 
     int32_t prev_x = -100;
     int32_t prev_y = -100;
@@ -781,11 +878,11 @@ int main(){
     uint64_t last_scene = rdtsc64();
     uint64_t last_chrome = 0;
     uint64_t last_clock = 0;
-    uint64_t last_client_seq = 0;   /* round 19: 控制台 OUT_SEQ 监视 (dirty 标记) */
+    uint64_t last_client_seq = 0;   /* 控制台 OUT_SEQ 监视 (dirty 标记) */
 
     /* ---- window-manager interaction state ---- */
     enum { WM_NORMAL = 0, WM_MAX = 1, WM_MIN = 2, WM_CLOSED = 3 } wmMode = WM_NORMAL;
-    int wm_prior = WM_NORMAL;   /* C9 (round 14): 最小化先态 */
+    int wm_prior = WM_NORMAL;   /* 最小化先态 */
     uint32_t normX = place.x, normY = place.y;   /* NORMAL surface top-left   */
     uint32_t normW = SKYWIN_W, normH = SKYWIN_H; /* NORMAL body size          */
     bool     prevLeft = false, dragging = false, resizing = false;
@@ -797,6 +894,10 @@ int main(){
     int      pressHit = 0;   /* 0 none,1 caption,2 min,3 max,4 close,5 tb,6 rz,8 content;
                                 generic-client presses are owned by wm_client_* */
     int      tbPressId = -1; /* taskbar pill id under the current press        */
+    /* 点击焦点: 按下命中某个窗口时记录它的 pid。焦点不再只看 z 序 ——
+       DOOM 一启动就在最上层, 按 z 序它会永久抢走键盘, 于是点开 Console
+       敲字却一个都收不到, 表现就是输入卡死。 */
+    static uint64_t press_focus_pid = 0;
     uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
 
     /* ---- focus routing (keyboard delivery follows click-to-front) ----
@@ -812,6 +913,13 @@ int main(){
     };
     auto wm_refocus = [&]() {
         if (!wmKbd) return;
+        /* 优先看"用户最后按下的是哪个窗口": 它被抬到最上层后 z 序也会指向它,
+           这里是双保险 —— 只要记录的 pid 还注册着, 键盘就给它。
+           否则 z 序会让后启动的客户端 (DOOM) 永久霸占键盘。 */
+        if (press_focus_pid != 0) {
+            int fs = kbd_slot_for_pid(wmKbd, (int32_t)press_focus_pid);
+            if (fs >= 0) { kbd_focus_set_slot(wmKbd, fs); return; }
+        }
         const bool consVis = (wmMode == WM_NORMAL || wmMode == WM_MAX) &&
                              consoleLayer != nullptr;
         WmClient* tc = wm_client_top_visible();
@@ -823,7 +931,19 @@ int main(){
             kbd_focus_broadcast(wmKbd);
     };
 
+    bool wmForceFullCompose = false;
     comp.SetCursor(0, 0, true);
+
+    /* 光标线程: 见 CursorThreadEntry 的说明。必须在 SetCursor 之后启动,
+       否则第一帧可能先被线程画一次再被初始化覆盖。 */
+    g_mouse_page = p;
+    if (sys_thread_launch((uint64_t)CursorThreadEntry, 0) < 0) {
+        /* 启动失败就退回主线程贴图 (老路径), 保证光标仍可用 */
+        g_mouse_page = nullptr;
+    }
+    /* 光标位置/可见性是"结构性"状态: 之后的第一次合成必须整屏 (局部行带可能
+       根本不含光标所在行, 那样屏幕上就没有箭头)。 */
+    wmForceFullCompose = true;
 
     for(;;){
         /* take the newest available mouse snapshot (seqlock retry) */
@@ -841,36 +961,83 @@ int main(){
         if (my < 0) my = 0;
         if (mx >= fb_width - 16) mx = fb_width - 16;
         if (my >= fb_height - 16) my = fb_height - 16;
-        /* 把夹紧后的坐标**写回**共享状态。
-           否则内核那边仍在累加原始增量: 指针被推到屏幕外之后, 共享坐标会
-           停在屏幕外很远的地方, 而这里每帧都把它夹到边界 —— 表现就是
-           "鼠标没反应", 必须反向走完那段死区才恢复。 */
-        if (p->x != mx || p->y != my) {
-            uint64_t ws = __atomic_load_n(&p->seq, __ATOMIC_RELAXED);
-            if (!(ws & 1)) {
-                __atomic_store_n(&p->seq, ws + 1, __ATOMIC_RELEASE);
-                p->x = mx; p->y = my;
-                __atomic_store_n(&p->seq, ws + 2, __ATOMIC_RELEASE);
-            }
-        }
+        /* 注意: 这里**不要**把夹紧后的坐标写回共享状态。
+           曾经这么做过, 结果是一场竞态: 桌面每个循环都写回, 而驱动随时可能
+           刚更新了位置 —— 写回会把新位置覆盖成旧值, 单次移动很容易被抹掉
+           (实测光标直接卡在原地不动)。
+           死区问题已经在内核侧解决: 驱动累加时就夹紧到 [0, 16384]
+           (见 mouse.cpp), 指针不可能再跑到负数或无穷远。 */
 
         /* Drain the WM keyboard cursor (multi-reader ring; notepad has its
            own). Global shortcuts would be handled here; text goes to notepad.
-           C10 (round 22 记录): 事件被显式丢弃 —— 键盘输入到焦点客户端的
+           事件被显式丢弃 —— 键盘输入到焦点客户端的
            转发通道未实现 (已知缺口, 见 WM 路线图) */
         if (wmKbd) {
             uint64_t kh = __atomic_load_n(&wmKbd->head, __ATOMIC_ACQUIRE);
             wmKbdCursor = kbd_reader_resync(wmKbd, wmKbdCursor);
             while (wmKbdCursor < kh) {
                 KbdEvent ke = wmKbd->ring[wmKbdCursor & (KBD_RING_CAP - 1u)];
-                (void)ke;   /* C10: 转发通道未实现前显式丢弃 (已知缺口) */
+                (void)ke;   /* 转发通道未实现前显式丢弃 (已知缺口) */
                 wmKbdCursor++;
             }
             if (wmKbdSlot >= 0) kbd_reader_setpos(wmKbd, wmKbdSlot, wmKbdCursor);
         }
 
         uint64_t now = rdtsc64();
+        /* ---- 临时性能统计: 每 2s 打出循环速率 / 合成耗时 / 光标耗时 ---- */
+        {
+            ++pf_loops;
+            if (pf_last_report == 0) pf_last_report = now;
+            if (now - pf_last_report >= tsc_per_ms * 2000u) {
+                uint64_t cc, cn, bc, bn, lm;
+                comp_perf_take(&cc, &cn, &bc, &bn, &lm);
+                const uint64_t el_ms = (now - pf_last_report) / tsc_per_ms;
+                char pm[220];
+                int pn = snprintf(pm, sizeof(pm),
+                    "[perf] loops=%llu/s comp=%llu avg_us=%llu | cur=%llu avg_us=%llu lockfail=%llu\n",
+                    (unsigned long long)(el_ms ? pf_loops * 1000ull / el_ms : 0),
+                    (unsigned long long)cn,
+                    (unsigned long long)(cn ? (cc * 1000ull / tsc_per_ms) / cn : 0),
+                    (unsigned long long)bn,
+                    (unsigned long long)(bn ? (bc * 1000ull / tsc_per_ms) / bn : 0),
+                    (unsigned long long)lm);
+                if (pn > 0) syscall(SYS_DBGSOUT, (uint64_t)pm, (uint64_t)pn, 0, 0, 0, 0);
+                pf_loops = 0;
+                pf_last_report = now;
+            }
+        }
         bool moved = (mx != prev_x || my != prev_y);
+        /* 损伤行带 (本轮的局部合成区域): 空 = 需要整屏合成 */
+        int32_t dmg_y0 = 0, dmg_y1 = 0;
+
+
+        /* ------------------------------------------------------------------
+           输入优先 (响应速度的核心): 鼠标位置一有新值就**立刻**贴上光标,
+           这一步只是重贴 16x16 方块, 亚毫秒级。
+
+           然后把"重活" (窗口交互、客户端轮询、整屏合成) 限速到 ~30Hz:
+           实测重活一段要 10~33ms (合成 10~19ms + 交互/轮询 ~17ms), 如果每轮
+           都跑, 鼠标采样就被拖到 30~260ms 一次 —— 手感就是"指针跟不上手"。
+           限速后输入链路每轮都走, 采样间隔只取决于空转让出, 通常 1~3ms。
+           ------------------------------------------------------------------ */
+        /* 光标由 CursorThreadEntry 独立线程贴图 (见上面的说明), 主线程不再做,
+           这样即使本轮重活跑了几十毫秒, 指针也是跟手的。 */
+        {
+            static uint64_t last_heavy;
+            if (last_heavy && now - last_heavy < scene_gap) {
+                /* 让出 CPU 等下一轮重活窗口。
+                   注意: 这里**不能**换成 SYSCALL_SLEEP_MS —— QEMU 实测该
+                   内核的 Sleep 对 1~2ms 的短睡眠不会按时唤醒, 桌面主循环
+                   会整体睡死 (loops 归零, DOOM 停在某一帧), 且因线程处于
+                   睡眠态不触发 STALL WATCHDOG, 极难定位。
+                   yield 虽然空转, 但绝不会丢唤醒。 */
+                sys_yield();
+                continue;
+            }
+            last_heavy = now;
+        }
+
+
 
         /* ==================== Window-manager interaction ==================== */
         const bool leftDown = (ml != 0);
@@ -971,6 +1138,13 @@ int main(){
                         last_chrome = 0;         /* repaint immediately   */
                     } else if (inBox(bx, by, bw, th)) {
                         pressHit = 1;            /* caption empty area    */
+                        /* 点中 Console 标题栏: 抬到所有客户端之上并抢焦点 */
+                        press_focus_pid = place.client_pid;
+                        if (consoleLayer) {
+                            WmClient* topc = wm_client_top_visible();
+                            if (topc && consoleLayer->z <= topc->layer->z)
+                                consoleLayer->z = topc->layer->z + 1;
+                        }
                         dragging = true;
                         grabDX = mx - (int32_t)normX;
                         grabDY = my - (int32_t)normY;
@@ -981,6 +1155,7 @@ int main(){
                 if (pressHit == 0 && mx >= bx && mx < bx + bw &&
                                         my >= by && my < by + bh)
                     pressHit = 8;
+                    press_focus_pid = place.client_pid;
             } else if (cTop) {
                 /* Generic client press: raise + arm close/drag — all client
                    interaction lives in wm_client.cpp (the old notepad
@@ -1000,7 +1175,7 @@ int main(){
 
             if (pressHit == 0 && !wm_client_pressed() && my >= tbY0 &&
                 my < tbY0 + tbH) {
-                /* Hit whichever taskbar pill (console + generic clients) is
+        /* Hit whichever taskbar pill (console + generic clients) is
                    under the pointer; record its window id for the release. */
                 TBRect tr[12];
                 int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font(),
@@ -1204,18 +1379,39 @@ int main(){
         }
         prevLeft = leftDown;
 
-        /* Keep the mirrored presentation surfaces in step with the client. */
-        if (wmMode == WM_MAX && maxSurf)
-            wm_mirror_content(maxSurf, (int32_t)maxW, 0, (int32_t)SKYWIN_TITLE_H,
-                              (int32_t)maxW, (int32_t)maxH,
-                              (const uint32_t*)place.desk_surf);
-        else if (wmMode == WM_NORMAL && rzSurf &&
-                 (normW != SKYWIN_W || normH != SKYWIN_H))
-            wm_mirror_content(rzSurf, rzPitch, M, M + th,
-                              (int32_t)normW, (int32_t)normH,
-                              (const uint32_t*)place.desk_surf);
+        /* Keep the mirrored presentation surfaces in step with the client.
+           只在客户端**真的产出新内容** (OUT_SEQ 变化) 或几何变化时才搬运。
+           原实现在每次重活循环里无条件 memcpy 620x~350x4 ≈ 0.9 MB ——
+           内容没变时这一遍完全是白搬的, 而重活循环是 30Hz。 */
+        {
+            static uint64_t last_mirror_seq  = ~0ull;
+            static int32_t  last_mirror_w = -1, last_mirror_h = -1;
+            static int      last_mirror_mode = -1;
+            uint64_t mseq = 0;
+            if (place.proto)
+                mseq = *(volatile uint64_t*)(place.proto + SKYWIN_PROTO_OUT_SEQ * 8u);
+            const int32_t mw = (wmMode == WM_MAX) ? (int32_t)maxW : (int32_t)normW;
+            const int32_t mh = (wmMode == WM_MAX) ? (int32_t)maxH : (int32_t)normH;
+            if (mseq != last_mirror_seq || wmMode != last_mirror_mode ||
+                mw != last_mirror_w || mh != last_mirror_h) {
+                last_mirror_seq  = mseq;
+                last_mirror_mode = wmMode;
+                last_mirror_w    = mw;
+                last_mirror_h    = mh;
+                if (wmMode == WM_MAX && maxSurf)
+                    wm_mirror_content(maxSurf, (int32_t)maxW, 0,
+                                      (int32_t)SKYWIN_TITLE_H,
+                                      (int32_t)maxW, (int32_t)maxH,
+                                      (const uint32_t*)place.desk_surf);
+                else if (wmMode == WM_NORMAL && rzSurf &&
+                         (normW != SKYWIN_W || normH != SKYWIN_H))
+                    wm_mirror_content(rzSurf, rzPitch, M, M + th,
+                                      (int32_t)normW, (int32_t)normH,
+                                      (const uint32_t*)place.desk_surf);
+            }
+        }
 
-        /* 审计卫生 (round 15): 实际为 2 Hz (clock_gap = 500ms) */
+        /* 审计卫生: 实际为 2 Hz (clock_gap = 500ms) */
         if (cleanBar && now - last_clock >= clock_gap) {
             last_clock = now;
             WmDateTime ndt;
@@ -1223,6 +1419,9 @@ int main(){
                 int tstate = (wmMode == WM_MIN) ? 1 : (wmMode == WM_CLOSED ? 2 : 0);
                 wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tstate,
                                 &ndt, true);
+                /* 只有任务栏条带变了 -> 局部合成即可 */
+                dmg_y0 = (int32_t)scrH - (int32_t)barH;
+                dmg_y1 = (int32_t)scrH;
                 wmDirty = true;
             }
         }
@@ -1257,7 +1456,7 @@ int main(){
             }
         }
 
-        /* P1-47: 死窗口轮询 —— 客户端进程退出后移除窗口 (sys_kill(pid,0)
+        /* 死窗口轮询 —— 客户端进程退出后移除窗口 (sys_kill(pid,0)
            为存活探测)。控制台单独处理; 其余通用客户端 (含 notepad) 由
            wm_clients_sweep 统一清扫, 图层随最后一个窗口自动退役。 */
         {
@@ -1275,63 +1474,58 @@ int main(){
             }
         }
 
-        /* round 19: 客户端输出立即标记 dirty —— 监视协议页 OUT_SEQ,
+        /* 客户端输出立即标记 dirty —— 监视协议页 OUT_SEQ,
            任何新字符触发重合成 (不再依赖 2Hz 时钟, 迟到输出秒上屏);
            任务栏时钟的 2Hz 重合成仍作为空闲兜底 */
+        /* 轮询之前 wmDirty 是否已经为真: 为真说明本轮有**结构性**变化
+           (点击/窗口增删移动缩放/模式切换), 必须整屏合成; 否则才可以只重绘
+           轮询给出的损伤行带。 */
+        const bool dirty_pre_polls = wmDirty;
+
         if (place.proto) {
             uint64_t seq = *(volatile uint64_t *)(place.proto +
                                                   SKYWIN_PROTO_OUT_SEQ * 8u);
             if (seq != last_client_seq) {
                 last_client_seq = seq;
                 wmDirty = true;
+                dmg_y0 = (int32_t)consoleWin.PosY - 8;
+                dmg_y1 = (int32_t)(consoleWin.PosY + consoleWin.SizeY) + 8;
             }
         }
 
         /* Same frame ping for the generic (non-console) clients: DOOM bumps
            OUT_SEQ once per rendered frame, so a continuous-render client is
            recomposed at its own pace instead of the 2 Hz idle fallback. */
-        wm_clients_poll_output(&wmDirty);
+        wm_clients_poll_output(&wmDirty, &dmg_y0, &dmg_y1);
 
         wm_refocus();   /* keyboard focus tracks the topmost visible window */
 
+        /* 整屏合成。
+           试过"按损伤行带只重绘变化的行"(ComposeRows), 但在本机 (TCG) 上
+           反而更慢: 行带合成要重新走一遍整行(壁纸 memcpy + 全层遍历),
+           收益集中在任务栏那种极矮的带, 而客户端内容往往覆盖半屏以上 ——
+           实测桌面主循环从 30~38 it/s 掉到 13~16 it/s, 鼠标更涩。
+           所以这里保持整屏合成; 局部重绘只用于**光标**(16 行 × 2, 见
+           Compositor::CursorMoveTo) —— 那才是真正高频且极小面积的部分。 */
+        (void)dirty_pre_polls;
+        (void)dmg_y0; (void)dmg_y1;
+        wmForceFullCompose = false;
         if (wmDirty) { comp.Compose(); last_scene = rdtsc64(); }
 
         if (moved) {
-            /* Pointer overlay fast path: spin-pace at ~60Hz, then erase and
-               re-stamp only the 16x16 square directly on the scanout. */
-            if (now - last_move < move_gap) {
-                __asm__ __volatile__("pause" ::: "memory");
-                continue;
-            }
-            comp.CursorMoveTo(mx, my);
-            last_move = now;
             prev_x = mx;
             prev_y = my;
-
-            /* Drag/resize tracks the hand; otherwise recompose the slow scene
-               at ~30Hz so console output still advances while moving. */
-            if (dragging || resizing || wm_client_any_drag() ||
-                now - last_scene >= scene_gap) {
+            /* 只有**几何变化** (拖动/缩放) 才需要强制重组 (光标已在上方贴好)。 */
+            if (dragging || resizing || wm_client_any_drag()) {
                 comp.Compose();
                 last_scene = now;
             }
         } else {
-            /* Pointer still: poll on a short bounded spin instead of a long
-               sys_yield() so the down/up edges are always sampled. */
-            if (now - last_scene < idle_gap) {
-                uint64_t until = now + 2u * tsc_per_ms;
-                do {
-                    __asm__ __volatile__("pause" ::: "memory");
-                } while (rdtsc64() < until);
-                continue;
-            }
-            comp.SetCursor(mx, my, true);
-            comp.Compose();
-            last_scene = now;
-            last_move  = now;
-            prev_x = mx;
-            prev_y = my;
+            /* 指针静止: 不重绘 (场景变化有 wmDirty 路径), 让出 CPU。
+               同上一处: 不可用 SYSCALL_SLEEP_MS (会睡死且不触发 STALL)。 */
+            sys_yield();
         }
+
     }
     syscall(9, 0, 0, 0, 0, 0, 0);
     return 0;

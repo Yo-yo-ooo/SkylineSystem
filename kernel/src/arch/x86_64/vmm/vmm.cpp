@@ -10,7 +10,7 @@
 #include <mem/heap.h>
 #include <klib/kio.h>
 #include <arch/x86_64/schedule/sched.h>
-#include <arch/x86_64/pit/pit.h>   /* P0-2: WaitAcks 墙钟封顶 */
+#include <arch/x86_64/pit/pit.h>   /* WaitAcks 墙钟封顶 */
 
 #ifndef container_of
 #define container_of(ptr, type, member) \
@@ -98,7 +98,7 @@ static inline rc_node *rc_search(uint64_t phys) {
 /* 公共 API: 首次共享 0→2 (src+dst), 后续 ++
    在 sys_pmmapSHARE / Fork 的 pt_lock 临界区内调用,
    rc_tree_lock 是 pt_lock 之后获取的全局锁, 无反向持有者, 无死锁.
-   P0-7: 返回 false = OOM (调用方必须拒绝共享, 不得静默降级) */
+   返回 false = OOM (调用方必须拒绝共享, 不得静默降级) */
 bool RefSharedPhys(uint64_t phys) {
     /* 预分配在锁外: kmalloc 可能触发页面回收, 持锁 kmalloc 有死锁风险 */
     rc_node *rn = (rc_node*)kmalloc(sizeof(rc_node));
@@ -152,7 +152,7 @@ static inline bool RefDecPhys(uint64_t phys) {
     return false;
 }
 
-/* P0-5: CoW 拷贝后递减旧共享页引用 (ua.cpp 与 HandlePF 共用语义) */
+/* CoW 拷贝后递减旧共享页引用 (ua.cpp 与 HandlePF 共用语义) */
 void UnrefSharedPhys(uint64_t phys) {
     if (RefDecPhys(phys)) PMM::Free((void*)phys);
 }
@@ -272,7 +272,7 @@ namespace VMM {
            rather than guessing from an empty queue. */
         static inline uint32_t QMask() { return TLB_SHOOTDOWN_QMAX - 1u; }
 
-        static inline void DoAck(int32_t initiator) {   /* P0-3: int8_t ≥128 核溢出 */
+        static inline void DoAck(int32_t initiator) {   /* int8_t ≥128 核溢出 */
             if (initiator < 0) return;
             cpu_t* in = smp_cpu_list[initiator];
             if (!in) return;
@@ -376,7 +376,7 @@ namespace VMM {
             if (type == 1 && nr == 0) return;
 
             cpu_t* me = this_cpu();
-            const int32_t meid = (int32_t)me->id;   /* P0-3: 全程 int32 */
+            const int32_t meid = (int32_t)me->id;   /* 全程 int32 */
             if (want_ack) {
                 /* SEQ_CST: 这个递增必须对目标核的 DoAck 可见, 见那边注释 */
                 __atomic_add_fetch(&me->shootdown_acks, 1, __ATOMIC_SEQ_CST);
@@ -627,9 +627,9 @@ namespace VMM {
                 cpu_t* me0 = this_cpu();
                 __atomic_store_n(&me0->shootdown_ack_mask, 0, __ATOMIC_RELAXED);
                 if (likely(!need_full && nr > 0)) {
-                    /* P0-2 重做: want_ack=true —— 页释放路径等远端完成
+                    /* want_ack=true —— 页释放路径等远端完成
                        invlpg 后才能复用该页; WaitAcks 已改 100ms 墙钟
-                       封顶 (round 52 挂死根因 = 4 亿 pause 自旋在 TCG
+                       封顶 ( 挂死根因 = 4 亿 pause 自旋在 TCG
                        引导期耗时分钟级) */
                     ForEachTarget(pm, [&](cpu_t* target) {
                         SendTarget(target, pm, 1, b->addrs, nr, true);
@@ -640,7 +640,7 @@ namespace VMM {
                         SendTarget(target, pm, 2, nullptr, 0, true);
                     });
                 }
-                WaitAcks(this_cpu());   /* P0-2: ACK fence (100ms 封顶) */
+                WaitAcks(this_cpu());   /* ACK fence (100ms 封顶) */
             }
             asm volatile("push %0\n\tpopfq" :: "r"(rf) : "memory");
         }
@@ -740,10 +740,28 @@ namespace VMM {
         VMM::MapRange(kernel_pagemap, rs, PHYS_BASE2(rs), MM_READ|MM_NX, DIV_ROUND_UP(re-rs, PAGE_SIZE));
         VMM::MapRange(kernel_pagemap, ds, PHYS_BASE2(ds), MM_READ|MM_WRITE|MM_NX, DIV_ROUND_UP(de-ds, PAGE_SIZE));
 #undef PHYS_BASE2
-        for (uint64_t gb4 = 0; gb4 < 0x100000000; gb4 += PAGE_2MB) {
-            VMM::Map2M(kernel_pagemap, gb4, gb4, MM_READ | MM_WRITE);
-            VMM::Map2M(kernel_pagemap, HIGHER_HALF(gb4), gb4, MM_READ | MM_WRITE);
+        /* HHDM 覆盖范围。
+           原来只映射前 4 GiB, 而 PMM 会把 max_phys (最高 USABLE 上界) 以内的
+           页**全部**发出去 —— 物理内存 > 4 GiB 的机器上, 那些页没有 HHDM
+           映射, 内核一写就缺页。实测 -m 3072M: CR2 = HHDM + 0x100007080,
+           随后 "no usable root filesystem"。
+           现在覆盖到 PMM 能发放的上界: pmm_bitmap_pages 在 PMM::Init 里
+           已由同一份 memmap 定好, 与 max_phys 同源, 因此"能分配的页一定
+           有内核映射"。
+           内存开销: 2 MiB 大页下每 1 GiB 只需 1 个 PD 页 (4 KiB), 约
+           4 KiB/GiB; 3 GiB 机器只多 4 KiB。
+           低 4 GiB 恒映射: 帧缓冲 / AHCI / PCI BAR 等 MMIO 都在窗口内,
+           identity 映射也沿用该窗口 (只扩展 HHDM, 不改 identity)。 */
+        uint64_t hhdm_top = (uint64_t)PMM::pmm_bitmap_pages * PAGE_SIZE;
+        if (hhdm_top < 0x100000000ULL) hhdm_top = 0x100000000ULL;
+        hhdm_top = ALIGN_UP(hhdm_top, PAGE_2MB);
+        for (uint64_t p = 0; p < hhdm_top; p += PAGE_2MB) {
+            if (p < 0x100000000ULL)
+                VMM::Map2M(kernel_pagemap, p, p, MM_READ | MM_WRITE);
+            VMM::Map2M(kernel_pagemap, HIGHER_HALF(p), p, MM_READ | MM_WRITE);
         }
+        kinfoln("VMM: HHDM covers 0..%lu MiB (%lu GiB), identity 0..4096 MiB",
+                (unsigned long)(hhdm_top >> 20), (unsigned long)(hhdm_top >> 30));
         VMM::SwitchPageMap(kernel_pagemap);
 
         /*  引用计数红黑树: 仅跟踪共享页, 无预分配大数组 */
@@ -973,11 +991,11 @@ namespace VMM {
     }
 
     /* ---- 非共享: 高效大页释放, 不碰引用计数树 ----
-       A3 (round 2 修复): 释放顺序收敛 —— 原实现先 PMM::Free 再 Unmap,
+       释放顺序收敛 —— 原实现先 PMM::Free 再 Unmap,
        页可被立即复用而远端陈旧 TLB 仍在 (写穿已复用页)。改为两阶段:
        ① Unmap + DeferredPage (登记 flush); ② 同步 fence 完成后才
        真正归还物理页。
-       round 3 (桌面回归修复): 原 4096 条目局部数组 = 32KB, 压爆 16KB
+       (桌面回归修复): 原 4096 条目局部数组 = 32KB, 压爆 16KB
        内核栈 (FreeOwnedRegion 在进程销毁路径, 栈上有完整调用链) →
        栈损坏 → 三重故障 → QEMU -no-reboot 直接退出 (桌面无法进入的
        根因)。改 256 条目 (2KB) 分批: 收集 → fence → 释放 → 继续 */
@@ -1142,7 +1160,7 @@ namespace VMM {
             do {
                 if (r->start >= (uint64_t)HIGHER_HALF(0)) { r = r->next; continue; }
                 uint64_t v = r->start, mapped = 0;
-                bool share_failed = false;   /* P0-7: OOM 时中止 fork */
+                bool share_failed = false;   /* OOM 时中止 fork */
                 while (mapped < r->page_count) {
                     Internal::PageInfo info = VMM::Internal::GetPageInfo(parent, v);
                     if (info.size == 0) break;
@@ -1155,7 +1173,7 @@ namespace VMM {
                             ok_count++;
                         }
                         if (share_failed) {
-                            /* 审计 #6 (round 3 修复): 撤销共享时归还已成功
+                            /* 撤销共享时归还已成功
                                递增的 [0, ok_count) 页的引用, 否则 refcount
                                悬挂 (原实现只解除映射, 计数泄漏) */
                             for (uint64_t k = 0; k < ok_count; k++)
@@ -1171,7 +1189,7 @@ namespace VMM {
                             else ok_count++;
                         }
                         if (!ok) {
-                            /* 审计 #6: 同 1GB 路径 —— 归还已递增的引用 */
+                            /* 同 1GB 路径 —— 归还已递增的引用 */
                             for (uint64_t k = 0; k < ok_count; k++)
                                 UnrefSharedPhys(info.phys + k*PAGE_SIZE);
                             VMM::Unmap(pm, v); VMM::Unmap(parent, v);
@@ -1190,7 +1208,7 @@ namespace VMM {
                     v += info.size;
                 }
                 if (unlikely(share_failed)) {
-                    /* P0-7: 共享失败 → 中止 fork (子 pm 已建的合法共享
+                    /* 共享失败 → 中止 fork (子 pm 已建的合法共享
                        由 DestroyPM 的 RefDecPhys 逐一归还) */
                     spinlock_unlock(&parent->pt_lock); spinlock_unlock(&parent->vma_lock);
                     VMM::DestroyPM(pm);
@@ -1204,7 +1222,7 @@ namespace VMM {
                 r = r->next;
             } while (r != parent->vma_head);
         }
-        /* 审计 #12 (round 4 修复): 原 ShootdownFull (无 ACK) —— fork 标记
+        /* 原 ShootdownFull (无 ACK) —— fork 标记
            COW 后远端 CPU 的陈旧写 TLB 尚未刷新即可直写共享页, 绕过 COW
            隔离。改 ShootdownFence (同步 ACK 屏障): 返回时保证无远端仍
            持有 pm 的陈旧 TLB 条目 */

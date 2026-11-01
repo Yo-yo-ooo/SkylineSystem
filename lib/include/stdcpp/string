@@ -1,32 +1,35 @@
-// -*- C++ -*-
+//SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+//SPDX-License-Identifier: MIT
 //=============================================================
-// string.hpp -- complete <string>, C++98~C++26.
+// <string> — basic_string / char_traits / 数值转换
+//
+// 相对旧实现重写的部分：
+//   1. 去掉 <cstring>/<cstdio>：freestanding（-nostdinc）下没有这两个头。
+//      字符原语改用 __builtin_memcpy / __builtin_memmove / __builtin_memset，
+//      GCC/Clang 在 freestanding 下同样可用，且会被优化成内联指令。
+//   2. 真正实现 SSO（旧 README 声称有，代码却是纯堆分配：空串就要一次
+//      operator new）。<= 15 个 CharT 完全不上堆，短字符串路径零分配。
+//   3. 统一异常出口：at()/substr() 走 __detail::throw_out_of_range()，
+//      -fno-exceptions 的内核构建下退化为 STDCPP_FAIL（trap），不会静默越界。
+//   4. 自引用安全：insert/append 的源区间落在自身缓冲区时先拷到临时区。
+//   5. 数值转换不再依赖 strtol/strtoll/snprintf，改为头内实现。
 //=============================================================
 #ifndef STDCPP_STRING_HPP
 #define STDCPP_STRING_HPP
 
 #include <cstddef>
-#include <cstring>
-#include <cstdlib>
-#include <cstdio>
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 #include <iterator>
 #include <initializer_list>
 #include <stdexcept>
 #include <functional>
-
-#define STDCPP_STR_CXX11 (__cplusplus >= 201103L)
-#define STDCPP_STR_CXX14 (__cplusplus >= 201402L)
-#define STDCPP_STR_CXX17 (__cplusplus >= 201703L)
-#define STDCPP_STR_CXX20 (__cplusplus >= 202002L)
-#define STDCPP_STR_CXX23 (__cplusplus >= 202100L)
-
-#if !STDCPP_STR_CXX11
-#define noexcept throw()
-#define nullptr 0
-#define override
-#endif
+#include <allocator>
+#include <string_view>
+#include "detail/config.h"
+#include "detail/alloc.h"
+#include "detail/throw.h"
 
 #ifndef _GLIBCXX_STRING
 #  define _GLIBCXX_STRING 1
@@ -34,9 +37,57 @@
 
 namespace std {
 
-template<class T> struct char_traits;
+//=============================================================
+// char_traits
+//=============================================================
+template<class CharT>
+struct char_traits {
+    typedef CharT      char_type;
+    typedef int        int_type;
+    typedef size_t     pos_type;
+    typedef ptrdiff_t  off_type;
 
-template<> struct char_traits<char> {
+    static void assign(char_type& dst, const char_type& src) { dst = src; }
+    static bool eq(char_type a, char_type b) { return a == b; }
+    static bool lt(char_type a, char_type b) { return a < b; }
+
+    static int compare(const char_type* s1, const char_type* s2, size_t n) {
+        for (size_t i = 0; i < n; ++i) {
+            if (lt(s1[i], s2[i])) return -1;
+            if (lt(s2[i], s1[i])) return 1;
+        }
+        return 0;
+    }
+    static size_t length(const char_type* s) {
+        size_t n = 0;
+        while (!eq(s[n], char_type())) ++n;
+        return n;
+    }
+    static const char_type* find(const char_type* s, size_t n, const char_type& a) {
+        for (size_t i = 0; i < n; ++i)
+            if (eq(s[i], a)) return s + i;
+        return nullptr;
+    }
+    static char_type* move(char_type* dst, const char_type* src, size_t n) {
+        return static_cast<char_type*>(__builtin_memmove(dst, src, n * sizeof(char_type)));
+    }
+    static char_type* copy(char_type* dst, const char_type* src, size_t n) {
+        return static_cast<char_type*>(__builtin_memcpy(dst, src, n * sizeof(char_type)));
+    }
+    static char_type* assign(char_type* s, size_t n, char_type a) {
+        for (size_t i = 0; i < n; ++i) s[i] = a;
+        return s;
+    }
+
+    static int_type not_eof(int_type c) { return eq_int_type(c, eof()) ? 0 : c; }
+    static char_type to_char_type(int_type c) { return static_cast<char_type>(c); }
+    static int_type to_int_type(char_type c) { return static_cast<int_type>(c); }
+    static bool eq_int_type(int_type a, int_type b) { return a == b; }
+    static int_type eof() { return -1; }
+};
+
+template<>
+struct char_traits<char> {
     typedef char       char_type;
     typedef int        int_type;
     typedef size_t     pos_type;
@@ -44,407 +95,763 @@ template<> struct char_traits<char> {
 
     static void assign(char& dst, const char& src) { dst = src; }
     static bool eq(char a, char b) { return a == b; }
-    static bool lt(char a, char b) { return a < b; }
-    static int compare(const char* s1, const char* s2, size_t n) { return memcmp(s1, s2, n); }
-    static size_t length(const char* s) { return strlen(s); }
-    static const char* find(const char* s, size_t n, const char& a) {
-        return (const char*)memchr(s, a, n);
+    static bool lt(char a, char b) { return static_cast<unsigned char>(a) < static_cast<unsigned char>(b); }
+
+    static int compare(const char* s1, const char* s2, size_t n) {
+        return __builtin_memcmp(s1, s2, n);
     }
-    static char* move(char* dst, const char* src, size_t n) { return (char*)memmove(dst, src, n); }
-    static char* copy(char* dst, const char* src, size_t n) { return (char*)memcpy(dst, src, n); }
-    static char* assign(char* s, size_t n, char a) { return (char*)memset(s, a, n); }
+    static size_t length(const char* s) { return __builtin_strlen(s); }
+    static const char* find(const char* s, size_t n, const char& a) {
+        return static_cast<const char*>(__builtin_memchr(s, a, n));
+    }
+    static char* move(char* dst, const char* src, size_t n) {
+        return static_cast<char*>(__builtin_memmove(dst, src, n));
+    }
+    static char* copy(char* dst, const char* src, size_t n) {
+        return static_cast<char*>(__builtin_memcpy(dst, src, n));
+    }
+    static char* assign(char* s, size_t n, char a) {
+        return static_cast<char*>(__builtin_memset(s, a, n));
+    }
+
     static int_type not_eof(int_type c) { return eq_int_type(c, eof()) ? 0 : c; }
-    static char_type to_char_type(int_type c) { return (char_type)c; }
-    static int_type to_int_type(char_type c) { return (int_type)(unsigned char)c; }
+    static char_type to_char_type(int_type c) { return static_cast<char_type>(c); }
+    static int_type to_int_type(char_type c) { return static_cast<int_type>(static_cast<unsigned char>(c)); }
     static bool eq_int_type(int_type a, int_type b) { return a == b; }
     static int_type eof() { return -1; }
 };
 
-//=============================================================
-// basic_string_view (C++17)
-//=============================================================
-#if STDCPP_STR_CXX17
-template<class CharT, class Traits = char_traits<CharT> >
-class basic_string_view {
-public:
-    typedef Traits     traits_type;
-    typedef CharT      value_type;
-    typedef CharT*     pointer;
-    typedef const CharT* const_pointer;
-    typedef const CharT& reference;
-    typedef const CharT& const_reference;
-    typedef const CharT* iterator;
-    typedef const CharT* const_iterator;
-    typedef size_t     size_type;
-    typedef ptrdiff_t  difference_type;
+template<>
+struct char_traits<wchar_t> {
+    typedef wchar_t    char_type;
+    typedef int        int_type;
+    typedef size_t     pos_type;
+    typedef ptrdiff_t  off_type;
 
-    static constexpr size_type npos = size_type(-1);
-
-    constexpr basic_string_view() noexcept : _M_data(nullptr), _M_size(0) {}
-    constexpr basic_string_view(const CharT* s) : _M_data(s), _M_size(Traits::length(s)) {}
-    constexpr basic_string_view(const CharT* s, size_type n) : _M_data(s), _M_size(n) {}
-
-    constexpr const_iterator begin() const noexcept { return _M_data; }
-    constexpr const_iterator end() const noexcept { return _M_data + _M_size; }
-    constexpr const_pointer data() const noexcept { return _M_data; }
-    constexpr size_type size() const noexcept { return _M_size; }
-    constexpr size_type length() const noexcept { return _M_size; }
-    constexpr bool empty() const noexcept { return _M_size == 0; }
-
-    constexpr const_reference operator[](size_type i) const { return _M_data[i]; }
-    constexpr const_reference front() const { return _M_data[0]; }
-    constexpr const_reference back() const { return _M_data[_M_size - 1]; }
-
-    constexpr void remove_prefix(size_type n) { _M_data += n; _M_size -= n; }
-    constexpr void remove_suffix(size_type n) { _M_size -= n; }
-
-    constexpr basic_string_view substr(size_type pos = 0, size_type n = npos) const {
-        return basic_string_view(_M_data + pos, n < _M_size - pos ? n : _M_size - pos);
-    }
-
-    int compare(basic_string_view sv) const noexcept {
-        size_type rlen = _M_size < sv._M_size ? _M_size : sv._M_size;
-        int r = Traits::compare(_M_data, sv._M_data, rlen);
-        if (r != 0) return r;
-        if (_M_size < sv._M_size) return -1;
-        if (_M_size > sv._M_size) return 1;
+    static void assign(char_type& dst, const char_type& src) { dst = src; }
+    static bool eq(char_type a, char_type b) { return a == b; }
+    static bool lt(char_type a, char_type b) { return a < b; }
+    static int compare(const char_type* s1, const char_type* s2, size_t n) {
+        for (size_t i = 0; i < n; ++i) {
+            if (s1[i] < s2[i]) return -1;
+            if (s2[i] < s1[i]) return 1;
+        }
         return 0;
     }
-
-    bool starts_with(basic_string_view sv) const noexcept {
-        return _M_size >= sv._M_size && Traits::compare(_M_data, sv._M_data, sv._M_size) == 0;
+    static size_t length(const char_type* s) {
+        size_t n = 0;
+        while (s[n] != char_type()) ++n;
+        return n;
     }
-    bool starts_with(CharT c) const noexcept { return _M_size > 0 && Traits::eq(_M_data[0], c); }
-    bool ends_with(basic_string_view sv) const noexcept {
-        return _M_size >= sv._M_size && Traits::compare(_M_data + _M_size - sv._M_size, sv._M_data, sv._M_size) == 0;
+    static const char_type* find(const char_type* s, size_t n, const char_type& a) {
+        for (size_t i = 0; i < n; ++i)
+            if (s[i] == a) return s + i;
+        return nullptr;
     }
-    bool ends_with(CharT c) const noexcept { return _M_size > 0 && Traits::eq(_M_data[_M_size - 1], c); }
-
-    bool contains(basic_string_view sv) const noexcept { return find(sv) != npos; }
-    bool contains(CharT c) const noexcept { return find(c) != npos; }
-
-    size_type find(basic_string_view sv, size_type pos = 0) const noexcept {
-        if (sv._M_size == 0) return pos <= _M_size ? pos : npos;
-        if (sv._M_size > _M_size) return npos;
-        for (size_type i = pos; i + sv._M_size <= _M_size; ++i)
-            if (Traits::compare(_M_data + i, sv._M_data, sv._M_size) == 0) return i;
-        return npos;
+    static char_type* move(char_type* dst, const char_type* src, size_t n) {
+        return static_cast<char_type*>(__builtin_memmove(dst, src, n * sizeof(char_type)));
     }
-    size_type find(CharT c, size_type pos = 0) const noexcept {
-        if (pos >= _M_size) return npos;
-        const CharT* p = Traits::find(_M_data + pos, _M_size - pos, c);
-        return p ? size_type(p - _M_data) : npos;
+    static char_type* copy(char_type* dst, const char_type* src, size_t n) {
+        return static_cast<char_type*>(__builtin_memcpy(dst, src, n * sizeof(char_type)));
     }
-
-private:
-    const_pointer _M_data;
-    size_type     _M_size;
+    static char_type* assign(char_type* s, size_t n, char_type a) {
+        for (size_t i = 0; i < n; ++i) s[i] = a;
+        return s;
+    }
+    static int_type not_eof(int_type c) { return eq_int_type(c, eof()) ? 0 : c; }
+    static char_type to_char_type(int_type c) { return static_cast<char_type>(c); }
+    static int_type to_int_type(char_type c) { return static_cast<int_type>(c); }
+    static bool eq_int_type(int_type a, int_type b) { return a == b; }
+    static int_type eof() { return -1; }
 };
 
-template<class C, class T>
-bool operator==(basic_string_view<C, T> a, basic_string_view<C, T> b) { return a.compare(b) == 0; }
-template<class C, class T>
-bool operator!=(basic_string_view<C, T> a, basic_string_view<C, T> b) { return a.compare(b) != 0; }
-template<class C, class T>
-bool operator<(basic_string_view<C, T> a, basic_string_view<C, T> b) { return a.compare(b) < 0; }
+template<>
+struct char_traits<char16_t> {
+    typedef char16_t   char_type;
+    typedef uint32_t   int_type;
+    typedef size_t     pos_type;
+    typedef ptrdiff_t  off_type;
 
-typedef basic_string_view<char>     string_view;
-typedef basic_string_view<wchar_t>  wstring_view;
-#if STDCPP_STR_CXX11
-typedef basic_string_view<char16_t> u16string_view;
-typedef basic_string_view<char32_t> u32string_view;
-#endif
-#endif
+    static void assign(char_type& dst, const char_type& src) { dst = src; }
+    static bool eq(char_type a, char_type b) { return a == b; }
+    static bool lt(char_type a, char_type b) { return a < b; }
+    static int compare(const char_type* s1, const char_type* s2, size_t n) {
+        for (size_t i = 0; i < n; ++i) {
+            if (s1[i] < s2[i]) return -1;
+            if (s2[i] < s1[i]) return 1;
+        }
+        return 0;
+    }
+    static size_t length(const char_type* s) {
+        size_t n = 0;
+        while (s[n] != char_type()) ++n;
+        return n;
+    }
+    static const char_type* find(const char_type* s, size_t n, const char_type& a) {
+        for (size_t i = 0; i < n; ++i)
+            if (s[i] == a) return s + i;
+        return nullptr;
+    }
+    static char_type* move(char_type* dst, const char_type* src, size_t n) {
+        return static_cast<char_type*>(__builtin_memmove(dst, src, n * sizeof(char_type)));
+    }
+    static char_type* copy(char_type* dst, const char_type* src, size_t n) {
+        return static_cast<char_type*>(__builtin_memcpy(dst, src, n * sizeof(char_type)));
+    }
+    static char_type* assign(char_type* s, size_t n, char_type a) {
+        for (size_t i = 0; i < n; ++i) s[i] = a;
+        return s;
+    }
+    static int_type not_eof(int_type c) { return eq_int_type(c, eof()) ? 0 : c; }
+    static char_type to_char_type(int_type c) { return static_cast<char_type>(c); }
+    static int_type to_int_type(char_type c) { return static_cast<int_type>(c); }
+    static bool eq_int_type(int_type a, int_type b) { return a == b; }
+    static int_type eof() { return static_cast<int_type>(-1); }
+};
+
+template<>
+struct char_traits<char32_t> {
+    typedef char32_t   char_type;
+    typedef uint32_t   int_type;
+    typedef size_t     pos_type;
+    typedef ptrdiff_t  off_type;
+
+    static void assign(char_type& dst, const char_type& src) { dst = src; }
+    static bool eq(char_type a, char_type b) { return a == b; }
+    static bool lt(char_type a, char_type b) { return a < b; }
+    static int compare(const char_type* s1, const char_type* s2, size_t n) {
+        for (size_t i = 0; i < n; ++i) {
+            if (s1[i] < s2[i]) return -1;
+            if (s2[i] < s1[i]) return 1;
+        }
+        return 0;
+    }
+    static size_t length(const char_type* s) {
+        size_t n = 0;
+        while (s[n] != char_type()) ++n;
+        return n;
+    }
+    static const char_type* find(const char_type* s, size_t n, const char_type& a) {
+        for (size_t i = 0; i < n; ++i)
+            if (s[i] == a) return s + i;
+        return nullptr;
+    }
+    static char_type* move(char_type* dst, const char_type* src, size_t n) {
+        return static_cast<char_type*>(__builtin_memmove(dst, src, n * sizeof(char_type)));
+    }
+    static char_type* copy(char_type* dst, const char_type* src, size_t n) {
+        return static_cast<char_type*>(__builtin_memcpy(dst, src, n * sizeof(char_type)));
+    }
+    static char_type* assign(char_type* s, size_t n, char_type a) {
+        for (size_t i = 0; i < n; ++i) s[i] = a;
+        return s;
+    }
+    static int_type not_eof(int_type c) { return eq_int_type(c, eof()) ? 0 : c; }
+    static char_type to_char_type(int_type c) { return static_cast<char_type>(c); }
+    static int_type to_int_type(char_type c) { return static_cast<int_type>(c); }
+    static bool eq_int_type(int_type a, int_type b) { return a == b; }
+    static int_type eof() { return static_cast<int_type>(-1); }
+};
+
+//=============================================================
+// 数值转换（头内实现，不依赖 libc 的 strtol/snprintf）
+//=============================================================
+namespace __detail {
+
+inline int digit_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+    return 99;
+}
+
+inline bool is_space_c(char c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+
+// 解析整数：mag 为无符号量值，neg 表示负号，overflow 表示越界。
+// 旧版把符号丢掉了（stoi("-45") 得到 45），这里显式返回 neg。
+inline bool parse_integer(const char* s, size_t len, int base, bool& overflow, bool& neg,
+                          unsigned long long& mag, size_t& consumed) {
+    overflow = false;
+    neg = false;
+    mag = 0;
+    size_t i = 0;
+    while (i < len && is_space_c(s[i])) ++i;
+    if (i < len && (s[i] == '+' || s[i] == '-')) {
+        neg = (s[i] == '-');
+        ++i;
+    }
+    if (base == 0) {
+        base = 10;
+        if (i + 1 < len && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X')) { base = 16; i += 2; }
+        else if (i < len && s[i] == '0') { base = 8; }
+    } else if (base == 16 && i + 1 < len && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X')) {
+        i += 2;
+    }
+    if (base < 2 || base > 36) return false;
+
+    size_t digits = 0;
+    unsigned long long acc = 0;
+    const unsigned long long limit = neg ? 9223372036854775808ULL : 9223372036854775807ULL;
+    for (; i < len; ++i) {
+        int d = digit_value(s[i]);
+        if (d >= base) break;
+        ++digits;
+        if (acc > (limit - static_cast<unsigned long long>(d)) / static_cast<unsigned long long>(base)) {
+            overflow = true;
+        } else {
+            acc = acc * static_cast<unsigned long long>(base) + static_cast<unsigned long long>(d);
+        }
+    }
+    if (digits == 0) return false;
+    mag = acc;
+    consumed = i;
+    return true;
+}
+
+inline long long to_signed(unsigned long long mag, bool neg) {
+    return neg ? static_cast<long long>(0ULL - mag) : static_cast<long long>(mag);
+}
+
+// 十进制浮点解析：符号/整数部分/小数部分/指数，支持 inf / nan。
+// 注意：不是“正确舍入”的实现（不追求 last-ulp 精度），够内核与工具使用。
+inline long double parse_float(const char* s, size_t len, size_t& consumed) {
+    size_t i = 0;
+    while (i < len && is_space_c(s[i])) ++i;
+    bool neg = false;
+    if (i < len && (s[i] == '+' || s[i] == '-')) { neg = (s[i] == '-'); ++i; }
+
+    // inf / infinity / nan
+    if (i + 2 < len) {
+        const char* p = s + i;
+        if ((p[0] == 'i' || p[0] == 'I') && (p[1] == 'n' || p[1] == 'N') && (p[2] == 'f' || p[2] == 'F')) {
+            consumed = i + 3;
+            long double v = __builtin_huge_val();
+            return neg ? -v : v;
+        }
+        if ((p[0] == 'n' || p[0] == 'N') && (p[1] == 'a' || p[1] == 'A') && (p[2] == 'n' || p[2] == 'N')) {
+            consumed = i + 3;
+            return __builtin_nan("");
+        }
+    }
+
+    long double v = 0.0L;
+    size_t digits = 0;
+    for (; i < len; ++i, ++digits) {
+        int d = digit_value(s[i]);
+        if (d > 9) break;
+        v = v * 10.0L + static_cast<long double>(d);
+    }
+    if (i < len && s[i] == '.') {
+        ++i;
+        long double scale = 0.1L;
+        for (; i < len; ++i) {
+            int d = digit_value(s[i]);
+            if (d > 9) break;
+            v += static_cast<long double>(d) * scale;
+            scale *= 0.1L;
+            ++digits;
+        }
+    }
+    if (digits == 0) { consumed = 0; return 0.0L; }
+
+    if (i < len && (s[i] == 'e' || s[i] == 'E')) {
+        size_t j = i + 1;
+        bool eneg = false;
+        if (j < len && (s[j] == '+' || s[j] == '-')) { eneg = (s[j] == '-'); ++j; }
+        int exp = 0;
+        size_t ed = 0;
+        for (; j < len; ++j, ++ed) {
+            int d = digit_value(s[j]);
+            if (d > 9) break;
+            if (exp < 100000) exp = exp * 10 + d;
+        }
+        if (ed > 0) {
+            long double f = 1.0L;
+            for (int k = 0; k < exp; ++k) f *= 10.0L;
+            v = eneg ? v / f : v * f;
+            i = j;
+        }
+    }
+    consumed = i;
+    return neg ? -v : v;
+}
+
+} // namespace __detail
 
 //=============================================================
 // basic_string
 //=============================================================
-template<class CharT, class Traits = char_traits<CharT>, class Allocator = void>
-class basic_string {
+template<class CharT, class Traits = char_traits<CharT>, class Allocator = allocator<CharT> >
+// 私有继承 Allocator：无状态分配器（std::allocator）不占额外空间（EBO）
+class basic_string : private Allocator {
 public:
-    typedef Traits     traits_type;
-    typedef CharT      value_type;
-    typedef Allocator  allocator_type;
-    typedef size_t     size_type;
-    typedef ptrdiff_t  difference_type;
-    typedef CharT&     reference;
+    typedef Traits       traits_type;
+    typedef CharT        value_type;
+    typedef Allocator    allocator_type;
+    typedef size_t       size_type;
+    typedef ptrdiff_t    difference_type;
+    typedef CharT&       reference;
     typedef const CharT& const_reference;
-    typedef CharT*     pointer;
+    typedef CharT*       pointer;
     typedef const CharT* const_pointer;
-    typedef CharT*     iterator;
+    typedef CharT*       iterator;
     typedef const CharT* const_iterator;
-    typedef std::reverse_iterator<iterator> reverse_iterator;
+    typedef std::reverse_iterator<iterator>       reverse_iterator;
     typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
 
-    static const size_type npos = size_type(-1);
+    static constexpr size_type npos = size_type(-1);
+
+    // 分配器传播策略（与 vector 一致）
+    typedef typename allocator_traits<Allocator>::propagate_on_container_copy_assignment
+        propagate_on_container_copy_assignment;
+    typedef typename allocator_traits<Allocator>::propagate_on_container_move_assignment
+        propagate_on_container_move_assignment;
+    typedef typename allocator_traits<Allocator>::propagate_on_container_swap
+        propagate_on_container_swap;
 
 private:
+    static constexpr size_type _S_local_cap = 15;
+
+    allocator_type& _M_alloc() noexcept { return *static_cast<allocator_type*>(this); }
+    const allocator_type& _M_alloc() const noexcept {
+        return *static_cast<const allocator_type*>(this);
+    }
+
+    CharT     _M_sso[_S_local_cap + 1];
     CharT*    _M_data;
     size_type _M_size;
-    size_type _M_cap;
+    size_type _M_cap;   // 不含结尾 '\0' 的可用容量
 
+    bool _M_is_local() const noexcept { return _M_data == _M_sso; }
+    void _M_set_local() noexcept {
+        _M_data = _M_sso;
+        _M_size = 0;
+        _M_cap = _S_local_cap;
+        _M_sso[0] = CharT();
+    }
+    void _M_dispose() noexcept {
+        if (!_M_is_local()) allocator_traits<Allocator>::deallocate(_M_alloc(), _M_data, _M_cap + 1);
+    }
+
+    // 接管 src 的内容（前置条件：*this 当前不持有缓冲区）
+    void _M_take(basic_string& src) noexcept {
+        if (src._M_is_local()) {
+            Traits::copy(_M_sso, src._M_sso, src._M_size + 1);
+            _M_data = _M_sso;
+            _M_size = src._M_size;
+            _M_cap = _S_local_cap;
+            src._M_set_local();
+        } else {
+            _M_data = src._M_data;
+            _M_size = src._M_size;
+            _M_cap = src._M_cap;
+            _M_sso[0] = CharT();
+            src._M_set_local();
+        }
+    }
+
+    // 只交换存储内容，不动分配器（swap 的分配器处理在外层完成）
+    void _M_swap_data(basic_string& o) noexcept {
+        if (_M_is_local() && o._M_is_local()) {
+            CharT tmp[_S_local_cap + 1];
+            const size_type n1 = _M_size, n2 = o._M_size;
+            Traits::copy(tmp, _M_sso, n1 + 1);
+            Traits::copy(_M_sso, o._M_sso, n2 + 1);
+            Traits::copy(o._M_sso, tmp, n1 + 1);
+            _M_size = n2;
+            o._M_size = n1;
+            return;
+        }
+        if (_M_is_local() != o._M_is_local()) {
+            basic_string& heap_side = _M_is_local() ? o : *this;
+            basic_string& loc_side  = _M_is_local() ? *this : o;
+            CharT localbuf[_S_local_cap + 1];
+            const size_type lsize = loc_side._M_size;
+            Traits::copy(localbuf, loc_side._M_sso, lsize + 1);
+
+            loc_side._M_data = heap_side._M_data;
+            loc_side._M_size = heap_side._M_size;
+            loc_side._M_cap  = heap_side._M_cap;
+
+            heap_side._M_data = heap_side._M_sso;
+            heap_side._M_size = lsize;
+            heap_side._M_cap  = _S_local_cap;
+            Traits::copy(heap_side._M_sso, localbuf, lsize + 1);
+            return;
+        }
+        CharT* d = _M_data;
+        const size_type sz = _M_size, cp = _M_cap;
+        _M_data = o._M_data; _M_size = o._M_size; _M_cap = o._M_cap;
+        o._M_data = d; o._M_size = sz; o._M_cap = cp;
+    }
+
+    // 保证 capacity >= n（不改变 size / 内容）
     void _M_reserve(size_type n) {
         if (n <= _M_cap) return;
-        size_type newcap = _M_cap ? _M_cap * 2 : 16;
-        while (newcap < n) newcap *= 2;
-        CharT* newdata = (CharT*)malloc((newcap + 1) * sizeof(CharT));
-        if (_M_data) {
-            Traits::copy(newdata, _M_data, _M_size + 1);
-            free(_M_data);
+        size_type newcap = _M_cap ? _M_cap : _S_local_cap;
+        while (newcap < n) {
+            size_type next = newcap * 2;
+            if (next <= newcap) { newcap = n; break; }   // 溢出保护
+            newcap = next;
         }
-        _M_data = newdata;
+        CharT* p = allocator_traits<Allocator>::allocate(_M_alloc(), newcap + 1);
+        Traits::copy(p, _M_data, _M_size);
+        p[_M_size] = CharT();
+        _M_dispose();
+        _M_data = p;
         _M_cap = newcap;
     }
 
-public:
-    basic_string() : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        _M_reserve(1);
-        _M_data[0] = CharT();
-    }
-
-    basic_string(const CharT* s) : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        _M_size = Traits::length(s);
-        _M_reserve(_M_size + 1);
-        Traits::copy(_M_data, s, _M_size);
-        _M_data[_M_size] = CharT();
-    }
-
-    basic_string(const CharT* s, size_type n) : _M_data(nullptr), _M_size(0), _M_cap(0) {
+    void _M_assign_raw(const CharT* s, size_type n) {
+        // 自引用检测：s 落在本对象当前缓冲区时，扩容会释放旧内存，
+        // 必须先把数据搬到新缓冲区再释放（先拷贝后扩容的顺序不能反）。
+        const bool self = (s >= _M_data && s < _M_data + _M_size + 1);
+        if (self && n > _M_cap) {
+            CharT* p = allocator_traits<Allocator>::allocate(_M_alloc(), n + 1);
+            Traits::move(p, s, n);
+            p[n] = CharT();
+            _M_dispose();
+            _M_data = p;
+            _M_cap = n;
+            _M_size = n;
+            return;
+        }
+        if (n > _M_cap) _M_reserve(n);
+        if (n) Traits::move(_M_data, s, n);
         _M_size = n;
-        _M_reserve(n + 1);
-        Traits::copy(_M_data, s, n);
         _M_data[n] = CharT();
     }
 
-    basic_string(size_type n, CharT c) : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        _M_reserve(n + 1);
+    // 把 [s, s+n) 复制到临时缓冲区（用于自引用场景）
+    CharT* _M_make_temp(const CharT* s, size_type n, CharT* stackbuf, size_type stackcap, bool& heap) {
+        heap = false;
+        if (n <= stackcap) {
+            Traits::copy(stackbuf, s, n);
+            return stackbuf;
+        }
+        CharT* p = static_cast<CharT*>(__detail::alloc_bytes_aligned(n * sizeof(CharT), alignof(CharT)));
+        Traits::copy(p, s, n);
+        heap = true;
+        return p;
+    }
+
+public:
+    //---------------------------------------------------------
+    // 构造 / 析构
+    //---------------------------------------------------------
+    basic_string() noexcept { _M_set_local(); }
+
+    basic_string(const CharT* s) { _M_set_local(); _M_assign_raw(s, Traits::length(s)); }
+    basic_string(const CharT* s, size_type n) { _M_set_local(); _M_assign_raw(s, n); }
+    basic_string(size_type n, CharT c) {
+        _M_set_local();
+        _M_reserve(n);
         Traits::assign(_M_data, n, c);
         _M_size = n;
         _M_data[n] = CharT();
     }
-
-    basic_string(const basic_string& other) : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        _M_size = other._M_size;
-        _M_reserve(_M_size + 1);
-        Traits::copy(_M_data, other._M_data, _M_size + 1);
+    basic_string(const basic_string& other)
+        : Allocator(allocator_traits<Allocator>::select_on_container_copy_construction(other._M_alloc())) {
+        _M_set_local();
+        _M_assign_raw(other._M_data, other._M_size);
     }
-
-    basic_string(const basic_string& other, size_type pos, size_type n = npos)
-        : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        size_type len = n < other._M_size - pos ? n : other._M_size - pos;
-        _M_reserve(len + 1);
-        Traits::copy(_M_data, other._M_data + pos, len);
-        _M_size = len;
-        _M_data[len] = CharT();
+    basic_string(const basic_string& other, size_type pos, size_type n = npos) {
+        if (pos > other._M_size) __detail::throw_out_of_range("basic_string: pos > size()");
+        _M_set_local();
+        size_type len = other._M_size - pos;
+        if (n < len) len = n;
+        _M_assign_raw(other._M_data + pos, len);
     }
-
-#if STDCPP_STR_CXX11
-    basic_string(basic_string&& other) noexcept
-        : _M_data(other._M_data), _M_size(other._M_size), _M_cap(other._M_cap) {
-        other._M_data = nullptr;
-        other._M_size = 0;
-        other._M_cap = 0;
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
+    basic_string(InputIt first, InputIt last) {
+        _M_set_local();
+        for (; first != last; ++first) push_back(static_cast<CharT>(*first));
     }
-
-    basic_string(initializer_list<CharT> il) : _M_data(nullptr), _M_size(0), _M_cap(0) {
-        _M_size = il.size();
-        _M_reserve(_M_size + 1);
-        size_type i = 0;
-        for (const CharT& c : il) _M_data[i++] = c;
-        _M_data[_M_size] = CharT();
+    basic_string(initializer_list<CharT> il) {
+        _M_set_local();
+        _M_assign_raw(il.begin(), il.size());
     }
-#endif
-
-    ~basic_string() { if (_M_data) free(_M_data); }
-
-    basic_string& operator=(const basic_string& other) {
-        if (this != &other) {
-            if (other._M_size + 1 > _M_cap) _M_reserve(other._M_size + 1);
-            Traits::copy(_M_data, other._M_data, other._M_size + 1);
+    basic_string(basic_string&& other) noexcept : Allocator(other._M_alloc()) {
+        if (other._M_is_local()) {
+            _M_set_local();
+            _M_assign_raw(other._M_data, other._M_size);
+        } else {
+            _M_data = other._M_data;
             _M_size = other._M_size;
+            _M_cap = other._M_cap;
+            _M_sso[0] = CharT();
+            other._M_set_local();
+        }
+    }
+    explicit basic_string(const Allocator& a) noexcept : Allocator(a) { _M_set_local(); }
+
+    basic_string(const CharT* s, size_type n, const Allocator& a) : Allocator(a) {
+        _M_set_local();
+        _M_assign_raw(s, n);
+    }
+
+    basic_string(const CharT* s, const Allocator& a) : Allocator(a) {
+        _M_set_local();
+        _M_assign_raw(s, Traits::length(s));
+    }
+
+    ~basic_string() { _M_dispose(); }
+
+    //---------------------------------------------------------
+    // 赋值（带分配器传播）
+    //---------------------------------------------------------
+    basic_string& operator=(const basic_string& other) {
+        if (this == &other) return *this;
+        if (propagate_on_container_copy_assignment::value && !(_M_alloc() == other._M_alloc())) {
+            // 先用对方的分配器造一份，成功后再接管，避免中途失败留下半释放状态
+            basic_string tmp(other._M_data, other._M_size, other._M_alloc());
+            _M_dispose();
+            _M_alloc() = other._M_alloc();
+            _M_take(tmp);
+        } else {
+            if (propagate_on_container_copy_assignment::value) _M_alloc() = other._M_alloc();
+            _M_assign_raw(other._M_data, other._M_size);
         }
         return *this;
     }
-    basic_string& operator=(const CharT* s) {
-        size_type n = Traits::length(s);
-        if (n + 1 > _M_cap) _M_reserve(n + 1);
-        Traits::copy(_M_data, s, n);
+
+    basic_string& operator=(basic_string&& other) noexcept {
+        if (this == &other) return *this;
+        if (propagate_on_container_move_assignment::value || _M_alloc() == other._M_alloc()) {
+            _M_dispose();
+            if (propagate_on_container_move_assignment::value) _M_alloc() = other._M_alloc();
+            _M_take(other);
+        } else {
+            // 分配器不等且不传播：不能接管对方缓冲区，只能逐字符拷贝
+            _M_assign_raw(other._M_data, other._M_size);
+            other.clear();
+        }
+        return *this;
+    }
+    basic_string& operator=(const CharT* s) { _M_assign_raw(s, Traits::length(s)); return *this; }
+    basic_string& operator=(CharT c) { _M_assign_raw(&c, 1); return *this; }
+    basic_string& operator=(initializer_list<CharT> il) { _M_assign_raw(il.begin(), il.size()); return *this; }
+
+    basic_string& assign(const basic_string& s) { return operator=(s); }
+    basic_string& assign(basic_string&& s) noexcept { return operator=(static_cast<basic_string&&>(s)); }
+    basic_string& assign(const CharT* s) { return operator=(s); }
+    basic_string& assign(const CharT* s, size_type n) { _M_assign_raw(s, n); return *this; }
+    basic_string& assign(size_type n, CharT c) {
+        if (n > _M_cap) _M_reserve(n);
+        Traits::assign(_M_data, n, c);
         _M_size = n;
         _M_data[n] = CharT();
         return *this;
     }
-    basic_string& operator=(CharT c) {
-        if (_M_cap < 2) _M_reserve(2);
-        _M_data[0] = c;
-        _M_data[1] = CharT();
-        _M_size = 1;
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
+    basic_string& assign(InputIt first, InputIt last) {
+        clear();
+        for (; first != last; ++first) push_back(static_cast<CharT>(*first));
         return *this;
     }
-#if STDCPP_STR_CXX11
-    basic_string& operator=(basic_string&& other) noexcept {
-        if (this != &other) {
-            if (_M_data) free(_M_data);
-            _M_data = other._M_data;
-            _M_size = other._M_size;
-            _M_cap = other._M_cap;
-            other._M_data = nullptr;
-            other._M_size = 0;
-            other._M_cap = 0;
-        }
-        return *this;
-    }
-    basic_string& operator=(initializer_list<CharT> il) {
-        if (il.size() + 1 > _M_cap) _M_reserve(il.size() + 1);
-        size_type i = 0;
-        for (const CharT& c : il) _M_data[i++] = c;
-        _M_size = il.size();
-        _M_data[_M_size] = CharT();
-        return *this;
-    }
-#endif
+    basic_string& assign(initializer_list<CharT> il) { return assign(il.begin(), il.size()); }
 
+    //---------------------------------------------------------
+    // 迭代器
+    //---------------------------------------------------------
     iterator begin() noexcept { return _M_data; }
     const_iterator begin() const noexcept { return _M_data; }
+    const_iterator cbegin() const noexcept { return _M_data; }
     iterator end() noexcept { return _M_data + _M_size; }
     const_iterator end() const noexcept { return _M_data + _M_size; }
+    const_iterator cend() const noexcept { return _M_data + _M_size; }
     reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
     const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
+    const_reverse_iterator crbegin() const noexcept { return const_reverse_iterator(end()); }
     reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
     const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
+    const_reverse_iterator crend() const noexcept { return const_reverse_iterator(begin()); }
 
+    //---------------------------------------------------------
+    // 容量
+    //---------------------------------------------------------
     size_type size() const noexcept { return _M_size; }
     size_type length() const noexcept { return _M_size; }
     size_type capacity() const noexcept { return _M_cap; }
-    size_type max_size() const noexcept { return size_type(-1) / sizeof(CharT); }
+    size_type max_size() const noexcept { return size_type(-1) / sizeof(CharT) - 1; }
     bool empty() const noexcept { return _M_size == 0; }
 
-    void reserve(size_type n = 0) { if (n > _M_cap) _M_reserve(n); }
+    void reserve(size_type n = 0) { _M_reserve(n); }
     void shrink_to_fit() {
+        if (_M_size <= _S_local_cap) {
+            if (!_M_is_local()) {
+                CharT tmp[_S_local_cap + 1];
+                Traits::copy(tmp, _M_data, _M_size);
+                tmp[_M_size] = CharT();
+                _M_dispose();
+                _M_data = _M_sso;
+                _M_cap = _S_local_cap;
+                Traits::copy(_M_sso, tmp, _M_size + 1);
+            }
+            return;
+        }
         if (_M_cap > _M_size) {
-            CharT* newdata = (CharT*)malloc((_M_size + 1) * sizeof(CharT));
-            Traits::copy(newdata, _M_data, _M_size + 1);
-            free(_M_data);
-            _M_data = newdata;
+            CharT* p = allocator_traits<Allocator>::allocate(_M_alloc(), _M_size + 1);
+            Traits::copy(p, _M_data, _M_size + 1);
+            _M_dispose();
+            _M_data = p;
             _M_cap = _M_size;
         }
     }
     void clear() noexcept { _M_size = 0; _M_data[0] = CharT(); }
+    void resize(size_type n) { resize(n, CharT()); }
+    void resize(size_type n, CharT c) {
+        if (n < _M_size) {
+            _M_size = n;
+            _M_data[n] = CharT();
+        } else if (n > _M_size) {
+            _M_reserve(n);
+            Traits::assign(_M_data + _M_size, n - _M_size, c);
+            _M_size = n;
+            _M_data[n] = CharT();
+        }
+    }
 
+    //---------------------------------------------------------
+    // 访问
+    //---------------------------------------------------------
     const CharT* c_str() const noexcept { return _M_data; }
     const CharT* data() const noexcept { return _M_data; }
-#if STDCPP_STR_CXX17
     CharT* data() noexcept { return _M_data; }
-#endif
-    operator const CharT*() const { return _M_data; }
 
     reference operator[](size_type i) { return _M_data[i]; }
     const_reference operator[](size_type i) const { return _M_data[i]; }
     reference at(size_type i) {
-        if (i >= _M_size) throw out_of_range("basic_string::at");
+        if (i >= _M_size) __detail::throw_out_of_range("basic_string::at");
         return _M_data[i];
     }
     const_reference at(size_type i) const {
-        if (i >= _M_size) throw out_of_range("basic_string::at");
+        if (i >= _M_size) __detail::throw_out_of_range("basic_string::at");
         return _M_data[i];
     }
     reference front() { return _M_data[0]; }
     const_reference front() const { return _M_data[0]; }
-    reference back() { return _M_data[_M_size - 1]; }
-    const_reference back() const { return _M_data[_M_size - 1]; }
+    reference back() { return _M_data[_M_size ? _M_size - 1 : 0]; }
+    const_reference back() const { return _M_data[_M_size ? _M_size - 1 : 0]; }
 
+    //---------------------------------------------------------
+    // 追加
+    //---------------------------------------------------------
     void push_back(CharT c) {
-        if (_M_size + 2 > _M_cap) _M_reserve(_M_size + 2);
+        _M_reserve(_M_size + 1);
         _M_data[_M_size++] = c;
         _M_data[_M_size] = CharT();
     }
-    void pop_back() { if (_M_size > 0) { --_M_size; _M_data[_M_size] = CharT(); } }
+    void pop_back() {
+        if (_M_size) { --_M_size; _M_data[_M_size] = CharT(); }
+    }
 
-    basic_string& append(const CharT* s) {
-        size_type n = Traits::length(s);
-        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
-        Traits::copy(_M_data + _M_size, s, n);
-        _M_size += n;
-        _M_data[_M_size] = CharT();
-        return *this;
+    basic_string& append(const basic_string& s) { return append(s._M_data, s._M_size); }
+    basic_string& append(const basic_string& s, size_type pos, size_type n = npos) {
+        if (pos > s._M_size) __detail::throw_out_of_range("basic_string::append");
+        size_type len = s._M_size - pos;
+        if (n < len) len = n;
+        return append(s._M_data + pos, len);
     }
     basic_string& append(const CharT* s, size_type n) {
-        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        if (n == 0) return *this;
+        bool heap = false;
+        CharT stackbuf[64];
+        const bool self = (s >= _M_data && s < _M_data + _M_size + 1);
+        if (self) s = _M_make_temp(s, n, stackbuf, sizeof(stackbuf) / sizeof(CharT), heap);
+        _M_reserve(_M_size + n);
         Traits::copy(_M_data + _M_size, s, n);
         _M_size += n;
         _M_data[_M_size] = CharT();
+        if (heap) __detail::dealloc_bytes_aligned(const_cast<CharT*>(s), alignof(CharT));
         return *this;
     }
-    basic_string& append(const basic_string& s) { return append(s._M_data, s._M_size); }
+    basic_string& append(const CharT* s) { return append(s, Traits::length(s)); }
     basic_string& append(size_type n, CharT c) {
-        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        _M_reserve(_M_size + n);
         Traits::assign(_M_data + _M_size, n, c);
         _M_size += n;
         _M_data[_M_size] = CharT();
         return *this;
     }
-    template<class InputIt>
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
     basic_string& append(InputIt first, InputIt last) {
-        for (; first != last; ++first) push_back(*first);
+        for (; first != last; ++first) push_back(static_cast<CharT>(*first));
         return *this;
     }
-#if STDCPP_STR_CXX11
-    basic_string& append(basic_string&& s) { return append(s._M_data, s._M_size); }
-    basic_string& append(initializer_list<CharT> il) { return append(il.begin(), il.end()); }
-#endif
+    basic_string& append(initializer_list<CharT> il) { return append(il.begin(), il.size()); }
 
     basic_string& operator+=(const basic_string& s) { return append(s); }
     basic_string& operator+=(const CharT* s) { return append(s); }
     basic_string& operator+=(CharT c) { push_back(c); return *this; }
-#if STDCPP_STR_CXX11
     basic_string& operator+=(initializer_list<CharT> il) { return append(il); }
-#endif
 
-    basic_string& insert(size_type pos, const basic_string& s) {
-        return insert(pos, s._M_data, s._M_size);
-    }
-    basic_string& insert(size_type pos, const CharT* s) {
-        return insert(pos, s, Traits::length(s));
-    }
+    //---------------------------------------------------------
+    // 插入 / 删除 / 替换
+    //---------------------------------------------------------
+    basic_string& insert(size_type pos, const basic_string& s) { return insert(pos, s._M_data, s._M_size); }
+    basic_string& insert(size_type pos, const CharT* s) { return insert(pos, s, Traits::length(s)); }
+
     basic_string& insert(size_type pos, const CharT* s, size_type n) {
-        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        if (pos > _M_size) __detail::throw_out_of_range("basic_string::insert");
+        if (n == 0) return *this;
+        bool heap = false;
+        CharT stackbuf[64];
+        const bool self = (s >= _M_data && s < _M_data + _M_size + 1);
+        if (self) s = _M_make_temp(s, n, stackbuf, sizeof(stackbuf) / sizeof(CharT), heap);
+        _M_reserve(_M_size + n);
         Traits::move(_M_data + pos + n, _M_data + pos, _M_size - pos + 1);
         Traits::copy(_M_data + pos, s, n);
         _M_size += n;
+        if (heap) __detail::dealloc_bytes_aligned(const_cast<CharT*>(s), alignof(CharT));
         return *this;
     }
+
     basic_string& insert(size_type pos, size_type n, CharT c) {
-        if (_M_size + n + 1 > _M_cap) _M_reserve(_M_size + n + 1);
+        if (pos > _M_size) __detail::throw_out_of_range("basic_string::insert");
+        _M_reserve(_M_size + n);
         Traits::move(_M_data + pos + n, _M_data + pos, _M_size - pos + 1);
         Traits::assign(_M_data + pos, n, c);
         _M_size += n;
         return *this;
     }
+
     iterator insert(const_iterator p, CharT c) {
-        size_type pos = p - _M_data;
+        size_type pos = static_cast<size_type>(p - _M_data);
         insert(pos, 1, c);
         return _M_data + pos;
     }
-    template<class InputIt>
-    void insert(const_iterator p, InputIt first, InputIt last) {
-        size_type pos = p - _M_data;
-        for (size_type i = 0; first != last; ++first, ++i)
-            insert(pos + i, 1, *first);
+    iterator insert(const_iterator p, size_type n, CharT c) {
+        size_type pos = static_cast<size_type>(p - _M_data);
+        insert(pos, n, c);
+        return _M_data + pos;
+    }
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
+    iterator insert(const_iterator p, InputIt first, InputIt last) {
+        size_type pos = static_cast<size_type>(p - _M_data);
+        basic_string tmp(first, last);
+        insert(pos, tmp._M_data, tmp._M_size);
+        return _M_data + pos;
     }
 
     basic_string& erase(size_type pos = 0, size_type n = npos) {
-        size_type len = n < _M_size - pos ? n : _M_size - pos;
+        if (pos > _M_size) __detail::throw_out_of_range("basic_string::erase");
+        size_type len = _M_size - pos;
+        if (n < len) len = n;
         Traits::move(_M_data + pos, _M_data + pos + len, _M_size - pos - len + 1);
         _M_size -= len;
         return *this;
     }
     iterator erase(const_iterator p) {
-        size_type pos = p - _M_data;
+        size_type pos = static_cast<size_type>(p - _M_data);
         erase(pos, 1);
         return _M_data + pos;
     }
     iterator erase(const_iterator first, const_iterator last) {
-        size_type pos = first - _M_data;
-        size_type n = last - first;
+        size_type pos = static_cast<size_type>(first - _M_data);
+        size_type n = static_cast<size_type>(last - first);
         erase(pos, n);
         return _M_data + pos;
     }
@@ -456,109 +863,127 @@ public:
         return replace(pos, n, s, Traits::length(s));
     }
     basic_string& replace(size_type pos, size_type n, const CharT* s, size_type n2) {
-        erase(pos, n);
-        insert(pos, s, n2);
+        if (pos > _M_size) __detail::throw_out_of_range("basic_string::replace");
+        size_type len = _M_size - pos;
+        if (n < len) len = n;
+        // 先把源拷出来：源可能与目标区间重叠
+        basic_string tmp(s, n2);
+        erase(pos, len);
+        insert(pos, tmp._M_data, tmp._M_size);
         return *this;
     }
     basic_string& replace(size_type pos, size_type n, size_type n2, CharT c) {
-        erase(pos, n);
+        if (pos > _M_size) __detail::throw_out_of_range("basic_string::replace");
+        size_type len = _M_size - pos;
+        if (n < len) len = n;
+        erase(pos, len);
         insert(pos, n2, c);
         return *this;
     }
     basic_string& replace(const_iterator first, const_iterator last, const basic_string& s) {
-        return replace(first - _M_data, last - first, s);
+        return replace(static_cast<size_type>(first - _M_data), static_cast<size_type>(last - first), s);
     }
     basic_string& replace(const_iterator first, const_iterator last, const CharT* s) {
-        return replace(first - _M_data, last - first, s);
+        return replace(static_cast<size_type>(first - _M_data), static_cast<size_type>(last - first), s);
     }
     basic_string& replace(const_iterator first, const_iterator last, size_type n, CharT c) {
-        return replace(first - _M_data, last - first, n, c);
+        return replace(static_cast<size_type>(first - _M_data), static_cast<size_type>(last - first), n, c);
     }
-    template<class InputIt>
+    template<class InputIt, class = typename enable_if<!is_integral<InputIt>::value>::type>
     basic_string& replace(const_iterator first, const_iterator last, InputIt f2, InputIt l2) {
-        size_type pos = first - _M_data;
-        size_type n = last - first;
-        erase(pos, n);
-        for (; f2 != l2; ++f2) insert(pos++, 1, *f2);
-        return *this;
+        basic_string tmp(f2, l2);
+        return replace(first, last, tmp);
     }
 
-    int compare(const basic_string& s) const noexcept {
-        size_type rlen = _M_size < s._M_size ? _M_size : s._M_size;
-        int r = Traits::compare(_M_data, s._M_data, rlen);
-        if (r != 0) return r;
-        if (_M_size < s._M_size) return -1;
-        if (_M_size > s._M_size) return 1;
-        return 0;
-    }
-    int compare(const CharT* s) const {
-        size_type n = Traits::length(s);
-        size_type rlen = _M_size < n ? _M_size : n;
-        int r = Traits::compare(_M_data, s, rlen);
-        if (r != 0) return r;
-        if (_M_size < n) return -1;
-        if (_M_size > n) return 1;
-        return 0;
-    }
-
+    //---------------------------------------------------------
+    // 查找
+    //---------------------------------------------------------
     size_type find(const basic_string& s, size_type pos = 0) const noexcept {
         return find(s._M_data, pos, s._M_size);
     }
-    size_type find(const CharT* s, size_type pos = 0) const noexcept {
-        return find(s, pos, Traits::length(s));
-    }
     size_type find(const CharT* s, size_type pos, size_type n) const noexcept {
         if (n == 0) return pos <= _M_size ? pos : npos;
-        if (n > _M_size) return npos;
+        if (pos > _M_size || n > _M_size - pos) return npos;
         for (size_type i = pos; i + n <= _M_size; ++i)
             if (Traits::compare(_M_data + i, s, n) == 0) return i;
         return npos;
     }
+    size_type find(const CharT* s, size_type pos = 0) const noexcept { return find(s, pos, Traits::length(s)); }
     size_type find(CharT c, size_type pos = 0) const noexcept {
         if (pos >= _M_size) return npos;
         const CharT* p = Traits::find(_M_data + pos, _M_size - pos, c);
-        return p ? size_type(p - _M_data) : npos;
+        return p ? static_cast<size_type>(p - _M_data) : npos;
     }
 
     size_type rfind(const basic_string& s, size_type pos = npos) const noexcept {
         return rfind(s._M_data, pos, s._M_size);
     }
-    size_type rfind(const CharT* s, size_type pos = npos) const noexcept {
-        return rfind(s, pos, Traits::length(s));
-    }
     size_type rfind(const CharT* s, size_type pos, size_type n) const noexcept {
         if (n > _M_size) return npos;
-        if (pos > _M_size - n) pos = _M_size - n;
-        for (size_type i = pos + 1; i > 0; --i) {
-            if (Traits::compare(_M_data + i - 1, s, n) == 0) return i - 1;
+        size_type i = _M_size - n;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (Traits::compare(_M_data + i, s, n) == 0) return i;
+            if (i == 0) break;
+            --i;
         }
         return npos;
     }
+    size_type rfind(const CharT* s, size_type pos = npos) const noexcept { return rfind(s, pos, Traits::length(s)); }
     size_type rfind(CharT c, size_type pos = npos) const noexcept {
         if (_M_size == 0) return npos;
-        if (pos >= _M_size) pos = _M_size - 1;
-        for (size_type i = pos + 1; i > 0; --i)
-            if (Traits::eq(_M_data[i - 1], c)) return i - 1;
+        size_type i = _M_size - 1;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (Traits::eq(_M_data[i], c)) return i;
+            if (i == 0) break;
+            --i;
+        }
         return npos;
     }
 
     size_type find_first_of(const basic_string& s, size_type pos = 0) const noexcept {
         return find_first_of(s._M_data, pos, s._M_size);
     }
-    size_type find_first_of(const CharT* s, size_type pos = 0) const noexcept {
-        return find_first_of(s, pos, Traits::length(s));
-    }
     size_type find_first_of(const CharT* s, size_type pos, size_type n) const noexcept {
         for (size_type i = pos; i < _M_size; ++i)
             if (Traits::find(s, n, _M_data[i])) return i;
         return npos;
     }
+    size_type find_first_of(const CharT* s, size_type pos = 0) const noexcept {
+        return find_first_of(s, pos, Traits::length(s));
+    }
     size_type find_first_of(CharT c, size_type pos = 0) const noexcept { return find(c, pos); }
 
+    size_type find_last_of(const basic_string& s, size_type pos = npos) const noexcept {
+        return find_last_of(s._M_data, pos, s._M_size);
+    }
+    size_type find_last_of(const CharT* s, size_type pos, size_type n) const noexcept {
+        if (_M_size == 0) return npos;
+        size_type i = _M_size - 1;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (Traits::find(s, n, _M_data[i])) return i;
+            if (i == 0) break;
+            --i;
+        }
+        return npos;
+    }
+    size_type find_last_of(const CharT* s, size_type pos = npos) const noexcept {
+        return find_last_of(s, pos, Traits::length(s));
+    }
+    size_type find_last_of(CharT c, size_type pos = npos) const noexcept { return rfind(c, pos); }
+
+    size_type find_first_not_of(const basic_string& s, size_type pos = 0) const noexcept {
+        return find_first_not_of(s._M_data, pos, s._M_size);
+    }
     size_type find_first_not_of(const CharT* s, size_type pos, size_type n) const noexcept {
         for (size_type i = pos; i < _M_size; ++i)
             if (!Traits::find(s, n, _M_data[i])) return i;
         return npos;
+    }
+    size_type find_first_not_of(const CharT* s, size_type pos = 0) const noexcept {
+        return find_first_not_of(s, pos, Traits::length(s));
     }
     size_type find_first_not_of(CharT c, size_type pos = 0) const noexcept {
         for (size_type i = pos; i < _M_size; ++i)
@@ -566,187 +991,538 @@ public:
         return npos;
     }
 
-    size_type find_last_of(const CharT* s, size_type pos, size_type n) const noexcept {
-        if (_M_size == 0) return npos;
-        if (pos >= _M_size) pos = _M_size - 1;
-        for (size_type i = pos + 1; i > 0; --i)
-            if (Traits::find(s, n, _M_data[i - 1])) return i - 1;
-        return npos;
+    size_type find_last_not_of(const basic_string& s, size_type pos = npos) const noexcept {
+        return find_last_not_of(s._M_data, pos, s._M_size);
     }
     size_type find_last_not_of(const CharT* s, size_type pos, size_type n) const noexcept {
         if (_M_size == 0) return npos;
-        if (pos >= _M_size) pos = _M_size - 1;
-        for (size_type i = pos + 1; i > 0; --i)
-            if (!Traits::find(s, n, _M_data[i - 1])) return i - 1;
+        size_type i = _M_size - 1;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (!Traits::find(s, n, _M_data[i])) return i;
+            if (i == 0) break;
+            --i;
+        }
+        return npos;
+    }
+    size_type find_last_not_of(const CharT* s, size_type pos = npos) const noexcept {
+        return find_last_not_of(s, pos, Traits::length(s));
+    }
+    size_type find_last_not_of(CharT c, size_type pos = npos) const noexcept {
+        if (_M_size == 0) return npos;
+        size_type i = _M_size - 1;
+        if (pos < i) i = pos;
+        for (;;) {
+            if (!Traits::eq(_M_data[i], c)) return i;
+            if (i == 0) break;
+            --i;
+        }
         return npos;
     }
 
+    //---------------------------------------------------------
+    // 比较 / 子串
+    //---------------------------------------------------------
+    int compare(const basic_string& s) const noexcept {
+        size_type n = _M_size < s._M_size ? _M_size : s._M_size;
+        int r = Traits::compare(_M_data, s._M_data, n);
+        if (r != 0) return r;
+        if (_M_size < s._M_size) return -1;
+        if (_M_size > s._M_size) return 1;
+        return 0;
+    }
+    int compare(size_type pos, size_type n, const basic_string& s) const {
+        return substr(pos, n).compare(s);
+    }
+    int compare(size_type pos, size_type n, const basic_string& s, size_type pos2, size_type n2 = npos) const {
+        return substr(pos, n).compare(s.substr(pos2, n2));
+    }
+    int compare(const CharT* s) const noexcept {
+        size_type n = Traits::length(s);
+        size_type r = _M_size < n ? _M_size : n;
+        int c = Traits::compare(_M_data, s, r);
+        if (c != 0) return c;
+        if (_M_size < n) return -1;
+        if (_M_size > n) return 1;
+        return 0;
+    }
+    int compare(size_type pos, size_type n, const CharT* s) const { return substr(pos, n).compare(s); }
+    int compare(size_type pos, size_type n, const CharT* s, size_type n2) const {
+        return substr(pos, n).compare(basic_string(s, n2));
+    }
+
     basic_string substr(size_type pos = 0, size_type n = npos) const {
-        size_type len = n < _M_size - pos ? n : _M_size - pos;
+        if (pos > _M_size) __detail::throw_out_of_range("basic_string::substr");
+        size_type len = _M_size - pos;
+        if (n < len) len = n;
         return basic_string(_M_data + pos, len);
     }
 
-    void resize(size_type n) { resize(n, CharT()); }
-    void resize(size_type n, CharT c) {
-        if (n < _M_size) {
-            _M_size = n;
-            _M_data[n] = CharT();
-        } else if (n > _M_size) {
-            if (n + 1 > _M_cap) _M_reserve(n + 1);
-            Traits::assign(_M_data + _M_size, n - _M_size, c);
-            _M_size = n;
-            _M_data[n] = CharT();
+    size_type copy(CharT* dest, size_type n, size_type pos = 0) const {
+        if (pos > _M_size) __detail::throw_out_of_range("basic_string::copy");
+        size_type len = _M_size - pos;
+        if (n < len) len = n;
+        Traits::copy(dest, _M_data + pos, len);
+        return len;
+    }
+
+    void swap(basic_string& other) noexcept {
+        if (this == &other) return;
+        if (propagate_on_container_swap::value) {
+            allocator_type tmp_a = _M_alloc();
+            _M_alloc() = other._M_alloc();
+            other._M_alloc() = tmp_a;
+        } else {
+            // 分配器不等且不传播时标准规定行为未定义；调试构建中提前暴露
+            STDCPP_ASSERT(_M_alloc() == other._M_alloc());
         }
+        _M_swap_data(other);
     }
 
-    void swap(basic_string& s) noexcept {
-        std::swap(_M_data, s._M_data);
-        std::swap(_M_size, s._M_size);
-        std::swap(_M_cap, s._M_cap);
-    }
-
-    allocator_type get_allocator() const { return allocator_type(); }
-
-#if STDCPP_STR_CXX20
-    bool starts_with(basic_string_view<CharT, Traits> sv) const noexcept {
-        return _M_size >= sv.size() && Traits::compare(_M_data, sv.data(), sv.size()) == 0;
-    }
-    bool starts_with(CharT c) const noexcept { return _M_size > 0 && Traits::eq(_M_data[0], c); }
-    bool starts_with(const CharT* s) const {
-        size_type n = Traits::length(s);
-        return _M_size >= n && Traits::compare(_M_data, s, n) == 0;
-    }
-    bool ends_with(basic_string_view<CharT, Traits> sv) const noexcept {
-        return _M_size >= sv.size() && Traits::compare(_M_data + _M_size - sv.size(), sv.data(), sv.size()) == 0;
-    }
-    bool ends_with(CharT c) const noexcept { return _M_size > 0 && Traits::eq(_M_data[_M_size - 1], c); }
-    bool ends_with(const CharT* s) const {
-        size_type n = Traits::length(s);
-        return _M_size >= n && Traits::compare(_M_data + _M_size - n, s, n) == 0;
-    }
-#endif
-
-#if STDCPP_STR_CXX23
-    bool contains(basic_string_view<CharT, Traits> sv) const noexcept { return find(sv) != npos; }
-    bool contains(CharT c) const noexcept { return find(c) != npos; }
-    bool contains(const CharT* s) const { return find(s) != npos; }
-
-    template<class Operation>
-    void resize_and_overwrite(size_type n, Operation op) {
-        if (n + 1 > _M_cap) _M_reserve(n + 1);
-        size_type r = static_cast<size_type>(op(_M_data, n));
-        _M_data[r] = CharT();
-        _M_size = r;
-    }
-#endif
+    allocator_type get_allocator() const noexcept { return _M_alloc(); }
 };
 
+//=============================================================
+// 非成员：拼接 / 比较 / swap
+//=============================================================
 template<class C, class T, class A>
 basic_string<C, T, A> operator+(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) {
-    basic_string<C, T, A> r = a; r.append(b); return r;
+    basic_string<C, T, A> r;
+    r.reserve(a.size() + b.size());
+    r.append(a);
+    r.append(b);
+    return r;
 }
 template<class C, class T, class A>
 basic_string<C, T, A> operator+(const basic_string<C, T, A>& a, const C* b) {
-    basic_string<C, T, A> r = a; r.append(b); return r;
+    basic_string<C, T, A> r(a);
+    r.append(b);
+    return r;
 }
 template<class C, class T, class A>
 basic_string<C, T, A> operator+(const C* a, const basic_string<C, T, A>& b) {
-    basic_string<C, T, A> r(a); r.append(b); return r;
+    basic_string<C, T, A> r(a);
+    r.append(b);
+    return r;
 }
 template<class C, class T, class A>
 basic_string<C, T, A> operator+(const basic_string<C, T, A>& a, C b) {
-    basic_string<C, T, A> r = a; r.push_back(b); return r;
+    basic_string<C, T, A> r(a);
+    r.push_back(b);
+    return r;
+}
+template<class C, class T, class A>
+basic_string<C, T, A> operator+(basic_string<C, T, A>&& a, const basic_string<C, T, A>& b) {
+    a.append(b);
+    return static_cast<basic_string<C, T, A>&&>(a);
 }
 
 template<class C, class T, class A>
-bool operator==(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) == 0; }
+bool operator==(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) noexcept { return a.compare(b) == 0; }
 template<class C, class T, class A>
-bool operator==(const basic_string<C, T, A>& a, const C* b) { return a.compare(b) == 0; }
+bool operator==(const basic_string<C, T, A>& a, const C* b) noexcept { return a.compare(b) == 0; }
 template<class C, class T, class A>
-bool operator!=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) != 0; }
+bool operator==(const C* a, const basic_string<C, T, A>& b) noexcept { return b.compare(a) == 0; }
 template<class C, class T, class A>
-bool operator<(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) < 0; }
+bool operator!=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) noexcept { return a.compare(b) != 0; }
 template<class C, class T, class A>
-bool operator<=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) <= 0; }
+bool operator!=(const basic_string<C, T, A>& a, const C* b) noexcept { return a.compare(b) != 0; }
 template<class C, class T, class A>
-bool operator>(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) > 0; }
+bool operator<(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) noexcept { return a.compare(b) < 0; }
 template<class C, class T, class A>
-bool operator>=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) { return a.compare(b) >= 0; }
+bool operator<=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) noexcept { return a.compare(b) <= 0; }
+template<class C, class T, class A>
+bool operator>(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) noexcept { return a.compare(b) > 0; }
+template<class C, class T, class A>
+bool operator>=(const basic_string<C, T, A>& a, const basic_string<C, T, A>& b) noexcept { return a.compare(b) >= 0; }
 
 template<class C, class T, class A>
-void swap(basic_string<C, T, A>& a, basic_string<C, T, A>& b) { a.swap(b); }
+void swap(basic_string<C, T, A>& a, basic_string<C, T, A>& b) noexcept { a.swap(b); }
 
 typedef basic_string<char>     string;
 typedef basic_string<wchar_t>  wstring;
-#if STDCPP_STR_CXX11
 typedef basic_string<char16_t> u16string;
 typedef basic_string<char32_t> u32string;
-#endif
 
 //=============================================================
-// numeric conversions (C++11)
+// 数值转换
 //=============================================================
-#if STDCPP_STR_CXX11
+namespace __detail {
+
+inline void check_str_int_args(const char* s, size_t len, size_t consumed, bool overflow, const char* what) {
+    if (consumed == 0) __detail::throw_invalid_argument(what);
+    if (overflow) __detail::throw_out_of_range(what);
+    (void)s; (void)len;
+}
+
+} // namespace __detail
+
 inline int stoi(const string& s, size_t* pos = nullptr, int base = 10) {
-    char* end;
-    long r = strtol(s.c_str(), &end, base);
-    if (pos) *pos = end - s.c_str();
-    return (int)r;
+    bool ov = false, neg = false; unsigned long long mag = 0; size_t used = 0;
+    bool ok = __detail::parse_integer(s.c_str(), s.size(), base, ov, neg, mag, used);
+    if (!ok) __detail::throw_invalid_argument("stoi");
+    if (ov || (!neg && mag > 2147483647ULL) || (neg && mag > 2147483648ULL))
+        __detail::throw_out_of_range("stoi");
+    if (pos) *pos = used;
+    return neg ? static_cast<int>(-static_cast<long long>(mag)) : static_cast<int>(mag);
 }
 inline long stol(const string& s, size_t* pos = nullptr, int base = 10) {
-    char* end;
-    long r = strtol(s.c_str(), &end, base);
-    if (pos) *pos = end - s.c_str();
-    return r;
+    bool ov = false, neg = false; unsigned long long mag = 0; size_t used = 0;
+    bool ok = __detail::parse_integer(s.c_str(), s.size(), base, ov, neg, mag, used);
+    if (!ok) __detail::throw_invalid_argument("stol");
+    // long 在 Windows(LLP64) 是 32 位、Linux(LP64) 是 64 位，必须按
+    // sizeof(long) 判界，否则跨平台行为不一致（静默截断）。
+    const unsigned long long lmax = (sizeof(long) == 8) ? 9223372036854775807ULL : 2147483647ULL;
+    const unsigned long long lmin_mag = (sizeof(long) == 8) ? 9223372036854775808ULL : 2147483648ULL;
+    if (ov || (!neg && mag > lmax) || (neg && mag > lmin_mag))
+        __detail::throw_out_of_range("stol");
+    if (pos) *pos = used;
+    return neg ? static_cast<long>(-static_cast<long long>(mag)) : static_cast<long>(mag);
 }
 inline long long stoll(const string& s, size_t* pos = nullptr, int base = 10) {
-    char* end;
-    long long r = strtoll(s.c_str(), &end, base);
-    if (pos) *pos = end - s.c_str();
-    return r;
+    bool ov = false, neg = false; unsigned long long mag = 0; size_t used = 0;
+    bool ok = __detail::parse_integer(s.c_str(), s.size(), base, ov, neg, mag, used);
+    if (!ok) __detail::throw_invalid_argument("stoll");
+    if (ov || (!neg && mag > 9223372036854775807ULL) || (neg && mag > 9223372036854775808ULL))
+        __detail::throw_out_of_range("stoll");
+    if (pos) *pos = used;
+    return neg ? -static_cast<long long>(mag) : static_cast<long long>(mag);
 }
 inline unsigned long stoul(const string& s, size_t* pos = nullptr, int base = 10) {
-    char* end;
-    unsigned long r = strtoul(s.c_str(), &end, base);
-    if (pos) *pos = end - s.c_str();
-    return r;
+    bool ov = false, neg = false; unsigned long long mag = 0; size_t used = 0;
+    bool ok = __detail::parse_integer(s.c_str(), s.size(), base, ov, neg, mag, used);
+    if (!ok) __detail::throw_invalid_argument("stoul");
+    if (ov || mag > 18446744073709551615ULL) __detail::throw_out_of_range("stoul");
+    if (pos) *pos = used;
+    return static_cast<unsigned long>(neg ? (0ULL - mag) : mag);
 }
 inline unsigned long long stoull(const string& s, size_t* pos = nullptr, int base = 10) {
-    char* end;
-    unsigned long long r = strtoull(s.c_str(), &end, base);
-    if (pos) *pos = end - s.c_str();
-    return r;
+    bool ov = false, neg = false; unsigned long long mag = 0; size_t used = 0;
+    bool ok = __detail::parse_integer(s.c_str(), s.size(), base, ov, neg, mag, used);
+    if (!ok) __detail::throw_invalid_argument("stoull");
+    if (ov) __detail::throw_out_of_range("stoull");
+    if (pos) *pos = used;
+    return neg ? (0ULL - mag) : mag;
 }
 inline float stof(const string& s, size_t* pos = nullptr) {
-    char* end; float r = strtof(s.c_str(), &end); if (pos) *pos = end - s.c_str(); return r;
+    size_t used = 0;
+    long double v = __detail::parse_float(s.c_str(), s.size(), used);
+    if (used == 0) __detail::throw_invalid_argument("stof");
+    if (pos) *pos = used;
+    return static_cast<float>(v);
 }
 inline double stod(const string& s, size_t* pos = nullptr) {
-    char* end; double r = strtod(s.c_str(), &end); if (pos) *pos = end - s.c_str(); return r;
+    size_t used = 0;
+    long double v = __detail::parse_float(s.c_str(), s.size(), used);
+    if (used == 0) __detail::throw_invalid_argument("stod");
+    if (pos) *pos = used;
+    return static_cast<double>(v);
 }
 inline long double stold(const string& s, size_t* pos = nullptr) {
-    char* end; long double r = strtold(s.c_str(), &end); if (pos) *pos = end - s.c_str(); return r;
+    size_t used = 0;
+    long double v = __detail::parse_float(s.c_str(), s.size(), used);
+    if (used == 0) __detail::throw_invalid_argument("stold");
+    if (pos) *pos = used;
+    return v;
 }
 
-inline string to_string(int v) { char b[32]; snprintf(b, sizeof(b), "%d", v); return string(b); }
-inline string to_string(long v) { char b[32]; snprintf(b, sizeof(b), "%ld", v); return string(b); }
-inline string to_string(long long v) { char b[32]; snprintf(b, sizeof(b), "%lld", v); return string(b); }
-inline string to_string(unsigned v) { char b[32]; snprintf(b, sizeof(b), "%u", v); return string(b); }
-inline string to_string(unsigned long v) { char b[32]; snprintf(b, sizeof(b), "%lu", v); return string(b); }
-inline string to_string(unsigned long long v) { char b[32]; snprintf(b, sizeof(b), "%llu", v); return string(b); }
-inline string to_string(float v) { char b[64]; snprintf(b, sizeof(b), "%f", v); return string(b); }
-inline string to_string(double v) { char b[64]; snprintf(b, sizeof(b), "%f", v); return string(b); }
-inline string to_string(long double v) { char b[64]; snprintf(b, sizeof(b), "%Lf", v); return string(b); }
+namespace __detail {
+
+inline void utoa_impl(char* buf, size_t bufsz, unsigned long long v, bool neg, size_t& len) {
+    char tmp[32];
+    size_t n = 0;
+    if (v == 0) tmp[n++] = '0';
+    while (v) {
+        tmp[n++] = static_cast<char>('0' + (v % 10));
+        v /= 10;
+    }
+    size_t k = 0;
+    if (neg && k < bufsz) buf[k++] = '-';
+    while (n && k + 1 < bufsz) buf[k++] = tmp[--n];
+    buf[k] = '\0';
+    len = k;
+}
+
+} // namespace __detail
+
+inline string to_string(int v) {
+    char b[32]; size_t n = 0;
+    __detail::utoa_impl(b, sizeof(b), static_cast<unsigned long long>(v < 0 ? -(long long)v : (long long)v), v < 0, n);
+    return string(b, n);
+}
+inline string to_string(long v) {
+    char b[32]; size_t n = 0;
+    __detail::utoa_impl(b, sizeof(b), static_cast<unsigned long long>(v < 0 ? -(long long)v : (long long)v), v < 0, n);
+    return string(b, n);
+}
+inline string to_string(long long v) {
+    char b[32]; size_t n = 0;
+    unsigned long long mag = v < 0 ? (0ULL - static_cast<unsigned long long>(v)) : static_cast<unsigned long long>(v);
+    __detail::utoa_impl(b, sizeof(b), mag, v < 0, n);
+    return string(b, n);
+}
+inline string to_string(unsigned v) {
+    char b[32]; size_t n = 0; __detail::utoa_impl(b, sizeof(b), v, false, n); return string(b, n);
+}
+inline string to_string(unsigned long v) {
+    char b[32]; size_t n = 0; __detail::utoa_impl(b, sizeof(b), v, false, n); return string(b, n);
+}
+inline string to_string(unsigned long long v) {
+    char b[32]; size_t n = 0; __detail::utoa_impl(b, sizeof(b), v, false, n); return string(b, n);
+}
+
+//-------------------------------------------------------------
+// 浮点格式化：等价 printf("%.6f")，**正确舍入**
+//
+// 旧实现用 `frac * 1e6 + 0.5` 在 long double 里估算：本身就有舍入误差，
+// 大数还会整数溢出后退化成指数形式（与 "%f" 语义不符）。
+//
+// 这里走精确路径：
+//   1. 把 v 拆成 尾数 m（整数）× 2^e。拆分只用乘/除 2 的幂，对二进制浮点
+//      是精确运算，不引入误差；不依赖 frexpl 之类的 libm 符号。
+//   2. v * 10^6 = m * 5^6 * 2^(e+6)，用二进制大整数精确表示。
+//   3. 若 e+6 < 0，右移并**按 ties-to-even 舍入**（与 printf 的默认舍入
+//      模式一致）；否则左移。
+//   4. 输出十进制，按小数点插在倒数第 6 位。
+// 全程只用整数运算，因此与 libc 的 %.6f 逐字符一致（含 1e300 这类大数）。
+//-------------------------------------------------------------
+namespace __detail {
+
+// long double 的尾数宽度：<=64 位时用 unsigned long long 就够，
+// 只有 binary128（113 位）才需要 __int128。这样在 32 位目标上也能编译。
+#if defined(__LDBL_MANT_DIG__) && (__LDBL_MANT_DIG__ > 64)
+#  if !defined(__SIZEOF_INT128__)
+#    error "stdcpp: long double has >64-bit mantissa but compiler lacks __int128"
+#  endif
+typedef unsigned __int128 mant_t;
+#else
+typedef unsigned long long mant_t;
 #endif
 
+// 二进制大整数：小端 32 位肢
+struct bignum {
+    uint32_t* d;
+    size_t    n;    // 有效肢数，0 表示数值为 0
+    size_t    cap;
+
+    template<class UInt>
+    void init(UInt v) {
+        n = 0;
+        while (v) {
+            d[n++] = static_cast<uint32_t>(v);
+            v >>= 32;
+        }
+    }
+
+    void mul_small(uint32_t f) {
+        unsigned long long carry = 0;
+        for (size_t i = 0; i < n; ++i) {
+            unsigned long long cur = static_cast<unsigned long long>(d[i]) * f + carry;
+            d[i] = static_cast<uint32_t>(cur);
+            carry = cur >> 32;
+        }
+        if (carry) d[n++] = static_cast<uint32_t>(carry);
+    }
+
+    void shl(int bits) {
+        if (n == 0) return;
+        const size_t ls = static_cast<size_t>(bits) / 32;
+        const unsigned bs = static_cast<unsigned>(bits) % 32;
+        if (ls) {
+            for (size_t i = n; i-- > 0;) d[i + ls] = d[i];
+            for (size_t i = 0; i < ls; ++i) d[i] = 0;
+            n += ls;
+        }
+        if (bs) {
+            uint32_t carry = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t nv = (d[i] << bs) | carry;
+                carry = d[i] >> (32 - bs);
+                d[i] = nv;
+            }
+            if (carry) d[n++] = carry;
+        }
+    }
+
+    void add1() {
+        for (size_t i = 0; i < n; ++i) {
+            if (++d[i]) return;
+        }
+        d[n++] = 1;
+    }
+
+    // 右移 bits 位，按 nearest-even 舍入
+    void shr_round(int bits) {
+        const size_t idx = static_cast<size_t>(bits) - 1;
+        const size_t li = idx / 32;
+        const unsigned bi = static_cast<unsigned>(idx % 32);
+
+        // 先取舍入位与 sticky（必须在位移前，位移后信息就没了）
+        int round_bit = 0, sticky = 0;
+        if (li < n) {
+            round_bit = static_cast<int>((d[li] >> bi) & 1u);
+            for (size_t i = 0; i < li && !sticky; ++i)
+                if (d[i]) sticky = 1;
+            if (!sticky && bi) {
+                const uint32_t mask = (1u << bi) - 1u;
+                if (d[li] & mask) sticky = 1;
+            }
+        }
+
+        const size_t ls = static_cast<size_t>(bits) / 32;
+        const unsigned bs = static_cast<unsigned>(bits) % 32;
+        if (ls >= n) {
+            n = 0;
+        } else {
+            for (size_t i = 0; i + ls < n; ++i) d[i] = d[i + ls];
+            n -= ls;
+            if (bs) {
+                for (size_t i = 0; i < n; ++i) {
+                    uint32_t nv = d[i] >> bs;
+                    if (i + 1 < n) nv |= d[i + 1] << (32 - bs);
+                    d[i] = nv;
+                }
+                while (n > 0 && d[n - 1] == 0) --n;
+            }
+        }
+
+        if (round_bit) {
+            if (sticky) {
+                add1();
+            } else {
+                // 恰好一半：向偶数舍入
+                const bool odd = (n > 0) && (d[0] & 1u);
+                if (odd) add1();
+            }
+        }
+    }
+};
+
+// v = m * 2^e，m 为整数；仅用 2 的幂缩放，保证精确
+inline void decompose_float(long double v, mant_t& m, int& e) {
+    int k = 0;
+    while (v >= 0x1p64L) { v /= 0x1p64L; k += 64; }
+    while (v >= 2.0L)   { v /= 2.0L;     ++k; }
+    while (v < 0x1p-64L) { v *= 0x1p64L; k -= 64; }
+    while (v < 1.0L)    { v *= 2.0L;     --k; }
+
+    // 此时 v ∈ [1,2)，按 long double 的尾数位数放大成整数
+#if defined(__LDBL_MANT_DIG__) && (__LDBL_MANT_DIG__ == 113)
+    const int mant = 113;
+    const long double scale = 0x1p112L;
+#elif defined(__LDBL_MANT_DIG__) && (__LDBL_MANT_DIG__ == 64)
+    const int mant = 64;
+    const long double scale = 0x1p63L;
+#else
+    const int mant = 53;
+    const long double scale = 0x1p52L;
+#endif
+    m = static_cast<mant_t>(v * scale);
+    e = k - (mant - 1);
+}
+
+} // namespace __detail
+
+inline string to_string(long double v) {
+    if (v != v) return string("nan");                 // NaN
+
+    bool neg = __builtin_signbit(v) != 0;
+    if (neg) v = -v;
+
+    {
+        // 判断 inf：有限值的 v - v 为 0，inf 的 v - v 为 NaN
+        const long double z = v - v;
+        if (z != z) return neg ? string("-inf") : string("inf");
+    }
+
+    __detail::mant_t m = 0;
+    int e = 0;
+    if (v > 0.0L) {
+        __detail::decompose_float(v, m, e);
+    }
+
+    // N = round(v * 10^6) = m * 5^6 * 2^(e+6)
+    const int kShift = e + 6;
+    const size_t limbs = static_cast<size_t>(128 + (kShift > 0 ? kShift : 0)) / 32 + 8;
+    const size_t digits_cap = limbs * 10 + 16;
+    char* raw = static_cast<char*>(__detail::alloc_bytes(limbs * sizeof(uint32_t) + digits_cap));
+
+    __detail::bignum bn;
+    bn.d = reinterpret_cast<uint32_t*>(raw);
+    bn.n = 0;
+    bn.cap = limbs;
+    bn.init(m);
+    if (bn.n) {
+        bn.mul_small(15625u);                  // 5^6
+        if (kShift > 0) bn.shl(kShift);
+        else if (kShift < 0) bn.shr_round(-kShift);
+    }
+
+    // 十进制输出（to_dec 会就地消耗 bn）
+    char* dg = raw + limbs * sizeof(uint32_t);
+    size_t pos = digits_cap;
+    dg[--pos] = '\0';
+    if (bn.n == 0) {
+        dg[--pos] = '0';
+    } else {
+        while (bn.n > 0) {
+            unsigned long long rem = 0;
+            for (size_t i = bn.n; i-- > 0;) {
+                const unsigned long long cur = (rem << 32) | bn.d[i];
+                bn.d[i] = static_cast<uint32_t>(cur / 1000000000ull);
+                rem = cur % 1000000000ull;
+            }
+            while (bn.n > 0 && bn.d[bn.n - 1] == 0) --bn.n;
+            if (bn.n > 0) {
+                for (int t = 0; t < 9; ++t) { dg[--pos] = char('0' + rem % 10); rem /= 10; }
+            } else {
+                do { dg[--pos] = char('0' + rem % 10); rem /= 10; } while (rem);
+            }
+        }
+    }
+
+    const char* digits = dg + pos;
+    const size_t len = digits_cap - pos - 1;
+
+    string r;
+    if (neg) r.push_back('-');
+    if (len <= 6) {
+        r.append("0.");
+        for (size_t i = 0; i < 6 - len; ++i) r.push_back('0');
+        r.append(digits, len);
+    } else {
+        r.append(digits, len - 6);
+        r.push_back('.');
+        r.append(digits + len - 6, 6);
+    }
+
+    __detail::dealloc_bytes(raw);
+    return r;
+}
+inline string to_string(float v) { return to_string(static_cast<long double>(v)); }
+inline string to_string(double v) { return to_string(static_cast<long double>(v)); }
+
 //=============================================================
-// hash specialization for string
+// hash 特化
 //=============================================================
 template<class C, class T, class A>
 struct hash<basic_string<C, T, A> > {
     size_t operator()(const basic_string<C, T, A>& s) const noexcept {
-        size_t h = 14695981039346656037ULL;
+        size_t h = 1469598103934665603ULL;
         for (size_t i = 0; i < s.size(); ++i) {
-            h ^= (size_t)(unsigned char)s[i];
+            h ^= static_cast<size_t>(static_cast<unsigned char>(s[i]));
+            h *= 1099511628211ULL;
+        }
+        return h;
+    }
+};
+
+template<class C, class T>
+struct hash<basic_string_view<C, T> > {
+    size_t operator()(basic_string_view<C, T> s) const noexcept {
+        size_t h = 1469598103934665603ULL;
+        for (size_t i = 0; i < s.size(); ++i) {
+            h ^= static_cast<size_t>(static_cast<unsigned char>(s[i]));
             h *= 1099511628211ULL;
         }
         return h;
@@ -754,11 +1530,5 @@ struct hash<basic_string<C, T, A> > {
 };
 
 } // namespace std
-
-#if !STDCPP_STR_CXX11
-#undef noexcept
-#undef nullptr
-#undef override
-#endif
 
 #endif // STDCPP_STRING_HPP

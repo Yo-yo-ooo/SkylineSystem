@@ -23,7 +23,7 @@ struct slub_slab_t {
     kmem_cache    *cache;
     slub_slab_t   *partial_next;   // global partial-list link
     void          *freelist;       // 本 CPU 的空闲对象栈 (单主人, 免锁)
-    void          *foreign_head;   // P2-55: 跨 CPU free 的隔离栈 (c->lock 保护)
+    void          *foreign_head;   // 跨 CPU free 的隔离栈 (c->lock 保护)
     uint32_t       inuse;
     uint32_t       objects;
     int32_t        cpu_owner;      // active owner CPU id, -1 when unowned
@@ -94,7 +94,7 @@ static slub_slab_t *slub_new_slab(kmem_cache *c) {
     s->cache = c;
     s->partial_next = nullptr;
     s->freelist = head;
-    s->foreign_head = nullptr;   /* P2-55 */
+    s->foreign_head = nullptr;   
     s->inuse = 0;
     s->objects = n;
     s->cpu_owner = -1;
@@ -184,7 +184,7 @@ void *Alloc(kmem_cache *c) {
     slub_slab_t *s = (cpu && cpu->id < MAX_CPU) ? c->cpu_active[cpu->id] : nullptr;
 
     void *obj = s ? slub_stack_pop(&s->freelist) : nullptr;
-    /* P2-55: 本 CPU 栈空时, 在 c->lock 下收割跨 CPU 隔离栈
+    /* 本 CPU 栈空时, 在 c->lock 下收割跨 CPU 隔离栈
        (foreign_head → 本 CPU freelist), 再重试免锁弹出 */
     if (unlikely(!obj && s)) {
         spinlock_lock(&c->lock);
@@ -202,6 +202,18 @@ void *Alloc(kmem_cache *c) {
     if (unlikely(!obj)) obj = slow_alloc(c, cpu, s);
 
     if (likely(obj)) {
+        /* ---- freelist 完整性闸门 (QEMU 实测) --------------------------
+         * 内核半区指针的高 16 位必须是 0xFFFF。不满足 = 非规范地址, 说明
+         * 之前有人把**野指针**丢进了 kfree, 它被压进 per-CPU freelist,
+         * 现在又被当成对象弹出来。若直接 slub_page_of(obj)->inuse, 就会在
+         * 非规范地址上 #GP, 现场只剩 RCX 里一串被截断的地址 (实测:
+         * CR2=0x0000FFFF9000003A), 无法定位元凶。
+         * 这里提前拦住, 并打出最近 16 次 kfree 的 (ptr, caller)。 */
+        if (unlikely((((uint64_t)obj) >> 48) != 0xFFFFull)) {
+            kfree_hist_dump("SLUB freelist 被野指针污染");
+            kerrorln("[slub] 弹出非法对象 obj=%p cache=%p", obj, (void *)c);
+            Panic("SLUB freelist corrupted: a non-heap pointer was freed");
+        }
         slub_slab_t *owner = slub_page_of(obj);
         __atomic_add_fetch(&owner->inuse, 1, __ATOMIC_RELAXED);
         __atomic_add_fetch(&c->alloc_count, 1, __ATOMIC_RELAXED);
@@ -273,7 +285,7 @@ void Free(kmem_cache *c, void *obj) {
     int32_t owner = __atomic_load_n(&s->cpu_owner, __ATOMIC_ACQUIRE);
     uint32_t my_id = this_cpu()->id;
 
-    /* P2-55: 跨 CPU free 隔离 —— 本 CPU 的对象压本 CPU 免锁栈
+    /* 跨 CPU free 隔离 —— 本 CPU 的对象压本 CPU 免锁栈
        (单主人, 无 ABA); 其他 CPU 的对象压 foreign_head (c->lock 串行化),
        彻底消除跨核 Treiber 栈的 ABA 窗口 */
     if (owner >= 0 && (int32_t)my_id == owner) {

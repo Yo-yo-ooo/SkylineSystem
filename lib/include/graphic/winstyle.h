@@ -1,19 +1,19 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: MIT
-//
+
 // winstyle.h — shared geometry/protocol for the userspace console window.
-//
+
 // The console is a FIXED-SIZE, centered, modern (Win11/Fluent style) window:
 // one cool-dark rounded surface (anti-aliased corner radius), a flat caption
 // with a close cross, a near-black terminal paper, and a soft drop shadow.
-//
+
 // The ARGB window SURFACE is deliberately larger than the visible body: a
 // symmetric SKYWIN_SHADOW margin around the body holds the soft shadow and the
 // corner anti-aliasing, so rounded corners and shadow correctly composite
 // over the wallpaper (per-pixel alpha). The body itself lives at
 // (SKYWIN_SHADOW, SKYWIN_SHADOW) inside the tightly-packed surface, whose
 // scanline pitch equals SKYWIN_SURF_W.
-//
+
 // Both desktop/TLoad (which allocates + shares the surface AND paints the
 // window decoration) and the hw2 client (which only runs printf into the
 // content area) include this header, so the geometry can never drift between
@@ -133,7 +133,7 @@ typedef struct SkyWinPlacement {
     uint32_t x, y;        /* top-left position on the scanout (centered)   */
     uint64_t proto;       /* desktop-side alias of the client protocol
                              page; WM watches OUT_SEQ here to mark the
-                             window dirty on client output (round 19)     */
+                             window dirty on client output */
 } SkyWinPlacement;
 
 /* ---- modern dark (Win11/Fluent) palette, 0xAARRGGBB, matches RGB() ------ *
