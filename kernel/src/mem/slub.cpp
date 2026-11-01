@@ -209,11 +209,15 @@ void *Alloc(kmem_cache *c) {
          * 非规范地址上 #GP, 现场只剩 RCX 里一串被截断的地址 (实测:
          * CR2=0x0000FFFF9000003A), 无法定位元凶。
          * 这里提前拦住, 并打出最近 16 次 kfree 的 (ptr, caller)。 */
+#ifndef __KERNEL_TEST_HOST__
+        /* 同上: 宿主测试的堆地址高位不是 0xFFFF, 这条内核专属校验必须关掉,
+           否则每次 Alloc 都会 Panic。 */
         if (unlikely((((uint64_t)obj) >> 48) != 0xFFFFull)) {
             kfree_hist_dump("SLUB freelist 被野指针污染");
             kerrorln("[slub] 弹出非法对象 obj=%p cache=%p", obj, (void *)c);
             Panic("SLUB freelist corrupted: a non-heap pointer was freed");
         }
+#endif
         slub_slab_t *owner = slub_page_of(obj);
         __atomic_add_fetch(&owner->inuse, 1, __ATOMIC_RELAXED);
         __atomic_add_fetch(&c->alloc_count, 1, __ATOMIC_RELAXED);

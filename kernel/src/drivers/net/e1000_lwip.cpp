@@ -34,6 +34,12 @@ extern "C" uint64_t net_time_ms(void) { return PIT::TimeSinceBootMS(); }
    starts inside the boot window, saturates cores and contends global locks,
    which caused the intermittent failure to reach the desktop. */
 #define NET_FLOOD_AUTO 0
+/* 网络可观测性噪音开关 (默认关)。
+   原来是**无条件**每 10 秒打一行 [lwip][stat]、RX 丢弃累计、以及收不到帧时
+   每 15 秒打两行 [lwip][stall] —— 无网络流量的机器上这些行把串口刷满,
+   真正的内核告警/桌面日志全被淹掉。默认关闭, 排查网络问题时置 1 即可。
+   注意: 桌面进程存活性检查不在此开关内, 它是真正的看门狗, 必须保留。 */
+#define NET_STAT_VERBOSE 0
 
 static struct netif g_netif;
 static bool g_started = false;
@@ -320,16 +326,20 @@ static void lwip_thread(void) {
         }
 
         /* 性能画像: 每 5 分钟输出 RTT 百分位 */
+#if NET_STAT_VERBOSE
         static uint64_t last_rtt = 0;
         if (now - last_rtt >= 300000) {
             rtt_report();
             last_rtt = now;
         }
+#endif
 
+#if NET_STAT_VERBOSE
         if (g_rx_dropped && (now & 0x3FF) == 0) {
             kinfoln("[lwip] RX dropped frames cumulative %u\n", g_rx_dropped);
             g_rx_dropped = 0;
         }
+#endif
 
         /* 可观测性: 每 10 秒一次统计 + 速率 (观测长期趋势/泄漏/退化) */
         static uint64_t last_diag = 0;
@@ -338,11 +348,13 @@ static void lwip_thread(void) {
             E1000::Stats s = E1000::GetStats();
             uint64_t rxp_s = (s.rx_pkts - prev_rx) * 1000 / (now - last_diag);
             uint64_t txp_s = (s.tx_pkts - prev_tx) * 1000 / (now - last_diag);
+#if NET_STAT_VERBOSE
             kinfoln("[lwip][stat] rx=%llu(%lluB) tx=%llu(%lluB) rate rx=%llu/s tx=%llu/s drop=%u err=%u txfull=%u irq=%u ping=%u\n",
                     (unsigned long long)s.rx_pkts, (unsigned long long)s.rx_bytes,
                     (unsigned long long)s.tx_pkts, (unsigned long long)s.tx_bytes,
                     (unsigned long long)rxp_s, (unsigned long long)txp_s,
                     s.rx_dropped, s.rx_err, s.tx_full, s.irq_count, g_ping_replies);
+#endif
             prev_rx = s.rx_pkts; prev_tx = s.tx_pkts;
             /* 桌面进程 (PID 7) 是唯一窗口管理器: 它一旦没了, 桌面就不再
                合成新窗口、也不会再 spawn 子进程 (用户看到的现象就是
@@ -366,6 +378,7 @@ static void lwip_thread(void) {
         {
             E1000::Stats s = E1000::GetStats();
             if (s.rx_pkts != last_rx_pkts) { last_rx = now; last_rx_pkts = s.rx_pkts; }
+#if NET_STAT_VERBOSE
             if (now - last_rx > 30000 && (now - last_rx) % 15000 < 100) {
                 kinfoln("[lwip][stall] rdh=%u rdt=%u tail=%u armed=%u fifo=%u\n",
                         E1000::DiagRDH(), E1000::DiagRDT(),
@@ -376,6 +389,7 @@ static void lwip_thread(void) {
                     o += snprintf(line + o, sizeof(line) - o, "%u", (unsigned)E1000::DiagDescState(i));
                 kinfoln("[lwip][stall] state[0..15]=%s\n", line);
             }
+#endif
         }
         PIT::Sleep(5);
     }

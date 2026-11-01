@@ -1,5 +1,21 @@
 # tests/Makefile — Kernel Core ALGO / ABLIB TEST
-CXX      := g++
+# CXX 选择: 优先 g++, 但**必须验证它能编译 <mutex>**。
+# 实测 (本机): g++ 指向 gcc-15, 其 libstdc++ 与当前 glibc 组合下 std::mutex
+# 直接编译失败 (__gthread_cond_t 退化成 unsigned int, 而 __GTHREAD_COND_INIT
+# 仍是花括号初始化), 结果所有宿主测试编不过, CI 第一步 build 就挂。
+# 这里按顺序探测, 取第一个能编 <mutex> 的; 全都不行才退回 g++ (保留原错误)。
+CXX_PROBE := /tmp/sky_cxx_probe
+CXX := $(shell for c in g++ g++-14 g++-13 clang++-18 clang++; do \
+	command -v $$c >/dev/null 2>&1 || continue; \
+	printf '#include <mutex>\n#include <thread>\nint main(){}\n' > $(CXX_PROBE).cpp; \
+	if $$c -std=gnu++17 -pthread $(CXX_PROBE).cpp -o $(CXX_PROBE).out >/dev/null 2>&1; then echo $$c; break; fi; \
+done)
+ifeq ($(strip $(CXX)),)
+CXX := g++          # 一个都探测不到: 退回原行为 (错误可见, 便于定位)
+endif
+# 诊断: 让 CI 日志一眼看到实际用了哪个编译器
+$(info [tests] CXX = $(CXX))
+
 CC       := gcc
 CXXFLAGS := -std=gnu++17 -O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
             -pthread -D__KERNEL_TEST_HOST__ -I common -I ../kernel/include

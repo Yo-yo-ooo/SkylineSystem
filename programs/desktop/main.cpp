@@ -1140,11 +1140,7 @@ int main(){
                         pressHit = 1;            /* caption empty area    */
                         /* 点中 Console 标题栏: 抬到所有客户端之上并抢焦点 */
                         press_focus_pid = place.client_pid;
-                        if (consoleLayer) {
-                            WmClient* topc = wm_client_top_visible();
-                            if (topc && consoleLayer->z <= topc->layer->z)
-                                consoleLayer->z = topc->layer->z + 1;
-                        }
+                        comp.RaiseWindow(&consoleWin);
                         dragging = true;
                         grabDX = mx - (int32_t)normX;
                         grabDY = my - (int32_t)normY;
@@ -1170,6 +1166,12 @@ int main(){
                     rzClient = rz;
                 } else {
                     wm_client_press(comp, cTop, mx, my);
+                    /* 按下客户端窗口 = 切到它: 置顶 + 接管键盘。
+                       不这样做的话键盘只按 z 序走, 点哪个窗口都换不了焦点。 */
+                    if (cTop) {
+                        comp.RaiseWindow(&cTop->win);
+                        press_focus_pid = cTop->place.client_pid;
+                    }
                 }
             }
 
@@ -1350,13 +1352,29 @@ int main(){
                         }
                         wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tbState,
                                         &fireDT, haveDT);
+                        /* 点 Console 的 pill: 还原(或本就可见)时提到最前并
+                           把键盘给它。否则 z 序仍会让后启动的客户端 (DOOM)
+                           永久霸占键盘, 敲字一个都进不了 Console。 */
+                        if (wmMode != WM_MIN) {
+                            comp.RaiseWindow(&consoleWin);
+                            press_focus_pid = place.client_pid;
+                        } else {
+                            press_focus_pid = 0;   /* 最小化后交给 z 序 */
+                        }
                         wmDirty = true;
                     } else if (tbPressId >= 1) {
                         /* Generic-client pill: minimize or restore that app. */
                         WmClient* cc = wm_client_by_order(tbPressId - 1);
                         if (cc) {
-                            if (cc->minimized) wm_client_restore(comp, cc);
-                            else               wm_client_minimize(comp, cc);
+                            if (cc->minimized) {
+                                wm_client_restore(comp, cc);
+                                /* 还原即"切到它": 置顶并接管键盘 */
+                                comp.RaiseWindow(&cc->win);
+                                press_focus_pid = cc->place.client_pid;
+                            } else {
+                                wm_client_minimize(comp, cc);
+                                press_focus_pid = 0;
+                            }
                         }
                         const int cs = (wmMode == WM_CLOSED) ? 2
                                        : ((wmMode == WM_MIN) ? 1 : 0);

@@ -141,7 +141,12 @@ static bool kfree_ptr_in_kernel_half(void *ptr) {
 
 extern "C" void kfree(void *ptr) {
     if (ptr) kfree_hist_record(ptr, __builtin_return_address(0));
+#ifndef __KERNEL_TEST_HOST__
+    /* 内核专属: 宿主测试里 heap 地址是 0x55xx.../0x7fxx..., 高 16 位并非
+       0xFFFF, 这道闸门会把**所有**正常释放都拒掉 (泄漏 + 测试自杀)。
+       内核地址空间校验只在真正的内核构建里启用。 */
     if (ptr && !kfree_ptr_in_kernel_half(ptr)) return;   /* 拒收, 见上 */
+#endif
 #ifdef __x86_64__
     if (SLUB::TryFree(ptr)) return;           // page magic routes SLUB vs SLAB/large
 #endif
