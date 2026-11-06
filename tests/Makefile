@@ -25,7 +25,7 @@ LDLIBS   := -pthread
 
 HEAP_SRC := ../kernel/src/mem/heap.cpp ../kernel/src/mem/slab.cpp ../kernel/src/mem/slub.cpp
 ART_SRC  := ../kernel/src/klib/algorithm/art.c
-FC_SRC   := ../kernel/src/fs/fc.cpp ../kernel/src/fs/fc_idle.cpp
+FC_SRC   := ../kernel/modules/builtin/common/fs/fc.cpp ../kernel/modules/builtin/common/fs/fc_idle.cpp
 
 # 游离工具纳入目标 (art_mini = ART 前缀冲突隔离, art_replay = 复现工具)
 art-mini: bin/art_mini
@@ -146,7 +146,7 @@ bin/memops_asan: memops/main.cpp memops/memops_shim.c
 	  $(MEM_INC) memops/main.cpp bin/memops_shim_asan.o bin/memops_asan_obj.o -o $@ $(LDLIBS)
 
 .PHONY: all slub slub-poison fc fc-asan sched clean art-mini art-replay alloc fuzz \
-        memops memops-bench memops-asan
+        memops memops-bench memops-asan kmod kmod-asan
 all: slub slub-poison fc sched memops
 
 slub: bin/slub_test
@@ -226,3 +226,15 @@ bin/fc_reg: common/kernel_shim.cpp fc/regression.cpp $(HEAP_SRC) $(FC_SRC) $(ART
 
 clean:
 	rm -rf bin
+
+# ============================================================================
+# kmod 宿主测试门禁（真实内核 kmod 源码在宿主编译；细节规则见 tests/kmod/Makefile）
+#   kmod        -> bin/kmod_test          （-O2）
+#   kmod-asan   -> bin/kmod_test_asan     （ASAN+UBSAN，elf_loader 负向/fuzz 用）
+# 用法: cd tests && make -B kmod && ./bin/kmod_test
+# ============================================================================
+kmod:
+	@$(MAKE) -C kmod kmod CXX='$(CXX)'
+
+kmod-asan:
+	@$(MAKE) -C kmod kmod-asan CXX='$(CXX)'

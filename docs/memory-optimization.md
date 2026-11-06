@@ -755,7 +755,7 @@ Error: W_ReadLump: only read 8192 of 16297 on lump 438
 `ext4_malloc` 原本直接映射到 `kmalloc`。内存紧张时 `ext4_buf_alloc()` 拿不到
 4 KiB 块缓冲就返回 NULL，于是**文件读到一半返回 0**。
 
-新增 `kernel/src/fs/lwext4/ext4_user_alloc.cpp`，打开
+新增 `kernel/modules/builtin/common/fs/lwext4/ext4_user_alloc.cpp`，打开
 `CONFIG_USE_USER_MALLOC=1`，提供四个钩子：
 
 - 正常路径仍然 `kmalloc` / `kfree` / `krealloc`（行为不变，不额外占内存）；
@@ -913,7 +913,7 @@ PowerShell `Set-Content` 写文件时损坏的 UTF-8），只影响注释可读�
 **status=5 = EIO**，而且是**固定偏移**。往上游追一层就看到了:
 
 ```c
-// kernel/src/drivers/Disk_Interfaces/sata/sataDiskInterface.cpp
+// kernel/modules/builtin/common/drivers/Disk_Interfaces/sata/sataDiskInterface.cpp
 void* dma_phys = PMM::Request();
 if (!dma_phys) return false;      // → ext4 收到 EIO → 用户态看到短读
 ```
@@ -2520,7 +2520,7 @@ comp.Compose();          // ← 每 50ms 一次**整屏**合成 = 20 次/秒
 
 ### B. 鼠标采样率 100Hz -> 200Hz（驱动）
 
-`kernel/src/drivers/mouse/x86/mouse.cpp` 的初始化只发了
+`kernel/modules/builtin/common/drivers/mouse/x86/mouse.cpp` 的初始化只发了
 RESET / SET_DEFAULT / ENABLE_REPORT，**没有设置采样率**，所以 PS/2 鼠标停在
 默认 **100Hz**：每 10ms 才产生一个新位置，光标位置本身就有 10ms 量化。
 现在补上 `0xF3`(SET_SAMPLE_RATE) + 200，量化降到 5ms。这是驱动侧唯一能直接

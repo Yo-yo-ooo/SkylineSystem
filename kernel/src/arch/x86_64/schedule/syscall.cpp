@@ -12,6 +12,13 @@
 static uint64_t 
 SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,syscall_frame_t*){return NULL;}
 
+/* kmod 治理哨兵（Tier0 固定入口 + Tier1 可注册实现）：
+ * syscall 编号/参数/返回/错误码/语义固定；syscall_lists[] 只决定"实现"。
+ * 治理槽上的条目统一指向哨兵，由 KmodSyscallEntry 按帧内编号查治理表，
+ * 并负责模块 epoch（热替换/卸载期间排空在飞调用）与状态检查。 */
+extern "C" void *KmodSyscallSentinel(void);
+extern "C" uint64_t KmodSyscallEntry(void *frame);
+
 __attribute__((aligned(64)))
 uint64_t (*syscall_lists[512])(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,syscall_frame_t*) = \
     {SYSCALL_NULL};
@@ -40,6 +47,13 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
     auto func = syscall_lists[frame->rax];
 
     //kinfoln("Attempting to call index %ld at addr 0x%p", frame->rax, func);
+    /* kmod 治理槽：入口/编号/参数/返回/错误码固定，只有"实现"可注册/替换。
+       哨兵统一入口负责治理表查找、模块 epoch 与 -ENOSYS/-EAGAIN 语义。 */
+    if (__builtin_expect(func == (decltype(func))KmodSyscallSentinel(), 0)) {
+        frame->rax = KmodSyscallEntry(frame);
+        stall_set_kernel_busy(0);
+        return;
+    }
     /* 返回值只写进**帧槽** —— user.asm 的收尾是从帧槽读回 %rax 交给用户态
        (不再依赖"函数返回时 %rax 还是返回值"; %rax 是 caller-saved, 本函数
        返回前的任何一步都会踩掉它, 那正是"内核返回 0x320、用户态收到 0/1"
@@ -71,38 +85,14 @@ syscall_lists[x] = sys_xxxx //? <---- it means i don't know how to impl this sys
 uint64_t sys_time(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,syscall_frame_t*);
 
 void syscall_init() {
-    
-    syscall_lists[SYSCALL_FOPEN] = sys_fopen;
-    syscall_lists[SYSCALL_FWRITE] = sys_fwrite;
-    syscall_lists[SYSCALL_FREAD] = sys_fread;
-    syscall_lists[SYSCALL_FCLOSE] = sys_fclose;
-    syscall_lists[SYSCALL_FLSEEK] = sys_flseek;
-    syscall_lists[SYSCALL_FSIZE] = sys_fsize;
-    
-    syscall_lists[SYSCALL_THREAD_LAUNCH] = sys_thread_launch;
-    syscall_lists[SYSCALL_GETTID] = sys_gettid;
-    syscall_lists[SYSCALL_GETPID] = sys_getpid;
-    syscall_lists[SYSCALL_EXIT] = sys_exit;
-    syscall_lists[SYSCALL_PMMAP] = sys_pmmapSHARE;
-    syscall_lists[SYSCALL_YIELD] = sched_yield;
-    syscall_lists[SYSCALL_LOAD] = sys_load;
-    syscall_lists[SYSCALL_LAUNCH] = sys_launch;
-
-    syscall_lists[SYSCALL_MMAP] = sys_mmap;
-    syscall_lists[SYSCALL_MUNMAP] = sys_munmap;
-    syscall_lists[SYSCALL_SYSINFO] = sys_sysinfo;
-    syscall_lists[SYSCALL_TIME] = sys_time;             /* RTC wall seconds */
-    syscall_lists[SYSCALL_MONOTONIC_MS] = sys_monotonic_ms;  /* 毫秒单调时钟 */
-    syscall_lists[SYSCALL_SLEEP_MS] = sys_sleep_ms;          /* 毫秒真睡眠 */
-    syscall_lists[SYSCALL_KILL] = sys_kill;             /* terminate a process */
-
-    syscall_lists[SYSCALL_ARCH_PRCTL] = sys_arch_prctl;
-    syscall_lists[SYSCALL_GETRANDOM] = sys_getrandom;
-    syscall_lists[SYSCALL_DEV_MMAP] = sys_dev_mmap;
-    
-    syscall_lists[SYSCALL_DBGSOUT] = sys_dbgsout;
-    syscall_lists[SYSCALL_DEV_GETINFO] = sys_dev_getinfo;
-    syscall_lists[SYSCALL_DEV_IOCTL] = sys_dev_ioctl;
+    /* 固定槽 0..63 的实现不再在 Tier0 硬编码：由内建组件 kernel.syscall.*
+     * （kernel/src/arch/x86_64/components/syscall_*.cpp）在
+     * KmodBootComponents() 阶段通过导出表 kind=KMOD_SYM_SYSCALL 注册；
+     * 槽位哨兵由 KmodSyscallInit() 安装（0..63 + 128..511），dispatch 在
+     * syscall_handler 里经哨兵进入治理表（编号/参数/返回/错误码/语义不变）。
+     * 本函数只保留 CPU 侧 syscall 入口装配（EFER/STAR/LSTAR/FMASK）。
+     * 29(SYSCALL_KMOD_INFO)/30(SYSCALL_KMOD_PROBE) 的实现仍在 Tier0
+     * syscall_registry.cpp 内部分派。 */
 
     __builtin_prefetch((const void*)syscall_lists,0,0);
     

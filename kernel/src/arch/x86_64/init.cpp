@@ -24,45 +24,38 @@
 #include <arch/x86_64/schedule/sched_bench.h>
 #include <arch/x86_64/pit/pit.h>
 #include <drivers/net/e1000.h>
-/* 诊断门控: 1 = 启动时由专用内核线程在 cpu 1 后台跑 SchedBench。
-   注意: init 处于 bootstrap 上下文, 不能睡眠/忙等, 因此启动后不等待,
-   网络初始化延后到 wrapper 尾部。 */
-#define SCHED_BENCH_AUTO 0
-#if SCHED_BENCH_AUTO   
-/* 调度器真实内核画像实验代码: 相位探针定位挂点 */
-static volatile uint32_t g_bench_done = 0;
-static void bench_wrapper(void) {
-    bool ok = SchedBench::Run(1);
-    kinfoln("[sched_bench] done=%d (actual base_quantum=%u ms)\n", (int)ok,
-            SchedBench::Report()->base_quantum_ms);
-    SchedBench::sched_bench_report *r = SchedBench::Report();
-    kinfoln("[sched_bench] step: t90=%llu valid=%d t90_pass=%d overshoot=%d sat=%d\n",
-            (unsigned long long)r->step.t90_ms, (int)r->step.valid,
-            (int)r->step.t90_pass, (int)r->step.overshoot_pass, (int)r->step.sat_pass);
-    kinfoln("[sched_bench] pollute: base=[%llu,%llu] mult=[%llu,%llu] pass=%d/%d\n",
-            (unsigned long long)r->pollute.base_min, (unsigned long long)r->pollute.base_max,
-            (unsigned long long)r->pollute.mult_min, (unsigned long long)r->pollute.mult_max,
-            (int)r->pollute.base_pass, (int)r->pollute.mult_pass);
-    kinfoln("[sched_bench] shortwin: windows=%llu resets=%llu stalled=%llu mf=%llu msl=%llu pass=%d\n",
-            (unsigned long long)r->shortwin.short_windows, (unsigned long long)r->shortwin.base_resets,
-            (unsigned long long)r->shortwin.stalled, (unsigned long long)r->shortwin.mf,
-            (unsigned long long)r->shortwin.msl, (int)r->shortwin.pass);
-    kinfoln("[sched_bench] osc: w=[%llu,%llu] toggles=%llu entered=%d hyst=%d\n",
-            (unsigned long long)r->osc.weight_min, (unsigned long long)r->osc.weight_max,
-            (unsigned long long)r->osc.toggles, (int)r->osc.entered_osc, (int)r->osc.hyst_ok);
-    g_bench_done = 1;
-    /* bench 完成后再起网络 (洪泛线程会污染 RIP 反馈测量) */
-    NetStackInit();
-    while (true) PIT::Sleep(1000);
-}
-#endif
+#include <kmod/kmod.h>
+#include <kmod/kmod_seats.h>
+
+/* 原 init.cpp 尾部常见的 Tier0 依赖（串口/GDT/IDT/PMM/VMM/SLAB/SMP/LAPIC/
+   PIT/RTC 等基础头）保持原样，避免组件化重构改变既有编译单元语义。 */
 #include <atomic/atomic.h>
 #include <arch/x86_64/cpu.h>
-#include <arch/x86_64/lapic/lapic.h>
+#include <drivers/ahci/ahci.h>
+#include <drivers/nvme/nvme.h>
+#include <drivers/usb/xhci.h>
+#include <drivers/ata/ata.h>
+#include <drivers/keyboard/x86/keyboard.h>
+#include <drivers/dev/dev.h>
+#include <fs/lwext4/ext4.h>
+#include <fs/lwext4/blockdev/blockdev.h>
+#include <fs/fc.h>
+#include <arch/x86_64/simd/simd.h>
+#include <mem/heap.h>
+#include <arch/x86_64/drivers/hpet/hpet.h>
+#include <drivers/framebuffer/fb.h>
+#include <klib/renderer/rnd.h>
+#include <arch/x86_64/interrupt/gdt.h>
+#include <arch/x86_64/interrupt/idt.h>
+#include <mem/pmm.h>
+#include <arch/x86_64/vmm/vmm.h>
+#include <arch/x86_64/ioapic/ioapic.h>
+#include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/schedule/sched_bench.h>
 #include <arch/x86_64/pit/pit.h>
+#include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/rtc/rtc.h>
 #include <drivers/mouse/x86/ps2mouse.h>
-#include <drivers/net/e1000.h>
 
 /* x86mem 运行时参数 (NT 存储阈值)。必须走 __KERNEL_INC__ 分支: 内核用
    -mno-sse 编译, 而这个宏会让 x86mem.h 跳过 nmmintrin.h / avx*intrin.h。 */
@@ -71,9 +64,24 @@ static void bench_wrapper(void) {
 #include "../../../../ablib/arch/x86_64/x86mem/x86mem.h"
 #endif
 
-#define PIC1_COMMAND 0x20
-#define PIC1_DATA 0x21
-#define PIC2_DATA 0xA1
+/* ============================================================================
+ * x86_64_init —— Tier0 固定核心 + 组件图驱动启动
+ * ----------------------------------------------------------------------------
+ * 重构后这里只保留**不可模块化**的 Tier0：
+ *   - 早期串口/GDT/IDT/FPU/SIMD/SMEP/SMAP
+ *   - PMM/VMM/SLAB/SLUB（页表与分配机制；分配策略座位另议）
+ *   - syscall 入口装配（编号/语义/入口固定，实现由组件注册）
+ *   - kmod 加载器/治理机制本身（Tier0 固定）
+ * 其余全部是内建组件 (builtin component)，由 KmodBootComponents() 按
+ * 统一拓扑图（manifest/.in/.out，provider 先序）初始化：
+ *   ACPI/MADT -> LAPIC/IOAPIC -> PIT/HPET/RTC -> 文件缓存 -> SMP ->
+ *   调度核心 -> 设备核心 -> PCI 核心 -> 驱动组件 -> PCI 枚举 ->
+ *   块设备核心 -> VFS -> ext4/FatFs -> 根文件系统 -> 显示 ->
+ *   调度安装 -> 网络 -> 用户态进程
+ * 任何组件失败 -> 整张 boot 图回滚（本函数打印现场并停机，便于门禁定位）。
+ * ==========================================================================*/
+
+/* 引导期自检已在 sti 之前由 x86_64_init 同步调用（见下方 KmodSelfTest）。 */
 
 uint32_t PrintFSERIAL = 0;
 
@@ -87,25 +95,14 @@ extern void sys_sysinfo_init(void);
 
 extern void enable_smep_smap();
 
-/* PCI scan -> trigger probe wrappers. Each driver is bound the moment its
-   matching PCI function enumerates, so the board init no longer hard-codes
-   FindPCIDev() + constructors. USB MSC follows automatically: once the xHCI
-   function probes, its downstream enumeration registers mass-storage LUNs. */
-static void pci_probe_ahci(PCI::PCIHeader0* h) { new AHCI::AHCIDriver(&h->Header); }
-static void pci_probe_nvme(PCI::PCIHeader0* h) { new class NVME(h); }
-static void pci_probe_xhci(PCI::PCIHeader0* h) { XHCI::InitXHCIFromPCI(h); }
-static void pci_probe_e1000(PCI::PCIHeader0* h) { E1000::Init(h); }
-
-static const PCI::PCIDriver kAhciDriver =
-    {"AHCI", 0x01, 0x06, 0x01, pci_probe_ahci};
-static const PCI::PCIDriver kNvmeDriver =
-    {"NVMe", 0x01, 0x08, 0x02, pci_probe_nvme};
-static const PCI::PCIDriver kXhciDriver =
-    {"xHCI", 0x0C, 0x03, 0x30, pci_probe_xhci};
-static const PCI::PCIDriver kE1000Driver =
-    {"e1000", 0x02, 0x00, 0x00, pci_probe_e1000};
-
 void __init x86_64_init(void){
+    /* Tier0 引导期强制关中断：组件图初始化期间任何 IRQ（尤其 PIT IRQ0 在
+       handler 注册前被解除屏蔽）都会闯进"未捕获 IRQ -> 打印 -> kprintf 锁
+       重入"路径，表现为串口随机停在某组件日志中间。上线（sti+IPI）之前
+       不允许外部中断；各组件/驱动注册 handler 后再统一开中断。 */
+    asm volatile("cli" ::: "memory");
+
+    /* ---------------- Tier0 早段：不可模块化的核心机制 ---------------- */
     InitFunc("Serial(Simulater)",Serial::Init());
     WELCOME_X86_64
     kinfo("INIT x86_64 ARCH\n");
@@ -142,144 +139,49 @@ void __init x86_64_init(void){
     if (SLUB::SelfTest()) { kpokln("SLUB: self-test OK (named cache + kmalloc fusion)"); }
     else                  { kpokln("SLUB: self-test FAILED stage=%u", SLUB::LastFailStage()); }
 #endif
-    InitFunc("ACPI",ACPI::Init((void*)RSDP_ADDR));
-    InitFunc("MADT",MADT_Init());
-    //DISABLE PIC
-    outb(PIC1_DATA, 0xff);
-    outb(PIC2_DATA, 0xff);
-    kinfoln("DISABLED PIC!");
-    //ENABLE ICMR
-    outb(0x22,0x70);
-    outb(0x23,0x01);
-    kinfoln("ENABLED ICMR!");
-    //simd_cpu_init(get_cpu(0));
-    InitFunc("LAPIC",LAPIC::Init());
-    InitFunc("IOAPIC",IOAPIC::Init());
-    InitFunc("PIT & RTC",PIT::InitPIT());
-    InitFunc("HPET",HPET::InitHPET());
-    bsp_cpu->file_cache = (file_cache_cpu_t*)kmalloc(sizeof(file_cache_cpu_t));
-    file_cache_cpu_init(bsp_cpu->file_cache, bsp_cpu->id,file_cache_writeback_callback);
-    /* 文件缓存必须有上限。
-       file_cache_should_cache() 的判据是
-           if (soft_limit == 0 || total_cache_bytes < soft_limit) { 缓存 }
-       而内核从来没有调用过 file_cache_set_limits() (只有 tests/ 调),
-       于是 soft_limit 恒为 0 → **无条件缓存所有读过的数据**, 永不淘汰。
-       实测: 2 GiB 机器上, 稳态空闲内存从 130 MiB 一路掉到 21 MiB —— 读一次
-       30 MiB 字体 + 11 MiB WAD 就全进了缓存。64 MiB 目标下这是致命的。
-       这里按总内存的 1/32 分配, 每核 512 KiB ~ 4 MiB。 */
-    {
-        uint64_t free_bytes = PMM::FreePages() << 12;
-        uint64_t per_cpu = free_bytes / 32;
-        /* 每个 CPU 的文件缓存预算: 至少 512 KiB, 至多 4 MiB。
-           实测把上限压到 1 MiB 反而更糟 (80 MiB 下 OOM 从 50 涨到 171) ——
-           缓存太小 → 读盘次数暴增 → 每次读都要临时 kbuf, 瞬时压力更大。 */
-        if (per_cpu < (512u << 10))  per_cpu = (512u << 10);
-        if (per_cpu > (4u << 20))    per_cpu = (4u << 20);
-        file_cache_set_limits(bsp_cpu->file_cache, per_cpu, per_cpu * 2);
-    }
-    InitFunc("SMP",smp_init());
-    /* Route the legacy PIT (IRQ0/GSI0) to vector 32 on the BSP and unmask it.
-       The 8259 PIC is fully masked above, so without this IOAPIC redirection no
-       timer IRQ ever arrives: TicksSinceBoot stays at 0 and TimeSinceBootMS() is
-       frozen. That stalls EEVDF vruntime accounting, Rate-aware quantum feedback
-       and every timeout, which produced the ~14s worker-startup stall and the
-       runtime compositor/mouse freeze. */
-    IOAPIC::RemapIRQ(bsp_cpu->lapic_id, 0, 32, false);
-    InitFunc("RTC",RTC::InitRTC());
     InitFunc("SIMD Core 0",simd_cpu_init(this_cpu()));
     InitFunc("Intel SMEP & SMAP",enable_smep_smap());
-    
-    InitFunc("Schedule",Schedule::Init());
-    InitCPUThread();
+
+    /* syscall 入口装配：编号/参数/返回/错误码/语义固定；实现由组件注册。 */
     InitFunc("Syscall",syscall_init());
-    
 
-    InitFunc("VsDev",Dev::Init());
-    InitFunc("File & MP MAN",InitFFMAN());
-    //InitFunc("ATA",ATA::Init());
-    /* Register PCI drivers first, then enumerate the bus: each matching
-       function is probed the instant it is discovered (AHCI / NVMe / xHCI;
-       USB mass storage follows automatically once xHCI probes). */
-    PCI::RegisterDriver(&kAhciDriver);
-    PCI::RegisterDriver(&kNvmeDriver);
-    PCI::RegisterDriver(&kXhciDriver);
-    PCI::RegisterDriver(&kE1000Driver);
-    if(ACPI::mcfg == NULL){PCI::DoPCIWithoutMCFG();}
-    else{InitFunc("PCI",PCI::EnumeratePCI(ACPI::mcfg));}
+    /* ---------------- Tier0: kmod 加载器/治理机制 ---------------- */
+    InitFunc("Kmod",KmodInit());
 
-    InitFunc("PS/2 MOUSE(x86)",ps2_mouse_init());
-    InitFunc("KEYBOARD(x86)",keyboard_init());
-    
-
-    /* 根文件系统设备探测列表 (原硬编码 "sata0" —— 纯 NVMe
-       机器直接 hcf)。依次尝试常见块设备名, 全部失败才停机。 */
-    {
-        static const char *kRootCandidates[] = {"sata0", "nvme0", "usb0", "sata1", nullptr};
-        bool root_ok = false;
-        for (int i = 0; kRootCandidates[i]; i++) {
-            if (ext4_kernel_init(kRootCandidates[i], "/mp/", 0)) {
-                root_ok = true;
-                break;
-            }
-        }
-        if (!root_ok) {
-            kerrorln("init: no usable root filesystem device, halting");
-            hcf();
-        }
+    /* ---------------- Tier1+: 整个内核的组件图（拓扑驱动） ----------------
+       这是启动序列组件化的核心：x86_64_init 不再硬编码 ACPI/SMP/PIT/PCI/
+       驱动/文件系统/网络/显示/用户态的初始化顺序，而由每个内建组件的
+       manifest/provider 依赖在统一拓扑图中表达。 */
+    int32_t krc = KmodBootComponents();
+    if (krc != KMOD_OK) {
+        kerrorln("init: builtin component graph FAILED rc=%d (%s)",
+                 (int)krc, KmodElfErrorString(krc));
+        KmodDump();
+        hcf();
     }
 
-    FrameBufferDevice::Init();
+    /* ---------------- Tier2: 可加载 .ko（同一张图的扩展） ---------------- */
+    InitFunc("Kmod ingest",KmodBootIngest());
+    InitFunc("Kmod boot",KmodBootLoad());
 
-    //ext4_fs_test_all();
-
-    Schedule::Install();
-    extern void sched_calibrate_tsc(void);
-    sched_calibrate_tsc();   /* TSC 校准: RIP 采样执行期分母 (pollute 复测前提) */
-
-#if SCHED_BENCH_AUTO
-    {
-        proc_t *bproc = Schedule::NewProcess(false);
-        if (bproc) {
-            /* 不等待: init 的忙等/睡眠都会饿死或挂起 (bootstrap 上下文)。
-               bench 完成后 wrapper 自会调用 NetStackInit (网络延后 = 安静机器) */
-            Schedule::NewKernelThreadEx(bproc, 0, 8, (void *)bench_wrapper, 8);
-        }
-    }
-#else
-    /* 网络栈延后上线: e1000 已在 PCI 枚举时探测完成。不在 pre-sti bootstrap
-       上下文直接起网络线程 (会与 AP/桌面竞态), 而是 spawn 一个正规内核
-       线程; 待 bootstrap 执行 sti、kick 调度后, 由它在 live 线程上下文拉起
-       lwIP (仅诊断构建 NET_FLOOD_AUTO 才含 TX flood)。不等待。 */
-    {
-        proc_t *nproc = Schedule::NewProcess(false);
-        if (nproc)
-            Schedule::NewKernelThreadEx(nproc, 0, 8,
-                                        (void *)NetStackInitDeferred, 8);
-    }
-#endif
-
+    /* kmod 引导期自检：**在 sti 之前单线程执行**。
+       原因：自检要反复加载/热替换/卸载模块（堆+VMM+座位+syscall 治理），
+       与桌面/文件缓存/定时器抢占并发交织会放大既有 fs-cache/VMM 锁序问题
+       （实测概率性 STALL WATCHDOG）。引导期单线程执行后，桌面线程才在
+       下面的 sti+IPI 之后开始运行，模块治理链路的错误可确定性暴露。
+       PrintFSERIAL=1：自检日志只走串口，不再重复写 flanterm 帧缓冲。 */
     atomic_store_4(&PrintFSERIAL,1,0);
+    {
+        int32_t srt = KmodSelfTest();
+        kinfoln("[kmod] boot selftest done rc=%d (%s)", (int)srt,
+                srt == KMOD_OK ? "PASS" : "FAIL");
+        if (srt != KMOD_OK)
+            KmodDump();
+    }
+
     sys_sysinfo_init();
 
-    proc_t *proc = Schedule::NewProcess(true);
-
-    kinfoln("Creating desktop process...");
-    char *argv[] = {(char*)"Test Main Thread"};
-    char *envp[] = {nullptr};
-    thread_t *desktop = Schedule::NewThread(proc, 0, 0, 
-        "/mp/desktop.elf", 1, argv, envp);  
-    (void)desktop;
-    proc_t *proc2 = Schedule::NewProcess(true);
-    thread_t *desktop2 = Schedule::NewThread(proc2, 0, 1, 
-        "/mp/hw.elf", 1, argv, envp);  
-    (void)desktop2;
-    /*proc_t *proc3 = Schedule::NewProcess(true);
-    thread_t *desktop3 = Schedule::NewThread(proc3, 0, 1, 
-        "/mp/hw2.elf", 1, argv, envp);   */
-    kinfoln("desktop PROCESS: %d",proc->id);
-    /* 桌面进程 id 记入全局: 诊断线程据此报告"窗口管理器已经不在" */
-    extern int32_t g_desktop_pid;
-    g_desktop_pid = (int32_t)proc->id;
+    /* ---------------- Tier0 收尾：上线 & idle ---------------- */
     asm volatile("sti");
     LAPIC::IPI(smp_bsp_cpu,SCHED_VEC);
     LAPIC::IPIOthers(smp_bsp_cpu, SCHED_VEC);

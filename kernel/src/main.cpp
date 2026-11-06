@@ -128,6 +128,32 @@ limine_file* getFile(const char* name)
     return NULL;
 }
 
+/* kmod 引导镜像访问接口：把 Limine module response 暴露给 kmod 层，
+   避免把 limine.h 拖进 Tier0 模块子系统（kernel/src/arch/x86_64/kmod/）。 */
+extern "C" size_t GetBootModuleCount(void)
+{
+    limine_module_response *r = module_request.response;
+    return (r == NULL) ? 0 : r->module_count;
+}
+
+extern "C" bool GetBootModuleInfo(size_t index, const uint8_t **data,
+                                  uint64_t *size, const char **path)
+{
+    limine_module_response *r = module_request.response;
+    if (r == NULL || index >= r->module_count)
+        return false;
+    limine_file *f = r->modules[index];
+    if (!f || f->address == 0 || f->size == 0)
+        return false;
+    if (data)
+        *data = (const uint8_t *)f->address;
+    if (size)
+        *size = f->size;
+    if (path)
+        *path = f->path;
+    return true;
+}
+
 struct flanterm_context* ft_ctx = NULL;
 
 void FT_Clear(){

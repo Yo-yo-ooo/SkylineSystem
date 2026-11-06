@@ -259,7 +259,7 @@ correspond to real kernel performance."
 |---|---|---|---|
 | `sched_ref_eevdf` | formula replica | implement a reference model per Linux EEVDF equations (VD=avg+slice/w, eligible set, protect_slice, lag), compared **side-by-side under the same load** against the 3EVDF replica | two-model fairness/tail-latency comparison table; quantify the cost of "unweighted deadline + no protect_slice" |
 | `sched_wake_sleep_model` | formula replica | add random sleep/wake (exponential distribution), measure wake→run latency P99, RIP on/off | real measure of interactive latency (replacing the current "max pick interval") |
-| QEMU in-kernel accounting trace (**real code**) | real source + kernel print | extend `kernel/src/arch/x86_64/schedule/syscall/sched_bench.cpp`: every N ticks output each thread's vruntime/deadline/quantum/avg_vruntime to serial, QEMU `-serial file:` capture then offline analysis | real ledger convergence/drift curves under SMP; evidence one level stronger than the model |
+| QEMU in-kernel accounting trace (**real code**) | real source + kernel print | extend `kernel/modules/builtin/x86_64/syscall/sched_bench.cpp`: every N ticks output each thread's vruntime/deadline/quantum/avg_vruntime to serial, QEMU `-serial file:` capture then offline analysis | real ledger convergence/drift curves under SMP; evidence one level stronger than the model |
 
 ---
 
@@ -293,7 +293,7 @@ correspond to real kernel performance."
 | Module | Source file | Real source compiled | shim/replica/simulation | Verifiable boundary | Next verification approach |
 |---|---|---|---|---|---|
 | SLUB/SLAB | `kernel/src/mem/heap.cpp` | ✅ real source (`-D__KERNEL_TEST_HOST__` only disables cli, adds ASAN hooks) | shim: VMM page pool, this_cpu, spinlock (no contention) | algorithmic correctness, single-threaded memory safety | multithreaded per-CPU shim, OOM injection, QEMU long stability |
-| File cache | `kernel/src/fs/fc.cpp` + `art.c` + `heap.cpp` | ✅ real source | shim same as above; `g_fc_cpus` multi-instance single-threaded | single-core multi-cache-instance semantics | true concurrent multithreading, QEMU disk load |
+| File cache | `kernel/modules/builtin/common/fs/fc.cpp` + `art.c` + `heap.cpp` | ✅ real source | shim same as above; `g_fc_cpus` multi-instance single-threaded | single-core multi-cache-instance semantics | true concurrent multithreading, QEMU disk load |
 | ART | `art.c` | ✅ real source | none (art_mini compiled directly) | full semantics | already includes prefix/chain/delete; add deep keys + concurrency |
 | Scheduler | `tests/sched/main.cpp` | ❌ | **formula-replica model** (constants/formulas annotated against sched.cpp line numbers) + multimap substitute | ledger math | QEMU sched_bench trace (real code) or sched_core.h extraction |
 | Whole kernel | ISO | ✅ | none | QEMU TCG smoke | KVM/real machine, fault injection, stress load |

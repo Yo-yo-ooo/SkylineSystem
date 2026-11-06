@@ -79,6 +79,23 @@ SECTIONS
 
     .data : {
         *(.data .data.*)
+        /* 内建组件 (kmod builtin component)：每个组件的 .in/.out 条目落在
+           .kbuiltin.in.<ID>/.kbuiltin.out.<ID>；描述符表由 BEGIN/END 宏登记，
+           段内 BEGIN/END 哨兵界定条目范围（见 include/kmod/kmod_component.h）。 */
+        . = ALIGN(8);
+        KEEP(*(.kbuiltin.in.*))
+        KEEP(*(.kbuiltin.out.*))
+        . = ALIGN(8);
+        __kbuiltin_desc_start = .;
+        KEEP(*(.kbuiltin.desc))
+        __kbuiltin_desc_end = .;
+        /* kmod Tier0 内核导出表 (.kout)：模块 .in 里 provider="kernel" 的导入
+           在加载期按名解析到这张表。必须可写段（PIE 下函数指针初始化会产生
+           RELATIVE 重定位，由 Limine 在启动时应用）。 */
+        . = ALIGN(8);
+        __kout_start = .;
+        KEEP(*(.kout))
+        __kout_end = .;
     } :data
 
     /* NOTE: .bss needs to be the last thing mapped to :data, otherwise lots of */

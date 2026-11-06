@@ -115,6 +115,6 @@ OOM 修掉后仍有少量 `ACK timeout`。看 `WaitAcks()`：超时 100ms 后会
 
 - `kernel/src/mem/pmm.cpp`：`PMM: reserved N bootloader pages`、`[pmmsample]`
 - `kernel/src/arch/x86_64/vmm/vmm.cpp`：`[vmmdiag] big alloc`、OOM 行里的 `free=/pc=`
-- `kernel/src/arch/x86_64/schedule/syscall/memory.cpp`：`[mmapsample]`、`[munmapsample]`
+- `kernel/modules/builtin/x86_64/syscall/memory.cpp`：`[mmapsample]`、`[munmapsample]`
 - `kernel/src/arch/x86_64/schedule/sched.cpp`：`[pmmdiag]`（OOM 场景下 idle 拿不到
   CPU，实测一条都没打出来，留着意义不大）

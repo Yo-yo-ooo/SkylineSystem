@@ -256,25 +256,48 @@ override KLDFLAGS += \
     -T linker-$(KARCH).ld
 
 
-# Use "find" to glob all *.c, *.S, and *.asm files in the tree and obtain the
+# Use "find" to glob all *.c, *.S, *.cpp, *.asm files in the tree and obtain the
 # object and header dependency file names.
+#
+# 目录分层（全模块化重构后）：
+#   src/                    Tier0 固定核心（boot/GDT/IDT/中断/页表/调度核心/
+#                           syscall 入口/kmod 机制/klib/mem/print/elf/flanterm）
+#   modules/builtin/common/ Tier1 内建组件实现（驱动/文件系统/网络/分区/ACPI/
+#                           SMBIOS；与原 src 非 arch 目录一一对应，所有架构编译）
+#   modules/builtin/<arch>/ Tier1 内建组件的架构相关实现（平台/驱动/syscall 家族）
+#   modules/loadable/       可加载 .ko 演示模块（独立 modules 目标编译）
+# 内建组件仍静态链接进内核镜像，但源码与生命周期均归属 modules 树，由
+# KmodBootComponents() 按 manifest 依赖拓扑初始化（见 docs/kernel-components.md）。
 define find_sources
  $(patsubst src/%,%,$(shell find src -type f -name "*.$(1)" -not -path "*/arch/*" | LC_ALL=C sort)) \
  $(patsubst src/%,%,$(shell find src/arch/$(KARCH) -type f -name "*.$(1)" | LC_ALL=C sort))
 endef
 
+# 内建组件的源文件（相对 modules/），对象落在 obj-$(KARCH)/modules/<rel>。
+define find_module_sources
+ $(patsubst modules/%,%,$(shell find modules/builtin/common -type f -name "*.$(1)" 2>/dev/null | LC_ALL=C sort)) \
+ $(patsubst modules/%,%,$(shell find modules/builtin/$(KARCH) -type f -name "*.$(1)" 2>/dev/null | LC_ALL=C sort))
+endef
+
 CFILES := $(call find_sources,c)
 ASFILES := $(call find_sources,S)
 CPPFILES := $(call find_sources,cpp)
+MOD_CFILES := $(call find_module_sources,c)
+MOD_ASFILES := $(call find_module_sources,S)
+MOD_CPPFILES := $(call find_module_sources,cpp)
 
 ifeq ($(KARCH),x86_64)
 override NASMFILES := $(shell cd src && find -L * -type f -name '*.asm' | LC_ALL=C sort)
+override MOD_NASMFILES := $(patsubst modules/%,%,$(shell find modules/builtin -type f -name '*.asm' 2>/dev/null | LC_ALL=C sort))
 endif
 override OBJ := $(addprefix obj-$(KARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(CPPFILES:.cpp=.cpp.o))
+override OBJ += $(addprefix obj-$(KARCH)/modules/,$(MOD_CFILES:.c=.c.o) $(MOD_ASFILES:.S=.S.o) $(MOD_CPPFILES:.cpp=.cpp.o))
 ifeq ($(KARCH),x86_64)
 override OBJ += $(addprefix obj-$(KARCH)/,$(NASMFILES:.asm=.asm.o))
+override OBJ += $(addprefix obj-$(KARCH)/modules/,$(MOD_NASMFILES:.asm=.asm.o))
 endif
 override HEADER_DEPS := $(addprefix obj-$(KARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=.S.d))
+override HEADER_DEPS += $(addprefix obj-$(KARCH)/modules/,$(MOD_CFILES:.c=.c.d) $(MOD_ASFILES:.S=.S.d))
 
 # Default target.
 .PHONY: all
@@ -332,12 +355,101 @@ obj-$(KARCH)/%.cpp.o: src/%.cpp Makefile
 	@mkdir -p "$$(dirname $@)"
 	@$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
+# Tier1 内建组件（modules/builtin/**）编译规则：源文件来自 modules 树，
+# 对象落在 obj-$(KARCH)/modules/builtin/<rel>，与 Tier0 src 对象分离。
+obj-$(KARCH)/modules/%.c.o: modules/%.c Makefile
+	@echo [MOD-C] $<
+	@mkdir -p "$$(dirname $@)"
+	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+
+obj-$(KARCH)/modules/%.S.o: modules/%.S Makefile
+	@echo [MOD-GAS] $<
+	@mkdir -p "$$(dirname $@)"
+	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+
+obj-$(KARCH)/modules/%.cpp.o: modules/%.cpp Makefile
+	@echo [MOD-C++] $<
+	@mkdir -p "$$(dirname $@)"
+	@$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
+
+ifeq ($(KARCH),x86_64)
+obj-$(KARCH)/modules/%.asm.o: modules/%.asm Makefile
+	@echo [MOD-NASM] $<
+	@mkdir -p "$$(dirname $@)"
+	@nasm $(KNASMFLAGS) $< -o $@
+endif
+
 ifeq ($(KARCH),x86_64)
 # Compilation rules for *.asm (nasm) files.
 obj-$(KARCH)/%.asm.o: src/%.asm Makefile
 	@echo NASM $<
 	@mkdir -p "$$(dirname $@)"
 	@nasm $(KNASMFLAGS) $< -o $@
+endif
+
+# ==================== kmod 可加载模块 (.ko) 构建 ====================
+# 独立 PHONY 目标：把 modules/loadable/*.cpp 编译成 bin-$(KARCH)/modules/*.ko，
+# 不进入 OBJ / 内核链接（默认 all 目标不含 .ko，Tier1 内建组件另走 modules/builtin）。
+#
+# 加载器约束（见 kernel/include/kmod/kmod_abi.h 与 src/arch/x86_64/kmod/elf_loader.cpp）：
+#   - ET_REL，-fno-pic/-fno-pie -mcmodel=large（alloc 段只允许绝对 64 位重定位）；
+#   - .in/.out/.kmod_manifest 段由模块头宏生成，非 const 且 8 字节对齐；
+#   - 只允许 R_X86_64_64/PC32/PLT32/32/32S（alloc 目标），用 modules-check 复核。
+ifeq ($(KARCH),x86_64)
+# 支持直接 `make -C kernel modules`：此时 SS_BUILD_DIR 没有被根 Makefile export，
+# 用 CURDIR 反推仓库根，保证 -I 指向真实的 kernel/include。
+KMOD_ROOT := $(if $(SS_BUILD_DIR),$(SS_BUILD_DIR),$(abspath $(CURDIR)/..))
+KMOD_MODULE_SRCS := $(wildcard modules/loadable/*.cpp)
+KMOD_MODULE_OBJS := $(patsubst modules/loadable/%.cpp,obj-$(KARCH)/loadable/%.cxx.o,$(KMOD_MODULE_SRCS))
+KMOD_MODULE_KOS := $(patsubst modules/loadable/%.cpp,bin-$(KARCH)/modules/%.ko,$(KMOD_MODULE_SRCS))
+
+# 模块编译 flags 与内核主 flags 刻意分离：内核用 -fPIE/-mcmodel=kernel，
+# 模块必须 -fno-pie/-mcmodel=large 才能保持"绝对地址 + 加载期回填"的模型。
+KMOD_CXXFLAGS := -std=gnu++17 -O2 -g \
+    -target x86_64-unknown-none \
+    -fno-pic -fno-pie -mcmodel=large \
+    -mno-red-zone -mno-sse -mno-sse2 -mno-80387 -mno-mmx \
+    -fno-stack-protector -fno-stack-check -fno-lto \
+    -fno-exceptions -fno-rtti -ffreestanding -nostdinc \
+    -Wno-c++20-designator \
+    -I$(KMOD_ROOT)/kernel/include \
+    -isystem $(KMOD_ROOT)/ablib/freestndchdrs/$(KARCH)/include
+KMOD_LDFLAGS := -m elf_x86_64 -r
+
+.PHONY: modules
+modules: $(KMOD_MODULE_KOS)
+
+# 中间 .cxx.o 保留，避免每次 make modules 都全量重编（.ko 依赖它做增量）。
+.SECONDARY: $(KMOD_MODULE_OBJS)
+
+obj-$(KARCH)/loadable/%.cxx.o: modules/loadable/%.cpp
+	@echo KMOD-CXX $<
+	@mkdir -p "$$(dirname $@)"
+	@$(KCXX) $(KMOD_CXXFLAGS) -c $< -o $@
+
+bin-$(KARCH)/modules/%.ko: obj-$(KARCH)/loadable/%.cxx.o
+	@echo KMOD-LD $@
+	@mkdir -p "$$(dirname $@)"
+	@$(KLD) $(KMOD_LDFLAGS) -o $@ $<
+
+# 构建后校验：.ko 的 alloc 段重定位必须只落在加载器白名单里。
+.PHONY: modules-check
+modules-check: $(KMOD_MODULE_KOS)
+	@echo "== kmod reloc check (allowed: R_X86_64_64/PC32/PLT32/32/32S) =="
+	@fail=0; for ko in $(KMOD_MODULE_KOS); do \
+	    bad=$$(readelf -rW "$$ko" | grep -oE 'R_X86_64_[A-Z0-9_]+' | \
+	           grep -vE '^R_X86_64_(64|PC32|PLT32|32|32S)$$' | sort -u); \
+	    if [ -n "$$bad" ]; then echo "[FAIL] $$ko: $$bad"; fail=1; \
+	    else echo "[OK]   $$ko"; fi; \
+	done; \
+	if [ $$fail -ne 0 ]; then echo "kmod reloc check FAILED"; exit 1; fi; \
+	echo "kmod reloc check OK"
+else
+.PHONY: modules modules-check
+modules:
+	@echo "modules: skipped (.ko 仅 x86_64，当前 KARCH=$(KARCH))"
+modules-check:
+	@echo "modules-check: skipped (.ko 仅 x86_64，当前 KARCH=$(KARCH))"
 endif
 
 # Remove object files and the final executable.

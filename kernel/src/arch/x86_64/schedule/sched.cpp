@@ -28,6 +28,9 @@
 #include <klib/kprintf.h>
 
 #include <arch/x86_64/schedule/sched_internal.h>
+/* B5：调度策略座位（Tier0 机制 + Tier1 策略）。仅读取座位/注册默认实现，
+ * 不引入 kmod 的加载/治理逻辑——调度核心仍是 Tier0 内联代码。 */
+#include <kmod/kmod_internal.h>
 
 /* 用户态被中断却连续这么多次看到 preempt_count>1 -> 判定泄漏 (见 Switch) */
 #define PREEMPT_LEAK_STREAK_LIMIT 1024u
@@ -51,6 +54,122 @@ uint32_t sched_prio_to_weight[16] = {
 
 static_assert(sizeof(sched_prio_to_weight)/sizeof(sched_prio_to_weight[0]) == 16,
               "sched_prio_to_weight must have 16 entries");
+
+/* ==================================================================== */
+/* B5：调度策略座位 kernel.seat.sched.policy.v1                         */
+/* -------------------------------------------------------------------- */
+/* 原则 5（开放策略，不开放核心机制）落地：                              */
+/*   - Tier0 固定机制（不可替换）：运行队列/上下文切换/时钟/EEVDF 记账； */
+/*   - Tier1 策略（座位）：只覆盖 quantum 数值与优先级->权重映射；        */
+/*   - 默认路径严格等价：未注册提供者 / 策略回调返回 0 / ABI 不符时，     */
+/*     wrapper 返回**原函数结果**，数值与引入座位前逐位一致。            */
+/*                                                                      */
+/* Tier0 内核默认 ops 在本文件懒注册（KmodSeatInit 在 kmod_init 阶段，   */
+/* 早于调度器组件；同名重复注册=幂等更新）。内建组件                  */
+/* kernel.sched.policy.eevdf 加载后会用组件内 ops 覆盖 kernel_ops，      */
+/* 但 provider 仍为 -1（内核默认），因此 .ko 提供者可随时接管/卸载。     */
+/* ==================================================================== */
+
+static const kmod_seat_sched_policy_ops_t g_kernel_sched_policy_ops = {
+    KMOD_SEAT_SCHED_POLICY_ABI,
+    (uint32_t)sizeof(kmod_seat_sched_policy_ops_t),
+    0u,                       /* policy_version：0 = 内核默认 EEVDF/反馈 */
+    0u,                       /* reserved */
+    "kernel.eevdf",           /* identity（selftest 可读） */
+    nullptr, nullptr, nullptr /* 全部 NULL = 完全沿用内核默认逻辑 */
+};
+
+static volatile int32_t g_sched_policy_seat_ready = 0;
+
+/* 注册/刷新 Tier0 内核默认策略座位（幂等；可在任意上下文调用）。 */
+static void sched_policy_seat_register_once(void)
+{
+    if (__atomic_load_n(&g_sched_policy_seat_ready, __ATOMIC_ACQUIRE) != 0)
+        return;
+    const int32_t rc = KmodSeatRegisterKernel(
+        KMOD_SEAT_SCHED_POLICY, KMOD_SEAT_SCHED_POLICY_ABI,
+        &g_kernel_sched_policy_ops,
+        (uint32_t)sizeof(g_kernel_sched_policy_ops), KMOD_CAP_SEAT_PROVIDER);
+    if (rc == KMOD_OK)
+        __atomic_store_n(&g_sched_policy_seat_ready, 1, __ATOMIC_RELEASE);
+}
+
+/* 当前策略：模块提供者优先，否则内核默认；ABI/尺寸/identity 不符一律回退。 */
+static const kmod_seat_sched_policy_ops_t *sched_policy_current(void)
+{
+    if (unlikely(__atomic_load_n(&g_sched_policy_seat_ready, __ATOMIC_ACQUIRE) == 0))
+        sched_policy_seat_register_once();
+    const void *raw = KmodSeatCurrent(KMOD_SEAT_SCHED_POLICY);
+    if (!raw)
+        return nullptr;
+    const kmod_seat_sched_policy_ops_t *ops =
+        (const kmod_seat_sched_policy_ops_t *)raw;
+    /* 机械校验失败（版本/尺寸/身份）→ 回退内核默认，不让坏 ops 进入调度路径 */
+    if (ops->abi_version != KMOD_SEAT_SCHED_POLICY_ABI ||
+        ops->ops_size != (uint32_t)sizeof(kmod_seat_sched_policy_ops_t) ||
+        !ops->identity)
+        return nullptr;
+    return ops;
+}
+
+static void sched_policy_ctx_fill(kmod_sched_policy_ctx_t *ctx, cpu_t *cpu,
+                                  thread_t *t, uint32_t stage,
+                                  uint64_t default_q)
+{
+    ctx->cpu_id = cpu ? cpu->id : 0u;
+    ctx->priority = (t && t->priority < 16u) ? (uint32_t)t->priority : 8u;
+    ctx->stage = stage;
+    ctx->reserved = 0u;
+    ctx->base_quantum_ms = cpu ? cpu->base_quantum : 0u;
+    ctx->weight = (t && t->weight) ? (uint64_t)t->weight : 1024ull;
+    ctx->default_quantum_ms = default_q;
+}
+
+/* base_quantum：定时器重臂基准。默认 = cpu->base_quantum（原逻辑）。 */
+static uint64_t sched_policy_base_quantum(cpu_t *cpu)
+{
+    const uint64_t def = cpu->base_quantum;
+    const kmod_seat_sched_policy_ops_t *ops = sched_policy_current();
+    if (unlikely(ops && ops->base_quantum_ms)) {
+        kmod_sched_policy_ctx_t ctx;
+        sched_policy_ctx_fill(&ctx, cpu, cpu->current_thread,
+                              KMOD_SCHED_STAGE_BASE, def);
+        const uint64_t v = ops->base_quantum_ms(&ctx);
+        if (v)
+            return v; /* 0 = 沿用内核默认 */
+    }
+    return def;
+}
+
+/* dynamic quantum（RIP 反馈融合后）：默认 = get_dynamic_quantum（原逻辑）。 */
+static uint64_t sched_policy_dynamic_quantum(cpu_t *cpu, thread_t *t)
+{
+    const uint64_t def = get_dynamic_quantum(cpu, t);
+    const kmod_seat_sched_policy_ops_t *ops = sched_policy_current();
+    if (unlikely(ops && ops->quantum_ms)) {
+        kmod_sched_policy_ctx_t ctx;
+        sched_policy_ctx_fill(&ctx, cpu, t, KMOD_SCHED_STAGE_DYNAMIC, def);
+        const uint64_t v = ops->quantum_ms(&ctx);
+        if (v)
+            return v;
+    }
+    return def;
+}
+
+/* eligibility 截断后 quantum：默认 = eligibility_capped_quantum（原逻辑）。 */
+static uint64_t sched_policy_eligibility_quantum(cpu_t *cpu, thread_t *t)
+{
+    const uint64_t def = eligibility_capped_quantum(cpu, t);
+    const kmod_seat_sched_policy_ops_t *ops = sched_policy_current();
+    if (unlikely(ops && ops->quantum_ms)) {
+        kmod_sched_policy_ctx_t ctx;
+        sched_policy_ctx_fill(&ctx, cpu, t, KMOD_SCHED_STAGE_ELIGIBILITY, def);
+        const uint64_t v = ops->quantum_ms(&ctx);
+        if (v)
+            return v;
+    }
+    return def;
+}
 
 volatile bool need_resched_flags[MAX_CPU] = {false};
 /* Set by an explicit Schedule::Yield(): unlike a timer tick, a voluntary
@@ -559,7 +678,7 @@ namespace Schedule {
                as the idle thread exists. */
             if (unlikely(!cpu->idle_thread || !cpu->current_thread)) {
                 if (cpu->idle_thread) cpu->current_thread = cpu->idle_thread;
-                LAPIC::Oneshot(SCHED_VEC, cpu->base_quantum * cpu->lapic_ticks);
+                LAPIC::Oneshot(SCHED_VEC, sched_policy_base_quantum(cpu) * cpu->lapic_ticks);
                 LAPIC::EOI();
                 irq_restore(rflags);
                 return;
@@ -592,7 +711,7 @@ namespace Schedule {
              * CheckPreempt 在计数归零后重新触发 SCHED_VEC. */
             if (unlikely(cpu->preempt_count > 1)) {
                 if (likely(cpu->current_thread)) {
-                    uint64_t q = get_dynamic_quantum(cpu, cpu->current_thread);
+                    uint64_t q = sched_policy_dynamic_quantum(cpu, cpu->current_thread);
                     LAPIC::Oneshot(SCHED_VEC, q * cpu->lapic_ticks);
                 }
                 LAPIC::EOI();
@@ -760,7 +879,7 @@ namespace Schedule {
 
             if (unlikely(!is_switch)) {
                 if (likely(next_thread != cpu->idle_thread)) {
-                    quantum = eligibility_capped_quantum(cpu, next_thread);
+                    quantum = sched_policy_eligibility_quantum(cpu, next_thread);
                 }
                 LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
                 LAPIC::EOI();
@@ -808,8 +927,8 @@ namespace Schedule {
             next_thread->rip_last_tsc = cur_tsc;
 
             quantum = (likely(next_thread != cpu->idle_thread))
-                    ? eligibility_capped_quantum(cpu, next_thread)
-                    : cpu->base_quantum;
+                    ? sched_policy_eligibility_quantum(cpu, next_thread)
+                    : sched_policy_base_quantum(cpu);
 
             LAPIC::Oneshot(SCHED_VEC, quantum * cpu->lapic_ticks);
             LAPIC::EOI();
@@ -882,6 +1001,9 @@ namespace Schedule {
     }
 
     void Init() {
+        /* B5：注册 Tier0 内核默认调度策略座位（幂等；组件随后可覆盖 ops，
+         * provider 仍为 -1，保证 .ko 策略提供者可接管/卸载回退）。 */
+        sched_policy_seat_register_once();
         /* per-CPU 融合权重显式初始化 (静态零 + 读取端防御双保险) */
         for (uint32_t i = 0; i < MAX_CPU; i++) {
             __atomic_store_n(&rip_fast_weight[i].w, RIP_FAST_W_NORM_Q10, __ATOMIC_RELAXED);

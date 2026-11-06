@@ -49,7 +49,7 @@
 | Component | vendored location | pinned version | last checked | TODO |
 |---|---|---|---|---|
 | lwIP | kernel/src/net | bundled in repo (upstream tag not recorded) | from round 15 | record the upstream tag |
-| lwext4 | kernel/src/fs/lwext4 | bundled in repo | from round 15 | record the upstream tag |
-| FatFs | kernel/src/fs/fatfs | bundled in repo | from round 15 | record the upstream tag |
+| lwext4 | kernel/modules/builtin/common/fs/lwext4 | bundled in repo | from round 15 | record the upstream tag |
+| FatFs | kernel/modules/builtin/common/fs/fatfs | bundled in repo | from round 15 | record the upstream tag |
 | mpaland/printf | lib/stdc/outfb/printf.c | upstream MIT version | from round 15 | track upstream fixes |
 | x86mem | ablib/arch/x86_64/x86mem | developed in this repo (MIT) | — | none |

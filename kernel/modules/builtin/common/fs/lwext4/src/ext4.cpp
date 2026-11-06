@@ -3337,9 +3337,17 @@ bool ext4_kernel_init(const char* devname,const char* mpname,uint32_t wpart){
     //kinfoln("HERE!");
     struct ext4_blockdev *p = ext4_blockdev_get(devname,wpart);
 
+    /* 组件化 (kmod) 后根挂载由 kernel.fs.rootfs 组件按候选设备列表探测：
+       设备不存在必须是"可失败的返回值"而不是 Panic/hcf，否则候选列表里
+       排在前面的不存在设备会把整机打死。语义不变：仍然要求显式错误日志 +
+       返回 false，调用方决定是否致命。 */
+    if (!p) {
+        kerror("ext4_kernel_init: blockdev '%s' not found\n", devname);
+        return false;
+    }
 
 	uint32_t r = ext4_mount(p, mpname, false);
-	if (r != EOK){kerror("ext4_mount: rc = %d\n", r);hcf();}
+	if (r != EOK){kerror("ext4_mount: rc = %d\n", r); return false;}
     kpok("EXT4 MOUNTED!\n");
 
     /* 装挂载点锁 (必须在上面的 mount 之后, 因为 mp 是 mount 里建的)。

@@ -2,6 +2,15 @@
 .global _start
 .type _start, @function
 _start:
+    /* 显式引导栈：不依赖 bootloader 提供的栈。
+       组件化启动（KmodBootComponents 拓扑：ACPI->APIC->...->PCI 枚举->FS->
+       网络->用户态）比旧的硬编码 init 链调用深度更大，叠加 kprintf/flanterm
+       输出路径后必须给 Tier0 一个确定大小的栈，否则会在不同组件处随机
+       "异常处理再入 kprintf 自死锁 / 栈静默踩坏"。64 KiB 只用于 bootstrap
+       阶段，调度器上线后各线程使用自己的内核栈。 */
+    lea     __boot_stack_top(%rip), %rsp
+    and     $-16, %rsp
+
     /* 检查 RDRAND: CPUID.01H:ECX[bit 30] */
     mov     $1, %eax
     xor     %ecx, %ecx
@@ -53,3 +62,15 @@ _start:
     hlt
     jmp     .Lhang
 .size _start, . - _start
+
+/* Tier0 bootstrap 栈（.bss，64 KiB，16 字节对齐）。Limine 跳转 _start 时
+   不保证栈大小；组件化启动链路比旧硬编码 init 链更深（拓扑图的 ACPI/APIC/
+   PCI/FS/网络组件 init + kprintf/flanterm 输出路径），需要确定大小的栈。
+   调度器上线后各线程使用自己的内核栈，本栈只在 bootstrap 阶段使用。 */
+.section .bss
+.align 16
+.global __boot_stack
+__boot_stack:
+    .skip 65536
+.global __boot_stack_top
+__boot_stack_top:

@@ -1,6 +1,6 @@
 # GUI Stack and Parallel Compositor
 
-Source: `programs/desktop/` (`main.cpp`, `loader.cpp`, `synthesizer/window.cpp`), `lib/graphic/`, `kernel/src/drivers/framebuffer/`.
+Source: `programs/desktop/` (`main.cpp`, `loader.cpp`, `synthesizer/window.cpp`), `lib/graphic/`, `kernel/modules/builtin/common/drivers/framebuffer/`.
 
 > The entire desktop runs in user space: the kernel only provides the framebuffer, shared memory, and sysinfo. This document describes the code's actual behavior, including known defects.
 

@@ -1,6 +1,6 @@
 # Filesystem stack
 
-Source: `kernel/src/fs/` (`fc.cpp` file cache, `fd.cpp` descriptors, `saf/`, `fatfs/`, `lwext4/`), `kernel/src/drivers/` (block devices).
+Source: `kernel/modules/builtin/common/fs/` (`fc.cpp` file cache, `fd.cpp` descriptors, `saf/`, `fatfs/`, `lwext4/`), `kernel/modules/builtin/common/drivers/` (block devices).
 
 ## 1. Overall stack
 
@@ -114,7 +114,7 @@ int32\\\_t file\\\_cache\\\_writeback\\\_callback(const uint8\\\_t \\\*key, uint
 
 ## 5. Partitioning
 
-`kernel/src/partition/`: `mbrgpt.cpp` (MBR/GPT identification), `identfstype.cpp` (probes the filesystem type on each partition), `mgr.cpp` (partition manager).
+`kernel/modules/builtin/common/partition/`: `mbrgpt.cpp` (MBR/GPT identification), `identfstype.cpp` (probes the filesystem type on each partition), `mgr.cpp` (partition manager).
 
 ## 6. Current status
 

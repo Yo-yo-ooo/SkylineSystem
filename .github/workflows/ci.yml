@@ -1,6 +1,8 @@
 # P4-87: 回归门禁 —— 宿主测试套件 + 金样比对 (Linux runner)
 # net_smoke (QEMU 网络冒烟) 依赖 Windows PowerShell + 桌面 QEMU,
 # 保留为手动门禁 (见 tests/net_smoke.ps1, 已参数化 -Root/-Qemu)。
+# kmod_smoke (QEMU kmod/组件化串口冒烟) 同为手动门禁,
+# 见 res/scripts/test/kmod_smoke.ps1 (-Root/-Qemu/-WaitSeconds/-MinBuiltins)。
 name: SkylineSystem CI
 
 on:
@@ -27,6 +29,14 @@ jobs:
       - name: allocator chaos (P4-86)
         working-directory: tests
         run: make -B alloc && ./bin/alloc_test
+
+      - name: kmod host gate (build + run, topology/capability/ELF loader)
+        working-directory: tests
+        run: make -B kmod && ./bin/kmod_test
+
+      - name: kmod ASAN gate (ELF loader negative cases + fuzz)
+        working-directory: tests
+        run: make -B kmod-asan && ./bin/kmod_test_asan
 
       - name: Static analysis gate (round 98-99)
         working-directory: tests

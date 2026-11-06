@@ -2,7 +2,7 @@
 
 ## 1. 鼠标：忽略了第 9 位符号位（真实 bug）
 
-`kernel/src/drivers/mouse/x86/mouse.cpp` 的 IRQ12 处理原来这样解增量:
+`kernel/modules/builtin/common/drivers/mouse/x86/mouse.cpp` 的 IRQ12 处理原来这样解增量:
 
 ```c
 int8_t dx_raw = (int8_t)mouse_bytes[1];   /* 只有低 8 位, 且不支持第 9 位 */

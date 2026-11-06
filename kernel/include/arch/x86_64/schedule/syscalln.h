@@ -37,4 +37,9 @@
 #define SYSCALL_MONOTONIC_MS    27   /* 毫秒级单调时钟 */
 #define SYSCALL_SLEEP_MS        28   /* 毫秒级真睡眠 */
 
+/* ---- kmod 治理自省槽（固定契约；实现由 Tier0 kmod 子系统提供） ---- */
+#define SYSCALL_KMOD_INFO       29   /* 写模块表快照，返回记录数；语义固定 */
+#define SYSCALL_KMOD_PROBE      30   /* 诊断探针：返回 MAGIC|impl_generation<<32；
+                                        语义固定，实现允许被治理层热替换 */
+
 #endif

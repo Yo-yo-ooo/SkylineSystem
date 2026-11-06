@@ -433,7 +433,7 @@ lib/bin/libsky.so   873144 bytes
   `desktop.elf` 1.04 MB / `doom.elf` 2.1 MB, 里面各带一份 libc + allocator + TTF + flanterm;
 - ELF 是 `EXEC` (固定 vaddr 0x400000, 非 PIE), `_start` 在
   `lib/base/arch/x86_64/init.S`, 由它调用 `_init_runtime_and_global_variables` 再调 `main`;
-- 内核 ELF 加载器在 `kernel/src/arch/x86_64/schedule/syscall/exec.cpp`:
+- 内核 ELF 加载器在 `kernel/modules/builtin/x86_64/syscall/exec.cpp`:
   只处理 `PT_LOAD` / `PT_TLS`, 返回 `hdr->e_entry + load_bias`;
 - 系统调用返回值链路刚修好 (见 `docs/debug-hang-2026-10-11.md` 第 11 节),
   这是后面所有用户态验证的前提。

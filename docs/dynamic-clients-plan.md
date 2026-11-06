@@ -67,7 +67,7 @@ CR0: 0x80010033   ← bit16 = WP 置位, 所以内核写只读页同样缺页
 ```
 memcpy_fscpuf              kernel/src/klib/meme.cpp:73
  └ __memcpy                kernel/src/klib/klib.cpp:85
-   └ elf_load_impl         kernel/src/arch/x86_64/schedule/syscall/exec.cpp
+   └ elf_load_impl         kernel/modules/builtin/x86_64/syscall/exec.cpp
      └ sys_load            exec.cpp:461
 ```
 

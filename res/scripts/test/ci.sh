@@ -29,6 +29,20 @@ echo "== run slub 多线程 (4 虚拟 CPU) =="
 echo "== run fc 多线程 (4 线程 × 4 实例) =="
 ./bin/fc_mt > ci_fcmt.log 2>&1
 
+echo "== build kmod =="
+make -B kmod > ci_kmod_build.log 2>&1 || { tail -40 ci_kmod_build.log; exit 1; }
+
+echo "== run kmod (拓扑/能力/ELF 加载器) =="
+./bin/kmod_test > ci_kmod.log 2>&1
+grep -ahE 'KMOD-TEST' ci_kmod.log || true
+
+echo "== build kmod ASAN+UBSAN =="
+make -B kmod-asan > ci_kmod_asan_build.log 2>&1 || { tail -40 ci_kmod_asan_build.log; exit 1; }
+
+echo "== run kmod ASAN+UBSAN (负向/fuzz) =="
+./bin/kmod_test_asan > ci_kmod_asan.log 2>&1
+grep -ahE 'KMOD-TEST RESULT' ci_kmod_asan.log || true
+
 echo "== 汇总 =="
-grep -ahE 'RESULT|FAIL|MISSING|redzone-oob' ci_slub.log ci_poison.log ci_fc.log ci_fcreg.log ci_sched.log ci_slubmt.log ci_fcmt.log || true
+grep -ahE 'RESULT|FAIL|MISSING|redzone-oob|KMOD-TEST' ci_slub.log ci_poison.log ci_fc.log ci_fcreg.log ci_sched.log ci_slubmt.log ci_fcmt.log ci_kmod.log ci_kmod_asan.log || true
 echo "CI DONE (日志: ci_*.log)"

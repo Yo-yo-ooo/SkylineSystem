@@ -107,7 +107,7 @@ large-block availability).
 
 ## 2. File Cache (fc.cpp + art.c) — 3 memory-safety defects located and fixed, all pass
 
-**Method**: actually compile `kernel/src/fs/fc.cpp` + `kernel/src/klib/algorithm/art.c` +
+**Method**: actually compile `kernel/modules/builtin/common/fs/fc.cpp` + `kernel/src/klib/algorithm/art.c` +
 `heap.cpp` (only the shim layer replaced), 4 per-CPU cache instances, 200 logical file keys,
 400k random operations (promote/get/put/invalidate/idle_handler weighted), with canary content
 verification, per-operation ART key-value consistency inspection, generational double-free

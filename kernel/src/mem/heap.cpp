@@ -11,6 +11,45 @@
 #include "heap_internal.h"
 #include <klib/kprintf.h>
 
+/* B6：分配器策略座位（Tier0 机制固定，Tier1 策略可替换）。
+ * 内核构建才引入 kmod 座位 ABI/注册入口；宿主 slub 测试（tests/slub）
+ * 不链接 kmod，策略恒缺席 → 默认路径与历史逐位一致（也不引入 kmod 头开销）。 */
+#ifndef __KERNEL_TEST_HOST__
+#include <kmod/kmod_seats.h>
+
+extern "C" const void *KmodSeatCurrent(const char *name);
+
+/* 读取当前分配策略 ops；NULL/ABI 不符/identity 缺失一律视为"无策略"。
+ * 仅在冷路径调用（>=4 KiB large path 或分配失败后的 OOM 路径）。 */
+static const kmod_seat_alloc_policy_ops_t *heap_alloc_policy(void)
+{
+    const void *raw = KmodSeatCurrent(KMOD_SEAT_ALLOC_POLICY);
+    if (!raw)
+        return nullptr;
+    const kmod_seat_alloc_policy_ops_t *ops =
+        (const kmod_seat_alloc_policy_ops_t *)raw;
+    if (ops->abi_version != KMOD_SEAT_ALLOC_POLICY_ABI ||
+        ops->ops_size != (uint32_t)sizeof(kmod_seat_alloc_policy_ops_t) ||
+        !ops->identity)
+        return nullptr;
+    return ops;
+}
+
+/* 策略 large 阈值解析：返回 0 = 沿用内核默认（不改变路径）。
+ * 策略不得把 large 门限压到小对象区（< 4 KiB），越界值被 clamp。 */
+static uint64_t heap_policy_large_threshold(uint64_t request)
+{
+    const kmod_seat_alloc_policy_ops_t *ops = heap_alloc_policy();
+    if (!ops || !ops->large_alloc_threshold)
+        return 0ull;
+    uint64_t t = ops->large_alloc_threshold(request,
+                                            KMOD_ALLOC_LARGE_DEFAULT_THRESHOLD);
+    if (t != 0ull && t < KMOD_ALLOC_LARGE_MIN)
+        t = KMOD_ALLOC_LARGE_MIN;
+    return t;
+}
+#endif /* !__KERNEL_TEST_HOST__ */
+
 /* 临时诊断: 按调用者统计内核堆分配字节数 (64 槽哈希)。
    目的: 找出"DOOM 启动后消失的 ~110 MiB" 是哪些内核调用点要的。
    只累加, 不在这里打印 —— 打印放在 lwip 的定时统计里, 避免重入。 */
@@ -62,18 +101,48 @@ extern "C" void kalloc_query(void *p) {
 
 extern "C" void *kmalloc(uint64_t size) {
 #ifdef __x86_64__
-    void *p = SLUB::Kmalloc((size_t)size);    // small object: lock-free SLUB path
-    if (likely(p)) {
-#ifdef __KERNEL_TEST_HOST__
-        __asan_unpoison_memory_region(p, (size_t)size);
-        if (g_kalloc_log_on)
-            g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)p, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
+    /* B6：分配器策略座位（仅冷路径）。
+       - 只有 request >= KMOD_ALLOC_LARGE_MIN(4 KiB) 才查询 large 阈值；
+         小对象（<4 KiB）热路径**零策略查询**，与原路径指令级等价。
+       - 默认（无提供者 / 回调返回 0）large_direct=false：仍先尝试 SLUB
+         小对象分配器，然后 SLAB large 路径 —— 与历史行为逐位一致。
+       - 策略显式返回阈值 t 且 request >= t 时，跳过 SLUB 尝试直接走
+         large 路径：SLUB kmalloc 尺寸类仅 16..1024 B，>=4 KiB 必然 miss，
+         因此该"跳过"不改变结果，只改变失败尝试次数。 */
+    bool large_direct = false;
+#ifndef __KERNEL_TEST_HOST__
+    if (unlikely(size >= KMOD_ALLOC_LARGE_MIN)) {
+        const uint64_t t = heap_policy_large_threshold(size);
+        if (t != 0ull && size >= t)
+            large_direct = true;
+    }
 #endif
-        km_track(size, __builtin_return_address(0));
-        return p;
+    if (!large_direct) {
+        void *p = SLUB::Kmalloc((size_t)size);    // small object: lock-free SLUB path
+        if (likely(p)) {
+#ifdef __KERNEL_TEST_HOST__
+            __asan_unpoison_memory_region(p, (size_t)size);
+            if (g_kalloc_log_on)
+                g_kalloc_log[g_kalloc_idx++ & ((1u << 20) - 1)] = {(uintptr_t)p, (uint32_t)size, (uint32_t)(uintptr_t)__builtin_return_address(0)};
+#endif
+            km_track(size, __builtin_return_address(0));
+            return p;
+        }
     }
 #endif
     void *q = SLAB::Alloc(size);               // >1024 B large object, or SLUB not online
+#ifndef __KERNEL_TEST_HOST__
+    if (unlikely(!q)) {
+        /* B6：OOM/回退策略（仅分配失败路径查询；默认 0/NULL 保持原语义：
+         * 不重试，返回 NULL）。策略返回 KMOD_ALLOC_OOM_RETRY 才允许重试一次。 */
+        const kmod_seat_alloc_policy_ops_t *ops = heap_alloc_policy();
+        if (ops && ops->oom_policy &&
+            ops->oom_policy(size, KMOD_ALLOC_OOM_KIND_KMALLOC) ==
+                KMOD_ALLOC_OOM_RETRY) {
+            q = SLAB::Alloc(size);
+        }
+    }
+#endif
 #ifdef __KERNEL_TEST_HOST__
     if (q) {
         __asan_unpoison_memory_region(q, (size_t)size);

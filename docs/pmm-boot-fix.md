@@ -140,7 +140,7 @@ if (!buf->refctr) {              /* 未被引用 ⇒ 一定在 lru_root 里 */
 已排除"垃圾数据"这一路：`ext4_buf_alloc()` 用 `ext4_calloc(1, ...)` 分配 buf，
 节点字段是清零的，不是未初始化内存。
 
-**最可能的原因是多 CPU 并发**：`kernel/src/arch/x86_64/schedule/syscall/fops.cpp`
+**最可能的原因是多 CPU 并发**：`kernel/modules/builtin/x86_64/syscall/fops.cpp`
 里**完全没有锁**，而 4 个 CPU 上的多个进程会同时进入 ext4 的
 `ext4_bcache_alloc` / `RB_INSERT` / `RB_REMOVE`。lwext4 本身是单线程设计，
 共享的 `ext4_bcache` 被并发改红黑树必然损坏。旁证：崩溃前紧邻一条
@@ -164,7 +164,7 @@ if (!buf->refctr) {              /* 未被引用 ⇒ 一定在 lru_root 里 */
 而本内核**从来没有调用过它** —— `mp->os_locks` 恒为 NULL，那些加锁宏全是
 空操作。这就是"4 个 CPU 并发改同一棵 bcache 红黑树"的直接原因。
 
-修复（`kernel/src/fs/lwext4/src/ext4.cpp`）：
+修复（`kernel/modules/builtin/common/fs/lwext4/src/ext4.cpp`）：
 
 - 在 `ext4_kernel_init()` 里 `ext4_mount()` 之后调用
   `ext4_mount_setup_locks(mpname, &g_ext4_locks)`；
