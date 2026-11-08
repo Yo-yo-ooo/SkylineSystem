@@ -24,6 +24,7 @@
 ![SMP](https://img.shields.io/badge/SMP-multicore-brightgreen)
 ![Boot](https://img.shields.io/badge/boot-Limine%20BIOS%2BUEFI-blue)
 [![kmod](https://img.shields.io/badge/kernel-modular%20%C2%B7%20private--contract%20kmod-orange)](./docs/kernel-modules.md)
+[![Lua](https://img.shields.io/badge/desktop-Lua%205.4%20theme%20scripting-yellow)](./docs/lua-desktop.md)
 
 > **SkylineSystem 是一个面向 x86_64 SMP 的 hobby 操作系统：不是 Linux 发行版，也不追求
 > POSIX/Linux ABI。** 它在一个架构上追求深度——自研调度器/虚拟内存/系统调用边界/合成器/
@@ -216,6 +217,58 @@ SkylineSystem/
 - 单一 Limine 镜像（BIOS + UEFI），同时可生成 HDD 镜像；`.ko` 由独立 `modules` 目标构建，
   默认不进入内核链接。
 
+### 3.6 桌面内嵌 Lua：脚本绘制壁纸 + 可编程窗口样式
+
+桌面（`programs/desktop`）内嵌 **Lua 5.4.7**（`programs/desktop/lua/`，上游零 patch），
+启动时执行 `/mp/desktop.lua`（缺失时用内嵌兜底脚本）。**壁纸 framebuffer 直接交给
+脚本绘制**（C++ 只提供 `wallpaper` FrameBuffer 变量与像素原语，不解析渐变/颜色配置）；窗口 chrome
+通过 `sky.set_window_style` 配置。只开放纯计算库与这块壁纸位图，不开放 io/os/package：
+
+```lua
+-- 脚本直接拿到壁纸 FrameBuffer 变量 wallpaper（sky.wallpaper 同对象）
+local fb = wallpaper
+local w, h = fb.width, fb.height
+local top, bottom = 0x102040, 0x7A2F6E
+-- ... 每行算插值，然后：
+fb.hline(0, y, w, (r << 16) | (g << 8) | b)
+
+-- 窗口样式
+sky.set_window_style{
+    corner_radius = 16,
+    title_color   = 0x232A45,
+    border_color  = 0x7A88C8,
+    ink_color     = 0xFFFFFF,
+    shadow_alpha  = 55,
+}
+```
+
+- 预置变量 `wallpaper`：`addr/addr_u64`、`width/height`、`pitch_pixels/pitch_bytes/
+  stride`、`bpp/format`，以及 `fill/pixel/hline/vline/rect/size` 方法
+  （`sky.wallpaper` 指向同一 table；`sky.wallpaper_*` 函数形式也保留）；
+- 窗口 chrome 的标题栏/边框/纸面/标题文字/关闭字形/圆角/软阴影从
+  `programs/desktop/sky_style.*` 的运行期配置读取，默认值与旧桌面一致；
+- 脚本错误只回退默认主题并通过串口报告，不阻断桌面；
+- 标准 C 依赖（setjmp/longjmp、locale、time、math/stdio/string 扩展）已在
+  `lib/stdc/` 补齐并由 `tests/stdc/` 覆盖；
+- QEMU 无头验证：串口标记 + 截图像素采样，见
+  [docs/lua-desktop.md](docs/lua-desktop.md) 与
+  `res/scripts/test/lua_desktop_smoke.ps1`。
+
+### 3.7 Installer、Settings 与 Notepad 文件对话框
+
+- **Installer**（`programs/installer/`）：GUI 安装程序，把 3 套 Lua 主题、
+  `/mp/themes.index`、Notepad 文件索引与示例笔记写入 `/mp`，窗口显示逐文件
+  安装日志；首启由 Settings 提示 + `I` / Ctrl+Alt+I 拉起（重复运行覆盖）；
+- **Settings**（`programs/settings/`）：启动时自动打开的设置窗口，读取
+  `/mp/themes.index` 列出主题；Enter 通过 WM 命令邮箱让桌面**立即加载选中 `.lua`**
+  （重绘壁纸与所有窗口 chrome），R 重载 `/mp/desktop.lua`，I 打开 Installer；
+- **Notepad** 增加 **Ctrl+O Open 文件对话框**（读 `/mp/files.index`）、
+  **Ctrl+W Close 对话框**（Save and Close / Discard / Cancel）、Ctrl+S 保存；
+- 桌面全局快捷键：**Ctrl+Alt+S** Settings、**Ctrl+Alt+N** Notepad、
+  **Ctrl+Alt+I** Installer；
+- 详见 [docs/desktop-features.md](docs/desktop-features.md)，QEMU 自动验证脚本：
+  `res/scripts/test/desktop_features_smoke.ps1`。
+
 ---
 
 ## 4. 可加载模块（Tier 2）演示
@@ -301,6 +354,10 @@ make -C kernel modules-check          # 15/15 [OK]
 > 直接 `cd kernel && make` 时必须显式传 `SS_BUILD_DIR`：
 > `cd kernel && make SS_BUILD_DIR="$(cd .. && pwd)"`（顶层 Makefile 会自动处理）。
 
+内建组件与 `.ko` 的完整构建流程（源文件发现、`KCOMPONENT_*`/`KMOD_*` 宏生成的段、
+链接器 KEEP/导出表、启动期拓扑构图、新增组件步骤、常见构建错误）见
+[**docs/kernel-build.md**](docs/kernel-build.md)。
+
 ### 5.3 运行
 
 ```bash
@@ -340,6 +397,7 @@ gdb kernel/bin-x86_64/kernel
 
 ```bash
 cd tests
+make -B stdc && ./bin/stdc_test          # 用户态 libc 标准函数：217 PASS
 make -B kmod && ./bin/kmod_test          # 模块/组件门禁：PASS 6/6
 make -B kmod-asan && ./bin/kmod_test_asan  # ASAN+UBSAN 负向/fuzz：0 报告
 
@@ -348,6 +406,7 @@ bash ../res/scripts/test/ci.sh           # 全套 CI
 bash ../res/scripts/test/golden.sh       # 与金样逐行比对
 ```
 
+`tests/stdc` 覆盖 Lua 所需的 setjmp/longjmp、字符串/数学/locale/time/stdio 新函数；
 `tests/kmod` 覆盖：ELF 加载器正/负向 + 2000 次 fuzz、拓扑 DAG/环、能力策略、
 syscall 注册表/座位、事务回滚、内建组件模型，以及 **kernel 导入的 contract/ABI/size
 强校验**与 **klib 直接符号解析**。
@@ -361,7 +420,23 @@ pwsh -File res/scripts/test/kmod_smoke.ps1 `
 
 期望：`KMOD SMOKE: PASS`，串口包含 `KMOD_SELFTEST PASS 12/12`、
 `builtin ready` ×37、`kernel exports: 57 symbol(s)`、桌面 `PROCESS: 6`，且无异常/STALL。
-GitHub Actions 的 `.github/workflows/ci.yml` 已接入宿主套件、kmod/ASAN、静态分析与金样门禁。
+
+桌面 Lua 主题门禁（串口标记 + 截图像素采样）：
+
+```powershell
+pwsh -File res/scripts/test/lua_desktop_smoke.ps1 `
+     -Root C:\ZSY\SkylineSystem -UseDisk -WaitSeconds 90 `
+     -ExpectWallpaperTop 0x102040 -ExpectWallpaperBottom 0x7A2F6E `
+     -ExpectTitleColor 0x232A45 -RequireSource file
+```
+
+Installer / Settings / Notepad 对话框门禁（QEMU HMP 注入按键 + 串口标记 + 截图）：
+
+```powershell
+pwsh -File res/scripts/test/desktop_features_smoke.ps1 -Root C:\ZSY\SkylineSystem
+```
+
+GitHub Actions 的 `.github/workflows/ci.yml` 已接入宿主套件、kmod/ASAN、stdc、静态分析与金样门禁。
 
 ### 6.3 构建门禁速查
 
@@ -389,6 +464,8 @@ readelf -r kernel/bin-x86_64/kernel | grep 32S   # 应为空
 | [gui.md](docs/gui.md) | 并行软件合成器、窗口层、光标层、SDF 圆角/阴影与已知缺陷 |
 | [filesystems.md](docs/filesystems.md) | VFS / SAF / lwext4 / FAT / 每 CPU 文件缓存 |
 | [network.md](docs/network.md) | e1000 驱动 + lwIP 移植、DHCP/ping/TCP 与边界 |
+| [lua-desktop.md](docs/lua-desktop.md) | 桌面内嵌 Lua 5.4：预置 `wallpaper` FrameBuffer 变量（addr/width/height/pitch + 绘制方法）、`sky.set_window_style` 窗口主题、标准 C 补充与 QEMU 截图门禁 |
+| [desktop-features.md](docs/desktop-features.md) | Installer 安装程序、Settings/Lua 主题加载界面、Notepad Open/Close 对话框、桌面快捷键、命令邮箱、QEMU 验证与 AHCI/ext4 SMP 修复 |
 | [stability-report.md](docs/stability-report.md) · [stability-audit.md](docs/stability-audit.md) | 长稳运行报告与稳定性审计 |
 | [../SECURITY.md](SECURITY.md) | 安全状态、明确边界、已知风险与漏洞上报流程 |
 

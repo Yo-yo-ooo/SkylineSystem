@@ -25,6 +25,11 @@ extern "C" {
 
 #define DEFAULT_BUF_SIZE 4096
 
+/* ISO C 标准缓冲区大小 (Lua lauxlib.c 的 LoadF 直接用它开栈缓冲) */
+#ifndef BUFSIZ
+#define BUFSIZ 8192
+#endif
+
 #define EOF (-1)   /* end-of-file / input-failure sentinel */
 
 typedef struct {
@@ -38,7 +43,18 @@ typedef struct {
     size_t buf_pos;        // 缓冲区当前读取游标
     size_t buf_size;       // 缓冲区中当前实际有效的数据量
     volatile uint8_t lock;
+
+    /* ---- ISO C 流状态 (Lua lauxlib/ldblib 需要 feof/ferror/ungetc) ---- */
+    int eof;               // EOF 指示器 (feof)
+    int error;             // 错误指示器 (ferror)
+    int ungot;             // ungetc 单字符回退槽, -1 = 空
+    int kind;              // 流类型, 见下面的 SKY_FILE_KIND_*
 } FILE;
+
+/* stream->kind 取值 */
+#define SKY_FILE_KIND_FILE    0   /* 普通文件 (fd 有效, 走 sys_* ) */
+#define SKY_FILE_KIND_CONSOLE 1   /* stdout/stderr: 写 console_stdout_write() */
+#define SKY_FILE_KIND_STDIN   2   /* stdin: 无内核输入源, 读即 EOF */
 
 
 int fclose(FILE *stream);
@@ -47,6 +63,29 @@ FILE *fopen(const char * __restrict__ filename, const char * __restrict__ mode);
 size_t fread(void * __restrict__ ptr, size_t size, size_t nmemb, FILE * __restrict__ stream);
 int fseek(FILE * __restrict__ stream, long offset, int whence);
 long ftell(FILE * __restrict__ stream);
+
+/* ---- ISO C 标准流 (Lua: lbaselib print -> stdout, lauxlib panic -> stderr) ---- */
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
+
+/* ---- ISO C 标准 I/O (lib/stdc/stdio.c; printf 家族在 outfb/printf.c) ---- */
+size_t fwrite(const void * __restrict__ ptr, size_t size, size_t nmemb, FILE * __restrict__ stream);
+int fflush(FILE *stream);
+int feof(FILE *stream);
+int ferror(FILE *stream);
+void clearerr(FILE *stream);
+int fgetc(FILE *stream);
+int getc(FILE *stream);
+int ungetc(int c, FILE *stream);
+int fputc(int c, FILE *stream);
+int putc(int c, FILE *stream);
+int putchar(int c);
+int fputs(const char * __restrict__ str, FILE * __restrict__ stream);
+char *fgets(char * __restrict__ str, int count, FILE * __restrict__ stream);
+FILE *freopen(const char * __restrict__ filename, const char * __restrict__ mode,
+              FILE * __restrict__ stream);
+void rewind(FILE *stream);
 
 
 /**
@@ -124,6 +163,14 @@ int32_t vsnprintf_(char* buffer, size_t count, const char* format, va_list va);
  */
 #define vprintf vprintf_
 int32_t vprintf_(const char* format, va_list va);
+
+/**
+ * 标准 fprintf/vfprintf (lib/stdc/stdio.c): 先用 vsnprintf_ 格式化, 再
+ * fwrite 到对应流。stdout/stderr 走控制台, 普通文件走 sys_fwrite。
+ * \return 实际写出的字符数; 出错返回负数。
+ */
+int fprintf(FILE* stream, const char* format, ...);
+int vfprintf(FILE* stream, const char* format, va_list va);
 
 
 /**

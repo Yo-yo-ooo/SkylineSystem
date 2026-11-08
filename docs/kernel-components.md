@@ -15,7 +15,9 @@
 - **Tier 1 内建组件 (builtin)**：静态链接进内核镜像，但与 `.ko` 使用**完全相同**的
   `kmod_manifest_t` / `.in` / `.out` 线格式，由 `KCOMPONENT_BEGIN/END` 宏放入
   `.kbuiltin.*` 段；启动时组件管理器 `KmodBootComponents()` 扫描描述符、按统一拓扑图
-  bind/apply/init。内建组件可被 `.ko` 热替换（失败回滚恢复内建实现）。
+  bind/apply/init。内建组件在机制上支持 `.ko` 接管（失败回滚恢复内建实现）；但当前
+  `.ko` 名称校验禁止 `kernel./core.` 保留前缀，真实 37 个 `kernel.*` 组件尚不能被外部
+  `.ko` 同名替换（见 §9.6）；已落地的可替换层是座位策略与固定 syscall 实现。
 - **Tier 2 可加载 `.ko`**：外部实现/扩展/诊断，加载/热替换/卸载受治理。
 
 组件 = manifest（身份/Tier/能力/生命周期/预算）+ imports（模块级依赖+私有契约）+ exports
@@ -54,8 +56,10 @@ KCOMPONENT_END(acpi)
 - `KmodBootComponents()`：扫描描述符 → provider 依赖边 → `KmodTopoSort` → 逐组件
   `KmodModuleAllocBuiltin → KmodBindImports → KmodApplyExports → KmodCallInit → READY`；
 - 失败逆序回滚；环/缺失依赖/能力问题在启动日志中以 `[kmod]` 审计可见；
-- 之后 `KmodBootLoad()` 加载 `KMOD_MF_BOOT` 的 `.ko`，它们可以导入内建组件的私有契约，
-  内建组件也可被 `.ko` 热替换（`KmodHotReplace`）。
+- 之后 `KmodBootLoad()` 加载 `KMOD_MF_BOOT` 的 `.ko`，它们可以导入内建组件的私有契约。
+  内建组件节点级接管（`KmodHotReplace` 的 builtin→.ko takeover）代码路径已实现并有
+  失败回滚测试；但 `.ko` 不得使用 `kernel./core.` 保留名，故真实 `kernel.*` 组件当前
+  不可被外部 `.ko` 同名替换（见 §9.6）。
 
 ## 4. 启动序列组件化映射（x86_64）
 
@@ -138,8 +142,10 @@ KCOMPONENT_END(acpi)
 3. **生命周期**：init 幂等、exit/quiesce 可重入保护；组件失败不阻断无关组件的回滚语义；
 4. **能力**：能力位与组件实际资源使用匹配（准入审计）；
 5. **不回归**：内核可启动到既有行为（QEMU 串口出现 `KMOD_SELFTEST PASS`，桌面/网络/FS 冒烟通过）；
-6. **可替换性证据**：Tier 1 组件被 `.ko` 热替换的正向 + 失败回滚用例（至少随机座位/syscall
-   已覆盖；调度/分配策略与至少一个驱动/FS 组件需补）。
+6. **可替换性证据**：已覆盖策略/实现层的 `.ko` 热替换正/负向（随机源、调度策略、分配策略、
+   固定 syscall 探针）；**组件节点级** builtin→.ko takeover 目前只有宿主测试的失败回滚用例
+   （真实 `kernel.*` 名称受 `.ko` 保留前缀校验保护，未开放同名替换，见 §9.6）。
+   驱动/FS 组件节点的 `.ko` 接管仍需先开放受信替换机制。
 
 ## 8. 验证门禁
 
@@ -168,6 +174,14 @@ pwsh -File res/scripts/test/kmod_smoke.ps1
    回调，否则只能冷替换（需重启）。
 5. 大型第三方代码（lwIP、lwext4、FatFs）会长期以"组件包装内建代码"形式存在：组件化的是
    **生命周期/契约/配置边界**，不是逐函数改写为跨模块调用。
+6. **内建组件同名替换尚未开放**：`KmodGovHotReplace` 的 builtin→.ko takeover 事务已实现
+   （quiesce/原子切换/失败回滚恢复 BUILTIN），宿主测试用非保留名合成组件
+   `vendor.host.comp` 覆盖失败回滚；但 `.ko` 名称校验（`KmodNameValidate`）禁止
+   `kernel./core.` 保留前缀，而真实 37 个内建组件全部使用 `kernel.*` 名，因此
+   **外部 `.ko` 无法同名接管它们**。若要开放，需要受信机制（白名单/签名 +
+   专用 capability，或允许内建组件声明可替换的 vendor 别名），当前未实现。
+   实际已可通过 `.ko` 替换的是：座位策略（random/sched/alloc，见 QEMU selftest）
+   与固定 syscall 探针实现（座位/syscall 治理层，不改变组件节点）。
 
 ## 10. 迁移进度台账（实测快照，2026-11-06）
 

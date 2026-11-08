@@ -326,14 +326,25 @@ static void dl_add_export(dl_obj *o, const char *name, uint64_t value) {
     e->name[k] = 0;
 }
 
-static uint64_t dl_lookup(dl_obj *objs, int nobj, const char *name) {
+/* 在其它对象里查找符号（skip 为 nullptr 时等价于普通全局查找）。
+ * COPY 重定位必须用这个版本：COPY 的目标对象（主程序）自己的 .dynsym 里也有
+ * 一个"已定义"的 COPY 符号（地址就是待填充的 BSS），普通查找会先命中它，
+ * 于是把"自己的零值"拷给自己 —— 实测 _ctype/stdout/stdin/stderr 全部变成 0，
+ * 桌面 Lua 的 string.format("%d") 因此报 invalid conversion specification。 */
+static uint64_t dl_lookup_except(dl_obj *objs, int nobj, const char *name,
+                                 const dl_obj *skip) {
     if (!name || !name[0]) return 0;
     const uint32_t h = dl_elf_hash(name);       /* 只算一次, 各对象共用 */
     for (int k = 0; k < nobj; k++) {
+        if (skip && &objs[k] == skip) continue;
         const dl_sym *s = dl_obj_find(&objs[k], name, h);
         if (s) return s->value;
     }
     return 0;
+}
+
+static uint64_t dl_lookup(dl_obj *objs, int nobj, const char *name) {
+    return dl_lookup_except(objs, nobj, name, nullptr);
 }
 
 /* 读取动态段; 同时把导出符号收进 exports[]。
@@ -525,7 +536,7 @@ static int dl_relocate(dl_obj *o, dl_obj *objs, int nobj, bool collect_only) {
                              o->name, (unsigned long long)sz, nm);
                     return -EINVAL;
                 }
-                uint64_t src = dl_lookup(objs, nobj, nm);
+                uint64_t src = dl_lookup_except(objs, nobj, nm, o);
                 if (src == 0) {
                     if (collect_only) continue;
                     kerrorln("[dynlink] %s: COPY symbol '%s' unresolved", o->name, nm);

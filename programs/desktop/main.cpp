@@ -8,6 +8,8 @@
 #include <graphic/devtype.h>   /* DEV_TYPE_FRAMEBUFFER: 设备类型编号权威 */
 #include <graphic/basicdraw.hpp>
 #include <graphic/winstyle.h>
+#include "sky_style.h"
+#include "lua_glue.h"
 #include <graphic/flanterm.h>
 #include <graphic/kbdshare.h>
 #include <stdlib.h>
@@ -460,8 +462,8 @@ static void wm_mirror_content(uint32_t* dst, int32_t dstPitch,
                               const uint32_t* normSurf) {
     int32_t cw = bodyW;
     if (cw > (int32_t)SKYWIN_CONTENT_W) cw = (int32_t)SKYWIN_CONTENT_W;
-    int32_t ch = bodyH - (int32_t)SKYWIN_TITLE_H - (int32_t)SKYWIN_RADIUS;
-    if (ch > (int32_t)SKYWIN_CONTENT_H) ch = (int32_t)SKYWIN_CONTENT_H;
+    int32_t ch = bodyH - (int32_t)SKYWIN_TITLE_H - SkyWinRadius();
+    if (ch > SkyWinContentH()) ch = SkyWinContentH();
     if (cw <= 0 || ch <= 0) return;
     for (int32_t r = 0; r < ch; r++) {
         const uint32_t* sp = normSurf
@@ -486,7 +488,7 @@ static void wm_rebuild_resize(uint32_t* rzSurf, int32_t rzPitch,
     rb.Width = rb.PixelsPerScanLine = rzPitch;
     rb.Height            = rows;
     SkyPaintChromeSized(&rb, rzPitch, rows, nw, nh, 0, "Skyline Console",
-                        SKYRGB_PAPER);
+                        SkyRGBPaper());
     wm_mirror_content(rzSurf, rzPitch, M, M + (int32_t)SKYWIN_TITLE_H,
                       nw, nh, normSurf);
 }
@@ -511,10 +513,10 @@ static void wm_paint_chrome_live(uint32_t* rzSurf, int32_t rzPitch,
     lb.BufferSize        = (uint64_t)rzPitch * rows * sizeof(uint32_t);
     lb.Width = lb.PixelsPerScanLine = rzPitch;
     lb.Height            = rows;
-    DrawFillRect(&lb, M, M, nw, TH, SKYRGB_TITLE);                 /* title bar */
-    DrawFillRect(&lb, M, M + TH, nw, nh - TH, SKYRGB_PAPER);       /* paper     */
-    DrawFillRect(&lb, M, M + TH - 1, nw, 1, SKYRGB_SEP);           /* separator */
-    DrawRect(&lb, M, M, nw, nh, SKYRGB_BORDER);                    /* hair frame*/
+    DrawFillRect(&lb, M, M, nw, TH, SkyRGBTitle());                /* title bar */
+    DrawFillRect(&lb, M, M + TH, nw, nh - TH, SkyRGBPaper());      /* paper     */
+    DrawFillRect(&lb, M, M + TH - 1, nw, 1, SkyRGBSeparator());    /* separator */
+    DrawRect(&lb, M, M, nw, nh, SkyRGBBorder());                   /* hair frame*/
     SkyPaintCaptionIcons(&lb, M, M, nw, TH, 0);                    /* glyphs    */
     wm_mirror_content(rzSurf, rzPitch, M, M + TH, nw, nh, normSurf);
 }
@@ -648,8 +650,9 @@ int main(){
 
     const uint32_t barH = SKYWIN_TASKBAR_H;
 
-    BasicDraw bd((FrameBuffer*)&fb);
-    bd.RenderWallpaper(wallBuf);
+    /* 桌面内嵌 Lua：把壁纸 framebuffer 交给脚本绘制（sky.wallpaper_*），
+       C++ 不解析渐变/颜色配置；脚本在创建窗口之前完成绘制。 */
+    SkyLuaInit(wallBuf, scrW, scrH);
 
     /* Pristine copy of just the taskbar strip, so the acrylic layer can be
        repainted every minute without darkening on top of itself. */
@@ -734,7 +737,7 @@ int main(){
         consoleWin.FrameStartX = SKYWIN_CONTENT_X;
         consoleWin.FrameStartY = SKYWIN_CONTENT_Y;
         consoleWin.FrameEndX   = SKYWIN_CONTENT_X + SKYWIN_CONTENT_W;
-        consoleWin.FrameEndY   = SKYWIN_CONTENT_Y + SKYWIN_CONTENT_H;
+        consoleWin.FrameEndY   = SKYWIN_CONTENT_Y + SkyWinContentH();
         consoleWin.FbAddr = place.desk_surf;
         consoleWin.HasAlpha = 1;   /* rounded corners + soft drop shadow */
         consoleLayer = comp.RegisterWindowAuto(&consoleWin);
@@ -790,6 +793,16 @@ int main(){
         }
     }
 
+    /* ---- Installer / Settings ------------------------------------------------
+       Installer 不随桌面自动启动：首启时 Settings 窗口显示 "press I to run
+       Installer"，用户按 I（或 Ctrl+Alt+I）再拉起它。这样安装写盘发生在桌面
+       完成启动之后，避免与启动期大量并发 FS 读（DOOM WAD/字体/程序加载）
+       叠在一起；安装完成后 Settings 重新读 index。
+       Settings: 始终拉起，且最后 spawn（置顶）—— 桌面设置 + .lua 配置
+       加载界面；键盘焦点在启动时自然落在它上面。 */
+    wm_client_spawn(comp, &fb, "/mp/settings.elf", "Settings",
+                    620u, 430u, 0xFF121218u, 40u, 40u);
+
     /* Desktop-owned (NOT shared with the client) full-work-area surface used
        only while maximized: opaque, no rounded shadow margin. The live text is
        mirrored in from the normal shared surface each frame.
@@ -808,13 +821,13 @@ int main(){
         mb.BufferSize        = (uint64_t)maxW * maxH * sizeof(uint32_t);
         mb.Width = mb.PixelsPerScanLine = maxW;
         mb.Height            = maxH;
-        DrawFillRect(&mb, 0, 0, maxW, SKYWIN_TITLE_H, SKYRGB_TITLE);
-        DrawFillRect(&mb, 0, SKYWIN_TITLE_H, maxW, maxH - SKYWIN_TITLE_H, SKYRGB_PAPER);
-        DrawFillRect(&mb, 0, SKYWIN_TITLE_H - 1, maxW, 1, SKYRGB_SEP);
+        DrawFillRect(&mb, 0, 0, maxW, SKYWIN_TITLE_H, SkyRGBTitle());
+        DrawFillRect(&mb, 0, SKYWIN_TITLE_H, maxW, maxH - SKYWIN_TITLE_H, SkyRGBPaper());
+        DrawFillRect(&mb, 0, SKYWIN_TITLE_H - 1, maxW, 1, SkyRGBSeparator());
         TTF_Font* mf = console_font();
         if (mf)
             TTF_DrawText(&mb, mf, 14, (SKYWIN_TITLE_H - 22) / 2,
-                         "Skyline Console", SKYRGB_INK);
+                         "Skyline Console", SkyRGBInk());
         SkyPaintCaptionIcons(&mb, 0, 0, (int32_t)maxW,
                              (int32_t)SKYWIN_TITLE_H, 1);
         return maxSurf;
@@ -931,8 +944,62 @@ int main(){
             kbd_focus_broadcast(wmKbd);
     };
 
+    /* ---- 全局快捷键（Ctrl+Alt+S/N/I）：聚焦/拉起 Settings/Notepad/Installer。
+       键盘事件环是广播/焦点投递之外的同一份事件，WM 自己始终能收到这些组合键，
+       所以即使当前焦点在 Notepad/DOOM 上也能用快捷键切回设置界面。 */
+    auto raise_or_spawn = [&](const char* title, const char* elf,
+                              uint32_t bw, uint32_t bh, uint32_t paper,
+                              uint32_t dx, uint32_t dy) -> bool {
+        WmClient* c = wm_client_find_title(title);
+        if (!c && elf)
+            c = wm_client_spawn(comp, &fb, elf, title, bw, bh, paper, dx, dy);
+        if (!c) return false;
+        if (c->minimized)
+            wm_client_restore(comp, c);
+        comp.RaiseWindow(&c->win);
+        press_focus_pid = c->place.client_pid;
+        wm_refocus();
+        return true;
+    };
+
     bool wmForceFullCompose = false;
     comp.SetCursor(0, 0, true);
+
+    /* 重新应用 .lua 主题后，用当前运行期 theme 重绘控制台 chrome；内容区
+       像素先保存/恢复，避免把控制台文字抹掉。 */
+    auto repaint_console_chrome = [&]() {
+        if (!place.desk_surf) return;
+        const int32_t surfW = (int32_t)SKYWIN_SURF_W;
+        const int32_t surfH = (int32_t)SKYWIN_SURF_H;
+        const uint32_t cw = (uint32_t)SKYWIN_CONTENT_W;
+        const uint32_t ch = (uint32_t)SkyWinContentH();
+        if (cw == 0u || ch == 0u) return;
+        uint32_t* base = (uint32_t*)place.desk_surf;
+        uint32_t* tmp = (uint32_t*)malloc((size_t)cw * ch * sizeof(uint32_t));
+        if (!tmp) return;
+        for (uint32_t r = 0; r < ch; r++) {
+            const uint32_t* sp = base
+                + (uint64_t)(SKYWIN_CONTENT_Y + r) * (uint32_t)surfW
+                + SKYWIN_CONTENT_X;
+            memcpy(tmp + (uint64_t)r * cw, sp, (size_t)cw * sizeof(uint32_t));
+        }
+        FrameBuffer s;
+        s.BaseAddress       = base;
+        s.BufferSize        = (uint64_t)surfW * surfH * sizeof(uint32_t);
+        s.Width             = (uint64_t)surfW;
+        s.PixelsPerScanLine = (uint64_t)surfW;
+        s.Height            = (uint64_t)surfH;
+        SkyPaintChromeSized(&s, surfW, surfH, (int32_t)SKYWIN_W,
+                            (int32_t)SKYWIN_H, 0, "Skyline Console",
+                            SkyRGBPaper());
+        for (uint32_t r = 0; r < ch; r++) {
+            uint32_t* dp = base
+                + (uint64_t)(SKYWIN_CONTENT_Y + r) * (uint32_t)surfW
+                + SKYWIN_CONTENT_X;
+            memcpy(dp, tmp + (uint64_t)r * cw, (size_t)cw * sizeof(uint32_t));
+        }
+        free(tmp);
+    };
 
     /* 光标线程: 见 CursorThreadEntry 的说明。必须在 SetCursor 之后启动,
        否则第一帧可能先被线程画一次再被初始化覆盖。 */
@@ -944,6 +1011,8 @@ int main(){
     /* 光标位置/可见性是"结构性"状态: 之后的第一次合成必须整屏 (局部行带可能
        根本不含光标所在行, 那样屏幕上就没有箭头)。 */
     wmForceFullCompose = true;
+
+    bool wmShortcutDirty = false;
 
     for(;;){
         /* take the newest available mouse snapshot (seqlock retry) */
@@ -969,18 +1038,34 @@ int main(){
            (见 mouse.cpp), 指针不可能再跑到负数或无穷远。 */
 
         /* Drain the WM keyboard cursor (multi-reader ring; notepad has its
-           own). Global shortcuts would be handled here; text goes to notepad.
-           事件被显式丢弃 —— 键盘输入到焦点客户端的
-           转发通道未实现 (已知缺口, 见 WM 路线图) */
+           own). 这里只处理**全局快捷键**；普通文本输入仍由焦点客户端自己
+           从同一事件环读取。 */
         if (wmKbd) {
+            bool shortcutDirty = false;
             uint64_t kh = __atomic_load_n(&wmKbd->head, __ATOMIC_ACQUIRE);
             wmKbdCursor = kbd_reader_resync(wmKbd, wmKbdCursor);
             while (wmKbdCursor < kh) {
                 KbdEvent ke = wmKbd->ring[wmKbdCursor & (KBD_RING_CAP - 1u)];
-                (void)ke;   /* 转发通道未实现前显式丢弃 (已知缺口) */
+                if (ke.action == KBD_ACTION_DOWN) {
+                    const bool ctrl = (ke.mods & (KBD_MOD_LCTRL | KBD_MOD_RCTRL)) != 0;
+                    const bool alt  = (ke.mods & (KBD_MOD_LALT | KBD_MOD_RALT)) != 0;
+                    if (ctrl && alt) {
+                        const char k = (char)ke.key;
+                        if (k == 's' || k == 'S')
+                            shortcutDirty |= raise_or_spawn("Settings", "/mp/settings.elf",
+                                                            620u, 430u, 0xFF121218u, 40u, 40u);
+                        else if (k == 'n' || k == 'N')
+                            shortcutDirty |= raise_or_spawn("Notepad", "/mp/notepad.elf",
+                                                            560u, 420u, 0xFF0F0F12u, 90u, 70u);
+                        else if (k == 'i' || k == 'I')
+                            shortcutDirty |= raise_or_spawn("Installer", "/mp/installer.elf",
+                                                            560u, 380u, 0xFF14141Au, 70u, 60u);
+                    }
+                }
                 wmKbdCursor++;
             }
             if (wmKbdSlot >= 0) kbd_reader_setpos(wmKbd, wmKbdSlot, wmKbdCursor);
+            wmShortcutDirty = shortcutDirty;
         }
 
         uint64_t now = rdtsc64();
@@ -1084,7 +1169,8 @@ int main(){
             comp.SetCursorShape(want);
         }
 
-        bool wmDirty = false;
+        bool wmDirty = wmShortcutDirty;
+        wmShortcutDirty = false;
 
         if (leftDown && !prevLeft) {                 /* press edge: classify  */
             pressHit = 0; rzDir = 0;
@@ -1515,6 +1601,60 @@ int main(){
            OUT_SEQ once per rendered frame, so a continuous-render client is
            recomposed at its own pace instead of the 2 Hz idle fallback. */
         wm_clients_poll_output(&wmDirty, &dmg_y0, &dmg_y1);
+
+        /* ---- client -> WM command mailbox (Settings / Installer) ----------
+           Settings 选择 /mp/theme_*.lua 后发 SKYWIN_CMD_LOAD_LUA；这里直接
+           重跑 Lua（壁纸 framebuffer + 运行期窗口样式都被脚本更新），然后
+           刷新任务栏、重绘所有窗口 chrome 并整屏合成。 */
+        {
+            WmClient* cmdClient = nullptr;
+            uint64_t cmd = 0u;
+            char cmdArg[64];
+            while (wm_client_poll_command(&cmdClient, &cmd, cmdArg, sizeof(cmdArg))) {
+                char log[224];
+                if (cmd == SKYWIN_CMD_LOAD_LUA || cmd == SKYWIN_CMD_RELOAD_DESKTOP) {
+                    const char* path = (cmd == SKYWIN_CMD_LOAD_LUA)
+                                           ? cmdArg : "/mp/desktop.lua";
+                    int rc = (cmd == SKYWIN_CMD_LOAD_LUA)
+                                 ? SkyLuaLoadConfigFile(path)
+                                 : SkyLuaReloadDesktop();
+                    int n = snprintf(log, sizeof(log),
+                                     "[desktop] theme: load path=%s rc=%d radius=%u\n",
+                                     path, rc, (unsigned)g_sky_style.win_radius);
+                    if (n > 0)
+                        syscall(SYS_DBGSOUT, (uint64_t)log, (uint64_t)n, 0, 0, 0, 0);
+
+                    /* 壁纸/样式已更新：任务栏 acrylic 条带重新取壁纸像素，
+                       并重绘所有窗口 chrome（内容区像素保存/恢复）。 */
+                    if (cleanBar) {
+                        memcpy(cleanBar,
+                               wallBuf + (uint64_t)(scrH - barH) * scrW,
+                               (size_t)scrW * barH * sizeof(uint32_t));
+                        WmDateTime thDT;
+                        bool thHave = wm_read_datetime(&thDT);
+                        wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 0,
+                                        &thDT, thHave);
+                    }
+                    repaint_console_chrome();
+                    const int nc = wm_client_count();
+                    for (int ci = 0; ci < nc; ci++) {
+                        WmClient* wc = wm_client_by_order(ci);
+                        if (wc) wm_client_repaint_chrome(wc, &wmDirty);
+                    }
+                    /* 壁纸内容是在原缓冲里就地改写的（指针不变），必须显式
+                       要求整屏重组，否则增量合成会继续显示旧的壁纸行。 */
+                    comp.ForceFullCompose();
+                    wmDirty = true;
+                } else if (cmd == SKYWIN_CMD_SPAWN_INSTALLER) {
+                    if (!wm_client_find_title("Installer")) {
+                        wm_client_spawn(comp, &fb, "/mp/installer.elf",
+                                        "Installer", 560u, 380u,
+                                        0xFF14141Au, 70u, 60u);
+                        wmDirty = true;
+                    }
+                }
+            }
+        }
 
         wm_refocus();   /* keyboard focus tracks the topmost visible window */
 

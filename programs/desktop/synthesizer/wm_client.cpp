@@ -4,6 +4,7 @@
 // synthesizer/wm_client.cpp — generic windowed-client management.
 #include <synthesizer/wm_client.h>
 #include <graphic/fb.h>
+#include "sky_style.h"
 #include <syscall.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,8 +54,8 @@ static void rz_mirror(uint32_t* dst, int32_t dstPitch, int32_t dx, int32_t dy,
     const int32_t srcPitch   = (int32_t)c->place.w;      /* spawn surface width */
     const int32_t srcContentW = (int32_t)(c->place.w - 2u * SKYWIN_SHADOW);
     const int32_t srcContentH = (int32_t)(c->place.h - 2u * SKYWIN_SHADOW)
-                                - (int32_t)SKYWIN_TITLE_H - (int32_t)SKYWIN_RADIUS;
-    int32_t cw = bodyW, ch = bodyH - (int32_t)SKYWIN_TITLE_H - (int32_t)SKYWIN_RADIUS;
+                                - (int32_t)SKYWIN_TITLE_H - (int32_t)SkyWinRadius();
+    int32_t cw = bodyW, ch = bodyH - (int32_t)SKYWIN_TITLE_H - (int32_t)SkyWinRadius();
     if (cw > srcContentW) cw = srcContentW;
     if (ch > srcContentH) ch = srcContentH;
     if (cw <= 0 || ch <= 0) return;
@@ -92,8 +93,8 @@ static void rz_paint_live(uint32_t* dst, int32_t pitch, int32_t nw, int32_t nh,
     const int32_t rows = nh + 2 * M;
     memset(dst, 0, (size_t)pitch * (size_t)rows * sizeof(uint32_t));
 
-    const uint32_t face  = SKYRGB_TITLE;
-    const uint32_t rim   = SKYRGB_BORDER;
+    const uint32_t face  = SkyRGBTitle();
+    const uint32_t rim   = SkyRGBBorder();
     for (int32_t y = M; y < M + nh; y++) {
         uint32_t* row = dst + (uint64_t)y * (uint32_t)pitch;
         for (int32_t x = M; x < M + nw; x++)
@@ -112,7 +113,7 @@ static void rz_paint_live(uint32_t* dst, int32_t pitch, int32_t nw, int32_t nh,
     for (int32_t y = M; y < M + (int32_t)SKYWIN_TITLE_H && y < M + nh; y++) {
         uint32_t* row = dst + (uint64_t)y * (uint32_t)pitch;
         for (int32_t x = M; x < M + nw; x++)
-            row[x] = 0xFF000000u | (SKYRGB_TITLE & 0x00FFFFFFu);
+            row[x] = 0xFF000000u | (SkyRGBTitle() & 0x00FFFFFFu);
     }
     rz_mirror(dst, pitch, M, M + (int32_t)SKYWIN_TITLE_H, nw, nh, c);
 }
@@ -139,7 +140,7 @@ static void rz_apply(WmClient* c, int32_t nx, int32_t ny, int32_t nw, int32_t nh
     c->win.FrameStartX = (uint32_t)M;
     c->win.FrameStartY = (uint32_t)(M + SKYWIN_TITLE_H);
     c->win.FrameEndX   = (uint32_t)(M + nw);
-    c->win.FrameEndY   = (uint32_t)(M + nh - SKYWIN_RADIUS);
+    c->win.FrameEndY   = (uint32_t)(M + nh - SkyWinRadius());
     c->win.HasAlpha    = 1;
 }
 
@@ -579,4 +580,99 @@ void wm_clients_poll_output(bool* dirty, int32_t* py0, int32_t* py1) {
             if (bottom > *py1) *py1 = bottom;
         }
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* 客户端 -> WM 命令邮箱（Settings / Installer）                       */
+/* ------------------------------------------------------------------ */
+WmClient* wm_client_find_title(const char* title) {
+    if (!title) return nullptr;
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) {
+        WmClient* c = &g_clients[i];
+        if (c->used && c->title && strcmp(c->title, title) == 0)
+            return c;
+    }
+    return nullptr;
+}
+
+static void cmd_read_arg(volatile uint64_t* q, char* out, uint32_t cap) {
+    if (!out || cap == 0) return;
+    uint8_t buf[SKYWIN_CMD_ARG_BYTES];
+    for (uint32_t s = 0; s < (SKYWIN_CMD_ARG_BYTES / 8u); s++) {
+        uint64_t v = q[SKYWIN_PROTO_CMD_ARG0 + s];
+        for (uint32_t b = 0; b < 8u; b++)
+            buf[s * 8u + b] = (uint8_t)(v >> (b * 8u));
+    }
+    uint32_t n = cap - 1u;
+    if (n > SKYWIN_CMD_ARG_BYTES) n = SKYWIN_CMD_ARG_BYTES;
+    memcpy(out, buf, n);
+    out[n] = '\0';
+}
+
+int wm_client_poll_command(WmClient** out, uint64_t* cmd,
+                           char* arg, uint32_t argCap) {
+    if (!out || !cmd || !arg || argCap == 0) return 0;
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) {
+        WmClient* c = &g_clients[i];
+        if (!c->used || !c->place.proto) continue;
+        volatile uint64_t* q = (volatile uint64_t*)c->place.proto;
+        uint64_t seq = __atomic_load_n(&q[SKYWIN_PROTO_CMD_SEQ], __ATOMIC_ACQUIRE);
+        if (seq == c->cmd_seq) continue;
+        c->cmd_seq = seq;
+        uint64_t cm = __atomic_load_n(&q[SKYWIN_PROTO_CMD], __ATOMIC_ACQUIRE);
+        if (cm == SKYWIN_CMD_NONE) continue;
+        if (cm == SKYWIN_CMD_LOAD_LUA)
+            cmd_read_arg(q, arg, argCap);
+        else
+            arg[0] = '\0';
+        q[SKYWIN_PROTO_CMD] = SKYWIN_CMD_NONE;
+        *out = c;
+        *cmd = cm;
+        return 1;
+    }
+    return 0;
+}
+
+/* 重绘一个客户端的 chrome（使用当前运行期 theme），只把内容区像素原位保存/
+   恢复，避免破坏客户端绘制的内容。用于 Settings 加载新 .lua 后立即生效。 */
+void wm_client_repaint_chrome(WmClient* c, bool* dirty) {
+    if (!c || !c->used || !c->place.desk_surf) return;
+    volatile uint64_t* q = (volatile uint64_t*)c->place.proto;
+    uint32_t cw = q ? (uint32_t)q[SKYWIN_PROTO_CONTENT_W] : 0u;
+    uint32_t ch = q ? (uint32_t)q[SKYWIN_PROTO_CONTENT_H] : 0u;
+    if (cw == 0u || ch == 0u) return;
+    if (cw > c->bodyW) cw = c->bodyW;
+    if (ch > c->bodyH) ch = c->bodyH;
+    if (cw == 0u || ch == 0u) return;
+
+    uint32_t* base = (uint32_t*)c->place.desk_surf;
+    const int32_t pitch = (int32_t)c->place.w;
+    if (pitch <= 0) return;
+    uint32_t* tmp = (uint32_t*)malloc((size_t)cw * ch * sizeof(uint32_t));
+    if (!tmp) return;
+    for (uint32_t r = 0; r < ch; r++) {
+        const uint32_t* sp = base
+            + (uint64_t)(SKYWIN_CONTENT_Y + r) * (uint32_t)pitch
+            + SKYWIN_CONTENT_X;
+        memcpy(tmp + (uint64_t)r * cw, sp, (size_t)cw * sizeof(uint32_t));
+    }
+
+    FrameBuffer s;
+    s.BaseAddress       = base;
+    s.BufferSize        = (uint64_t)pitch * c->place.h * sizeof(uint32_t);
+    s.Width             = (uint64_t)pitch;
+    s.PixelsPerScanLine = (uint64_t)pitch;
+    s.Height            = c->place.h;
+    SkyPaintChromeSized(&s, pitch, (int32_t)c->place.h,
+                        (int32_t)c->bodyW, (int32_t)c->bodyH, 0,
+                        c->title ? c->title : "", c->paperRGB);
+
+    for (uint32_t r = 0; r < ch; r++) {
+        uint32_t* dp = base
+            + (uint64_t)(SKYWIN_CONTENT_Y + r) * (uint32_t)pitch
+            + SKYWIN_CONTENT_X;
+        memcpy(dp, tmp + (uint64_t)r * cw, (size_t)cw * sizeof(uint32_t));
+    }
+    free(tmp);
+    if (dirty) *dirty = true;
 }

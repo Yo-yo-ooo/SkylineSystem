@@ -13,6 +13,8 @@ all:
 	$(MAKE) -C helloworld
 	$(MAKE) -C helloworld2
 	$(MAKE) -C notepad
+	$(MAKE) -C installer
+	$(MAKE) -C settings
 	$(MAKE) -C PureDOOM
     
 	@echo "Copying programs to disk image..."
@@ -21,7 +23,11 @@ all:
 	e2cp $(PROGRAM_BUILD_DIR)/hw.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/hw2.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/notepad.elf $(DISK_IMG):/
+	e2cp $(PROGRAM_BUILD_DIR)/installer.elf $(DISK_IMG):/
+	e2cp $(PROGRAM_BUILD_DIR)/settings.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/doom.elf $(DISK_IMG):/
+	@# 桌面内嵌 Lua 的默认主题脚本（用户可在镜像里编辑 /mp/desktop.lua 覆盖）
+	e2cp desktop/desktop.lua $(DISK_IMG):/
 
 	@# 共享库 (动态链接): 内核从 /mp/libsky.so 加载, 所以必须进盘。
 	@# 动态链接现在是**默认**产物, 所以缺这个库就是硬错误 —— 早点报出来,

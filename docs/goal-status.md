@@ -129,3 +129,93 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
   QEMU KMOD SMOKE: PASS、KMOD_SELFTEST PASS 12/12、kernel exports: 57、
   37 builtin ready、0 STALL；文档 kernel-modules.md §4.1 / kernel-components.md §6/§10
   已更新（含排除项与 ABI 规则）。
+
+## 🏁 桌面内嵌 Lua：可编程壁纸与窗口样式（当前目标）—— ✅ 实测完成
+
+在桌面程序（programs/desktop）内嵌 Lua 5.4.7，启动时执行 /mp/desktop.lua，脚本通过
+受控 sky.* API 修改运行期窗口 chrome 与壁纸；同时补齐 Lua 所需、原用户态 libc 缺失的
+标准 C 函数（标准语义 + 宿主测试）。
+
+- **Lua 运行时**：programs/desktop/lua/ vendor 上游 Lua 5.4.7（28 个 .c + 27 个 .h，
+  SHA256 全量核对、**零 patch**；MIT LICENSE）；只注册 base/string/table/math/utf8/
+  coroutine/debug，不开放 io/os/package。glue 在 programs/desktop/lua_glue.cpp，
+  优先加载 /mp/desktop.lua，缺失回退内嵌脚本；错误只回退默认主题、串口报告。
+- **运行期主题**：programs/desktop/sky_style.*。窗口圆角/标题栏/边框/分隔线/纸面/
+  标题文字/关闭字形/阴影强度全部可由 Lua 设置；**壁纸不再由 C++ 解析渐变/颜色配置**，
+  脚本通过 sky.wallpaper_* 原语直接绘制 wallpaper framebuffer。
+  默认值与旧桌面逐位一致；loader/main/wm_client 的窗口 chrome 全部改走运行期 theme。
+- **API**：预置壁纸 FrameBuffer 变量 `wallpaper`（`addr/addr_u64/width/height/
+  pitch_pixels/pitch_bytes/stride/bpp/format` + `fill/pixel/hline/vline/rect/size`
+  方法；`sky.wallpaper` 同对象，`sky.wallpaper_*` 函数形式保留）；
+  `sky.set_window_style{corner_radius,title_color,border_color,separator_color,
+  paper_color,ink_color,close_color,shadow_alpha}`、`sky.get_style()`、`sky.log()`。
+- **标准 C 函数**（lib/stdc 补齐）：setjmp/longjmp（x86_64 SysV asm）、signal.h、
+  locale（C locale）、time/clock/difftime（SYSCALL_TIME/MONOTONIC_MS）、
+  math（asin/log2/log10/sinh/cosh/tanh/frexp/ldexp/modf/HUGE_VAL[F]）、
+  string（strstr/strspn/strcspn/strrchr/strpbrk/strcoll/strerror/memchr/memcmp 声明）、
+  stdio（BUFSIZ/stdin/out/err/fwrite/fflush/fprintf/fgets/feof/ferror/freopen/getc/
+  ungetc…）、stdlib abort；FILE 扩展 eof/error/ungetc 状态。
+- **内核侧修复**：动态链接 R_X86_64_COPY 原先从"目标对象自己的导出"取源，导致
+  _ctype/stdout/stdin/stderr COPY 到全 0（Lua string.format 报 invalid conversion
+  specification）；改为在其它对象中查找定义后，桌面 Lua 正常。
+- **验证**：
+  * make cm 全新 clean build 通过；make -C lib 通过；
+  * tests/stdc：**PASS 217 / FAIL 0**（CI 已接入）；
+  * tests/kmod + ASAN：PASS 6/6；
+  * QEMU lua_desktop_smoke.ps1：**LUA DESKTOP SMOKE: PASS**（source=file、
+    style radius=16/title=0x232A45、壁纸由 Lua 直接绘制进 framebuffer——
+    串口 `wallpaper: script-painted ... top=0x102040 ... bottom=0x7A2F6E` 回读 +
+    截图像素采样通过）；
+  * QEMU kmod_smoke.ps1 回归：**KMOD SMOKE: PASS**（12/12、37 builtin、0 STALL）。
+- **文档**：docs/lua-desktop.md（新增）、docs/README.md 索引、root README §3.6/§6/§7、
+  programs/desktop/lua/README.md（vendor 记录）。
+
+## 🏁 安装程序 + Desktop 设置/`.lua` 配置加载界面 + Notepad 文件对话框（当前目标）—— ✅ QEMU 实测完成
+
+### 交付
+- **Installer**（`programs/installer/`）：GUI 安装程序，把 6 个资源写入 `/mp`：
+  `themes.index`、`theme_aurora.lua`、`theme_ember.lua`、`theme_mint.lua`、
+  `files.index`、`notes.txt`；窗口逐文件显示 new/overwrite/failed；写完后才
+  `CLIENT_READY`；Esc/Enter 或 WM 关闭退出；重复运行覆盖。
+- **Settings**（`programs/settings/`）：桌面启动时自动 spawn 并置顶；读取
+  `/mp/themes.index` 列出主题；Up/Down 选择、Enter 通过 WM 协议页命令邮箱发送
+  `SKYWIN_CMD_LOAD_LUA`；R 重载 `/mp/desktop.lua`、I 打开 Installer、L 重读
+  index（列表为空时每 1s 自动重读）、Esc 退出；写 `/mp/selected_theme.txt`。
+- **命令行邮箱**（`lib/include/graphic/winstyle.h`）：协议页 slot 10..15，
+  `SKYWIN_CMD_LOAD_LUA / RELOAD_DESKTOP / SPAWN_INSTALLER` + `skywin_send_command`；
+  desktop `wm_client_poll_command()` 轮询，`SkyLuaLoadConfigFile()` 运行期重建
+  Lua state、应用壁纸/窗口样式，`Compositor::ForceFullCompose()` 整屏重组，
+  `wm_client_repaint_chrome()` 重绘所有窗口 chrome（内容区像素保存/恢复）。
+- **Notepad**（`programs/notepad/main.cpp`）：Ctrl+O Open 文件对话框（读
+  `/mp/files.index`，fallback 3 项，读取文件/CRLF/截断/错误提示）、Ctrl+W Close
+  对话框（Save and Close / Discard and Close / Cancel）、Ctrl+S 保存；
+  对话框内 Up/Down/Enter/Esc；忽略 Ctrl+Alt+* 全局快捷键；串口标记齐全。
+- **桌面快捷键**：Ctrl+Alt+S/N/I 聚焦/拉起 Settings/Notepad/Installer。
+- **内核修复**（首启安装器 + DOOM 暴露）：
+  * AHCI 轮询不再在 ext4 临界区内 `sti`（消除 ext4 bcache 并发损坏/卡死）；
+  * ext4 挂载锁 owner 改为线程指针、等待者开中断 Yield（消除关中断自旋饿死
+    TLB/定时器导致的 STALL 连锁）；
+  * `/mp` 大文件（>1MiB）不进 file_cache（`sys_fread`），规避 DOOM 启动时
+    `file_cache_promote` invalid free；
+  * 键盘 Esc 映射修复（scancode 0x01 → 0x1B，之前 Esc 被输入核心丢弃）。
+
+### 验证（4 CPU、2G QEMU；脚本自动清理 disk.img 首启资源）
+- 宿主：**`make cm` 全新 clean build 通过**（ISO 5812 sectors）；
+  `tests/stdc` **PASS 217/0**；`tests/kmod` **6/6**、ASAN **6/6**；
+  `kernel modules-check` **OK 15/15**。
+- **QEMU `desktop_features_smoke.ps1`：DESKTOP FEATURES: PASS（0 warning）**，
+  0 STALL / 0 Panic / 0 invalid free：
+  * Installer 首装 `6/6 files (6 new, 0 failed)` → READY → Aurora 主题加载
+    rc=0 → Esc 关闭（`[installer] exit: Esc/Enter`）；
+  * Settings 自动刷新列表（`method: auto-refresh`）→ 应用 Mint：
+    `[desktop] theme: load path=/mp/theme_mint.lua rc=0 radius=18`，
+    截图像素/帧差通过；
+  * Notepad `dialog=open items=5` → `opened path=/mp/theme_aurora.lua bytes=1479`
+    → `dialog=close` → **Esc cancel**（`close choice=cancel`）；
+  * R → `[desktop] theme: load path=/mp/desktop.lua rc=0 radius=16`；
+  * disk.img 上 6 个安装资源 + `selected_theme.txt` 全部校验存在。
+- 证据：`res/scripts/test/desktop_features_smoke.ps1`、`desktop_features_serial.log`、
+  `desktop_features_*.ppm`。
+- **QEMU 回归**：`lua_desktop_smoke.ps1` **PASS**；`kmod_smoke.ps1` **PASS**。
+- **文档**：`docs/desktop-features.md`（新增）、`docs/README.md` 索引、
+  root README §3.7/§6/§7；`docs/lua-desktop.md` 关联。

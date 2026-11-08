@@ -165,7 +165,6 @@ namespace AHCI
            for up to the whole timeout and starves peer threads pinned to it.
            Keep IRQs enabled while polling so the scheduler can preempt us, and
            restore the masked state expected by the syscall ABI on the way out. */
-        asm volatile("sti");
         while(PIT::MonotonicMS() < s)
         {
             if((hbaPort->commandIssue & 1) == 0)
@@ -175,7 +174,6 @@ namespace AHCI
             }
             asm volatile("pause");
         }
-        asm volatile("cli");
         
         if (timeout)
         {
@@ -297,19 +295,16 @@ namespace AHCI
            for up to the whole timeout and starves peer threads pinned to it.
            Keep IRQs enabled while polling so the scheduler can preempt us, and
            restore the masked state expected by the syscall ABI on the way out. */
-        asm volatile("sti");
         while (PIT::MonotonicMS() < deadline)
         {
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
-                asm volatile("cli");
-                RecoverPort();
+                        RecoverPort();
                 return false;
             }
             asm volatile("pause");
         }
-        asm volatile("cli");
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
             RecoverPort();
@@ -419,16 +414,14 @@ namespace AHCI
            for up to the whole timeout and starves peer threads pinned to it.
            Keep IRQs enabled while polling so the scheduler can preempt us, and
            restore the masked state expected by the syscall ABI on the way out. */
-        asm volatile("sti");
         while (PIT::MonotonicMS() < deadline)
         {
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES)
-            { asm volatile("cli"); RecoverPort(); return false; }
+            {  RecoverPort(); return false; }
             asm volatile("pause");
         }
-        asm volatile("cli");
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
         {

@@ -16,6 +16,10 @@ void free(void* ptr);
 void* calloc(size_t nmemb, size_t size);
 void* realloc(void* ptr, size_t size);
 
+/* ISO C: 异常终止, 不返回。用户态没有 SIGABRT 投递, 实现为
+   sys_exit(128 + SIGABRT) (=134) —— 与 POSIX shell 的 128+signal 约定一致。 */
+__attribute__((__noreturn__)) void abort(void);
+
 /* 分配器健康自检的**读取入口** (定义在 stdc/allocator/allocator.c)。
    必须用函数而不是直接 extern 变量: 动态链接时用户程序直接引用 libsky.so
    里的全局变量会生成 R_X86_64_COPY —— 主程序 BSS 里多出一份副本, 读到的

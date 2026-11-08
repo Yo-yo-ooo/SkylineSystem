@@ -89,24 +89,65 @@
  *
  * 为什么做成**递归锁**: lwext4 的公开函数之间会互相调用 (例如
  * ext4_fopen2 -> ext4_generic_open2), 若每一层都 EXT4_MP_LOCK, 非递归
- * 自旋锁会自死锁。这里用 "owner = 当前 CPU + 深度计数", 只有最外层真正
+ * 自旋锁会自死锁。这里用 "owner = 当前线程 + 深度计数", 只有最外层真正
  * 拿锁 / 放锁, 内层仅增加深度。irqsave 的 flags 也只在最外层保存,
  * 否则内层会把中断状态恢复错。
+ *
+ * 2026-11 修复: owner 从 "CPU id" 改成 "当前线程指针"。AHCI 轮询会在
+ * 磁盘 I/O 期间短暂开中断（见 ahci.cpp 的说明），若按 CPU 认 owner，
+ * 同一 CPU 上被调度进来的其它线程会被误判为"重入"而同时进入 lwext4；
+ * 线程迁移/抢占后 owner 也会错位。线程 owner 还允许等待者在**开着中断**
+ * 的状态下让出 CPU（Schedule::Yield），避免旧实现"关中断自旋等锁"把
+ * TLB shootdown / 定时器全部饿死、触发 STALL WATCHDOG（安装器写盘时实测）。
  * ------------------------------------------------------------------------- */
-static spinlock_t g_ext4_mplock;
-static volatile uint32_t g_ext4_owner;   /* 0 = 空闲; 否则 cpu_id + 1 */
+static volatile uint64_t g_ext4_owner;   /* 0 = 空闲; 否则 thread_t* 值 */
 static volatile uint32_t g_ext4_depth;
-static uint64_t g_ext4_flags;
+static uint64_t g_ext4_flags;            /* 最外层保存的 RFLAGS */
+
+static inline uint64_t ext4_read_flags(void) {
+    uint64_t f;
+    __asm__ volatile("pushfq; popq %0" : "=r"(f) :: "memory");
+    return f;
+}
+static inline void ext4_cli(void) { __asm__ volatile("cli" ::: "memory"); }
+static inline void ext4_sti(void) { __asm__ volatile("sti" ::: "memory"); }
 
 static void ext4_os_lock(void) {
-    uint32_t me = (uint32_t)this_cpu()->id + 1;
-    if (g_ext4_owner == me) {            /* 同一 CPU 重入 */
+    uint64_t me = (uint64_t)(uintptr_t)Schedule::this_thread();
+    bool sched_ready = (me != 0);
+    if (!me)
+        me = 0x8000000000000000ULL | (uint64_t)this_cpu()->id;
+
+    if (__atomic_load_n(&g_ext4_owner, __ATOMIC_ACQUIRE) == me) {
         g_ext4_depth++;
+        ext4_cli();                       /* 与最外层锁的 IF 语义一致 */
         return;
     }
-    g_ext4_flags = spin_lock_irqsave(&g_ext4_mplock);
-    g_ext4_owner = me;
-    g_ext4_depth = 1;
+
+    uint64_t flags = ext4_read_flags();
+    for (;;) {
+        uint64_t expected = 0;
+        if (__atomic_compare_exchange_n(&g_ext4_owner, &expected, me, false,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            g_ext4_depth = 1;
+            g_ext4_flags = flags;
+            ext4_cli();                   /* 临界区内禁止抢占/迁移 */
+            return;
+        }
+        if (__atomic_load_n(&g_ext4_owner, __ATOMIC_ACQUIRE) == me) {
+            g_ext4_depth++;               /* 同线程嵌套 */
+            ext4_cli();
+            return;
+        }
+        /* 让中断进来: 回收 TLB shootdown / 定时器；有调度器时主动让出 CPU，
+         * 让持锁线程（可能在等 AHCI I/O）继续执行。 */
+        ext4_sti();
+        if (sched_ready)
+            Schedule::Yield();
+        else
+            __asm__ volatile("pause");
+        ext4_cli();
+    }
 }
 
 static void ext4_os_unlock(void) {
@@ -115,8 +156,11 @@ static void ext4_os_unlock(void) {
         return;
     }
     g_ext4_depth = 0;
-    g_ext4_owner = 0;
-    spin_unlock_irqrestore(&g_ext4_mplock, g_ext4_flags);
+    __atomic_store_n(&g_ext4_owner, 0, __ATOMIC_RELEASE);
+    if (g_ext4_flags & 0x200ULL)         /* 恢复调用者原本的 IF */
+        ext4_sti();
+    else
+        ext4_cli();
 }
 
 static const struct ext4_lock g_ext4_locks = {

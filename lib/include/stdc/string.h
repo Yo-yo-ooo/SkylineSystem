@@ -26,6 +26,17 @@ int32_t atoi(char *str);
 void *memcpy(void *str1, const void *str2, size_t n);
 void *memset(void *str, int c, size_t n);
 void *memmove(void *str1, const void *str2, size_t n);
+int memcmp(const void *str1, const void *str2, size_t n);
+void *memchr(const void *str, int c, size_t n);
+
+/* ---- 内嵌 Lua 5.4 需要的补充函数 (lib/stdc/string_extra.c) ---- */
+char *strstr(const char *haystack, const char *needle);
+size_t strspn(const char *str, const char *accept);
+size_t strcspn(const char *str, const char *reject);
+char *strrchr(const char *str, int c);
+char *strpbrk(const char *str, const char *accept);
+char *strerror(int errnum);
+int strcoll(const char *str1, const char *str2);
 
 
 #ifdef __cplusplus

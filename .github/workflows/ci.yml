@@ -30,6 +30,10 @@ jobs:
         working-directory: tests
         run: make -B alloc && ./bin/alloc_test
 
+      - name: userspace libc host suite (task-11: setjmp/string/math/locale/time/stdio)
+        working-directory: tests
+        run: make -B stdc && ./bin/stdc_test
+
       - name: kmod host gate (build + run, topology/capability/ELF loader)
         working-directory: tests
         run: make -B kmod && ./bin/kmod_test

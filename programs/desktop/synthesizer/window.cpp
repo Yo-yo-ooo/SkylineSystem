@@ -325,6 +325,11 @@ void Compositor::SetBackground(const uint32_t* bg) {
     force_full_ = 1;
 }
 
+void Compositor::ForceFullCompose(void) {
+    CompScanGuard _sg(this);
+    force_full_ = 1;
+}
+
 void Compositor::SetDynamicRows(int32_t y0, int32_t y1) {
     CompScanGuard _sg(this);
     dyn_y0_ = y0; dyn_y1_ = y1;

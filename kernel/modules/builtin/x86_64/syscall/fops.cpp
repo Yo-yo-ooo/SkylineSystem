@@ -165,12 +165,26 @@ GENERATE_IGN3()) {
             return -EFAULT;
         }
 
+        /* 大文件不做块级缓存（DOOM WAD 11MB、字体等）：每 4KiB 一个条目会让
+         * 缓存/淘汰长期高 churn，并在 SMP 下暴露 file_cache 条目生命周期竞态
+         * （实测 DOOM 启动阶段偶发 file_cache_promote invalid free）。小文件
+         * （程序/配置/主题）仍然正常缓存；大文件交给块设备/页缓存前的读取。
+         * 这是稳定性优先的有意取舍，见 docs/desktop-features.md §8。 */
+        const bool cache_promote_ok =
+            (FD->file_size == 0 || FD->file_size <= (1ull << 20));
+
         // 只有从 offset 0 开始读取的数据，才能安全作为整个文件的缓存前缀进行记录/提升
         if (cur_offset == 0) {
-            void *cache_buf = kmalloc(total_read);
-            if (cache_buf) {
-                __memcpy(cache_buf, kbuf, total_read);
-                file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, cache_buf, FD->file_size, FD->file_uid);
+            if (cache_promote_ok) {
+                void *cache_buf = kmalloc(total_read);
+                if (cache_buf) {
+                    __memcpy(cache_buf, kbuf, total_read);
+                    file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path, FD->path_len, total_read, cache_buf, FD->file_size, FD->file_uid);
+                }
+            } else {
+                file_cache_record_io(cpu->file_cache, (const uint8_t*)FD->path,
+                                     FD->path_len, total_read, NULL,
+                                     FD->file_size, FD->file_uid);
             }
         } else {
             /* Step 2: 非零偏移读取改为逐块 promote ——
@@ -193,7 +207,7 @@ GENERATE_IGN3()) {
                    的读就会命中并拿到错位数据 —— 密集的小块读 (逐字形读
                    glyf 切片, 每 4KB 块里约 8 个字形) 必然连环踩中, 表现为
                    文件内容随机损坏。非块首的部分块跳过, 后续块仍然入缓存。 */
-                if (blk_from == 0) {
+                if (blk_from == 0 && cache_promote_ok) {
                     void *block_buf = kmalloc(chunk);
                     if (!block_buf) break;   /* OOM: 放弃剩余块, 已 promote 的保留 */
                     __memcpy(block_buf, (uint8_t*)kbuf + off, chunk);

@@ -28,6 +28,7 @@ struct WmClient {
     Window          win;         /* compositor window (static storage: stable) */
     const char*     title;       /* spawn title (string-literal lifetime)      */
     uint64_t        last_seq;    /* last observed client OUT_SEQ (frame ping)  */
+    uint64_t        cmd_seq;     /* last consumed client->WM command sequence  */
 
     /* ---- geometry / interactive resize ---- */
     uint32_t        bodyW, bodyH;    /* current body size (spawn size at first) */
@@ -92,5 +93,15 @@ void      wm_client_toggle_max(WmClient* c, int32_t scrW, int32_t scrH,
 int       wm_client_count       (void);                 /* used slots              */
 WmClient* wm_client_by_order    (int idx);              /* idx-th used client      */
 WmClient* wm_client_top_visible (void);                 /* highest-z shown client  */
+WmClient* wm_client_find_title  (const char* title);    /* first client by title   */
+
+/* Client -> WM one-shot command mailbox (settings/installer use it).
+ * Returns 1 and fills *out/*cmd/arg if any client published a new command;
+ * the command slot is cleared after consumption. */
+int       wm_client_poll_command(WmClient** out, uint64_t* cmd,
+                                 char* arg, uint32_t argCap);
+/* Repaint a client's chrome (title bar/border/paper/radius) with the current
+ * runtime theme while preserving its content pixels; marks *dirty. */
+void      wm_client_repaint_chrome(WmClient* c, bool* dirty);
 
 #endif /* SYNTHESIZER_WM_CLIENT_H */

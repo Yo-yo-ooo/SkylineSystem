@@ -30,6 +30,7 @@
 #include <graphic/flanterm.h>
 #include <base/font/ttf/ttf.h>
 #include <graphic/winstyle.h>
+#include "sky_style.h"
 
 #define PAGE_SIZE    4096UL
 #define SHARE_FLAGS  7UL
@@ -85,21 +86,21 @@ void SkyPaintCaptionIcons(FrameBuffer* s, int32_t bx0, int32_t by0,
 
     /* minimize: one horizontal rule centred in [B-3BTN, B-2BTN) */
     int32_t cx = bx0 + (int32_t)SKYWIN_BTN_MIN_L((uint32_t)bodyW) + bw / 2;
-    DrawLine(s, cx - 5, cy, cx + 5, cy, SKYRGB_CLOSE);
+    DrawLine(s, cx - 5, cy, cx + 5, cy, SkyRGBClose());
 
     /* maximize / restore: hollow square, or two overlapping squares */
     cx = bx0 + (int32_t)SKYWIN_BTN_MAX_L((uint32_t)bodyW) + bw / 2;
     if (maximized) {
-        DrawRect(s, cx - 2, cy - 8, 7, 7, SKYRGB_CLOSE);    /* rear box  */
-        DrawRect(s, cx - 5, cy - 5, 10, 10, SKYRGB_CLOSE);  /* front box */
+        DrawRect(s, cx - 2, cy - 8, 7, 7, SkyRGBClose());    /* rear box  */
+        DrawRect(s, cx - 5, cy - 5, 10, 10, SkyRGBClose());  /* front box */
     } else {
-        DrawRect(s, cx - 5, cy - 5, 10, 10, SKYRGB_CLOSE);
+        DrawRect(s, cx - 5, cy - 5, 10, 10, SkyRGBClose());
     }
 
     /* close: a cross centred in the right-most button */
     cx = bx0 + (int32_t)SKYWIN_BTN_CLOSE_L((uint32_t)bodyW) + bw / 2;
-    DrawLine(s, cx - 5, cy - 5, cx + 5, cy + 5, SKYRGB_CLOSE);
-    DrawLine(s, cx + 5, cy - 5, cx - 5, cy + 5, SKYRGB_CLOSE);
+    DrawLine(s, cx - 5, cy - 5, cx + 5, cy + 5, SkyRGBClose());
+    DrawLine(s, cx + 5, cy - 5, cx - 5, cy + 5, SkyRGBClose());
 }
 
 /* Rasterize the modern rounded/shadowed chrome for a body of bodyW x bodyH
@@ -116,7 +117,7 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
     const int32_t SH = surfH;
     const int32_t M  = (int32_t)SKYWIN_SHADOW;
     const float   BW = (float)bodyW, BH = (float)bodyH;
-    const float   R  = (float)SKYWIN_RADIUS;
+    const float   R  = (float)SkyWinRadius();
     const int32_t TH = (int32_t)SKYWIN_TITLE_H;
     const float   HW = BW * 0.5f, HH = BH * 0.5f;
     const float   RX = HW - R, RY = HH - R;      /* straight part half-extents */
@@ -145,9 +146,9 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
                second sqrt entirely. Pick the flat fill for this scanline. */
             if (cov >= 1.f) {
                 uint32_t fill;
-                if (d > -1.0f)                fill = SKYRGB_BORDER;   /* hairline */
-                else if ((int32_t)by == TH-1) fill = SKYRGB_SEP;      /* separator*/
-                else if (by < (float)TH)      fill = SKYRGB_TITLE;
+                if (d > -1.0f)                fill = SkyRGBBorder();   /* hairline */
+                else if ((int32_t)by == TH-1) fill = SkyRGBSeparator();      /* separator*/
+                else if (by < (float)TH)      fill = SkyRGBTitle();
                 else                          fill = paperRGB;       /* client paper */                out[idx] = 0xFF000000u | (fill & 0x00FFFFFFu);
                 continue;
             }
@@ -164,7 +165,7 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
             float aOut = cov + sh * (1.f - cov);
             if (aOut <= 0.003f) { out[idx] = 0; continue; }
 
-            uint32_t fill = (by < (float)TH) ? SKYRGB_TITLE : paperRGB;
+            uint32_t fill = (by < (float)TH) ? SkyRGBTitle() : paperRGB;
             uint32_t fr = (fill >> 16) & 0xFF, fg = (fill >> 8) & 0xFF, fb = fill & 0xFF;
             /* shadow is pure black, so out_rgb = fill*cov / aOut */
             uint32_t oa = (uint32_t)(aOut * 255.f + 0.5f);
@@ -180,7 +181,7 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
     TTF_Font *font = console_font();
     if (font)
         TTF_DrawText(wb, font, M + 14, M + (TH - 22) / 2,
-                     title ? title : "", SKYRGB_INK);
+                     title ? title : "", SkyRGBInk());
 
     /* 5) caption glyphs: minimize / maximize / close, right-aligned */
     SkyPaintCaptionIcons(wb, M, M, bodyW, TH, restoreGlyph);
@@ -231,7 +232,7 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     const uint32_t contentX = SKYWIN_SHADOW;
     const uint32_t contentY = SKYWIN_SHADOW + SKYWIN_TITLE_H;
     const uint32_t contentW = bodyW;
-    const uint32_t contentH = bodyH - SKYWIN_TITLE_H - SKYWIN_RADIUS;
+    const uint32_t contentH = bodyH - SKYWIN_TITLE_H - SkyWinRadius();
     uint64_t content_off =
         ((uint64_t)contentY * surfW + contentX) * sizeof(uint32_t);
 
@@ -307,5 +308,5 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
 
 uint64_t TLoad(FrameBuffer *Fb, SkyWinPlacement *place) {
     return SpawnWindowedApp(Fb, "/mp/hw2.elf", "Skyline Console",
-                            SKYWIN_W, SKYWIN_H, place, SKYRGB_PAPER);
+                            SKYWIN_W, SKYWIN_H, place, SkyRGBPaper());
 }

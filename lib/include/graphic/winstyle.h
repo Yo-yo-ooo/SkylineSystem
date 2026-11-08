@@ -102,8 +102,51 @@ extern "C" {
 #define SKYWIN_PROTO_WIN_H        7u
 #define SKYWIN_PROTO_CLIENT_READY 8u
 #define SKYWIN_PROTO_OUT_SEQ      9u
-#define SKYWIN_PROTO_SLOTS        16u
+
+/* [10..15] client -> WM command mailbox (optional; settings/installer use it).
+ *   [10] command id (SKYWIN_CMD_*), 0 = none
+ *   [11..14] 32-byte argument payload (e.g. NUL-terminated "/mp/...lua" path)
+ *   [15] sequence counter; a changed non-zero seq means "one command pending".
+ * Commands are consumed by the desktop WM, which then clears the cmd slot. */
+#define SKYWIN_PROTO_CMD        10u
+#define SKYWIN_PROTO_CMD_ARG0   11u
+#define SKYWIN_PROTO_CMD_ARG1   12u
+#define SKYWIN_PROTO_CMD_ARG2   13u
+#define SKYWIN_PROTO_CMD_ARG3   14u
+#define SKYWIN_PROTO_CMD_SEQ    15u
+#define SKYWIN_PROTO_SLOTS      16u
 #define SKYWIN_PROTO_PAGE_VA  0x400000UL  /* client fixed .prepad protocol page */
+
+#define SKYWIN_CMD_NONE            0u
+#define SKYWIN_CMD_LOAD_LUA        1u  /* arg = /mp/...lua path */
+#define SKYWIN_CMD_RELOAD_DESKTOP  2u  /* no arg: reload /mp/desktop.lua */
+#define SKYWIN_CMD_SPAWN_INSTALLER 3u  /* no arg: open /mp/installer.elf */
+#define SKYWIN_CMD_ARG_BYTES       32u
+
+/* Client-side helper: publish one command into the WM protocol page.
+ * `q` is the 16-slot protocol page (client-side page at SKYWIN_PROTO_PAGE_VA). */
+static inline void skywin_send_command(volatile uint64_t *q, uint64_t cmd,
+                                       const char *arg)
+{
+    if (!q)
+        return;
+    uint8_t buf[SKYWIN_CMD_ARG_BYTES];
+    for (uint32_t i = 0; i < SKYWIN_CMD_ARG_BYTES; i++)
+        buf[i] = 0;
+    if (arg) {
+        for (uint32_t i = 0; i + 1u < SKYWIN_CMD_ARG_BYTES && arg[i]; i++)
+            buf[i] = (uint8_t)arg[i];
+    }
+    for (uint32_t s = 0; s < (SKYWIN_CMD_ARG_BYTES / 8u); s++) {
+        uint64_t v = 0;
+        for (uint32_t b = 0; b < 8u; b++)
+            v |= (uint64_t)buf[s * 8u + b] << (b * 8u);
+        q[SKYWIN_PROTO_CMD_ARG0 + s] = v;
+    }
+    q[SKYWIN_PROTO_CMD] = cmd;
+    __atomic_add_fetch(&q[SKYWIN_PROTO_CMD_SEQ], 1u, __ATOMIC_RELEASE);
+}
+
 
 /* Readiness handshake magic: stored little-endian, so in memory it reads as
    the ASCII word "READY" with 'R' at the lowest byte. */

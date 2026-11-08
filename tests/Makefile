@@ -47,6 +47,11 @@ bin/alloc_test: alloc/alloc_main.cpp ../lib/stdc/allocator/allocator.c ../lib/st
 	$(CXX) $(CXXFLAGS) -I ../lib/include -I ../ablib \
 	  alloc/alloc_main.cpp bin/allocator_host.o bin/sct_host.o -o $@ $(LDLIBS)
 
+# 用户态 libc (lib/stdc) 宿主测试 (task-11: Lua 所需缺失标准函数)
+# 规则在 tests/stdc/Makefile; 产物 tests/bin/stdc_test
+stdc:
+	@$(MAKE) -C stdc
+
 # 债务 #6: 内核 vsnprintf 宿主模糊测试 (ASAN+UBSAN)
 fuzz: bin/kprintf_fuzz
 bin/kprintf_fuzz: fuzz/kprintf_fuzz.cpp fuzz/fuzz_shim.cpp ../kernel/src/klib/kprintf.cpp
@@ -146,7 +151,7 @@ bin/memops_asan: memops/main.cpp memops/memops_shim.c
 	  $(MEM_INC) memops/main.cpp bin/memops_shim_asan.o bin/memops_asan_obj.o -o $@ $(LDLIBS)
 
 .PHONY: all slub slub-poison fc fc-asan sched clean art-mini art-replay alloc fuzz \
-        memops memops-bench memops-asan kmod kmod-asan
+        memops memops-bench memops-asan kmod kmod-asan stdc
 all: slub slub-poison fc sched memops
 
 slub: bin/slub_test

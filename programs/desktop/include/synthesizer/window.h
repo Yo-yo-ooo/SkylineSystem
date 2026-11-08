@@ -60,6 +60,9 @@ public:
 
     bool Init(FrameBuffer* screen);
     void SetBackground(const uint32_t* bg);
+    /* 壁纸/主题被就地改写（内容指针不变）时，强制下一帧整屏重组，
+     * 避免增量合成跳过未标记为 dirty 的壁纸行。 */
+    void ForceFullCompose(void);
 
     /* 永远要重画的屏幕行带 (任务栏): 壁纸缓冲被 wm_draw_taskbar 就地改写的
        区域。其它行在"没有内容窗口覆盖"时可以被跳过 —— 见 ComposeRangeToBack。 */
