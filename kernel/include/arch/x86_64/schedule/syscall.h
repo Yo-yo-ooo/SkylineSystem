@@ -111,6 +111,7 @@ uint64_t sys_getrandom(uint64_t buf, uint64_t size, uint64_t flags,
     GENERATE_IGN3());
 uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5());
 uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4());
+uint64_t sys_readdir(uint64_t path,uint64_t buf,uint64_t cap,GENERATE_IGN3());
 uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp,GENERATE_IGN4());
 uint64_t sys_pmmapSHARE(
     uint64_t dst_pid,      // 目标进程（要改谁的页表）
@@ -133,6 +134,9 @@ uint64_t sys_dev_ioctl(
         GENERATE_IGN2());
 uint64_t sys_dbgsout(uint64_t CharsAddr,uint64_t OutSize,GENERATE_IGN4());
 uint64_t sys_kill(uint64_t pid,uint64_t sig,GENERATE_IGN4());
+/* 固定 syscall 31：子进程退出事件（1=复制一条 {int32 pid; int32 code;} 到
+ * user_buf，0=空，负=-errno）。见 sched.h 的 proc_t::child_ev ring。 */
+uint64_t sys_child_event(uint64_t u_buf, GENERATE_IGN5());
 uint64_t sys_fsize(uint64_t fd_idx,GENERATE_IGN5());
 }
 #endif

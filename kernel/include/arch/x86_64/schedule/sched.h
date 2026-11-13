@@ -112,6 +112,20 @@ typedef struct thread_t {
     char     rip_pad[3];
 } thread_t;
 
+/* ---- 子进程退出事件 ring (v1) ----------------------------------------
+ * 固定容量的进程内队列：子进程退出时（FinalizeProcExit / DeleteProc）在
+ * 摘除 parent->children 之前把 {pid, code} 推进父进程的 ring；父进程用
+ * sys_child_event(31) 逐条弹出，替代 desktop 500ms sys_kill(pid,0) 轮询。
+ * 生产者/消费者都用 PROC_LIST_LOCK 串行化；head/tail 单调递增，满 8 条时
+ * 丢弃最旧一条并累加 overflow（诊断计数；不扩展 syscall ABI，调用方可保留
+ * 低频兜底扫描覆盖丢失事件）。 */
+#define PROC_CHILD_EVENT_CAP 8u
+
+typedef struct child_exit_event {
+    int32_t pid;
+    int32_t code;
+} child_exit_event_t;
+
 typedef struct proc_t {
     uint64_t id;
     thread_t *threads;
@@ -128,6 +142,12 @@ typedef struct proc_t {
        proc_get/proc_put 配对 (children 遍历、kill 对端、waitpid)。
        refcount 归零才允许释放 FDMan/pagemap/结构体 */
     volatile int32_t refcount;
+    /* 子进程退出事件 ring（见 PROC_CHILD_EVENT_CAP 注释；由 PROC_LIST_LOCK
+       保护，不要绕过该锁读写）。 */
+    uint32_t child_ev_head;      /* 生产者：下一条写入位置（单调） */
+    uint32_t child_ev_tail;      /* 消费者：下一条读取位置（单调） */
+    uint32_t child_ev_overflow;  /* 队列满丢弃最旧的累计条数（诊断） */
+    child_exit_event_t child_ev[PROC_CHILD_EVENT_CAP];
 } proc_t;
 
 typedef struct procl{
@@ -251,6 +271,11 @@ namespace Schedule{
     void WaitForThreadOffCpu(thread_t *thread);
     void KillThread(thread_t *thread);
     void TriggerPreempt(thread_t *woken_thread);
+
+    /* 子进程退出事件（固定 syscall 31 的内核侧消费者）：
+       从**当前进程**的 child_ev ring 弹出一条 {pid, code}；返回 false = 空。
+       内部取 PROC_LIST_LOCK，线程安全；可从任意线程上下文调用。 */
+    bool ConsumeChildExitEvent(int32_t *pid_out, int32_t *code_out);
 }
 
 }

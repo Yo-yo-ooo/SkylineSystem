@@ -5,10 +5,10 @@
  * ============================================================================
  * 边界（docs/kernel-modules.md "syscall 治理"）：
  *   - 固定契约槽 0..63：编号/参数/返回/错误码/语义固定，Tier0 不变。
- *     其中 0..28 的实现由 Tier1 内建组件 (kernel.syscall.<family>) 注册；
- *     29(SYSCALL_KMOD_INFO)、30(SYSCALL_KMOD_PROBE) 由 Tier0 治理层内部
- *     实现（30 标记 SWAPPABLE，允许模块在能力(KMOD_CAP_SYSCALL_OVERRIDE)
- *     约束下替换"实现"，语义不变）。31..63 保留未定义。
+ *     其中 0..28 与 31 的实现由 Tier1 内建组件 (kernel.syscall.<family>)
+ *     注册；29(SYSCALL_KMOD_INFO)、30(SYSCALL_KMOD_PROBE) 由 Tier0 治理层
+ *     内部实现（30 标记 SWAPPABLE，允许模块在能力(KMOD_CAP_SYSCALL_OVERRIDE)
+ *     约束下替换"实现"，语义不变）。32..63 保留未定义。
  *   - 128..511 是动态命名空间槽：模块声明各自命名空间 + 能力
  *     (KMOD_CAP_SYSCALL_IMPL) 才能注册实现；内核只做机械校验。
  *   - syscall.cpp 的固定 dispatch 在治理槽（0..63 + 128..511）上安装
@@ -55,9 +55,9 @@ extern uint64_t (*syscall_lists[KMOD_SYSCALL_MAX])(
 namespace {
 
 /* ------------------------------------------------------------------ */
-/* 固定契约表（0..30，共 31 条；22/23 为历史保留空洞，仅占位审计）    */
+/* 固定契约表（0..31，共 32 条；22=mkdir, 23=readdir 均已启用）      */
 /* ------------------------------------------------------------------ */
-constexpr uint32_t kFixedContractCount = 31u;
+constexpr uint32_t kFixedContractCount = 32u;
 
 const kmod_syscall_contract_t g_contracts[kFixedContractCount] = {
     /* nr, flags, abi, name, owner */
@@ -83,8 +83,8 @@ const kmod_syscall_contract_t g_contracts[kFixedContractCount] = {
     {19u, KMOD_SC_FIXED, 1u, "kill", "kernel"},
     {20u, KMOD_SC_FIXED, 1u, "getrandom", "kernel"},
     {21u, KMOD_SC_FIXED, 1u, "dev_mmap", "kernel"},
-    {22u, KMOD_SC_FIXED, 1u, "reserved", "kernel"},
-    {23u, KMOD_SC_FIXED, 1u, "reserved", "kernel"},
+    {22u, KMOD_SC_FIXED, 1u, "mkdir", "kernel"},
+    {23u, KMOD_SC_FIXED, 1u, "readdir", "kernel"},
     {24u, KMOD_SC_FIXED, 1u, "dbgsout", "kernel"},
     {25u, KMOD_SC_FIXED, 1u, "dev_getinfo", "kernel"},
     {26u, KMOD_SC_FIXED, 1u, "dev_ioctl", "kernel"},
@@ -94,6 +94,8 @@ const kmod_syscall_contract_t g_contracts[kFixedContractCount] = {
      "kernel"},
     {KMOD_SYSCALL_PROBE, KMOD_SC_FIXED | KMOD_SC_SWAPPABLE, 1u, "kmod_probe",
      "kernel"},
+    /* 31: 子进程退出事件（固定语义；实现由内建组件 kernel.syscall.proc 注册） */
+    {31u, KMOD_SC_FIXED, 1u, "child_event", "kernel"},
 };
 
 /* ------------------------------------------------------------------ */

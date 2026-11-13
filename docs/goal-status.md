@@ -219,3 +219,79 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
 - **QEMU 回归**：`lua_desktop_smoke.ps1` **PASS**；`kmod_smoke.ps1` **PASS**。
 - **文档**：`docs/desktop-features.md`（新增）、`docs/README.md` 索引、
   root README §3.7/§6/§7；`docs/lua-desktop.md` 关联。
+
+
+### 当前目标（第 2 轮）：DOOM 窗口 + Desktop z-order/focus + 最小化保持最大化 + 子进程退出事件 + 64MB
+
+- **DOOM 窗口**：WM content 高度 = bodyH − title − **运行时主题圆角**（默认 16），
+  640×440 body 实际 content 640×392；旧 shim 的 `ch>=400 ? 2x : 1x` 回退 1x，
+  只画左上 320×200，其余黑边。改为预计算 col/row 映射、**始终填满 content**
+  （2G 截图四象限/四边 non-black；content_w=640 content_h=392 exact_2x=0）。
+- **z-order / focus**：`wm_focus_immediate` 同帧 `kbd_focus_set_slot`；点击/任务栏
+  restore/raise/spawn 立即置顶+聚焦；`wm_refocus` 跳过 minimized/closed/no-layer，
+  失效回退最高可见 `layer->z`；console 与 generic client 统一。任务栏 pill 语义
+  与 z/focus 一致。
+- **最小化保持最大化**：console caption/taskbar 两条路径保存 `wm_prior`；
+  `WmClient::pre_minimized_max` 支持 generic 客户端最大化→最小化→恢复保持
+  maximized；恢复 raise+focus。QEMU 截图：Notepad max=restore 帧完全一致，
+  console max→min→restore 仍 max。
+- **子进程退出事件**：`proc_t` child-event ring（8 条）+ `FinalizeProcExit`/
+  `DeleteProc` 入队；`sys_load` 将客户端挂到 desktop children；用户 syscall 31
+  `child_event`；desktop 每帧 drain≤16 立即回收窗口，仅保留 2s 兜底 sweep。
+  kmod 固定契约 31→32，`kernel.syscall.proc` 导出槽 31，host kmod 6/6、ASAN 6/6。
+- **64MB 低内存**：`-m64M` 可用约 56MiB。启动路径自动启动 Notepad/Settings，
+  DOOM 由 `Ctrl+Alt+D` 按需（避免 R_Init/WAD 冷读推迟桌面 ready）；PureDOOM
+  DOOM_TINY 下 zone 8MiB（`doom_set_zone_mb`），64M 下 DOOM 可 init/持续渲染（zone=8，
+  OOM≈197–1741，0 panic；50–74s 心跳）。
+  新增 OOM 加固：`VMA::InsertRegion` 空链防护、`elf_load_impl` `PMM::Request()==0`
+  失败回收；桌面关闭窗口 `sys_munmap` 共享 surface/protocol 别名。
+- **键盘兜底**：Ctrl+Alt+C 聚焦 Console、Ctrl+Alt+M 切换最大化、Ctrl+Alt+H 最小化、
+  Ctrl+Alt+D 拉起 DOOM；用于无鼠标/无头验证。
+- **验证**：
+  * 2G：DOOM 窗口修复截图、Notepad/console maximize→minimize→restore 截图、
+    child-event 串口（`[wm] child pid=...` + drop，无 500ms 轮询路径）；
+  * 64M：desktop 应用稳定（OOM≈13–16，0 panic）；DOOM-only 模式 init/frames；
+  * `tests/stdc` 217/0、`tests/kmod` 6/6、ASAN 6/6。
+- **已知边界**：56MiB 下 DOOM 与 Notepad/Settings 同时常驻会 PMM OOM；
+  DOOM 采用按需/独占策略（低内存自动启动桌面应用）；≥84MiB 无此限制。
+
+
+### 当前目标（第 3 轮）：Setup 安装整个操作系统 + DOOM 极限压缩
+
+- **Setup / OS 安装**：
+  * 新 `res/scripts/build_os_pkg.py`：SKYOS1 容器 + 64KiB LZ4 block，
+    28 entries（kernel/15×.ko/Limine/desktop.lua/libsky/7 个程序），
+    `5,460,395 B`（raw `8,908,221 B`，压缩比 0.613）；`make os-pkg`
+    自动 e2cp 到 `disk.img:/os.pkg`，`cm`/`ma` 末尾自动调用；
+  * 内核固定 syscall **22 mkdir**（`ext4_dir_mk`，幂等，ext4-only；
+    `kernel.syscall.file` 导出 + kmod 契约 22 + 用户 `SYSCALL_MKDIR`）；
+  * `programs/installer/main.cpp` 升级 Setup：保留旧 6 资源安装与
+    `[installer]` 门禁标记，读 `/mp/os.pkg` → 流式解压写 `/mp/system/**`
+    → 写 `os.manifest`；串口 `[setup] os pkg / install / install complete /
+    manifest written`；标题 “SkylineSystem Setup”；
+  * QEMU `setup_os_smoke.ps1`：**PASS 0 warning，28/28 files，failed=0，
+    installed=8,908,221 B，manifest 937 B**；E1–E6 从 disk.img 校验
+    kernel ELF magic、desktop.elf/libsky 大小、count==total_files。
+- **DOOM 极限压缩**：
+  * `DOOM_TINY`（Makefile 默认 1，可 `DOOM_TINY=0`）：V_Init 单 64KiB
+    screen + screens[0..3] 别名；去掉 screen_buffer(64KiB)/
+    final_screen_buffer(256KiB RGBA)/重复 screens[0]；shim palette→ARGB
+    LUT 直写 WM surface；**固定 buffer 640KiB→65KiB，省 575KiB**；
+  * tiny 下 audio stub、wipe/save-load/screenshot/后屏禁用、全屏；
+    16 位审计/static_assert，不动 fixed_t；
+  * `tools/wadtrim.py`：删 289 个音频 lump，`doom.wad 11,159,840 →
+    9,071,551 B`（81.29%，省 1.99MiB），verify/audio_left=0；
+    `--adpcm` IMA-ADPCM 4-bit：122 sfx `1,222,616→620,982 B`
+    （3.93:1 vs 16-bit PCM / 1.97:1 vs DMX8）；
+  * zone 策略 DOOM_TINY 下 ≤80MiB→8MiB（连续三次 64M PASS），≤128MiB→10MiB，
+    更大→12MiB；低内存启动策略改为
+    Console+DOOM 优先，Notepad/Settings 延迟；
+  * QEMU `doom_compact_smoke.ps1`：2G **PASS**（compact=1，zone=12，
+    init done+心跳，截图实际游戏画面）；64M **PASS**（zone=8，OOM≈25–26，init 后余 ~5–6MiB，
+    0 panic/STALL，init done+心跳，截图）。
+- **验证**：host `tests/kmod` 6/6 + ASAN、`tests/stdc` 217/0；Setup gate
+  PASS；DOOM gate 2G/64M PASS；旧 desktop_features gate 仅 D6 截图 1 cell
+  抖动（K0/D1–D7/C/E 其余 PASS，产品行为正常）。
+- **边界**：Setup 安装完整系统树到 ext4 `/mp/system`，不做分区/MBR/
+  limine bios-install；WAD 仍从 VFS 流式读，未做 file mmap/per-lump LZ4；
+  DOOM 不是 RP2040 384KB 运行环境。

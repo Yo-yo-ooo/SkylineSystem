@@ -190,8 +190,81 @@ struct TBRect {
 #define TB_MIN_W        72
 #define TB_MAX_W        200
 #define TB_GAP          8
-#define TB_LEFT_MARGIN  10
+
+/* ---- 开始菜单（Start Menu）-----------------------------------------------
+ * 任务栏最左侧固定一个"开始"按钮；点开后注册一个 WM 自绘的 ARGB overlay
+ * 窗口（RegisterWindowAuto -> 独占最高 z 的 layer），菜单项直接调用
+ * raise_or_spawn() 启动/聚焦应用。菜单打开期间键盘焦点被钉在 WM 自己的
+ * reader slot（见 wm_refocus），客户端收不到键，Esc 不会误关应用。
+ * 菜单不是普通 WmClient：它没有客户端进程/协议页，surface 由 WM 独占。 */
+#define SKY_START_BTN_X    10
+#define SKY_START_BTN_W    46
+#define SKY_START_MENU_X   10
+#define SKY_START_MENU_W  300
+#define SKY_START_MENU_H  376
+#define SKY_START_ITEM_H   34
+#define SKY_START_ITEM_TOP 92
+#define SKY_START_ITEMS     7
+
+/* 药丸区从开始按钮右侧开始；所有调用点（绘制 + 命中测试）共用这个宏，
+   不会出现"画在 A 处、点在 B 处"的漂移。 */
+#define TB_LEFT_MARGIN  (SKY_START_BTN_X + SKY_START_BTN_W + TB_GAP)
 #define SKY_TRAY_RESERVE 104
+
+struct StartItem {
+    const char* label;
+    const char* title;      /* WM 窗口标题（raise_or_spawn 用），nullptr = 非应用项 */
+    const char* elf;
+    uint32_t    w, h, paper, dx, dy;
+    int         kind;       /* 0=应用, 1=Console, 2=About */
+    bool        needsWad;
+};
+
+static const StartItem kStartItems[SKY_START_ITEMS] = {
+    {"Explorer",          "Explorer",  "/mp/explorer.elf",  640u, 460u, 0xFF0F0F12u, 110u, 50u, 0, false},
+    {"Notepad",           "Notepad",   "/mp/notepad.elf",   560u, 420u, 0xFF0F0F12u,  90u, 70u, 0, false},
+    {"Settings",          "Settings",  "/mp/settings.elf",  620u, 430u, 0xFF121218u,  40u, 40u, 0, false},
+    {"Installer / Setup", "Installer", "/mp/installer.elf", 560u, 380u, 0xFF14141Au,  70u, 60u, 0, false},
+    {"DOOM",              "DOOM",      "/mp/doom.elf",      640u, 440u, 0xFF000000u, 120u, 60u, 0, true},
+    {"Console",           nullptr,     nullptr,               0u,   0u, 0u,            0u,  0u, 1, false},
+    {"About...",          nullptr,     nullptr,               0u,   0u, 0u,            0u,  0u, 2, false},
+};
+
+/* 文件级状态：desktop 是单进程，任务栏绘制（文件级函数）与主循环共用。 */
+static bool       g_startOpen     = false;
+static bool       g_startAbout    = false;
+static int        g_startSel      = 0;
+static int        g_startPressIdx = -1;
+static int32_t    g_startX = 0, g_startY = 0;
+static Window     g_startWin;                 /* 全局零初始化 */
+static CompLayer* g_startLayer   = nullptr;
+static uint32_t*  g_startSurf    = nullptr;
+
+static inline void start_menu_geom(uint32_t H, uint32_t barH,
+                                   int32_t* x, int32_t* y) {
+    *x = SKY_START_MENU_X;
+    *y = (int32_t)H - (int32_t)barH - SKY_START_MENU_H - 8;
+    if (*y < 8) *y = 8;
+}
+
+static inline bool start_btn_hit(int32_t mx, int32_t my,
+                                 uint32_t H, uint32_t barH) {
+    return mx >= SKY_START_BTN_X && mx < SKY_START_BTN_X + SKY_START_BTN_W &&
+           my >= (int32_t)H - (int32_t)barH && my < (int32_t)H;
+}
+
+/* 命中菜单项返回下标 [0, SKY_START_ITEMS)，否则 -1。About 页面没有条目。 */
+static inline int start_item_at(int32_t mx, int32_t my,
+                                uint32_t H, uint32_t barH) {
+    int32_t x = 0, y = 0;
+    start_menu_geom(H, barH, &x, &y);
+    if (g_startAbout || mx < x || mx >= x + (int32_t)SKY_START_MENU_W ||
+        my < y || my >= y + (int32_t)SKY_START_MENU_H)
+        return -1;
+    const int idx = (my - (y + (int32_t)SKY_START_ITEM_TOP)) /
+                    (int32_t)SKY_START_ITEM_H;
+    return (idx >= 0 && idx < SKY_START_ITEMS) ? idx : -1;
+}
 
 /* 按**字符数**截断（放不下时末尾补 "..."）。
    为什么不用 TTF_GetTextSize 量像素：实测它对同样的字符串报出的宽度
@@ -222,15 +295,17 @@ static void tb_elide(const char* src, int32_t maxChars, char* out, size_t outsz)
      1) 自然宽度（文字 + 34），各自限制在 [TB_MIN_W, TB_MAX_W]；
      2) 总宽超出可用宽 -> 所有药丸取等宽（仍不低于 TB_MIN_W），标题用省略号截断；
      3) 等宽也放不下 -> 只保留放得下的若干个，最后一个显示 "+N" 表示其余窗口。 */
-static int tb_layout(TBRect* r, int cap, int consoleHidden, TTF_Font* f,
-                     int32_t availW) {
+static int tb_layout(TBRect* r, int cap, int consoleHidden, int consoleMinimized,
+                     TTF_Font* f, int32_t availW) {
     if (!r || cap <= 0) return 0;
 
     /* --- 收集条目（控制台 + 客户端） --- */
     struct { const char* title; int id, state; } src[24];
     int ns = 0;
     if (!consoleHidden) {
-        src[ns].title = "Skyline Console"; src[ns].id = 0; src[ns].state = 0; ns++;
+        src[ns].title = "Skyline Console"; src[ns].id = 0;
+        src[ns].state = consoleMinimized ? 1 : 0;   /* 与 wmMode/z/focus 一致 */
+        ns++;
     }
     int cc = wm_client_count();
     for (int i = 0; i < cc && ns < 24; i++) {
@@ -302,6 +377,109 @@ static int tb_layout(TBRect* r, int cap, int consoleHidden, TTF_Font* f,
     return (n < cap) ? n : cap;
 }
 
+/* 任务栏最左侧的开始按钮。四格窗口标记用方块画，不依赖字体（缺字体时
+   按钮仍可点、状态仍可辨）。打开时边框用 accent 高亮。 */
+static void wm_draw_start_button(FrameBuffer* lb, uint32_t H, uint32_t barH) {
+    const int32_t x = SKY_START_BTN_X;
+    const int32_t y = (int32_t)H - (int32_t)barH + 7;
+    const int32_t h = (int32_t)barH - 14;
+    BasicDraw b(lb);
+    b.DrawRoundedRect(x, y, SKY_START_BTN_W, h, 7,
+                      g_startOpen ? 0xFF3A3A42u : 0xFF2A2A30u, true);
+    b.DrawRoundedRect(x, y, SKY_START_BTN_W, h, 7,
+                      g_startOpen ? SKYRGB_ACCENT : SKYRGB_BORDER, false);
+    const uint32_t ic = g_startOpen ? 0xFFFFFFFFu : 0xFFE9E9EFu;
+    const int32_t ix = x + 14, iy = y + 10;
+    DrawFillRect(lb, ix,       iy,       8u, 8u, ic);
+    DrawFillRect(lb, ix + 10,  iy,       8u, 8u, ic);
+    DrawFillRect(lb, ix,       iy + 10,  8u, 8u, ic);
+    DrawFillRect(lb, ix + 10,  iy + 10,  8u, 8u, ic);
+}
+
+/* 重绘开始菜单的 ARGB surface（WM 独占，不经过任何客户端协议页）。
+   surface 之外保持全透明，圆角与描边由 BasicDraw 的 SDF 处理。 */
+static void wm_paint_start_menu(uint32_t H, uint32_t barH) {
+    if (!g_startSurf) return;
+    const int32_t W = (int32_t)SKY_START_MENU_W;
+    const int32_t MW = (int32_t)SKY_START_MENU_H;
+    int32_t x = 0, y = 0;
+    start_menu_geom(H, barH, &x, &y);
+    g_startX = x; g_startY = y;
+
+    FrameBuffer fb;
+    fb.BaseAddress       = g_startSurf;
+    fb.BufferSize        = (uint64_t)W * MW * sizeof(uint32_t);
+    fb.Width             = (uint64_t)W;
+    fb.PixelsPerScanLine = (uint64_t)W;
+    fb.Height            = (uint64_t)MW;
+    memset(g_startSurf, 0, (size_t)W * MW * sizeof(uint32_t));
+
+    BasicDraw d(&fb);
+    d.DrawRoundedRect(0, 0, W, MW, 14, 0xFF1B1F27u, true);
+    d.DrawRoundedRect(0, 0, W, MW, 14, 0xFF4A5260u, false);
+
+    TTF_Font* f = console_font();
+    const uint32_t INK    = 0xFFE9E9EFu;
+    const uint32_t DIM    = 0xFF9AA0A8u;
+    const uint32_t ACCENT = 0xFF60CDFFu;
+    const uint32_t SEP    = 0xFF343A45u;
+    const uint32_t HILITE = 0xFF2B3644u;
+    const uint32_t WARN   = 0xFFF0C674u;
+
+    if (f) {
+        TTF_DrawText(&fb, f, 18, 12, "SkylineSystem", INK);
+        TTF_DrawText(&fb, f, 18, 38, g_startAbout ? "About" : "Start", ACCENT);
+    }
+    DrawFillRect(&fb, 16, 64, (uint32_t)(W - 32), 1u, SEP);
+
+    if (g_startAbout) {
+        static const char* kAbout[] = {
+            "SkylineSystem  (x86_64)",
+            "Boot: Limine  |  FS: ext4",
+            "User-space WM + compositor",
+            "Apps: Explorer, Notepad,",
+            "      Settings, Setup, DOOM",
+            "Ctrl+Alt+B  open Start menu",
+            "Ctrl+Alt+E  open Explorer",
+            "Esc: back",
+        };
+        for (int i = 0; i < 8; i++) {
+            if (f) TTF_DrawText(&fb, f, 20, 82 + i * 26,
+                                kAbout[i], i == 7 ? WARN : DIM);
+            else DrawFillRect(&fb, 20, 86 + i * 26, 12u, 8u, SEP);
+        }
+    } else {
+        if (f) TTF_DrawText(&fb, f, 18, 70, "APPLICATIONS", DIM);
+        for (int i = 0; i < SKY_START_ITEMS; i++) {
+            const int32_t iy = (int32_t)SKY_START_ITEM_TOP +
+                               i * (int32_t)SKY_START_ITEM_H;
+            const bool sel = (i == g_startSel);
+            if (sel) {
+                DrawFillRect(&fb, 10, (uint32_t)iy, (uint32_t)(W - 20),
+                             32u, HILITE);
+                DrawFillRect(&fb, 10, (uint32_t)iy, 3u, 32u, ACCENT);
+            }
+            /* 图标色块：应用=accent，Console=灰，About=暖黄 */
+            const uint32_t icon = kStartItems[i].kind == 2 ? WARN
+                                : kStartItems[i].kind == 1 ? 0xFF7A8494u
+                                : ACCENT;
+            DrawFillRect(&fb, 20, (uint32_t)(iy + 9), 14u, 14u, icon);
+            if (f)
+                TTF_DrawText(&fb, f, 48, iy + 5, kStartItems[i].label,
+                             sel ? 0xFFFFFFFFu : INK);
+        }
+    }
+
+    const int32_t fy = MW - 42;
+    DrawFillRect(&fb, 16, (uint32_t)fy, (uint32_t)(W - 32), 1u, SEP);
+    if (f) {
+        TTF_DrawText(&fb, f, 18, fy + 6,
+                     g_startAbout ? "Esc: back    Ctrl+Alt+B: close"
+                                  : "Up/Down  Enter  Esc    Ctrl+Alt+B",
+                     DIM);
+    }
+}
+
 static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
                             uint32_t W, uint32_t H, int appState,
                             const WmDateTime* dt, bool haveClock) {
@@ -322,11 +500,15 @@ static void wm_draw_taskbar(uint32_t* wall, const uint32_t* cleanBar,
     for (uint32_t i = 0; i < W * barH; i++) stripe[i] = wm_acrylic_pixel(stripe[i]);
     DrawFillRect(&lb, 0, y0, W, 1, SKYRGB_TB_HILITE);   /* luminous top edge  */
 
+    /* 1b) Start button — fixed left slot; pills start to its right because
+           TB_LEFT_MARGIN already accounts for the button width. */
+    wm_draw_start_button(&lb, H, barH);
+
     /* 2) left: one rounded pill per open window (console + generic clients) */
     TTF_Font* f = console_font();
     TBRect rects[12];
     const int32_t pillAvail = (int32_t)W - TB_LEFT_MARGIN - SKY_TRAY_RESERVE;
-    int ne = tb_layout(rects, 12, appState == 2, f, pillAvail);
+    int ne = tb_layout(rects, 12, appState == 2, appState == 1, f, pillAvail);
     const int32_t py = (int32_t)y0 + 7, ph = (int32_t)barH - 14;
     for (int i = 0; i < ne; i++) {
         const TBRect* t = &rects[i];
@@ -546,7 +728,7 @@ extern "C" void CursorThreadEntry() {
     for (;;) {
         volatile ps2_mouse_state_t* mp = g_mouse_page;
         if (mp) {
-            uint32_t s1, s2;
+            uint32_t s1 = 0, s2 = 0;
             int32_t x = 0, y = 0;
             do {
                 s1 = __atomic_load_n(&mp->seq, __ATOMIC_ACQUIRE);
@@ -747,9 +929,25 @@ int main(){
        Notepad is down to spawn PARAMETERS now: title, body size, paper
        colour, stacking offset. Caption drag / close / click-to-front /
        dead-process cleanup are app-agnostic (wm_client.cpp); adding
-       another windowed app is one more wm_client_spawn() line. */
-    wm_client_spawn(comp, &fb, "/mp/notepad.elf", "Notepad",
-                    560u, 420u, 0xFF0F0F12u, 90u, 70u);
+       another windowed app is one more wm_client_spawn() line.
+       低内存（<80MiB）下优先常驻 Notepad/Settings，DOOM 改为 Ctrl+Alt+D 按需。 */
+    const uint64_t bootMemMB = wm_total_mem_mb();
+    const bool lowMemMode = (bootMemMB && bootMemMB < 80);
+    bool bootHasDoomWad = false;
+    /* 低内存下优先桌面应用（Notepad/Settings），DOOM 用 Ctrl+Alt+D 按需独占；
+       ≥80MiB 时全部自动启动，保持原行为。 */
+    /* 低内存（<80MiB）下把 RAM 留给 DOOM：Notepad/Settings 延迟，
+       用户可随时 Ctrl+Alt+N / Ctrl+Alt+S 打开。 */
+    if (!lowMemMode) {
+        wm_client_spawn(comp, &fb, "/mp/notepad.elf", "Notepad",
+                        560u, 420u, 0xFF0F0F12u, 90u, 70u);
+    } else {
+        char nm[112];
+        int nn = snprintf(nm, sizeof(nm),
+                          "[desktop] Notepad deferred (mem=%lu MiB; Ctrl+Alt+N)\n",
+                          (unsigned long)bootMemMB);
+        if (nn > 0) syscall(SYS_DBGSOUT, (uint64_t)nm, (uint64_t)nn, 0, 0, 0, 0);
+    }
 
     /* DOOM (PureDOOM shim). The game is only spawned when an IWAD is
        actually present at /mp/doom.wad (registered) or /mp/doom1.wad
@@ -762,6 +960,7 @@ int main(){
         if (!wad) wad = fopen("/mp/doom1.wad", "rb");
         if (wad) {
             fclose(wad);
+            bootHasDoomWad = true;
             /* DOOM 的峰值需求约 25-30 MiB (ELF + 4 MiB zone + 运行时堆)。
                在 64 MiB 的目标机上, 桌面 + 控制台 + 记事本本身只用约 30 MiB,
                整机零 OOM、完全正常; 一旦再拉起 DOOM, 内核就开始连环 OOM,
@@ -780,28 +979,49 @@ int main(){
                >=84 MiB 正常启动。同一份镜像在两种配置下都对, 无需改代码重编。
                阈值 84 MiB 来自实测 (72 MiB 时 37 次 OOM, 96 MiB 完全干净)。 */
             const uint64_t memMB = wm_total_mem_mb();
-            if (!DESKTOP_ENABLE_DOOM || (memMB && memMB < 84)) {
-                char msg[96];
+            (void)memMB;
+            /* 不在启动路径自动拉起 DOOM：它的 R_Init/WAD 冷读会把桌面 ready
+               推迟数十秒，并在 64MiB 目标机上与桌面应用抢内存。DOOM 改为
+               Ctrl+Alt+D 按需启动；低内存下建议先关闭 Notepad/Settings。 */
+            {
+                char msg[128];
                 int mn = snprintf(msg, sizeof(msg),
-                                  "[desktop] DOOM skipped (mem=%lu MiB, need >=84)\n",
-                                  (unsigned long)memMB);
-                if (mn > 0) syscall(SYS_DBGSOUT, (uint64_t)msg, (uint64_t)mn, 0, 0, 0, 0);
-            } else {
+                                  "[desktop] DOOM on demand (Ctrl+Alt+D, mem=%lu MiB%s)\n",
+                                  (unsigned long)wm_total_mem_mb(),
+                                  lowMemMode ? ", low-memory" : "");
+                if (mn > 0)
+                    syscall(SYS_DBGSOUT, (uint64_t)msg, (uint64_t)mn, 0, 0, 0, 0);
+            }
+            /* 低内存目标机优先保证 DOOM 可运行：Notepad/Settings 已延迟，
+               这里自动拉起 DOOM（仍可用 Ctrl+Alt+D 重新聚焦/恢复）。 */
+            if (lowMemMode) {
                 wm_client_spawn(comp, &fb, "/mp/doom.elf", "DOOM",
                                 640u, 440u, 0xFF000000u, 120u, 60u);
             }
         }
     }
 
+    /* 内存分档（与 DOOM zone/启动策略共用；QEMU -m64M 时总量约 56MiB）。 */
+
     /* ---- Installer / Settings ------------------------------------------------
        Installer 不随桌面自动启动：首启时 Settings 窗口显示 "press I to run
        Installer"，用户按 I（或 Ctrl+Alt+I）再拉起它。这样安装写盘发生在桌面
        完成启动之后，避免与启动期大量并发 FS 读（DOOM WAD/字体/程序加载）
        叠在一起；安装完成后 Settings 重新读 index。
-       Settings: 始终拉起，且最后 spawn（置顶）—— 桌面设置 + .lua 配置
-       加载界面；键盘焦点在启动时自然落在它上面。 */
-    wm_client_spawn(comp, &fb, "/mp/settings.elf", "Settings",
-                    620u, 430u, 0xFF121218u, 40u, 40u);
+       Settings: 自动拉起并置顶（桌面设置 + .lua 加载界面）。低内存下优先保证
+       桌面应用常驻；DOOM 由 Ctrl+Alt+D 按需独占（切换时关闭其它重型窗口）。 */
+    WmClient* bootSettingsClient = nullptr;
+    if (!lowMemMode) {
+        bootSettingsClient =
+            wm_client_spawn(comp, &fb, "/mp/settings.elf", "Settings",
+                            620u, 430u, 0xFF121218u, 40u, 40u);
+    } else {
+        char dm[112];
+        int dn = snprintf(dm, sizeof(dm),
+                          "[desktop] Settings deferred (mem=%lu MiB; Ctrl+Alt+S)\n",
+                          (unsigned long)bootMemMB);
+        if (dn > 0) syscall(SYS_DBGSOUT, (uint64_t)dm, (uint64_t)dn, 0, 0, 0, 0);
+    }
 
     /* Desktop-owned (NOT shared with the client) full-work-area surface used
        only while maximized: opaque, no rounded shadow margin. The live text is
@@ -864,6 +1084,8 @@ int main(){
     const uint64_t idle_gap   = 50u  * tsc_per_ms;   /* scene refresh, still  */
     const uint64_t chrome_gap = 16u  * tsc_per_ms;   /* live-resize repaint  */
     const uint64_t clock_gap  = 500u * tsc_per_ms;   /* poll RTC at 2 Hz */
+    (void)move_gap;   /* 保留的调参常量: 光标/空闲节流已由 CursorThread 接管 */
+    (void)idle_gap;
 
     /* 进桌面耗时 (main 入口 -> 主循环就绪): 把"卡"的入口段单独量化 */
     {
@@ -887,11 +1109,13 @@ int main(){
 
     uint32_t seq1, seq2;
     int32_t mx, my;
-    uint64_t last_move  = rdtsc64();
-    uint64_t last_scene = rdtsc64();
+    uint64_t last_move  = rdtsc64();   /* 旧主线程贴图路径遗留时间戳 */
+    uint64_t last_scene = rdtsc64();   /* 场景节流时间戳 (保留供诊断) */
     uint64_t last_chrome = 0;
     uint64_t last_clock = 0;
     uint64_t last_client_seq = 0;   /* 控制台 OUT_SEQ 监视 (dirty 标记) */
+    (void)last_move;    /* 光标已由独立线程贴图, 主线程不再使用 */
+    (void)last_scene;
 
     /* ---- window-manager interaction state ---- */
     enum { WM_NORMAL = 0, WM_MAX = 1, WM_MIN = 2, WM_CLOSED = 3 } wmMode = WM_NORMAL;
@@ -914,9 +1138,10 @@ int main(){
     uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
 
     /* ---- focus routing (keyboard delivery follows click-to-front) ----
-       Recompute the focused window every frame: the topmost VISIBLE window
-       owns the keyboard. This self-heals lazy reader registration and client
-       death without per-event bookkeeping. */
+       显式焦点 = 用户最后按下的窗口 (press_focus_pid)；它必须仍可见/未最小化/
+       未关闭才有效，否则回退到"最高可见 z"窗口（console 与 client 统一比较
+       layer->z）。press edge / 任务栏 restore/raise 都在同一帧调用
+       wm_refocus()/wm_focus_immediate()，不再依赖下一帧自愈。 */
     auto wm_focus_pid = [&](uint64_t pid) {
         if (!wmKbd) return;
         if (!pid) { kbd_focus_broadcast(wmKbd); return; }
@@ -924,15 +1149,53 @@ int main(){
         if (s >= 0) kbd_focus_set_slot(wmKbd, s);
         /* slot not registered yet: leave the current owner, retried next frame */
     };
+    /* pid 对应的窗口现在是否可接收键盘焦点（可见、未最小化、未关闭）。 */
+    auto wm_pid_focusable = [&](uint64_t pid) -> bool {
+        if (!pid) return false;
+        if (place.client_pid == pid)
+            return (wmMode == WM_NORMAL || wmMode == WM_MAX) &&
+                   consoleLayer != nullptr;
+        const int nc = wm_client_count();
+        for (int i = 0; i < nc; i++) {
+            WmClient* c = wm_client_by_order(i);
+            if (c && c->place.client_pid == pid)
+                return c->used && c->layer != nullptr && !c->minimized;
+        }
+        return false;
+    };
+    /* pid 的窗口是否是当前最高可见窗口（console 与 client 统一按 layer->z）。 */
+    auto wm_pid_is_top = [&](uint64_t pid) -> bool {
+        if (!pid) return false;
+        const bool consVis = (wmMode == WM_NORMAL || wmMode == WM_MAX) &&
+                             consoleLayer != nullptr;
+        WmClient* tc = wm_client_top_visible();
+        if (consVis && (!tc || consoleLayer->z >= tc->layer->z))
+            return place.client_pid == pid;
+        return tc && tc->place.client_pid == pid;
+    };
     auto wm_refocus = [&]() {
         if (!wmKbd) return;
-        /* 优先看"用户最后按下的是哪个窗口": 它被抬到最上层后 z 序也会指向它,
-           这里是双保险 —— 只要记录的 pid 还注册着, 键盘就给它。
-           否则 z 序会让后启动的客户端 (DOOM) 永久霸占键盘。 */
-        if (press_focus_pid != 0) {
-            int fs = kbd_slot_for_pid(wmKbd, (int32_t)press_focus_pid);
-            if (fs >= 0) { kbd_focus_set_slot(wmKbd, fs); return; }
+        /* 开始菜单打开时把键盘焦点钉在 WM 自己的 reader slot：所有客户端
+           （含 console）都收不到键，菜单独占 Up/Down/Enter/Esc，按 Esc 不会
+           把当前应用关掉、Enter 不会误触发设置项。关闭菜单后 wm_refocus()
+           自动回到"显式焦点 -> 最高可见窗口"的正常路径。 */
+        if (g_startOpen) {
+            if (wmKbdSlot >= 0) kbd_focus_set_slot(wmKbd, wmKbdSlot);
+            return;
         }
+        /* 1) 显式焦点优先 —— 但必须仍可见/未最小化/未关闭，否则键盘会留在
+              隐藏窗口上（最小化后打不进字 / 关窗后按键丢失）。 */
+        if (press_focus_pid != 0) {
+            if (wm_pid_focusable(press_focus_pid)) {
+                const int fs = kbd_slot_for_pid(wmKbd, (int32_t)press_focus_pid);
+                if (fs >= 0) kbd_focus_set_slot(wmKbd, fs);
+                /* slot 尚未注册（刚 spawn 的客户端）: 保持当前 owner，
+                   下一帧 wm_refocus 会补上，避免焦点闪回其它窗口。 */
+                return;
+            }
+            press_focus_pid = 0;   /* 焦点窗口已最小化/关闭: 立即失效 */
+        }
+        /* 2) 回退: 最高可见窗口（console 与 client 统一比较 layer->z）。 */
         const bool consVis = (wmMode == WM_NORMAL || wmMode == WM_MAX) &&
                              consoleLayer != nullptr;
         WmClient* tc = wm_client_top_visible();
@@ -943,6 +1206,26 @@ int main(){
         else
             kbd_focus_broadcast(wmKbd);
     };
+    /* 立即请求焦点: 记录显式焦点并在同一帧设置 kbd_focus_set_slot。 */
+    auto wm_focus_immediate = [&](uint64_t pid) {
+        press_focus_pid = pid;
+        wm_refocus();
+        /* 无头门禁用焦点切换证据（只在目标变化时打一行）。 */
+        static uint64_t focus_logged = ~0ull;
+        if (pid != focus_logged) {
+            focus_logged = pid;
+            char fm[80];
+            int fn = snprintf(fm, sizeof(fm), "[wm] focus pid=%llu\n",
+                              (unsigned long long)pid);
+            if (fn > 0)
+                syscall(SYS_DBGSOUT, (uint64_t)fm, (uint64_t)fn, 0, 0, 0, 0);
+        }
+    };
+
+    /* 启动时最后 spawn 的 Settings 是初始焦点（WM 会把它置顶）；若它的
+       键盘 reader slot 还没注册，wm_refocus 会在后续帧自动补上。 */
+    if (bootSettingsClient)
+        wm_focus_immediate(bootSettingsClient->place.client_pid);
 
     /* ---- 全局快捷键（Ctrl+Alt+S/N/I）：聚焦/拉起 Settings/Notepad/Installer。
        键盘事件环是广播/焦点投递之外的同一份事件，WM 自己始终能收到这些组合键，
@@ -954,15 +1237,170 @@ int main(){
         if (!c && elf)
             c = wm_client_spawn(comp, &fb, elf, title, bw, bh, paper, dx, dy);
         if (!c) return false;
-        if (c->minimized)
-            wm_client_restore(comp, c);
+        if (c->minimized) {
+            bool d = false;
+            wm_client_restore(comp, c, fb_width, fb_height, (int32_t)barH, &d);
+        }
         comp.RaiseWindow(&c->win);
-        press_focus_pid = c->place.client_pid;
-        wm_refocus();
+        wm_focus_immediate(c->place.client_pid);   /* 立即切焦点，不等下一帧 */
+        return true;
+    };
+
+    /* ---- 开始菜单状态机 --------------------------------------------------
+       只捕获 main 作用域的 comp / wallBuf / cleanBar / scrW / scrH / barH 等；
+       wmDirty 是每帧局部变量，统一由调用点置位（快捷键走 shortcutDirty）。 */
+    auto start_menu_taskbar = [&]() {
+        if (!wallBuf || !cleanBar) return;
+        WmDateTime sdt;
+        const bool have = wm_read_datetime(&sdt);
+        const int st = (wmMode == WM_MIN) ? 1 : (wmMode == WM_CLOSED ? 2 : 0);
+        wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, st, &sdt, have);
+    };
+    auto start_menu_open = [&]() {
+        if (g_startOpen) return;
+        if (!g_startSurf) {
+            g_startSurf = (uint32_t*)malloc((size_t)SKY_START_MENU_W *
+                                            SKY_START_MENU_H * sizeof(uint32_t));
+            if (!g_startSurf) return;
+        }
+        g_startOpen = true;
+        g_startAbout = false;
+        g_startSel = 0;
+        wm_paint_start_menu(scrH, (uint32_t)barH);
+        g_startWin.PosX = (uint32_t)g_startX;
+        g_startWin.PosY = (uint32_t)g_startY;
+        g_startWin.SizeX = SKY_START_MENU_W;
+        g_startWin.SizeY = SKY_START_MENU_H;
+        g_startWin.FrameStartX = 0; g_startWin.FrameStartY = 0;
+        g_startWin.FrameEndX = SKY_START_MENU_W;
+        g_startWin.FrameEndY = SKY_START_MENU_H;
+        g_startWin.FbAddr = (uint64_t)(uintptr_t)g_startSurf;
+        g_startWin.HasAlpha = 1;
+        g_startLayer = comp.RegisterWindowAuto(&g_startWin);
+        if (!g_startLayer) {         /* 注册失败：不留半开状态 */
+            g_startOpen = false;
+            return;
+        }
+        start_menu_taskbar();        /* 开始按钮切到高亮态 */
+        wm_refocus();                /* 键盘焦点钉在 WM slot（菜单独占按键） */
+        comp.ForceFullCompose();
+        char m[96];
+        int n = snprintf(m, sizeof(m), "[wm] start menu: open items=%d\n",
+                         SKY_START_ITEMS);
+        if (n > 0)
+            syscall(SYS_DBGSOUT, (uint64_t)(uintptr_t)m, (uint64_t)n, 0,0,0,0);
+    };
+    auto start_menu_close = [&]() {
+        if (!g_startOpen) return;
+        g_startOpen = false;
+        g_startAbout = false;
+        g_startPressIdx = -1;
+        if (g_startLayer) {
+            comp.UnregisterWindow(&g_startWin);  /* auto layer 随之退役 */
+            g_startLayer = nullptr;
+        }
+        /* 菜单独占输入：把其它 reader 的消费游标推进到当前 head，丢弃菜单
+           期间堆积的按键。否则关闭菜单后旧焦点窗口会"补读"这些 Enter/Esc
+           （实测 Settings 把菜单的 Enter 当成"应用主题"、Esc 直接退出）。 */
+        if (wmKbd) {
+            const uint64_t kh = __atomic_load_n(&wmKbd->head, __ATOMIC_ACQUIRE);
+            for (int s = 0; s < (int)KBD_MAX_READERS; s++) {
+                if (s == wmKbdSlot) continue;
+                if (__atomic_load_n(&wmKbd->consumer[s], __ATOMIC_ACQUIRE) != 0)
+                    kbd_reader_setpos(wmKbd, s, kh);
+            }
+        }
+        start_menu_taskbar();
+        wm_refocus();                /* 恢复正常焦点路由 */
+        comp.ForceFullCompose();
+        /* 用本地缓冲 + snprintf 的返回值作为长度（与 open/select 日志同一
+           条已验证可输出路径）；直接对字符串常量求 strlen 的写法在这个
+           freestanding libc 下实测没有输出。 */
+        char cm[80];
+        int cn = snprintf(cm, sizeof(cm), "[wm] start menu: close\n");
+        if (cn > 0)
+            syscall(SYS_DBGSOUT, (uint64_t)(uintptr_t)cm, (uint64_t)cn,
+                    0,0,0,0);
+    };
+    auto start_menu_toggle = [&]() -> bool {
+        if (g_startOpen) start_menu_close();
+        else start_menu_open();
+        char tm[96];
+        int tn = snprintf(tm, sizeof(tm), "[wm] start menu: toggle %s\n",
+                          g_startOpen ? "open" : "close");
+        if (tn > 0)
+            syscall(SYS_DBGSOUT, (uint64_t)(uintptr_t)tm, (uint64_t)tn,
+                    0,0,0,0);
+        return true;
+    };
+    auto start_menu_repaint = [&]() {
+        wm_paint_start_menu(scrH, (uint32_t)barH);
+        comp.ForceFullCompose();
+    };
+    auto start_menu_activate = [&](int idx) -> bool {
+        if (idx < 0 || idx >= SKY_START_ITEMS) return false;
+        const StartItem* it = &kStartItems[idx];
+        {
+            char m[128];
+            int n = snprintf(m, sizeof(m),
+                             "[wm] start menu: select=%d label=%s\n",
+                             idx, it->label);
+            if (n > 0)
+                syscall(SYS_DBGSOUT, (uint64_t)(uintptr_t)m, (uint64_t)n,
+                        0,0,0,0);
+        }
+        if (it->kind == 2) {         /* About：切换页面，不关闭菜单 */
+            g_startAbout = !g_startAbout;
+            start_menu_repaint();
+            return true;
+        }
+        /* 必须先关菜单再启动：关闭后 wm_refocus 走常规路径，
+           raise_or_spawn 的 wm_focus_immediate 才能落到新窗口上。 */
+        start_menu_close();
+        if (it->kind == 1) {         /* Console：恢复/置顶/聚焦 */
+            if (consoleLayer) {
+                if (wmMode == WM_MIN) {
+                    wmMode = (decltype(wmMode))wm_prior;
+                    if (wmMode == WM_MAX && ensure_max_surf())
+                        wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
+                    else {
+                        wmMode = WM_NORMAL;
+                        wm_apply_normal(&consoleWin, &place, normX, normY,
+                                        normW, normH, rzSurf, rzPitch);
+                    }
+                    comp.SetVisible(&consoleWin, true);
+                }
+                comp.RaiseWindow(&consoleWin);
+                wm_focus_immediate(place.client_pid);
+            }
+            char lm[96];
+            int ln = snprintf(lm, sizeof(lm),
+                              "[wm] start menu: launch=Console\n");
+            if (ln > 0)
+                syscall(SYS_DBGSOUT, (uint64_t)(uintptr_t)lm, (uint64_t)ln,
+                        0,0,0,0);
+        } else if (it->needsWad && !bootHasDoomWad) {
+            char lm[96];
+            int ln = snprintf(lm, sizeof(lm),
+                              "[wm] start menu: launch=DOOM skipped (no WAD)\n");
+            if (ln > 0)
+                syscall(SYS_DBGSOUT, (uint64_t)(uintptr_t)lm, (uint64_t)ln,
+                        0,0,0,0);
+        } else {
+            raise_or_spawn(it->title, it->elf, it->w, it->h,
+                           it->paper, it->dx, it->dy);
+            char m[128];
+            int n = snprintf(m, sizeof(m), "[wm] start menu: launch=%s\n",
+                             it->title);
+            if (n > 0)
+                syscall(SYS_DBGSOUT, (uint64_t)(uintptr_t)m, (uint64_t)n,
+                        0,0,0,0);
+        }
         return true;
     };
 
     bool wmForceFullCompose = false;
+    (void)wmForceFullCompose;   /* 兼容旧路径的置位: 合成器内部已自行管理整屏标志 */
     comp.SetCursor(0, 0, true);
 
     /* 重新应用 .lua 主题后，用当前运行期 theme 重绘控制台 chrome；内容区
@@ -1004,7 +1442,7 @@ int main(){
     /* 光标线程: 见 CursorThreadEntry 的说明。必须在 SetCursor 之后启动,
        否则第一帧可能先被线程画一次再被初始化覆盖。 */
     g_mouse_page = p;
-    if (sys_thread_launch((uint64_t)CursorThreadEntry, 0) < 0) {
+    if ((int64_t)sys_thread_launch((uint64_t)CursorThreadEntry, 0) < 0) {
         /* 启动失败就退回主线程贴图 (老路径), 保证光标仍可用 */
         g_mouse_page = nullptr;
     }
@@ -1049,9 +1487,60 @@ int main(){
                 if (ke.action == KBD_ACTION_DOWN) {
                     const bool ctrl = (ke.mods & (KBD_MOD_LCTRL | KBD_MOD_RCTRL)) != 0;
                     const bool alt  = (ke.mods & (KBD_MOD_LALT | KBD_MOD_RALT)) != 0;
+
+                    /* 开始菜单独占键盘：wm_refocus 已把焦点钉在 WM 自己的
+                       reader slot，客户端不会同时收到这些键（Esc 不会误关
+                       应用、Enter 不会误触发设置项）。 */
+                    if (g_startOpen && !ctrl && !alt) {
+                        switch (ke.key) {
+                        case KBD_KEY_UP:
+                            g_startSel = (g_startSel + SKY_START_ITEMS - 1) % SKY_START_ITEMS;
+                            start_menu_repaint(); shortcutDirty = true; break;
+                        case KBD_KEY_DOWN:
+                            g_startSel = (g_startSel + 1) % SKY_START_ITEMS;
+                            start_menu_repaint(); shortcutDirty = true; break;
+                        case KBD_KEY_HOME:
+                            g_startSel = 0;
+                            start_menu_repaint(); shortcutDirty = true; break;
+                        case KBD_KEY_END:
+                            g_startSel = SKY_START_ITEMS - 1;
+                            start_menu_repaint(); shortcutDirty = true; break;
+                        case '\n':
+                        case '\r':
+                            if (g_startAbout) {
+                                g_startAbout = false;
+                                start_menu_repaint();
+                                shortcutDirty = true;
+                            } else {
+                                shortcutDirty |= start_menu_activate(g_startSel);
+                            }
+                            break;
+                        case 0x1B:
+                            if (g_startAbout) {
+                                g_startAbout = false;
+                                start_menu_repaint();
+                            } else {
+                                start_menu_close();
+                            }
+                            shortcutDirty = true;
+                            break;
+                        default: break;
+                        }
+                    }
+
                     if (ctrl && alt) {
                         const char k = (char)ke.key;
-                        if (k == 's' || k == 'S')
+                        if (k == 'b' || k == 'B')
+                            shortcutDirty |= start_menu_toggle();
+                        else if (k == 'e' || k == 'E') {
+                            /* 无鼠标/无头门禁的直达入口；菜单开着时先关掉，
+                               否则新窗口的焦点会被菜单的黑洞路由吃掉。 */
+                            if (g_startOpen) start_menu_close();
+                            shortcutDirty |= raise_or_spawn("Explorer",
+                                    "/mp/explorer.elf", 640u, 460u,
+                                    0xFF0F0F12u, 110u, 50u);
+                        }
+                        else if (k == 's' || k == 'S')
                             shortcutDirty |= raise_or_spawn("Settings", "/mp/settings.elf",
                                                             620u, 430u, 0xFF121218u, 40u, 40u);
                         else if (k == 'n' || k == 'N')
@@ -1060,6 +1549,72 @@ int main(){
                         else if (k == 'i' || k == 'I')
                             shortcutDirty |= raise_or_spawn("Installer", "/mp/installer.elf",
                                                             560u, 380u, 0xFF14141Au, 70u, 60u);
+                        else if ((k == 'd' || k == 'D') && bootHasDoomWad)
+                            shortcutDirty |= raise_or_spawn("DOOM", "/mp/doom.elf",
+                                                            640u, 440u, 0xFF000000u, 120u, 60u);
+                        else if (k == 'c' || k == 'C') {
+                            /* 聚焦/恢复 Console（无鼠标时的键盘入口）。 */
+                            if (consoleLayer) {
+                                if (wmMode == WM_MIN) {
+                                    wmMode = (decltype(wmMode))wm_prior;
+                                    if (wmMode == WM_MAX && ensure_max_surf()) {
+                                        wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
+                                    } else {
+                                        wmMode = WM_NORMAL;
+                                        wm_apply_normal(&consoleWin, &place,
+                                                        normX, normY, normW, normH,
+                                                        rzSurf, rzPitch);
+                                    }
+                                    comp.SetVisible(&consoleWin, true);
+                                }
+                                comp.RaiseWindow(&consoleWin);
+                                wm_focus_immediate(place.client_pid);
+                                shortcutDirty = true;
+                            }
+                        } else if (k == 'm' || k == 'M') {
+                            /* 切换焦点窗口的最大化状态（键盘可达的最小化/最大化验证）。 */
+                            WmClient* fc = wm_client_find_pid(press_focus_pid);
+                            if (!fc && press_focus_pid == place.client_pid &&
+                                (wmMode == WM_NORMAL || wmMode == WM_MAX)) {
+                                if (wmMode == WM_NORMAL && ensure_max_surf()) {
+                                    wmMode = WM_MAX;
+                                    wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
+                                } else if (wmMode == WM_MAX) {
+                                    wmMode = WM_NORMAL;
+                                    wm_apply_normal(&consoleWin, &place,
+                                                    normX, normY, normW, normH,
+                                                    rzSurf, rzPitch);
+                                }
+                                comp.RaiseWindow(&consoleWin);
+                                shortcutDirty = true;
+                            } else if (fc && !fc->minimized) {
+                                bool d = false;
+                                wm_client_toggle_max(fc, fb_width, fb_height,
+                                                     (int32_t)barH, &d);
+                                comp.RaiseWindow(&fc->win);
+                                wm_focus_immediate(fc->place.client_pid);
+                                shortcutDirty |= d;
+                            }
+                        } else if (k == 'h' || k == 'H') {
+                            /* 最小化焦点窗口：稍后 Ctrl+Alt+<窗口快捷键> 恢复时必须
+                               回到最小化前的最大化状态。 */
+                            WmClient* fc = wm_client_find_pid(press_focus_pid);
+                            if (!fc && press_focus_pid == place.client_pid &&
+                                wmMode != WM_MIN) {
+                                wm_prior = wmMode;
+                                wmMode = WM_MIN;
+                                comp.SetVisible(&consoleWin, false);
+                                press_focus_pid = 0;
+                                wm_refocus();
+                                shortcutDirty = true;
+                            } else if (fc && !fc->minimized) {
+                                wm_client_minimize(comp, fc);
+                                if (press_focus_pid == fc->place.client_pid)
+                                    press_focus_pid = 0;
+                                wm_refocus();
+                                shortcutDirty = true;
+                            }
+                        }
                     }
                 }
                 wmKbdCursor++;
@@ -1135,7 +1690,6 @@ int main(){
                bw = (int32_t)normW;   bh = (int32_t)normH; }
 
         /* taskbar app-pill hit rectangle (matches wm_draw_taskbar layout) */
-        const int32_t tbX0 = 10, tbW = 208;
         const int32_t tbY0 = fb_height - (int32_t)barH + 7;
         const int32_t tbH  = (int32_t)barH - 14;
         auto inBox = [&](int32_t x0, int32_t y0, int32_t ww, int32_t hh) {
@@ -1175,6 +1729,28 @@ int main(){
         if (leftDown && !prevLeft) {                 /* press edge: classify  */
             pressHit = 0; rzDir = 0;
 
+            /* 开始按钮 / 开始菜单优先于一切窗口命中测试：菜单是最高 z 的
+               overlay，点菜单外部只用于关闭，不穿透到下层窗口。 */
+            bool startClaim = false;
+            if (start_btn_hit(mx, my, scrH, (uint32_t)barH)) {
+                pressHit = 10;                   /* release 时 toggle */
+                startClaim = true;
+            } else if (g_startOpen) {
+                int32_t sx = 0, sy = 0;
+                start_menu_geom(scrH, (uint32_t)barH, &sx, &sy);
+                if (mx >= sx && mx < sx + (int32_t)SKY_START_MENU_W &&
+                    my >= sy && my < sy + (int32_t)SKY_START_MENU_H) {
+                    pressHit = 9;
+                    g_startPressIdx = start_item_at(mx, my, scrH,
+                                                    (uint32_t)barH);
+                } else {
+                    start_menu_close();
+                    pressHit = 8;                /* 吞掉本次点击 */
+                    wmDirty = true;
+                }
+                startClaim = true;
+            }
+
             /* ---- topmost-window hit test --------------------------------
                Every window (console + generic clients) sits on its own
                auto-created layer, so stacking order == layer z. Whichever
@@ -1192,7 +1768,7 @@ int main(){
             bool consoleTop = inConsole &&
                               (!cTop || consoleLayer->z >= cTop->layer->z);
 
-            if (consoleTop) {
+            if (!startClaim && consoleTop) {
                 /* Win11 click-to-front: a press anywhere on the body (caption,
                    border band or content) raises it above every other window. */
                 comp.RaiseWindow(&consoleWin);
@@ -1237,8 +1813,10 @@ int main(){
                 if (pressHit == 0 && mx >= bx && mx < bx + bw &&
                                         my >= by && my < by + bh)
                     pressHit = 8;
-                    press_focus_pid = place.client_pid;
-            } else if (cTop) {
+                /* 按下（caption/内容/按钮/缩放带任一处）= 立即置顶 + 抢键盘焦点，
+                   不再等下一帧 wm_refocus。 */
+                wm_focus_immediate(place.client_pid);
+            } else if (!startClaim && cTop) {
                 /* Generic client press: raise + arm close/drag — all client
                    interaction lives in wm_client.cpp (the old notepad
                    special cases pressHit 7 / 9 used to be inline here).
@@ -1250,13 +1828,16 @@ int main(){
                     wm_client_resize_begin(rz, mx, my, dir);
                     clientResizing = true;
                     rzClient = rz;
+                    /* 按在缩放带也是"按下该窗口": 置顶 + 立即抢焦点。 */
+                    comp.RaiseWindow(&rz->win);
+                    wm_focus_immediate(rz->place.client_pid);
                 } else {
                     wm_client_press(comp, cTop, mx, my);
-                    /* 按下客户端窗口 = 切到它: 置顶 + 接管键盘。
+                    /* 按下客户端窗口 = 切到它: 置顶 + 立即接管键盘。
                        不这样做的话键盘只按 z 序走, 点哪个窗口都换不了焦点。 */
                     if (cTop) {
                         comp.RaiseWindow(&cTop->win);
-                        press_focus_pid = cTop->place.client_pid;
+                        wm_focus_immediate(cTop->place.client_pid);
                     }
                 }
             }
@@ -1266,7 +1847,8 @@ int main(){
         /* Hit whichever taskbar pill (console + generic clients) is
                    under the pointer; record its window id for the release. */
                 TBRect tr[12];
-                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font(),
+                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, wmMode == WM_MIN,
+                                   console_font(),
                                    (int32_t)scrW - TB_LEFT_MARGIN - SKY_TRAY_RESERVE);
                 for (int i = 0; i < nt; i++)
                     if (mx >= tr[i].x && mx < tr[i].x + tr[i].w) {
@@ -1337,14 +1919,22 @@ int main(){
 
         if (!leftDown && prevLeft) {                 /* release edge: action  */
             bool fire = false;
-            if (pressHit >= 2 && pressHit <= 4 &&
+            if (pressHit == 10) {
+                /* 开始按钮：释放仍在同一按钮上才 toggle。 */
+                fire = start_btn_hit(mx, my, scrH, (uint32_t)barH);
+            } else if (pressHit == 9) {
+                /* 菜单项：按下与释放必须落在同一项上，避免拖动误启动应用。 */
+                const int idx = start_item_at(mx, my, scrH, (uint32_t)barH);
+                fire = (idx >= 0 && idx == g_startPressIdx);
+            } else if (pressHit >= 2 && pressHit <= 4 &&
                 (wmMode == WM_NORMAL || wmMode == WM_MAX)) {
                 int32_t lx = bx + bw - (5 - pressHit) * (int32_t)SKYWIN_BTN_W;
                 fire = inBox(lx, by, (int32_t)SKYWIN_BTN_W, th);
             } else if (pressHit == 5) {
                 /* fire only if the release stays inside the same pill. */
                 TBRect tr[12];
-                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, console_font(),
+                int nt = tb_layout(tr, 12, wmMode == WM_CLOSED, wmMode == WM_MIN,
+                                   console_font(),
                                    (int32_t)scrW - TB_LEFT_MARGIN - SKY_TRAY_RESERVE);
                 for (int i = 0; i < nt; i++)
                     if (tr[i].id == tbPressId && mx >= tr[i].x &&
@@ -1360,6 +1950,12 @@ int main(){
             wm_client_release(comp, mx, my, fb_width, fb_height,
                               (int32_t)barH, &relDirty);
             if (relDirty) wmDirty = true;
+            /* 客户端 close/minimize 之后: 若显式焦点窗口已不可见(被关/被最小化),
+               立即转移焦点到最高可见窗口, 不等下一轮 wm_refocus。 */
+            if (press_focus_pid != 0 && !wm_pid_focusable(press_focus_pid)) {
+                press_focus_pid = 0;
+                wm_refocus();
+            }
 
             /* Finish a generic-client resize: repaint the real chrome once at
                the release geometry (the drag only showed a flat preview). */
@@ -1391,9 +1987,22 @@ int main(){
                 WmDateTime fireDT;
                 bool haveDT = wm_read_datetime(&fireDT);
                 int tbState = (wmMode == WM_MIN) ? 1 : 0;
-                if (pressHit == 2) {                        /* minimize         */
+                if (pressHit == 10) {                       /* Start button      */
+                    start_menu_toggle();
+                    wmDirty = true;
+                } else if (pressHit == 9) {                  /* Start menu item  */
+                    start_menu_activate(g_startPressIdx);
+                    wmDirty = true;
+                } else if (pressHit == 2) {                  /* minimize         */
+                    /* 最小化先态: caption 最小化按钮与任务栏 pill 走同一套
+                       wm_prior 记录, 恢复时才能回到 MAX/NORMAL。 */
+                    if (wmMode == WM_NORMAL || wmMode == WM_MAX)
+                        wm_prior = wmMode;
                     wmMode = WM_MIN;
                     comp.SetVisible(&consoleWin, false);
+                    if (press_focus_pid == place.client_pid)
+                        press_focus_pid = 0;
+                    wm_refocus();   /* 焦点立即转移到下一个可见窗口 */
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 1, &fireDT, haveDT);
                     wmDirty = true;
                 } else if (pressHit == 4) {                 /* close: kill + unregister */
@@ -1403,9 +2012,13 @@ int main(){
                     if (place.client_pid) sys_kill(place.client_pid, 9);
                     comp.UnregisterWindow(&consoleWin);
                     consoleLayer = nullptr;   /* auto layer retired with it */
+                    if (press_focus_pid == place.client_pid)
+                        press_focus_pid = 0;
+                    wm_refocus();   /* 焦点立即转移 (console 已关闭) */
                     wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, 2, &fireDT, haveDT);
                     wmDirty = true;
-                } else if (pressHit == 3 && (ensure_max_surf())) {    /* maximize toggle  */
+                } else if (pressHit == 3 && wmMode != WM_MIN &&
+                           (ensure_max_surf())) {    /* maximize toggle  */
                     if (wmMode == WM_NORMAL) {
                         wmMode = WM_MAX;
                         wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
@@ -1417,7 +2030,11 @@ int main(){
                     wmDirty = true;
                 } else if (pressHit == 5) {                 /* taskbar toggle   */
                     if (tbPressId == 0) {
-                        /* Console pill: the existing minimize/restore path. */
+                        /* Console pill:
+                           - 最小化 -> 按 wm_prior 还原到 MAX/NORMAL，raise+立即聚焦；
+                           - 可见且已是最上层/焦点 -> 切换为最小化（保存先态）并
+                             立即转移焦点；
+                           - 可见但被压在后面 -> raise + 立即聚焦（不误最小化）。 */
                         if (wmMode == WM_MIN) {
                             /* restore the pre-minimize mode */
                             if (wm_prior == WM_MAX && maxSurf) {
@@ -1425,42 +2042,58 @@ int main(){
                                 wm_apply_max(&consoleWin, maxSurf, maxW, maxH);
                             } else {
                                 wmMode = WM_NORMAL;
+                                wm_prior = WM_NORMAL;
                                 wm_apply_normal(&consoleWin, &place, normX, normY,
                                                 normW, normH, rzSurf, rzPitch);
                             }
                             comp.SetVisible(&consoleWin, true);
+                            comp.RaiseWindow(&consoleWin);   /* 恢复即置顶 */
+                            wm_focus_immediate(place.client_pid);
                             tbState = 0;
                         } else if (wmMode == WM_NORMAL || wmMode == WM_MAX) {
-                            wm_prior = wmMode;
-                            wmMode = WM_MIN;
-                            comp.SetVisible(&consoleWin, false);
-                            tbState = 1;
+                            if (wm_pid_is_top(place.client_pid)) {
+                                /* 已是焦点/最上层: 切换为最小化 (保存先态) */
+                                wm_prior = wmMode;   /* 所有最小化路径都保存 */
+                                wmMode = WM_MIN;
+                                comp.SetVisible(&consoleWin, false);
+                                if (press_focus_pid == place.client_pid)
+                                    press_focus_pid = 0;
+                                wm_refocus();   /* 焦点立即转移 */
+                                tbState = 1;
+                            } else {
+                                /* 可见但在后面: raise + 立即聚焦 */
+                                comp.RaiseWindow(&consoleWin);
+                                wm_focus_immediate(place.client_pid);
+                                tbState = 0;
+                            }
                         }
                         wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tbState,
                                         &fireDT, haveDT);
-                        /* 点 Console 的 pill: 还原(或本就可见)时提到最前并
-                           把键盘给它。否则 z 序仍会让后启动的客户端 (DOOM)
-                           永久霸占键盘, 敲字一个都进不了 Console。 */
-                        if (wmMode != WM_MIN) {
-                            comp.RaiseWindow(&consoleWin);
-                            press_focus_pid = place.client_pid;
-                        } else {
-                            press_focus_pid = 0;   /* 最小化后交给 z 序 */
-                        }
                         wmDirty = true;
                     } else if (tbPressId >= 1) {
-                        /* Generic-client pill: minimize or restore that app. */
+                        /* Generic-client pill:
+                           - 最小化 -> restore(按 pre_minimized_max 还原几何/最大化)
+                             + raise + 立即聚焦；
+                           - 可见且已是最上层/焦点 -> 最小化 + 立即转移焦点；
+                           - 可见但在后面 -> raise + 立即聚焦。 */
                         WmClient* cc = wm_client_by_order(tbPressId - 1);
                         if (cc) {
+                            bool dirty2 = false;
                             if (cc->minimized) {
-                                wm_client_restore(comp, cc);
-                                /* 还原即"切到它": 置顶并接管键盘 */
-                                comp.RaiseWindow(&cc->win);
-                                press_focus_pid = cc->place.client_pid;
-                            } else {
+                                wm_client_restore(comp, cc, fb_width, fb_height,
+                                                  (int32_t)barH, &dirty2);
+                                comp.RaiseWindow(&cc->win);   /* 恢复即置顶 */
+                                wm_focus_immediate(cc->place.client_pid);
+                            } else if (wm_pid_is_top(cc->place.client_pid)) {
                                 wm_client_minimize(comp, cc);
-                                press_focus_pid = 0;
+                                if (press_focus_pid == cc->place.client_pid)
+                                    press_focus_pid = 0;
+                                wm_refocus();   /* 焦点立即转移 */
+                            } else {
+                                comp.RaiseWindow(&cc->win);
+                                wm_focus_immediate(cc->place.client_pid);
                             }
+                            if (dirty2) wmDirty = true;
                         }
                         const int cs = (wmMode == WM_CLOSED) ? 2
                                        : ((wmMode == WM_MIN) ? 1 : 0);
@@ -1560,21 +2193,44 @@ int main(){
             }
         }
 
-        /* 死窗口轮询 —— 客户端进程退出后移除窗口 (sys_kill(pid,0)
-           为存活探测)。控制台单独处理; 其余通用客户端 (含 notepad) 由
-           wm_clients_sweep 统一清扫, 图层随最后一个窗口自动退役。 */
+        /* 子进程退出事件（syscall 31）：每帧有界 drain，收到即回收窗口。
+           不再用 500ms kill(pid,0) 轮询；2s 低频 sweep 只兜底 ring 溢出/丢失。 */
         {
+            struct ChildExit { int32_t pid; int32_t code; } ev;
+            for (int drains = 0; drains < 16; drains++) {
+                int64_t r = (int64_t)syscall(SYSCALL_CHILD_EVENT,
+                                             (uint64_t)&ev, 0, 0, 0, 0, 0);
+                if (r <= 0) break;
+                char cm[96];
+                int cn = snprintf(cm, sizeof(cm),
+                                  "[wm] child pid=%d code=%d\n",
+                                  (int)ev.pid, (int)ev.code);
+                if (cn > 0)
+                    syscall(SYS_DBGSOUT, (uint64_t)cm, (uint64_t)cn, 0, 0, 0, 0);
+
+                if (!wm_client_reap_pid(comp, ev.pid, &wmDirty)) {
+                    if (place.client_pid &&
+                        (int32_t)place.client_pid == ev.pid) {
+                    comp.UnregisterWindow(&consoleWin);
+                        place.client_pid = 0;
+                        consoleLayer = nullptr;  /* auto layer retired */
+                        wmDirty = true;
+                    }
+                }
+                /* 退出窗口若正好是键盘焦点，立即把焦点交给下一个可见窗口。 */
+                wm_refocus();
+            }
             static uint64_t dead_check_at = 0;
-            if (now - dead_check_at > tsc_per_ms * 500) {
+            if (now - dead_check_at > tsc_per_ms * 2000) {
                 dead_check_at = now;
                 int64_t rConsole = place.client_pid ? sys_kill(place.client_pid, 0) : 1;
                 if (place.client_pid && rConsole < 0) {
                     comp.UnregisterWindow(&consoleWin);
                     place.client_pid = 0;
-                    consoleLayer = nullptr;   /* auto layer retired with it */
+                    consoleLayer = nullptr;
                     wmDirty = true;
                 }
-                wm_clients_sweep(comp, &wmDirty);
+                wm_clients_sweep(comp, &wmDirty);  /* 兜底：事件丢失/溢出 */
             }
         }
 
@@ -1646,10 +2302,22 @@ int main(){
                     comp.ForceFullCompose();
                     wmDirty = true;
                 } else if (cmd == SKYWIN_CMD_SPAWN_INSTALLER) {
-                    if (!wm_client_find_title("Installer")) {
-                        wm_client_spawn(comp, &fb, "/mp/installer.elf",
-                                        "Installer", 560u, 380u,
-                                        0xFF14141Au, 70u, 60u);
+                    /* 打开 Installer: 已存在则 restore/raise/聚焦, 不存在则 spawn
+                       后立即置顶+聚焦 (命令发起后焦点应落在新窗口上)。 */
+                    WmClient* inst = wm_client_find_title("Installer");
+                    if (!inst) {
+                        inst = wm_client_spawn(comp, &fb, "/mp/installer.elf",
+                                               "Installer", 560u, 380u,
+                                               0xFF14141Au, 70u, 60u);
+                    }
+                    if (inst) {
+                        if (inst->minimized) {
+                            bool d = false;
+                            wm_client_restore(comp, inst, fb_width, fb_height,
+                                              (int32_t)barH, &d);
+                        }
+                        comp.RaiseWindow(&inst->win);
+                        wm_focus_immediate(inst->place.client_pid);
                         wmDirty = true;
                     }
                 }

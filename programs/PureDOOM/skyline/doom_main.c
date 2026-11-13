@@ -1,7 +1,7 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
 //
-// doom_main.c — PureDOOM host shim for SkylineSystem.
+// doom_main.c �?PureDOOM host shim for SkylineSystem.
 //
 // PureDOOM ships the whole game (renderer, game logic, WAD loader) as one
 // freestanding C header; everything platform-shaped is funnelled through six
@@ -31,6 +31,23 @@
 #define DOOM_SCR_W 320
 #define DOOM_SCR_H 200
 
+/* ---- DOOM_TINY compact presentation -------------------------------------
+   The compact build keeps a single 8-bit palette-index screen: no 64 KiB copy
+   buffer and no 256 KiB RGBA buffer. Build a 256-entry ARGB LUT from the
+   engine's live palette (it changes on damage/pickup/radiation) and convert
+   indices straight into the WM surface. Normal builds keep the RGBA path. */
+#if DOOM_TINY
+static uint32_t g_argb_lut[256];
+static void sky_build_palette_lut(void) {
+    const unsigned char* pal = doom_get_palette();
+    for (int i = 0; i < 256; i++)
+        g_argb_lut[i] = 0xFF000000u |
+                        ((uint32_t)pal[i * 3 + 0] << 16) |
+                        ((uint32_t)pal[i * 3 + 1] << 8) |
+                        (uint32_t)pal[i * 3 + 2];
+}
+#endif
+
 /* ---- serial debug (syscall 24) ----------------------------------------- */
 static void sky_dbg(const char* s) {
     size_t n = 0;
@@ -57,11 +74,11 @@ static int sky_ends_with(const char* s, const char* suf) {
    files that do not exist. On a kernel whose sys_fopen still reports a failed
    open as a valid fd, the first such probe makes the next op hit
    ext4_assert(file && file->mp) and panics the whole kernel (fixed in
-   syscall/fops.cpp — this guard keeps the client alive on unfixed kernels,
+   syscall/fops.cpp �?this guard keeps the client alive on unfixed kernels,
    and is a no-op once the kernel is rebuilt). */
 /* ---- in-RAM IWAD mirror (OPTIONAL fallback) ---------------------------
    The kernel's read path is fixed (fd_t::offset accounting), so DOOM reads
-   lumps straight from the file on demand — which is what the engine is
+   lumps straight from the file on demand �?which is what the engine is
    designed for: W_ReadLump() pulls one lump at a time and the zone cache
    keeps the hot ones, while the kernel file cache serves repeated hits.
    The mirror is only a safety net for a kernel whose seek+read is broken
@@ -84,7 +101,7 @@ static int sky_wad_load(const char* path) {
     unsigned char* buf = (unsigned char*)malloc((size_t)sz);
     if (!buf) { fclose(f); return 0; }
     /* ONE read of the whole file: on Skyline, a sequence of small reads is
-       not reliable (see sky_seek_ok — the VFS can fall back to offset 0),
+       not reliable (see sky_seek_ok �?the VFS can fall back to offset 0),
        but a single whole-file read from offset 0 is exactly how the 31 MB
        TTF font is loaded and it works. */
     fseek(f, 0, SEEK_SET);
@@ -101,7 +118,7 @@ static int sky_wad_load(const char* path) {
 
 /* Does a seek to the lump directory actually return directory bytes?
    Decisive test: read 16 bytes at offset 0 and 16 bytes at the directory
-   offset. If they are byte-identical, the file position never moved — i.e.
+   offset. If they are byte-identical, the file position never moved �?i.e.
    lseek is a no-op and every read is served from the start of the file.
    (Do NOT just test "the name field is non-zero": the IWAD header happens to
    have non-zero bytes at those positions and fools that check.) */
@@ -143,7 +160,7 @@ static int  sky_seek(void* h, int offset, doom_seek_t origin);
 static int  sky_read(void* h, void* buf, int count) {
     /* Read in small chunks and retry: DOOM asks for the whole lump directory
        (numlumps * 16 B, ~35 KB for doom.wad) in a single fread, and a short
-       or failed large read silently leaves the lump table zeroed — which
+       or failed large read silently leaves the lump table zeroed �?which
        surfaces much later as "W_GetNumForName, PNAMES not found!". Chunking
        keeps every request inside what the VFS read path handles. */
     if (sky_is_mirror(h)) {                     /* serve from the RAM mirror */
@@ -163,11 +180,8 @@ static int  sky_read(void* h, void* buf, int count) {
         if (want > SKY_READ_CHUNK) want = SKY_READ_CHUNK;
         size_t n = fread((char*)buf + got, 1, want, (FILE*)h);
         if (n == 0) {
-            /* 内存紧张时内核的文件读可能瞬时返回 0 (中转缓冲或块缓存分配失败)。
-               直接 break 会让整次 W_ReadLump 变成"只读了一半", DOOM 随即
-               I_Error 退出 —— 实测 64/72/80 MiB 下就是这样起的。
-               先原地位重试; 若仍然 0, **重新 seek 回当前位置再试** ——
-               内核侧的 FD 偏移和底层文件位置可能已经不同步。 */
+            /* 内存紧张时内核的文件读可能瞬时返�?0 (中转缓冲或块缓存分配失败)�?               直接 break 会让整次 W_ReadLump 变成"只读了一�?, DOOM 随即
+               I_Error 退�?—�?实测 64/72/80 MiB 下就是这样起的�?               先原地位重试; 若仍�?0, **重新 seek 回当前位置再�?* —�?               内核侧的 FD 偏移和底层文件位置可能已经不同步�?*/
             if (++zero_retries <= 32) {
                 for (volatile int spin = 0; spin < 20000; spin++) { }
                 if ((zero_retries & 7) == 0) {
@@ -230,10 +244,8 @@ static uint64_t g_last_probe  = 0;   /* TSC of the last RTC probe        */
 #define SKYCLOCK_PROBE_US 10000      /* re-anchor granularity: 10 ms     */
 
 static void sky_gettime(int* sec, int* usec) {
-    /* 用内核的毫秒单调时钟 (SYSCALL_MONOTONIC_MS)。
-       原来的实现是"RTC 秒 + TSC 补小数", 需要自己用 TSC 相对 RTC 秒做校准;
-       实测该校准整体偏大约 1.8 倍 —— 于是 DOOM 的 35 Hz 节拍实际只有约
-       19 Hz, 整个游戏慢放, 看起来就像"卡"。内核直接给毫秒后就不需要校准了。 */
+    /* 用内核的毫秒单调时钟 (SYSCALL_MONOTONIC_MS)�?       原来的实现是"RTC �?+ TSC 补小�?, 需要自己用 TSC 相对 RTC 秒做校准;
+       实测该校准整体偏大约 1.8 �?—�?于是 DOOM �?35 Hz 节拍实际只有�?       19 Hz, 整个游戏慢放, 看起来就�?�?。内核直接给毫秒后就不需要校准了�?*/
     uint64_t ms = syscall(SYSCALL_MONOTONIC_MS, 0, 0, 0, 0, 0, 0);
     *sec  = (int)(ms / 1000u);
     *usec = (int)((ms % 1000u) * 1000u);
@@ -247,6 +259,36 @@ static char* sky_getenv(const char* var) {
     if (strcmp(var, "DOOMWADDIR") == 0) return "/mp";
     if (strcmp(var, "HOME") == 0)       return "/mp";   /* I_Error if NULL */
     return 0;
+}
+
+/* ---- zone sizing (low-memory policy) -----------------------------------
+   DOOM's zone is the dominant fixed allocation: upstream defaults to 12 MiB
+   on 64-bit (mb_used = 6 * sizeof(void*)/4). On a 64 MiB QEMU machine the
+   kernel reports ~56 MiB total, and desktop+console+notepad+settings leave
+   only a few MiB for DOOM -- so scale the zone by machine RAM tier and log
+   the decision for the QEMU serial gate. Ask the kernel's SysInfo page (the
+   same source desktop's wm_total_mem_mb() uses). Must be called before
+   doom_init(): Z_Init() reads mb_used via I_ZoneBase() once. */
+static int sky_pick_zone_mb(uint64_t* total_mb_out, uint64_t* free_mb_out) {
+    uint64_t total_mb = 0, free_mb = 0;
+    SysInfo* si = (SysInfo*)sys_sysinfo(0);
+    if ((int64_t)si > 0) {
+        total_mb = si->mem_total >> 20;
+        free_mb  = si->mem_free >> 20;
+        sys_sysinfo((uint64_t)si);      /* hand the mapping back to the kernel */
+    }
+    int mb = 12;                        /* upstream default (>=192 MiB host) */
+    if (total_mb && total_mb <= 80)       mb = 8; /* DOOM_TINY+trim: 8 MiB verified at -m64M (2x PASS) */
+    else if (total_mb && total_mb <= 128) mb = 10;
+    else if (total_mb && total_mb <= 192) mb = 12;
+    /* NOTE: no free-RAM clamp here -- the zone size must be deterministic per
+       machine tier for A/B testing (Lead's 64M measurements: 8/9 MiB
+       failed during R_Init on the older kernel, 10 MiB is the smallest
+       stable tier; the 12 MiB upstream default runs but triggers more
+       PMM OOM). */
+    if (total_mb_out) *total_mb_out = total_mb;
+    if (free_mb_out)  *free_mb_out  = free_mb;
+    return mb;
 }
 
 /* ---- keyboard ----------------------------------------------------------
@@ -325,37 +367,64 @@ static void sky_mouse_pump(int focused) {
 
 /* ---- presentation ------------------------------------------------------
    doom_get_framebuffer(4) is 320x200 RGBA; the shared surface is ARGB
-   (0xAARRGGBB, see RGB() in graphic/fb.h). Nearest-neighbour upscale. */
-static void blit_frame(uint32_t* dst, uint32_t pitch, uint32_t cw, uint32_t ch,
-                       const unsigned char* src, uint32_t scale) {
-    uint32_t dw = DOOM_SCR_W * scale, dh = DOOM_SCR_H * scale;
-    if (dw > cw) dw = cw;
-    if (dh > ch) dh = ch;
+   (0xAARRGGBB, see RGB() in graphic/fb.h). Nearest-neighbour upscale.
 
-    if (scale == 2) {
-        for (uint32_t y = 0; y < dh; y++) {
-            const unsigned char* srow = src + (uint64_t)(y >> 1) * DOOM_SCR_W * 4u;
-            uint32_t* drow = dst + (uint64_t)y * pitch;
-            for (uint32_t x = 0; x < DOOM_SCR_W; x++) {
-                const unsigned char* p = srow + (uint64_t)x * 4u;
-                uint32_t px = 0xFF000000u | ((uint32_t)p[0] << 16) |
-                              ((uint32_t)p[1] << 8) | (uint32_t)p[2];
-                drow[2u * x]       = px;
-                drow[2u * x + 1u]  = px;
-            }
-        }
-        return;
-    }
-    for (uint32_t y = 0; y < dh; y++) {
-        const unsigned char* srow = src + (uint64_t)(y / scale) * DOOM_SCR_W * 4u;
+   2026-11 "DOOM window fix": the WM derives the content height as
+       contentH = bodyH - SKYWIN_TITLE_H - SkyWinRadius()
+   so it depends on the *runtime theme radius* (the default desktop.lua sets
+   corner_radius=16, turning the 640x440 body into a 640x392 content area;
+   the old "2x if ch>=400 else 1x" rule then fell back to 1x and left a big
+   black half/quarter of the window). We now always FILL the content area:
+   exact 2x when it is 640x400, otherwise a precomputed nearest-neighbour map
+   (x always 2x, y scaled by ch/200 -- at most ~2% vertical squash for the
+   radius range 0..20). No black borders and no dependency on theme radius. */
+#define BLIT_MAX_W 1024u
+#define BLIT_MAX_H 1024u
+static uint16_t g_colmap[BLIT_MAX_W];   /* dest x -> source x */
+static uint16_t g_rowmap[BLIT_MAX_H];   /* dest y -> source y */
+static uint32_t g_mapW = 0, g_mapH = 0;
+
+static void blit_setup(uint32_t cw, uint32_t ch) {
+    if (cw > BLIT_MAX_W) cw = BLIT_MAX_W;
+    if (ch > BLIT_MAX_H) ch = BLIT_MAX_H;
+    g_mapW = cw;
+    g_mapH = ch;
+    for (uint32_t x = 0; x < cw; x++)
+        g_colmap[x] = (uint16_t)((uint64_t)x * DOOM_SCR_W / cw);
+    for (uint32_t y = 0; y < ch; y++)
+        g_rowmap[y] = (uint16_t)((uint64_t)y * DOOM_SCR_H / ch);
+}
+
+#if DOOM_TINY
+/* Compact build: source is the engine's 8-bit palette-index screen. */
+static void blit_frame(uint32_t* dst, uint32_t pitch,
+                       const unsigned char* src) {
+    if (!dst || !src || !g_mapW || !g_mapH) return;
+    for (uint32_t y = 0; y < g_mapH; y++) {
+        const unsigned char* srow =
+            src + (uint64_t)g_rowmap[y] * DOOM_SCR_W;
         uint32_t* drow = dst + (uint64_t)y * pitch;
-        for (uint32_t x = 0; x < dw; x++) {
-            const unsigned char* p = srow + (uint64_t)(x / scale) * 4u;
+        for (uint32_t x = 0; x < g_mapW; x++)
+            drow[x] = g_argb_lut[srow[g_colmap[x]]];
+    }
+}
+#else
+/* Normal build: source is the engine's 320x200 RGBA buffer. */
+static void blit_frame(uint32_t* dst, uint32_t pitch,
+                       const unsigned char* src) {
+    if (!dst || !src || !g_mapW || !g_mapH) return;
+    for (uint32_t y = 0; y < g_mapH; y++) {
+        const unsigned char* srow =
+            src + (uint64_t)g_rowmap[y] * DOOM_SCR_W * 4u;
+        uint32_t* drow = dst + (uint64_t)y * pitch;
+        for (uint32_t x = 0; x < g_mapW; x++) {
+            const unsigned char* p = srow + (uint64_t)g_colmap[x] * 4u;
             drow[x] = 0xFF000000u | ((uint32_t)p[0] << 16) |
                       ((uint32_t)p[1] << 8) | (uint32_t)p[2];
         }
     }
 }
+#endif
 
 /* Minimal serial formatting (no printf dependency: the shim must build
    against both Skyline's libc and the plain host libc used by hosttest). */
@@ -426,10 +495,53 @@ int main(void) {
         }
     } else {
     }
+    /* Zone 大小按机器内存档位缩放（64MiB 目标�?-> 4MiB；见 sky_pick_zone_mb）�?       DOOM 默认 zone = 6*(sizeof(void*)/4) = 12MiB(64-bit)，在 55MiB 可用内存�?       会把桌面/其它应用挤进 OOM。必须在 doom_init() 之前设置：Z_Init() 只经
+       I_ZoneBase() 读一�?mb_used�?*/
+    {
+        uint64_t total_mb = 0, free_mb = 0;
+        int zone_mb = sky_pick_zone_mb(&total_mb, &free_mb);
+        doom_set_zone_mb(zone_mb);
+        sky_dbg_num("zone_mb", (unsigned long)zone_mb);
+        sky_dbg_num("mem_total_mb", (unsigned long)total_mb);
+        sky_dbg_num("mem_free_mb", (unsigned long)free_mb);
+    }
+    /* WAD size evidence for the serial gate. The trimmed WAD must be
+       installed as /mp/doom.wad (or /mp/doom1.wad): those are the names the
+       engine probes under DOOMWADDIR=/mp. doom_trim.wad is logged when both
+       files exist. */
+    {
+        FILE* wf = fopen("/mp/doom.wad", "rb");
+        long plain = wf ? (long)fsize(wf) : -1;
+        if (wf) fclose(wf);
+        FILE* tf = fopen("/mp/doom_trim.wad", "rb");
+        long trim = tf ? (long)fsize(tf) : -1;
+        if (tf) fclose(tf);
+        if (plain > 0) {
+            char line[128];
+            int n = snprintf(line, sizeof(line),
+                             "[doom] wad bytes=%ld -> %ld (trim file=%ld)\n",
+                             plain, trim > 0 ? trim : plain, trim);
+            if (n > 0)
+                syscall(SYSCALL_DBGSOUT, (uint64_t)line, (uint64_t)n, 0, 0, 0, 0);
+        }
+    }
     doom_init(1, argv, DOOM_FLAG_HIDE_MOUSE_OPTIONS |
                        DOOM_FLAG_HIDE_SOUND_OPTIONS |
                        DOOM_FLAG_HIDE_MUSIC_OPTIONS);
     sky_dbg("[doom] init done\n");
+#if DOOM_TINY
+    sky_dbg("[doom] compact=1 screens_kb=64 final_rgba_kb=0 screen_copy_kb=0\n");
+#else
+    sky_dbg("[doom] compact=0 screens_kb=256 final_rgba_kb=256 screen_copy_kb=64\n");
+#endif
+    {
+        SysInfo* si = (SysInfo*)sys_sysinfo(0);
+        if ((int64_t)si > 0) {
+            unsigned long free_mb = (unsigned long)(si->mem_free >> 20);
+            sys_sysinfo((uint64_t)si);
+            sky_dbg_num("mem_free_mb_post_init", free_mb);
+        }
+    }
 
     uint64_t kbdVA = syscall(SYSCALL_DEV_MMAP, (uint64_t)KBD_DEV_TYPE,
                              0, 0, 0, 0, 0);
@@ -446,7 +558,12 @@ int main(void) {
     }
 
     uint32_t* surf = (uint32_t*)contentVA;
-    uint32_t scale = (cw >= DOOM_SCR_W * 2u && ch >= DOOM_SCR_H * 2u) ? 2u : 1u;
+    /* 内容区改为“始终填满”（�?blit_frame 注释）：runtime theme radius 会把
+       contentH 变成 392 等非 400 值，旧的 1x 回退会留大片黑边�?*/
+    blit_setup(cw, ch);
+    sky_dbg_num("content_w", (unsigned long)cw);
+    sky_dbg_num("content_h", (unsigned long)ch);
+    sky_dbg_num("exact_2x", (cw == 640u && ch == 400u) ? 1u : 0u);
 
     for (;;) {
         int focused = 1;
@@ -472,21 +589,17 @@ int main(void) {
 
         sky_mouse_pump(focused);
 
-        /* 帧率限制 (DOOM 原生 35 Hz)。
-           没有它主循环会跑到 200+ fps: 每一轮都递增 OUT_SEQ, 等于要求桌面
-           每秒重组两百多次, 合成器直接被这一路请求占满 —— 表现就是"DOOM
-           跑着跑着整个桌面卡住/卡顿"。放在输入泵之后, 输入延迟不受影响。 */
+        /* 帧率限制 (DOOM 原生 35 Hz)�?           没有它主循环会跑�?200+ fps: 每一轮都递增 OUT_SEQ, 等于要求桌面
+           每秒重组两百多次, 合成器直接被这一路请求占�?—�?表现就是"DOOM
+           跑着跑着整个桌面卡住/卡顿"。放在输入泵之后, 输入延迟不受影响�?*/
         {
             static int64_t next_us;
             int gs = 0, gu = 0;
             sky_gettime(&gs, &gu);
             int64_t now_us = (int64_t)gs * 1000000 + (int64_t)gu;
             if (next_us && now_us < next_us) {
-                /* **有界等待**: 时钟一旦停止前进 (跨核 TSC 偏差 / 时钟冻结),
-                   `while (now < next) yield;` 会永远等下去 —— 实测表现为
-                   "DOOM 跑一会就卡死": 心跳停止、进程还在、内核无恙。
-                   这里给等待加硬上限: 最多让出 DOOM_WAIT_MAX 次就放弃本帧的
-                   节拍限制继续渲染。宁可掉几帧, 绝不永久卡住。 */
+                /* **有界等待**: 时钟一旦停止前�?(跨核 TSC 偏差 / 时钟冻结),
+                   `while (now < next) yield;` 会永远等下去 —�?实测表现�?                   "DOOM 跑一会就卡死": 心跳停止、进程还在、内核无恙�?                   这里给等待加硬上�? 最多让�?DOOM_WAIT_MAX 次就放弃本帧�?                   节拍限制继续渲染。宁可掉几帧, 绝不永久卡住�?*/
                 static unsigned long wait_spins;
                 if (next_us - now_us > 200000) {
                     next_us = now_us;              /* 时钟异常: 重置节拍 */
@@ -502,14 +615,18 @@ int main(void) {
         }
 
         doom_update();
-        blit_frame(surf, pitch, cw, ch, doom_get_framebuffer(4), scale);
+#if DOOM_TINY
+        sky_build_palette_lut();
+        blit_frame(surf, pitch, doom_get_framebuffer(1));
+#else
+        blit_frame(surf, pitch, doom_get_framebuffer(4));
+#endif
         q[SKYWIN_PROTO_OUT_SEQ]++;     /* new frame: ask the WM to recompose */
 
-        /* 帧心跳: 每 128 帧往串口打一行。
-           用途 —— 用户报"DOOM 运行到一半卡了"时, 看这行就能定性:
+        /* 帧心�? �?128 帧往串口打一行�?           用�?—�?用户�?DOOM 运行到一半卡�?�? 看这行就能定�?
              * 心跳停了            -> DOOM 自己的主循环卡住 (doom_update/blit_frame)
-             * 心跳继续但画面不动  -> 桌面合成/共享表面那边的问题, 与 DOOM 无关
-           没有这个判别, 只能靠猜。 */
+             * 心跳继续但画面不�? -> 桌面合成/共享表面那边的问�? �?DOOM 无关
+           没有这个判别, 只能靠猜�?*/
         {
             static uint64_t frames;
             if ((++frames & 127u) == 0) {

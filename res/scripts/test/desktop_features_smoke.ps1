@@ -551,8 +551,12 @@ echo '=== ROOT ==='
 e2ls "`$img:/" 2>&1
 for f in themes.index selected_theme.txt files.index notes.txt theme_aurora.lua theme_ember.lua theme_mint.lua; do
   echo "=== FILE `$f ==="
-  e2cp "`$img:/`$f" - 2>&1
+  tmp="/tmp/dsk_postcheck_`$f"
+  rm -f "`$tmp"
+  e2cp "`$img:/`$f" "`$tmp" 2>&1
   rc=`$?
+  if [ -f "`$tmp" ]; then cat "`$tmp"; fi
+  rm -f "`$tmp"
   echo ""
   echo "=== ENDFILE `$f rc=`$rc ==="
 done
@@ -1003,6 +1007,10 @@ function Invoke-SettingsApplyMint {
         param([int]$TimeoutSeconds)
         [void](Send-KeyChecked -Session $Session -Keys 'ctrl-alt-s')
         Start-Sleep -Milliseconds 400
+        # 先 Home 归零选择：Settings 可能按 /mp/selected_theme.txt 的当前主题
+        # 初始选中（如 Mint），再固定两次 Down 才会选到 Mint（index 2）。
+        [void](Send-KeyChecked -Session $Session -Keys 'home')
+        Start-Sleep -Milliseconds 250
         [void](Send-KeyChecked -Session $Session -Keys 'down')
         Start-Sleep -Milliseconds 300
         [void](Send-KeyChecked -Session $Session -Keys 'down')

@@ -32,6 +32,35 @@
 #ifndef __DOOM_H__
 #define __DOOM_H__
 
+/* ===========================================================================
+ * DOOM_TINY -- SkylineSystem "compact" build (default 0 here; the Skyline
+ * programs/PureDOOM/Makefile sets -DDOOM_TINY=1, hosthost/other ports keep 0).
+ *
+ * Goal (RP2040-style extreme trimming): minimum *fixed* RAM and WAD size while
+ * the game stays playable. Measured fixed-buffer savings vs the normal build:
+ *   - V_Init: ONE 64 KiB screen; screens[0..3] alias it   (was 4 x 64 KiB)
+ *   - no I_InitGraphics second screens[0] allocation      (was +64 KiB)
+ *   - no screen_buffer 64 KiB / no final_screen_buffer 256 KiB (shim blits
+ *     palette indices straight to ARGB, doom_get_framebuffer(1) + palette)
+ *   -> 576 KiB fixed buffers saved (screens 192 + extra screen 64 +
+ *      screen_buffer 64 + final_rgba 256); screens[4] status-bar buffer stays.
+ * Trade-offs (documented, deliberate):
+ *   - wipe transitions disabled (they need screens[2]/[3] as separate buffers)
+ *   - save/load disabled (G_SaveGame parks the savegame buffer in screens[1])
+ *   - view forced fullscreen (no border/back-screen buffer = no screens[1])
+ *   - the software crosshair overlay is unavailable (it needs a screen copy)
+ *   - audio is stripped too: tools/wadtrim.py deletes the IWAD's music (D_*),
+ *     DMX sound (DS*) and PC-speaker (DP*) lumps and the sound/music entry
+ *     points return immediately (I_InitSound skips the sfx pre-cache,
+ *     S_StartSoundAtVolume/S_ChangeMusic/S_UpdateSounds are no-ops), so no
+ *     audio lump is ever requested.
+ * Everything else (fixed_t 16.16 physics, angle_t BAM, renderer, BSP) is
+ * untouched -- see the audit note after SCREENWIDTH/SCREENHEIGHT below.
+ * ========================================================================= */
+#ifndef DOOM_TINY
+#define DOOM_TINY 0
+#endif
+
 
 // Sample rate of sound samples from doom
 #define DOOM_SAMPLERATE 11025
@@ -193,7 +222,15 @@ void doom_update(void); // This will update at 35 FPS
 void doom_force_update(void); // This will run a frame everytime it's called, regardless of FPS.
 
 // Channels: 1 = indexed, 3 = RGB, 4 = RGBA
+// DOOM_TINY: channels==1 returns the live indexed screen with no copy, and
+// the RGBA (channels==4) path does not exist (no final_screen_buffer).
 const unsigned char* doom_get_framebuffer(int channels);
+
+// DOOM_TINY helper: current 256*3 RGB palette (updated by I_SetPalette from
+// PLAYPAL / damage / pickup / radiation palettes). Lets a compact shim convert
+// indexed pixels to ARGB directly instead of paying for a full RGBA copy.
+// Also valid in normal builds (returns the same screen_palette table).
+const unsigned char* doom_get_palette(void);
 
 // It is always 2048 bytes in size
 short* doom_get_sound_buffer(void);
@@ -1059,6 +1096,29 @@ typedef enum
 // extern int SCREENWIDTH;
 #define SCREENWIDTH 320
 #define SCREENHEIGHT 200
+
+/* ---- DOOM_TINY: 16-bit / fixed-buffer audit -------------------------------
+ * SAFE to keep as-is (already 8/16-bit or geometry-bounded):
+ *   - screen x/y are 0..319 / 0..199 -> they fit int16_t/uint16_t (the shim's
+ *     dest->source upscale maps are uint16_t, 1024 entries each);
+ *   - palette indices are byte; screen_palette is 256*3 bytes;
+ *   - ST status-bar bitmap is 320x32 = 10 KiB (screens[4], separate buffer).
+ * MUST stay 32-bit (shrinking breaks the engine):
+ *   - fixed_t (16.16 fixed point) and angle_t (BAM): collision, slope and
+ *     sine/cosine tables are defined over the full 32-bit range;
+ *   - map/mobj/vertex coordinates and rw_distance (physics/physics clipping);
+ *   - zone sizes and WAD lump offsets/sizes (files > 64 KiB, e.g. 11 MB IWAD);
+ *   - renderer temporaries (visplanes, drawsegs) indexed by 32-bit opens.
+ * The asserts below only freeze the assumptions TINY relies on; they do not
+ * change any type. */
+#if DOOM_TINY
+_Static_assert(SCREENWIDTH > 0 && SCREENWIDTH <= 320,
+               "DOOM_TINY: screen width must fit one compact screen");
+_Static_assert(SCREENHEIGHT > 0 && SCREENHEIGHT <= 200,
+               "DOOM_TINY: screen height must fit one compact screen");
+_Static_assert((SCREENWIDTH * SCREENHEIGHT) <= 0xFFFF,
+               "DOOM_TINY: 64 KiB screen must be addressable with 16-bit offsets");
+#endif
 
 // The maximum number of players, multiplayer/networking.
 #define MAXPLAYERS 4
@@ -7543,8 +7603,15 @@ void doom_init(int argc, char** argv, int flags)
     if (!doom_exit) doom_exit = doom_exit_impl;
     if (!doom_getenv) doom_getenv = doom_getenv_impl;
 
+#if DOOM_TINY
+    /* compact: palette indices go straight from screens[0] to the shim's ARGB
+       blit; neither the 64 KiB copy buffer nor the 256 KiB RGBA buffer exists */
+    screen_buffer = 0;
+    final_screen_buffer = 0;
+#else
     screen_buffer = doom_malloc(SCREENWIDTH * SCREENHEIGHT);
     final_screen_buffer = doom_malloc(SCREENWIDTH * SCREENHEIGHT * 4);
+#endif
     last_update_time = I_GetTime();
 
     myargc = argc;
@@ -7583,6 +7650,14 @@ void doom_force_update(void)
 
 const unsigned char* doom_get_framebuffer(int channels)
 {
+#if DOOM_TINY
+    /* Compact build: the 8-bit palette-index screen IS the live screen; return
+       it directly (no 64 KiB copy, no 256 KiB RGBA conversion). The shim reads
+       doom_get_palette() and writes ARGB itself. channels 3/4 do not exist in
+       this build; callers use channels==1. */
+    (void)channels;
+    return screens[0];
+#else
     int i, len;
 
     doom_memcpy(screen_buffer, screens[0], SCREENWIDTH * SCREENHEIGHT);
@@ -7647,6 +7722,15 @@ const unsigned char* doom_get_framebuffer(int channels)
     {
         return 0;
     }
+#endif
+}
+
+
+const unsigned char* doom_get_palette(void)
+{
+    /* Current palette (screen_palette is refreshed by I_SetPalette). Safe in
+       both build modes; the compact shim uses it for its ARGB lookup table. */
+    return screen_palette;
 }
 
 
@@ -9261,6 +9345,11 @@ void D_Display(void)
     }
 
     // save the current screen if about to wipe
+#if DOOM_TINY
+    /* compact build: wipe needs screens[2]/[3] as apart buffers (they alias
+       screens[0] here), so transitions are instant; no "melt" effect. */
+    wipe = false;
+#else
     if (gamestate != wipegamestate)
     {
         wipe = true;
@@ -9268,6 +9357,7 @@ void D_Display(void)
     }
     else
         wipe = false;
+#endif
 
     if (gamestate == GS_LEVEL && gametic)
         HU_Erase();
@@ -15980,6 +16070,16 @@ void I_InitSound()
 {
     int i;
 
+#if DOOM_TINY
+    /* compact build: the IWAD's audio lumps are stripped by tools/wadtrim.py
+       and the whole sound system is inert (S_StartSoundAtVolume /
+       S_ChangeMusic / S_UpdateSounds return immediately), so there is nothing
+       to pre-cache. Keep the mixbuffer zeroed to preserve the API contract. */
+    for (i = 0; i < MIXBUFFERSIZE; i++)
+        mixbuffer[i] = 0;
+    return;
+#endif
+
     // Secure and configure sound device first.
     doom_print("I_InitSound: ");
 
@@ -16246,6 +16346,19 @@ unsigned long I_TickSong()
     return midi_event;
 }
 int mb_used = 6 * (sizeof(void*) / 4);
+
+// ---- Skyline port extension (single auditable patch point) ----------------
+// Override the DOOM zone size (MiB) BEFORE doom_init(). mb_used stays the
+// single source of truth for I_ZoneBase()/I_GetHeapSize(), so the engine is
+// otherwise unchanged; the clamp keeps callers out of absurd values.
+// Policy (4/6/8/12 MiB by machine RAM) lives in skyline/doom_main.c.
+void doom_set_zone_mb(int mb)
+{
+    if (mb < 2) mb = 2;
+    if (mb > 64) mb = 64;
+    mb_used = mb;
+}
+
 ticcmd_t emptycmd;
 
 
@@ -16476,7 +16589,12 @@ void I_SetPalette(byte* palette)
 
 void I_InitGraphics(void)
 {
+#if DOOM_TINY
+    /* compact build: V_Init already installed the single aliased screen; a
+       second screens[0] allocation here would waste another 64 KiB. */
+#else
     screens[0] = (unsigned char*)doom_malloc(SCREENWIDTH * SCREENHEIGHT);
+#endif
 }
 char* sprnames[NUMSPRITES + 1] = {
     "TROO","SHTG","PUNG","PISG","PISF","SHTF","SHT2","CHGG","CHGF","MISG",
@@ -22086,6 +22204,13 @@ void M_LoadSelect(int choice)
 //
 void M_LoadGame(int choice)
 {
+#if DOOM_TINY
+    /* compact build: savegame buffer would live in screens[1] (aliased to the
+       live screen), so save/load is disabled. */
+    (void)choice;
+    players[consoleplayer].message = "Load disabled (compact build)";
+    return;
+#endif
     if (netgame)
     {
         M_StartMessage(LOADNET, 0, false);
@@ -22154,6 +22279,13 @@ void M_SaveSelect(int choice)
 //
 void M_SaveGame(int choice)
 {
+#if DOOM_TINY
+    /* compact build: G_SaveGame writes its savegame buffer into screens[1],
+       which aliases the live screen here -- saving is disabled. */
+    (void)choice;
+    players[consoleplayer].message = "Save disabled (compact build)";
+    return;
+#endif
     if (!usergame)
     {
         M_StartMessage(SAVEDEAD, 0, false);
@@ -22183,6 +22315,10 @@ void M_QuickSaveResponse(int ch)
 
 void M_QuickSave(void)
 {
+#if DOOM_TINY
+    players[consoleplayer].message = "Save disabled (compact build)";
+    return;
+#endif
     if (!usergame)
     {
         S_StartSound(0, sfx_oof);
@@ -22223,6 +22359,10 @@ void M_QuickLoadResponse(int ch)
 
 void M_QuickLoad(void)
 {
+#if DOOM_TINY
+    players[consoleplayer].message = "Load disabled (compact build)";
+    return;
+#endif
     if (netgame)
     {
         M_StartMessage(QLOADNET, 0, false);
@@ -22684,6 +22824,13 @@ void M_ChangeDetail(int choice)
 
 void M_SizeDisplay(int choice)
 {
+#if DOOM_TINY
+    /* compact build: view is forced fullscreen (no border/back-screen buffer;
+       screens[1] aliases screens[0]), so screen-size changes are rejected. */
+    (void)choice;
+    players[consoleplayer].message = "Screen size fixed (compact build)";
+    return;
+#else
     switch (choice)
     {
         case 0:
@@ -22703,6 +22850,7 @@ void M_SizeDisplay(int choice)
     }
 
     R_SetViewSize(screenblocks, detailLevel);
+#endif
 }
 
 
@@ -23378,6 +23526,15 @@ void M_Init(void)
     doom_boolean hide_mouse = (doom_flags & DOOM_FLAG_HIDE_MOUSE_OPTIONS) ? true : false;
     doom_boolean hide_sound = ((doom_flags & DOOM_FLAG_HIDE_MUSIC_OPTIONS) && (doom_flags & DOOM_FLAG_HIDE_SOUND_OPTIONS)) ? true : false;
 
+#if DOOM_TINY
+    /* Compact build: force the fullscreen view (scaledviewwidth==320 skips the
+       border/back-screen path that would need screens[1] as a separate buffer)
+       and grey out the Save/Load entries (their handlers also reject). */
+    screenblocks = 11;
+    MainMenu[loadgame].status = 0;
+    MainMenu[savegame].status = 0;
+#endif
+
     OptionsMenu = OptionsMenuFull;
     if (hide_mouse && !hide_sound)
     {
@@ -23918,6 +24075,12 @@ void WritePCXfile(char* filename, byte* data, int width, int height, byte* palet
 //
 void M_ScreenShot(void)
 {
+#if DOOM_TINY
+    /* compact build: screens[2] aliases the live screen and the shim has no
+       writable filesystem path, so screenshots are unavailable. */
+    players[consoleplayer].message = "Screenshot disabled (compact build)";
+    return;
+#else
     int i;
     byte* linear;
     char lbmname[12];
@@ -23947,6 +24110,7 @@ void M_ScreenShot(void)
                  W_CacheLumpName("PLAYPAL", PU_CACHE));
 
     players[consoleplayer].message = "screen shot";
+#endif
 }
 unsigned char rndtable[256] = {
     0,   8, 109, 220, 222, 241, 149, 107,  75, 248, 254, 140,  16,  66 ,
@@ -38013,6 +38177,11 @@ void R_InitBuffer(int width, int height)
 //
 void R_FillBackScreen(void)
 {
+#if DOOM_TINY
+    /* compact build: no separate screens[1] back screen (it aliases screens[0])
+       and the view is forced fullscreen, so the border pattern is unused. */
+    return;
+#else
     byte* src;
     byte* dest;
     int x;
@@ -38091,6 +38260,7 @@ void R_FillBackScreen(void)
                 viewwindowy + viewheight,
                 1,
                 W_CacheLumpName("brdr_br", PU_CACHE));
+#endif
 }
 
 
@@ -41188,6 +41358,14 @@ void S_StartSoundAtVolume(void* origin_p, int sfx_id, int volume)
 
     mobj_t* origin = (mobj_t*)origin_p;
 
+#if DOOM_TINY
+    /* compact build: audio lumps are stripped; never look up sfx lumps or
+       touch channels. Sound events become no-ops. */
+    (void)rc; (void)sep; (void)pitch; (void)priority;
+    (void)sfx; (void)cnum; (void)origin; (void)sfx_id; (void)volume;
+    return;
+#endif
+
     // check for bogus sound #
     if (sfx_id < 1 || sfx_id > NUMSFX)
     {
@@ -41373,6 +41551,13 @@ void S_UpdateSounds(void* listener_p)
 
     mobj_t* listener = (mobj_t*)listener_p;
 
+#if DOOM_TINY
+    /* compact build: no channels are ever allocated sounds; nothing to update */
+    (void)audible; (void)cnum; (void)volume; (void)sep; (void)pitch;
+    (void)sfx; (void)c; (void)listener;
+    return;
+#endif
+
     for (cnum = 0; cnum < numChannels; cnum++)
     {
         c = &channels_s_sound[cnum];
@@ -41475,6 +41660,13 @@ void S_ChangeMusic(int musicnum, int looping)
 {
     musicinfo_t* music;
     char namebuf[9];
+
+#if DOOM_TINY
+    /* compact build: music lumps (D_*) are stripped from the IWAD; selecting a
+       song becomes a no-op instead of W_GetNumForName() -> I_Error. */
+    (void)musicnum; (void)looping; (void)music; (void)namebuf;
+    return;
+#endif
 
     if ((musicnum <= mus_None)
         || (musicnum >= NUMMUSIC))
@@ -45859,10 +46051,21 @@ void V_Init(void)
 
     // stick these in low dos memory on PCs
 
+#if DOOM_TINY
+    /* "lying frame buffer": ONE 64 KiB screen, screens[0..3] all alias it.
+       Wipe is disabled and save/load is disabled in this build (see D_Display,
+       M_SaveGame/M_LoadGame), so the aliases are never written concurrently.
+       screens[4] (ST status bar) is still allocated separately by ST_Init(). */
+    base = I_AllocLow(SCREENWIDTH * SCREENHEIGHT);
+
+    for (i = 0; i < 4; i++)
+        screens[i] = base;
+#else
     base = I_AllocLow(SCREENWIDTH * SCREENHEIGHT * 4);
 
     for (i = 0; i < 4; i++)
         screens[i] = base + i * SCREENWIDTH * SCREENHEIGHT;
+#endif
 }
 lumpinfo_t* lumpinfo;
 int numlumps;
@@ -46750,7 +46953,14 @@ static int sp_state;
 
 void WI_slamBackground(void)
 {
+#if DOOM_TINY
+    /* compact build: the "slam" background normally comes from screens[1]
+       (aliased here); clear to black so the intermission stats stay readable
+       instead of leaving stale level pixels. */
+    doom_memset(screens[0], 0, SCREENWIDTH * SCREENHEIGHT);
+#else
     doom_memcpy(screens[0], screens[1], SCREENWIDTH * SCREENHEIGHT);
+#endif
     V_MarkRect(0, 0, SCREENWIDTH, SCREENHEIGHT);
 }
 

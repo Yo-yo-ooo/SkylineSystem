@@ -230,6 +230,12 @@ init 有看门狗预算（默认 500ms），超预算即失败回滚（`stats.bu
 - 串口日志统一前缀 `[kmod]`（池/拓扑/事务/回滚/热替换/座位/syscall 逐条可审计）；
 - `KmodDump()`：模块表（state/tier/caps/refcount/epoch/deps/consumers）、图边、统计计数；
 - syscall 29 `SYSCALL_KMOD_INFO`：用户态只读快照（`kmod_sysinfo_t` + records）；
+- syscall 22 `SYSCALL_MKDIR`（`mkdir`，固定契约）：`mkdir(path, mode)` → 0/负
+  errno；当前仅 ext4（`ext4_dir_mk`，幂等），供 Setup 创建 `/mp/system`
+  目录树；SAF/FAT 返回 `-ENOSYS`；
+- syscall 31 `SYSCALL_CHILD_EVENT`（`child_event`，固定契约）：从当前进程的
+  child-exit ring 取一条 `{int32 pid; int32 code;}` 到用户缓冲，返回 1/0/-EINVAL/
+  -EFAULT；供 desktop 事件驱动回收客户端窗口（替代 500ms `sys_kill(pid,0)` 轮询）；
 - 统计：loads/unloads/hotswaps/rollbacks/reject_cap/cycle/version/format/reloc/name/policy/
   busy/seat_swaps/syscall_binds/syscall_overrides/epoch_waits/budget_exceeded/selftest 通过数。
 

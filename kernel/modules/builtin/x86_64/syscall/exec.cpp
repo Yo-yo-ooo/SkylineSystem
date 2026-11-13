@@ -42,6 +42,7 @@ extern int elf_dyn_apply(uint8_t *main_img, uint64_t main_len, pagemap_t *pm,
 
 extern art_tree *pid2proc_tree;
 extern spinlock_t PID2PROC_TREE_LOCK;
+extern spinlock_t PROC_LIST_LOCK;   /* task.cpp: 进程表/children 链表锁 */
 
 void execve_cleanup(int argc, int envc, char **argv, char **envp) {
     if (argv) {
@@ -237,6 +238,16 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
                 if (VMM::GetPhysics(pagemap, p))
                     continue;
                 uint64_t page = (uint64_t)PMM::Request();
+                if (unlikely(page == 0)) {
+                    /* 低内存下 PMM 耗尽：不能把物理 0 映射进用户页表再往
+                       (void*)eff_vaddr memcpy —— 那会在用户态未映射地址写
+                       128-bit SSE 并内核 #PF（64MB 下 spawn DOOM 实测）。
+                       返回加载失败，让 sys_load 走失败回收路径。 */
+                    kerrorln("ELF> OUT OF MEMORY mapping 0x%lx", (unsigned long)p);
+                    VMM::SwitchPageMap(restore_pm ? restore_pm
+                                                   : (pagemap_t*)kernel_pagemap);
+                    return 0;
+                }
                 VMM::Map(pagemap, p, page, flags);
                 /* 每页 kinfoln 为运行期噪音, 已降级移除 */
             }
@@ -369,6 +380,51 @@ extern uint32_t sched_prio_to_weight[16];
 art_tree *NOT_RUNQ_P;
 spinlock_t NOT_RUNQ_LOCK = 0;
 
+/* ============ 父子链接（子进程退出事件 syscall 31 的前提） ============
+ * sys_load 创建的客户端进程必须挂在调用者（desktop）名下，子进程退出时
+ * FinalizeProcExit/DeleteProc 才能把 {pid, exit_code} 推进调用者的事件 ring。
+ * 这与 ForkProcess() 维护的 parent/children/sibling 链表是**同一不变量**，
+ * 统一受 PROC_LIST_LOCK 保护：
+ *     proc->parent != nullptr  <=>  proc 出现在 parent->children 链表里
+ * 挂链失败（调用者 exiting）时保持 parent=nullptr —— 该进程的退出事件无人
+ * 消费，属于预期（父进程正在销毁，不会再关心子窗口）。 */
+static void proc_link_child(proc_t *parent, proc_t *child) {
+    if (!parent || !child || parent == child) return;
+    uint64_t fl = spin_lock_irqsave(&PROC_LIST_LOCK);
+    if (__atomic_load_n(&parent->exiting, __ATOMIC_ACQUIRE) != 0) {
+        spin_unlock_irqrestore(&PROC_LIST_LOCK, fl);
+        return;   /* 调用者正在退出：不挂链（无人消费事件） */
+    }
+    child->parent = parent;
+    child->sibling = nullptr;
+    proc_t **pp = &parent->children;
+    while (*pp) pp = &(*pp)->sibling;   /* 追加到 children 尾部（与 fork 一致） */
+    *pp = child;
+    spin_unlock_irqrestore(&PROC_LIST_LOCK, fl);
+}
+
+/* 反向摘链：sys_load 失败回收用。与 DeleteProc/FinalizeProcExit 的摘链逻辑
+ * 一致；若父进程已在本函数之前回收（理论上不会：回收父进程同样要先拿
+ * PROC_LIST_LOCK 把 children 的 parent 置空），child->parent 已被置空，
+ * 这里自然成为 no-op。 */
+static void proc_unlink_child(proc_t *child) {
+    if (!child) return;
+    uint64_t fl = spin_lock_irqsave(&PROC_LIST_LOCK);
+    proc_t *parent = child->parent;
+    if (parent) {
+        if (parent->children == child) {
+            parent->children = child->sibling;
+        } else {
+            proc_t *sib = parent->children;
+            while (sib && sib->sibling != child) sib = sib->sibling;
+            if (sib) sib->sibling = child->sibling;
+        }
+        child->parent = nullptr;
+    }
+    child->sibling = nullptr;
+    spin_unlock_irqrestore(&PROC_LIST_LOCK, fl);
+}
+
 /* ============ 统一失败回收 ============
  * thread 各字段由 memset 清零, 按非空判断已分配项;
  * 用户侧资源(ELF镜像/用户栈/信号栈/TLS)随 pagemap 一并销毁。
@@ -385,6 +441,10 @@ static void sys_load_fail(proc_t *proc, thread_t *thread,
         kfree(thread);
     }
     if (proc) {
+        /* 子进程退出事件接线：失败进程若已挂到调用者 children 名下，必须先
+           摘链再释放（否则 parent->children 留 dangling 指针，父进程后续
+           收事件/被回收遍历 children 时 UAF）。 */
+        proc_unlink_child(proc);
         if (proc->FDMan) {                       // 修复: 原来 kfree(parent) 漏掉的
             fd_manager_destroy(proc->FDMan);
             kfree(proc->FDMan);
@@ -442,6 +502,11 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
         sys_load_fail(nullptr, nullptr, pathname, nullptr, argv, argc, envp, envc);
         return -ENOMEM;
     }
+    /* 子进程退出事件（syscall 31）接线：客户端进程挂到调用者名下，退出时
+       FinalizeProcExit/DeleteProc 会把 {pid, exit_code} 推给调用者的事件
+       ring（desktop 每帧 sys_child_event 弹出 → 立即回收窗口）。所有失败
+       路径统一走 sys_load_fail() 摘链。 */
+    proc_link_child(caller, parent);
 
     thread_t *thread = (thread_t*)kmalloc(sizeof(thread_t));
     if (unlikely(!thread)) {
@@ -630,6 +695,10 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     本侧只清理 thread 的内核资源 (用户侧随 pagemap 回收)。
     注: 检查与挂链间仍有窄窗口, 彻底修复需 proc 引用计数。 */
     if (unlikely(parent->exiting)) {
+        /* 所有权已交给 kill 路径（DeleteProc/FinalizeProcExit）：它会负责
+           从调用者 children 摘链并把 proc 交给僵尸回收器。这里只回收本侧
+           thread 的内核资源；**不得**再 kfree(proc)（否则与回收器 double
+           free / UAF）。 */
         if (thread->fx_area)      VMM::Free(kernel_pagemap, (void*)thread->fx_area);
         if (thread->kernel_stack) VMM::Free(kernel_pagemap, (void*)thread->kernel_stack);
         kfree(thread);
@@ -638,7 +707,9 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
 
     // 线程账本: 先挂链再发布(launch 侧看到的 proc->threads 必然有效)
     if (!Schedule::Internal::ProcessAddThread(parent, thread)) {
-        /* 锁内重检失败 —— 顶层检查与挂链之间进程已退出 */
+        /* 锁内重检失败 —— 顶层检查与挂链之间进程已退出。同上：proc 归 kill
+           路径所有（摘链/回收由 DeleteProc/FinalizeProcExit 完成），本侧只
+           回收 thread。 */
         if (thread->fx_area)      VMM::Free(kernel_pagemap, (void*)thread->fx_area);
         if (thread->kernel_stack) VMM::Free(kernel_pagemap, (void*)thread->kernel_stack);
         kfree(thread);

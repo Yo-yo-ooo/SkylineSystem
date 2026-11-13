@@ -15,6 +15,7 @@ all:
 	$(MAKE) -C notepad
 	$(MAKE) -C installer
 	$(MAKE) -C settings
+	$(MAKE) -C explorer
 	$(MAKE) -C PureDOOM
     
 	@echo "Copying programs to disk image..."
@@ -25,6 +26,11 @@ all:
 	e2cp $(PROGRAM_BUILD_DIR)/notepad.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/installer.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/settings.elf $(DISK_IMG):/
+	@# Explorer 是新增文件：实测 e2tools 覆盖一个刚由 e2cp 新建的文件时，
+	@# 第二次写入可能把 inode 截成 0 字节（内核 sys_load 随后报 -EINVAL，
+	@# 表现为"菜单点了没反应"）。先删再写，保证镜像里一定是完整 ELF。
+	@e2rm $(DISK_IMG):/explorer.elf >/dev/null 2>&1 || true
+	e2cp $(PROGRAM_BUILD_DIR)/explorer.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/doom.elf $(DISK_IMG):/
 	@# 桌面内嵌 Lua 的默认主题脚本（用户可在镜像里编辑 /mp/desktop.lua 覆盖）
 	e2cp desktop/desktop.lua $(DISK_IMG):/
@@ -112,6 +118,7 @@ all:
 
 clean:
 	$(MAKE) -C desktop clean
+	$(MAKE) -C explorer clean
 	$(MAKE) -C PureDOOM clean
 	
 	rm -rf $(PROGRAM_BUILD_DIR)

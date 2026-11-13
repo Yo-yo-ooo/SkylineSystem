@@ -101,8 +101,8 @@ KCOMPONENT_END(acpi)
 
 | 组件（规划名） | 槽位（现有编号） | 能力 | 状态 |
 |---|---|---|---|
-| `kernel.syscall.file` | 0-5 fopen/fwrite/fread/fclose/flseek/fsize | FS | ⬜ |
-| `kernel.syscall.proc` | 6-9,11,12,13,19 thread_launch/gettid/getpid/exit/yield/load/launch/kill | SCHED | ⬜ |
+| `kernel.syscall.file` | 0-5,22 fopen/fwrite/fread/fclose/flseek/fsize + mkdir | FS | ⬜ |
+| `kernel.syscall.proc` | 6-9,11,12,13,19,31 thread_launch/gettid/getpid/exit/yield/load/launch/kill/child_event | SCHED | ⬜ |
 | `kernel.syscall.mem` | 10,14,15,18 pmmap/mmap/munmap/arch_prctl | MEM | ⬜ |
 | `kernel.syscall.info` | 16,25,26,29 sysinfo/dev_getinfo/dev_ioctl/kmod_info | DEV/LOG | ⬜ |
 | `kernel.syscall.time` | 17,27,28 time/monotonic_ms/sleep_ms | TIME | ⬜ |

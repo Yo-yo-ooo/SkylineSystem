@@ -185,12 +185,33 @@ SkylineSystem/
 - **分层链表**：每窗口每条带一次裁剪判断，逐扫描线 blit；每帧 O(条带数 × 窗口数)。
 - **WM 拥有窗口装饰**：SDF 抗锯齿圆角、方向性软阴影、拖动、最大化、最小化、
   8 方向缩放；关闭按钮经 `sys_kill` **真正终止客户端进程**。
+- **z-order / 焦点管理**：栈序统一为组件层 `z`；点击窗口、任务栏 restore/raise
+  立即置顶并在同一帧把键盘焦点交给该客户端；最小化/关闭焦点窗口立即回退到
+  最高可见窗口；隐藏窗口不参与命中测试。最小化保存先态，恢复保持最大化
+  （`pre_minimized_max` / console `wm_prior`）。
+- **子进程退出事件**：内核在 `FinalizeProcExit`/`DeleteProc` 把 `{pid, code}` 推入
+  父进程 ring，桌面每帧通过 syscall 31 `child_event` 立即回收窗口；不再依赖
+  500ms `sys_kill(pid,0)` 轮询（仅保留 2s 兜底）。
+- **64MB 低内存模式**：`<80MiB` 时自动启动 Console + DOOM，Notepad/Settings
+  延迟（Ctrl+Alt+N/S 可按需拉起），把 56MiB 优先给 DOOM；`Ctrl+Alt+D` 始终可
+  raise/restore/spawn DOOM。PureDOOM zone 按内存分档（DOOM_TINY 下 ≤80MiB 为 8MiB）并
+  在 64MB QEMU 下验证可 init/持续渲染。完整说明与 QEMU 证据见
+  [docs/desktop-features.md](docs/desktop-features.md)。
+- **DOOM_TINY 极限压缩**：帧缓冲别名 + 去 RGBA 副本，固定 buffer 由 640KiB
+  降到 65KiB（省 575KiB）；WAD trim 删除音频 lump
+  `11,159,840 → 9,071,551 B`；ADPCM-XQ 思路的 IMA-ADPCM 工具 3.93:1。
+  详见 [docs/doom-extreme.md](docs/doom-extreme.md)。
+- 键盘兜底入口：`Ctrl+Alt+C/M/H` 聚焦 Console、切换最大化、最小化焦点窗口；
+  `Ctrl+Alt+D` 拉起 DOOM。
+
+已知边界：56MiB 可用内存下 DOOM 与 Notepad/Settings 同时常驻会触发 PMM
+OOM；低内存模式优先 DOOM，桌面应用延迟/独立启动。详见
+[docs/desktop-features.md](docs/desktop-features.md) 与
+[docs/gui.md](docs/gui.md)。
+
 - **独立光标层**：O(16²) 直写扫描输出，移动鼠标不触发整帧重组。
 - 文本：in-tree TTF 光栅器（基于 stb_truetype，LRU+哈希 glyph 缓存，CJK 排版）
   与 flanterm 控制台渲染器（均为第三方组件）。
-
-已知缺口：子进程退出依赖周期轮询探测；无 z-order/focus 管理；最小化会丢失最大化状态。
-详见 [docs/gui.md](docs/gui.md)。
 
 ### 3.3 内存与安全
 
@@ -254,20 +275,36 @@ sky.set_window_style{
   [docs/lua-desktop.md](docs/lua-desktop.md) 与
   `res/scripts/test/lua_desktop_smoke.ps1`。
 
-### 3.7 Installer、Settings 与 Notepad 文件对话框
+### 3.7 Setup 安装整个 OS、Settings 与 Notepad 文件对话框
 
-- **Installer**（`programs/installer/`）：GUI 安装程序，把 3 套 Lua 主题、
-  `/mp/themes.index`、Notepad 文件索引与示例笔记写入 `/mp`，窗口显示逐文件
-  安装日志；首启由 Settings 提示 + `I` / Ctrl+Alt+I 拉起（重复运行覆盖）；
-- **Settings**（`programs/settings/`）：启动时自动打开的设置窗口，读取
+- **Setup**（`programs/installer/`，UI 标题 SkylineSystem Setup）：在保留旧
+  6 个主题/配置资源安装的同时，读取构建期生成的 `/mp/os.pkg`
+  （`SKYOS1` 容器 + 64KiB LZ4 block），递归 `mkdir`（syscall 22）并流式解压
+  安装到 `/mp/system`：kernel、15 个 `.ko`、Limine 配置/引导文件、libsky、
+  desktop/notepad/settings/installer/doom 等程序以及 desktop.lua；写
+  `/mp/system/os.manifest`。首启由 Settings 提示 + `I` / Ctrl+Alt+I 拉起；
+- 构建：`make os-pkg`（生成 `programs/bin/os.pkg` 并 e2cp 到 `disk.img:/os.pkg`；
+  `cm`/`ma` 在 kernel/programs 后自动调用）；
+- **Settings**（`programs/settings/`）：启动时自动打开（2G 内存档），读取
   `/mp/themes.index` 列出主题；Enter 通过 WM 命令邮箱让桌面**立即加载选中 `.lua`**
-  （重绘壁纸与所有窗口 chrome），R 重载 `/mp/desktop.lua`，I 打开 Installer；
+  （重绘壁纸与所有窗口 chrome），R 重载 `/mp/desktop.lua`，I 打开 Setup；
 - **Notepad** 增加 **Ctrl+O Open 文件对话框**（读 `/mp/files.index`）、
   **Ctrl+W Close 对话框**（Save and Close / Discard / Cancel）、Ctrl+S 保存；
-- 桌面全局快捷键：**Ctrl+Alt+S** Settings、**Ctrl+Alt+N** Notepad、
-  **Ctrl+Alt+I** Installer；
+- **开始菜单**（任务栏最左侧按钮 / **Ctrl+Alt+B**）：WM 自绘的最高 z 层
+  overlay，列出 Explorer / Notepad / Settings / Setup / DOOM / Console / About；
+  鼠标点击或 Up/Down/Enter/Esc 键盘导航，点击外部关闭；菜单打开时键盘焦点
+  钉在 WM 自己的 reader slot，Esc 不会误关当前应用；
+- **Explorer 文件浏览器**（`programs/explorer/`，**Ctrl+Alt+E** 或菜单首项）：
+  通过新增固定 syscall **23 `readdir`** 真实枚举 ext4 目录（不再依赖静态
+  `files.index`），支持进入目录、返回上级、刷新、文本/二进制预览、文件大小；
+  旧内核（槽 23 仍 reserved）自动降级到 `/mp/files.index`；
+- 桌面全局快捷键：**Ctrl+Alt+B** 开始菜单、**Ctrl+Alt+E** Explorer、
+  **Ctrl+Alt+S** Settings、**Ctrl+Alt+N** Notepad、**Ctrl+Alt+I** Setup、
+  **Ctrl+Alt+D** DOOM、**Ctrl+Alt+C/M/H** 窗口键盘兜底；
 - 详见 [docs/desktop-features.md](docs/desktop-features.md)，QEMU 自动验证脚本：
-  `res/scripts/test/desktop_features_smoke.ps1`。
+  `res/scripts/test/desktop_features_smoke.ps1`、`res/scripts/test/setup_os_smoke.ps1`、
+  `res/scripts/test/doom_compact_smoke.ps1`、
+  `res/scripts/test/start_explorer_smoke.py`。
 
 ---
 
@@ -434,6 +471,9 @@ Installer / Settings / Notepad 对话框门禁（QEMU HMP 注入按键 + 串口�
 
 ```powershell
 pwsh -File res/scripts/test/desktop_features_smoke.ps1 -Root C:\ZSY\SkylineSystem
+pwsh -File res/scripts/test/setup_os_smoke.ps1          # Setup 安装整个 OS
+pwsh -File res/scripts/test/doom_compact_smoke.ps1      # DOOM_TINY
+pwsh -File res/scripts/test/doom_compact_smoke.ps1 -MemMB 64
 ```
 
 GitHub Actions 的 `.github/workflows/ci.yml` 已接入宿主套件、kmod/ASAN、stdc、静态分析与金样门禁。
@@ -465,7 +505,8 @@ readelf -r kernel/bin-x86_64/kernel | grep 32S   # 应为空
 | [filesystems.md](docs/filesystems.md) | VFS / SAF / lwext4 / FAT / 每 CPU 文件缓存 |
 | [network.md](docs/network.md) | e1000 驱动 + lwIP 移植、DHCP/ping/TCP 与边界 |
 | [lua-desktop.md](docs/lua-desktop.md) | 桌面内嵌 Lua 5.4：预置 `wallpaper` FrameBuffer 变量（addr/width/height/pitch + 绘制方法）、`sky.set_window_style` 窗口主题、标准 C 补充与 QEMU 截图门禁 |
-| [desktop-features.md](docs/desktop-features.md) | Installer 安装程序、Settings/Lua 主题加载界面、Notepad Open/Close 对话框、桌面快捷键、命令邮箱、QEMU 验证与 AHCI/ext4 SMP 修复 |
+| [desktop-features.md](docs/desktop-features.md) | Setup 安装整个 OS（SKYOS1/LZ4 + mkdir syscall + manifest）、Settings/Lua 主题、Notepad 对话框、开始菜单 + Explorer（readdir syscall 23）、桌面快捷键、命令邮箱、QEMU 验证与 AHCI/ext4 SMP 修复 |
+| [doom-extreme.md](docs/doom-extreme.md) | DOOM_TINY 极限压缩：帧缓冲别名、去 RGBA 副本（省 575KiB）、WAD trim（11.16→9.07MB）、ADPCM 工具、64MiB zone=8 与 RP2040 对照 |
 | [stability-report.md](docs/stability-report.md) · [stability-audit.md](docs/stability-audit.md) | 长稳运行报告与稳定性审计 |
 | [../SECURITY.md](SECURITY.md) | 安全状态、明确边界、已知风险与漏洞上报流程 |
 
@@ -496,7 +537,11 @@ readelf -r kernel/bin-x86_64/kernel | grep 32S   # 应为空
 6. **既有并发风险（pre-existing）**：文件缓存的 `file_cache_tick` 在 PIT IRQ 上下文
    持锁做较重工作，与 VMM/heap 锁存在跨核 AB-BA 窗口；kmod 自检已移到 sti 前单线程
    以降低触发概率，根治方向记录在 [kernel-components.md §11](docs/kernel-components.md)。
-7. **GUI 缺口**：无 z-order/focus 管理、最小化丢失最大化状态、子进程退出靠轮询。
+7. **GUI/DOOM 内存与 Setup 边界**：56MiB 可用内存下 DOOM 与
+   Notepad/Settings 同时常驻会触发 PMM OOM；低内存模式优先 DOOM、桌面应用
+   延迟。Setup 安装的是完整 OS 系统树到 ext4 `/mp/system`，不做分区/MBR/
+   limine bios-install 的裸机写盘；默认不复制专有 doom.wad/TTF。DOOM_TINY
+   压的是固定 buffer/WAD 音频体积，不是 RP2040 384KB 级别。
 8. **调度器 RIP 反馈无量化基准**：只验证 EWMA 收敛，不宣称性能收益。
 
 ---

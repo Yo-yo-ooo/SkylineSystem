@@ -496,7 +496,155 @@ uint64_t sys_fclose(uint64_t fd,GENERATE_IGN5()){
     return res;
 }
 
-uint64_t sys_mkdir(uint64_t path,uint64_t mode,GENERATE_IGN4()){
+/* ============================================================
+ * sys_mkdir —— 固定 syscall 22（ABI: path, mode）
+ * ------------------------------------------------------------
+ * 目录创建（Setup 安装器用它建 /mp/system/ 下的目录树）。
+ *   - 只支持 ext4 挂载：SAF/FAT 等实现返回 -ENOSYS（诚实语义，不假装成功）；
+ *   - ext4_dir_mk() 对已存在的目录返回 EOK（幂等），所以调用方可以按路径
+ *     逐段无脑 mkdir；
+ *   - 返回 0 成功；负 errno（-ENOENT 无挂载点 / -ENOMEM / -EFAULT / -EIO…）。
+ * 注意：lwext4 的目录创建走同一挂载点锁与事务，本函数不额外持锁。
+ * ============================================================ */
+uint64_t sys_mkdir(uint64_t path, uint64_t mode, GENERATE_IGN4()) {
     IGNV_4();
-    return -ENOSYS; // Function not implemented
+    (void)mode;   /* SkylineSystem 目前没有 per-inode mode/权限语义；保留参数 */
+
+    proc_t *proc = Schedule::this_proc();
+    if (!proc || !proc->pagemap) return -EINVAL;
+    if (!is_user_address(path)) return -EFAULT;
+
+    char *kpath = (char *)kmalloc(PATH_MAX);
+    if (!kpath) return -ENOMEM;
+
+    int64_t path_len = strncpy_from_user(kpath, (const char *)path, PATH_MAX,
+                                         proc->pagemap);
+    if (path_len <= 0) {          /* -EFAULT/-ENAMETOOLONG 或空路径 */
+        kfree(kpath);
+        return path_len < 0 ? (uint64_t)path_len : (uint64_t)(int64_t)-EINVAL;
+    }
+
+    __hmap_s_mp *MP = GetMount(kpath);
+    if (!MP) {
+        kfree(kpath);
+        return -ENOENT;
+    }
+    if (MP->FST != FSType::FS_EXT4) {
+        kfree(kpath);
+        return -ENOSYS;
+    }
+
+    int32_t r = ext4_dir_mk(kpath);
+    kfree(kpath);
+    /* lwext4: 0 = EOK, 正数 = errno；syscall ABI 统一负 errno */
+    return (uint64_t)(int64_t)(r > 0 ? -r : r);
+}
+
+/* ============================================================
+ * sys_readdir —— 固定 syscall 23（ABI: path, buf, cap, flags）
+ * ------------------------------------------------------------
+ * 目录枚举（Explorer 文件浏览器用）。用户态给出路径 + 输出缓冲，内核
+ * 一次性写入以 '\n' 分隔的**文本行**并追加结尾 '\0'：
+ *
+ *     "d|<name>\n"   目录
+ *     "f|<name>\n"   普通文件
+ *     "?|<name>\n"   其它类型（符号链接/设备等）
+ *
+ * 为什么用文本而不是二进制 struct：用户态与内核不必共享结构体布局，
+ * 旧用户程序也不会因为结构体大小漂移读错内存；名称就是 ext4 目录项的
+ * 原始字节（不含路径），最长 255 字节。'.' / '..' 与 inode==0 的空洞项
+ * 由内核过滤，返回值为写入的**字节数**（不含结尾 NUL）。
+ *
+ *   - 只支持 ext4 挂载：其它挂载点返回 -ENOSYS（诚实语义）；
+ *   - 缓冲不足时截断到**完整行**（绝不写半行），仍返回已写字节数；
+ *   - cap 上限 64 KiB，避免用户态诱导内核做超大分配；
+ *   - 返回负 errno：-EINVAL/-EFAULT/-ENOENT/-ENOMEM/-ENOSYS/-EIO。
+ * 与 sys_mkdir 一样，目录迭代内部走 lwext4 的挂载点锁，此处不额外持锁。
+ * ============================================================ */
+uint64_t sys_readdir(uint64_t path, uint64_t buf, uint64_t cap,
+                     GENERATE_IGN3()) {
+    IGNV_3();
+    proc_t *proc = Schedule::this_proc();
+    if (!proc || !proc->pagemap) return -EINVAL;
+    if (cap == 0u || cap > 65536u) return -EINVAL;
+    if (!is_user_address(path) || !is_user_address(buf)) return -EFAULT;
+
+    uint64_t user_space_end = IsPM5LVL ? USER_SPACE_END_5LVL : USER_SPACE_END_4LVL;
+    if (buf >= user_space_end || cap > user_space_end - buf) return -EFAULT;
+
+    char *kpath = (char *)kmalloc(PATH_MAX);
+    if (!kpath) return -ENOMEM;
+    int64_t path_len = strncpy_from_user(kpath, (const char *)path, PATH_MAX,
+                                         proc->pagemap);
+    if (path_len <= 0) {
+        kfree(kpath);
+        return path_len < 0 ? (uint64_t)path_len : (uint64_t)(int64_t)-EINVAL;
+    }
+
+    /* GetMountPointName() 要求路径形如 "/mp/<something>"（含第二个 '/'），
+       而文件浏览器从挂载点根 "/mp" 开始枚举：直接查表会得到 nullptr ->
+       -ENOENT。给纯挂载点路径补一个尾斜杠，归一化为 "/mp/"：既能命中挂载
+       表（key 本来就是 "/mp/"），lwext4 也能把它当作根目录打开。
+       带子路径的 "/mp/system" 保持不变。 */
+    {
+        const size_t plen = (size_t)path_len;
+        bool has_second_slash = false;
+        for (size_t i = 1; i < plen; i++)
+            if (kpath[i] == '/') { has_second_slash = true; break; }
+        if (!has_second_slash && plen + 1u < (size_t)PATH_MAX) {
+            kpath[plen] = '/';
+            kpath[plen + 1u] = '\0';
+        }
+    }
+
+    __hmap_s_mp *MP = GetMount(kpath);
+    if (!MP) { kfree(kpath); return -ENOENT; }
+    if (MP->FST != FSType::FS_EXT4) { kfree(kpath); return -ENOSYS; }
+
+    char *out = (char *)kmalloc(cap);
+    if (!out) { kfree(kpath); return -ENOMEM; }
+    _memset(out, 0, cap);
+
+    ext4_dir dir;
+    _memset(&dir, 0, sizeof(dir));
+    int32_t r = ext4_dir_open(&dir, kpath);
+    if (r != 0) {
+        kfree(kpath);
+        kfree(out);
+        /* lwext4: 0 = EOK, 正数 = errno；syscall ABI 统一负 errno */
+        return (uint64_t)(int64_t)-r;
+    }
+
+    size_t used = 0;
+    for (;;) {
+        const ext4_direntry *de = ext4_dir_entry_next(&dir);
+        if (!de) break;
+        if (de->inode == 0 || de->name_length == 0) continue;
+        /* ext4_dir_entry_next() 先把 de->name 清零再拷 name_length 字节,
+           所以这里一定是 NUL 结尾；仍按 255 上限兜底。 */
+        const char *name = (const char *)de->name;
+        if (name[0] == '.' && (name[1] == '\0' ||
+                               (name[1] == '.' && name[2] == '\0')))
+            continue;                       /* 过滤 . / .. */
+        const char type = (de->inode_type == EXT4_DE_DIR) ? 'd'
+                        : (de->inode_type == EXT4_DE_REG_FILE) ? 'f' : '?';
+        size_t nlen = 0;
+        while (nlen < (size_t)de->name_length && nlen < 255u && name[nlen]) nlen++;
+        /* 每行 = type + '|' + name + '\n'，另留 1 字节给结尾 NUL */
+        if (used + nlen + 3u >= cap) break;
+        out[used++] = type;
+        out[used++] = '|';
+        for (size_t i = 0; i < nlen; i++) out[used++] = name[i];
+        out[used++] = '\n';
+    }
+    out[used] = '\0';
+    ext4_dir_close(&dir);
+    kfree(kpath);
+
+    if (!VMM::UserAccess::CopyToUser(proc->pagemap, buf, out, used + 1u)) {
+        kfree(out);
+        return -EFAULT;
+    }
+    kfree(out);
+    return (uint64_t)used;
 }

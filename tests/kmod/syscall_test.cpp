@@ -249,7 +249,7 @@ kmod_export_t g_exp_builtin[4];
 /* ================================================================== */
 int32_t test_contract_table(void)
 {
-    KCHECK_EQ_U64(KmodSyscallContractCount(), 31u);
+    KCHECK_EQ_U64(KmodSyscallContractCount(), 32u);
 
     struct NameCase {
         uint32_t nr;
@@ -267,10 +267,13 @@ int32_t test_contract_table(void)
         {16u, "sysinfo"},       {17u, "time"},
         {18u, "arch_prctl"},    {19u, "kill"},
         {20u, "getrandom"},     {21u, "dev_mmap"},
+        {22u, "mkdir"},
+        {23u, "readdir"},
         {24u, "dbgsout"},       {25u, "dev_getinfo"},
         {26u, "dev_ioctl"},     {27u, "monotonic_ms"},
         {28u, "sleep_ms"},      {KMOD_SYSCALL_INFO, "kmod_info"},
         {KMOD_SYSCALL_PROBE, "kmod_probe"},
+        {31u, "child_event"},
     };
     for (const NameCase &c : names) {
         const kmod_syscall_contract_t *ct = KmodSyscallContract(c.nr);
@@ -282,13 +285,8 @@ int32_t test_contract_table(void)
         KCHECK_MSG(std::strcmp(ct->owner, "kernel") == 0, "slot %u owner=%s",
                    c.nr, ct->owner);
     }
-    /* 22/23 为保留空洞（只做占位审计） */
-    for (uint32_t nr = 22u; nr <= 23u; nr++) {
-        const kmod_syscall_contract_t *ct = KmodSyscallContract(nr);
-        KCHECK(ct != nullptr);
-        KCHECK_MSG(std::strcmp(ct->name, "reserved") == 0,
-                   "slot %u should be reserved", nr);
-    }
+    /* 22=mkdir（Setup 安装器），23=readdir（Explorer）；固定契约表
+       0..31 现在没有保留空洞，全部有名字。 */
     /* flags：0..28 FIXED；29 FIXED|KMOD；30 FIXED|SWAPPABLE */
     for (uint32_t nr = 0; nr <= 28u; nr++) {
         const kmod_syscall_contract_t *ct = KmodSyscallContract(nr);
@@ -300,7 +298,11 @@ int32_t test_contract_table(void)
                   (uint32_t)(KMOD_SC_FIXED | KMOD_SC_KMOD));
     KCHECK_EQ_U64(KmodSyscallContract(KMOD_SYSCALL_PROBE)->flags,
                   (uint32_t)(KMOD_SC_FIXED | KMOD_SC_SWAPPABLE));
-    KCHECK(KmodSyscallContract(31u) == nullptr);
+    /* 31 child_event 是新增的固定契约；32 起仍未定义 */
+    KCHECK(KmodSyscallContract(31u) != nullptr);
+    KCHECK_MSG(std::strcmp(KmodSyscallContract(31u)->name, "child_event") == 0,
+               "slot 31 should be child_event");
+    KCHECK(KmodSyscallContract(32u) == nullptr);
     KCHECK(KmodSyscallContract(KMOD_SYSCALL_CORE_MAX) == nullptr);
     KCHECK(KmodSyscallContract(200u) == nullptr);
     return 0;
@@ -694,7 +696,16 @@ int32_t test_builtin_fixed_registration(void)
                        "probe30");
     KCHECK_EQ(KmodSyscallRegisterModule(bm1), (int32_t)KMOD_ERR_POLICY);
 
-    /* 31..63 无契约定义的固定槽 -> POLICY */
+    /* 31 child_event：新增固定契约槽（Tier1 家族），内建组件可注册并分派 */
+    set_syscall_export(&g_exp_builtin[2], 31u, stub_dyn_fn2, "child_event");
+    KCHECK_EQ(KmodSyscallRegisterModule(bm1), (int32_t)KMOD_OK);
+    KCHECK_EQ(KmodSyscallSlot(31u)->module, 1);
+    KCHECK_EQ_U64(call_slot(31u), 0x22222222ull);
+    KCHECK_EQ_U64(g_kmod_modules[1].epoch_active, 0u);
+    KmodSyscallUnregisterModule(bm1);
+    KCHECK(KmodSyscallSlot(31u)->fn == nullptr);
+
+    /* 32..63 无契约定义的固定槽 -> POLICY */
     set_syscall_export(&g_exp_builtin[2], 40u, stub_dyn_fn2, "slot40");
     KCHECK_EQ(KmodSyscallRegisterModule(bm1), (int32_t)KMOD_ERR_POLICY);
 

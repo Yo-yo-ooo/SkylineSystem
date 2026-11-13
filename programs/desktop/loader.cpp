@@ -24,6 +24,8 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdarg.h>
 #include <syscall.h>
 #include <base/arch/x86_64/syscalln.h>
 #include <graphic/fb.h>
@@ -37,6 +39,21 @@
 
 static inline uint64_t align_up(uint64_t x, uint64_t a) {
     return (x + (a - 1)) & ~(a - 1);
+}
+
+/* spawn 失败诊断：以前 SpawnWindowedApp 一路静默返回 0，WM 只是不弹窗口，
+   从串口完全看不出是 ELF 加载、共享内存还是 launch 失败。 */
+static void spawn_diag(const char* fmt, ...) {
+    char buf[192];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+        if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
+        syscall(SYSCALL_DBGSOUT, (uint64_t)(uintptr_t)buf, (uint64_t)n,
+                0, 0, 0, 0);
+    }
 }
 
 /* Capture the rdi/rsi sideband (resolved src/dst VAs) immediately after the
@@ -196,7 +213,11 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     if (!Fb || !Fb->BaseAddress) return 0;
 
     uint64_t pid = sys_load((uint64_t)elf, 0, 0);
-    if ((int64_t)pid < 0) return 0;
+    if ((int64_t)pid < 0) {
+        spawn_diag("[wm] spawn: sys_load(%s) rc=%lld\n",
+                   elf, (long long)(int64_t)pid);
+        return 0;
+    }
 
     uint64_t self      = sys_getpid();
     uint32_t surfW     = bodyW + 2u * SKYWIN_SHADOW;
@@ -210,6 +231,10 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     uint64_t client_whole = 0, desk_whole = 0;
     read_sideband(&client_whole, &desk_whole);
     if ((int64_t)r1 < 0 || client_whole == 0 || desk_whole == 0) {
+        spawn_diag("[wm] spawn: surface share failed (%s) r1=%lld cva=0x%llx dva=0x%llx\n",
+                   elf, (long long)(int64_t)r1,
+                   (unsigned long long)client_whole,
+                   (unsigned long long)desk_whole);
         /* 失败回滚 —— 击杀已加载的客户端进程 */
         sys_kill(pid, 9);
         return 0;
@@ -222,6 +247,8 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     read_sideband(&proto_src, &proto);
     (void)proto_src;
     if ((int64_t)r2 < 0 || proto == 0) {
+        spawn_diag("[wm] spawn: proto share failed (%s) r2=%lld proto=0x%llx\n",
+                   elf, (long long)(int64_t)r2, (unsigned long long)proto);
         /* 失败回滚 —— share 1 桌面别名归还 + 进程击杀兜底 */
         sys_munmap(desk_whole, winBytes);
         sys_kill(pid, 9);
@@ -257,7 +284,10 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
     SkyPaintChromeSized(&wb, (int32_t)surfW, (int32_t)surfH,
                         (int32_t)bodyW, (int32_t)bodyH, 0, title, paperRGB);
 
-    if ((int64_t)sys_launch(pid) < 0) {
+    int64_t launchRc = (int64_t)sys_launch(pid);
+    if (launchRc < 0) {
+        spawn_diag("[wm] spawn: sys_launch(%s) rc=%lld\n",
+                   elf, (long long)launchRc);
         /* 启动失败回滚 —— 归还 share 1 桌面别名 + 击杀进程 */
         sys_munmap(desk_whole, winBytes);
         sys_kill(pid, 9);

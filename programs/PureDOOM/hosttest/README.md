@@ -45,6 +45,32 @@ rate) and two dumped frames; `frame_game.png` shows first-person E1M1 with
 the full HUD. The committed `frame_menu.png` / `frame_game.png` are from an
 actual run (freedoom 0.13 IWAD, Windows host, gcc -O2).
 
+## DOOM_TINY compact build
+
+`programs/PureDOOM/Makefile` builds the Skyline client with `DOOM_TINY=1` by
+default (one 64 KiB aliased screen, palette-index blit, no wipe/save/audio).
+The host harness is mode-agnostic: pass the same define to both compiler
+commands to test the compact path, or omit it for the upstream 4-screen path.
+
+```sh
+# compact build (what Skyline ships):
+gcc -O2 -std=gnu17 -Dmain=doom_client_main -DDOOM_TINY=1 \
+    -Ihosttest -I.. -I../../../lib/include \
+    -c ../skyline/doom_main.c -o doom_shim.o
+gcc -O2 -std=gnu17 -DDOOM_TINY=1 -Ihosttest -I.. -I../../../lib/include \
+    -c harness.c -o harness.o
+```
+
+Two host-specific notes:
+
+- `syscall.h` now also provides `SysInfo` / `sys_sysinfo()` (2 GiB profile in
+  `harness.c`), because the shim's zone-size policy and the compact-build
+  memory markers read `mem_total` / `mem_free`.
+- The compact build expects the **trimmed** IWAD produced by
+  `make -C programs/PureDOOM wadtrim` if you want to test the audio-stubbed
+  path; the normal build needs the untouched IWAD (it pre-caches sfx lumps and
+  looks up `D_*` music lumps).
+
 ## What it proved / what it caught
 
 - end-to-end: WAD load through the file hooks, zone allocator through the

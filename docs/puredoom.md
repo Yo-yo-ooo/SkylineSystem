@@ -177,3 +177,23 @@ into a GPL-2.0 program is fine; the resulting `doom.elf` is GPL-2.0.
 The **WAD is not part of the source license** — the IWAD
 is id Software game data and must not be committed. `programs/PureDOOM/.gitignore`
 excludes `*.wad`.
+
+## 2026-11：DOOM_TINY 极限压缩模式
+
+`DOOM_TINY`（`programs/PureDOOM/Makefile` 默认 1）见
+[doom-extreme.md](./doom-extreme.md)。摘要：
+
+- 帧缓冲别名：`screens[0..3]` 共用 1×64KiB；wipe/save-load/后屏禁用；
+- 去掉 `screen_buffer`（64KiB）与 `final_screen_buffer`（256KiB RGBA），
+  shim 每帧 palette→ARGB LUT 直写 WM surface；
+- 固定 buffer 由 640KiB 降到 65KiB，**省 575KiB**；
+- 音频全剥离（tiny audio stub），`tools/wadtrim.py` 删除 289 个音频 lump：
+  `doom.wad 11,159,840 → 9,071,551 B`（81.29%）；
+- `--adpcm` IMA-ADPCM 4-bit 工具：122 个 DMX sfx `1,222,616 → 620,982 B`
+  （3.93:1 vs 16-bit PCM，1.97:1 vs DMX8）；
+- zone 策略 DOOM_TINY 下 ≤80MiB → 8MiB，≤128MiB → 10MiB，>192MiB → 12MiB；
+- QEMU 2G/64M 门禁 `res/scripts/test/doom_compact_smoke.ps1` 均 PASS
+  （64M：zone=8，`init done` + 心跳，0 panic）。
+
+诚实边界：仍从 ext4 `/mp/doom.wad` 流式读取；fixed_t/关卡数据未做有损压缩；
+不是 RP2040 的 384KB 运行环境。

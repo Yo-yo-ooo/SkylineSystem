@@ -305,6 +305,34 @@ static void EnqueueProcZombie(proc_t *proc) {
     irq_restore(flags);
 }
 
+/* ============================================================
+ *  子进程退出事件 (v1)
+ * ------------------------------------------------------------
+ *  生产者: FinalizeProcExit（自退出）/ DeleteProc（外部 kill）。两者都在
+ *  PROC_LIST_LOCK 临界区内、把子进程从 parent->children 摘除**之前**调用
+ *  child_exit_push_locked()，因此父进程不会漏掉事件（父进程此时不可能被
+ *  回收：回收父进程同样要先拿 PROC_LIST_LOCK 才能遍历/清空 children）。
+ *  消费者: sys_child_event(31) -> Schedule::ConsumeChildExitEvent()。
+ *  队列满: 丢弃最旧的一条并累加 child_ev_overflow（不扩 syscall ABI；
+ *  调用方可保留低频 sys_kill(pid,0) 兜底扫描覆盖丢失事件）。
+ * ============================================================ */
+static void child_exit_push_locked(proc_t *parent, int32_t pid, int32_t code) {
+    if (!parent)
+        return;
+    uint32_t head = parent->child_ev_head;
+    uint32_t tail = parent->child_ev_tail;
+    if ((uint32_t)(head - tail) >= PROC_CHILD_EVENT_CAP) {
+        /* ring full: drop the OLDEST event, keep the newest exit visible */
+        tail++;
+        parent->child_ev_overflow++;
+    }
+    uint32_t slot = head % PROC_CHILD_EVENT_CAP;
+    parent->child_ev[slot].pid = pid;
+    parent->child_ev[slot].code = code;
+    parent->child_ev_head = head + 1u;
+    parent->child_ev_tail = tail;
+}
+
 namespace Schedule {
     void DrainProcZombieList(cpu_t *cpu) {
         if (!cpu) return;
@@ -496,6 +524,11 @@ namespace Schedule {
 
         uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
         if (proc->parent) {
+            /* 子进程退出事件：必须在摘除 parent->children 之前入队
+               （父进程未 exiting 才入队；否则无人消费且父可能正在回收）。
+               外部 kill 路径没有退出码，code 记 0（unknown）。 */
+            if (__atomic_load_n(&proc->parent->exiting, __ATOMIC_ACQUIRE) == 0)
+                child_exit_push_locked(proc->parent, (int32_t)proc->id, 0);
             if (proc->parent->children == proc) proc->parent->children = proc->sibling;
             else {
                 proc_t *sibling = proc->parent->children;
@@ -518,6 +551,28 @@ namespace Schedule {
         EnqueueProcZombie(proc);
     }
 
+    /* 子进程退出事件消费者（sys_child_event(31)）：从当前进程的固定 ring
+     * 弹出一条。空队列返回 false；绝不阻塞、不计 epoch（纯内存操作）。 */
+    bool ConsumeChildExitEvent(int32_t *pid_out, int32_t *code_out) {
+        proc_t *me = this_proc();
+        if (!me) return false;
+        child_exit_event_t ev;
+        ev.pid = 0;
+        ev.code = 0;
+        uint64_t rflags = spin_lock_irqsave(&PROC_LIST_LOCK);
+        uint32_t tail = me->child_ev_tail;
+        if (tail == me->child_ev_head) {
+            spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+            return false;
+        }
+        ev = me->child_ev[tail % PROC_CHILD_EVENT_CAP];
+        me->child_ev_tail = tail + 1u;
+        spin_unlock_irqrestore(&PROC_LIST_LOCK, rflags);
+        if (pid_out) *pid_out = ev.pid;
+        if (code_out) *code_out = ev.code;
+        return true;
+    }
+
     static void FinalizeProcExit(proc_t *proc, cpu_t *cpu) {
         uint64_t pid = proc->id;
         thread_t *curr_thread = cpu->current_thread;
@@ -535,6 +590,13 @@ namespace Schedule {
         curr_thread->next = curr_thread->prev = nullptr;
 
         if (proc->parent) {
+            /* 子进程退出事件：摘除 parent->children 之前入队 {pid, exit_code}。
+               exit_code 来自发起退出的线程（PROC_KILL 在 FinalizeProcExit
+               之前已把它写进 curr_thread->exit_code）。父进程 exiting 时
+               跳过：无人消费且父进程可能正在被回收。 */
+            if (__atomic_load_n(&proc->parent->exiting, __ATOMIC_ACQUIRE) == 0)
+                child_exit_push_locked(proc->parent, (int32_t)proc->id,
+                                       (int32_t)curr_thread->exit_code);
             if (proc->parent->children == proc) proc->parent->children = proc->sibling;
             else {
                 proc_t *sibling = proc->parent->children;
@@ -901,25 +963,25 @@ namespace Schedule {
                                    main_bias,
                                    &so_tls_image, &so_tls_image_len, &tls_main_data_off);
             if (dr < 0) {
-                kerrorln("dynamic linking failed: %d", dr);
+                kerrorln("dynamic linking failed: %d (file=%s)", dr, Path);
                 kfree(buffer); kfree(thread);
                 return nullptr;
             }
         }
 
         thread->fx_area = (char*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
-        if (!thread->fx_area) { kfree(buffer); kfree(thread); return nullptr; }
+        if (!thread->fx_area) { kerrorln("NewThread(%s): fx_area alloc failed", Path); kfree(buffer); kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);
-        if (!kernel_stack) { VMM::Free(kernel_pagemap, (void*)thread->fx_area); kfree(buffer); kfree(thread); return nullptr; }
+        if (!kernel_stack) { kerrorln("NewThread(%s): kernel_stack alloc failed", Path); VMM::Free(kernel_pagemap, (void*)thread->fx_area); kfree(buffer); kfree(thread); return nullptr; }
         _memset((void*)kernel_stack, 0, 4 * PAGE_SIZE);
         thread->kernel_stack = kernel_stack; thread->kernel_rsp = kernel_stack + (PAGE_SIZE * 4);
         uint64_t thread_stack = (uint64_t)VMM::Alloc(thread->pagemap, 8, true);
-        if (!thread_stack) { VMM::Free(kernel_pagemap, (void*)thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); kfree(buffer); kfree(thread); return nullptr; }
+        if (!thread_stack) { kerrorln("NewThread(%s): user stack alloc failed", Path); VMM::Free(kernel_pagemap, (void*)thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); kfree(buffer); kfree(thread); return nullptr; }
         thread->stack = thread_stack; thread->thread_stack = thread_stack + 8 * PAGE_SIZE;
         uint64_t sig_stack = (uint64_t)VMM::Alloc(thread->pagemap, 1, true);
-        if (!sig_stack) { VMM::Free(kernel_pagemap, (void*)thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); VMM::Free(thread->pagemap, (void*)thread_stack); kfree(buffer); kfree(thread); return nullptr; }
+        if (!sig_stack) { kerrorln("NewThread(%s): sig stack alloc failed", Path); VMM::Free(kernel_pagemap, (void*)thread->fx_area); VMM::Free(kernel_pagemap, (void*)kernel_stack); VMM::Free(thread->pagemap, (void*)thread_stack); kfree(buffer); kfree(thread); return nullptr; }
         thread->sig_stack = sig_stack;
         thread->ctx.cs = 0x23; thread->ctx.ss = 0x1b; thread->ctx.rflags = 0x202;
         thread->ctx.rsp = thread->thread_stack;

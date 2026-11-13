@@ -48,9 +48,10 @@ the main thread renders strip 0; each of the remaining N-1 strips starts one wor
 
 - Window decorations are drawn by the WM; applications only handle the client area;
 - The **console window** has full interaction: dragging, maximizing, minimizing (restore from the taskbar), 8-direction resizing, and the close button reclaims the entire client process via `sys_kill`;
-- **notepad's window is registered but not managed**: it takes part in no hit testing / dragging / resizing / maximizing / closing;
-- **No child-process exit notification** (no waitpid/SIGCHLD): after a client `return 0`, a dead window is left on screen;
-- No z-order raise / focus management; minimizing loses the maximized state;
+- Generic clients (Notepad / DOOM / Settings / Installer) are now managed by the same WM path: hit testing, caption drag, edge resize, maximize/minimize/close, click-to-front;
+- **Child-process exit is event-driven**: the kernel pushes `{pid, exit_code}` into the parent's child-event ring in `FinalizeProcExit`/`DeleteProc`; the desktop drains fixed syscall 31 `child_event` every loop and drops the window immediately (a 2s `sys_kill(pid,0)` sweep remains only as overflow fallback);
+- **z-order / focus management**: stacking order is the compositor layer `z`; pressing any window or taskbar restore/raise brings it to the top and installs keyboard focus in the same frame; `wm_refocus()` falls back to the topmost visible window when the explicit focus target is minimized/closed; hidden windows are skipped by hit testing;
+- **Minimize preserves maximize state**: generic clients record `pre_minimized_max`, console records `wm_prior` on every minimize path (caption button and taskbar pill); restore re-applies the maximized geometry and raises the window. Keyboard fallbacks: `Ctrl+Alt+C` focus console, `Ctrl+Alt+M` toggle maximize, `Ctrl+Alt+H` minimize focused window;
 - "The console client is pure standard C and compiles unchanged with any host toolchain" — **inaccurate**: it depends on the in-tree libc (`-nostdlib`, the in-tree `_start`, the protocol page pinned at 0x400000) and can only be built against the libc that ships with this project;
 - The client and the compositor share a single surface with no flip/fence: the compositor may sample a frame the client is still halfway through redrawing;
 - `programs/desktop/loader.cpp` is responsible for loading the ELF into a new process and attaching it to a window.

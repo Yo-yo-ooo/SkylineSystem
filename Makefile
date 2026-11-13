@@ -188,6 +188,29 @@ kernel: kernel-deps
 	@echo "Building Kernel Modules (.ko)!"
 	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)" modules
 
+# ---------------------------------------------------------------------------
+# OS 安装包（Setup 用）：programs/bin/os.pkg = SKYOS1 容器 + 64 KiB 块 LZ4。
+# 内容见 res/scripts/build_os_pkg.py（存在才收、缺失跳过；默认不含 doom.wad，
+# 需要时 python3 res/scripts/build_os_pkg.py --with-doom-wad）。
+# 本目标只打包/拷盘, 不触发任何重构建, 也不会被 all 递归调用；cm/ma 在产出
+# kernel 与 programs 之后显式调用它。disk.img 存在则覆盖写入 /os.pkg。
+# ---------------------------------------------------------------------------
+.PHONY: os-pkg
+os-pkg:
+	@python3 res/scripts/build_os_pkg.py
+ifeq ($(KARCH),x86_64)
+	@if [ -f "$(PROGRAM_IMAGE_NAME).img" ]; then \
+		e2rm "$(PROGRAM_IMAGE_NAME).img:/os.pkg" >/dev/null 2>&1 || true; \
+		if e2cp programs/bin/os.pkg "$(PROGRAM_IMAGE_NAME).img:/os.pkg"; then \
+			echo "os.pkg -> $(PROGRAM_IMAGE_NAME).img:/os.pkg"; \
+		else \
+			echo "WARN: os.pkg e2cp 失败（disk.img 可能损坏/只读）"; \
+		fi; \
+	else \
+		echo "WARN: $(PROGRAM_IMAGE_NAME).img 不存在，跳过 os.pkg e2cp（先 make cm 生成镜像）"; \
+	fi
+endif
+
 $(IMAGE_NAME).iso: limine-binary/limine kernel
 	rm -rf iso_root
 	mkdir -p iso_root/boot
@@ -313,6 +336,8 @@ endif
 	@$(MAKE) -j$(shell nproc)
 ifeq ($(KARCH),x86_64)
 	@cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
+	@# kernel/programs/lib 产出后再打 OS 安装包并写入 disk.img:/os.pkg（Setup 用）
+	@$(MAKE) --no-print-directory os-pkg
 endif
 
 ma:
@@ -332,6 +357,8 @@ endif
 	@$(MAKE) -j$(shell nproc)
 ifeq ($(KARCH),x86_64)
 	@cp -f kernel/bin-$(KARCH)/$(OUTPUT)/kernel kernel
+	@# kernel/programs/lib 产出后再打 OS 安装包并写入 disk.img:/os.pkg（Setup 用）
+	@$(MAKE) --no-print-directory os-pkg
 endif
 
 mk:

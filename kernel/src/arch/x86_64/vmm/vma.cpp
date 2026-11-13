@@ -229,6 +229,12 @@ namespace VMM{
 
         vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags) {
             if (vma_unlikely(!after)) return nullptr;
+            /* 低内存下 VMA 节点池可能耗尽，或者 SetStart 的哨兵分配失败导致
+               vma_head 链未建立；此时 after->next 可能是 nullptr。原实现直接
+               `after->next->prev = region` 会在 addr=0x20 处内核 #PF（实测
+               64MB + DOOM 启动时 sys_thread_launch -> VMM::Alloc 路径）。
+               这里把"链不完整"当作分配失败返回，让上层 -ENOMEM 优雅降级。 */
+            if (vma_unlikely(!after->next)) return nullptr;
             vma_region_t *region = vma_alloc_node();
             if (vma_unlikely(!region)) return nullptr;   /*  PMM 耗尽,调用方须判空 */
             region->start      = start;

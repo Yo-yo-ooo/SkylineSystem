@@ -194,7 +194,10 @@ static void wm_drop(Compositor& comp, WmClient* c) {
     c->resizing = false;
     c->pressClose = false;
     c->pressMin = false;
+    c->pressMax = false;
     c->minimized = false;
+    c->maximized = false;
+    c->pre_minimized_max = false;
     if (g_press == c) g_press = nullptr;
     wm_diag_str("drop", c->title);
 }
@@ -207,20 +210,35 @@ void wm_client_close(Compositor& comp, WmClient* c) {
 
 void wm_client_minimize(Compositor& comp, WmClient* c) {
     if (!c || !c->used) return;
+    if (c->minimized) return;                 /* 幂等：重复最小化不覆盖先态 */
+    /* 记录最小化前的最大化态：恢复时必须回到 MAX（不能丢状态）。 */
+    c->pre_minimized_max = c->maximized;
     c->minimized = true;
     comp.SetVisible(&c->win, false);
+    /* 最小化只隐藏，不改 z 序；恢复时 restore() 会 raise。 */
 }
 
-void wm_client_restore(Compositor& comp, WmClient* c) {
+void wm_client_restore(Compositor& comp, WmClient* c,
+                       int32_t scrW, int32_t scrH, int32_t taskbarH,
+                       bool* dirty) {
     if (!c || !c->used || !c->layer) return;
+    /* 先解除最小化 (toggle_max 对 minimized 窗口是 no-op), 再按先态还原
+       最大化几何 —— 这样"最大化->最小化->恢复"不会丢 MAX 状态。 */
     c->minimized = false;
+    if (c->pre_minimized_max && !c->maximized) {
+        bool d = false;
+        wm_client_toggle_max(c, scrW, scrH, taskbarH, &d);
+        if (d && dirty) *dirty = true;
+    }
+    c->pre_minimized_max = false;
     comp.SetVisible(&c->win, true);
     comp.RaiseWindow(&c->win);   /* a restored window takes the top */
 }
 
 void wm_client_toggle_max(WmClient* c, int32_t scrW, int32_t scrH,
                           int32_t taskbarH, bool* dirty) {
-    if (!c || !c->used || !c->layer) return;
+    /* 最小化/未挂载的窗口不得触发最大化切换（无效果，也不改状态）。 */
+    if (!c || !c->used || !c->layer || c->minimized) return;
     const int32_t M = (int32_t)SKYWIN_SHADOW;
     if (!c->maximized) {
         c->savedX = c->bodyX; c->savedY = c->bodyY;
@@ -313,7 +331,8 @@ WmClient* wm_client_hit(int32_t x, int32_t y) {
     WmClient* best = nullptr;
     for (int i = 0; i < WM_MAX_CLIENTS; i++) {
         WmClient* c = &g_clients[i];
-        if (!c->used || !c->layer) continue;
+        /* 最小化的窗口只是隐藏：既不可命中，也不能抢 z/focus。 */
+        if (!c->used || !c->layer || c->minimized) continue;
         int32_t bx, by, bw, bh;
         wm_body(c, &bx, &by, &bw, &bh);
         if (x >= bx && x < bx + bw && y >= by && y < by + bh)
@@ -563,6 +582,18 @@ void wm_clients_sweep(Compositor& comp, bool* dirty) {
     }
 }
 
+bool wm_client_reap_pid(Compositor& comp, int32_t pid, bool* dirty) {
+    if (pid <= 0) return false;
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) {
+        WmClient* c = &g_clients[i];
+        if (!c->used || (int32_t)c->place.client_pid != pid) continue;
+        wm_drop(comp, c);
+        if (dirty) *dirty = true;
+        return true;
+    }
+    return false;
+}
+
 void wm_clients_poll_output(bool* dirty, int32_t* py0, int32_t* py1) {
     for (int i = 0; i < WM_MAX_CLIENTS; i++) {
         WmClient* c = &g_clients[i];
@@ -590,6 +621,16 @@ WmClient* wm_client_find_title(const char* title) {
     for (int i = 0; i < WM_MAX_CLIENTS; i++) {
         WmClient* c = &g_clients[i];
         if (c->used && c->title && strcmp(c->title, title) == 0)
+            return c;
+    }
+    return nullptr;
+}
+
+WmClient* wm_client_find_pid(uint64_t pid) {
+    if (!pid) return nullptr;
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) {
+        WmClient* c = &g_clients[i];
+        if (c->used && c->place.client_pid == pid)
             return c;
     }
     return nullptr;

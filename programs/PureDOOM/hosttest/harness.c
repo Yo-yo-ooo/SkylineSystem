@@ -73,6 +73,19 @@ long fsize(FILE* f) {
 uint64_t sys_getpid(void) { return 4242; }
 void     sys_exit(uint64_t s) { exit((int)s); }
 
+/* Host stand-in for the kernel sysinfo page: the shim's zone-size policy and
+   compact-build memory markers read mem_total/mem_free. Use a 2 GiB profile so
+   the host test exercises the normal (non-64M) zone tier. */
+static SysInfo g_host_sysinfo;
+uint64_t sys_sysinfo(uint64_t ARG) {
+    if (ARG) return 0;               /* munmap request: nothing to unmap */
+    g_host_sysinfo.occupy_pages = 1;
+    g_host_sysinfo.mem_total = (uint64_t)2048 << 20;
+    g_host_sysinfo.mem_free  = (uint64_t)1900 << 20;
+    g_host_sysinfo.mem_used  = g_host_sysinfo.mem_total - g_host_sysinfo.mem_free;
+    return (uint64_t)(uintptr_t)&g_host_sysinfo;
+}
+
 /* ---- the frame pump: DOOM calls this once per loop turn ---- */
 static int     g_tick = 0;
 static clock_t g_t0 = 0;

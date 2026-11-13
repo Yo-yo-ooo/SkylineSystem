@@ -29,6 +29,12 @@ LDFLAGS := -entry=_start -static -nostdlib -m elf_x86_64 -z noexecstack \
 # DOOM's 1993 code is not warning-clean and predates C23: `enum { false, true }`
 # collides with the C23 keywords, so this project is pinned to gnu17.
 # -fno-strict-aliasing: the original engine aliases freely through byte*.
+#
+# DOOM_TINY: Skyline "compact" build, ON by default here (one 64 KiB aliased
+# screen, no RGBA copy / wipe / save-load; see PureDOOM.h). Use
+# `make -C programs/PureDOOM DOOM_TINY=0` for the upstream 4-screen behaviour.
+DOOM_TINY ?= 1
+
 CFLAGS := -nostdlib -nostdinc \
     -I../../ablib/freestndchdrs/$(BUILD_ARCH)/include \
     -I. -I../../lib/include/stdc -I../../lib/include -I../../lib/include/base/arch/$(BUILD_ARCH) \
@@ -36,6 +42,7 @@ CFLAGS := -nostdlib -nostdinc \
     -fno-omit-frame-pointer -fno-exceptions \
     -ffunction-sections -fdata-sections -O2 -m64 -static -g3 \
     -std=gnu17 -fno-strict-aliasing \
+    -DDOOM_TINY=$(DOOM_TINY) \
     -Wall -Wextra \
     -Wno-unused-variable -Wno-unused-but-set-variable -Wno-parentheses \
     -Wno-enum-compare -Wno-unknown-pragmas -Wno-sign-compare \
@@ -49,8 +56,7 @@ OBJ := $(addprefix $(OBJDIR)/$(PROJ_NAME)/, \
     $(CPPFILES:.cpp=.cpp.o) \
 )
 
-.PHONY: all clean
-# 动态链接版 (PIE + libsky.so)。原先 -T ./link/console_x86_64.ld 是必须的
+.PHONY: all clean# 动态链接版 (PIE + libsky.so)。原先 -T ./link/console_x86_64.ld 是必须的
 # (静态 ET_EXEC 的只读头部会落在 0x400000 = WM 协议页, 第一次 OUT_SEQ 就写
 # 只读页崩在 addr=0x400048); 现在内核在加载期保证该 VA 有可写页, 且 PIE
 # 程序被搬到高地址, 头部不再占用它。详见 docs/dynamic-clients-plan.md。
@@ -75,3 +81,28 @@ $(OBJDIR)/$(PROJ_NAME)/%.cpp.o: %.cpp Makefile
 
 clean:
 	rm -rf $(OBJDIR)/$(PROJ_NAME) $(BINDIR)/doom.elf
+
+# ---- host-side WAD trimmer (host tool; never part of the default build) ----
+# The Skyline port runs without audio, so tools/wadtrim.py strips music (D_*),
+# DMX sound FX (DS*) and PC-speaker FX (DP*) lumps and rewrites a legal WAD.
+#   make -C programs/PureDOOM wadtrim                     -> doom_trim.wad
+#   make -C programs/PureDOOM wadtrim WADTRIM_FLAGS=--adpcm   (IMA-ADPCM stats)
+# Then install the trimmed file as /mp/doom.wad (the name the engine probes
+# under $DOOMWADDIR) on disk.img - e2cp is done by the integration owner.
+WADTRIM       := tools/wadtrim.py
+WADTRIM_IN    ?= $(firstword $(wildcard doom.wad doom1.wad))
+WADTRIM_OUT   ?= doom_trim.wad
+WADTRIM_FLAGS ?=
+
+.PHONY: wadtrim wadtrim-verify wadtrim-self-test
+wadtrim:
+	@if [ -z "$(WADTRIM_IN)" ]; then \
+	    echo "ERROR: no doom.wad/doom1.wad under programs/PureDOOM"; exit 1; fi
+	python3 $(WADTRIM) "$(WADTRIM_IN)" "$(WADTRIM_OUT)" --verify $(WADTRIM_FLAGS)
+
+wadtrim-verify: wadtrim
+	@echo "[wadtrim] output: $(WADTRIM_OUT)"
+	@ls -l "$(WADTRIM_OUT)"
+
+wadtrim-self-test:
+	python3 $(WADTRIM) --self-test

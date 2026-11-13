@@ -9,6 +9,7 @@
 #include <atomic/atomic.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/cpu/smap.h>      // SmapGuard
+#include <arch/x86_64/vmm/vmm.h>       // UserAccess::CopyToUser / is_user_address
 
 extern art_tree *pid2proc_tree;
 
@@ -445,4 +446,45 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
     if (cpu != self) LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
 
     return t->id;
+}
+
+/* ============================================================
+ * sys_child_event —— 子进程退出事件 (固定 syscall 31, ABI v1)
+ * ------------------------------------------------------------
+ * 参数: a0 = 用户缓冲指针，指向 8 字节结构 { int32 pid; int32 code; }
+ * 返回:  1 = 成功复制一条事件到用户缓冲
+ *        0 = 当前进程的事件队列为空
+ *       <0 = -errno (-EINVAL 无进程/非法缓冲, -EFAULT 用户拷贝失败)
+ *
+ * 语义固定：事件由内核在子进程退出时排队到父进程（sys_load/fork 建立的
+ * parent 关系）的固定 ring（PROC_CHILD_EVENT_CAP=8）；ring 满时丢最旧，
+ * 调用方可保留低频 sys_kill(pid,0) 兜底扫描。消费不阻塞；同一进程多线程
+ * 并发调用安全（PROC_LIST_LOCK 串行化 tail 推进），每条事件只会被一个
+ * 调用者取到。
+ * ============================================================ */
+struct child_event_user {
+    int32_t pid;
+    int32_t code;
+};
+
+uint64_t sys_child_event(uint64_t u_buf, GENERATE_IGN5()) {
+    IGNV_5();
+    proc_t *me = Schedule::this_proc();
+    if (!me) return -EINVAL;
+    /* 先做用户地址校验（不触碰用户页），拷贝放到锁外，避免缺页时持锁 */
+    if (u_buf == 0 || !is_user_address(u_buf) ||
+        !is_user_buffer_valid(u_buf, sizeof(struct child_event_user)))
+        return -EINVAL;
+
+    int32_t pid = 0;
+    int32_t code = 0;
+    if (!Schedule::ConsumeChildExitEvent(&pid, &code))
+        return 0;
+
+    struct child_event_user ev;
+    ev.pid = pid;
+    ev.code = code;
+    if (!VMM::UserAccess::CopyToUser(me->pagemap, u_buf, &ev, sizeof(ev)))
+        return -EFAULT;
+    return 1;
 }

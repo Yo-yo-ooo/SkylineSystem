@@ -38,6 +38,7 @@ struct WmClient {
     int32_t         rzPitch;
     bool            resizing;        /* edge/corner drag in progress            */
     bool            maximized;       /* body stretched to the work area         */
+    bool            pre_minimized_max; /* 最小化前的最大化态（恢复时还原）     */
     bool            pressMax;        /* maximize button armed                   */
     uint32_t        savedW, savedH;  /* geometry to restore from maximized      */
     int32_t         savedX, savedY;
@@ -74,6 +75,9 @@ void      wm_client_drag_all(Compositor& comp, int32_t mx, int32_t my,
                              int32_t scrW, int32_t scrH, int32_t taskbarH);
 bool      wm_client_any_drag(void);
 void      wm_clients_sweep  (Compositor& comp, bool* dirty);
+/* 按 pid 立即摘除一个已退出子进程的窗口（内核 child-exit 事件消费者用）。
+ * 找不到（已关闭/未知 pid）返回 false。 */
+bool      wm_client_reap_pid(Compositor& comp, int32_t pid, bool* dirty);
 /* Per-client frame ping: a client that renders continuously (DOOM) bumps
    OUT_SEQ in its protocol page; poll it every loop turn and mark the scene
    dirty so the compositor picks the new frame up immediately. */
@@ -81,8 +85,14 @@ void      wm_clients_sweep  (Compositor& comp, bool* dirty);
    无变化时保持原值不变。 */
 void      wm_clients_poll_output(bool* dirty, int32_t* py0, int32_t* py1);
 void      wm_client_close   (Compositor& comp, WmClient* c);
+/* 最小化：记录 pre_minimized_max（最小化前的最大化态）并隐藏窗口；
+ * 不改 z 序（隐藏而已），恢复时由 restore() 重新置顶并按先态还原几何。 */
 void      wm_client_minimize(Compositor& comp, WmClient* c);
-void      wm_client_restore (Compositor& comp, WmClient* c);
+/* 恢复：先按 pre_minimized_max 还原最大化几何（需要屏幕/任务栏尺寸），
+ * 再 SetVisible(true) + RaiseWindow（恢复即置顶）。 */
+void      wm_client_restore (Compositor& comp, WmClient* c,
+                             int32_t scrW, int32_t scrH, int32_t taskbarH,
+                             bool* dirty);
 /* Maximize / restore for a generic client: the body is stretched to the work
    area and presented from the WM resize surface (the client bitmap is still
    mirrored 1:1, so this is "more room", not scaling). */
@@ -94,9 +104,10 @@ int       wm_client_count       (void);                 /* used slots           
 WmClient* wm_client_by_order    (int idx);              /* idx-th used client      */
 WmClient* wm_client_top_visible (void);                 /* highest-z shown client  */
 WmClient* wm_client_find_title  (const char* title);    /* first client by title   */
+WmClient* wm_client_find_pid    (uint64_t pid);          /* first client by pid     */
 
 /* Client -> WM one-shot command mailbox (settings/installer use it).
- * Returns 1 and fills *out/*cmd/arg if any client published a new command;
+ * Returns 1 and fills out / cmd / arg if any client published a new command;
  * the command slot is cleared after consumption. */
 int       wm_client_poll_command(WmClient** out, uint64_t* cmd,
                                  char* arg, uint32_t argCap);

@@ -64,6 +64,21 @@ static void str_copy_bounded(char *dst, size_t cap, const char *src)
     dst[i] = '\0';
 }
 
+/* 串口诊断（门禁/回归定位 selected_theme 写入语义用；无 WM 协议依赖）。 */
+static void settings_log(const char *fmt, ...)
+{
+    char buf[240];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+        if (n > (int)sizeof(buf) - 1) n = (int)sizeof(buf) - 1;
+        syscall(SYS_DBGSOUT, (uint64_t)(uintptr_t)buf, (uint64_t)n,
+                0, 0, 0, 0);
+    }
+}
+
 /* 去首尾空白 + CR/LF（原地，返回同一指针便于链式使用） */
 static char *str_trim(char *s)
 {
@@ -163,6 +178,8 @@ static void load_theme_list(void)
         }
     }
     set_status(1, "Loaded %d theme(s) from %s", g_theme_count, SET_INDEX_FILE);
+    settings_log("[settings] list count=%d current=%s sel=%d\n",
+                 g_theme_count, g_current[0] ? g_current : "(none)", g_sel);
 }
 
 /* ---- /mp/selected_theme.txt（本程序写入 "显示名|路径"，读取兼容旧两行） -- */
@@ -216,6 +233,8 @@ static void apply_selected_theme(void)
     const char *name = g_names[g_sel];
     const char *path = g_paths[g_sel];
     const bool saved = write_selected_theme(name, path);
+    settings_log("[settings] apply name=%s path=%s saved=%d sel=%d/%d\n",
+                 name, path, saved ? 1 : 0, g_sel, g_theme_count);
     str_copy_bounded(g_current, sizeof(g_current), name);
 
     if (strlen(path) > (size_t)SET_CMD_PATH_MAX) {
