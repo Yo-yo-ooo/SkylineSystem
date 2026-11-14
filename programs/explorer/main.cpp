@@ -35,6 +35,7 @@
 #include <graphic/winstyle.h>
 #include <graphic/kbdshare.h>
 #include <base/font/ttf/ttf.h>
+#include <base/prof.h>          // sky_rdtsc / SkyLat (输入延迟量化)
 
 #define EXP_MAX_ENTRIES   96
 #define EXP_NAME_MAX      96
@@ -45,6 +46,12 @@
 #define EXP_ROOT        "/mp"
 #define EXP_INDEX_FILE  "/mp/files.index"
 #define EXP_PREVIEW_MAX 12
+
+/* A/B 量化开关 (P0-2): 1 = 优化前的行为 (每次变更整页重绘), 0 = 只重画变化
+   行带。同一份源码编出两个版本跑同一个探针, 才能给出可信的 before/after。 */
+#ifndef SKY_FULL_REDRAW
+#define SKY_FULL_REDRAW 0
+#endif
 
 struct ExpEntry {
     char     name[EXP_NAME_MAX];
@@ -62,6 +69,9 @@ static int       g_status_kind = 0;   /* 0=info 1=ok 2=warn */
 static char      g_source[16]  = "syscall";
 static bool      g_quit        = false;
 static bool      g_preview     = false;
+/* 局部重绘控制: 只有"纯选中移动"才允许只重画那两行, 其余 (换目录/预览/
+   重载/状态文本变化) 一律整页重绘。默认整页, 是最保守的取值。 */
+static bool      g_dmgFull     = true;
 static char      g_previewPath[EXP_PATH_MAX];
 static char      g_previewLines[EXP_PREVIEW_MAX][EXP_LINE_MAX];
 static int       g_previewLineCount = 0;
@@ -260,6 +270,7 @@ static void load_dir(const char *path)
     g_scroll = 0;
     g_preview = false;
     g_count = 0;
+    g_dmgFull = true;          /* 目录内容整个换了: 必须整页重绘 */
 
     for (uint32_t i = 0; i < EXP_BUF_SIZE; i++) g_dirBuf[i] = 0;
     explorer_log("[explorer] readdir: call path=%s cap=%u\n",
@@ -310,6 +321,7 @@ static void enter_entry(int idx)
 {
     if (idx < 0 || idx >= g_count) return;
     const ExpEntry *e = &g_entries[idx];
+    g_dmgFull = true;          /* 进目录 / 预览都换掉整块内容 */
 
     if (strcmp(e->name, "..") == 0) {
         char parent[EXP_PATH_MAX];
@@ -404,9 +416,82 @@ static void draw_text_fit(FrameBuffer *cb, TTF_Font *font, int32_t x, int32_t y,
     if (n > 0) TTF_DrawText(cb, font, x, y, buf, color);
 }
 
-static void render(FrameBuffer *cb, TTF_Font *font, int32_t lineH,
-                   uint32_t contentW, uint32_t contentH)
+/* ---- 布局 ---------------------------------------------------------------
+ * 把"几何 + 滚动收敛"从绘制里拆出来: 局部重绘要先用同一份布局算损伤行带,
+ * 再由同一份布局绘制 —— 两条路径不可能算出不同的行位置 (原来两处各算一遍
+ * 是 UI 漂移的经典来源)。
+ * 行带 (band) 用法: 元素占据 [y, y+h), 与 [y0,y1) 相交才需要重绘。 */
+struct ExpLayout {
+    int32_t pad;
+    int32_t textMaxW;
+    int32_t titleY;
+    int32_t sepY;
+    int32_t pathY;        /* 仅 contentH >= 200 时有效 */
+    int32_t hintY;        /* compact 模式的提示行 */
+    int32_t listTop;
+    int32_t listBottom;
+    int32_t footerY;      /* 快捷键提示行的 y (状态行在 +lineH) */
+    int     rows;
+    bool    compact;      /* 内容区太矮: 只画一行提示 */
+};
+
+static inline bool band_hit(int32_t y0, int32_t y1, int32_t y, int32_t h)
 {
+    return (y < y1) && (y + h > y0);
+}
+
+static ExpLayout exp_layout(int32_t lineH, uint32_t contentW, uint32_t contentH)
+{
+    ExpLayout L;
+    L.pad       = 16;
+    L.textMaxW  = (int32_t)contentW - 2 * L.pad;
+    L.compact   = false;
+    L.titleY    = L.pad;
+    L.sepY      = L.titleY + lineH + 4;
+    L.pathY     = L.sepY + 8;
+    L.hintY     = L.pathY;
+    L.listTop   = L.pathY;
+    L.listBottom = L.pathY;
+    L.footerY   = L.pathY;
+    L.rows      = 0;
+
+    int y = L.sepY + 8;
+    if ((int)contentH >= 200) y += lineH + 12;      /* 路径栏 */
+    L.listTop = y;
+    L.hintY   = y;
+    if ((int)contentH < 240) {
+        L.compact    = true;
+        L.listBottom = y;
+        L.footerY    = y;
+        return L;
+    }
+    const int footerH = lineH * 2 + 12;
+    L.listBottom = (int)contentH - L.pad - footerH;
+    if (L.listBottom < L.listTop) L.listBottom = L.listTop;
+    L.rows = (L.listBottom - L.listTop) / (lineH > 0 ? lineH : 1);
+    if (L.rows < 1) L.rows = 1;
+    L.footerY = L.listBottom + 4 + 8;
+
+    /* 选中的行必须落在可见窗口内 (与原实现一致) */
+    if (!g_preview && g_count > 0) {
+        if (g_sel < g_scroll) g_scroll = g_sel;
+        if (g_sel >= g_scroll + L.rows) g_scroll = g_sel - L.rows + 1;
+        if (g_scroll > g_count - L.rows) g_scroll = g_count - L.rows;
+        if (g_scroll < 0) g_scroll = 0;
+    }
+    return L;
+}
+
+/* 只重绘 [y0,y1) 这几行像素。
+ * 为什么不是"整页重绘": 内容区 ~608x400, 一次填充 ~950 KB, 再加逐行
+ * TTF_DrawText —— QEMU TCG 下单帧 10~30 ms。方向键连按时每键都整页重绘,
+ * 延迟就按"键数 × 单帧"堆积。列表选中变化只需要重画"旧选中行 + 新选中行
+ * + 底部状态带", 典型 3 行, 成本降两个数量级。 */
+static void render_band(FrameBuffer *cb, TTF_Font *font, int32_t lineH,
+                        uint32_t contentW, uint32_t contentH,
+                        int32_t y0, int32_t y1)
+{
+    if (!cb) return;
     const uint32_t PAD     = 16u;
     const uint32_t PAPER   = 0xFF0F0F12u;
     const uint32_t INK     = 0xFFE9E9EFu;
@@ -420,74 +505,74 @@ static void render(FrameBuffer *cb, TTF_Font *font, int32_t lineH,
     const uint32_t OK_C    = 0xFF8FE388u;
     const uint32_t WARN_C  = 0xFFF0C674u;
 
-    DrawFillRect(cb, 0, 0, contentW, contentH, PAPER);
-    const int32_t textMaxW = (int32_t)contentW - 2 * (int32_t)PAD;
+    if (y0 < 0) y0 = 0;
+    if (y1 > (int32_t)contentH) y1 = (int32_t)contentH;
+    if (y0 >= y1) return;
+    DrawFillRect(cb, 0, (uint64_t)y0, contentW, (uint64_t)(y1 - y0), PAPER);
+
+    const ExpLayout L = exp_layout(lineH, contentW, contentH);
+    const int32_t textMaxW = L.textMaxW;
     char line[EXP_LINE_MAX];
-    int y = (int)PAD;
 
     /* 标题栏（内容区内自绘，不与 WM 的窗口 chrome 冲突） */
-    if (font) TTF_DrawText(cb, font, (int32_t)PAD, y, "Explorer", ACCENT);
-    snprintf(line, sizeof(line), "%d items  [%s]", g_count, g_source);
-    if (font) {
-        int32_t tw = 0, th = 0;
-        TTF_GetTextSize(font, line, &tw, &th);
-        if ((int32_t)contentW - (int32_t)PAD - tw > (int32_t)PAD + 100)
-            draw_text_fit(cb, font, (int32_t)contentW - (int32_t)PAD - tw, y,
-                          line, MUTED, textMaxW);
+    if (band_hit(y0, y1, L.titleY, lineH)) {
+        if (font) TTF_DrawText(cb, font, (int32_t)PAD, L.titleY, "Explorer", ACCENT);
+        snprintf(line, sizeof(line), "%d items  [%s]", g_count, g_source);
+        if (font) {
+            int32_t tw = 0, th = 0;
+            TTF_GetTextSize(font, line, &tw, &th);
+            if ((int32_t)contentW - (int32_t)PAD - tw > (int32_t)PAD + 100)
+                draw_text_fit(cb, font, (int32_t)contentW - (int32_t)PAD - tw,
+                              L.titleY, line, MUTED, textMaxW);
+        }
     }
-    y += lineH + 4;
-    DrawFillRect(cb, PAD, (uint64_t)y, contentW - 2u * PAD, 1u, SEP);
-    y += 8;
+    if (band_hit(y0, y1, L.sepY, 1))
+        DrawFillRect(cb, PAD, (uint64_t)L.sepY, contentW - 2u * PAD, 1u, SEP);
 
     /* 路径栏 */
-    if ((int)contentH >= 200) {
-        DrawFillRect(cb, PAD, (uint64_t)y, contentW - 2u * PAD,
+    if ((int)contentH >= 200 && band_hit(y0, y1, L.pathY, lineH + 4)) {
+        DrawFillRect(cb, PAD, (uint64_t)L.pathY, contentW - 2u * PAD,
                      (uint64_t)lineH + 4u, BAR);
-        DrawFillRect(cb, PAD, (uint64_t)y, 3u, (uint64_t)lineH + 4u, ACCENT);
+        DrawFillRect(cb, PAD, (uint64_t)L.pathY, 3u, (uint64_t)lineH + 4u, ACCENT);
         snprintf(line, sizeof(line), " %s", g_cwd);
-        draw_text_fit(cb, font, (int32_t)PAD + 10, y + 2, line, INK,
+        draw_text_fit(cb, font, (int32_t)PAD + 10, L.pathY + 2, line, INK,
                       textMaxW - 20);
-        y += lineH + 12;
     }
 
-    if ((int)contentH < 240) {
-        draw_text_fit(cb, font, (int32_t)PAD, y,
-                      "Up/Down Enter: open   Backspace: up   Esc: quit",
-                      DIM, textMaxW);
+    if (L.compact) {
+        if (band_hit(y0, y1, L.hintY, lineH))
+            draw_text_fit(cb, font, (int32_t)PAD, L.hintY,
+                          "Up/Down Enter: open   Backspace: up   Esc: quit",
+                          DIM, textMaxW);
         return;
     }
 
-    const int footerH = lineH * 2 + 12;
-    int listTop = y;
-    int listBottom = (int)contentH - (int)PAD - footerH;
-    if (listBottom < listTop) listBottom = listTop;
-    int rows = (listBottom - listTop) / (lineH > 0 ? lineH : 1);
-    if (rows < 1) rows = 1;
-
     if (g_preview) {
-        snprintf(line, sizeof(line), "%s", g_previewPath);
-        draw_text_fit(cb, font, (int32_t)PAD, listTop, line, ACCENT, textMaxW);
-        int py = listTop + lineH + 4;
+        if (band_hit(y0, y1, L.listTop, lineH)) {
+            snprintf(line, sizeof(line), "%s", g_previewPath);
+            draw_text_fit(cb, font, (int32_t)PAD, L.listTop, line, ACCENT, textMaxW);
+        }
+        int py = L.listTop + lineH + 4;
         for (int i = 0; i < g_previewLineCount; i++) {
-            if (py + lineH > listBottom) break;
-            snprintf(line, sizeof(line), "  %s", g_previewLines[i]);
-            draw_text_fit(cb, font, (int32_t)PAD, py, line, DIM, textMaxW);
+            if (py + lineH > L.listBottom) break;
+            if (band_hit(y0, y1, py, lineH)) {
+                snprintf(line, sizeof(line), "  %s", g_previewLines[i]);
+                draw_text_fit(cb, font, (int32_t)PAD, py, line, DIM, textMaxW);
+            }
             py += lineH;
         }
     } else if (g_count == 0) {
-        draw_text_fit(cb, font, (int32_t)PAD, listTop,
-                      "(empty directory or readdir unavailable)", WARN_C,
-                      textMaxW);
+        if (band_hit(y0, y1, L.listTop, lineH))
+            draw_text_fit(cb, font, (int32_t)PAD, L.listTop,
+                          "(empty directory or readdir unavailable)", WARN_C,
+                          textMaxW);
     } else {
-        if (g_sel < g_scroll) g_scroll = g_sel;
-        if (g_sel >= g_scroll + rows) g_scroll = g_sel - rows + 1;
-        if (g_scroll > g_count - rows) g_scroll = g_count - rows;
-        if (g_scroll < 0) g_scroll = 0;
-
-        for (int r = 0; r < rows; r++) {
+        for (int r = 0; r < L.rows; r++) {
             int i = g_scroll + r;
             if (i >= g_count) break;
-            int ry = listTop + r * lineH;
+            int ry = L.listTop + r * lineH;
+            /* 高亮块的上下各多 3px (ry-3 .. ry+lineH), 按它判相交 */
+            if (!band_hit(y0, y1, ry - 3, lineH + 6)) continue;
             const bool sel = (i == g_sel);
             if (sel)
                 DrawFillRect(cb, PAD - 6u, (uint64_t)(ry - 3),
@@ -518,20 +603,55 @@ static void render(FrameBuffer *cb, TTF_Font *font, int32_t lineH,
     }
 
     /* 底部：分隔线 + 快捷键 + 状态 */
-    int fy = listBottom + 4;
-    DrawFillRect(cb, PAD, (uint64_t)fy, contentW - 2u * PAD, 1u, SEP);
-    fy += 8;
-    draw_text_fit(cb, font, (int32_t)PAD, fy,
-                  g_preview
-                      ? "Esc: back to list    R: reload directory"
-                      : "Up/Down: select   Enter: open   Backspace: up   R: reload",
-                  DIM, textMaxW);
-    fy += lineH;
-    if (g_status[0])
-        draw_text_fit(cb, font, (int32_t)PAD, fy, g_status,
+    int fy = L.footerY;
+    if (band_hit(y0, y1, fy - 8, 1))
+        DrawFillRect(cb, PAD, (uint64_t)(fy - 8), contentW - 2u * PAD, 1u, SEP);
+    if (band_hit(y0, y1, fy, lineH))
+        draw_text_fit(cb, font, (int32_t)PAD, fy,
+                      g_preview
+                          ? "Esc: back to list    R: reload directory"
+                          : "Up/Down: select   Enter: open   Backspace: up   R: reload",
+                      DIM, textMaxW);
+    if (g_status[0] && band_hit(y0, y1, fy + lineH, lineH))
+        draw_text_fit(cb, font, (int32_t)PAD, fy + lineH, g_status,
                       g_status_kind == 2 ? WARN_C
                                          : (g_status_kind == 1 ? OK_C : DIM),
                       textMaxW);
+
+    /* 帧提交: 与 Notepad 同理, WM 靠 OUT_SEQ 变化重合成。所有绘制路径
+       (整页 render / 局部 render_band) 都收敛在这里。 */
+    if (g_q)
+        __atomic_add_fetch(&g_q[SKYWIN_PROTO_OUT_SEQ], 1u, __ATOMIC_RELEASE);
+}
+
+/* 整页重绘 = 行带覆盖整个内容区 (启动首帧、目录切换、预览切换用)。 */
+static void render(FrameBuffer *cb, TTF_Font *font, int32_t lineH,
+                   uint32_t contentW, uint32_t contentH)
+{
+    render_band(cb, font, lineH, contentW, contentH, 0, (int32_t)contentH);
+}
+
+/* 条目 idx 在屏幕上的行 y (不可见返回 -1)。用于算局部重绘的行带。 */
+static int32_t exp_row_y(const ExpLayout &L, int32_t lineH, int idx)
+{
+    if (idx < 0 || idx >= g_count) return -1;
+    const int r = idx - g_scroll;
+    if (r < 0 || r >= L.rows) return -1;
+    return L.listTop + r * lineH;
+}
+
+/* 内容区局部坐标 cy -> 条目下标 (点不中返回 -1)。鼠标点击/命中共用。 */
+static int exp_row_at(int32_t lineH, uint32_t contentW, uint32_t contentH,
+                      int32_t cy)
+{
+    if (g_preview || g_count <= 0) return -1;
+    const ExpLayout L = exp_layout(lineH, contentW, contentH);
+    if (L.compact) return -1;
+    if (cy < L.listTop - 3 || cy >= L.listBottom) return -1;
+    const int r = (cy - L.listTop) / (lineH > 0 ? lineH : 1);
+    const int idx = g_scroll + r;
+    if (r < 0 || r >= L.rows || idx < 0 || idx >= g_count) return -1;
+    return idx;
 }
 
 /* ---- 键盘 --------------------------------------------------------------- */
@@ -540,6 +660,7 @@ static bool handle_key(uint16_t key)
     if (g_preview) {
         if (key == 0x1B) {          /* Esc：预览 -> 列表（不退出程序） */
             g_preview = false;
+            g_dmgFull = true;
             set_status(1, "Back to %s", g_cwd);
             return true;
         }
@@ -642,24 +763,148 @@ int main()
 
     load_dir(EXP_ROOT);
     render(&cb, font, lineH, contentW, contentH);
+    g_dmgFull = false;
     /* 就绪屏障：初始画面已绘好，WM 可挂载窗口。 */
     g_q[SKYWIN_PROTO_CLIENT_READY] = SKYWIN_READY_MAGIC;
+
+    /* 输入延迟样本: 每 32 个按键批次汇总一次 p50/p99 到串口 (P0-2 门禁用)。
+       先预热 TSC 标定, 别把一次性标定时间算进第一个样本。 */
+    static SkyLat lat;
+    static SkyLat latRender;      /* 纯绘制耗时 (不含被抢占的时间) */
+    sky_lat_reset(&lat);
+    sky_lat_reset(&latRender);
+    (void)sky_tsc_per_ms();
+
+    /* 鼠标状态 (P1): WM 只在指针位于本窗口**内容区**时投递事件, 所以这里
+       收到的坐标已经是 content-local, 不需要再做窗口换算。 */
+    uint64_t mouseSeq  = g_q[SKYWIN_PROTO_MOUSE_SEQ];
+    uint32_t mouseBtn  = 0;
+    uint64_t lastClickTsc = 0;
+    int      lastClickIdx = -1;
 
     for (;;) {
         uint64_t h = __atomic_load_n(&kbd->head, __ATOMIC_ACQUIRE);
         cursor = kbd_reader_resync(kbd, cursor);
         bool changed = false;
+        uint64_t tFirstKey = 0;         /* 本批第一个按键被取出的时刻 (TSC) */
+        const int prevSel = g_sel;
+        const int prevScroll = g_scroll;
         const bool allowed = (kbdSlot < 0) || kbd_focus_allows(kbd, kbdSlot);
         while (cursor < h) {
             KbdEvent e = kbd->ring[cursor & (KBD_RING_CAP - 1u)];
             if (allowed && e.action == KBD_ACTION_DOWN) {
+                if (tFirstKey == 0) tFirstKey = sky_rdtsc();
                 if (handle_key(e.key)) changed = true;
             }
             cursor++;
         }
         if (kbdSlot >= 0) kbd_reader_setpos(kbd, kbdSlot, cursor);
         if (g_quit) break;
-        if (changed) render(&cb, font, lineH, contentW, contentH);
+
+        /* ---- 鼠标 (P1): 左键单击选中, 双击 (700ms 内同一行) 打开 ----
+           700ms 比桌面常见的 500ms 宽: QEMU TCG 下 WM 以 30Hz 采样鼠标, 一次
+           按下/抬起各要占一个采样点, 门禁用 HMP 注入时两击间隔本来就有 ~0.5s。 */
+        {
+            const uint64_t mseq = g_q[SKYWIN_PROTO_MOUSE_SEQ];
+            if (mseq != mouseSeq) {
+                mouseSeq = mseq;
+                const int32_t cxm = (int32_t)g_q[SKYWIN_PROTO_MOUSE_X];
+                const int32_t cym = (int32_t)g_q[SKYWIN_PROTO_MOUSE_Y];
+                const uint32_t btn = (uint32_t)g_q[SKYWIN_PROTO_MOUSE_BTN];
+                const bool press = ((btn & 1u) != 0) && ((mouseBtn & 1u) == 0);
+                mouseBtn = btn;
+                (void)cxm;   /* 目前只用行位置; 列位置留给"按列排序"等后续 */
+                if (press) {
+                    const int idx = exp_row_at(lineH, contentW, contentH, cym);
+                    if (idx >= 0) {
+                        /* 双击窗口用 TSC 量, 不用 SYSCALL_MONOTONIC_MS ——
+                           实测后者的刻度与真实时间不一致 (同一次点击序列里它
+                           报 3735ms, 真实只有 ~0.37s), 拿它做时间窗会永远判
+                           "不是双击"。桌面主循环同样以 TSC 为时基。 */
+                        const uint64_t nowTsc = sky_rdtsc();
+                        const uint64_t dtMs = lastClickTsc
+                            ? (nowTsc - lastClickTsc) / sky_tsc_per_ms() : 0u;
+                        const bool dbl = (idx == lastClickIdx) && (dtMs <= 700u);
+                        lastClickTsc = nowTsc;
+                        lastClickIdx = idx;
+                        g_sel = idx;
+                        changed = true;
+                        if (dbl) {
+                            explorer_log("[explorer] mouse open idx=%d name=%s dt=%llums\n",
+                                         idx, g_entries[idx].name,
+                                         (unsigned long long)dtMs);
+                            enter_entry(idx);          /* -> g_dmgFull */
+                            lastClickIdx = -1;         /* 三击不再算双击 */
+                        } else {
+                            explorer_log("[explorer] mouse click idx=%d name=%s dt=%llums\n",
+                                         idx, g_entries[idx].name,
+                                         (unsigned long long)dtMs);
+                        }
+                    }
+                }
+            }
+        }
+
+        if (changed) {
+            const uint64_t t0 = tFirstKey ? tFirstKey : sky_rdtsc();
+            const uint64_t tr0 = sky_rdtsc();      /* 纯绘制耗时起点 */
+            if (g_dmgFull || SKY_FULL_REDRAW) {
+                render(&cb, font, lineH, contentW, contentH);
+                g_dmgFull = false;
+            } else {
+                /* 纯选中移动: 只重画"旧选中行 ∪ 新选中行" + 底部状态带。
+                   行带与 footer 带分两次画, 避免把中间那一大片也重画。 */
+                const ExpLayout L = exp_layout(lineH, contentW, contentH);
+                int32_t ya = exp_row_y(L, lineH, prevSel);
+                int32_t yb = exp_row_y(L, lineH, g_sel);
+                /* 滚动位置变了: 列表整体位移, 只重画选中行会留下上/下一行的
+                   残影 —— 必须重画整个列表区 (但仍然不必重画标题/路径/页脚)。 */
+                const bool listShifted = (g_scroll != prevScroll);
+                if (listShifted || (ya < 0 && yb < 0)) {
+                    render_band(&cb, font, lineH, contentW, contentH,
+                                L.listTop - 3, L.listBottom + 3);
+                } else {
+                    /* 只重画"旧选中行"和"新选中行"两条行带。
+                       注意**不要**用 min..max 把中间的行也带上: 一批按键可能
+                       一次移动好几行, 而中间那几行的内容根本没变 (变的只是
+                       高亮块), 把它们一起重画就是白白重栅格化几十个字形 ——
+                       快速连按时正是这个场景 (实测 p50 会翻好几倍)。 */
+                    int32_t ryOld = exp_row_y(L, lineH, prevSel);
+                    int32_t ryNew = exp_row_y(L, lineH, g_sel);
+                    if (ryOld >= 0)
+                        render_band(&cb, font, lineH, contentW, contentH,
+                                    ryOld - 3, ryOld + lineH + 3);
+                    if (ryNew >= 0 && ryNew != ryOld)
+                        render_band(&cb, font, lineH, contentW, contentH,
+                                    ryNew - 3, ryNew + lineH + 3);
+                    if (ryOld < 0 && ryNew < 0)
+                        render_band(&cb, font, lineH, contentW, contentH,
+                                    L.listTop - 3, L.listBottom + 3);
+                }
+                /* 状态行 (set_status 的结果) 在底部; 选中移动不改变它, 但
+                   高亮块以外的像素必须保持, 所以只补画 footer 带。 */
+                render_band(&cb, font, lineH, contentW, contentH,
+                            L.footerY - 8, (int32_t)contentH);
+            }
+            const uint64_t renderUs = sky_tsc_to_us(sky_rdtsc() - tr0);
+            if (tFirstKey != 0) {           /* 只统计键盘轮询的样本 */
+                const uint64_t dt = sky_rdtsc() - t0;
+                if (sky_lat_add(&lat, sky_tsc_to_us(dt))) {
+                    uint32_t p50 = 0, p99 = 0;
+                    int n = 0;
+                    sky_lat_report(&lat, &p50, &p99, &n);
+                    explorer_log("[explorer] input_lat n=%d p50=%uus p99=%uus\n",
+                                 n, (unsigned)p50, (unsigned)p99);
+                }
+                if (sky_lat_add(&latRender, renderUs)) {
+                    uint32_t r50 = 0, r99 = 0;
+                    int rn = 0;
+                    sky_lat_report(&latRender, &r50, &r99, &rn);
+                    explorer_log("[explorer] render_lat n=%d p50=%uus p99=%uus\n",
+                                 rn, (unsigned)r50, (unsigned)r99);
+                }
+            }
+        }
         sys_yield();
     }
 

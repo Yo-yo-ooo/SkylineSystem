@@ -478,6 +478,16 @@ static inline void rb_insert_raw(rb_root_t *root, rb_node_t *node, rb_compare_t 
     rb_node_t **proot = &root->node;
     while (node != *proot && node->parent->color == RB_RED) {
         rb_node_t *grandparent = node->parent->parent;
+        /* 防御: parent 是红色却没有祖父, 只可能是树被外力写坏 (节点内存被
+           别人重用/双重释放)。原实现直接解引用 grandparent->left, 于是
+           CR2=0x8 的内核 #PF 直接把整机 halt。这里收敛为"把 parent 涂黑",
+           结构上仍然是一棵可用的树, 内核继续跑 —— 坏树不应该打死系统。
+           真正的修法在数据所有者那一侧 (2026-11: VMA 哨兵页被整页归还 PMM
+           导致别的 pagemap 的节点被复用, 见 vma.cpp ReleaseSentinel)。 */
+        if (RB_UNLIKELY(!grandparent)) {
+            node->parent->color = RB_BLACK;
+            break;
+        }
         if (node->parent == grandparent->left) {
             rb_node_t *uncle = grandparent->right;
             if (uncle && uncle->color == RB_RED) {

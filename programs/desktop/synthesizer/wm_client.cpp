@@ -14,6 +14,9 @@ uint64_t SpawnWindowedApp(FrameBuffer* Fb, const char* elf, const char* title,
                           uint32_t bodyW, uint32_t bodyH,
                           SkyWinPlacement* place, uint32_t paperRGB);
 
+/* 共享页的映射粒度 (与 loader.cpp 的 PAGE_SIZE 一致)。 */
+#define WM_SHARE_PAGE 4096UL
+
 /* Rounded/shadowed chrome rasterizer (defined in loader.cpp). */
 void SkyPaintChromeSized(FrameBuffer* s, int32_t surfW, int32_t surfH,
                          int32_t bodyW, int32_t bodyH, int32_t restoreGlyph,
@@ -181,9 +184,30 @@ static void wm_diag_str(const char* what, const char* title) {
     syscall(SYS_DBGSOUT, (uint64_t)m, (uint64_t)o, 0, 0, 0, 0);
 }
 
+/* 释放一个窗口在**桌面 pagemap** 里占的地址空间 (共享 surface + 协议页)。
+   与 loader.cpp 的 SpawnWindowedApp 配对: 那里 e2 张共享页映射进桌面,
+   这里负责拆掉。失败路径的 munmap 仍在 loader.cpp 里 (它还没有 WmClient)。 */
+static void wm_unmap_shared(const SkyWinPlacement* p) {
+    if (!p) return;
+    if (p->desk_surf && p->w && p->h) {
+        uint64_t bytes = (uint64_t)p->w * (uint64_t)p->h * sizeof(uint32_t);
+        bytes = (bytes + WM_SHARE_PAGE - 1) & ~(uint64_t)(WM_SHARE_PAGE - 1);
+        sys_munmap(p->desk_surf, bytes);
+    }
+    if (p->proto)
+        sys_munmap(p->proto, WM_SHARE_PAGE);
+}
+
 static void wm_drop(Compositor& comp, WmClient* c) {
     wm_diag_str("drop", c->title);
     comp.UnregisterWindow(&c->win);
+    /* 归还桌面 pagemap 里为这个窗口映射的两张共享页 (surface + 协议页)。
+       为什么必须有: SpawnWindowedApp 成功路径**从不** sys_munmap —— 只有它的
+       失败分支会回滚。于是每开关一次窗口, 桌面就永久多出 2 个 VMA 和一整块
+       共享页引用 (640x460 的窗口 ≈ 1.2 MB), 反复开关会把桌面 VA/物理内存
+       单调吃光; VMA 节点池也会被撑大。
+       顺序: 先注销窗口 (合成器不再引用 FbAddr), 再拆映射。 */
+    wm_unmap_shared(&c->place);
     free(c->rzSurf);
     c->rzSurf = nullptr;
     c->rzPitch = 0;
@@ -319,12 +343,12 @@ WmClient* wm_client_spawn(Compositor& comp, FrameBuffer* fb, const char* elf,
     c->layer = comp.RegisterWindowAuto(&c->win);
     if (!c->layer) {
         if (c->place.client_pid) sys_kill(c->place.client_pid, 9);
+        wm_unmap_shared(&c->place);     /* 窗口没挂上: 共享页也不能白占 */
         c->used = false;
         return nullptr;
     }
     wm_diag_str("spawn", title);
     return c;
-    wm_diag_str("spawn", title);
 }
 
 WmClient* wm_client_hit(int32_t x, int32_t y) {
@@ -594,6 +618,21 @@ bool wm_client_reap_pid(Compositor& comp, int32_t pid, bool* dirty) {
     return false;
 }
 
+int wm_clients_new_frame(void) {
+    /* 只读探测: 有客户端刚画完一帧 (OUT_SEQ 变了) 就返回 1, 但**不**
+       更新 last_seq —— 更新留给 wm_clients_poll_output(), 否则它会漏掉
+       这次 dirty。桌面主循环用它决定是否跳过 30Hz 重活限速, 让打字
+       当场合成, 而不是等下一轮重活或 2Hz 时钟兜底。 */
+    for (int i = 0; i < WM_MAX_CLIENTS; i++) {
+        WmClient* c = &g_clients[i];
+        if (!c->used || !c->place.proto) continue;
+        uint64_t seq = *(volatile uint64_t*)(c->place.proto +
+                                             SKYWIN_PROTO_OUT_SEQ * 8u);
+        if (seq != c->last_seq) return 1;
+    }
+    return 0;
+}
+
 void wm_clients_poll_output(bool* dirty, int32_t* py0, int32_t* py1) {
     for (int i = 0; i < WM_MAX_CLIENTS; i++) {
         WmClient* c = &g_clients[i];
@@ -603,13 +642,47 @@ void wm_clients_poll_output(bool* dirty, int32_t* py0, int32_t* py1) {
         if (seq == c->last_seq) continue;
         c->last_seq = seq;
         if (dirty) *dirty = true;
-        /* 该客户端的行带 (含标题栏与投影余量) 并入损伤区 */
-        if (py0 && py1) {
-            const int32_t top    = c->bodyY - 48;
-            const int32_t bottom = c->bodyY + (int32_t)c->bodyH + 32;
-            if (top < *py0) *py0 = top;
-            if (bottom > *py1) *py1 = bottom;
+        if (!py0 || !py1) continue;
+
+        /* ---- 精确脏行带 (协议 [21..23]) --------------------------------
+           客户端 (notepad) 在提交时把"本帧真正改了哪几行"写进共享页。
+           用它代替"整窗行带", 打字时损伤区就从 500 多行缩到 17 行 —— 合成
+           成本正比于行数, 这是延迟的主杠杆。
+           两个前提, 任一不满足就退回整窗行带 (保守, 不会留残影):
+             (a) dirty_seq 必须**连续**: 跳了不止 1 说明客户端在两帧之间又
+                 提交过, 单帧的带已不代表全部改动;
+             (b) 带非空且落在内容区内。 */
+        const uint64_t dseq = *(volatile uint64_t*)(c->place.proto +
+                                                    SKYWIN_PROTO_DIRTY_SEQ * 8u);
+        bool exact = false;
+        int32_t cy0 = 0, cy1 = 0;
+        if (dseq == c->last_dirty_seq + 1u) {
+            const int32_t dy0 = (int32_t)*(volatile uint64_t*)(c->place.proto +
+                                            SKYWIN_PROTO_DIRTY_Y0 * 8u);
+            const int32_t dy1 = (int32_t)*(volatile uint64_t*)(c->place.proto +
+                                            SKYWIN_PROTO_DIRTY_Y1 * 8u);
+            if (dy0 >= 0 && dy1 > dy0 && dy1 <= (int32_t)c->bodyH) {
+                cy0 = dy0; cy1 = dy1; exact = true;
+            }
         }
+        c->last_dirty_seq = dseq;
+
+        int32_t top, bottom;
+        if (exact) {
+            /* 内容坐标 -> 屏幕行。内容区顶 = bodyY + 标题栏; 上下各留 4 px
+               余量, 吸收圆角、投影像素和光标跨行。 */
+            top    = c->bodyY + (int32_t)SKYWIN_TITLE_H + cy0 - 4;
+            bottom = c->bodyY + (int32_t)SKYWIN_TITLE_H + cy1 + 4;
+            if (top < c->bodyY) top = c->bodyY;
+            if (bottom > c->bodyY + (int32_t)c->bodyH)
+                bottom = c->bodyY + (int32_t)c->bodyH;
+        } else {
+            /* 该客户端的整窗行带 (含标题栏与投影余量) */
+            top    = c->bodyY - 48;
+            bottom = c->bodyY + (int32_t)c->bodyH + 32;
+        }
+        if (top < *py0) *py0 = top;
+        if (bottom > *py1) *py1 = bottom;
     }
 }
 
@@ -672,6 +745,32 @@ int wm_client_poll_command(WmClient** out, uint64_t* cmd,
         return 1;
     }
     return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* WM -> client 鼠标投递                                              */
+/* ------------------------------------------------------------------ */
+int wm_client_push_mouse(WmClient* c, int32_t mx, int32_t my, uint32_t buttons) {
+    if (!c || !c->used || !c->place.proto) return 0;
+
+    /* 内容区原点在屏幕上的位置: body 左上角 + 标题栏高度 (body 内几何)。
+       内容区尺寸与 loader.cpp 填给客户端的 CONTENT_W/CONTENT_H 完全一致:
+       宽 = body 宽, 高 = body 高 - 标题栏 - 圆角行 (圆角行由 WM 自己收尾)。 */
+    const int32_t cx = mx - c->bodyX;
+    const int32_t cy = my - c->bodyY - (int32_t)SKYWIN_TITLE_H;
+    const int32_t contentH = (int32_t)c->bodyH - (int32_t)SKYWIN_TITLE_H -
+                             (int32_t)SkyWinRadius();
+    if (cx < 0 || cy < 0 || cx >= (int32_t)c->bodyW || cy >= contentH)
+        return 0;                      /* 标题栏/边框/窗口外: 不投递 */
+
+    volatile uint64_t* q = (volatile uint64_t*)c->place.proto;
+    q[SKYWIN_PROTO_MOUSE_X]     = (uint64_t)(uint32_t)cx;
+    q[SKYWIN_PROTO_MOUSE_Y]     = (uint64_t)(uint32_t)cy;
+    q[SKYWIN_PROTO_MOUSE_BTN]   = (uint64_t)buttons;
+    q[SKYWIN_PROTO_MOUSE_WHEEL] = 0;   /* 本内核 PS/2 鼠标报文没有滚轮档位 */
+    /* seq 最后自增 (release): 客户端看到 seq 变化时, 上面四个槽一定已经写好。 */
+    __atomic_add_fetch(&q[SKYWIN_PROTO_MOUSE_SEQ], 1u, __ATOMIC_RELEASE);
+    return 1;
 }
 
 /* 重绘一个客户端的 chrome（使用当前运行期 theme），只把内容区像素原位保存/

@@ -164,6 +164,16 @@ namespace AHCI
            commandIssue 置位」的短临界区 (无 sti/无等待, 与 
            回退的跨 WaitCommand 锁不同, 无抢占下自旋危险) */
         spinlock_t slot_lock;
+        /* 整笔 I/O (选槽 -> 填表 -> 写 PxCI -> 轮询完成) 的串行锁。
+           为什么需要 (2026-11 偶发启动卡死): PxIS 与 PxCI 是**端口级**共享
+           寄存器。两笔命令并发时, 后一笔在入口写 PxIS=-1 会把前一笔的
+           错误状态清掉, 让前一笔的等待者永远等不到 TFES 分支, 只能耗到
+           5 秒超时; 而 PxCI 的赋值写 (而非置位写) 更会把对方在飞的位清掉,
+           硬件立刻报 TFES。两者都会让一次普通读变成"半截数据 + 错误",
+           上层若不校验就成了坏 ELF。串行化后端口只有一笔在飞, 这些共享
+           状态不再有并发语义。ext4 挂载锁本来就把绝大多数 I/O 串行了,
+           所以这里几乎不损失吞吐。 */
+        spinlock_t io_lock;
 
         bool     ident_cached = false;
         uint64_t cached_max_sector = 0;

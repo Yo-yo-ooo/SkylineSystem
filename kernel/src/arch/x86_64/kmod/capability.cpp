@@ -90,6 +90,10 @@ const builtin_trust kBuiltinTrust[] = {
                                KMOD_CAP_ALLOC_POLICY },
     /* B7：Tier0 共享服务（klib/sync）消费者 demo */
     { "vendor.demo.klib", KMOD_CAP_LOG | KMOD_CAP_MEM_ALLOC },
+    /* Tier2 dosvm.ko：动态 syscall 210/211 薄门面（KMOD_MF_BOOT 开机加载）。
+     * 三位都在 CAP_DEFINED_MASK (bit0..18) 内，不含 KMOD_CAP_RESERVED_CORE。 */
+    { "vendor.dosvm", KMOD_CAP_SYSCALL_IMPL | KMOD_CAP_LOG |
+                          KMOD_CAP_EXPERIMENTAL },
 };
 
 /* 信任表存储：entry.name 指向 names[i]（稳定地址；TrustAdd 原地更新 caps）。 */

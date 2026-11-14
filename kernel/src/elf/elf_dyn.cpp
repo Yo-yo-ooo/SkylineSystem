@@ -47,6 +47,7 @@ using Elf64::Elf64_Rela;
 /* 读取 DT_NEEDED 指向的共享库需要文件系统接口 */
 #include <fs/fc.h>
 #include <fs/fd.h>
+#include <elf/elf_image.h>   // kelf_read_file / kelf_validate_image
 
 #define DL_ENABLE_LOGS 1
 
@@ -707,27 +708,23 @@ static int dyn_read_needed(uint8_t *main_img, uint64_t main_len,
     for (uint64_t i = 0; i < n && k < sizeof(path) - 1; i++) path[k++] = name_out[i];
     path[k] = 0;
 
-    __hmap_s_mp *MP = GetMount(path);
-    if (!MP) { kerrorln("[dynlink] cannot resolve mount for '%s'", path); return -EINVAL; }
-    void *FileDesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
-    if (!FileDesc) return -ENOMEM;
-    _memset(FileDesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
-    if (MP->FSOPS->open(FileDesc, path, O_RDONLY) != 0) {
-        kfree(FileDesc);
-        kerrorln("[dynlink] cannot open '%s' (DT_NEEDED '%s')", path, name_out);
-        return -ENOENT;
+    /* ---- 读整个共享库 ----------------------------------------------------
+     * 这里原来也是"read 之后不问结果": 短读时使用未初始化/kfree 过的堆内存,
+     * 结果就是 [dynlink] libsky.so: bad ELF header。改为公共的可靠读取 +
+     * 结构校验 (见 elf/elf_image.h)。 */
+    uint8_t *b = nullptr;
+    uint64_t sz = 0;
+    int32_t rrc = kelf_read_file(path, &b, &sz);
+    if (rrc < 0) {
+        kerrorln("[dynlink] cannot read '%s' (DT_NEEDED '%s') rc=%d",
+                 path, name_out, (int)rrc);
+        return rrc;
     }
-    uint64_t sz = MP->FSOPS->fsize(FileDesc);
-    if (sz < sizeof(Elf64_Ehdr)) {
-        MP->FSOPS->close(FileDesc); kfree(FileDesc);
-        kerrorln("[dynlink] '%s' too small (%llu)", path, (unsigned long long)sz);
+    if (kelf_validate_image(path, b, sz) != 0) {
+        kerrorln("[dynlink] '%s' is not a valid shared object", path);
+        kfree(b);
         return -EINVAL;
     }
-    uint8_t *b = (uint8_t*)kmalloc(sz);
-    if (!b) { MP->FSOPS->close(FileDesc); kfree(FileDesc); return -ENOMEM; }
-    MP->FSOPS->read(FileDesc, b, sz, 0);
-    MP->FSOPS->close(FileDesc);
-    kfree(FileDesc);
     *buf = b; *out_len = sz;
     kinfoln("[dynlink] DT_NEEDED '%s' -> %s (%llu bytes)",
             name_out, path, (unsigned long long)sz);
@@ -801,7 +798,11 @@ int elf_dyn_prepare(uint8_t *main_img, uint64_t main_len, pagemap_t *pm,
         so->name[n] = 0;
 
         Elf64_Ehdr *seh = (Elf64_Ehdr*)so_img;
-        if (so_len < sizeof(Elf64_Ehdr) ||
+        /* 双重校验: 除了这里原有的"程序头表不越界", 再走一遍公共 ELF 校验
+           (魔数/位数/机型/每个 PT_LOAD 的文件范围)。缓冲区如今来自
+           kelf_read_file(), 但校验仍不能省 —— 少一次校验就意味着一次坏镜像
+           会把内核映射成用户的代码段。 */
+        if (kelf_validate_image(so->name, so_img, so_len) != 0 ||
             seh->e_phoff + (uint64_t)seh->e_phnum * sizeof(Elf64_Phdr) > so_len) {
             kerrorln("[dynlink] %s: bad ELF header", so->name);
             dl_cleanup();

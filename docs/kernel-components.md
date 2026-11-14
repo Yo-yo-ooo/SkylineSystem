@@ -284,3 +284,87 @@ pwsh -File res/scripts/test/kmod_smoke.ps1          # QEMU 无头串口门禁：
 | 构建系统 | `kernel/Makefile` 新增 `find_module_sources`：`modules/builtin/common` + `modules/builtin/$(KARCH)` 递归发现 `.c/.cpp/.S/.asm`，对象落 `obj-$(KARCH)/modules/<rel>`；`modules/loadable/*.cpp` 走独立 `.ko` 规则 |
 | 测试/文档路径 | `tests/Makefile` FC_SRC、`tests/kmod/Makefile` 核心源清单、`res/scripts/test/analyze.sh`、`docs/*.md` 路径全部更新；新增 `kernel/modules/README.md` 目录说明 |
 | 一致性校验 | 迁移前后源文件总数守恒（268 = 71 + 197；Tier0 后新增 1 个共享服务文件）；clean build + 宿主 6/6(+ASAN) + `modules-check` 15/15 + QEMU `KMOD_SMOKE PASS`（37 builtin ready、`KMOD_SELFTEST PASS 12/12`、0 STALL） |
+
+## 13. ELF 镜像读取：短读 + 端口寄存器竞态导致的偶发启动卡死（2026-11）
+
+### 13.1 现象
+
+概率性（约 1/5 ~ 1/10）启动时停在壁纸，`[perf] desktop ready in` 永远不出现，
+串口日志里同时出现：
+
+```
+[KERR] AHCI: port 0 recovered (CI 0x1 -> 0, IS was 0x40000000, attempts 1)
+[INFO] [dynlink] DT_NEEDED 'libsky.so' -> /mp/libsky.so (1032200 bytes)
+[KERR] [dynlink] libsky.so: bad ELF header
+[KERR] [dynlink] prepare failed: -22
+[user.init] WARN: desktop.elf thread creation failed (PID 6)
+```
+
+`IS was 0x40000000` 是 `PxIS.TFES`（Task File Error），即端口报了一次命令错误。
+
+### 13.2 根因（两层，缺一不可）
+
+1. **调用方丢掉了"读了几个字节"这个事实。**
+   `sys_load()`（`kernel/modules/builtin/x86_64/syscall/exec.cpp`）、
+   `Schedule::NewThread()`（`kernel/src/arch/x86_64/schedule/task.cpp`）和
+   `dyn_read_needed()`（`kernel/src/elf/elf_dyn.cpp`）都是
+   `MP->FSOPS->read(fd, buf, fsize, 0);` —— **既不检查返回码，也不检查
+   `*rcnt`**。而 `ext4_fread()` 的语义是"尽力读"：某个块 I/O 失败时它
+   `goto Finish` 提前返回（返回错误码，`*rcnt` 只包含已经拷好的部分）。
+   于是 `kmalloc` 出来**未初始化**的剩余部分被当成 ELF 头/程序头解析 ——
+   `bad ELF header` 就是这么来的。libsky.so 是启动期最大的单次读
+   （1,032,200 B ≈ 2017 扇区，要发 252 条 8 扇区命令），命中的概率最高。
+
+2. **AHCI 端口并发时互相踩寄存器。**
+   `Port::Read/Write` 在入口写 `hbaPort->interruptStatus = -1`（清端口级
+   PxIS），发命令时写 `hbaPort->commandIssue = 1 << slot`（**赋值**，不是
+   置位）。`PxIS/PxCI` 是**端口级共享寄存器**：两笔命令同时在飞时，后一笔
+   会把前一笔的在飞位清掉（硬件判定该命令被取消 → 报 TFES），也会把前一笔
+   的错误状态清掉（前一笔的等待者看不到 TFES，只能耗到 5 秒超时）。
+   4 核下桌面加载期确实存在并发读（进程加载 + 字体/主题文件读取）。
+
+另外 `Port::Read` 在 "taskFileData 一直 BUSY/DRQ" 的兜底分支里
+`return false` 时**没有释放 `slot_lock`** —— 该端口之后所有 I/O 都会在同一
+把锁上死等，等同于文件系统永久停摆。
+
+### 13.3 修复
+
+| 位置 | 修改 |
+|---|---|
+| 新增 `kernel/src/elf/elf_image.cpp` + `kernel/include/elf/elf_image.h` | `kelf_read_file()`：校验 `rc == 0 && rcnt == fsize`，否则**整文件重读**（最多 4 次，每次重读前清零缓冲区，失败打印 路径/次数/rc/实读/期望）；`kelf_validate_image()`：校验 e_ident 魔数、ELFCLASS64、EM_X86_64、e_type、程序头表边界、每个 `PT_LOAD` 的 `[p_offset, p_offset+p_filesz)` 都在文件内 |
+| `exec.cpp` / `task.cpp` / `elf_dyn.cpp` | 三处加载器统一改走 `kelf_read_file()` + `kelf_validate_image()`；`elf_dyn_prepare()` 里的 .so 头检查再叠加一次公共校验 |
+| `ahci.cpp` + `ahci.h` | 新增端口级 `io_lock`，把"选槽 → 填表 → 写 PxCI → 轮询完成"整段串行化（PxIS/PxCI/PRDT 都是端口级共享状态）；`PxCI` 改置位写 `|= 1<<slot`；两条早退路径补 `slot_lock` 解锁 |
+| `programs/desktop/loader.cpp` | `SpawnWindowedApp()` 的就绪等待每 64 次探一次进程存活，客户端已死立即放弃等待并打日志；即使没等到 `CLIENT_READY` 也照常挂载（窗口纸面已由 WM 预涂），单个客户端失败不再拖住整个桌面 |
+
+### 13.4 验证
+
+`res/scripts/test/boot_stability_5x.py`：连续 5 次冷启动，要求每次都出现
+`[perf] desktop ready in`，且日志里没有 `bad ELF header` / `prepare failed` /
+`[elfimg] short read` / panic / STALL。
+
+```
+BOOT STABILITY (5 runs)
+  PASS boot #1  ready in 2218ms, 5.2s wall
+  PASS boot #2  ready in 2318ms, 5.2s wall
+  PASS boot #3  ready in 2120ms, 5.7s wall
+  PASS boot #4  ready in 2549ms, 5.7s wall
+  PASS boot #5  ready in 2229ms, 5.2s wall
+BOOT STABILITY: PASS (5/5 ready)
+```
+
+`start_explorer_smoke.py`（菜单/Explorer/键盘/鼠标）同为 PASS。桌面输入延迟
+与鼠标投递的实测数据见 `docs/desktop-features.md` 第 12~14 节。
+
+
+### 13.5 追加：VMA 哨兵页 UAF（QA 复核发现，1/16 次整机 halt）
+
+`CleanPM()` 原来 `PMM::Free(PHYSICAL(pm->vma_head))` —— 但哨兵来自 `vma.cpp`
+的**按页切分节点池**（一页 ≈ 50 个节点分给 50 个 pagemap），整页释放会让别的
+pagemap 正在用的 VMA 节点被页表/用户页覆写，下一次 `rb_insert` 在 CR2=0x8 上
+内核 #PF → halt。修复：新增 `VMM::VMA::ReleaseSentinel()` 只归还节点；
+`sys_sysinfo()` 的 VMA 操作补 `pm->vma_lock`（VMA 树的 rb 内部锁在本内核里是
+空操作，唯一同步手段就是这把锁）；`rb_insert_raw()` 对"parent 红但无祖父"
+做了收敛防御，坏树不再打死整机。
+
+详细根因/修复/验证（7 次冒烟 + 新 `client_churn_gate.py` 10/15 轮窗口开关扰动
++ 5 次启动）见 `docs/desktop-features.md` 第 14 节。

@@ -166,7 +166,8 @@ void SkyPaintChromeSized(FrameBuffer *wb, int32_t surfW, int32_t surfH,
                 if (d > -1.0f)                fill = SkyRGBBorder();   /* hairline */
                 else if ((int32_t)by == TH-1) fill = SkyRGBSeparator();      /* separator*/
                 else if (by < (float)TH)      fill = SkyRGBTitle();
-                else                          fill = paperRGB;       /* client paper */                out[idx] = 0xFF000000u | (fill & 0x00FFFFFFu);
+                else                          fill = paperRGB;       /* client paper */
+                out[idx] = 0xFF000000u | (fill & 0x00FFFFFFu);
                 continue;
             }
 
@@ -240,20 +241,56 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
         return 0;
     }
 
-    /* share 2: client fixed protocol page -> desktop alias for writing. */
-    uint64_t r2 = sys_pmmapSHARE(self, 0, PAGE_SIZE, SHARE_FLAGS,
-                                 (uint64_t)pid, SKYWIN_PROTO_PAGE_VA);
+    /* 协议页: 两条路径, 先试 A, 不行再退回 B。
+       ------------------------------------------------------------------
+       协议页是 WM 与客户端之间的**用户态 ABI** (固定 VA 见 winstyle.h)。
+       它以前靠内核加载器兜底映射, 现在内核不认识它了(内核无关性: 换一套
+       窗口系统, ELF 加载器一行都不用改), 代价改由这里付。
+
+       路径 A —— 给"固定 VA 是空洞"的客户端补一页:
+         PIE(ET_DYN) 客户端被内核对搬到高地址 (bias >= 0x10000000), 那个
+         固定 VA 就是空洞; 而路径 B 里**客户端是 src**, 共享的是它"已经
+         存在"的一页, 空洞会让调用直接失败、客户端被击杀。
+         反方向复用同一条原语即可:
+             src = WM      (src_addr=0 -> 内核 EAlloc 一页并登记 VMA)
+             dst = 客户端  (固定协议页 VA)
+         pmmapSHARE 对"调用方指定 dst 区间"的全部要求是**无 VMA 重叠 +
+         PTE 未映射**, 空洞正好满足。
+         成功后 WM 已经拿到可写别名 (pre_src), 这就是协议页本尊, 不必再走
+         路径 B —— 少一次映射, 也不留多余别名。
+
+       路径 B —— 原路径: 静态客户端 (.prepad 已占住那一页) 直接用。
+         对它们路径 A 必然失败 (PTE 已映射), 这是常态而非错误。
+         内核在失败路径上会把 EAlloc 的页 VMM::Free 掉, 所以 A 失败不泄漏。 */
     uint64_t proto_src = 0, proto = 0;
-    read_sideband(&proto_src, &proto);
-    (void)proto_src;
-    if ((int64_t)r2 < 0 || proto == 0) {
-        spawn_diag("[wm] spawn: proto share failed (%s) r2=%lld proto=0x%llx\n",
-                   elf, (long long)(int64_t)r2, (unsigned long long)proto);
+    bool proto_ok = false;
+    {
+        const uint64_t rPre = sys_pmmapSHARE((uint64_t)pid,
+                                             SKYWIN_PROTO_PAGE_VA,
+                                             PAGE_SIZE, SHARE_FLAGS, self, 0);
+        uint64_t pre_src = 0, pre_dst = 0;
+        read_sideband(&pre_src, &pre_dst);
+        if ((int64_t)rPre >= 0 && pre_src != 0 && pre_dst != 0) {
+            proto     = pre_src;      /* WM 侧可写别名 */
+            proto_src = pre_dst;      /* 客户端侧固定 VA */
+            proto_ok  = true;
+        }
+    }
+    if (!proto_ok) {
+        const uint64_t r2 = sys_pmmapSHARE(self, 0, PAGE_SIZE, SHARE_FLAGS,
+                                           (uint64_t)pid, SKYWIN_PROTO_PAGE_VA);
+        read_sideband(&proto_src, &proto);
+        if ((int64_t)r2 >= 0 && proto != 0) proto_ok = true;
+    }
+    if (!proto_ok) {
+        spawn_diag("[wm] spawn: proto share failed (%s) proto=0x%llx\n",
+                   elf, (unsigned long long)proto);
         /* 失败回滚 —— share 1 桌面别名归还 + 进程击杀兜底 */
         sys_munmap(desk_whole, winBytes);
         sys_kill(pid, 9);
         return 0;
     }
+    (void)proto_src;
 
     /* Inner content-area origin inside the ARGB surface. */
     const uint32_t contentX = SKYWIN_SHADOW;
@@ -298,11 +335,24 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
        Wait for CLIENT_READY; console clients additionally wait until OUT_SEQ
        has gone quiet, i.e. the initial printf burst is fully rendered. The
        hard iteration cap guarantees a client that never signals cannot hang
-       the desktop during boot. */
+       the desktop during boot.
+
+       2026-11 修复 (偶发启动卡死): 原来只靠 2000 次 yield 的硬上限兜底。若
+       客户端进程在加载后立刻死掉 (ELF/so 读取失败、字体缺失……), 桌面仍要
+       陪它空转满 2000 次, 而启动阶段还会自动 spawn Notepad/Settings, 于是
+       "一个客户端失败"被放大成"整个桌面像卡死"。现在每隔 64 次就探一次
+       进程存活, 死了立即放弃等待; 窗口本身保留 (纸面已由 WM 预涂), 其余
+       窗口不受影响。 */
     {
         uint64_t last_seq = 0;
         uint32_t quiet = 0, hold = 0;
+        bool mounted = false;
         for (uint32_t i = 0; i < SKYWIN_STARTUP_WAIT_MAX; i++) {
+            if ((i & 63u) == 63u && (int64_t)sys_kill(pid, 0) < 0) {
+                spawn_diag("[wm] spawn: %s exited before CLIENT_READY (pid=%llu)\n",
+                           elf, (unsigned long long)pid);
+                break;
+            }
             uint64_t ready = q[SKYWIN_PROTO_CLIENT_READY];
             uint64_t seq   = q[SKYWIN_PROTO_OUT_SEQ];
             if (ready != SKYWIN_READY_MAGIC) {
@@ -311,17 +361,20 @@ uint64_t SpawnWindowedApp(FrameBuffer *Fb, const char* elf, const char* title,
                 /* Console client: require the output counter to settle. */
                 hold = 0;
                 if (seq == last_seq) {
-                    if (++quiet >= SKYWIN_STARTUP_QUIET) break;
+                    if (++quiet >= SKYWIN_STARTUP_QUIET) { mounted = true; break; }
                 } else {
                     quiet = 0;
                     last_seq = seq;
                 }
             } else {
                 /* Non-console client: READY is sufficient; tiny settle. */
-                if (++hold >= SKYWIN_READY_SETTLE) break;
+                if (++hold >= SKYWIN_READY_SETTLE) { mounted = true; break; }
             }
             sys_yield();
         }
+        if (!mounted)
+            spawn_diag("[wm] spawn: %s did not signal CLIENT_READY, mounting anyway\n",
+                       elf);
     }
 
     if (place) {

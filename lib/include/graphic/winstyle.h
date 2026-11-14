@@ -114,7 +114,45 @@ extern "C" {
 #define SKYWIN_PROTO_CMD_ARG2   13u
 #define SKYWIN_PROTO_CMD_ARG3   14u
 #define SKYWIN_PROTO_CMD_SEQ    15u
-#define SKYWIN_PROTO_SLOTS      16u
+
+/* [16..20] WM -> client 鼠标投递 (2026-11 新增, 客户端页 4 KiB 有余量)。
+ * 方向是 **WM 写 / 客户端读** (与 cmd 邮箱相反): 客户端在自己的事件循环里
+ * 轮询 [16] mouse_seq, 发现变化就读 [17..20]。
+ *   [16] mouse_seq   WM 每投递一个事件 +1 (客户端据此判断"有新事件")
+ *   [17] mouse_x     content-local X (像素, 相对内容区左上角)
+ *   [18] mouse_y     content-local Y
+ *   [19] buttons     按下位图: bit0 左键, bit1 右键, bit2 中键
+ *   [20] wheel       自上次事件以来累积的滚轮档数 (正 = 向下/远离用户)
+ * 语义要点:
+ *   - 只有指针停在**本客户端内容区**时 WM 才写, 不做全局广播 (否则所有
+ *     窗口都会收到不属于自己的点击);
+ *   - 一次点击的 press/release 是两个事件 (mouse_seq 各 +1), 客户端不要
+ *     假设"一个 seq = 一次点击";
+ *   - 客户端只读不写这些槽, WM 不读它们, 不存在双方同时写的竞争。 */
+#define SKYWIN_PROTO_MOUSE_SEQ  16u
+#define SKYWIN_PROTO_MOUSE_X    17u
+#define SKYWIN_PROTO_MOUSE_Y    18u
+#define SKYWIN_PROTO_MOUSE_BTN  19u
+#define SKYWIN_PROTO_MOUSE_WHEEL 20u
+
+/* [21..23] client -> WM 脏行带 (2026-11 新增, 打字上屏延迟修复)。
+ * 方向是 **客户端写 / WM 读**, 消费者是合成器:
+ *   [21] dirty_seq  每提交一帧 +1 (release), WM 据此判断"这一帧的带是新的"
+ *   [22] dirty_y0   本帧实际改动的**内容坐标**起始行 (含)
+ *   [23] dirty_y1   结束行 (不含)
+ * 语义要点:
+ *   - 只有"我自己窗口里改了几行"的客户端 (notepad 的 render_band) 才写;
+ *     不写的客户端三个槽恒为 0, WM 退回整窗行带 —— 老客户端行为不变;
+ *   - WM 必须比对 dirty_seq 的**连续性**: 若发现 seq 跳了不止 1 (客户端在两
+ *     次合成之间提交过两帧), 单帧的带不再代表全部改动, WM 退回整窗行带。
+ *     这条保证"漏一帧也不会留残影";
+ *   - 客户端不要假设 WM 已消费: 每次提交都按本帧真实改动重写, 不做累积;
+ *   - 与 OUT_SEQ 的关系: 先写 y0/y1, 再 ++dirty_seq, 最后 ++OUT_SEQ。
+ *     三个都是 release, WM 读到 OUT_SEQ 变化时带和像素都已就绪。 */
+#define SKYWIN_PROTO_DIRTY_SEQ  21u
+#define SKYWIN_PROTO_DIRTY_Y0   22u
+#define SKYWIN_PROTO_DIRTY_Y1   23u
+#define SKYWIN_PROTO_SLOTS      24u
 #define SKYWIN_PROTO_PAGE_VA  0x400000UL  /* client fixed .prepad protocol page */
 
 #define SKYWIN_CMD_NONE            0u

@@ -63,10 +63,15 @@ FIXED_ENTRIES = [
     ("boot/limine/limine.conf", "res/limine.conf"),
     ("boot/limine/limine-bios.sys", "limine-binary/limine-bios.sys"),
     ("boot/limine/BOOTX64.EFI", "limine-binary/BOOTX64.EFI"),
+    # 16-bit DOS payloads for the DOSVM window.  programs/bin/*.com are build
+    # products of programs/dos/{hello,filedemo}.asm (make -C programs/dos com);
+    # 缺失时 add() 会打印并跳过，不影响其它条目。
+    ("dos/hello.com", "programs/bin/hello.com"),
+    ("dos/filedemo.com", "programs/bin/filedemo.com"),
 ]
 
 PROGRAM_ELFS = ["desktop", "notepad", "settings", "installer", "doom",
-                "explorer", "hw", "hw2"]
+                "explorer", "hw", "hw2", "dos"]
 
 MODULE_GLOB_DIR = "kernel/bin-x86_64/modules"
 DOOM_WAD = "programs/PureDOOM/doom.wad"

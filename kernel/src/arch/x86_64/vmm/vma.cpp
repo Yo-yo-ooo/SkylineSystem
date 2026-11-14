@@ -227,8 +227,27 @@ namespace VMM{
             rb_root_init(&pagemap->vma_tree, nullptr, nullptr, nullptr, nullptr, nullptr);
         }
 
-        vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags) {
-            if (vma_unlikely(!after)) return nullptr;
+        /* 归还 pagemap 的哨兵节点。
+         * 为什么不能像原来那样 PMM::Free(PHYSICAL(pm->vma_head)):
+         *   vma_alloc_node() 是**按页切分**的池 —— 一页 4 KiB 切成 N 个节点,
+         *   base[0] 交给调用方, base[1..N-1] 进全局空闲链表。哨兵正是这样
+         *   拿到的一个节点, 所以它所在的那一页**同时装着其它 pagemap 正在
+         *   使用的节点**。在 CleanPM 里把整页 PMM::Free 掉, 这一页随后会被
+         *   当页表页/用户页重新分配, 别的 pagemap 的 VMA 节点 (parent/left/
+         *   right/color) 就被改写成任意值 —— 下一次 rb_insert 在
+         *   `node->parent->parent` 上是 NULL 时内核 #PF, 整机 halt。
+         *   (实测概率 ~1/16 次门禁: 前一个客户端退出后立刻拉起下一个。)
+         * 正确做法: 只把哨兵节点还给池 (池页永不单独归还 PMM, 峰值 VMA 数量
+         * 决定池的页数, 有界)。 */
+        void ReleaseSentinel(pagemap_t *pagemap) {
+            if (vma_unlikely(!pagemap || !pagemap->vma_head)) return;
+            vma_region_t *sentinel = pagemap->vma_head;
+            pagemap->vma_head   = nullptr;
+            pagemap->vma_cursor = nullptr;
+            vma_free_node(sentinel);
+        }
+
+        vma_region_t *InsertRegion(vma_region_t *after, uint64_t start, uint64_t page_count, uint64_t flags) {            if (vma_unlikely(!after)) return nullptr;
             /* 低内存下 VMA 节点池可能耗尽，或者 SetStart 的哨兵分配失败导致
                vma_head 链未建立；此时 after->next 可能是 nullptr。原实现直接
                `after->next->prev = region` 会在 addr=0x20 处内核 #PF（实测

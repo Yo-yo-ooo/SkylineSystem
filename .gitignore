@@ -21,6 +21,12 @@ a.si4project/
 *.log
 *.png
 !_qemu_doom_ingame.png
+# 16-bit DOS payloads: build products of programs/dos/*.asm (make -C programs/dos)
+# 仓库只保留 .asm 源，.com 一律由构建生成，不进版本库。
+/programs/dos/*.com
+/programs/bin/*.com
+/programs/dos/*.bak
+*.pyc
 /*.err
 /*.c
 /*.h

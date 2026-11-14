@@ -630,6 +630,20 @@ void Init() {
 
     mark_allocated(0, 1);  // physical page 0 must never be handed out (NULL)
 
+    /* DOSVM 独占 [0x70000, 0x84000) 共 80 KiB。这段在 QEMU
+     * e820 里是 USABLE，不放预留下次 PMM::Request() 就可能把它发给出
+     * 内核堆/模块，随后 16 位实模式代码会把别的页表数据踩坏。放在
+     * reserve_bootloader_memory() 之前，且在 free_pages 统计之前，计数
+     * 会自动把这 20 页扣掉。见 kernel/include/arch/x86_64/dosvm/
+     * dosvm_contract.h 的布局说明。
+     *
+     * 比原来的 64 KiB 多出的 16 KiB 是给 .COM 的栈留的：外部映像按
+     * MS-DOS 语义装在段 0x7100，一个完整 64 KiB 段的段顶在 0x81000。
+     * 程序若把 SS:SP 设成 CS:0xFFFE（合法且常见），栈就落在 0x80FFE
+     * 附近；把保留区顶到 0x84000，最坏结果是栈盖掉影屏（画面坏），
+     * 而不是写坏 PMM 已经发放出去的页。 */
+    mark_allocated(0x70000 / PAGE_SIZE, 0x14000 / PAGE_SIZE);
+
     /* 关键: 保留 bootloader 占用的内存 (它自己的页表就在里面)。
        必须在下面的 free_pages 统计**之前**, 否则计数会把它们算成空闲。 */
     reserve_bootloader_memory();

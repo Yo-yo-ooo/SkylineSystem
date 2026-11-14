@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // task.cpp - Task Lifecycle Management
 #include <elf/elf.h>
+#include <elf/elf_image.h>    // kelf_read_file / kelf_validate_image
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/smp/smp.h>
 #include <arch/x86_64/vmm/vmm.h>
@@ -14,6 +15,7 @@
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/interrupt/gdt.h>
 #include <arch/x86_64/cpu/smap.h>      // SmapGuard
+#include <arch/x86_64/dosvm/dosvm_contract.h>
 
 #ifndef likely
 #define likely(x)     __builtin_expect(!!(x), 1)
@@ -230,7 +232,9 @@ static void kill_thread_batch(thread_t *target, cpu_t *self_cpu, bool &need_wait
             spin_unlock_irqrestore(&t_cpu->sched_lock, rflags);
         }
 
-        if (need_ipi) {
+        /* Tier0 / dosvm: 离线核不收 64 位语义的 SCHED_VEC (底层也会丢),
+           在源头跳过避免无谓的 kill 唤醒记账。 */
+        if (need_ipi && !dosvm_core_is_offline(t_cpu->id)) {
             LAPIC::IPI(t_cpu->lapic_id, SCHED_VEC);
         }
         return;
@@ -475,7 +479,9 @@ namespace Schedule {
 
         if (was_running) {
             cpu_t *cur_cpu = this_cpu();
-            if (cpu != cur_cpu) LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
+            /* Tier0 / dosvm: 离线核不收 64 位语义 SCHED_VEC。 */
+            if (cpu != cur_cpu && !dosvm_core_is_offline(cpu->id))
+                LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
         }
     }
 
@@ -926,17 +932,23 @@ namespace Schedule {
         uint64_t half_slice = cpu->base_quantum / 2;
         thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
 
-        __hmap_s_mp *MP = GetMount(Path);
-        if(!MP) { kerrorln("Cannot Find Mount Point!!!"); kfree(thread); return nullptr; }
-        void *FileDesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
-        if (!FileDesc) { kfree(thread); return nullptr; }
-        _memset(FileDesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
-        if(MP->FSOPS->open(FileDesc, Path, O_RDONLY) != 0) { kfree(FileDesc); kfree(thread); return nullptr; }
-        uint64_t FSize = MP->FSOPS->fsize(FileDesc);
-        uint8_t *buffer = (uint8_t*)kmalloc(FSize);
-        if (!buffer) { MP->FSOPS->close(FileDesc); kfree(FileDesc); kfree(thread); return nullptr; }
-        MP->FSOPS->read(FileDesc, buffer, FSize, 0);
-        MP->FSOPS->close(FileDesc); kfree(FileDesc);
+        /* ---- 读取 ELF 镜像: 与 sys_load 共用同一个"校验+重读"实现 ----------
+         * 桌面进程正是从这里加载的 (init.cpp "Creating desktop process..."),
+         * 所以这条路径同样不能把短读的缓冲区当 ELF 用 (见 elf_image.h)。 */
+        uint8_t *buffer = nullptr;
+        uint64_t FSize = 0;
+        int32_t read_rc = kelf_read_file(Path, &buffer, &FSize);
+        if (read_rc < 0) {
+            kerrorln("NewThread(%s): ELF read failed rc=%d", Path, (int)read_rc);
+            kfree(thread);
+            return nullptr;
+        }
+        if (kelf_validate_image(Path, buffer, FSize) != 0) {
+            kerrorln("NewThread(%s): not a loadable ELF image", Path);
+            kfree(buffer);
+            kfree(thread);
+            return nullptr;
+        }
 
         uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
         uint64_t main_bias = 0;

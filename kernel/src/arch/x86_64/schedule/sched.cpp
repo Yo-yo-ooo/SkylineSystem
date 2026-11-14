@@ -26,6 +26,7 @@
 #include <pdef.h>
 #include <klib/stallwatch.h>
 #include <klib/kprintf.h>
+#include <arch/x86_64/dosvm/dosvm_contract.h>
 
 #include <arch/x86_64/schedule/sched_internal.h>
 /* B5：调度策略座位（Tier0 机制 + Tier1 策略）。仅读取座位/注册默认实现，
@@ -256,6 +257,9 @@ cpu_t *get_lw_cpu(cpu_t *ref_cpu) {
         cpu_t *cpu = smp_cpu_list[i];
         if (likely(i < last)) PREFETCH_R(smp_cpu_list[i + 1]);
         if (unlikely(cpu == nullptr)) continue;
+        /* Tier0 / dosvm: 下线核的 runqueue 在往返窗口内不得被选中,
+           否则新线程/新进程会被塞进一个暂时不能调度的核。 */
+        if (unlikely(dosvm_core_is_offline((uint32_t)i))) continue;
         if (ref_cpu && cpu_simd_mask(cpu) != ref_mask) continue;
         if (unlikely(!lw_cpu)) { lw_cpu = cpu; continue; }
         uint64_t current_weight = cpu->total_weight + (cpu->current_thread ? cpu->current_thread->weight : 0);
@@ -431,6 +435,10 @@ namespace Schedule {
                     if (likely(k + 1 < ncpu))
                         PREFETCH_R(smp_cpu_list[(start_cpu + k + 1) % ncpu]);
                     if (unlikely(!victim || victim == cpu)) continue;
+                    /* Tier0 / dosvm: 下线核的 runqueue 在切换窗口内不得
+                       被碰 (trylock / rb_last / RemoveFromQueue 都会摸
+                       它的队列结构), 也不该从它身上偷任务。 */
+                    if (unlikely(dosvm_core_is_offline(i))) continue;
                     if (pass == 0 && cpu_simd_mask(victim) != my_mask) continue;
                     if (unlikely(!atomic_load_1(&victim->has_surplus, ATOMIC_RELAXED))) continue;
 
@@ -529,6 +537,8 @@ namespace Schedule {
                 cpu_t *other = smp_cpu_list[i];
                 if (likely(i < last)) PREFETCH_R(smp_cpu_list[i + 1]);
                 if (unlikely(!other || other == cpu)) continue;
+                /* Tier0 / dosvm: 不把线程主动推送到已下线核的 runqueue。 */
+                if (unlikely(dosvm_core_is_offline((uint32_t)i))) continue;
                 uint64_t ow = other->total_weight + (other->current_thread ? other->current_thread->weight : 0);
                 if (ow < my_weight && ow < target_weight) {
                     if (cpu_simd_mask(other) == my_mask) { target = other; target_weight = ow; }
@@ -603,7 +613,10 @@ namespace Schedule {
              * 加载, 混合掩码系统上需实测该路径 */
             if (unlikely(push_count > 0)) {
                 thread_t *tcurr = __atomic_load_n(&target->current_thread, __ATOMIC_ACQUIRE);
-                if (tcurr == target->idle_thread) {
+                /* Tier0 / dosvm: 目标若在选核之后才被置为离线, 这里再
+                   兜一次, 不发 64 位语义 SCHED_VEC (底层也会丢)。 */
+                if (tcurr == target->idle_thread &&
+                    !dosvm_core_is_offline(target->id)) {
                     LAPIC::IPI(target->lapic_id, SCHED_VEC);
                 }
             }
@@ -969,6 +982,10 @@ namespace Schedule {
         if (unlikely(cpu_num >= MAX_CPU)) return;
         cpu_t *cpu = smp_cpu_list[cpu_num];
         if (unlikely(!cpu)) return;
+        /* Tier0 / dosvm: 唤醒已下线核没有意义 (IPI 会被底层丢弃), 而且会
+           在摘核窗口里设置 need_resched_flags / 让线程继续绑在该核上。
+           在源头返回, 等 dosvm_core_online() 后再正常调度。 */
+        if (unlikely(dosvm_core_is_offline(cpu_num))) return;
 
         thread_t *curr = __atomic_load_n(&cpu->current_thread, __ATOMIC_ACQUIRE);
         if (unlikely(!curr || curr == cpu->idle_thread)) {
@@ -1064,8 +1081,13 @@ namespace Schedule {
         for (int32_t i = 0; i <= last; i++) {
             cpu_t *c = smp_cpu_list[i];
             if (likely(i < last)) PREFETCH_R(smp_cpu_list[i + 1]);
-            if (likely(c && (uint32_t)i != cur_cpu->id)) LAPIC::IPI(c->lapic_id, SCHED_VEC);
+            /* Tier0 / dosvm: Resume 是全局唤醒广播, 逐核跳过已下线核,
+               不能把 64 位语义 SCHED_VEC 投给正在 real mode 的核。 */
+            if (likely(c && (uint32_t)i != cur_cpu->id) &&
+                likely(!dosvm_core_is_offline(c->id)))
+                LAPIC::IPI(c->lapic_id, SCHED_VEC);
         }
-        LAPIC::IPI(cur_cpu->lapic_id, SCHED_VEC);
+        if (likely(!dosvm_core_is_offline(cur_cpu->id)))
+            LAPIC::IPI(cur_cpu->lapic_id, SCHED_VEC);
     }
 }

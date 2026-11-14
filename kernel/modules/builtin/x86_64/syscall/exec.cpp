@@ -8,7 +8,9 @@
 #include <arch/x86_64/lapic/lapic.h>
 #include <atomic/atomic.h>
 #include <fs/fc.h>          // fd_manager_destroy
+#include <elf/elf_image.h>  // kelf_read_file / kelf_validate_image
 #include <arch/x86_64/cpu/smap.h>   // SmapGuard for direct user access
+#include <arch/x86_64/dosvm/dosvm_contract.h>
 
 extern int has_rdrand(void);
 extern uint64_t rdrand64_retry(int retries);
@@ -314,35 +316,11 @@ static uint64_t elf_load_impl(uint8_t *data, pagemap_t *pagemap,
         }
     }
 
-    /* ---------------------------------------------------------------------
-     * WM 协议页 (ABI 固定 VA = 0x400000) 兜底映射。
-     * -------------------------------------------------------------------
-     * programs/desktop/loader.cpp 是这样把协议页交给客户端的:
-     *     sys_pmmapSHARE(self, 0, PAGE_SIZE, FLAGS, pid, 0x400000)
-     * 参数顺序是 (dst_pid, dst_addr, len, flags, src_pid, src_addr) ——
-     * **客户端是 src**, 所以它共享的是客户端**已经存在**的那一页。
-     *
-     * 静态客户端的链接脚本用 .prepad 在 0x400000 预留了一页, 正好满足;
-     * 但 PIE(ET_DYN) 客户端会被内核搬到高地址 (bias >= 0x10000000),
-     * 0x400000 变成空洞, pmmapSHARE 直接失败, 客户端被 WM 击杀。
-     *
-     * 所以在加载期统一兜底: 若该 VA 还没有映射, 就分配一页给它。
-     * 这样客户端就可以和其它程序一样用 -pie + libsky.so, 不必再维护
-     * 那套脆弱的自定义链接脚本 (实测它会把 .rodata 同时塞进两个 PT_LOAD,
-     * 造成段重叠 + dl_vaddr_to_off 反查错位)。
-     * ------------------------------------------------------------------- */
-    {
-        const uint64_t kProtoVa = 0x400000;
-        if (!VMM::GetPhysics(pagemap, kProtoVa)) {
-            uint64_t pg = (uint64_t)PMM::Request();
-            if (pg) {
-                VMM::Map(pagemap, kProtoVa, pg, MM_READ | MM_WRITE | MM_USER);
-                VMM::VMA::AddRegion(pagemap, kProtoVa, 1,
-                                    MM_READ | MM_WRITE | MM_USER);
-                kinfoln("ELF> mapped WM protocol page at 0x%lx", kProtoVa);
-            }
-        }
-    }
+    /* 这里**故意不**给 WM 协议页兜底: 那一页是 WM 与客户端之间的用户态
+       ABI, 固定 VA 的约定只存在于 lib/graphic/winstyle.h 和 desktop/loader
+       里, 加载器不认识它、也不该认识它 (内核无关性: 换个窗口系统, 加载器
+       一行都不用动)。缺页的 PIE 客户端由 WM 在使用前补上, 见
+       programs/desktop/loader.cpp 的 "share 2 前置"。 */
 
     // 恢复进入时的地址空间(!smp_started 时 SwitchPageMap 返回 nullptr,兜底内核)
     VMM::SwitchPageMap(restore_pm ? restore_pm : (pagemap_t*)kernel_pagemap);
@@ -535,38 +513,26 @@ uint64_t sys_load(uint64_t u_pathname, uint64_t u_argv, uint64_t u_envp, \
     uint64_t half_slice = cpu->base_quantum / 2;
     thread->vruntime = base_vruntime > half_slice ? base_vruntime - half_slice : 0;
 
-    __hmap_s_mp *MP = GetMount(pathname);
-    if (unlikely(!MP)) {
-        kerrorln("Cannot Find Mount Point!!!");
+    /* ---- 读取 ELF 镜像 --------------------------------------------------
+     * 原实现是 `MP->FSOPS->read(FileDesc, buffer, FSize, 0);` —— **不检查**
+     * 返回值也不检查实读字节数。ext4_fread 在块设备层报错时会提前返回并只
+     * 填好前半段, 于是 kmalloc 的未初始化内存被当成 ELF 头解析, 表现为偶发
+     * `[dynlink] libsky.so: bad ELF header` / 桌面起不来。
+     * 现在统一走 kelf_read_file(): 校验 rc/rcnt + 失败整文件重读 + 读前清零,
+     * 并由 kelf_validate_image() 校验 ELF 头与各 PT_LOAD 边界。 */
+    uint8_t *buffer = nullptr;
+    uint64_t FSize = 0;
+    int32_t read_rc = kelf_read_file(pathname, &buffer, &FSize);
+    if (unlikely(read_rc < 0)) {
+        kerrorln("sys_load: cannot read ELF '%s' (rc=%d)", pathname, (int)read_rc);
         sys_load_fail(parent, thread, pathname, nullptr, argv, argc, envp, envc);
-        return -ENOENT;
+        return read_rc;
     }
-    void *FileDesc = kmalloc(MP->FSOPS->SIZEOF_FILE_DESC);
-    if (unlikely(!FileDesc)) {
-        sys_load_fail(parent, thread, pathname, nullptr, argv, argc, envp, envc);
-        return -ENOMEM;
-    }
-    _memset(FileDesc, 0, MP->FSOPS->SIZEOF_FILE_DESC);
-    if (MP->FSOPS->open(FileDesc, pathname, O_RDONLY) != 0) {
-        kfree(FileDesc);
-        sys_load_fail(parent, thread, pathname, nullptr, argv, argc, envp, envc);
-        return -EACCES;
-    }
-    uint64_t FSize = MP->FSOPS->fsize(FileDesc);
-    if (unlikely(FSize < sizeof(Elf64::Elf64_Ehdr))) {     // 修复: 空文件/过小文件
-        MP->FSOPS->close(FileDesc); kfree(FileDesc);
-        sys_load_fail(parent, thread, pathname, nullptr, argv, argc, envp, envc);
+    if (unlikely(kelf_validate_image(pathname, buffer, FSize) != 0)) {
+        kerrorln("sys_load: '%s' is not a loadable ELF image", pathname);
+        sys_load_fail(parent, thread, pathname, buffer, argv, argc, envp, envc);
         return -EINVAL;
     }
-    uint8_t *buffer = (uint8_t*)kmalloc(FSize);
-    if (unlikely(!buffer)) {
-        MP->FSOPS->close(FileDesc); kfree(FileDesc);
-        sys_load_fail(parent, thread, pathname, nullptr, argv, argc, envp, envc);
-        return -ENOMEM;
-    }
-    MP->FSOPS->read(FileDesc, buffer, FSize, 0);
-    MP->FSOPS->close(FileDesc);
-    kfree(FileDesc);
     kfree(pathname); pathname = nullptr;
 
     uint64_t tls_offset = 0, tls_memsz = 0, tls_filesz = 0, tls_align = 0;
@@ -731,6 +697,10 @@ uint64_t sys_launch(uint64_t pid, GENERATE_IGN5()){
     if (unlikely(!me)) return -EFAULT;
     cpu_t *cpu = get_lw_cpu();
     if (unlikely(!cpu)) return -EFAULT;
+    /* Tier0 / dosvm: 在下线核上 launch 会让进程入队到一个暂时不能调度
+       的核, 而唤醒 IPI 又被底层过滤掉。get_lw_cpu() 已跳过下线核, 这里
+       再兜一次并发置位; 此时 proc 仍在 NOT_RUNQ 树里, -EBUSY 可重试。 */
+    if (dosvm_core_is_offline(cpu->id)) return -EBUSY;
 
     thread_t *thread = nullptr;
     proc_t *proc = nullptr;
@@ -796,9 +766,11 @@ uint64_t sys_launch(uint64_t pid, GENERATE_IGN5()){
     asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
 
     // 唤醒目标 CPU:"塞进队列"和"CPU 知道要跑它"是两件事
-    if (cpu != me)
+    /* Tier0 / dosvm: 离线核不收 64 位语义 SCHED_VEC (底层也会丢)。
+       同核的 int $SCHED_VEC 是本地软中断, 不经过 LAPIC::IPI, 保留。 */
+    if (cpu != me && !dosvm_core_is_offline(cpu->id))
         LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
-    else
+    else if (cpu == me)
         asm volatile("int %0" :: "i"(SCHED_VEC));
 
     return 0;

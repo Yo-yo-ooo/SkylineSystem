@@ -73,6 +73,19 @@ typedef struct KbdShared {
     volatile int32_t slot_pid[KBD_MAX_READERS];    /* pid owning slot, 0 = free */
 
     KbdEvent ring[KBD_RING_CAP];
+
+    /* 与 ring[] 平行的"事件产生时刻 TSC 低 32 位"数组 (下标同样是
+       seq & (KBD_RING_CAP-1))。让客户端能算**端到端**输入延迟
+       (按键入环 -> 像素上屏), 而不只是"取出后画了多久"。
+       为什么放在结构体**末尾**而不是塞进 KbdEvent:
+         * KbdEvent 保持 4 字节 —— 老的客户端二进制 (settings/installer/
+           doom/hw2) 仍然按同样的偏移读 ring[], 不需要重新编译也能跑;
+         * 整个 KbdShared 要落在一个 4 KiB 共享页里: 现在
+           8+64+8+32+1024+1024 = 2160 B, 还有余量。
+       32 位 TSC 在 2.6GHz 下 1.65 秒回绕一次, 用无符号减法
+       (now_lo - stamp) 求差在"一次测量远小于 1.65 秒"时仍然正确 ——
+       输入延迟量级是毫秒。 */
+    volatile uint32_t stamp[KBD_RING_CAP];
 } KbdShared;
 
 /* ---- focus routing helpers ---------------------------------------------- */

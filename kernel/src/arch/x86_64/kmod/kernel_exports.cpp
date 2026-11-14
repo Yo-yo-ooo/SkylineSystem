@@ -17,6 +17,11 @@
  *     本文件的 libc 版本提供，保证 elf_loader fixture 可独立链接。
  * ==========================================================================*/
 #include <kmod/kmod_internal.h>
+/* Tier1 dosvm 内建组件的跨层契约：5 个 extern "C" 函数声明 + 契约名常量。
+ * 内核分支需要这些声明才能对 &name 取地址；宿主分支需要同一个
+ * DOSVM_KERNEL_CONTRACT 让桩表与 .kout 逐项一致。契约头只依赖 <stdint.h>，
+ * 两个分支都可安全包含。 */
+#include <arch/x86_64/dosvm/dosvm_contract.h>
 
 #ifdef __KERNEL_TEST_HOST__
 #include <cstdarg>
@@ -110,6 +115,22 @@ KMOD_KEXPORT(memcmp, KMOD_CONTRACT_KERNEL_LIBC_V1, 1u, KMOD_SYM_FUNC);
 
 KMOD_KEXPORT(KmodNowMs, KMOD_CONTRACT_KERNEL_TIME_V1, 1u, KMOD_SYM_FUNC);
 
+/* ---- Tier1 dosvm：动态 syscall 门面 (dosvm.ko) 的内核侧符号 -----------
+ * provider = "kernel"，contract = kernel.dosvm.v1，abi = 1。
+ * 实现由 kernel/modules/builtin/x86_64/dosvm/ 提供（真正的 long->real->long
+ * 往返）；本表只发布地址，dosvm.ko 通过 .in 导入后转调，绝不触碰 CR/GDT。
+ * 契约头已用 extern "C" 声明这些函数，故 KMOD_KEXPORT 可直接取 &name。 */
+KMOD_KEXPORT(dosvm_enter, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(dosvm_read, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(dosvm_generation, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(dosvm_last_cpu, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(dosvm_trips, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+/* .COM 装载与键盘注入：实模式里没有活键盘/文件回调，映像与按键都要在
+ * trip 之前由用户态搬进低内存。 */
+KMOD_KEXPORT(dosvm_stage_com, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(dosvm_push_keys, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(dosvm_mem_rw, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+
 #endif /* !__KERNEL_TEST_HOST__ */
 
 /* ================================================================== */
@@ -177,6 +198,59 @@ int host_memcmp(const void *a, const void *b, size_t n)
     return std::memcmp(a, b, n);
 }
 
+/* ---- Tier1 dosvm 的宿主桩 -------------------------------------------
+ * 宿主上没有 trampoline / AP / 实模式窗口，这些符号只需保持"存在且与内核
+ * .kout 逐项一一对应"：enter / read / stage / keys 返回 -38 (ENOSYS)，
+ * 三个只读统计返回 0。
+ * 这样宿主 selftest 的导出表不会与内核表出现条目数/名字/契约的漂移。 */
+int host_dosvm_enter(uint32_t cpu_id)
+{
+    (void)cpu_id;
+    return -38;
+}
+
+long host_dosvm_read(void *user_buf, uint64_t cap)
+{
+    (void)user_buf;
+    (void)cap;
+    return -38;
+}
+
+uint64_t host_dosvm_generation(void)
+{
+    return 0u;
+}
+
+uint64_t host_dosvm_last_cpu(void)
+{
+    return 0u;
+}
+
+uint64_t host_dosvm_trips(void)
+{
+    return 0u;
+}
+
+int host_dosvm_stage_com(void *user_img, uint64_t len, void *user_args,
+                         uint64_t args_len)
+{
+    (void)user_img; (void)len; (void)user_args; (void)args_len;
+    return -38;
+}
+
+int host_dosvm_push_keys(void *user_keys, uint64_t count)
+{
+    (void)user_keys; (void)count;
+    return -38;
+}
+
+int host_dosvm_mem_rw(uint64_t off, void *user_buf, uint64_t len,
+                      uint32_t is_write)
+{
+    (void)off; (void)user_buf; (void)len; (void)is_write;
+    return -38;
+}
+
 /* 与内核 .kout 内容一一对应；宿主上函数地址由宿主链接器静态重定位。 */
 kmod_export_t g_host_kout[] = {
     KMOD_EXPORT_ENTRY("kmalloc", KMOD_CONTRACT_KERNEL_MEM, host_kmalloc, 0u,
@@ -203,6 +277,23 @@ kmod_export_t g_host_kout[] = {
                       0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
     KMOD_EXPORT_ENTRY("KmodNowMs", KMOD_CONTRACT_KERNEL_TIME_V1, host_now_ms,
                       0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    /* 与内核分支末尾的 7 个 KMOD_KEXPORT 一一对应（同名/同契约/同 abi）。 */
+    KMOD_EXPORT_ENTRY("dosvm_enter", DOSVM_KERNEL_CONTRACT, host_dosvm_enter,
+                      0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("dosvm_read", DOSVM_KERNEL_CONTRACT, host_dosvm_read,
+                      0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("dosvm_generation", DOSVM_KERNEL_CONTRACT,
+                      host_dosvm_generation, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("dosvm_last_cpu", DOSVM_KERNEL_CONTRACT,
+                      host_dosvm_last_cpu, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("dosvm_trips", DOSVM_KERNEL_CONTRACT, host_dosvm_trips,
+                      0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("dosvm_stage_com", DOSVM_KERNEL_CONTRACT,
+                      host_dosvm_stage_com, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("dosvm_push_keys", DOSVM_KERNEL_CONTRACT,
+                      host_dosvm_push_keys, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("dosvm_mem_rw", DOSVM_KERNEL_CONTRACT,
+                      host_dosvm_mem_rw, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
 };
 
 constexpr uint32_t kHostKoutCount =

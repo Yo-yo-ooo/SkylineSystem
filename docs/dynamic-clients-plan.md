@@ -209,23 +209,35 @@ lock    : FFFFFFFF801B9F44 -> PROC_LIST_LOCK   (nm: pid2proc_tree+8)
 `DT_NEEDED` → `elf_dyn_apply()` 提前返回 → PLT 全是野地址。这个组合还会
 连带把静态构建的段表也搅乱，性价比太低。
 
-改成更干净的方案：**由内核保证 0x400000 一定有一页**。
+改成更干净的方案：**协议页由 WM 在用户态补上，内核一个字节都不提它**。
+
+加载器并不认识"那个固定 VA 是窗口协议页"这件事——它是 WM 与客户端之间的
+用户态 ABI（VA 常量定义在 `lib/include/graphic/winstyle.h`）。把它写进
+`exec.cpp`，意味着换一套窗口系统就要改 ELF 加载器，这是不该有的耦合
+（内核无关性）。
+
+职责因此挪到 `programs/desktop/loader.cpp` 的 `SpawnWindowedApp`，反方向复用
+同一条 `sys_pmmapSHARE` 原语：
 
 ```c
-/* exec.cpp, elf_load_impl 的两趟权限收紧之后 */
-const uint64_t kProtoVa = 0x400000;
-if (!VMM::GetPhysics(pagemap, kProtoVa)) {
-    uint64_t pg = (uint64_t)PMM::Request();
-    if (pg) {
-        VMM::Map(pagemap, kProtoVa, pg, MM_READ | MM_WRITE | MM_USER);
-        VMM::VMA::AddRegion(pagemap, kProtoVa, 1, MM_READ | MM_WRITE | MM_USER);
-    }
-}
+/* 路径 A: src = WM (src_addr=0 -> 内核 EAlloc 一页), dst = 客户端(固定协议页 VA) */
+uint64_t rPre = sys_pmmapSHARE(pid, SKYWIN_PROTO_PAGE_VA, PAGE_SIZE,
+                               SHARE_FLAGS, self, 0);
+read_sideband(&pre_src, &pre_dst);   /* 成功: pre_src 就是 WM 侧可写别名 */
+
+/* 路径 B (静态客户端): 它自己已经有那一页，直接共享给 WM */
+uint64_t r2 = sys_pmmapSHARE(self, 0, PAGE_SIZE, SHARE_FLAGS,
+                             pid, SKYWIN_PROTO_PAGE_VA);
 ```
 
-因为 `sys_pmmapSHARE` 共享的是"客户端**已经存在**的那一页"，只要加载期
-保证该 VA 有映射，客户端就可以和其它程序一样用 `-pie + libsky.so`，
-完全不需要自定义链接脚本，也不需要 `.prepad`。
+`pmmapSHARE` 对"调用方指定 dst 区间"的要求只有两条：**无 VMA 重叠 +
+PTE 未映射** —— PIE 客户端的空洞正好满足。静态客户端（`.prepad` 已占住
+这一页）会让路径 A 失败，这是常态而非错误；内核在失败路径上会把 EAlloc
+的那一页 `VMM::Free` 掉，所以不泄漏。路径 A 成功时 WM 已经拿到可写别名，
+不必再走路径 B，少一次映射、也不留多余别名。
+
+于是客户端照旧可以用 `-pie + libsky.so`，不需要自定义链接脚本，也不需要
+`.prepad`；而 ELF 加载器里不再出现任何协议页相关的常量。
 
 ### 验证：hw2 变成第三个动态链接程序
 

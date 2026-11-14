@@ -28,6 +28,7 @@ struct WmClient {
     Window          win;         /* compositor window (static storage: stable) */
     const char*     title;       /* spawn title (string-literal lifetime)      */
     uint64_t        last_seq;    /* last observed client OUT_SEQ (frame ping)  */
+    uint64_t        last_dirty_seq; /* last consumed client DIRTY_SEQ (row band) */
     uint64_t        cmd_seq;     /* last consumed client->WM command sequence  */
 
     /* ---- geometry / interactive resize ---- */
@@ -84,6 +85,7 @@ bool      wm_client_reap_pid(Compositor& comp, int32_t pid, bool* dirty);
 /* py0/py1: 变了内容的客户端所占的**行带并集** (供局部合成);
    无变化时保持原值不变。 */
 void      wm_clients_poll_output(bool* dirty, int32_t* py0, int32_t* py1);
+int       wm_clients_new_frame(void);
 void      wm_client_close   (Compositor& comp, WmClient* c);
 /* 最小化：记录 pre_minimized_max（最小化前的最大化态）并隐藏窗口；
  * 不改 z 序（隐藏而已），恢复时由 restore() 重新置顶并按先态还原几何。 */
@@ -111,6 +113,15 @@ WmClient* wm_client_find_pid    (uint64_t pid);          /* first client by pid 
  * the command slot is cleared after consumption. */
 int       wm_client_poll_command(WmClient** out, uint64_t* cmd,
                                  char* arg, uint32_t argCap);
+
+/* ---- WM -> client 鼠标投递 (协议页 [16..20], 见 graphic/winstyle.h) ----
+ * 只有指针**落在该客户端内容区 (body 减去标题栏/圆角行)** 时才写入, 坐标是
+ * content-local; 不在内容区就什么都不写 —— 不做全局广播, 否则每个窗口都会
+ * 收到不属于自己的点击。窗口被拖动/缩放/最大化后 bodyX/bodyY/bodyW/bodyH 是
+ * 权威几何, 所以坐标换算天然跟随几何变化。
+ * 返回 1 = 已投递, 0 = 指针不在内容区 (调用方不必日志)。 */
+int       wm_client_push_mouse(WmClient* c, int32_t mx, int32_t my,
+                               uint32_t buttons);
 /* Repaint a client's chrome (title bar/border/paper/radius) with the current
  * runtime theme while preserving its content pixels; marks *dirty. */
 void      wm_client_repaint_chrome(WmClient* c, bool* dirty);

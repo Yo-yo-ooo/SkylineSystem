@@ -137,6 +137,15 @@ struct TTF_Font_Internal {
     size_t         glyf_scratch_cap;
     int32_t*       win_gids;       /* glyph ids currently resident           */
     int32_t        win_count, win_cap;
+    /* O(1) 驻留位图: gid -> 1 表示该字形的轮廓已经在窗口里。
+       为什么必须要有: ttf_glyph_ensure()/ttf_glyf_load() 原来用
+       `for (i < win_count)` **线性扫** win_gids 判断是否驻留。win_count 随
+       窗口内容增长 (最多几百~上千个字形), 而 glyph_geo() 每个字符都要问一次
+       —— 画一行 N 个字符就是 N × win_count 次比较, 延迟随文本长度平方级增长
+       (实测 20 行 × 60 字符的文档按键 p50 从 0.17ms 涨到十几毫秒)。
+       位图按 numGlyphs 分配 (SourceHanSerif ≈ 65k → 64 KiB), 只读一次,
+       驻留/驱逐各写一个字节。 */
+    uint8_t*       glyf_resident;
     unsigned long  glyf_fetches, glyf_bytes;
 
     /* 几何缓存 (直接映射, codepoint & 255)。
@@ -310,13 +319,16 @@ static uint32_t ttf_loca_get(const TTF_Font* f, int32_t gid) {
    现在加载前先驱逐两个邻居, 这条边界就只属于当前字形。 */
 static void ttf_glyf_evict(TTF_Font* f, int32_t gid) {
     if (gid < 0) return;
+    if (f->glyf_resident && gid < f->info.numGlyphs && !f->glyf_resident[gid]) return;
     for (int32_t i = 0; i < f->win_count; i++) {
         if (f->win_gids[i] != gid) continue;
         ttf_loca_set(f, gid, 0);
         if (gid + 1 <= f->info.numGlyphs) ttf_loca_set(f, gid + 1, 0);
         f->win_gids[i] = f->win_gids[--f->win_count];
+        if (f->glyf_resident && gid < f->info.numGlyphs) f->glyf_resident[gid] = 0;
         return;
     }
+    if (f->glyf_resident && gid < f->info.numGlyphs) f->glyf_resident[gid] = 0;
 }
 
 static void ttf_glyf_reset(TTF_Font* f) {
@@ -324,6 +336,8 @@ static void ttf_glyf_reset(TTF_Font* f) {
         int32_t gid = f->win_gids[i];
         ttf_loca_set(f, gid, 0);
         if (gid + 1 <= f->info.numGlyphs) ttf_loca_set(f, gid + 1, 0);
+        if (f->glyf_resident && gid >= 0 && gid < f->info.numGlyphs)
+            f->glyf_resident[gid] = 0;
     }
     f->win_count     = 0;
     f->glyf_win_used = 0;
@@ -361,8 +375,14 @@ static bool ttf_glyf_slot_push(TTF_Font* f, int32_t gid) {
 /* Read one glyph (and, for composites, its components) into the window. */
 static bool ttf_glyf_load(TTF_Font* f, int32_t gid, int depth) {
     if (gid < 0 || gid >= f->info.numGlyphs) return false;
-    for (int32_t i = 0; i < f->win_count; i++)
-        if (f->win_gids[i] == gid) return true;      /* already resident */
+    /* O(1) 驻留判定 (位图) —— 原来是线性扫 win_gids, 每个字符都要付一次
+       窗口大小的代价 (见结构体里 glyf_resident 的说明)。 */
+    if (f->glyf_resident) {
+        if (f->glyf_resident[gid]) return true;
+    } else {
+        for (int32_t i = 0; i < f->win_count; i++)
+            if (f->win_gids[i] == gid) return true;  /* already resident */
+    }
 
     /* 先记下原始偏移, 再驱逐两个邻居: 驱逐会把 loca[gid]、loca[gid+1]
        清 0 (可能已被邻居占用), 之后我们才写入自己的这一对。 */
@@ -375,7 +395,9 @@ static bool ttf_glyf_load(TTF_Font* f, int32_t gid, int depth) {
     if (len == 0) {                    /* blank glyph: zero-length loca pair */
         ttf_loca_set(f, gid, 0);
         ttf_loca_set(f, gid + 1, 0);
-        return ttf_glyf_slot_push(f, gid);
+        if (!ttf_glyf_slot_push(f, gid)) return false;
+        if (f->glyf_resident) f->glyf_resident[gid] = 1;
+        return true;
     }
     /* stay inside the glyf table: a corrupt loca must not read past it */
     if (a > f->glyf_file_len || len > f->glyf_file_len - a) return false;
@@ -420,6 +442,7 @@ static bool ttf_glyf_load(TTF_Font* f, int32_t gid, int depth) {
     ttf_loca_set(f, gid, (uint32_t)at);
     ttf_loca_set(f, gid + 1, (uint32_t)(at + len));
     if (!ttf_glyf_slot_push(f, gid)) return false;
+    if (f->glyf_resident) f->glyf_resident[gid] = 1;   /* 驻留位图 */
     f->glyf_win_used += pad;
     f->glyf_fetches++;
     f->glyf_bytes += len;
@@ -464,10 +487,12 @@ static void ttf_glyf_teardown(TTF_Font* f) {
     if (!f) return;
     if (f->glyf_fd) fclose(f->glyf_fd);
     if (f->glyf_loc_orig) TTF_FREE(f->glyf_loc_orig);
+    if (f->glyf_resident) TTF_FREE(f->glyf_resident);
     if (f->glyf_scratch) TTF_FREE(f->glyf_scratch);
     if (f->win_gids) TTF_FREE(f->win_gids);
     f->glyf_fd = NULL;
     f->glyf_loc_orig = NULL;
+    f->glyf_resident = NULL;
     f->glyf_scratch = NULL;
     f->win_count = f->win_cap = 0;
     f->glyf_lazy = false;
@@ -1703,6 +1728,11 @@ static uint8_t ttf_read_lazy(TTF_Font** out_font, const char* path,
             goto fallback;
         }
         for (int32_t i = 0; i <= ng; i++) rf->glyf_loc_orig[i] = ttf_loca_get(rf, i);
+        /* 驻留位图 (gid -> 1 个字节): 把"字形是否在窗口里"的查询从
+           O(win_count) 线性扫描降到 O(1)。分配失败不影响正确性 ——
+           下面的代码会退回线性扫描。 */
+        rf->glyf_resident = (uint8_t*)TTF_MALLOC((size_t)ng);
+        if (rf->glyf_resident) TTF_MEMSET(rf->glyf_resident, 0, (size_t)ng);
         /* nothing is resident yet: every loca pair reads as zero-length, which
            stbtt reports as "empty glyph" instead of reading past the window. */
         TTF_MEMSET(rf->data + rf->info.loca, 0, (size_t)(ng + 1) * 4u);
@@ -1800,13 +1830,20 @@ int32_t x, int32_t y, const char* text, uint32_t color
     int32_t len = (int32_t)TTF_STRLEN(text);
 
     /* Pass 1 (metrics only): min_y for pixel-exact vertical parity with the
-       previous scratch-bitmap implementation (ink-top anchoring). */
+       previous scratch-bitmap implementation (ink-top anchoring).
+       这里**必须**走 glyph_geo_measured() 而不是 glyph_geo():
+         * glyph_geo() 会 ttf_glyph_ensure() —— 对 lazy 字形而言, 只要轮廓不在
+           窗口里就要读盘/重载, 而 pass 1 只是要 off_y;
+         * 结果是一行文字每画一次都可能触发 N 次字形载入 (窗口驱逐 -> 再读),
+           延迟随行长线性增长 (实测 20 行 × 60 字符文档按键 p99 上百毫秒)。
+       度量缓存的字段与 glyph_geo() 完全一致 (缓存就是它算出来后存下的),
+       所以 min_y 的取值不变; 真正需要轮廓的地方只有 pass 2 的 atlas_fetch. */
     int32_t min_y = 0;
     for (int32_t i = 0; i < len; ) {
         int32_t advance = 0;
         int32_t cp = utf8_to_codepoint(&text[i], len - i, &advance);
         TTF_GlyphGeo g;
-        glyph_geo(TTFFont, cp, &g);
+        glyph_geo_measured(TTFFont, cp, &g);
         int32_t top = TTFFont->ascent + g.off_y;
         if (top < min_y) min_y = top;
         i += advance;

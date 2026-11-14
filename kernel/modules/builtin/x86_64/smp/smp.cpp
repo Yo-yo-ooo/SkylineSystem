@@ -13,6 +13,8 @@
 #include <arch/x86_64/cpu.h>
 #include <arch/x86_64/lapic/lapic.h>
 #include <mem/pmm.h>
+#include <klib/errno.h>
+#include <arch/x86_64/dosvm/dosvm_contract.h>
 
 extern "C" int32_t file_cache_writeback_callback(
     uint64_t file_id,
@@ -32,6 +34,82 @@ extern void enable_smep_smap();
 void sched_idle();   /* real idle loop: queue self-check + halt */
 
 uint32_t apic_id_to_logical[MAX_CPU * 2] = {0};
+
+/* ==========================================================================
+ * Tier0 / dosvm: 单核可逆退出 IA-32e 的 "下线掩码"。
+ *
+ * 某个 AP 会真的清 CR0.PG 进入 real mode。它一旦处在非 x64 窗口, 任何按
+ * 64 位 IDT 语义投递的 IPI (SCHED_VEC / TLB_FLUSH_VEC / ...) 都会让它跳到
+ * 一个不存在的 64 位 IDT 门 -> triple fault -> 整机死。所以所有 IPI 发送
+ * 路径必须先查这个掩码 (LAPIC::IPI 里做统一兜底, 调度/TLB 路径在源头跳)。
+ *
+ * 位图语义: 位 N = 逻辑 cpu id N 已下线。契约只导出一个 uint64_t
+ * (g_cpu_offline_mask, 位 0..63), 而 MAX_CPU = 128, 故 id 64..127 由本文件
+ * 私有的影子字承载, 避免 1ULL << >=64 的 UB 和位别名。四个 API 同时看
+ * 两个字, 对调用方完全透明; 导出的符号仍精确反映低 64 个核的状态。
+ *
+ * 注意: dosvm_core_offline() 只负责"置位 + 全屏障", 不发 IPI、不自旋等
+ * 目标核应答 (会与 Tier1 的 IPI handler 形成死锁)。真正进入安全窗口由
+ * Tier1 在 0xF0 IPI handler 里自己 cli 完成; 0xF0 向量在本掩码面前放行。
+ * ========================================================================== */
+extern "C" {
+volatile uint64_t g_cpu_offline_mask = 0;
+}
+/* 高 64 个逻辑 id 的影子字 (不导出, 只通过下面四个 API 访问)。 */
+static volatile uint64_t s_cpu_offline_mask_hi = 0;
+
+/* 原子内建函数不接受带 volatile 限定的指针类型做泛型实参, 统一在这里
+   去掉限定; 之后所有访问都走 __atomic_* 内建, 编译器不会缓存旧值。 */
+static inline uint64_t *dosvm_offline_word(uint32_t cpu_id) {
+    return (cpu_id < 64u) ? (uint64_t *)&g_cpu_offline_mask
+                          : (uint64_t *)&s_cpu_offline_mask_hi;
+}
+static inline uint64_t dosvm_offline_bit(uint32_t cpu_id) {
+    return 1ULL << (cpu_id & 63u);
+}
+
+extern "C" int dosvm_core_offline(uint32_t cpu_id) {
+    /* MAX_CPU=128: 越界拒绝; BSP(0) 承担 PIT/全局初始化, 不允许摘除。 */
+    if (cpu_id >= (uint32_t)MAX_CPU || cpu_id == 0u) return -EINVAL;
+
+    uint64_t *word = dosvm_offline_word(cpu_id);
+    const uint64_t bit = dosvm_offline_bit(cpu_id);
+    /* fetch_or 的返回值让"已置位"判定与置位本身成为一次原子操作:
+       两个并发调用者只有一个能拿到 cleared 的旧值, 另一个直接 -EBUSY,
+       且绝不误清别人持有的位。 */
+    const uint64_t old = __atomic_fetch_or(word, bit, __ATOMIC_ACQ_REL);
+    if (old & bit) return -EBUSY;
+
+    /* 排空: 保证掩码对本核后续的所有 IPI 发送点可见 (也让编译器不把
+       后面的发送越过这次置位)。不等待对方 —— 对方的安全窗口由 0xF0
+       handler 自行建立。 */
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    return 0;
+}
+
+extern "C" void dosvm_core_online(uint32_t cpu_id) {
+    if (cpu_id >= (uint32_t)MAX_CPU || cpu_id == 0u) return;
+    uint64_t *word = dosvm_offline_word(cpu_id);
+    __atomic_fetch_and(word, ~dosvm_offline_bit(cpu_id), __ATOMIC_ACQ_REL);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+extern "C" int dosvm_core_is_offline(uint32_t cpu_id) {
+    if (cpu_id >= (uint32_t)MAX_CPU) return 0;
+    uint64_t *word = dosvm_offline_word(cpu_id);
+    return (__atomic_load_n(word, __ATOMIC_ACQUIRE) &
+            dosvm_offline_bit(cpu_id)) ? 1 : 0;
+}
+
+extern "C" int dosvm_lapic_offline(uint32_t lapic_id) {
+    /* apic_id_to_logical[] 是 MAX_CPU*2 项, 0xFF = 无效映射;
+       超界 (例如 x2APIC 的大 id) 一律当作"不离线", 宁可不拦也不能
+       用越界下标读内存。 */
+    if (lapic_id >= (uint32_t)(MAX_CPU * 2)) return 0;
+    const uint32_t logical = apic_id_to_logical[lapic_id];
+    if (logical == 0xFFu || logical >= (uint32_t)MAX_CPU) return 0;
+    return dosvm_core_is_offline(logical);
+}
 
 void smp_setup_kstack(cpu_t *cpu) {
     void *rsps = (void*)VMM::Alloc(kernel_pagemap, 8, false);

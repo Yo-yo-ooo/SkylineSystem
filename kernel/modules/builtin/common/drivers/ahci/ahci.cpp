@@ -217,6 +217,9 @@ namespace AHCI
         uint32_t sectorH = (uint32_t)(sector >> 32);
         uint32_t sectorCountCopy = sectorCount;
         
+        /* 端口级串行: PxIS/PxCI 是共享寄存器, 两笔命令并发会互相清掉对方的
+           错误位/在飞位 (见 ahci.h 里 io_lock 的说明)。 */
+        spinlock_lock(&io_lock);
         hbaPort->interruptStatus = (uint32_t)-1;
         /* 选槽 + 表填 + 签发在同一短临界区 ——
            两个线程并发写同一端口时不会再选到同一 slot (原实现
@@ -225,6 +228,7 @@ namespace AHCI
         int32_t slot = FindCommandSlot();
         if (slot == -1) {
             spinlock_unlock(&slot_lock);
+            spinlock_unlock(&io_lock);
             return false;
         }
 
@@ -279,12 +283,18 @@ namespace AHCI
         uint64_t spin = 0;
         while((hbaPort->taskFileData & (ATA_DEV_BUSY | ATA_DEV_DRQ)) && spin < 1000000)
             spin++;
-        if (spin == 1000000)
+        if (spin == 1000000) {
+            /* 修复: 原来这里裸 return false, 把 slot_lock 一起带走了 ——
+               该端口之后每次 I/O 都会在同一把锁上死等 (整个文件系统停摆)。 */
+            spinlock_unlock(&slot_lock);
+            spinlock_unlock(&io_lock);
             return false;
+        }
 
         /* 同 Write —— 命令表写全后、门铃前释放屏障 */
         __atomic_thread_fence(__ATOMIC_RELEASE);
-        hbaPort->commandIssue = 1 << slot;
+        /* 只置自己那一位, 不清掉别人的在飞位 (见 ahci.h io_lock 说明) */
+        hbaPort->commandIssue = hbaPort->commandIssue | (1u << slot);
         spinlock_unlock(&slot_lock);   /* 签发后释放 (短临界区) */
         /* deadline 用 MonotonicMS (TSC 直读) —— 原实现用
            TimeSinceBootMS, 该时钟在"本核收不到 PIT 节拍"时会冻结, 于是
@@ -300,7 +310,8 @@ namespace AHCI
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
-                        RecoverPort();
+                RecoverPort();
+                spinlock_unlock(&io_lock);
                 return false;
             }
             asm volatile("pause");
@@ -308,6 +319,7 @@ namespace AHCI
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) {
             RecoverPort();
+            spinlock_unlock(&io_lock);
             return false;
         }
 
@@ -318,10 +330,12 @@ namespace AHCI
             kerror("AHCI: port %d slot %d timeout (CI=%#x, IS=%#x)\n",
                    portNumber, slot, hbaPort->commandIssue, hbaPort->interruptStatus);
             RecoverPort();      /* 释放卡住的 slot, 否则该端口永久失效 */
+            spinlock_unlock(&io_lock);
             return false;
         }
 
         recover_attempts = 0;   /* 成功一笔就重置恢复限流 */
+        spinlock_unlock(&io_lock);
         return true;
     }
 
@@ -336,6 +350,9 @@ namespace AHCI
         uint32_t sectorH = (uint32_t)(sector >> 32);
         uint32_t sectorCountCopy = sectorCount;
         
+        /* 端口级串行: PxIS/PxCI 是共享寄存器, 两笔命令并发会互相清掉对方的
+           错误位/在飞位 (见 ahci.h 里 io_lock 的说明)。 */
+        spinlock_lock(&io_lock);
         hbaPort->interruptStatus = (uint32_t)-1;
         /* 选槽 + 表填 + 签发在同一短临界区 ——
            两个线程并发写同一端口时不会再选到同一 slot (原实现
@@ -344,6 +361,7 @@ namespace AHCI
         int32_t slot = FindCommandSlot();
         if (slot == -1) {
             spinlock_unlock(&slot_lock);
+            spinlock_unlock(&io_lock);
             return false;
         }
 
@@ -398,14 +416,18 @@ namespace AHCI
         uint64_t spin = 0;
         while((hbaPort->taskFileData & (ATA_DEV_BUSY | ATA_DEV_DRQ)) && spin < 1000000)
             spin++;
-        if (spin == 1000000)
+        if (spin == 1000000) {
+            spinlock_unlock(&slot_lock);
+            spinlock_unlock(&io_lock);
             return false;
+        }
 
         /* 命令表全部写入后、拉起 commandIssue 前加释放屏障 ——
            x86 上编译期即可见序 (WB 内存模型), 此 fence 文档化「表先于
            门铃」契约并保证移植到弱序架构时语义不变 */
         __atomic_thread_fence(__ATOMIC_RELEASE);
-        hbaPort->commandIssue = 1<<slot;
+        /* 置位写, 不清掉其它在飞命令的位 (见 ahci.h io_lock 说明) */
+        hbaPort->commandIssue = hbaPort->commandIssue | (1u << slot);
         spinlock_unlock(&slot_lock);   /* 签发后释放 (短临界区) */
 
         uint64_t deadline = PIT::MonotonicMS() + 5000;
@@ -419,13 +441,14 @@ namespace AHCI
             if ((hbaPort->commandIssue & (1<<slot)) == 0)
                 break;
             if (hbaPort->interruptStatus & HBA_PxIS_TFES)
-            {  RecoverPort(); return false; }
+            {  RecoverPort(); spinlock_unlock(&io_lock); return false; }
             asm volatile("pause");
         }
 
         if (hbaPort->interruptStatus & HBA_PxIS_TFES) 
         {
             RecoverPort();
+            spinlock_unlock(&io_lock);
             return false;
         }
 
@@ -435,10 +458,12 @@ namespace AHCI
             kerror("AHCI: port %d slot %d WRITE timeout (CI=%#x, IS=%#x)\n",
                    portNumber, slot, hbaPort->commandIssue, hbaPort->interruptStatus);
             RecoverPort();
+            spinlock_unlock(&io_lock);
             return false;
         }
 
         recover_attempts = 0;
+        spinlock_unlock(&io_lock);
         return true;
     }
 

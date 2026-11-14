@@ -37,10 +37,21 @@ void Post(uint16_t key, uint8_t action, uint8_t mods) {
         if (any && slowest <= h - KBD_RING_CAP) g_lost++;
     }
 
-    KbdEvent& e = g_shared.ring[h & (KBD_RING_CAP - 1u)];
+    const uint32_t slot_idx = (uint32_t)(h & (KBD_RING_CAP - 1u));
+    KbdEvent& e = g_shared.ring[slot_idx];
     e.key = key;
     e.action = action;
     e.mods = mods;
+    /* 入环时刻的 TSC 低 32 位, 写进与 ring[] 平行的 stamp[] (见 kbdshare.h):
+       客户端据此算"按键入环 -> 渲染完成"的端到端延迟。
+       Post() 可能来自 IRQ1, rdtsc 在中断里是安全的。非 x86 无 TSC, 填 0。 */
+    uint32_t tsc_lo = 0;
+#ifdef __x86_64__
+    uint32_t tsc_hi;
+    __asm__ __volatile__("rdtsc" : "=a"(tsc_lo), "=d"(tsc_hi));
+    (void)tsc_hi;
+#endif
+    g_shared.stamp[slot_idx] = tsc_lo;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     g_shared.head = h + 1;
     spin_unlock_irqrestore(&g_lock, rflags);

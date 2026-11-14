@@ -153,6 +153,23 @@ static uint64_t wm_total_mem_mb(void) {
     return total >> 20;
 }
 
+/* 归还控制台窗口在桌面 pagemap 里占的两张共享页 (surface + 协议页)。
+   与 loader.cpp 的 TLoad/SpawnWindowedApp 配对 —— 那里只负责映射。
+   必须在 UnregisterWindow 之后调用, 并把 place 里的别名清 0: 主循环后面
+   还会 `if (place.proto) ...` 轮询 OUT_SEQ, 清掉才不会读已拆的映射。 */
+static void wm_console_release(SkyWinPlacement* pl) {
+    if (!pl) return;
+    const uint64_t pg = 4096UL;
+    if (pl->desk_surf && pl->w && pl->h) {
+        uint64_t bytes = (uint64_t)pl->w * (uint64_t)pl->h * sizeof(uint32_t);
+        bytes = (bytes + pg - 1) & ~(pg - 1);
+        sys_munmap(pl->desk_surf, bytes);
+    }
+    if (pl->proto) sys_munmap(pl->proto, pg);
+    pl->desk_surf = 0;
+    pl->proto     = 0;
+}
+
 struct WmDateTime { int year, month, day, hh, mm; };
 
 /* Integer source-over used for the taskbar's acrylic darkening. */
@@ -201,10 +218,10 @@ struct TBRect {
 #define SKY_START_BTN_W    46
 #define SKY_START_MENU_X   10
 #define SKY_START_MENU_W  300
-#define SKY_START_MENU_H  376
+#define SKY_START_MENU_H  410
 #define SKY_START_ITEM_H   34
 #define SKY_START_ITEM_TOP 92
-#define SKY_START_ITEMS     7
+#define SKY_START_ITEMS     8
 
 /* 药丸区从开始按钮右侧开始；所有调用点（绘制 + 命中测试）共用这个宏，
    不会出现"画在 A 处、点在 B 处"的漂移。 */
@@ -226,6 +243,10 @@ static const StartItem kStartItems[SKY_START_ITEMS] = {
     {"Settings",          "Settings",  "/mp/settings.elf",  620u, 430u, 0xFF121218u,  40u, 40u, 0, false},
     {"Installer / Setup", "Installer", "/mp/installer.elf", 560u, 380u, 0xFF14141Au,  70u, 60u, 0, false},
     {"DOOM",              "DOOM",      "/mp/doom.elf",      640u, 440u, 0xFF000000u, 120u, 60u, 0, true},
+    /* 272 而不是 248：contentH = h - TITLE_H(32) - radius(8) - 其余装饰，
+     * 248 实测只给 200px，放不下 8px 状态栏 + 25*8=200px 文本屏（末行被裁）。
+     * 272 给 224px，状态栏/文本屏都能完整居中显示。 */
+    {"DOS Console",       "DOS",       "/mp/dos.elf",       660u, 272u, 0xFF000000u,  90u, 60u, 0, false},
     {"Console",           nullptr,     nullptr,               0u,   0u, 0u,            0u,  0u, 1, false},
     {"About...",          nullptr,     nullptr,               0u,   0u, 0u,            0u,  0u, 2, false},
 };
@@ -441,11 +462,13 @@ static void wm_paint_start_menu(uint32_t H, uint32_t barH) {
             "      Settings, Setup, DOOM",
             "Ctrl+Alt+B  open Start menu",
             "Ctrl+Alt+E  open Explorer",
+            "Ctrl+Alt+T  open DOS Console",
             "Esc: back",
         };
-        for (int i = 0; i < 8; i++) {
+        const int kAboutN = (int)(sizeof(kAbout) / sizeof(kAbout[0]));
+        for (int i = 0; i < kAboutN; i++) {
             if (f) TTF_DrawText(&fb, f, 20, 82 + i * 26,
-                                kAbout[i], i == 7 ? WARN : DIM);
+                                kAbout[i], i == kAboutN - 1 ? WARN : DIM);
             else DrawFillRect(&fb, 20, 86 + i * 26, 12u, 8u, SEP);
         }
     } else {
@@ -714,6 +737,10 @@ static void wm_paint_chrome_live(uint32_t* rzSurf, int32_t rzPitch,
    加了扫描出锁 (CompScanGuard), 光标线程与主线程互斥。
    ========================================================================== */
 static volatile ps2_mouse_state_t* g_mouse_page;
+/* 光标线程的节拍基准: 由 main() 在 probe_tsc_per_ms() 之后发布, 光标线程
+   只读。默认 3 GHz 是"主线程还没跑到"时的兜底, 不会用到 (线程在标定之后
+   才启动)。 */
+static uint64_t g_cursor_tsc_per_ms = 3000000u;
 
 extern "C" void CursorThreadEntry() {
     int32_t lx = -100000, ly = -100000;
@@ -756,8 +783,19 @@ extern "C" void CursorThreadEntry() {
                 }
             }
         }
-        /* 2ms 采样 (=500Hz); 真正的上限是鼠标 200Hz 采样率 */
-        syscall(SYSCALL_SLEEP_MS, 2, 0, 0, 0, 0, 0);
+        /* 2ms 采样 (=500Hz); 真正的上限是鼠标 200Hz 采样率。
+           节拍不能只靠 SYSCALL_SLEEP_MS: 内核 Sleep 的实现是"挂进定时器轮
+           再 Yield 一次", 被提前调度回来时会直接返回, 于是 2ms 睡眠变成
+           几十微秒一次的空转, 白占一个核还把别的线程挤慢。
+           做法: 先睡 2ms, 醒来再用 TSC 校验**绝对节拍** —— 睡够了就直接
+           继续, 睡不够才用 yield 补剩余 (<2ms)。正常情况零空转。 */
+        {
+            const uint64_t tick = g_cursor_tsc_per_ms * 2u;
+            const uint64_t t0  = rdtsc64();
+            const uint64_t due = t0 + tick;
+            syscall(SYSCALL_SLEEP_MS, 2, 0, 0, 0, 0, 0);
+            while (rdtsc64() < due) sys_yield();
+        }
     }
 }
 
@@ -1079,6 +1117,7 @@ int main(){
     uint64_t wmKbdCursor = wmKbdSlot >= 0 ? kbd_reader_pos(wmKbd, wmKbdSlot) : 0;
 
     const uint64_t tsc_per_ms = probe_tsc_per_ms();
+    g_cursor_tsc_per_ms = tsc_per_ms;   /* 光标线程的 2 ms 节拍基准 */
     const uint64_t move_gap   = 8u   * tsc_per_ms;   /* pointer overlay ~120Hz */
     const uint64_t scene_gap  = 33u  * tsc_per_ms;   /* recompose scene ~30Hz */
     const uint64_t idle_gap   = 50u  * tsc_per_ms;   /* scene refresh, still  */
@@ -1136,6 +1175,7 @@ int main(){
        敲字却一个都收不到, 表现就是输入卡死。 */
     static uint64_t press_focus_pid = 0;
     uint8_t  ml = 0;         /* left-button snapshot from the seqlock block    */
+    uint8_t  mr = 0;         /* right-button snapshot (鼠标投递给客户端用)     */
 
     /* ---- focus routing (keyboard delivery follows click-to-front) ----
        显式焦点 = 用户最后按下的窗口 (press_focus_pid)；它必须仍可见/未最小化/
@@ -1227,7 +1267,7 @@ int main(){
     if (bootSettingsClient)
         wm_focus_immediate(bootSettingsClient->place.client_pid);
 
-    /* ---- 全局快捷键（Ctrl+Alt+S/N/I）：聚焦/拉起 Settings/Notepad/Installer。
+    /* ---- 全局快捷键（Ctrl+Alt+S/N/I/E/D/T/C/B）：聚焦/拉起各应用/菜单。
        键盘事件环是广播/焦点投递之外的同一份事件，WM 自己始终能收到这些组合键，
        所以即使当前焦点在 Notepad/DOOM 上也能用快捷键切回设置界面。 */
     auto raise_or_spawn = [&](const char* title, const char* elf,
@@ -1460,6 +1500,7 @@ int main(){
             mx = p->x;
             my = p->y;
             ml = p->left;
+            mr = p->right;
             seq2 = __atomic_load_n(&p->seq, __ATOMIC_ACQUIRE);
             if (seq1 == seq2) break;
         }
@@ -1552,6 +1593,10 @@ int main(){
                         else if ((k == 'd' || k == 'D') && bootHasDoomWad)
                             shortcutDirty |= raise_or_spawn("DOOM", "/mp/doom.elf",
                                                             640u, 440u, 0xFF000000u, 120u, 60u);
+                        /* Ctrl+Alt+D 已被 DOOM 占用，DOS 控制台固定用 T。 */
+                        else if (k == 't' || k == 'T')
+                            shortcutDirty |= raise_or_spawn("DOS", "/mp/dos.elf",
+                                                            660u, 272u, 0xFF000000u, 90u, 60u);
                         else if (k == 'c' || k == 'C') {
                             /* 聚焦/恢复 Console（无鼠标时的键盘入口）。 */
                             if (consoleLayer) {
@@ -1647,8 +1692,12 @@ int main(){
             }
         }
         bool moved = (mx != prev_x || my != prev_y);
-        /* 损伤行带 (本轮的局部合成区域): 空 = 需要整屏合成 */
-        int32_t dmg_y0 = 0, dmg_y1 = 0;
+        /* 损伤行带 (本轮的局部合成区域, 半开区间 [dmg_y0, dmg_y1))。
+           哨兵是 INF/-INF 表示"本轮还没有人申报损伤" —— 以前这里是 0,0,
+           于是第一个申报者 (wm_clients_poll_output) 的 `top < *py0` 永远
+           不成立, 带只能从屏幕顶端长出来, 局部合成因此比整屏还贵。所有
+           申报点一律按 min/max 并入, 不再直接覆盖。 */
+        int32_t dmg_y0 = 0x7FFFFFFF, dmg_y1 = -1;
 
 
         /* ------------------------------------------------------------------
@@ -1660,11 +1709,63 @@ int main(){
            都跑, 鼠标采样就被拖到 30~260ms 一次 —— 手感就是"指针跟不上手"。
            限速后输入链路每轮都走, 采样间隔只取决于空转让出, 通常 1~3ms。
            ------------------------------------------------------------------ */
+        /* ---- 鼠标投递给客户端 (P1) --------------------------------------
+           **必须放在重活限速之前**: 主线程每轮都读一次鼠标共享页, 如果把
+           这段放进 30Hz 重活循环, 两次点击之间的 press/release 可能落在
+           同一个 33ms 采样窗口内被合并 —— 双击的第二个按下沿就丢了
+           (实测 M2 门禁 2/6 假失败)。这里只在位置/按键**变化**时才写
+           协议页, 每轮只是几次整数比较, 开销可忽略。
+           坐标由 wm_client_push_mouse() 换算成 content-local; 客户端轮询
+           协议页 [16] mouse_seq 取事件。不广播: 其它窗口收不到不属于自己的点击。 */
+        {
+            static int32_t  lastMx = -1, lastMy = -1;
+            static uint32_t lastBtn = 0xFFFFFFFFu;
+            static uint64_t lastMlog = 0;
+            const uint32_t btn = (uint32_t)((ml ? 1u : 0u) | (mr ? 2u : 0u));
+            WmClient* mc = wm_client_hit(mx, my);
+            if (!mc) {
+                lastMx = -1; lastMy = -1; lastBtn = 0xFFFFFFFFu;
+            } else if (mx != lastMx || my != lastMy || btn != lastBtn) {
+                const bool btnEdge = (btn != lastBtn);
+                lastMx = mx; lastMy = my; lastBtn = btn;
+                if (wm_client_push_mouse(mc, mx, my, btn)) {
+                    /* 串口打点: 按键沿必打 (门禁用), 纯移动最多 2 Hz, 免得刷屏。 */
+                    if (btnEdge || now - lastMlog >= tsc_per_ms * 500u) {
+                        char mm[112];
+                        int mn = snprintf(mm, sizeof(mm),
+                                          "[wm] mouse->client pid=%llu x=%d y=%d btn=%u\n",
+                                          (unsigned long long)mc->place.client_pid,
+                                          (int)(mx - mc->bodyX),
+                                          (int)(my - mc->bodyY - (int32_t)SKYWIN_TITLE_H),
+                                          (unsigned)btn);
+                        if (mn > 0)
+                            syscall(SYS_DBGSOUT, (uint64_t)mm, (uint64_t)mn, 0, 0, 0, 0);
+                        lastMlog = now;
+                    }
+                }
+            }
+        }
+
         /* 光标由 CursorThreadEntry 独立线程贴图 (见上面的说明), 主线程不再做,
-           这样即使本轮重活跑了几十毫秒, 指针也是跟手的。 */
+           这样即使本轮重活跑了几十毫秒, 指针也是跟手的。
+           重活限速放在鼠标投递**之后**: 输入事件已经先被采走, 不会被合并。 */
         {
             static uint64_t last_heavy;
-            if (last_heavy && now - last_heavy < scene_gap) {
+            static uint64_t last_frame_compose = 0;
+            /* 输入即上屏: 任意客户端刚提交新帧 (OUT_SEQ 变化) 时本轮
+               跳过 30Hz 限速直接走完合成, 打完字不必等下一轮重活。
+               16ms 冷却把连续渲染客户端 (DOOM) 的新帧合成为 ~60Hz 上限,
+               避免重活占满 CPU 又把鼠标采样拖涩。 */
+            bool clientFrame = wm_clients_new_frame() != 0;
+            if (place.proto) {
+                uint64_t cs = *(volatile uint64_t*)(place.proto +
+                                                    SKYWIN_PROTO_OUT_SEQ * 8u);
+                if (cs != last_client_seq) clientFrame = true;
+            }
+            if (clientFrame &&
+                now - last_frame_compose < 16ull * (uint64_t)tsc_per_ms)
+                clientFrame = false;
+            if (last_heavy && now - last_heavy < scene_gap && !clientFrame) {
                 /* 让出 CPU 等下一轮重活窗口。
                    注意: 这里**不能**换成 SYSCALL_SLEEP_MS —— QEMU 实测该
                    内核的 Sleep 对 1~2ms 的短睡眠不会按时唤醒, 桌面主循环
@@ -1674,9 +1775,21 @@ int main(){
                 sys_yield();
                 continue;
             }
+            if (clientFrame) last_frame_compose = now;
             last_heavy = now;
         }
 
+        /* ---- 开始菜单 hover 高亮 (鼠标可用性) ----------------------------
+           菜单打开时, 指针停在哪个条目上就把选中项移过去 —— 键盘 Up/Down
+           仍然可用, 两者共用 g_startSel。 */
+        if (g_startOpen && !g_startAbout && ml == 0) {
+            const int hover = start_item_at(mx, my, scrH, (uint32_t)barH);
+            if (hover >= 0 && hover != g_startSel) {
+                g_startSel = hover;
+                start_menu_repaint();
+                wmShortcutDirty = true;
+            }
+        }
 
 
         /* ==================== Window-manager interaction ==================== */
@@ -1906,7 +2019,8 @@ int main(){
                 rzSurf = (uint32_t*)malloc((size_t)rzPitch * rzCapRows * sizeof(uint32_t));
             /* Repaint at a bounded rate; the pointer overlay still runs at
                its own 60 Hz, so the hand never stutters between resizes. */
-            if (rzSurf && (now - last_chrome >= chrome_gap || last_chrome == 0)) {
+            if (rzSurf && place.desk_surf &&
+                (now - last_chrome >= chrome_gap || last_chrome == 0)) {
                 wm_paint_chrome_live(rzSurf, rzPitch, nw, nh,
                                      (const uint32_t*)place.desk_surf);
                 wm_apply_normal(&consoleWin, &place, normX, normY, normW, normH,
@@ -1972,7 +2086,7 @@ int main(){
             if (resizing) {
                 if (!rzSurf)
                     rzSurf = (uint32_t*)malloc((size_t)rzPitch * rzCapRows * sizeof(uint32_t));
-                if (rzSurf) {
+                if (rzSurf && place.desk_surf) {
                     wm_rebuild_resize(rzSurf, rzPitch, (int32_t)normW, (int32_t)normH,
                                       (const uint32_t*)place.desk_surf);
                     wm_apply_normal(&consoleWin, &place, normX, normY, normW, normH,
@@ -2011,6 +2125,10 @@ int main(){
                        is only a liveness probe and left the button dead. */
                     if (place.client_pid) sys_kill(place.client_pid, 9);
                     comp.UnregisterWindow(&consoleWin);
+                    /* 立刻归还桌面 pagemap 里的两张共享页 (surface + 协议页)。
+                       后面 child-exit 事件如果又走到这里, wm_console_release
+                       是幂等的 (别名已清 0)。 */
+                    wm_console_release(&place);
                     consoleLayer = nullptr;   /* auto layer retired with it */
                     if (press_focus_pid == place.client_pid)
                         press_focus_pid = 0;
@@ -2129,8 +2247,12 @@ int main(){
                 mseq = *(volatile uint64_t*)(place.proto + SKYWIN_PROTO_OUT_SEQ * 8u);
             const int32_t mw = (wmMode == WM_MAX) ? (int32_t)maxW : (int32_t)normW;
             const int32_t mh = (wmMode == WM_MAX) ? (int32_t)maxH : (int32_t)normH;
-            if (mseq != last_mirror_seq || wmMode != last_mirror_mode ||
-                mw != last_mirror_w || mh != last_mirror_h) {
+            /* place.desk_surf 在控制台窗口销毁时会被 wm_console_release()
+               清成 0 —— 这里必须判空, 否则下面 memcpy 的源地址是 NULL
+               (内核 #PF)。 */
+            if (place.desk_surf &&
+                (mseq != last_mirror_seq || wmMode != last_mirror_mode ||
+                 mw != last_mirror_w || mh != last_mirror_h)) {
                 last_mirror_seq  = mseq;
                 last_mirror_mode = wmMode;
                 last_mirror_w    = mw;
@@ -2157,8 +2279,12 @@ int main(){
                 wm_draw_taskbar(wallBuf, cleanBar, scrW, scrH, tstate,
                                 &ndt, true);
                 /* 只有任务栏条带变了 -> 局部合成即可 */
-                dmg_y0 = (int32_t)scrH - (int32_t)barH;
-                dmg_y1 = (int32_t)scrH;
+                {
+                    const int32_t ty0 = (int32_t)scrH - (int32_t)barH;
+                    const int32_t ty1 = (int32_t)scrH;
+                    if (ty0 < dmg_y0) dmg_y0 = ty0;
+                    if (ty1 > dmg_y1) dmg_y1 = ty1;
+                }
                 wmDirty = true;
             }
         }
@@ -2212,6 +2338,7 @@ int main(){
                     if (place.client_pid &&
                         (int32_t)place.client_pid == ev.pid) {
                     comp.UnregisterWindow(&consoleWin);
+                        wm_console_release(&place);   /* 归还两张共享页 */
                         place.client_pid = 0;
                         consoleLayer = nullptr;  /* auto layer retired */
                         wmDirty = true;
@@ -2226,6 +2353,7 @@ int main(){
                 int64_t rConsole = place.client_pid ? sys_kill(place.client_pid, 0) : 1;
                 if (place.client_pid && rConsole < 0) {
                     comp.UnregisterWindow(&consoleWin);
+                    wm_console_release(&place);
                     place.client_pid = 0;
                     consoleLayer = nullptr;
                     wmDirty = true;
@@ -2248,8 +2376,10 @@ int main(){
             if (seq != last_client_seq) {
                 last_client_seq = seq;
                 wmDirty = true;
-                dmg_y0 = (int32_t)consoleWin.PosY - 8;
-                dmg_y1 = (int32_t)(consoleWin.PosY + consoleWin.SizeY) + 8;
+                const int32_t cy0 = (int32_t)consoleWin.PosY - 8;
+                const int32_t cy1 = (int32_t)(consoleWin.PosY + consoleWin.SizeY) + 8;
+                if (cy0 < dmg_y0) dmg_y0 = cy0;
+                if (cy1 > dmg_y1) dmg_y1 = cy1;
             }
         }
 
@@ -2301,6 +2431,10 @@ int main(){
                        要求整屏重组，否则增量合成会继续显示旧的壁纸行。 */
                     comp.ForceFullCompose();
                     wmDirty = true;
+                    /* 局部合成路径也一并封死: 把损伤带铺满整屏, 后面的
+                       bandH 判据自然退回 Compose()。 */
+                    dmg_y0 = 0;
+                    dmg_y1 = (int32_t)fb_height;
                 } else if (cmd == SKYWIN_CMD_SPAWN_INSTALLER) {
                     /* 打开 Installer: 已存在则 restore/raise/聚焦, 不存在则 spawn
                        后立即置顶+聚焦 (命令发起后焦点应落在新窗口上)。 */
@@ -2319,6 +2453,9 @@ int main(){
                         comp.RaiseWindow(&inst->win);
                         wm_focus_immediate(inst->place.client_pid);
                         wmDirty = true;
+                        /* 新窗口出现 = 结构变化, 必须整屏 (局部带会漏掉它) */
+                        dmg_y0 = 0;
+                        dmg_y1 = (int32_t)fb_height;
                     }
                 }
             }
@@ -2326,17 +2463,49 @@ int main(){
 
         wm_refocus();   /* keyboard focus tracks the topmost visible window */
 
-        /* 整屏合成。
-           试过"按损伤行带只重绘变化的行"(ComposeRows), 但在本机 (TCG) 上
-           反而更慢: 行带合成要重新走一遍整行(壁纸 memcpy + 全层遍历),
-           收益集中在任务栏那种极矮的带, 而客户端内容往往覆盖半屏以上 ——
-           实测桌面主循环从 30~38 it/s 掉到 13~16 it/s, 鼠标更涩。
-           所以这里保持整屏合成; 局部重绘只用于**光标**(16 行 × 2, 见
-           Compositor::CursorMoveTo) —— 那才是真正高频且极小面积的部分。 */
-        (void)dirty_pre_polls;
-        (void)dmg_y0; (void)dmg_y1;
+        /* 重活段期间到达的新帧必须在这里再查一次。
+           循环开头那次 clientFrame 探测发生在窗口交互/上一次合成**之前**;
+           键盘若在那几十毫秒里到达, 那次探测已经过期, 不补这一查这一帧就
+           得等下一轮 (最坏被 scene_gap 再拦 33 ms)。wm_clients_new_frame()
+           是只读探测 (不动 last_seq), 重复调用安全。 */
+        if (wm_clients_new_frame() != 0) wmDirty = true;
+
+        /* 合成: 能局部就局部, 不能才整屏。
+           整屏 Compose() 有 allow_skip 快路 (静态背景行整行跳过), 所以它
+           并不真的搬 4 MB; ComposeRows 没有快路, 逐行都要遍历层。判据因此
+           是"损伤带比整屏有内容的行数更窄": 打字的 17 行稳赢, 半屏以上的
+           损伤带退回整屏。
+           dirty_pre_polls 为真 = 交互段里发生过结构性变化 (拖动/缩放/菜单/
+           增删窗口), 必须整屏; 只有"纯客户端内容更新"才允许走行带。 */
         wmForceFullCompose = false;
-        if (wmDirty) { comp.Compose(); last_scene = rdtsc64(); }
+        if (wmDirty) {
+            const int32_t bandH = dmg_y1 - dmg_y0;
+            const bool local = (!dirty_pre_polls && bandH > 0 &&
+                                bandH <= (int32_t)fb_height / 2);
+            /* 合成耗时打点: 每 256 次汇总一行到串口。
+               local=1 是"只重画损伤行带", local=0 是整屏 Compose。
+               这两列直接回答"局部合成到底省了多少" —— 不用猜。 */
+            const uint64_t tc0 = rdtsc64();
+            if (local) comp.ComposeRows(dmg_y0, dmg_y1);
+            else       comp.Compose();
+            static uint64_t cAcc = 0, cN = 0, cLocalN = 0;
+            cAcc += rdtsc64() - tc0;
+            cN++;
+            if (local) cLocalN++;
+            if (cN >= 256) {
+                char cl[128];
+                const int cn = snprintf(
+                    cl, sizeof(cl),
+                    "[desktop] compose n=%llu local=%llu avg=%llums rows=%d\n",
+                    (unsigned long long)cN, (unsigned long long)cLocalN,
+                    (unsigned long long)(cAcc / cN / tsc_per_ms),
+                    (int)(local ? bandH : 0));
+                if (cn > 0)
+                    syscall(SYS_DBGSOUT, (uint64_t)cl, (uint64_t)cn, 0, 0, 0, 0);
+                cAcc = 0; cN = 0; cLocalN = 0;
+            }
+            last_scene = rdtsc64();
+        }
 
         if (moved) {
             prev_x = mx;

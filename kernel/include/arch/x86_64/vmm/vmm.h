@@ -166,6 +166,10 @@ namespace VMM{
         vma_region_t *SplitRegion(pagemap_t *pagemap, vma_region_t *region, uint64_t split_addr);
         // Coalesce a region with adjacent neighbours that share identical flags.
         vma_region_t *MergeRegion(pagemap_t *pagemap, vma_region_t *region);
+        /* 归还哨兵节点 (pagemap 销毁时调用)。
+         * 注意: **不能**直接 PMM::Free 哨兵所在页 —— 节点池按页切分, 同一页
+         * 里的其它节点可能仍被别的 pagemap 使用 (见 vma.cpp 的说明)。 */
+        void ReleaseSentinel(pagemap_t *pagemap);
     }
 
     namespace LazyTLB{

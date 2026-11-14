@@ -16,6 +16,7 @@ all:
 	$(MAKE) -C installer
 	$(MAKE) -C settings
 	$(MAKE) -C explorer
+	$(MAKE) -C dos
 	$(MAKE) -C PureDOOM
     
 	@echo "Copying programs to disk image..."
@@ -32,6 +33,10 @@ all:
 	@e2rm $(DISK_IMG):/explorer.elf >/dev/null 2>&1 || true
 	e2cp $(PROGRAM_BUILD_DIR)/explorer.elf $(DISK_IMG):/
 	e2cp $(PROGRAM_BUILD_DIR)/doom.elf $(DISK_IMG):/
+	@# DOS 控制台是新增文件：与 explorer 一样先删再写，避免 e2tools 覆盖刚
+	@# 由 e2cp 新建的文件时把 inode 截成 0 字节（内核 sys_load 会报 -EINVAL）。
+	@e2rm $(DISK_IMG):/dos.elf >/dev/null 2>&1 || true
+	e2cp $(PROGRAM_BUILD_DIR)/dos.elf $(DISK_IMG):/
 	@# 桌面内嵌 Lua 的默认主题脚本（用户可在镜像里编辑 /mp/desktop.lua 覆盖）
 	e2cp desktop/desktop.lua $(DISK_IMG):/
 
@@ -119,6 +124,7 @@ all:
 clean:
 	$(MAKE) -C desktop clean
 	$(MAKE) -C explorer clean
+	$(MAKE) -C dos clean
 	$(MAKE) -C PureDOOM clean
 	
 	rm -rf $(PROGRAM_BUILD_DIR)

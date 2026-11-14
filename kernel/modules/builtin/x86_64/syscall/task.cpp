@@ -10,6 +10,7 @@
 #include <arch/x86_64/lapic/lapic.h>
 #include <arch/x86_64/cpu/smap.h>      // SmapGuard
 #include <arch/x86_64/vmm/vmm.h>       // UserAccess::CopyToUser / is_user_address
+#include <arch/x86_64/dosvm/dosvm_contract.h>
 
 extern art_tree *pid2proc_tree;
 
@@ -340,6 +341,10 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
     else
         cpu = get_lw_cpu();
     if (!cpu) return -EFAULT;
+    /* Tier0 / dosvm: hint 可以显式指向一个已下线核; 在分配/入队之前
+       拒绝, 否则新线程会被塞进该核的 runqueue, 且唤醒 IPI 被底层丢弃,
+       线程要等核回来才可能被调度。进程/线程结构尚未挂链, -EBUSY 可重试。 */
+    if (dosvm_core_is_offline(cpu->id)) return -EBUSY;
 
     thread_t *t = (thread_t*)kmalloc(sizeof(thread_t));
     if (!t) return -ENOMEM;
@@ -443,7 +448,9 @@ uint64_t sys_thread_launch(uint64_t entry, uint64_t hint, GENERATE_IGN4()){
 
     /* 唤醒目标核 (launch 语义: 注册即启动, 核可能睡着不知道队列有货) */
     cpu_t *self = this_cpu();
-    if (cpu != self) LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
+    /* Tier0 / dosvm: 离线核不收 64 位语义 SCHED_VEC (底层也会丢)。 */
+    if (cpu != self && !dosvm_core_is_offline(cpu->id))
+        LAPIC::IPI(cpu->lapic_id, SCHED_VEC);
 
     return t->id;
 }

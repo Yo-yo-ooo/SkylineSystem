@@ -17,12 +17,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>            // INT32_MAX (脏行带哨兵)
 #include <syscall.h>
 #include <base/arch/x86_64/syscalln.h>
 #include <graphic/fb.h>
 #include <graphic/winstyle.h>
 #include <graphic/kbdshare.h>
 #include <base/font/ttf/ttf.h>
+#include <base/prof.h>          // sky_rdtsc / SkyLat (输入延迟量化)
 
 #define NOTE_MAX_LINES  256
 #define NOTE_MAX_COLS   200
@@ -31,6 +33,13 @@
 #define NOTE_DEFAULT_PATH "/mp/notes.txt"
 #define NOTE_INDEX_PATH   "/mp/files.index"
 #define NOTE_STATUS_MS  2500u
+
+/* A/B 量化开关 (P0-2): 1 = 优化前的行为 (每次变更整页重绘), 0 = 按行带局部
+   重绘。同一份源码编出两个版本、跑同一个探针 (res/scripts/test/
+   input_latency_probe.py), 才能给出可信的 before/after 数据。 */
+#ifndef SKY_FULL_REDRAW
+#define SKY_FULL_REDRAW 0
+#endif
 
 /* ------------------------------------------------------------------ */
 /* editor state                                                        */
@@ -74,6 +83,46 @@ static const char* const kCloseItems[3] = {
     "Discard and Close",
     "Cancel",
 };
+
+/* 字体句柄 (main 里创建): 让 note_* 辅助函数也能打 TTF 缓存统计。 */
+static TTF_Font* g_font = nullptr;
+/* 延迟诊断的窗口级计数 (每 32 个按键批次清零一次) */
+static uint32_t g_qMax = 0;      /* 本窗口内见过的最大"环里积压事件数" */
+static uint32_t g_e2eSkip = 0;   /* 端到端样本里被丢弃的跨核异常值 */
+/* 三个直方图放到文件作用域: note_quick_save() 也要能把窗口清零 (探针用
+   Ctrl+S 把"铺文档"阶段的冷启动样本丢掉, 再测稳态输入)。 */
+static SkyLat g_lat;             /* 取出 -> 画完 (同线程 TSC) */
+static SkyLat g_latRender;       /* 纯绘制 */
+static SkyLat g_latE2E;          /* 内核入环 -> 画完 */
+
+static void note_log(const char* fmt, ...);   /* 定义在后面, 这里先声明 */
+
+/* 文档字符数 (含 '\n'): 门禁用它证明"注入 N 个字符, 收到的就是 N 个",
+   即没有丢字/乱序。 */
+static uint64_t note_total_chars(void) {
+    uint64_t n = 0;
+    for (int i = 0; i < g_nLines; i++) n += (uint64_t)strlen(g_lines[i]);
+    if (g_nLines > 1) n += (uint64_t)(g_nLines - 1);   /* 行间换行符 */
+    return n;
+}
+
+/* TTF 缓存命中率 + lazy glyf 的读盘统计 (证明"热路径不再碰字形文件")。 */
+static void note_log_ttf(const char* tag) {
+    if (!g_font) return;
+    TTF_CacheStats cs;
+    TTF_GetCacheStats(g_font, &cs);
+    TTF_AtlasStats as;
+    TTF_GetAtlasStats(g_font, &as);
+    unsigned long cap = 0, resident = 0, fetches = 0, bytes = 0;
+    TTF_GetGlyfStats(g_font, &cap, &resident, &fetches, &bytes);
+    unsigned long tot = cs.hit_count + cs.miss_count;
+    unsigned long pct = tot ? (cs.hit_count * 100u) / tot : 0u;
+    note_log("[notepad] ttf %s: hit=%lu miss=%lu hit%%=%lu atlas glyphs=%d/%d "
+             "evict=%lu | glyf win=%luKB res=%lu fetch=%lu bytes=%lu\n",
+             tag, cs.hit_count, cs.miss_count, pct,
+             (int)as.glyph_count, (int)as.glyph_max, as.evict_count,
+             cap / 1024u, resident, fetches, bytes);
+}
 
 /* ---- tiny line-buffer editor ------------------------------------------- */
 static void ed_insert(char c) {
@@ -407,6 +456,19 @@ static void note_quick_save(void) {
         note_statusf(false, "Saved: %s", g_path, "");
         note_log("[notepad] saved path=%s bytes=%llu\n", g_path,
                  (unsigned long long)nbytes);
+        /* 门禁用: 文档字符数必须等于注入的键数 (证明无丢字/乱序),
+           顺便打一次 TTF 缓存命中率。 */
+        note_log("[notepad] len=%llu lines=%d\n",
+                 (unsigned long long)note_total_chars(), g_nLines);
+        note_log_ttf("save");
+        /* 保存 = 重新开始一个测量窗口: 探针先 Ctrl+S 把"铺文档"阶段
+           (冷缓存/大量首见字形) 的样本丢掉, 再输入被测量的字符,
+           这样读到的分位数是**稳态**输入, 不掺冷启动。 */
+        sky_lat_reset(&g_lat);
+        sky_lat_reset(&g_latRender);
+        sky_lat_reset(&g_latE2E);
+        g_qMax = 0;
+        g_e2eSkip = 0;
     } else {
         note_statusf(true, "Save failed: %s (%s)", path, err);
         note_log("[notepad] save_failed path=%s\n", path);
@@ -476,6 +538,9 @@ static void note_dlg_activate(int idx) {
     if (g_dialog == DLG_CLOSE) {
         if (idx == 1) {                          /* Discard and Close */
             note_log("[notepad] close choice=discard\n");
+            note_log("[notepad] len=%llu lines=%d\n",
+                     (unsigned long long)note_total_chars(), g_nLines);
+            note_log_ttf("exit");
             note_log("[notepad] exit saved=0\n");
             sys_exit(0);
             return;
@@ -499,6 +564,9 @@ static void note_dlg_activate(int idx) {
         if (!g_path[0]) note_set_path(path);
         note_log("[notepad] saved path=%s bytes=%llu\n", g_path,
                  (unsigned long long)nbytes);
+        note_log("[notepad] len=%llu lines=%d\n",
+                 (unsigned long long)note_total_chars(), g_nLines);
+        note_log_ttf("exit");
         note_log("[notepad] exit saved=1\n");
         sys_exit(0);                             /* WM reaps the window */
     }
@@ -701,6 +769,7 @@ int main() {
     /* on-demand: read only the tables the rasterizer needs */
     TTF_ReadFontGlyfLazy(&font, "/mp/SourceHanSerifTC_Medium.ttf", 20, 256);
     if (!font) return 1;
+    g_font = font;          /* 供 note_log_ttf() 打缓存统计 */
     int32_t lineH = TTF_GetLineHeight(font);
     if (lineH <= 0) lineH = 22;
 
@@ -719,35 +788,113 @@ int main() {
     const uint32_t INK   = 0xFFE9E9EFu;
     const uint32_t CARET = 0xFF8FD3FFu;
 
-    auto render = [&]() {
-        DrawFillRect(&cb, 0, 0, contentW, contentH, PAPER);
+    /* ---- 局部重绘 ---------------------------------------------------------
+     * 原来每次 changed 都整页重绘: contentW*contentH*4 B 的填充 (~850 KB)
+     * 加上每一行一次 TTF_DrawText。QEMU TCG 下一帧 10~30 ms, 而事件循环
+     * 每个按键都会走一次 —— 快速打字时延迟就按"键数 × 单帧"累积。
+     * 现在按**像素行带**重绘: 只清掉真正变了的那几行再重画, 其余像素原样
+     * 保留 (内容区是 WM 共享的 surface, 没人会擦掉它)。
+     * 弹窗 (Open/Close) 是覆盖整块的模态层, 仍然整页重绘 —— 它不是打字热
+     * 路径, 而且必须盖住下面的文本。整页路径的帧提交由 render_full() 推迟
+     * 到模态层也写完之后统一执行, 不在 render_band 里提前递增 OUT_SEQ。 */
+    /* WM 只靠 OUT_SEQ 变化才把客户端 surface 搬运/重合成; release 语义保证
+       序号对 WM 可见之前, 本次帧的所有像素写入已经完成。因此提交必须是每条
+       绘制路径的最后一步, 并集中在一处, 避免模态层被漏在提交之后。 */
+    /* 本帧累积的脏行带 (内容坐标, 半开区间)。
+       每个 render_band 把自己的范围并进来, commit_frame 一口气发布给 WM。
+       打字时这通常只有一行高 (17 px), WM 因此只重合成那 17 行, 而不是整屏
+       800 行 —— 这是"按键到上屏"延迟从几十毫秒降到个位数的主路径。
+       哨兵用 INT32_MAX / -1: 空带 (y1 <= y0) 表示"本帧一个像素都没动",
+       此时不发布脏带, 也不递增 dirty_seq。 */
+    int32_t frameY0 = INT32_MAX, frameY1 = -1;
+
+    auto commit_frame = [&]() {
+        /* 顺序: 带 -> dirty_seq -> OUT_SEQ。全部 release, WM 看到 OUT_SEQ
+           变化时, 像素与脏带都已在共享页里可见。 */
+        if (frameY1 > frameY0) {
+            q[SKYWIN_PROTO_DIRTY_Y0] = (uint64_t)frameY0;
+            q[SKYWIN_PROTO_DIRTY_Y1] = (uint64_t)frameY1;
+            __atomic_add_fetch(&q[SKYWIN_PROTO_DIRTY_SEQ], 1u, __ATOMIC_RELEASE);
+        }
+        frameY0 = INT32_MAX;
+        frameY1 = -1;
+        __atomic_add_fetch(&q[SKYWIN_PROTO_OUT_SEQ], 1u, __ATOMIC_RELEASE);
+    };
+    auto render_band = [&](int32_t y0, int32_t y1, bool commit) {
+        if (y0 < 0) y0 = 0;
+        if (y1 > (int32_t)contentH) y1 = (int32_t)contentH;
+        if (y0 >= y1) return;
+        if (y0 < frameY0) frameY0 = y0;
+        if (y1 > frameY1) frameY1 = y1;
+        DrawFillRect(&cb, 0, (uint64_t)y0, contentW, (uint64_t)(y1 - y0), PAPER);
         for (int i = 0; i < g_nLines; i++) {
             int y = PAD_Y + i * lineH;
-            if (y + lineH > (int)contentH) break;
+            if (y + lineH <= y0) continue;
+            if (y >= y1) break;
             if (g_lines[i][0])
                 TTF_DrawText(&cb, font, PAD_X, y, g_lines[i], INK);
         }
         if (g_dialog == DLG_NONE) {
-            /* caret: a 2 px bar at the pixel width of the prefix text */
+            /* caret: a 2 px bar at the pixel width of the prefix text.
+               只在它所在的行带被重绘时补画 (旧光标已被同一带的清屏擦掉)。 */
             char prefix[NOTE_MAX_COLS];
-            memcpy(prefix, g_lines[g_curLine], (size_t)g_curCol);
-            prefix[g_curCol] = '\0';
+            int n = g_curCol;
+            if (n < 0) n = 0;
+            if (n > NOTE_MAX_COLS - 1) n = NOTE_MAX_COLS - 1;
+            memcpy(prefix, g_lines[g_curLine], (size_t)n);
+            prefix[n] = '\0';
             int32_t px = 0, ph = 0;
             TTF_GetTextSize(font, prefix, &px, &ph);
             if (ph <= 0) ph = lineH;
             int cx = PAD_X + px;
             int cy = PAD_Y + g_curLine * lineH;
-            DrawFillRect(&cb, cx, cy, 2, ph, CARET);
+            if (cy < y1 && cy + lineH > y0)
+                DrawFillRect(&cb, cx, cy, 2, ph, CARET);
         }
-        note_draw_status(&cb, font, lineH, contentW, contentH);
+        /* 状态栏自带底色填充, 只在行带相交时画 (它会盖住底部的空行) */
+        const int32_t sy = (int32_t)contentH - lineH - 1;
+        if (sy < y1 && sy + lineH + 1 > y0)
+            note_draw_status(&cb, font, lineH, contentW, contentH);
+
+        /* 帧提交: 曾经这里从不递增, 打完字只能等 2Hz 任务栏时钟 (500ms)
+           兜底, 实测按键->上屏 p50 414ms / p99 448ms。现在提交必须发生在
+           **全部**像素写入之后 (含模态层): 局部重绘 (打字) 以 commit=true
+           在这里就地提交; render_full() 以 commit=false 绘制底图, 把提交
+           推迟到 note_draw_dialog() 画完模态层之后, 再调用 commit_frame()。
+           release 语义保证这些像素写入先于 OUT_SEQ 对 WM 可见。 */
+        if (commit) commit_frame();
+    };
+    auto render_full = [&]() {
+        render_band(0, (int32_t)contentH, false);
         note_draw_dialog(&cb, font, lineH, contentW, contentH);
+        commit_frame();   /* 帧提交必须在所有像素（含模态层）写完之后 */
     };
 
+    /* 输入延迟样本 (每 32 个按键批次汇总一次 p50/p99 到串口) */
+    sky_lat_reset(&g_lat);
+    sky_lat_reset(&g_latRender);
+    sky_lat_reset(&g_latE2E);
+    g_qMax = 0; g_e2eSkip = 0;
+    (void)sky_tsc_per_ms();       /* 预热 TSC 标定, 别算进第一个样本 */
+
+    /* 预热常用 ASCII 字形: 字形缓存是进程内的, 新起的 Notepad 缓存是冷的,
+       第一个按键才惰性加载 glyf —— QEMU TCG 下实测首键上屏 568 ms, 而
+       稳态只有 115 ms。这里在 READY 之前逐字栅格化一遍(都画在 (4,4),
+       单字符不会越界), 随后 render_full() 清屏覆盖, 把冷启动成本挪到
+       用户开始打字之前。 */
+    static const char kWarmGlyphs[] =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        " .,;:/-_()[]{}'\"=+*#@!?<>";
+    for (const char* p = kWarmGlyphs; *p; ++p) {
+        char one[2] = {*p, '\0'};
+        TTF_DrawText(&cb, font, 4, 4, one, INK);
+    }
+
     g_lines[0][0] = '\0';
-    render();
+    render_full();
     /* Universal readiness barrier: tell the WM our initial surface is
-       painted. Notepad does not use the libc console, so OUT_SEQ stays 0 and
-       READY alone lets the WM mount immediately. */
+       painted. READY 是挂载信号; 输出帧的搬运另由 OUT_SEQ 递增驱动
+       (见 commit_frame / render_band 末尾), 两者互不影响。 */
     q[SKYWIN_PROTO_CLIENT_READY] = SKYWIN_READY_MAGIC;
     /* Serial marker for the QEMU headless gate: first frame painted + READY. */
     note_log("[notepad] start content=%ux%u\n", (unsigned)contentW,
@@ -756,15 +903,34 @@ int main() {
     for (;;) {
         uint64_t h = __atomic_load_n(&kbd->head, __ATOMIC_ACQUIRE);
         cursor = kbd_reader_resync(kbd, cursor);
-        bool changed = false;
+        bool keyChanged = false;
+        bool statusChanged = false;
+        uint64_t tFirstKey = 0;   /* 本批第一个按键被取出的时刻 (TSC) */
+        /* 本批开始时环里已经积压了多少事件。这是"输入是否在等渲染"的
+           **无时钟偏差**证据: 处理及时时它应当恒为 0~1; 一旦客户端被一帧
+           拖住, 按键就会在环里排队, 这个值线性增长。 */
+        const uint64_t qPending = (h > cursor) ? (h - cursor) : 0u;
+        if (qPending > (uint64_t)g_qMax) g_qMax = (uint32_t)qPending;
+        /* 内核入环时刻 (KbdEvent.tsc_lo, 低 32 位): 端到端延迟起点。 */
+        uint32_t tKernel = 0;
+        /* 变化前的光标/行数/弹窗态: 决定局部重绘的行带 */
+        const int prevCurLine = g_curLine;
+        const int prevNLines  = g_nLines;
+        const int prevDialog  = g_dialog;
+        const bool hadStatus  = (g_status[0] != 0);
         /* Focus gate: only the focused notepad edits text; a non-focused
            instance still drains the ring below. */
         bool allowed = (kbdSlot < 0) || kbd_focus_allows(kbd, kbdSlot);
         while (cursor < h) {
             KbdEvent e = kbd->ring[cursor & (KBD_RING_CAP - 1u)];
             if (allowed && e.action == KBD_ACTION_DOWN) {
+                if (tFirstKey == 0) {
+                    tFirstKey = sky_rdtsc();
+                    /* 平行数组里的入环时刻 (与事件同槽位) */
+                    tKernel = kbd->stamp[cursor & (KBD_RING_CAP - 1u)];
+                }
                 note_handle_key(e.key, e.mods);
-                changed = true;
+                keyChanged = true;
             }
             cursor++;
         }
@@ -772,9 +938,83 @@ int main() {
         /* Expire the transient status line (Saved:/Opened:/error). */
         if (g_status[0] && note_now_ms() >= g_statusUntilMs) {
             g_status[0] = '\0';
-            changed = true;
+            statusChanged = true;
         }
-        if (changed) render();
+        if (keyChanged || statusChanged) {
+            const bool statusVisible = (g_status[0] != 0) || hadStatus;
+            const uint64_t t0 = keyChanged ? tFirstKey : sky_rdtsc();
+            const uint64_t tr0 = sky_rdtsc();      /* 纯绘制耗时起点 */
+            if (SKY_FULL_REDRAW) {
+                render_full();               /* A/B: 优化前的整页重绘 */
+            } else if (g_dialog != DLG_NONE || prevDialog != DLG_NONE) {
+                render_full();               /* 模态层: 必须整页重绘 */
+            } else if (g_nLines != prevNLines) {
+                /* 行数变了 (Enter / 行首退格 / Delete 合并行): 从最早变化的
+                   那一行一直重画到文本区末尾 —— 下面的行整体位移了。 */
+                int from = prevCurLine < g_curLine ? prevCurLine : g_curLine;
+                if (from < 0) from = 0;
+                int32_t y0 = PAD_Y + from * lineH;
+                int32_t y1 = (int32_t)contentH;   /* 一直重画到文本区末尾 */
+                render_band(y0, y1, true);
+            } else {
+                /* 行数不变: 只需重画"旧光标行 ∪ 新光标行" (插入/退格只改
+                   当前行; 上下键只是光标换行)。 */
+                int lo = prevCurLine < g_curLine ? prevCurLine : g_curLine;
+                int hi = prevCurLine > g_curLine ? prevCurLine : g_curLine;
+                int32_t y0 = PAD_Y + lo * lineH;
+                int32_t y1 = PAD_Y + (hi + 1) * lineH;
+                /* 状态条可见时把它一并纳入损伤区 (它是覆盖层, 不随文本行清屏
+                   而消失, 但文本变化可能改变它的可见性)。 */
+                if (statusVisible) y1 = (int32_t)contentH;
+                render_band(y0, y1, true);
+            }
+            const uint64_t nowTsc = sky_rdtsc();
+            const uint64_t renderUs = sky_tsc_to_us(nowTsc - tr0);
+            if (keyChanged) {
+                /* (a) 取出 -> 画完 (同线程 TSC, 无跨核偏差, 与历史数据可比) */
+                if (sky_lat_add(&g_lat, sky_tsc_to_us(nowTsc - t0))) {
+                    uint32_t p50 = 0, p99 = 0;
+                    int n = 0;
+                    sky_lat_report(&g_lat, &p50, &p99, &n);
+                    note_log("[notepad] input_lat n=%d p50=%uus p99=%uus "
+                             "qmax=%u e2e_skip=%u\n",
+                             n, (unsigned)p50, (unsigned)p99, (unsigned)g_qMax,
+                             (unsigned)g_e2eSkip);
+                    g_qMax = 0;
+                }
+                /* (b) 内核入环 -> 画完 (端到端)。TSC 在 SMP 下可能跨核偏移,
+                       离谱值 (>=200ms) 只计数不采样, 避免污染分位数。 */
+                if (tKernel) {
+                    const uint32_t dcyc = (uint32_t)((uint32_t)nowTsc - tKernel);
+                    const uint64_t e2eUs = sky_tsc_to_us(dcyc);
+                    if (e2eUs < 200000ull) {
+                        if (sky_lat_add(&g_latE2E, e2eUs)) {
+                            uint32_t e50 = 0, e99 = 0;
+                            int en = 0;
+                            sky_lat_report(&g_latE2E, &e50, &e99, &en);
+                            note_log("[notepad] e2e_lat n=%d p50=%uus p99=%uus "
+                                     "skip=%u\n",
+                                     en, (unsigned)e50, (unsigned)e99,
+                                     (unsigned)g_e2eSkip);
+                        }
+                    } else {
+                        g_e2eSkip++;
+                    }
+                }
+                if (sky_lat_add(&g_latRender, renderUs)) {
+                    uint32_t r50 = 0, r99 = 0;
+                    int rn = 0;
+                    sky_lat_report(&g_latRender, &r50, &r99, &rn);
+                    note_log("[notepad] render_lat n=%d p50=%uus p99=%uus\n",
+                             rn, (unsigned)r50, (unsigned)r99);
+                }
+            }
+        }
+        /* 输入优先: 渲染期间到达的按键已经在环里了 —— 立刻再走一轮,
+           不要先 yield 一整圈 (原来那次 yield 会把按键拖到下一轮, 用户体感
+           就是"打完字才一次性出现")。环空才让出 CPU。 */
+        if (__atomic_load_n(&kbd->head, __ATOMIC_ACQUIRE) != cursor)
+            continue;
         sys_yield();   /* event loop: stay cheap, text editing is not 60 Hz */
     }
     return 0;

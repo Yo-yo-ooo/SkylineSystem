@@ -11,6 +11,7 @@
 #include <klib/kio.h>
 #include <arch/x86_64/schedule/sched.h>
 #include <arch/x86_64/pit/pit.h>   /* WaitAcks 墙钟封顶 */
+#include <arch/x86_64/dosvm/dosvm_contract.h>
 
 #ifndef container_of
 #define container_of(ptr, type, member) \
@@ -367,6 +368,14 @@ namespace VMM {
            last item so the target ACKs after servicing the whole set. */
         static void SendTarget(cpu_t* t, pagemap_t* pm, uint8_t type,
                                const uint64_t* addrs, uint32_t nr, bool want_ack) {
+            /* Tier0 / dosvm: 目标核正处在(或即将进入)非 x64 窗口, 不能收
+               64 位 IDT 语义的 TLB_FLUSH_VEC。必须在下面
+               __atomic_add_fetch(&me->shootdown_acks, 1) **之前**返回:
+               否则这一票 ACK 永远收不回来, WaitAcks 必然等满 100ms 超时
+               并刷 KERR —— 即"跳过该核导致 ACK 记账失衡"。
+               LAPIC::IPI 底层也会丢, 但记账必须在源头就对上。 */
+            if (unlikely(!t) || dosvm_core_is_offline(t->id)) return;
+
             /* 空地址集 + type 1: 没有可下发的请求。
                必须在**递增 shootdown_acks 之前**返回, 否则就是纯粹的记账泄漏:
                发送端 +1, 却没有任何队列项能让目标核回 ACK (下面的 for 循环
@@ -451,8 +460,12 @@ namespace VMM {
                         for (uint32_t ci = 0; ci < MAX_CPU && m; ci++, m >>= 1) {
                             if (!(m & 1u)) continue;
                             cpu_t* tc = smp_cpu_list[ci];
-                            if (tc && tc != me)
-                                LAPIC::IPI(tc->lapic_id, TLB_FLUSH_VEC);
+                            if (!tc || tc == me) continue;
+                            /* Tier0 / dosvm: 对已下线核重发 64 位语义
+                               TLB_FLUSH_VEC 既无意义也危险 (底层同样会
+                               丢弃), 直接在源头跳过。 */
+                            if (dosvm_core_is_offline(ci)) continue;
+                            LAPIC::IPI(tc->lapic_id, TLB_FLUSH_VEC);
                         }
                     }
                 }
@@ -517,7 +530,9 @@ namespace VMM {
                     uint32_t id = (uint32_t)w * 64u + (uint32_t)b;
                     if (unlikely(id >= MAX_CPU)) continue;
                     cpu_t* t = smp_cpu_list[id];
-                    if (likely(t)) fn(t);
+                    /* Tier0 / dosvm: 在 fn(t) 之前跳过下线核; BatchCommit
+                       的 want_ack=true 目标若被漏过会直接造成 ACK 失衡。 */
+                    if (likely(t) && !dosvm_core_is_offline(id)) fn(t);
                 }
             }
         }
@@ -555,6 +570,10 @@ namespace VMM {
             for (int32_t i = 0; i <= smp_last_cpu; i++) {
                 cpu_t* t = smp_cpu_list[i];
                 if (unlikely(!t || t == me)) continue;
+                /* Tier0 / dosvm: 同步 fence 的每个目标都要在 SendTarget
+                   之前跳过下线核, 保证 shootdown_acks 只对真会回 ACK 的核
+                   计数 (SendTarget 内部还有一道同样的检查防并发置位)。 */
+                if (dosvm_core_is_offline((uint32_t)i)) continue;
                 SendTarget(t, pm, 2, nullptr, 0, true);
             }
             WaitAcks(me);
@@ -1246,8 +1265,13 @@ namespace VMM {
                 }
                 VMM::VMA::RemoveRegion(pm, r); r = next;
             }
-            PMM::Free(PHYSICAL(pm->vma_head));
-            pm->vma_head = pm->vma_cursor = nullptr;
+            /* 修复(UAF): 哨兵来自**全局节点池**的一页, 同一页还切给了其它
+               pagemap 用 (见 vma.cpp ReleaseSentinel 的说明)。这里原来
+               `PMM::Free(PHYSICAL(pm->vma_head))` 会把整页还给 PMM, 该页
+               随后被当页表页/用户页重用 → 别的 pagemap 的 VMA 节点被写坏
+               → 下一次 rb_insert 在内核 #PF, 整机 halt (实测 ~1/16 次门禁,
+               崩点正是"前一个客户端退出后立刻拉起下一个")。 */
+            VMM::VMA::ReleaseSentinel(pm);
         }
         vm_mapping_t *mapping = pm->vm_mappings;
         if (mapping) {

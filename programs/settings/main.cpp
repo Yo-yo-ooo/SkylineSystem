@@ -363,6 +363,10 @@ static void render(FrameBuffer *cb, TTF_Font *font, int32_t lineH,
                       g_status_kind == 2 ? WARN_C
                                          : (g_status_kind == 1 ? OK_C : DIM),
                       textMaxW);
+
+    /* 帧提交: 同 Notepad/Explorer, 让 WM 立刻重合成而不是等 2Hz 兜底。 */
+    if (g_q)
+        __atomic_add_fetch(&g_q[SKYWIN_PROTO_OUT_SEQ], 1u, __ATOMIC_RELEASE);
 }
 
 /* ---- 键盘 --------------------------------------------------------------- */
