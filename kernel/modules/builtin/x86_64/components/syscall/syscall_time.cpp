@@ -19,8 +19,8 @@ KCOMPONENT_BEGIN(syscall_time, "kernel.syscall.time", "1.0.0",
 KCOMPONENT_DEPENDS(syscall_time, "kernel.sched.core", sched)
 KCOMPONENT_DEPENDS(syscall_time, "kernel.time.rtc", rtc)
 
-KCOMPONENT_EXPORT_SYSCALL(syscall_time, 17u, sys_time)
-KCOMPONENT_EXPORT_SYSCALL(syscall_time, 27u, sys_monotonic_ms)
-KCOMPONENT_EXPORT_SYSCALL(syscall_time, 28u, sys_sleep_ms)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_time, 17u, sys_time)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_time, 27u, sys_monotonic_ms)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_time, 28u, sys_sleep_ms)
 
 KCOMPONENT_END(syscall_time)

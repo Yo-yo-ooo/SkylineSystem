@@ -75,7 +75,9 @@ extern "C" {
 #define KMOD_DEPENDS(provider_, dep_tag_) \
     __attribute__((used, section(KMOD_SEC_IN), aligned(8)))                  \
     static kmod_import_t __kmod_dep_##dep_tag_ = {                           \
-        provider_, "", "", 0, 0u, 0u, 0u, KMOD_IMP_REQUIRED | KMOD_IMP_DEP_EDGE };
+        provider_, "", "", 0, 0u, 0u, 0u, KMOD_IMP_REQUIRED | KMOD_IMP_DEP_EDGE }; \
+    __attribute__((used, section(KMOD_SEC_DEP_NAMES)))                       \
+    static const char __kmod_depname_##dep_tag_[] = provider_;
 
 /* 导入是否已回填（供 optional import 使用） */
 #define KMOD_IMPORT_READY(name) ((name) != 0)
@@ -105,6 +107,15 @@ extern "C" {
     KMOD_IMPORT_EX(name, const kmod_algo_ops_t *, "kernel",                   \
                    KMOD_CONTRACT_KERNEL_ALGO, KMOD_CONTRACT_KERNEL_ALGO,       \
                    1u, 0u, (uint32_t)sizeof(kmod_algo_ops_t));
+
+/* 统一 DynModule 注入服务（kernel.dynlink.v1）。持有者可以像 LoadLibrary
+ * 一样在运行期注入其他模块，并用 resolve() 做 dlsym 式解析。
+ * 治理要求：导入该契约的模块必须被授予 KMOD_CAP_MODULE_LOAD。 */
+#define KMOD_IMPORT_DYNLINK(name)                                             \
+    KMOD_IMPORT_EX(name, const kmod_dynlink_ops_t *, "kernel",                \
+                   KMOD_CONTRACT_KERNEL_DYNLINK,                              \
+                   KMOD_CONTRACT_KERNEL_DYNLINK, KMOD_DYNLINK_OPS_ABI, 0u,    \
+                   (uint32_t)sizeof(kmod_dynlink_ops_t));
 
 /* ------------------------------------------------------------------ */
 /* 导出（.out 段）                                                     */
@@ -153,6 +164,16 @@ extern "C" {
     static kmod_export_t __kmod_exp_syscall_##fn = {                         \
         #fn, KMOD_CONTRACT_KERNEL_SYSCALL, (void *)&fn, 0u, 1u,              \
         KMOD_SYM_SYSCALL, KMOD_EXF_HOTREPLACEABLE, (uint32_t)(slot_), 0u };
+
+/* resident 组件 .ko 的 syscall 实现地址在 kernel 镜像内（不是本 .ko），
+ * 需要 EXTERNAL 标记让 loader 跳过"导出必须落在本镜像内"的校验。 */
+#define KMOD_EXPORT_SYSCALL_EXTERNAL(slot_, fn) \
+    __attribute__((used, section(KMOD_SEC_OUT), aligned(8)))                 \
+    static kmod_export_t __kmod_exp_syscall_ext_##fn = {                     \
+        #fn, KMOD_CONTRACT_KERNEL_SYSCALL, (void *)&fn, 0u, 1u,              \
+        KMOD_SYM_SYSCALL,                                                   \
+        (KMOD_EXF_HOTREPLACEABLE | KMOD_EXF_EXTERNAL),                      \
+        (uint32_t)(slot_), 0u };
 
 /* 声明本模块拥有的动态 syscall 命名空间（审计/自省用；不影响回填规则）。
  * tag_ 为模块内唯一标记（模块名简写即可），用于生成不冲突的变量名。 */

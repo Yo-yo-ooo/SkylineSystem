@@ -72,8 +72,8 @@
  *   - PMM/VMM/SLAB/SLUB（页表与分配机制；分配策略座位另议）
  *   - syscall 入口装配（编号/语义/入口固定，实现由组件注册）
  *   - kmod 加载器/治理机制本身（Tier0 固定）
- * 其余全部是内建组件 (builtin component)，由 KmodBootComponents() 按
- * 统一拓扑图（manifest/.in/.out，provider 先序）初始化：
+ * 其余全部是独立组件 .ko（modules.saf），由 KmodSafIngest 入池、
+ * KmodBootLoad 按统一拓扑图（manifest/.in/.out，provider 先序）初始化：
  *   ACPI/MADT -> LAPIC/IOAPIC -> PIT/HPET/RTC -> 文件缓存 -> SMP ->
  *   调度核心 -> 设备核心 -> PCI 核心 -> 驱动组件 -> PCI 枚举 ->
  *   块设备核心 -> VFS -> ext4/FatFs -> 根文件系统 -> 显示 ->
@@ -148,19 +148,11 @@ void __init x86_64_init(void){
     /* ---------------- Tier0: kmod 加载器/治理机制 ---------------- */
     InitFunc("Kmod",KmodInit());
 
-    /* ---------------- Tier1+: 整个内核的组件图（拓扑驱动） ----------------
-       这是启动序列组件化的核心：x86_64_init 不再硬编码 ACPI/SMP/PIT/PCI/
-       驱动/文件系统/网络/显示/用户态的初始化顺序，而由每个内建组件的
-       manifest/provider 依赖在统一拓扑图中表达。 */
-    int32_t krc = KmodBootComponents();
-    if (krc != KMOD_OK) {
-        kerrorln("init: builtin component graph FAILED rc=%d (%s)",
-                 (int)krc, KmodElfErrorString(krc));
-        KmodDump();
-        hcf();
-    }
-
-    /* ---------------- Tier2: 可加载 .ko（同一张图的扩展） ---------------- */
+    /* ---------------- DynModule：所有模块都是独立 .ko --------------------
+       没有 .kbuiltin 静态组件表了：Limine 只加载一个 modules.saf，里面是
+       内核启动依赖的全部 .ko（原 38 个组件壳 + demo/扩展）。KmodBootIngest
+       解析 SAF 入池，KmodBootLoad 按 manifest 依赖做拓扑加载；组件的
+       provider/依赖关系仍由 .in 表达，和原来的组件图等价。 */
     InitFunc("Kmod ingest",KmodBootIngest());
     InitFunc("Kmod boot",KmodBootLoad());
 

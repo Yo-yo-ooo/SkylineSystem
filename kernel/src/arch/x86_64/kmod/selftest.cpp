@@ -17,6 +17,7 @@
  *   KMOD_SELFTEST PASS <n>/<total>    或    KMOD_SELFTEST FAIL <n>/<total>
  * ==========================================================================*/
 #include <kmod/kmod_internal.h>
+#include <kmod/kdll.h>
 
 /* 演示模块名（kernel/modules/demo_*.cpp，mod-demos 维护） */
 #define DEMO_HELLO    "vendor.demo.hello"
@@ -30,6 +31,9 @@
 #define DEMO_SCHED    "vendor.demo.sched"
 #define DEMO_ALLOC    "vendor.demo.alloc"
 #define DEMO_KLIB     "vendor.demo.klib"
+#define DEMO_INJECT   "vendor.demo.inject"
+#define DEMO_LATE     "vendor.demo.late"
+#define DEMO_XMOD     "vendor.demo.xmod"
 
 #define KMOD_SYSCALL_DYN_DEMO 200u
 #define KMOD_ENOSYS_U64 ((uint64_t)(int64_t)(-38))
@@ -124,11 +128,32 @@ bool case_unload_busy(void)
     return ok;
 }
 
+bool case_cross_module_symbol(void)
+{
+    /* demo_xmod 直接引用 demo_hello 的 C 符号（不经过 .in 函数指针）。
+     * init 成功后写入 magic；这里用 KdllResolve 读回，证明 ELF 重定位
+     * 确实拿到了另一个 .ko 的导出地址。 */
+    uint64_t *p = (uint64_t *)KdllResolve(DEMO_XMOD, "xmod_magic");
+    bool ok = (p != nullptr) && (*p == 0x584D4F440001ULL);
+    report("cross-module-symbol", ok,
+           ok ? "" : "cross-.ko symbol not resolved");
+    return ok;
+}
+
 bool case_dep_autoload(void)
 {
     bool ok = true;
     char why[96] = "";
-    if (KmodUnload(DEMO_GREETER) != KMOD_OK) {
+    /* xmod 在 boot 时已加载并持有 hello 的符号引用；先摘掉它，才能验证
+     * hello 的依赖自动拉起。 */
+    if (KmodUnload(DEMO_XMOD) != KMOD_OK) {
+        ok = false;
+        const char *s = "unload xmod failed";
+        uint32_t i = 0;
+        for (; s[i] && i + 1 < sizeof(why); i++) why[i] = s[i];
+        why[i] = '\0';
+    }
+    if (ok && KmodUnload(DEMO_GREETER) != KMOD_OK) {
         ok = false;
         const char *s = "unload greeter failed";
         uint32_t i = 0;
@@ -546,6 +571,70 @@ bool case_shared_klib(void)
     return ok;
 }
 
+/* 统一 DynModule：KdllInject 按名注入非 BOOT 模块，依赖 late 自动拉起；
+ * init 里再注入 hello 并 resolve 符号；eject 释放 PIN 并卸载。 */
+bool case_dynamic_inject(void)
+{
+    bool ok = true;
+    char why[128] = "";
+
+    int32_t rc = KdllInject(DEMO_INJECT, KMOD_INJ_PIN | KMOD_INJ_SILENT);
+    if (rc != KMOD_OK) {
+        ok = false;
+        why_set(why, sizeof(why), "KdllInject(vendor.demo.inject) failed");
+    }
+    if (ok) {
+        ok = state_is(DEMO_INJECT, KMOD_STATE_READY) &&
+             state_is(DEMO_LATE, KMOD_STATE_READY) &&
+             state_is(DEMO_HELLO, KMOD_STATE_READY);
+        if (!ok)
+            why_set(why, sizeof(why),
+                    "inject/late/hello not all READY after LoadLibrary");
+    }
+    if (ok) {
+        kmod_module_t *m = KmodModuleFind(DEMO_INJECT);
+        uint64_t magic = 0u;
+        bool found = false;
+        if (m) {
+            for (uint32_t i = 0; i < m->n_exports; i++) {
+                const kmod_export_t *e = &m->exports[i];
+                if (e->symbol && str_eq_local(e->symbol, "inject_magic") &&
+                    e->kind == KMOD_SYM_DATA && e->addr) {
+                    magic = *(const uint64_t *)e->addr;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        ok = found && magic == 0x494E4A45435431ull &&
+             KdllPinCount("vendor.demo.hello") >= 1u;
+        if (!ok)
+            why_set(why, sizeof(why),
+                    "inject init/resolve/pin evidence missing");
+    }
+    if (ok) {
+        int32_t erc = KdllEject(DEMO_INJECT);
+        ok = erc == KMOD_OK && KmodModuleState(DEMO_INJECT) < 0;
+        if (!ok)
+            why_set(why, sizeof(why), "eject vendor.demo.inject failed");
+    }
+    if (ok && KmodModuleState(DEMO_LATE) == (int32_t)KMOD_STATE_READY) {
+        /* late 是作为依赖被自动注入的（没有 PIN）；先显式拿一个 PIN，
+         * 才能用 KdllEject 走真正的 FreeLibrary 卸载路径。 */
+        int32_t irc = KdllInject(DEMO_LATE, KMOD_INJ_PIN | KMOD_INJ_SILENT);
+        int32_t erc = (irc == KMOD_OK) ? KdllEject(DEMO_LATE) : irc;
+        ok = erc == KMOD_OK && KmodModuleState(DEMO_LATE) < 0;
+        if (!ok)
+            why_set(why, sizeof(why), "eject vendor.demo.late failed");
+    }
+    if (ok && KdllPinCount("vendor.demo.hello") != 0u) {
+        ok = false;
+        why_set(why, sizeof(why), "hello pin leaked after inject exit");
+    }
+    report("dynamic-inject", ok, why);
+    return ok;
+}
+
 } /* namespace */
 
 extern "C" int32_t KmodSelfTest(void)
@@ -556,6 +645,7 @@ extern "C" int32_t KmodSelfTest(void)
 
     case_boot_topology();
     case_unload_busy();
+    case_cross_module_symbol();
     case_dep_autoload();
     case_cycle_reject();
     case_cap_reject();
@@ -566,6 +656,7 @@ extern "C" int32_t KmodSelfTest(void)
     case_sched_policy_seat();
     case_alloc_policy_seat();
     case_shared_klib();
+    case_dynamic_inject();
 
     KmodDump();
     g_kmod_stats.selftest_pass = (uint64_t)g_pass;

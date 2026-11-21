@@ -120,6 +120,9 @@ namespace VMM{
     namespace UserAccess {
         bool CopyToUser(pagemap_t* pagemap, uint64_t u_dest, const void* k_src, uint64_t len);
         bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len);
+        /* 已持有 vma_lock/pt_lock 或处于异常上下文（#PF 诊断）时使用：
+           不加锁，只做翻译/校验/拷贝。 */
+        bool CopyFromUserNoLock(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len);
     }
 
     namespace Internal {

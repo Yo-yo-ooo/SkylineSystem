@@ -177,16 +177,18 @@ kernel-deps:
 .PHONY: kernel
 kernel: kernel-deps
 	@echo "Start Building Kernel!"
-	@# 必须在 kernel/ 目录里调用子 make: kernel/Makefile 会执行
-	@# `override SS_BUILD_DIR := $(shell pwd)`, 在子目录里就是正确值。
-	@# 若写成 $(MAKE) -C kernel, 递归变量 SS_BUILD_DIR 会在子 make 中
-	@# 重新展开, 而 $(shell pwd) 仍是仓库根 -> -I 路径多一层 kernel/,
-	@# 内核任何改动都编译不过。为稳妥起见这里显式传入绝对路径。
+	@# 1) 先构建组件 .ko（实现代码按 modules/compose 迁入 .ko）。
+	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)" components
+	@# 2) 从组件 .ko 的未定义符号重新生成 kernel.component.v1 导出表。
+	@#    必须在 kernel 链接之前，否则新迁入的实现符号没有 .kout 条目。
+	python3 res/scripts/gen_component_exports.py
+	@# 3) kernel 镜像（Tier0 + 共享实现库 + 生成的导出表）。
 	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)"
-	@# kmod 可加载模块 (.ko)：独立子目标，产出 kernel/bin-$(KARCH)/modules/*.ko。
-	@# 不并入内核 OBJ/链接，因此不影响上面内核镜像的既有行为。
+	@# 4) demo .ko + 单一 modules.saf。
 	@echo "Building Kernel Modules (.ko)!"
 	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)" modules
+	@# Limine 只加载一个内核模块归档：modules.saf 内含全部 .ko。
+	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)" modules-saf
 
 # ---------------------------------------------------------------------------
 # OS 安装包（Setup 用）：programs/bin/os.pkg = SKYOS1 容器 + 64 KiB 块 LZ4。
@@ -216,10 +218,9 @@ $(IMAGE_NAME).iso: limine-binary/limine kernel
 	mkdir -p iso_root/boot
 	cp -v kernel/bin-$(KARCH)/kernel iso_root/boot/
 ifeq ($(KARCH),x86_64)
-	@# kmod 镜像池：所有 .ko 都随 ISO 下发（boot 模块由内核自动加载，
-	@# 非 boot 模块进入镜像池供 selftest 按名加载/热替换）。
-	mkdir -p iso_root/boot/modules
-	cp -v kernel/bin-$(KARCH)/modules/*.ko iso_root/boot/modules/
+	@# 统一 DynModule 归档：Limine 只声明 boot():/boot/modules.saf，
+	@# 内核解析 SAF 后把其中全部 .ko 登记进镜像池/加载。
+	cp -v kernel/bin-$(KARCH)/modules.saf iso_root/boot/modules.saf
 endif
 	mkdir -p iso_root/boot/limine
 	cp -v ./res/limine.conf iso_root/boot/limine/
@@ -280,9 +281,8 @@ endif
 	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(KARCH)/kernel ::/boot
 	mcopy -i $(IMAGE_NAME).hdd@@1M ./res/limine.conf ::/boot/limine
 ifeq ($(KARCH),x86_64)
-	@# kmod 模块随 hdd 一并分发（与 ISO 的 boot():/boot/modules 布局一致）。
-	mmd -i $(IMAGE_NAME).hdd@@1M ::/boot/modules
-	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(KARCH)/modules/*.ko ::/boot/modules
+	@# 与 ISO 一致：内核模块只随 modules.saf 分发。
+	mcopy -i $(IMAGE_NAME).hdd@@1M kernel/bin-$(KARCH)/modules.saf ::/boot/modules.saf
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/limine-bios.sys ::/boot/limine
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/BOOTX64.EFI ::/EFI/BOOT
 	mcopy -i $(IMAGE_NAME).hdd@@1M limine-binary/BOOTIA32.EFI ::/EFI/BOOT

@@ -1,0 +1,24 @@
+# kernel.fs.ext4 (lwext4) implementation sources -> linked into fs_ext4.ko
+builtin/common/fs/lwext4/blockdev/blockdev.cpp
+builtin/common/fs/lwext4/ext4_user_alloc.cpp
+builtin/common/fs/lwext4/src/ext4_balloc.cpp
+builtin/common/fs/lwext4/src/ext4_bcache.cpp
+builtin/common/fs/lwext4/src/ext4_bitmap.cpp
+builtin/common/fs/lwext4/src/ext4_blockdev.cpp
+builtin/common/fs/lwext4/src/ext4_block_group.cpp
+builtin/common/fs/lwext4/src/ext4.cpp
+builtin/common/fs/lwext4/src/ext4_crc32.cpp
+builtin/common/fs/lwext4/src/ext4_debug.cpp
+builtin/common/fs/lwext4/src/ext4_dir.cpp
+builtin/common/fs/lwext4/src/ext4_dir_idx.cpp
+builtin/common/fs/lwext4/src/ext4_extent.cpp
+builtin/common/fs/lwext4/src/ext4_fs.cpp
+builtin/common/fs/lwext4/src/ext4_hash.cpp
+builtin/common/fs/lwext4/src/ext4_ialloc.cpp
+builtin/common/fs/lwext4/src/ext4_inode.cpp
+builtin/common/fs/lwext4/src/ext4_journal.cpp
+builtin/common/fs/lwext4/src/ext4_mbr.cpp
+builtin/common/fs/lwext4/src/ext4_mkfs.cpp
+builtin/common/fs/lwext4/src/ext4_super.cpp
+builtin/common/fs/lwext4/src/ext4_trans.cpp
+builtin/common/fs/lwext4/src/ext4_xattr.cpp

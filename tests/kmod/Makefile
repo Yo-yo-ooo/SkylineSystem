@@ -43,12 +43,15 @@ HAVE_SERVICES := $(wildcard $(KMOD_DIR)/kernel_services.cpp)
 HAVE_GOV      := $(if $(and $(HAVE_ELF),$(HAVE_POOL),$(HAVE_CAP),$(HAVE_SEAT),$(HAVE_SYSCALL)),$(wildcard $(KMOD_DIR)/governance.cpp))
 # 内建组件管理器依赖 governance + elf_loader + topology
 HAVE_BUILTIN := $(if $(and $(HAVE_GOV),$(HAVE_ELF),$(HAVE_TOPO)),$(wildcard $(KMOD_DIR)/builtin.cpp))
+# 统一 DynModule 注入层依赖 governance + builtin + kernel_exports
+HAVE_KDLL    := $(if $(and $(HAVE_BUILTIN),$(HAVE_KEXP)),$(wildcard $(KMOD_DIR)/kdll.cpp))
 
 CORE_FOUND    := $(HAVE_ELF) $(HAVE_TOPO) $(HAVE_CAP) $(HAVE_GOV) $(HAVE_SYSCALL) \
-                     $(HAVE_SEAT) $(HAVE_KEXP) $(HAVE_SERVICES) $(HAVE_POOL) $(HAVE_BUILTIN)
+                     $(HAVE_SEAT) $(HAVE_KEXP) $(HAVE_SERVICES) $(HAVE_POOL) $(HAVE_BUILTIN) \
+                     $(HAVE_KDLL)
 ALL_CORE_NAMES := elf_loader.cpp topology.cpp capability.cpp governance.cpp \
                         syscall_registry.cpp seat.cpp kernel_exports.cpp kmod_pool.cpp \
-                        builtin.cpp kernel_services.cpp
+                        builtin.cpp kernel_services.cpp kdll.cpp
 PRESENT_CORE  := $(wildcard $(addprefix $(KMOD_DIR)/,$(ALL_CORE_NAMES)))
 CORE_MISSING  := $(notdir $(filter-out $(PRESENT_CORE),$(addprefix $(KMOD_DIR)/,$(ALL_CORE_NAMES))))
 CORE_EXCLUDED := $(notdir $(filter-out $(CORE_FOUND),$(PRESENT_CORE)))
@@ -62,7 +65,7 @@ FIX_OBJS     := $(patsubst fixtures/%.cpp,$(FIX_DIR)/%.o,$(FIX_SRCS))
 # 测试文件按"依赖的实现文件是否存在"过滤；gov/syscall 的测试由其他任务交付，
 # 缺失时 test_main 打印 SKIP（不算失败）。
 KNOWN_TESTS := topology_test.cpp capability_test.cpp elf_loader_test.cpp \
-                    gov_test.cpp syscall_test.cpp component_test.cpp
+                    gov_test.cpp syscall_test.cpp component_test.cpp inject_test.cpp
 TEST_SRCS    := test_main.cpp
 TEST_SKIP    :=
 
@@ -130,11 +133,21 @@ else
 TEST_SKIP += component_test.cpp(builtin.cpp deps)
 endif
 
+ifneq ($(strip $(HAVE_KDLL)),)
+ifneq ($(wildcard inject_test.cpp),)
+TEST_SRCS += inject_test.cpp
+else
+TEST_SKIP += inject_test.cpp(file missing)
+endif
+else
+TEST_SKIP += inject_test.cpp(kdll.cpp deps)
+endif
+
 # 其他任务/后续新增的 *_test.cpp 自动纳入（不写 main，提供 test_<name>_run）
 EXTRA_TESTS := $(filter-out test_main.cpp $(KNOWN_TESTS),$(wildcard *_test.cpp))
 TEST_SRCS    += $(EXTRA_TESTS)
 
-$(info [kmod] core sources compiled: $(words $(CORE_FOUND))/10 ($(notdir $(CORE_FOUND))))
+$(info [kmod] core sources compiled: $(words $(CORE_FOUND))/11 ($(notdir $(CORE_FOUND))))
 ifneq ($(strip $(CORE_EXCLUDED)),)
 $(info [kmod] present but waiting deps (not compiled): $(CORE_EXCLUDED))
 endif
@@ -183,7 +196,7 @@ kmod-asan: kmod-status $(BIN_DIR)/kmod_test_asan $(FIX_OBJS)
 # 每次构建都打印源码就绪情况（-B 下也可见）
 kmod-status: FORCE
 	@echo "[kmod] ===== source status ====="
-	@echo "[kmod] kernel core $(words $(CORE_FOUND))/10: $(notdir $(CORE_FOUND))"
+	@echo "[kmod] kernel core $(words $(CORE_FOUND))/11: $(notdir $(CORE_FOUND))"
 	@if [ -n "$(strip $(CORE_EXCLUDED))" ]; then \
 	    echo "[kmod] present but waiting deps (not compiled): $(CORE_EXCLUDED)"; fi
 	@if [ -n "$(strip $(CORE_MISSING))" ]; then \

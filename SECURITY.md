@@ -1,55 +1,119 @@
-# Security Status and Vulnerability Process (SECURITY)
+# Security status and how to report a bug
 
-> Stated truthfully: this OS is an educational single-user kernel; its security mechanisms cover the
-> "architecture level" rather than the "policy level". To report issues, see the process at the end.
+SkylineSystem is a single-user hobby kernel. What exists is architecture-level hardening, not a
+policy layer: no uid/gid, no file permission bits. Anything that reports an issue should follow the
+process at the end of this file.
 
-## Implemented (Architecture Level)
+## What is in place
 
-| Mechanism | Location | Status |
+| Mechanism | Where | State |
 |---|---|---|
-| Kernel/user address-space isolation | VMM | ✅ |
-| SMEP / SMAP | `enable_smep_smap()` | ✅ |
-| NX (EFER.NXE) | enabled per CPUID | ✅ |
-| User-space W^X | ELF loading tightened by p_flags | ✅ |
-| KASLR | bootloader load randomization (`make kaslr-check` gate) | ✅ |
-| User pointer validation | `ua.cpp` MM_USER check + half-range upper bound (a previous HHDM alias hole was fixed) | ✅ |
-| syscall entry validation | out-of-range / unregistered → -ENOSYS | ✅ (round 9 audit) |
-| Sensitive-operation trust bit | kill/exec/cross-process mmap require `IsTrusted` | ✅ |
-| Kernel stack | 16KB default, deep-call-chain components may use 32KB | ✅ (round 14) |
+| Kernel/user address-space separation | VMM | yes |
+| SMEP / SMAP | `enable_smep_smap()` | yes |
+| NX (EFER.NXE) | set when CPUID allows | yes |
+| User-space W^X | ELF loading checks `p_flags` | yes |
+| KASLR | bootloader randomises the load base (`make kaslr-check` gates it) | yes |
+| User pointer validation | `ua.cpp` MM_USER check plus an upper bound on the half range (an earlier HHDM alias hole was closed) | yes |
+| syscall entry validation | out-of-range or unregistered slot returns -ENOSYS | yes (round 9 audit) |
+| Trust bit for sensitive operations | kill/exec/cross-process mmap all require `IsTrusted` | yes |
+| Kernel stack | 16KB by default; deep call chains may take 32KB | yes (round 14) |
 
-## Explicit Boundaries (not defects, the current design state)
+### 2026-11 user-pointer sweep
 
-- **No uid/gid, no file permission bits, no chmod/access**: single-user OS; sensitive operations go through the process trust bit.
-- **User-space ASLR is implemented on the kernel side**: the ELD loader supports ET_DYN load bias (randomized base);
-  in-tree programs are currently compiled at a static base and do not enable it (P3-79 wording correction: previously written as "no user-space ASLR").
-- **No security-module / CVE numbering system**: this OS does not assign CVEs; CVEs for upstream lwIP/lwext4/FatFs
-  need to be tracked (see below).
+`SmapGuard` only toggles AC so the kernel may touch user pages; it does not check
+that the address *is* a user address. Several handlers dereferenced caller
+pointers directly under `SmapGuard`, which gave any process an arbitrary
+kernel-address read/write. Fixed this round:
 
-## Known Risks (Technical Debt List)
+- `SYSCALL_TIME` / `gettimeofday` / `settimeofday` / `clock_gettime`
+  (`kernel/modules/builtin/x86_64/syscall/time.cpp`): all copies go through
+  `VMM::UserAccess::CopyToUser/CopyFromUser`; the dead
+  `pv & MM_READ & MM_WRITE` check and the zero-usecond `gettimeofday` were
+  replaced with real timeval/timespec construction.
+- `SYSCALL_KMOD_INFO` (29) (`kernel/src/arch/x86_64/kmod/syscall_registry.cpp`):
+  the module-table snapshot now uses `CopyToUser`; an unwritable buffer returns
+  `-EFAULT` instead of writing to the raw pointer.
+- `SYSCALL_GETRANDOM` (`kernel/modules/builtin/x86_64/syscall/random.cpp`):
+  fills a 256-byte kernel buffer per chunk and copies it out; calls above
+  16 MiB return `-EINVAL`.
 
-1. **Kernel `_vsnprintf` hardening TODO**: the `%s` NULL guard is in place; the crashes under
-   lwIP multi-module debug output were attributed to the thread stack (fixed in round 14), but vsnprintf's long-format/nested scenarios are not exhaustively covered.
-2. **Zero-copy RX = experimental state** (`NET_ZEROCOPY=0` off by default), see docs/dpdk-lite.md.
-3. **sched_bench not verified on the real kernel** (model tests pass).
-4. Upstream component version tracking: CVE advisories for lwIP / lwext4 / FatFs must be periodically
-   compared against the vendored versions in `kernel/src/net` and `kernel/src/fs`.
+The ELF loader also rejects relocations and symbols that target sections skipped
+by the layout pass (`SHT_NOTE`/toolchain metadata): such a section has
+`sec_off == 0`, so the old bounds check degenerated to the attacker-controlled
+`sh_size` and produced an out-of-image write. Regression coverage:
+`tests/kmod` case `reloc target SHT_NOTE`. Remaining known gaps are listed
+below (loader module code still runs in ring 0, no W^X for module images).
 
-## Vulnerability Reporting Process
+`CopyFromUser` now takes `vma_lock -> pt_lock` like `CopyToUser`, closing the
+page-table TOCTOU between a caller's check and the copy. The page-fault
+diagnostic path uses `CopyFromUserNoLock` because it may already run inside a
+holder of those locks.
 
-1. Open an issue in the project repository with `[SECURITY]` in the title, including reproduction steps (QEMU flags + logs).
-2. Issues involving upstream (lwIP/lwext4/FatFs) are forwarded upstream with the forwarding reference recorded.
-3. After the fix is merged, update the "Known Risks" section of this document and docs/stability-audit.md.
+Module images of seat providers are intentionally not freed on unload/hot
+replace (`KMOD_MODF_SEAT_PROVIDER`): the scheduler and heap call seat ops
+without entering the provider's epoch, so freeing the code they may still be
+executing is a use-after-free. The trade-off is one leaked image (tens of KB)
+per swap; module unload still returns success and the seat reverts to the
+kernel default.
 
-## Upstream CVE Tracking List (C6, round 15)
+Two interrupt/return-path hardening changes landed with this sweep:
 
-> Minimum-cost manual tracking while automation is absent: each quarter, check the versions below
-> line by line against NVD advisories. Automation direction (optional): a GitHub Action periodically
-> pulls NVD's cpeMatch, matches the versions pinned in this table, and opens an issue on a hit.
+- `syscall_handler` rejects a user RCX outside the user half before dispatch.
+  `sysret` would load that value into RIP and take a #GP at CPL0 (hcf); the
+  non-canonical value can only come from a user program, so the process is
+  terminated instead.
+- `#DF`(8)/`NMI`(2)/`#MC`(18) now use the per-CPU IST1 stack that was already
+  allocated and published in the TSS. A double fault caused by a corrupted
+  kernel stack can now enter the C handler on a fresh stack instead of
+  triple-faulting.
+
+## Boundaries
+
+These are design decisions, not bugs waiting to be fixed.
+
+- No uid/gid, no permission bits, no chmod/access. Single-user system. Sensitive operations are
+  gated by the per-process trust bit instead.
+- User-space ASLR is supported on the kernel side. The ELF loader handles ET_DYN load bias; the
+  in-tree programs are linked at a static base and leave it off. An earlier version of this file said
+  "no user-space ASLR", which was wrong (P3-79 wording correction).
+- No security module, no CVE numbering of our own. CVEs against vendored lwIP/lwext4/FatFs have to
+  be tracked by hand, see the watch list below.
+
+## Known risks
+
+1. `_vsnprintf` hardening is unfinished. The `%s` NULL guard is in place; the crashes seen while
+   debugging lwIP multi-module output turned out to be the thread stack (fixed in round 14). Long and
+   nested format strings are still not covered exhaustively.
+2. Zero-copy RX is experimental, `NET_ZEROCOPY=0` by default. See docs/dpdk-lite.md.
+3. `sched_bench` has only been run against the model, never against the real kernel.
+4. Vendored component versions are not pinned to upstream tags, so advisories cannot be matched
+   mechanically.
+5. Module images are loaded into ordinary kernel heap (`kmod_alloc`) and mapped RWX: there is no
+   per-section page protection for `.ko` text/rodata/data, and no W^X for module code. Anything that
+   can load a module can write its own code and the kernel's writable data; this is the same trust
+   level as a Linux kernel module, not a sandbox.
+6. `KdllResolve(name, sym)` returns a raw address without pinning the provider. It is only safe while
+   the caller also holds a `KMOD_INJ_PIN` (or a consumer import edge) on that module; otherwise an
+   unload/hot-replace can free the code behind the pointer.
+
+## Reporting a vulnerability
+
+1. Open an issue titled `[SECURITY] ...`, with reproduction steps, the QEMU flags used and the serial
+   log attached.
+2. If the problem is upstream (lwIP/lwext4/FatFs), forward it upstream and record the reference in the
+   issue.
+3. Once the fix is merged, update this file and docs/stability-audit.md.
+
+## Upstream CVE watch list (C6, round 15)
+
+Checked by hand every quarter until something automatic exists: go through the versions below against
+NVD advisories line by line. The automation direction, if it ever happens, is a GitHub Action that
+pulls NVD `cpeMatch`, compares it with the versions pinned here and opens an issue on a hit.
 
 | Component | vendored location | pinned version | last checked | TODO |
 |---|---|---|---|---|
-| lwIP | kernel/src/net | bundled in repo (upstream tag not recorded) | from round 15 | record the upstream tag |
-| lwext4 | kernel/modules/builtin/common/fs/lwext4 | bundled in repo | from round 15 | record the upstream tag |
-| FatFs | kernel/modules/builtin/common/fs/fatfs | bundled in repo | from round 15 | record the upstream tag |
-| mpaland/printf | lib/stdc/outfb/printf.c | upstream MIT version | from round 15 | track upstream fixes |
-| x86mem | ablib/arch/x86_64/x86mem | developed in this repo (MIT) | — | none |
+| lwIP | kernel/src/net | bundled, upstream tag not recorded | round 15 | record the upstream tag |
+| lwext4 | kernel/modules/builtin/common/fs/lwext4 | bundled | round 15 | record the upstream tag |
+| FatFs | kernel/modules/builtin/common/fs/fatfs | bundled | round 15 | record the upstream tag |
+| mpaland/printf | lib/stdc/outfb/printf.c | upstream MIT version | round 15 | follow upstream fixes |
+| x86mem | ablib/arch/x86_64/x86mem | written in this repo (MIT) | — | none |

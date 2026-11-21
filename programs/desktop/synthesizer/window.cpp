@@ -89,10 +89,13 @@ static inline void comp_backoff(uint32_t &spin) {
        空转 —— 合成器 worker 在帧间等待时就是这样一直占着 CPU, 实测把
        DOOM 的启动拖慢一倍 (R_InitData 18.2s vs 8.6s)。
        SYSCALL_SLEEP_MS 走内核 Schedule::Sleep (定时器轮), 真正让出 CPU。 */
-    /* 自旋一小段后 sys_yield()。**不能**换成 sleep:
-       主循环的 compose 与输入处理是同一个线程串行的, worker 一旦睡过整帧,
-       主线程就卡在栅栏上读不到鼠标 —— 实测 sleep 版本光标完全不动。
-       (启动加速改由"限制 worker 数量"实现, 见 StartWorkers 里的说明。) */
+    /* 自旋一小段后 sys_yield()。
+       历史: 曾经改成 Sleep 后实测"光标完全不动" —— 根因不是 sleep 本身,
+       而是 AP 的定时器轮只有 BSP 的 PIT tick 在推进, AP 上睡眠的线程永远
+       不会被唤醒 (已修: Switch() 每次 SCHED_VEC 调 TimerTickWheels(),
+       idle 有睡眠者时按 1ms 重武装)。worker 仍用 spin→yield: Sleep 版
+       实测把合成中位从 ~10ms 拖到 ~22ms (worker 可能落在主线程所在核),
+       低延迟优先; 代价是帧间占 CPU, 由"最多 2 个 worker"限制。 */
     if (spin < COMP_SPIN_BUDGET) { cpu_relax(); ++spin; }
     else { sys_yield(); spin = 0; }
 }
@@ -292,6 +295,7 @@ bool Compositor::Init(FrameBuffer* screen) {
     started_cnt_ = 0;
     done_compose_ = 0;
     for (uint32_t i = 0; i < COMP_CPUS_SANITY; i++) worker_done_seq_[i] = 0;
+    for (uint32_t i = 0; i < COMP_CPUS_SANITY; i++) worker_busy_[i] = 0;
     cur_x_ = cur_y_ = 0;
     cur_visible_ = 0;
     cur_shape_ = SKY_CURSOR_ARROW;
@@ -924,13 +928,17 @@ void Compositor::WorkerEntry(uint32_t id) {
     uint64_t last_seq = 0;
     for (;;) {
         uint64_t seq;
-        uint32_t wait = 0;
-        do {                                   /* spin/yield until a frame */
+        uint32_t spins = 0;
+        for (;;) {
             if (__atomic_load_n(&shutdown_, __ATOMIC_ACQUIRE)) return;
             seq = __atomic_load_n(&frame_seq_, __ATOMIC_ACQUIRE);
             if (seq != last_seq) break;
-            comp_backoff(wait);
-        } while (true);
+            /* 等帧用 spin→yield。Sleep 版本虽然省 CPU，但 worker 可能被
+               调度到主线程所在核：Sleep(1) 要等主线程让出，实测把中位
+               合成时间从 10ms 拖到 22ms。低延迟优先，CPU 成本由"最多
+               2 个 worker"限制。 */
+            comp_backoff(spins);
+        }
 
         /* Shutdown check BEFORE rendering: once Compose()'s barrier timeout
            has degraded the compositor, the main thread finished this strip
@@ -940,10 +948,13 @@ void Compositor::WorkerEntry(uint32_t id) {
         if (__atomic_load_n(&shutdown_, __ATOMIC_ACQUIRE)) return;
         last_seq = seq;
 
+        __atomic_store_n(&worker_busy_[id], 1u, __ATOMIC_RELEASE);
         ComposeStripToBack(id);                 /* scene -> back_ only */
         /* Publish per-strip completion for THIS frame seq: Compose()'s
-           timeout path reads it to learn which strips it must finish. */
+           barrier and its timeout path key off the per-strip seq, so a late
+           ack from an older frame can never satisfy this frame. */
         __atomic_store_n(&worker_done_seq_[id], seq, __ATOMIC_RELEASE);
+        __atomic_store_n(&worker_busy_[id], 0u, __ATOMIC_RELEASE);
         __atomic_add_fetch(&done_compose_, 1, __ATOMIC_RELEASE);
     }
 }
@@ -995,22 +1006,17 @@ void Compositor::StartWorkers() {
     }
     if (n < 1) n = 1;
     if (n > COMP_CPUS_SANITY) n = COMP_CPUS_SANITY;   /* defensive only */
-    /* worker 数量上限 (实测调优, 不是权宜之计)。
-       worker 在屏障上是**自旋等待**的, 一直占着 CPU。4 个 vCPU 上
-       "3 worker + DOOM + 桌面主线程 + 控制台" 属于超订, 重负载客户端
-       (DOOM) 抢不到核。实测把 worker 从 3 降到 1:
-           R_InitData  +18.2s -> +8.6s   (2.1x)
-           第一帧       30.7s -> 19.6s
-       而 DOOM 稳态帧率不变 (19.2 fps), 界面渲染/光标/时钟全部正常 ——
-       说明满屏合成的并行度并不是瓶颈, 让出 CPU 给客户端更划算。
-       机器核更多时可上调此上限; 但先要解决"worker 空转" (需要内核提供
-       真正的 sleep, 现在只有 yield, 让出后立刻又会被调度回来)。 */
-    /* 实测结论 (2026-10, 4 vCPU / 96 MiB, DOOM 运行中):
-       并行分条 + 有界栅栏是**负优化** —— 栅栏等待占掉合成耗时的 47~84%,
-       单帧最坏 125ms (平均 15~68ms); 而纯单线程 平均 13~25ms, 最坏 27ms,
-       等待 0%。响应速度看的是最坏延迟, 所以这里固定 1: 只有主线程合成,
-       worker 线程不再启动 (下面的代码保留, 需要时把 n 调大即可)。 */
-    n = 1;
+    /* 多核渲染（默认开启）：条带数 = 在线 CPU 数（上限 3），主线程画条带 0，
+       其余每个 CPU 一个 worker。
+       2026-10 的"并行 = 负优化"结论来自 **3 个 worker + 自旋等待**：常驻
+       空转抢核，DOOM 的 R_InitData 从 +8.6s 被拖到 +18.2s。现在：
+         - worker 上限 2（条带 3），4 vCPU 上至少留 1 核给 DOOM/客户端；
+         - 屏障按"每条带一个完成序号 + busy 标志"判定，迟到帧的 ack 不会
+           满足当前帧（旧的共享计数器有这个问题），超时也只补画空转条带；
+       注意：worker 和主线程的等待都**不能用 Sleep** —— Sleep 会停掉本核
+       LAPIC timer，没有其它事件时定时器轮不前进，等帧线程会永久睡死
+       （实测：worker 睡死后首帧桌面起不来、光标不动）。 */
+    if (n > 3u) n = 3u;
     ncpus_ = n;
 
     /* dynamically allocate the exact strip table for this CPU count */
@@ -1060,6 +1066,8 @@ void Compositor::StartWorkers() {
     __atomic_store_n(&started_cnt_,  0, __ATOMIC_SEQ_CST);
     for (uint32_t i = 0; i < COMP_CPUS_SANITY; i++)
         __atomic_store_n(&worker_done_seq_[i], 0, __ATOMIC_SEQ_CST);
+    for (uint32_t i = 0; i < COMP_CPUS_SANITY; i++)
+        __atomic_store_n(&worker_busy_[i], 0u, __ATOMIC_SEQ_CST);
     __atomic_store_n(&frame_seq_,    0, __ATOMIC_SEQ_CST);
     __atomic_store_n(&shutdown_,     0, __ATOMIC_SEQ_CST);
 
@@ -1069,7 +1077,7 @@ void Compositor::StartWorkers() {
     uint32_t peers = (n > 1) ? n - 1 : 0;
     uint32_t launched_ok = 0;
     for (uint32_t i = 0; i < peers; i++) {
-        if (sys_thread_launch((uint64_t)CompWorkerTrampoline, i + 1) >= 0)
+        if ((int64_t)sys_thread_launch((uint64_t)CompWorkerTrampoline, i + 1) >= 0)
             launched_ok++;
     }
     /* Wait for every launched worker to run its entry ack. The high safety
@@ -1099,7 +1107,24 @@ void Compositor::StartWorkers() {
             }
         }
     }
+    /* 有 worker 起不来：只保留条带 0 全屏，不能让 Compose() 去等一个
+       根本不存在的 worker（那会每帧都走超时降级）。 */
+    if (launched_ok < peers) {
+        __atomic_store_n(&shutdown_, 1, __ATOMIC_RELEASE);
+        __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
+        if (strips_) {
+            strips_[0].y0 = 0;
+            strips_[0].y1 = (uint32_t)screen_.Height;
+        }
+        ncpus_ = 1;
+    }
     launched_ = 1;
+    {
+        char m[80];
+        int len = snprintf(m, sizeof(m), "[comp] strips=%u workers=%u\n",
+                           (unsigned)ncpus_, (unsigned)launched_ok);
+        if (len > 0) syscall(SYS_DBGSOUT, (uint64_t)m, (uint64_t)len, 0, 0, 0, 0);
+    }
 }
 
 void Compositor::Compose() {
@@ -1119,8 +1144,9 @@ void Compositor::Compose() {
     ComputeCoverSpan(&ny0, &ny1);
 
     /* phase 1 (off-screen): peers render strips 1..N-1 to back_, main strip 0.
-       Bump the frame sequence, then wait on the per-frame completion counter. */
-    __atomic_store_n(&done_compose_, 0, __ATOMIC_RELEASE);
+       Bump the frame sequence, then wait for every strip to publish `seq`.
+       Per-strip sequence numbers (not a shared counter) make a late ack from
+       frame N-1 unable to satisfy frame N. */
     const uint64_t seq = __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE);
     ComposeStripToBack(0);
 
@@ -1129,23 +1155,43 @@ void Compositor::Compose() {
        click: any input action that sets wmDirty (e.g. the taskbar toggle)
        funnels into Compose(); if a single pinned worker misses the frame
        (its core lost to a client that never yields, or the thread died),
-       the wait never ended and the WHOLE desktop — cursor included, it
-       lives in this same main loop — locked up. Now: after
-       COMP_FRAME_YIELD_BUDGET yields the main thread finishes every strip
-       that has not published completion for `seq` itself, then degrades
-       permanently to single-thread. Worst case is one possibly torn frame
-       (a straggler worker mid-render sees shutdown_ == 1 and exits without
-       writing back_ again); never a hang. */
-    uint32_t spin = 0, yields = 0;
+       the wait never ended and the WHOLE desktop — cursor included — locked
+       up. Now: spin briefly, then yield; every 512 yields sleep 1ms (the
+       workers do the same, so a normal frame acks within 1~2ms). After
+       ~50 rounds (~50ms) the main thread takes over: it only re-renders
+       strips whose worker is NOT currently inside ComposeStripToBack
+       (worker_busy_ == 0), then degrades permanently to single-thread. */
+    auto all_strips_done = [&]() -> bool {
+        for (uint32_t i = 1; i <= peers; i++)
+            if (__atomic_load_n(&worker_done_seq_[i], __ATOMIC_ACQUIRE) < seq)
+                return false;
+        return true;
+    };
+    uint32_t spin = 0, yields = 0, wait_rounds = 0;
     for (;;) {
-        if (__atomic_load_n(&done_compose_, __ATOMIC_ACQUIRE) >= peers) break;
+        if (all_strips_done()) break;
         if (spin < COMP_SPIN_BUDGET) { cpu_relax(); ++spin; continue; }
         sys_yield();
         spin = 0;
-        if (++yields > COMP_FRAME_YIELD_BUDGET) {
-            for (uint32_t i = 1; i < ncpus_; i++)
-                if (__atomic_load_n(&worker_done_seq_[i], __ATOMIC_ACQUIRE) < seq)
-                    ComposeStripToBack(i);      /* finish missing strips here */
+        if (++yields <= COMP_FRAME_YIELD_BUDGET) continue;
+        yields = 0;
+        /* 主线程在这里**不能 Sleep**：它持有扫描出锁，Sleep 又会停掉本核
+           LAPIC timer，没有事件推进定时器轮时主线程永久睡死（实测首帧
+           桌面再也起不来）。改为继续 yield，用轮数做超时。 */
+        if (++wait_rounds > 50u) {
+            {
+                static const char m[] =
+                    "[comp] parallel barrier timeout, degrade to single strip\n";
+                syscall(SYS_DBGSOUT, (uint64_t)m,
+                        (uint64_t)(sizeof(m) - 1), 0, 0, 0, 0);
+            }
+            for (uint32_t i = 1; i <= peers; i++) {
+                if (__atomic_load_n(&worker_done_seq_[i], __ATOMIC_ACQUIRE) >= seq)
+                    continue;
+                if (__atomic_load_n(&worker_busy_[i], __ATOMIC_ACQUIRE))
+                    continue;   /* 不要和正在写这条带的 worker 并发合成 */
+                ComposeStripToBack(i);      /* finish an idle missing strip */
+            }
             __atomic_store_n(&shutdown_, 1, __ATOMIC_RELEASE);
             __atomic_add_fetch(&frame_seq_, 1, __ATOMIC_RELEASE); /* wake */
             /* ONE full-screen strip from now on (see StartWorkers). */
@@ -1154,6 +1200,18 @@ void Compositor::Compose() {
                 strips_[0].y1 = (uint32_t)screen_.Height;
             }
             ncpus_ = 1;
+            /* Wait (bounded) until any in-flight worker leaves the render
+               critical section: from here on the main thread may mutate the
+               layer/window lists again, and a straggler must not be walking
+               them. A worker that was mid-render finishes and sees shutdown. */
+            for (uint32_t i = 1; i <= peers; i++) {
+                uint32_t w = 0;
+                while (__atomic_load_n(&worker_busy_[i], __ATOMIC_ACQUIRE)) {
+                    if (++w > 400000u) break;
+                    cpu_relax();
+                    if ((w & 0x1FFFu) == 0u) sys_yield();
+                }
+            }
             break;
         }
     }

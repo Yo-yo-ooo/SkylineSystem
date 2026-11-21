@@ -4,11 +4,6 @@
 #include <limine.h>
 
 namespace ACPI{
-    ACPI::MCFGHeader* mcfg = nullptr;
-    ACPI::FADTHeader *FADT = nullptr;
-    int32_t ACPI_DIV = 0;
-    ACPI::SDTHeader* rootThing = nullptr;
-    volatile bool UseXSDT = false;
 
     void* FindTable(const char* signature){
         return ACPI::FindTable(ACPI::rootThing,signature,ACPI::ACPI_DIV);

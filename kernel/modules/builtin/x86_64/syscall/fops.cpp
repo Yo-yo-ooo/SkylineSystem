@@ -382,14 +382,24 @@ static inline bool is_path_too_long(const char* kpath) {
     return true;
 }
 
+/* 按页分块拷贝：路径/目录名通常 <64B，逐字节进 CopyFromUser 会为每个
+   字符拿两次页表锁；这里每页最多一次（跨页才两次）。语义不变。 */
 static int64_t strncpy_from_user(char* dst, const char* src, size_t max_len, pagemap_t* pagemap) {
-    for (size_t i = 0; i < max_len; i++) {
-        if (!VMM::UserAccess::CopyFromUser(pagemap, dst + i, (void*)(src + i), 1)) {
+    size_t i = 0;
+    while (i < max_len) {
+        const uint64_t va = (uint64_t)(uintptr_t)(src + i);
+        size_t chunk = (size_t)(PAGE_SIZE - (va & (PAGE_SIZE - 1)));
+        if (chunk > max_len - i)
+            chunk = max_len - i;
+        if (!VMM::UserAccess::CopyFromUser(pagemap, dst + i, src + i, chunk)) {
             return -EFAULT;
         }
-        if (dst[i] == '\0') {
-            return i;
+        for (size_t j = 0; j < chunk; j++) {
+            if (dst[i + j] == '\0') {
+                return (int64_t)(i + j);
+            }
         }
+        i += chunk;
     }
     return -ENAMETOOLONG;
 }

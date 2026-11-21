@@ -236,8 +236,17 @@ static kmod_pci_ops_t g_pci_ops = {
     core_enumerate,
 };
 
+extern "C" void pci_name_set_hooks(const char *(*)(uint16_t),
+                                           const char *(*)(uint16_t, uint16_t),
+                                           const char *(*)(uint8_t),
+                                           const char *(*)(uint8_t, uint8_t),
+                                           const char *(*)(uint8_t, uint8_t, uint8_t));
+
 static int32_t pci_core_init(void)
 {
+    pci_name_set_hooks(&PCI::GetVendorName, &PCI::GetDeviceName,
+                       &PCI::GetClassName, &PCI::GetSubclassName,
+                       &PCI::GetProgIFName);
     kprintf_("[comp.pci.core] init: contract=%s abi=%u slots=%u\n",
              KMOD_CONTRACT_PCI_V1, (unsigned)KMOD_PCI_ABI_V1,
              (unsigned)kMaxDrivers);

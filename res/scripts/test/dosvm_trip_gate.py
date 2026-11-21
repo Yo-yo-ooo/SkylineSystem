@@ -7,8 +7,8 @@ Proves (or disproves) that one AP really leaves x86_64, runs a 16-bit DOS
 payload in real mode, and returns to long mode while the BSP + desktop keep
 running.  Evidence comes from the serial log, not from code inspection:
 
-    [dosvm] ready: blob=... @0x70000 ...      (Tier1 init, trampoline installed)
-    [dosvm] facade loaded (syscall 210/211)  (Tier2 .ko auto-loaded)
+    [dosvm] ready: blob=... @0x70000 ...      (kernel.arch.dosvm.ko init)
+    [dosvm] dynlink: inject ... rc=0          (DynModule pmm/acpi injection)
     [dosvm] trip begin: cpu=N ...            (syscall 211 -> 0xF0 IPI)
     [dosvm] trip OK: cpu=N gen=... trips=... (returned, magic matched)
     [dos] init: ...                          (L3 window client spawned)
@@ -32,7 +32,9 @@ import time
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 READY = re.compile(r"\[dosvm\] ready:")
-FACADE = re.compile(r"\[dosvm\] facade loaded")
+# Tier1/Tier2 合并后不再有独立 dosvm.ko 门面；统一 DynModule 在 ready 之后
+# 打印 dynlink 注入证据（pmm/acpi resident 模块）。
+FACADE = re.compile(r"\[dosvm\] (facade loaded|dynlink:)")
 TRIP_BEGIN = re.compile(r"\[dosvm\] trip begin: cpu=(\d+)")
 TRIP_OK = re.compile(r"\[dosvm\] trip OK: cpu=(\d+) gen=(\d+) trips=(\d+)")
 TRIP_FAIL = re.compile(r"\[dosvm\] trip (TIMEOUT|FAILED|DISABLED)")

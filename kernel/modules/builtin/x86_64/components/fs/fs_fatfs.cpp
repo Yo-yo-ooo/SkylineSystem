@@ -38,6 +38,8 @@ KCOMPONENT_IMPORT_FN(fs_fatfs, kprintf_, int, (const char *, ...), "kernel",
                      "kprintf_", "kernel.log.v1")
 KCOMPONENT_IMPORT(fs_fatfs, vfs_ops_, kmod_vfs_ops_t *, "kernel.fs.vfs",
                   "kernel.vfs.v1", "kernel.vfs.v1")
+KCOMPONENT_DEPENDS(fs_fatfs, "kernel.block.core", block_core)
+KCOMPONENT_DEPENDS(fs_fatfs, "kernel.fs.ext4", ext4)
 
 namespace {
 

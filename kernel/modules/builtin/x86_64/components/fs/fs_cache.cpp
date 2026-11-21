@@ -43,6 +43,7 @@ KCOMPONENT_BEGIN(fs_cache, "kernel.fs.cache", "1.0.0", KMOD_TIER_POLICY,
 
 KCOMPONENT_IMPORT_FN(fs_cache, kprintf_, int, (const char *, ...), "kernel",
                      "kprintf_", "kernel.log.v1")
+KCOMPONENT_DEPENDS(fs_cache, "kernel.fs.fccore", fs_fccore)
 
 namespace {
 

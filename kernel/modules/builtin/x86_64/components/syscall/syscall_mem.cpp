@@ -20,9 +20,9 @@ KCOMPONENT_BEGIN(syscall_mem, "kernel.syscall.mem", "1.0.0",
 
 KCOMPONENT_DEPENDS(syscall_mem, "kernel.sched.core", sched)
 
-KCOMPONENT_EXPORT_SYSCALL(syscall_mem, 10u, sys_pmmapSHARE)
-KCOMPONENT_EXPORT_SYSCALL(syscall_mem, 14u, sys_mmap)
-KCOMPONENT_EXPORT_SYSCALL(syscall_mem, 15u, sys_munmap)
-KCOMPONENT_EXPORT_SYSCALL(syscall_mem, 18u, sys_arch_prctl)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_mem, 10u, sys_pmmapSHARE)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_mem, 14u, sys_mmap)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_mem, 15u, sys_munmap)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_mem, 18u, sys_arch_prctl)
 
 KCOMPONENT_END(syscall_mem)

@@ -40,6 +40,12 @@ int32_t pool_find_exact(const char *name, const char *version)
 
 extern "C" int32_t KmodPoolAdd(const uint8_t *data, uint64_t size, bool owned)
 {
+    return KmodPoolAddEx(data, size, owned, false);
+}
+
+extern "C" int32_t KmodPoolAddEx(const uint8_t *data, uint64_t size, bool owned,
+                                 bool trusted)
+{
     if (!data || size < sizeof(kmod_manifest_t)) {
         kmod_log("[kmod] pool: image too small (%llu bytes)\n",
                  (unsigned long long)size);
@@ -51,7 +57,7 @@ extern "C" int32_t KmodPoolAdd(const uint8_t *data, uint64_t size, bool owned)
     }
     kmod_manifest_t man;
     char err[96];
-    int32_t rc = KmodElfInspect(data, size, &man, err, sizeof(err));
+    int32_t rc = KmodElfInspectEx(data, size, &man, err, sizeof(err), trusted);
     if (rc != KMOD_OK) {
         kmod_log("[kmod] pool: inspect rejected image (%s)\n", err);
         return rc;
@@ -86,12 +92,30 @@ extern "C" int32_t KmodPoolAdd(const uint8_t *data, uint64_t size, bool owned)
     img->parse_ret = KMOD_OK;
     img->inspected = true;
     img->owned = owned;
+    img->trusted = trusted;
     g_kmod_image_count++;
-    kmod_log("[kmod] pool: + %s@%s (%llu bytes, tier=%u, flags=0x%x, caps=0x%llx)\n",
+    kmod_log("[kmod] pool: + %s@%s (%llu bytes, tier=%u, flags=0x%x, "
+             "caps=0x%llx%s)\n",
              img->name, img->version, (unsigned long long)size,
              (unsigned)img->tier, (unsigned)img->flags,
-             (unsigned long long)img->caps_required);
+             (unsigned long long)img->caps_required,
+             trusted ? ", trusted" : "");
     return (int32_t)(g_kmod_image_count - 1);
+}
+
+extern "C" void KmodPoolRelease(int32_t index)
+{
+    if (index < 0 || (uint32_t)index >= g_kmod_image_count)
+        return;
+    kmod_image_t *img = &g_kmod_images[index];
+    if (img->owned && img->data)
+        kmod_free((void *)img->data, img->size);
+    kmod_log("[kmod] pool: release image %s@%s (injection failed)\n",
+             img->name, img->version);
+    img->data = nullptr;
+    img->size = 0;
+    img->owned = false;
+    img->parse_ret = KMOD_ERR_NOTFOUND;
 }
 
 extern "C" int32_t KmodPoolFind(const char *name, const char *version)

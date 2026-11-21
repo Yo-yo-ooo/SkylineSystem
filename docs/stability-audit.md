@@ -1,41 +1,42 @@
-# Stability Report Self-Audit: Evidence Gaps, Retest Plans, Conclusion Downgrades and Roadmap
+# Stability report audit: what holds up, what doesn't, and what was retested
 
-> This file audits `docs/stability-report.md` item by item. Principles:
-> ① Strictly distinguish "real kernel source compiled" / "formula-replica model" / "pure simulation";
-> ② Single-threaded shim conclusions must not be written as "component stable" or "SMP safe";
-> ③ Performance numbers without context are all considered invalid.
+This file goes through `docs/stability-report.md` item by item. Three rules apply throughout:
 
-## 0'. Retest Progress (Items Landed, 2026-09-27)
+- keep "real kernel source, compiled" apart from "formula-replica model" and from "pure simulation";
+- a single-threaded shim result never gets written up as "component stable" or "SMP safe";
+- a performance number without context counts as invalid.
+
+## 0. Retest progress (landed 2026-09-27)
 
 | Audit Item | Status | Evidence |
 |---|---|---|
-| S1-S5 boundary/krealloc/kcalloc wraparound/OOM injection/alignment | ✅ | `tests/slub/main.cpp` all PASS (report §1.2) |
-| S2 latency distribution P50/P95/P99 | ✅ | 128B class 2M ops, P50=86ns/P99=120ns (report §1.3) |
-| S8 per-class throughput + batch timing + sink | ✅ | 16..1024B seven classes + krealloc (report §1.4) |
-| S7 OOM path | ✅ | `vmm_set_fail_all` injection: large block NULL, krealloc keeps old block, cold cache NULL, recovery (§1.2) |
-| Redzone out-of-bounds negative test | ✅ | `slub-poison` standalone build (`-DSLAB_DEBUG_POISON`), Free detects ACTIVE |
-| S9 live_pages mechanism | ✅ | 17 pages = SLUB class active slabs + SLAB page pool; `dump_live_pages()` prints allocation sites |
-| F4 three minimal regressions | ✅ | `tests/fc/regression.cpp`: test_art_true_prefix_key / test_promote_inline_capacity_reuse / test_insert_fail_no_dangling (fault injection) all PASS |
-| F1 per-path throughput | ✅ | get-hit/get-miss/promote/invalidate/idle_handler (report §2) |
-| F2 hit rate statistics | ✅ | hits/misses/migrations output (report §2) |
-| Long chaos | ✅ | 2M ops, 500 keys, soft/hard limits 64KB/256KB (report §2) |
-| Scheduler EEVDF reference comparison | ✅ | weighted slice+VD model, fairness/wakeup latency side by side (report §3.1/§3.4) |
-| M3 seed printing | ✅ | three suites print seeds at startup |
-| M4 CI | ✅ | `tests/ci.sh` full suite (slub/slub-poison/fc/fc-reg/sched) |
-| Five overstated claims | ✅ | report has downgraded/corrected all of them (see §5 handling column) |
-| **Not completed** | ⏳ | S6/F5 multithreaded concurrency (partially done, see below), QEMU sched trace, before/after fix performance comparison, golden-sample diff, evictions counter trigger-condition verification |
+| S1-S5 boundary/krealloc/kcalloc wraparound/OOM injection/alignment | done | `tests/slub/main.cpp` all PASS (report §1.2) |
+| S2 latency distribution P50/P95/P99 | done | 128B class 2M ops, P50=86ns/P99=120ns (report §1.3) |
+| S8 per-class throughput + batch timing + sink | done | 16..1024B seven classes + krealloc (report §1.4) |
+| S7 OOM path | done | `vmm_set_fail_all` injection: large block NULL, krealloc keeps old block, cold cache NULL, recovery (§1.2) |
+| Redzone out-of-bounds negative test | done | `slub-poison` standalone build (`-DSLAB_DEBUG_POISON`), Free detects ACTIVE |
+| S9 live_pages mechanism | done | 17 pages = SLUB class active slabs + SLAB page pool; `dump_live_pages()` prints allocation sites |
+| F4 three minimal regressions | done | `tests/fc/regression.cpp`: test_art_true_prefix_key / test_promote_inline_capacity_reuse / test_insert_fail_no_dangling (fault injection) all PASS |
+| F1 per-path throughput | done | get-hit/get-miss/promote/invalidate/idle_handler (report §2) |
+| F2 hit rate statistics | done | hits/misses/migrations output (report §2) |
+| Long chaos | done | 2M ops, 500 keys, soft/hard limits 64KB/256KB (report §2) |
+| Scheduler EEVDF reference comparison | done | weighted slice+VD model, fairness/wakeup latency side by side (report §3.1/§3.4) |
+| M3 seed printing | done | three suites print seeds at startup |
+| M4 CI | done | `tests/ci.sh` full suite (slub/slub-poison/fc/fc-reg/sched) |
+| Five overstated claims | done | all corrected in the report, see §5 |
+| **Not completed** | pending | S6/F5 multithreaded concurrency (partially done, see below), QEMU sched trace, before/after fix performance comparison, golden-sample diff, evictions counter trigger-condition verification |
 
-## 0''. SMP Retest Progress (Multithreading + TSAN, 2026-09-27)
+## 0.1 SMP retests (multithreading + TSAN, 2026-09-27)
 
-**Kernel-side fixes ultimately kept** (all verified no-regression by QEMU boot):
+Kernel-side fixes ultimately kept (all verified no-regression by QEMU boot):
 
 | # | Fix | Evidence | Status |
 |---|---|---|---|
-| 1 | `art.c` NODE4/16 node cache gets spinlock | fc-mt segfault (remove_child16) | ✅ kept |
-| 4 | `fc.cpp total_entries` fully `__atomic_*` | TSAN fc.cpp:574/803 | ✅ kept |
-| 5 | kernel `spinlock_lock/unlock` unified `extern "C"` | link error | ✅ kept |
+| 1 | `art.c` NODE4/16 node cache gets spinlock | fc-mt segfault (remove_child16) | kept |
+| 4 | `fc.cpp total_entries` fully `__atomic_*` | TSAN fc.cpp:574/803 | kept |
+| 5 | kernel `spinlock_lock/unlock` unified `extern "C"` | link error | kept |
 
-**Fixes reverted (important lesson)**:
+Fixes reverted (important lesson):
 
 | Fix | Revert reason | Lesson |
 |---|---|---|
@@ -43,17 +44,17 @@
 | `SLUB::Free` tail state machine lock-in + magic precondition | After reverting tagged, boot still abnormal → reverted together to git HEAD semantics (original reclaim/link structure) | TSAN race was real, but the "fix" changed early boot/interrupt path semantics |
 | `slow_alloc`/`Alloc` in-lock accounting refactor | Same as above | Same as above |
 
-**TSAN known reports (unfixed, listed as roadmap)**: cross-CPU free on shared slabs —
+TSAN known reports (unfixed, listed as roadmap): cross-CPU free on shared slabs —
 `reclaim_slab` vs Free tail reads race, revived path post-unlock accounting window — none of
 which caused functional failures in 4-thread chaos (fc-mt/slub-mt failures=0); Linux avoids
 this structurally with per-CPU freelists; this kernel's roadmap: per-CPU freelist rework (P2).
 
-**Verification status (closed)**:
-- `slub-mt` (4 threads per-CPU + cross-thread free + same-cache contention): **failures=0**; contended throughput 10.7M ops/s (-14%).
-- `fc-mt` (4 threads × 4 instances × 300k ops, 30% dirty-write cross-instance broadcast + full-time inspection): **failures=0**.
-- **Lesson 2**: the series of "residual crashes" during fc-mt convergence was finally traced to a **harness bug itself** — `alloca` accumulating in a loop blew up the 8MB thread stack; after switching to fixed-size arrays everything is green (unrelated to kernel fixes).
-- **QEMU core-count sweep (with disk parameters)**: smp 1/2/4 × 45s each **all without anomalies** (19-20KB serial logs).
-- Conclusion: **"single-core algorithm correct + 4-thread shim concurrency passes (functional green); SMP theoretical races listed as known limitations, real kernel passes core-count sweep and 30-minute long stability without anomalies"**.
+Verification status (closed):
+- `slub-mt` (4 threads per-CPU + cross-thread free + same-cache contention): failures=0; contended throughput 10.7M ops/s (-14%).
+- `fc-mt` (4 threads × 4 instances × 300k ops, 30% dirty-write cross-instance broadcast + full-time inspection): failures=0.
+- Lesson 2: the series of "residual crashes" during fc-mt convergence was finally traced to a harness bug itself — `alloca` accumulating in a loop blew up the 8MB thread stack; after switching to fixed-size arrays everything is green (unrelated to kernel fixes).
+- QEMU core-count sweep (with disk parameters): smp 1/2/4 × 45s each all without anomalies (19-20KB serial logs).
+- Conclusion: "single-core algorithm correct + 4-thread shim concurrency passes (functional green); SMP theoretical races listed as known limitations, real kernel passes core-count sweep and 30-minute long stability without anomalies".
 
 ### 0'''. New Verifications This Round
 
@@ -88,26 +89,26 @@ this structurally with per-CPU freelists; this kernel's roadmap: per-CPU freelis
 
 ### 7.2 File Cache Semantic Path Coverage Checklist (the precise boundary of "all pass")
 
-**Before/after fix performance comparison (P1 item)**: the pre-fix binaries for ART terminator
-guard/TryGetSize check/idempotent delete were not kept, **so before/after comparison is
-impossible**; post-fix absolute numbers have been provided (per-path + mixed load 0.607M
+Before/after fix performance comparison (P1 item): the pre-fix binaries for ART terminator
+guard/TryGetSize check/idempotent delete were not kept, so before/after comparison is
+impossible; post-fix absolute numbers have been provided (per-path + mixed load 0.607M
 ops/s). The guard cost is one branch comparison per `key[depth]`, not quantified separately —
-recorded truthfully as a data gap, no fabricated numbers.
+recorded as a data gap; no number is invented for it.
 
 | Path | Kernel implementation | Test coverage |
 |---|---|---|
-| promote (write promotion) | ✅ | ✅ chaos 40% weight + capacity reuse regression + fault injection |
-| get/put (incl. cross-core migration, pin) | ✅ | ✅ 35% weight + strict content verification (after dirty write) |
-| invalidate (cross-core broadcast) | ✅ | ✅ 10% weight + post-invalidation consistency check |
-| idle_handler/tick (LRU decay, eviction decision) | ✅ | ✅ 15% weight |
-| **writeback/dirty-page writeback** | ✅ (wb_cb + dirty-ratio throttling) | ⚠️ only callback stub + throttle trigger path (regression uses is_dirty=false; chaos dirty ratio low) |
-| **readahead** | ⚠️ (access_freq==0 cold eviction, no active readahead) | ❌ no active readahead logic to test |
-| **truncate/fsync** | ❌ not implemented (non-POSIX OS) | N/A |
-| **OOM reclamation** (`fc_try_evict_for_space`) | ✅ | ⚠️ migration rejection path observed under pressure-limit config; active OOM reclamation not separately stress-tested |
+| promote (write promotion) | implemented | chaos 40% weight + capacity reuse regression + fault injection |
+| get/put (incl. cross-core migration, pin) | implemented | 35% weight + strict content verification after dirty write |
+| invalidate (cross-core broadcast) | implemented | 10% weight + post-invalidation consistency check |
+| idle_handler/tick (LRU decay, eviction decision) | implemented | 15% weight |
+| **writeback / dirty-page writeback** | implemented (wb_cb + dirty-ratio throttling) | only the callback stub and the throttle trigger path are exercised; the regression runs is_dirty=false and chaos keeps the dirty ratio low |
+| **readahead** | not implemented (access_freq==0 cold eviction only) | nothing to test |
+| **truncate/fsync** | not implemented (non-POSIX OS) | N/A |
+| **OOM reclamation** (`fc_try_evict_for_space`) | implemented | only the migration-rejection path was observed under a pressure-limit config; active OOM reclamation isn't separately stress-tested |
 
 ### 7.3 QEMU Real-Kernel Load
 
-- **fio/filebench/perf/trace-cmd have no equivalents on this OS** — a hobby OS has no userspace benchmarking toolchain.
+- fio/filebench/perf/trace-cmd have no equivalents on this OS — a hobby OS has no userspace benchmarking toolchain.
   Feasible alternatives (roadmap): in-kernel `sched_bench` serial trace + file-cache self-stress module.
 - Done: TCG 30-minute long stability (smp 4) without anomalies + core-count sweep (smp 1/2/4 × 45s each), see §0'''.
 
@@ -115,21 +116,21 @@ recorded truthfully as a data gap, no fabricated numbers.
 
 | Detection | SLUB | File cache | Scheduler |
 |---|---|---|---|
-| ASAN (OOB/UAF) | ✅ (slub + redzone standalone build) | ✅ (fc-asan chaos) | N/A (model) |
-| LSAN (leaks) | ✅ (**zero leak reports** after destructor returns shim page pool) | ✅ same as left | N/A |
-| TSAN (data races) | ⚠️ functional green + known theoretical race reports (§0'') | ⚠️ same as left | N/A (single-threaded model) |
-| Valgrind memcheck | ✅ fc-reg: **definitely/indirectly lost = 0**; all 9 warnings are shim `posix_memalign` wrapper (alignment args), 0 invalid accesses to kernel objects | ✅ same as left | N/A |
-| gcov coverage | ✅ heap.cpp line 32.5% | ✅ fc.cpp 41.7% / art.c 50.6% | N/A |
+| ASAN (OOB/UAF) | (slub + redzone standalone build) | (fc-asan chaos) | N/A (model) |
+| LSAN (leaks) | (**zero leak reports** after destructor returns shim page pool) | same as left | N/A |
+| TSAN (data races) | functional green + known theoretical race reports (§0'') | same as left | N/A (single-threaded model) |
+| Valgrind memcheck | fc-reg: **definitely/indirectly lost = 0**; all 9 warnings are shim `posix_memalign` wrapper (alignment args), 0 invalid accesses to kernel objects | same as left | N/A |
+| gcov coverage | heap.cpp line 32.5% | fc.cpp 41.7% / art.c 50.6% | N/A |
 
 ---
 
-## 0. Honest Baseline of Existing Tests (audit starting point)
+## 0. Baseline of existing tests (audit starting point)
 
 | Fact | Value |
 |---|---|
 | Test host | WSL2 (Ubuntu-24.04), g++ 14, -O2; **CPU model/core count/pinning/governor not recorded** |
 | Threading model | all **single-threaded**; shim spinlock degenerates to no contention |
-| Random seeds | hardcoded: slub `0x9E3779B97F4A7C15ULL`, fc `0x2545F4914F6CDD1DULL`, sched `0xDEADBEEFCAFEBABEULL` (deterministic ✓, but not written into the report) |
+| Random seeds | hardcoded: slub `0x9E3779B97F4A7C15ULL`, fc `0x2545F4914F6CDD1DULL`, sched `0xDEADBEEFCAFEBABEULL` (deterministic, but not written into the report) |
 | ops definition | SLUB stress 1 op = kmalloc+single-byte memset+kfree (**each iteration includes one steady_clock timing call**); named cache 1 op = alloc+free; fc 1 op = kcopy(kmalloc+memcpy)+promote(is_dirty=true, incl. broadcast); sched 1 tick = pick thread + run quantum + accounting |
 | QEMU verification | Windows qemu-system-x86_64, `-machine q35 -cpu max`, **TCG (no KVM)**, 2G/4 cores, idle desktop load; latest round is **150 seconds** smoke (early 300-second rounds predate the ART/inline fixes) |
 | Performance number sources | 3 runs only for SLUB; fc/sched have no variance / no P50/P99 / no per-class / no warmup description |
@@ -167,10 +168,10 @@ recorded truthfully as a data gap, no fabricated numbers.
 | `test_size_class_throughput` | per-class throughput | each class (16..1024) standalone 2s×3 runs throughput + latency | per-class table | recorded | batch timing (one clock per 1M ops) |
 | `ops_def_and_measurement` | measurement specification | move timing out: 10k warmup first, then N ops with two clocks; op definition written into report | pure ops/s | reproducible | checksum anti-elimination |
 
-**Report changes**:
+Report changes:
 - Throughput numbers must annotate: op definition (with/without memset, clock calls), warmup, run duration, variance, core pinning or not, WSL2 virtualization noise.
-- "Same order of magnitude as same-machine glibc, so not a bottleneck" → **delete or downgrade**: the glibc comparison was **never actually measured**; throughput ≠ bottleneck conclusion. If kept, must actually measure glibc malloc/free under the same load in the same process for three numbers, and the bottleneck conclusion needs kernel-side profile (syscall/IO share) support.
-- "This component can be judged stable" → **downgrade**: "Under single-threaded, no-fault-injection, host-shim environment, algorithmic correctness and memory safety within the S1-S10 coverage behave well; SMP safety, OOM tolerance, and fragmentation characteristics are not yet verified."
+- "Same order of magnitude as same-machine glibc, so not a bottleneck" → delete or downgrade: the glibc comparison was never actually measured; throughput ≠ bottleneck conclusion. If kept, must actually measure glibc malloc/free under the same load in the same process for three numbers, and the bottleneck conclusion needs kernel-side profile (syscall/IO share) support.
+- "This component can be judged stable" → downgrade: "Under single-threaded, no-fault-injection, host-shim environment, algorithmic correctness and memory safety within the S1-S10 coverage behave well; SMP safety, OOM tolerance, and fragmentation characteristics are not yet verified."
 - live_pages=9: add `dump_live_pages_sites` (record the call site of every VMM::Alloc in the shim), explain the composition of the 9 pages before writing conclusions.
 
 ---
@@ -211,10 +212,10 @@ recorded truthfully as a data gap, no fabricated numbers.
 | `test_fc_oom_fallback` | eviction fallback | kmalloc failure injection → assert fc_kmalloc_with_fallback triggers eviction and returns a usable block | no crash, recoverable | fault-injection switch |
 | `test_broadcast_pinned` | pinned broadcast | get(holding pin) → other core invalidate → assert state INVALID, no dangling after put | no FCDBG warnings | negative assertion |
 
-**Report changes**:
+Report changes:
 - "All pass" → change to "the 400,000-op chaos, destroy, and three-run promote throughput listed in this report pass" (state the scope).
 - promote throughput: add variance, op definition (incl. broadcast and kcopy), warmup.
-- "After the fix, 4 cores 300 seconds without #GP" → **downgrade and correct**: "QEMU(TCG) 4-core idle desktop 150-second smoke without anomalies (early 300-second rounds predate the ART/inline fixes); not a proof of SMP correctness, needs F5 concurrency tests + fault injection to strengthen."
+- "After the fix, 4 cores 300 seconds without #GP" → downgrade and correct: "QEMU(TCG) 4-core idle desktop 150-second smoke without anomalies (early 300-second rounds predate the ART/inline fixes); not a proof of SMP correctness, needs F5 concurrency tests + fault injection to strengthen."
 
 ---
 
@@ -222,33 +223,33 @@ recorded truthfully as a data gap, no fabricated numbers.
 
 ### 3.1 Mechanism Comparison with Linux EEVDF (corrected via line-by-line source reading)
 
-**Important correction (2026-09-27)**: the earlier model replica and report described sched.cpp
-as "CFS leftmost vruntime + RIP heuristic" — **after reading the source this is confirmed to be
-an understatement**. The real source's selection skeleton is already EEVDF: deadline-sorted
+Important correction (2026-09-27): the earlier model replica and report described sched.cpp
+as "CFS leftmost vruntime + RIP heuristic" — after reading the source this is confirmed to be
+an understatement. The real source's selection skeleton is already EEVDF: deadline-sorted
 red-black tree (`thread_rb_cmp` :574-582), eligible subtree-augmented descent search (:897-919),
-**min-deadline selection among eligible** (:889-894 fallback), wakeup preemption + remaining
+min-deadline selection among eligible (:889-894 fallback), wakeup preemption + remaining
 slice protection (:1220-1230), lag clamping (:588-605), weight-scaled quantum + per-thread
 `custom_quantum` override (:205-214). Model mode 0 has been rewritten to match the real source,
 report §3 qualitative claims corrected.
 
 | Mechanism | Linux EEVDF (6.6+) | sched.cpp real source | Gap |
 |---|---|---|---|
-| Virtual deadline VD | `ve + slice/weight`, eligible set sorted by VD | **Aligned (2026-09-27)**: `deadline = vruntime + slice` + **deadline protection** (not extended until vruntime passes the old deadline, Linux update_deadline semantics) — this kernel's slice is already weight-scaled, one full slice's vruntime consumption is always base_quantum, so `ve + slice` and `ve + slice/w` are **isomorphic** in their respective units | ✅ aligned |
-| eligibility / lag | explicit lag≥0 + lag accounting | **Aligned (2026-09-27)**: `vruntime ≤ avg` is the equivalent form of lag≥0 (weight>0); added **vlag accounting** — sleep dequeue saves `vlag=(avg−vruntime)·weight` (Linux update_entity_lag), wakeup places at `vruntime = avg − vlag/weight` (Linux place_entity), then symmetric clamping [avg−slice, avg+2·slice] | ✅ aligned (clamp thresholds still constants ±slice/±2slice, Linux uses latency-scale thresh — small residual difference) |
-| protect_slice | preemption protection | **exists**: wakeup preemption requires current remaining slice ≥ ¼ base_quantum (:1221-1230), otherwise no interruption; + added deadline protection | ✅ exists (simplified version) |
-| wakeup preemption | `wakeup_gran` check | **exists**: waker eligible and smaller deadline → interrupt (:1220) | ✅ exists |
-| lag clamping | placement compensation | **exists**: vruntime ∈ [avg−slice, avg+2·slice] (:591-602) | ✅ exists (symmetric clamping) |
-| slice interface | sched_setattr | **exists**: per-thread `custom_quantum` override (:209-211) | ✅ exists |
-| quantum weight scaling | slice ∝ weight | **exists**: `base_quantum × weight / 1024` (:212-213) | ✅ exists |
+| Virtual deadline VD | `ve + slice/weight`, eligible set sorted by VD | **Aligned (2026-09-27)**: `deadline = vruntime + slice` + **deadline protection** (not extended until vruntime passes the old deadline, Linux update_deadline semantics) — this kernel's slice is already weight-scaled, one full slice's vruntime consumption is always base_quantum, so `ve + slice` and `ve + slice/w` are **isomorphic** in their respective units | aligned |
+| eligibility / lag | explicit lag≥0 + lag accounting | **Aligned (2026-09-27)**: `vruntime ≤ avg` is the equivalent form of lag≥0 (weight>0); added **vlag accounting** — sleep dequeue saves `vlag=(avg−vruntime)·weight` (Linux update_entity_lag), wakeup places at `vruntime = avg − vlag/weight` (Linux place_entity), then symmetric clamping [avg−slice, avg+2·slice] | aligned (clamp thresholds still constants ±slice/±2slice, Linux uses latency-scale thresh — small residual difference) |
+| protect_slice | preemption protection | **exists**: wakeup preemption requires current remaining slice ≥ ¼ base_quantum (:1221-1230), otherwise no interruption; + added deadline protection | exists (simplified version) |
+| wakeup preemption | `wakeup_gran` check | **exists**: waker eligible and smaller deadline → interrupt (:1220) | exists |
+| lag clamping | placement compensation | **exists**: vruntime ∈ [avg−slice, avg+2·slice] (:591-602) | exists (symmetric clamping) |
+| slice interface | sched_setattr | **exists**: per-thread `custom_quantum` override (:209-211) | exists |
+| quantum weight scaling | slice ∝ weight | **exists**: `base_quantum × weight / 1024` (:212-213) | exists |
 | multi-queue balance | runqueue push/steal | model is single-queue; real source has TryPush/steal (:765, :859) | model doesn't cover it (real source has it) |
 
-**Verification (2026-09-27 alignment round)**: kernel 0 warnings 0 errors, QEMU smp 2/4 boot
+Verification (2026-09-27 alignment round): kernel 0 warnings 0 errors, QEMU smp 2/4 boot
 without anomalies; after model mode 0 synchronized replica: fairness shares still precise (max
 deviation 0.0056%, deadline protection makes convergence slightly looser but PASS), spawn/exit
 chaos 0 failures, wakeup→run latency 144 ticks vs Linux full reference 7 ticks (tradeoff of
 remaining-slice protection, a cost explicitly noted in source comments).
 
-**Downgraded statement (kept)**: "Under the ledger model (single queue, fixed weights, faithful
+Downgraded statement (kept): "Under the ledger model (single queue, fixed weights, faithful
 replica of the real selection skeleton), 200k-tick shares match weights, vruntime max deviation
 0.0012%; excludes multi-queue balance semantics, model throughput/latency numbers do not
 correspond to real kernel performance."
@@ -292,11 +293,11 @@ correspond to real kernel performance."
 
 | Module | Source file | Real source compiled | shim/replica/simulation | Verifiable boundary | Next verification approach |
 |---|---|---|---|---|---|
-| SLUB/SLAB | `kernel/src/mem/heap.cpp` | ✅ real source (`-D__KERNEL_TEST_HOST__` only disables cli, adds ASAN hooks) | shim: VMM page pool, this_cpu, spinlock (no contention) | algorithmic correctness, single-threaded memory safety | multithreaded per-CPU shim, OOM injection, QEMU long stability |
-| File cache | `kernel/modules/builtin/common/fs/fc.cpp` + `art.c` + `heap.cpp` | ✅ real source | shim same as above; `g_fc_cpus` multi-instance single-threaded | single-core multi-cache-instance semantics | true concurrent multithreading, QEMU disk load |
-| ART | `art.c` | ✅ real source | none (art_mini compiled directly) | full semantics | already includes prefix/chain/delete; add deep keys + concurrency |
-| Scheduler | `tests/sched/main.cpp` | ❌ | **formula-replica model** (constants/formulas annotated against sched.cpp line numbers) + multimap substitute | ledger math | QEMU sched_bench trace (real code) or sched_core.h extraction |
-| Whole kernel | ISO | ✅ | none | QEMU TCG smoke | KVM/real machine, fault injection, stress load |
+| SLUB/SLAB | `kernel/src/mem/heap.cpp` | real source (`-D__KERNEL_TEST_HOST__` only disables cli, adds ASAN hooks) | shim: VMM page pool, this_cpu, spinlock (no contention) | algorithmic correctness, single-threaded memory safety | multithreaded per-CPU shim, OOM injection, QEMU long stability |
+| File cache | `kernel/modules/builtin/common/fs/fc.cpp` + `art.c` + `heap.cpp` | real source | shim same as above; `g_fc_cpus` multi-instance single-threaded | single-core multi-cache-instance semantics | true concurrent multithreading, QEMU disk load |
+| ART | `art.c` | real source | none (art_mini compiled directly) | full semantics | already includes prefix/chain/delete; add deep keys + concurrency |
+| Scheduler | `tests/sched/main.cpp` | no | **formula-replica model** (constants/formulas annotated against sched.cpp line numbers) + multimap substitute | ledger math | QEMU sched_bench trace (real code) or sched_core.h extraction |
+| Whole kernel | ISO | done | none | QEMU TCG smoke | KVM/real machine, fault injection, stress load |
 
 ---
 
@@ -316,4 +317,4 @@ correspond to real kernel performance."
 | **P2** | CI: `tests/ci.sh` + GitHub Actions + golden-sample diff | 0.5 day | golden samples from P0/P1 tests | regression gate |
 | **P2** | before/after fix performance comparison (art guard branch, TryGetSize reuse-check overhead) | 0.5 day | switchable comparison build | overhead quantification (expected <1-3%, optimize if >5%) |
 
-**Suggested execution order**: all P0 → all P1 → P2 as needed (P2's multithreading and QEMU trace have the highest value; CI and performance comparison can come later).
+Suggested execution order: all P0 → all P1 → P2 as needed (P2's multithreading and QEMU trace have the highest value; CI and performance comparison can come later).

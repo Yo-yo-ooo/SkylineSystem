@@ -21,6 +21,7 @@
 #include <kmod/kmod_internal.h>
 
 #include <cstdint>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -494,17 +495,19 @@ int check_neg_elf_structure()
         KCHECK(text != nullptr);
         const KElfSection *out = kelf_find(secs, ".out");
         KCHECK(out != nullptr);
-        // .text sh_addralign 字段偏移 = 48
+        // .text sh_addralign 字段偏移 = 48；4K 是合法上限（Kbd 共享页）
         d = base;
-        uint64_t align_bad = 32;
+        uint64_t align_bad = 8192;
         KCHECK(patch_shdr(d, *text, 48, &align_bad, sizeof(align_bad)));
         bad += check_load_fail(d, kKexp, kNKexp, KMOD_ERR_FORMAT,
-                               "section addralign>16");
-        // .out sh_type 改成 SHT_NOTE(7)：alloc 段类型非法
+                               "section addralign>4096");
+        // .out sh_type 改成 SHT_NOTE(7)：alloc 段类型非法。
+        // 修复 SHT_NOTE 重定位越界写后，这里在重定位阶段就被拒绝
+        // （note 段不参与布局，不能作为重定位目标），错误码为 RELOC。
         d = base;
         uint32_t type_note = 7;
         KCHECK(patch_shdr(d, *out, 4, &type_note, sizeof(type_note)));
-        bad += check_load_fail(d, kKexp, kNKexp, KMOD_ERR_FORMAT,
+        bad += check_load_fail(d, kKexp, kNKexp, KMOD_ERR_RELOC,
                                "alloc section type NOTE");
     }
 
@@ -880,6 +883,38 @@ int32_t test_fuzz()
     return 0;
 }
 
+// ============================================================================
+// 8) 回归：重定位目标必须是真正参与布局的段（SHT_NOTE 不能当目标）
+//    SHT_NOTE 在布局阶段被跳过（sec_off[] 恒 0），修复前仍可作为重定位
+//    目标：边界检查用的是攻击者可控的 sh_size，写入点 = mem + r.offset，
+//    可越过镜像造成内核越界写。
+// ============================================================================
+int32_t test_reloc_note_target_rejected()
+{
+    std::vector<uint8_t> d;
+    if (!read_fixture_checked("fixture_a.o", &d))
+        return 1;
+    std::vector<KElfSection> secs;
+    if (!parse_sections(d, &secs))
+        return 1;
+    const KElfSection *text = kelf_find(secs, ".text");
+    if (!text) {
+        KT_FAIL("fixture_a.o has no .text section");
+        return 1;
+    }
+
+    /* 把 .text 的类型改成 SHT_NOTE(7)：它仍被 .rela.text 指向，但不再参与
+       镜像布局。修复后 loader 必须在重定位阶段显式拒绝。 */
+    uint32_t note_type = 7u;
+    if (!patch_shdr(d, *text, offsetof(KElfShdr, sh_type), &note_type,
+                    sizeof(note_type))) {
+        KT_FAIL("patch .text sh_type failed");
+        return 1;
+    }
+    return check_load_fail(d, kKexp, kNKexp, KMOD_ERR_RELOC,
+                           "reloc target SHT_NOTE") ? 1 : 0;
+}
+
 } // namespace
 
 extern "C" int32_t test_elf_loader_run(void)
@@ -899,6 +934,8 @@ extern "C" int32_t test_elf_loader_run(void)
     if (check_neg_elf_structure() != 0)
         bad++;
     if (check_neg_manifest() != 0)
+        bad++;
+    if (test_reloc_note_target_rejected() != 0)
         bad++;
     if (test_fuzz() != 0)
         bad++;

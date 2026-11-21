@@ -33,18 +33,20 @@ KCOMPONENT_BEGIN(syscall_file, "kernel.syscall.file", "1.0.0",
 /* VFS 核心必须先于文件类 syscall 家族就绪（组件图保证 provider 先序）。 */
 KCOMPONENT_DEPENDS(syscall_file, "kernel.sched.core", sched)
 KCOMPONENT_DEPENDS(syscall_file, "kernel.fs.vfs", vfs)
+/* fops.cpp 的 readdir/mkdir 直接调用 lwext4 目录 API；ext4 实现已是 .ko。 */
+KCOMPONENT_DEPENDS(syscall_file, "kernel.fs.ext4", ext4)
 
-KCOMPONENT_EXPORT_SYSCALL(syscall_file, 0u, sys_fopen)
-KCOMPONENT_EXPORT_SYSCALL(syscall_file, 1u, sys_fwrite)
-KCOMPONENT_EXPORT_SYSCALL(syscall_file, 2u, sys_fread)
-KCOMPONENT_EXPORT_SYSCALL(syscall_file, 3u, sys_fclose)
-KCOMPONENT_EXPORT_SYSCALL(syscall_file, 4u, sys_flseek)
-KCOMPONENT_EXPORT_SYSCALL(syscall_file, 5u, sys_fsize)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_file, 0u, sys_fopen)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_file, 1u, sys_fwrite)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_file, 2u, sys_fread)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_file, 3u, sys_fclose)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_file, 4u, sys_flseek)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_file, 5u, sys_fsize)
 /* 固定槽 22：mkdir（原 reserved 空洞；Setup 需要建目录树）。契约表同名
    "mkdir"，ABI 固定 (path, mode) -> 0 / -errno，仅 ext4 支持。 */
-KCOMPONENT_EXPORT_SYSCALL(syscall_file, 22u, sys_mkdir)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_file, 22u, sys_mkdir)
 /* 固定槽 23：readdir（原 reserved 空洞；Explorer 真正枚举 ext4 目录）。
    ABI 固定 (path, buf, cap, flags) -> 写入字节数 / -errno，仅 ext4 支持。 */
-KCOMPONENT_EXPORT_SYSCALL(syscall_file, 23u, sys_readdir)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_file, 23u, sys_readdir)
 
 KCOMPONENT_END(syscall_file)

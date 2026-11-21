@@ -68,4 +68,17 @@ static void driver_e1000_exit(void)
     kprintf_("[comp.driver.e1000] exit: hot-remove unsupported in v1\n");
 }
 
+/* lwIP 胶水已迁入 kernel.net.lwip.ko；驱动只导出 E1000 收发 API。 */
+KCOMPONENT_EXPORT_RAW(driver_e1000, send, "_ZN5E10004SendEPKht",
+    &E1000::Send, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(driver_e1000, set_input,
+    "_ZN5E100016SetInputCallbackEPFiPhtjPvES1_",
+    &E1000::SetInputCallback, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(driver_e1000, get_mac, "_ZN5E10006GetMACEPh",
+    &E1000::GetMAC, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(driver_e1000, poll_rx, "_ZN5E10006PollRXEv",
+    &E1000::PollRX, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(driver_e1000, get_stats, "_ZN5E10008GetStatsEv",
+    &E1000::GetStats, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+
 KCOMPONENT_END(driver_e1000)

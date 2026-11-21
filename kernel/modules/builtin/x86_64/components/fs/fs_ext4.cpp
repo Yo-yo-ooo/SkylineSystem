@@ -45,6 +45,17 @@ KCOMPONENT_IMPORT(fs_ext4, vfs_ops_, kmod_vfs_ops_t *, "kernel.fs.vfs",
 /* 块设备层必须先就绪（设备注册/枚举由 kernel.block.core + pci.enumerate 负责） */
 KCOMPONENT_DEPENDS(fs_ext4, "kernel.block.core", block_core)
 
+/* lwext4 目录 API 由 kernel.syscall.file 的 fops.cpp 直接调用；按 mangled
+ * 符号名登记到 .out，provider 先序 + resolver 在加载期回填。 */
+KCOMPONENT_EXPORT_RAW(fs_ext4, dir_mk, "_Z11ext4_dir_mkPKc",
+    &ext4_dir_mk, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(fs_ext4, dir_open, "_Z13ext4_dir_openP8ext4_dirPKc",
+    &ext4_dir_open, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(fs_ext4, dir_next, "_Z19ext4_dir_entry_nextP8ext4_dir",
+    &ext4_dir_entry_next, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(fs_ext4, dir_close, "_Z14ext4_dir_closeP8ext4_dir",
+    &ext4_dir_close, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+
 namespace {
 
 constexpr uint32_t kExt4SuperSector = 2u;       /* 超级块字节偏移 1024 / 512 */
@@ -196,4 +207,6 @@ static void comp_fs_ext4_exit(void)
     g_ext4_registered = false;
 }
 
+KCOMPONENT_EXPORT_RAW(fs_ext4, identify_extx,
+    "_Z12IdentifyExtx9VsDevTypejjb", &IdentifyExtx, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 KCOMPONENT_END(fs_ext4)

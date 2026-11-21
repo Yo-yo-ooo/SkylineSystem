@@ -277,7 +277,7 @@ static int swar_hexstrtod(const char* s, const char** pp, double* out) {
 /* ==========================================================================
    2. 浮点数解析器
    注：十进制路径为高精度近似，17位以内数字误差极小，但不保证标准级正确舍入
-       (round to nearest, ties to even)。若追求完美精度需升级为 Eisel-Lemire 算法。
+       (round to nearest, ties to even)。要更高精度得换成 Eisel-Lemire 算法。
        C99 十六进制浮点数 (0x1.8p3) 由 swar_hexstrtod 单独精确解析。
    ========================================================================== */
 static double swar_strtod_impl(const char* nptr, char** endptr) {

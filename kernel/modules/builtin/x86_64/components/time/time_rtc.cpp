@@ -47,9 +47,12 @@ const kmod_rtc_ops_t g_rtc_ops = {
 
 } /* namespace */
 
+extern "C" void rtc_set_hooks(void (*)(void), void (*)(void), void (*)(void));
+
 static int32_t time_rtc_init(void)
 {
     RTC::InitRTC();
+    rtc_set_hooks(&RTC::InitRTC, &RTC::read_rtc, &RTC::UpdateTimeIfNeeded);
     kprintf_("[comp.time.rtc] init: unix=%u\n", (unsigned)RTC::ToUnixTime());
     return KMOD_OK;
 }
@@ -61,4 +64,8 @@ static void time_rtc_exit(void)
 
 KCOMPONENT_EXPORT_CONTRACT(time_rtc, KMOD_CONTRACT_RTC_V1, g_rtc_ops,
                            KMOD_RTC_ABI_V1)
+KCOMPONENT_EXPORT_RAW(time_rtc, to_unix, "_ZN3RTC10ToUnixTimeEv", &RTC::ToUnixTime,
+                      0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(time_rtc, read_rtc, "_ZN3RTC8read_rtcEv", &RTC::read_rtc,
+                      0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 KCOMPONENT_END(time_rtc)

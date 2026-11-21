@@ -8,6 +8,8 @@
 namespace PIT
 {
     extern uint64_t TicksSinceBoot;
+    extern int32_t roughCount;
+    extern uint64_t MicroSecondOffset;
     extern uint64_t freq;
     extern uint16_t Divisor;
     static const uint64_t BaseFrequency = 1193182;

@@ -63,6 +63,8 @@ FIXED_ENTRIES = [
     ("boot/limine/limine.conf", "res/limine.conf"),
     ("boot/limine/limine-bios.sys", "limine-binary/limine-bios.sys"),
     ("boot/limine/BOOTX64.EFI", "limine-binary/BOOTX64.EFI"),
+    # 单一内核模块归档（38 个组件 + demo/扩展）。与 ISO 的 Limine 配置一致。
+    ("boot/modules.saf", "kernel/bin-x86_64/modules.saf"),
     # 16-bit DOS payloads for the DOSVM window.  programs/bin/*.com are build
     # products of programs/dos/{hello,filedemo}.asm (make -C programs/dos com);
     # 缺失时 add() 会打印并跳过，不影响其它条目。
@@ -73,7 +75,6 @@ FIXED_ENTRIES = [
 PROGRAM_ELFS = ["desktop", "notepad", "settings", "installer", "doom",
                 "explorer", "hw", "hw2", "dos"]
 
-MODULE_GLOB_DIR = "kernel/bin-x86_64/modules"
 DOOM_WAD = "programs/PureDOOM/doom.wad"
 
 
@@ -210,12 +211,6 @@ def collect_entries(root: str, with_wad: bool):
 
     for name in PROGRAM_ELFS:
         add("programs/%s.elf" % name, "programs/bin/%s.elf" % name)
-
-    mod_dir = os.path.join(root, MODULE_GLOB_DIR)
-    if os.path.isdir(mod_dir):
-        for fn in sorted(os.listdir(mod_dir)):
-            if fn.endswith(".ko"):
-                add("boot/modules/%s" % fn, os.path.join(MODULE_GLOB_DIR, fn))
 
     if with_wad:
         add("data/doom.wad", DOOM_WAD)

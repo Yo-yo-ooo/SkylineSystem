@@ -44,6 +44,10 @@ KCOMPONENT_IMPORT_FN(fs_vfs, kprintf_, int, (const char *, ...), "kernel",
  * 这里不导入符号（InitFFMAN 仍只在 dev.core 里调用一次），只声明先后顺序。 */
 KCOMPONENT_DEPENDS(fs_vfs, "kernel.dev.core", dev_core)
 
+
+void file_cache_tick(file_cache_cpu_t *s);
+extern "C" void fc_set_idle_tick(void (*fn)(file_cache_cpu_t *));
+
 /* ==================================================================== */
 /* FS 实现注册表（组件内状态；ext4/fatfs 组件在各自 init 里登记）        */
 /* ==================================================================== */
@@ -455,4 +459,8 @@ static void comp_fs_vfs_exit(void)
     kprintf_("[fs.vfs] exit: fs registry cleared\n");
 }
 
+/* fd 操作实现已迁入本 .ko；fd_manager 核心仍 Tier0。 */
+KCOMPONENT_EXPORT_RAW(fs_vfs, fd_alloc, "fd_alloc", &fd_alloc, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(fs_vfs, fd_get, "fd_get", &fd_get, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(fs_vfs, fd_free, "fd_free", &fd_free, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 KCOMPONENT_END(fs_vfs)

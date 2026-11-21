@@ -60,3 +60,48 @@ jobs:
         with:
           name: ci-logs
           path: tests/ci_*.log
+
+  kernel-build:
+    # The host suites above never compile the kernel: a kernel/userspace break
+    # could pass CI. This job does a full clean build and boots the result.
+    #
+    # Order matters: the top-level `kernel` target builds component .ko first,
+    # regenerates kernel.component.v1 from their undefined symbols, then links
+    # Tier 0 and packs modules.saf. Building with `make -C kernel` alone skips
+    # the export regeneration: the kernel links, but 4 modules fail to resolve
+    # at boot (rootfs/net.lwip/sched.install/user.init) - verified by a
+    # clean-tree run on 2026-11-21.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain and image tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld nasm make python3 gcc g++ \
+            xorriso e2fsprogs e2tools mtools dos2unix curl wget unzip \
+            qemu-system-x86
+
+      - name: Build components, kernel, modules and modules.saf
+        run: make kernel -j2
+
+      - name: Build userspace library
+        run: make -C lib -j2
+
+      - name: Create program image
+        run: |
+          truncate -s 256M disk.img
+          mkfs.ext4 -q -F -O ^metadata_csum disk.img
+
+      - name: Build programs
+        run: make -C programs -j2
+
+      - name: Build ISO
+        run: make SkylineSystem-x86_64.iso -j2
+
+      - name: Module format / relocation gate
+        run: make -C kernel SS_BUILD_DIR="$PWD" modules-check
+
+      - name: QEMU boot smoke
+        run: sh res/scripts/test/qemu_smoke.sh --wait 180 --disk disk.img
+

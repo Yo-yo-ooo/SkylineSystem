@@ -1,17 +1,19 @@
-# Commit Message Conventions (aligned with the tag convention in docs/release.md)
+# Commit message conventions
 
-Tag format: `v<year>.<month>.<n>` (see docs/release.md). Commit messages are classified by the following prefixes,
-styles such as `fix/sched` and `fix(driver):` are all fine, but a **type prefix + short description** is required.
+Same numbering as the tags in [release.md](release.md): `v<year>.<month>.<n>`.
+
+Every commit starts with a type prefix and a short description. `fix/sched` and `fix(driver):` are
+both fine as styles; what matters is the prefix being present.
 
 | Prefix | Meaning |
-|------|------|
-| `fix` | defect fix (correctness / race / data loss) — must include the root cause and verification |
-| `feat` | new feature / new driver / new interface |
-| `perf` | performance improvement — must include before/after numbers and the measurement environment |
-| `refactor` | structural changes with no behavior change |
-| `docs` | documentation / wording corrections |
-| `test` | tests / gates (tests/, golden, CI) |
-| `hygiene` | dead code / naming / spelling / repository hygiene |
+|---|---|
+| `fix` | defect fix (correctness, race, data loss) — include the root cause and how it was verified |
+| `feat` | new feature, driver or interface |
+| `perf` | performance work — include before/after numbers and the environment measured on |
+| `refactor` | structural change, no behavior change |
+| `docs` | documentation or wording corrections |
+| `test` | tests and gates (tests/, golden, CI) |
+| `hygiene` | dead code, naming, spelling, repository tidying |
 
-The legacy `efix` (emergency fix) / `a` (uncategorized) / `smol` (small change) prefixes are no longer used;
-classify those commits as `fix` / `refactor` / `hygiene`.
+The old `efix` (emergency fix), `a` (uncategorized) and `smol` (small change) prefixes are retired;
+those commits fall under `fix`, `refactor` or `hygiene` now.

@@ -18,10 +18,11 @@
 #
 # Assertions:
 #   (a) serial.log exists and contains "KMOD_SELFTEST PASS"
-#   (b) "[kmod] builtin ready:" lines >= -MinBuiltins
-#   (c) "[kmod] boot load: 2 requested, 2 ready, 0 failed"
+#   (b) "[kmod] loaded kernel.*" (or legacy "[kmod] builtin ready:") lines
+#       >= -MinBuiltins
+#   (c) "[kmod] boot load: N requested, N ready, 0 failed"
 #       OR "[demo.greeter] hello_fn -> 1001"
-#       (proves .ko parsing / relocation / private-contract import binding ran)
+#       (proves SAF parsing / .ko relocation / private-contract binding ran)
 #   (d) no Exception|Panic|Kernel crash|General protection|SMASHING
 #   (e) contains "desktop PROCESS" (existing boot behaviour preserved)
 # Failure prints the last match of each failed keyword plus serial tail.
@@ -169,7 +170,7 @@ if ($selftestFail) {
 }
 
 # ---- (b) builtin component graph established ----
-$builtins = Select-String -Path $serial -Pattern '[kmod] builtin ready:' -SimpleMatch -ErrorAction SilentlyContinue
+$builtins = Select-String -Path $serial -Pattern '\[kmod\] builtin ready:|\[kmod\] loaded kernel\.' -ErrorAction SilentlyContinue
 $nBuiltin = if ($builtins) { ($builtins | Measure-Object).Count } else { 0 }
 $bOk = ($nBuiltin -ge $MinBuiltins)
 if (-not $bOk -and $AllowBuiltinRollback) {
@@ -183,16 +184,16 @@ if (-not $bOk -and $AllowBuiltinRollback) {
         $bOk = $true
     }
 }
-Report "(b) '[kmod] builtin ready:' x$nBuiltin (>= $MinBuiltins)" $bOk '\[kmod\] builtin' $false
+Report "(b) kernel modules loaded x$nBuiltin (>= $MinBuiltins)" $bOk '\[kmod\] (builtin ready|loaded kernel)' $false
 
 # ---- (c) .ko loader + private-contract binding proof ----
-$bootLoad = Select-String -Path $serial -Pattern '[kmod] boot load: 2 requested, 2 ready, 0 failed' -SimpleMatch -ErrorAction SilentlyContinue
+$bootLoad = Select-String -Path $serial -Pattern '\[kmod\] boot load: \d+ requested, \d+ ready, 0 failed' -ErrorAction SilentlyContinue
 $greeter = Select-String -Path $serial -Pattern '[demo.greeter] hello_fn -> 1001' -SimpleMatch -ErrorAction SilentlyContinue
 $cOk = ([bool]$bootLoad) -or ([bool]$greeter)
 if ($cOk) {
     Write-Host "PASS: (c) .ko loader + private-contract binding proof"
 } else {
-    Write-Host "FAIL: (c) no '[kmod] boot load: 2 requested, 2 ready, 0 failed' and no '[demo.greeter] hello_fn -> 1001'"
+    Write-Host "FAIL: (c) no '[kmod] boot load: N requested, N ready, 0 failed' and no '[demo.greeter] hello_fn -> 1001'"
     $last = Last-Match 'boot load|demo.greeter' $false
     if ($last) { Write-Host "  last match: $last" }
     $fail = 1

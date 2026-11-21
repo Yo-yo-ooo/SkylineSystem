@@ -1,67 +1,39 @@
 #!/bin/sh
-
-set -ex
+# SkylineSystem dependency check.
+#
+# Third-party sources (lwIP, lwext4, FatFs, flanterm, stb_truetype, libart,
+# tidwall hashmap, mpaland/printf, x86mem) are vendored in-tree, so there is
+# nothing to download here. The only external artefacts are fetched by the
+# top-level Makefile:
+#   * limine-binary/  <- Limine release tarball (prebuilt bootloader)
+#   * limine-protocol <- cloned only when kernel/src/limine.h is missing
+#   * OVMF            <- only for `make run` (UEFI)
+#
+# This script used to contain clone/download helpers that were never called
+# (a no-op). It now verifies that the vendored dependencies are actually
+# present, so a truncated checkout fails loudly instead of at compile time.
+set -eu
 
 srcdir="$(dirname "$0")"
-test -z "$srcdir" && srcdir=.
-
 cd "$srcdir"
 
-clone_repo_commit() {
-    if test -d "$2/.git"; then
-        git -C "$2" reset --hard
-        git -C "$2" clean -fd
-        if ! git -C "$2" checkout HEAD; then
-            rm -rf "$2"
-        fi
-    else
-        if test -d "$2"; then
-            set +x
-            echo "error: '$2' is not a Git repository"
-            exit 1
-        fi
-    fi
-    if ! test -d "$2"; then
-        git clone $1 "$2"
-        if ! git -C "$2" checkout HEAD; then
-            rm -rf "$2"
-            exit 1
-        fi
+missing=0
+check() {
+    if [ ! -e "$1" ]; then
+        echo "error: missing vendored dependency: kernel/$1" >&2
+        missing=1
     fi
 }
 
-download_by_hash() {
-    # command -v "curl -Lo" 把整串当命令名恒假,
-    # curl 存在也永远落入 wget 分支 —— 改为探测裸命令名
-    DOWNLOAD_COMMAND="curl -Lo"
-    if ! command -v curl >/dev/null 2>&1; then
-        DOWNLOAD_COMMAND="wget -O"
-        if ! command -v wget >/dev/null 2>&1; then
-            set +x
-            echo "error: Neither curl nor wget found"
-            exit 1
-        fi
-    fi
-    SHA256_COMMAND="sha256sum"
-    if ! command -v $SHA256_COMMAND >/dev/null 2>&1; then
-        SHA256_COMMAND="sha256"
-        if ! command -v $SHA256_COMMAND >/dev/null 2>&1; then
-            set +x
-            echo "error: Cannot find sha256(sum) command"
-            exit 1
-        fi
-    fi
-    if ! test -f "$2" || ! $SHA256_COMMAND "$2" | grep $3 >/dev/null 2>&1; then
-        rm -f "$2"
-        mkdir -p "$2" && rm -rf "$2"
-        $DOWNLOAD_COMMAND "$2" $1
-        if ! $SHA256_COMMAND "$2" | grep $3 >/dev/null 2>&1; then
-            set +x
-            echo "error: Cannot download file '$2' by hash"
-            echo "incorrect hash:"
-            $SHA256_COMMAND "$2"
-            rm -f "$2"
-            exit 1
-        fi
-    fi
-}
+check include/lwip/lwipopts.h
+check include/fs/lwext4/ext4.h
+check include/fs/fatfs/ff.h
+check include/flanterm/flanterm.h
+check src/limine.h
+
+if [ "$missing" -ne 0 ]; then
+    echo "get-deps: vendored dependencies incomplete" >&2
+    exit 1
+fi
+
+echo "get-deps: vendored dependencies present; nothing to download"

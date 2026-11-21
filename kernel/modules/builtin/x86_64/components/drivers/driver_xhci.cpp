@@ -17,6 +17,7 @@
 
 #include <arch/x86_64/dev/pci/pci.h>
 #include <drivers/usb/xhci.h>
+#include <drivers/usb/hid.h>
 
 static int32_t driver_xhci_init(void);
 static void driver_xhci_exit(void);
@@ -69,5 +70,14 @@ static void driver_xhci_exit(void)
 {
     kprintf_("[comp.driver.xhci] exit: hot-remove unsupported in v1\n");
 }
+
+/* HID 实现已随 xHCI 一起迁入本 .ko；按 mangled 符号名原样导出，供
+ * kernel.input.ps2.kbd 的 .ko 在加载期解析（跨 .ko 符号表）。 */
+KCOMPONENT_EXPORT_RAW(driver_xhci, hid_kbd,
+    "_ZN3USB3HID16RegisterKeyboardEPFvRKNS0_9HIDReportEE",
+    &USB::HID::RegisterKeyboard, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(driver_xhci, hid_mouse,
+    "_ZN3USB3HID13RegisterMouseEPFvRKNS0_11MouseReportEE",
+    &USB::HID::RegisterMouse, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 
 KCOMPONENT_END(driver_xhci)

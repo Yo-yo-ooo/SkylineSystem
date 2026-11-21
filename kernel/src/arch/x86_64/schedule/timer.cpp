@@ -99,12 +99,16 @@ namespace Schedule {
         }
     }
 
-    void Tick() {
+    /* 只推进本核定时器轮并唤醒到期线程，不做 resched/Yield。
+       从 SCHED_VEC 的 Switch() 入口调用：AP 上的 PIT IRQ 不会来，
+       原来轮子只在 BSP 的 PIT tick 里走 —— AP 上 Sleep() 的线程
+       永远不会醒（用户态光标线程被 steal 到 AP 后就"卡死不动"）。 */
+    void TimerTickWheels() {
         cpu_t *cpu = this_cpu();
         if (!cpu) return;
         uint64_t now = PIT::TimeSinceBootMS();
         if (now == cpu->timer_last_tick) return;
-        
+
         uint64_t rflags;
         asm volatile("pushfq\n\tcli\n\tpop %0" : "=r"(rflags) :: "memory");
         spinlock_lock(&cpu->sched_lock);
@@ -129,12 +133,26 @@ namespace Schedule {
             }
         }
         spinlock_unlock(&cpu->sched_lock);
-        
+
+        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
+    }
+
+    /* 本核 tv1 里是否有等待中的睡眠线程（idle 据此决定是否 1ms 短睡）。 */
+    bool TimerPending() {
+        cpu_t *cpu = this_cpu();
+        if (!cpu) return false;
+        for (uint32_t i = 0; i < TV_SIZE; i++)
+            if (cpu->tv1[i]) return true;
+        return false;
+    }
+
+    void Tick() {
+        TimerTickWheels();
+        cpu_t *cpu = this_cpu();
+        if (!cpu) return;
         if (__atomic_load_n(&need_resched_flags[cpu->id], __ATOMIC_ACQUIRE)) {
             __atomic_store_n(&need_resched_flags[cpu->id], false, __ATOMIC_RELEASE);
             Schedule::Yield();
         }
-        
-        asm volatile("push %0\n\tpopfq" :: "r"(rflags) : "memory");
     }
 }

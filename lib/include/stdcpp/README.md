@@ -1,6 +1,6 @@
 # stdcpp — SkylineSystem 的 freestanding C++ 标准库
 
-`lib/include/stdcpp/` 是一套**头文件实现**的 C++ 标准库子集，供内核与用户态
+`lib/include/stdcpp/` 是一套头文件实现的 C++ 标准库子集，供内核与用户态
 C++ 程序共用。本文档记录真实状态、设计约束与关键语义的实现方式。
 
 ---
@@ -14,10 +14,10 @@ C++ 程序共用。本文档记录真实状态、设计约束与关键语义的�
 
 因此本库有两条硬约束：
 
-1. **不得假设宿主 libc**。没有 `<string.h>`、`<stdio.h>`、`malloc`、`strtol`、
+1. 不得假设宿主 libc。没有 `<string.h>`、`<stdio.h>`、`malloc`、`strtol`、
    `snprintf`。字符/内存原语一律用 `__builtin_memcpy/memmove/memset/memcmp/strlen`，
    数值转换在头内实现。
-2. **不得无条件使用异常**。`-fno-exceptions` 下连 `try/catch` 都是编译错误
+2. 不得无条件使用异常。`-fno-exceptions` 下连 `try/catch` 都是编译错误
    （不只是 `throw`）。所有失败路径统一走 `detail/throw.h` 的
    `STDCPP_THROW` / `STDCPP_TRY` / `STDCPP_CATCH_ALL` / `STDCPP_RETHROW`。
 
@@ -28,8 +28,8 @@ C++ 程序共用。本文档记录真实状态、设计约束与关键语义的�
 
 ## 二、内存模型（重要）
 
-**所有容器都经 `::operator new` / `::operator delete` 分配，不再直接调
-`malloc`。** 统一入口在 `detail/alloc.h`：
+所有容器都经 `::operator new` / `::operator delete` 分配，不再直接调
+`malloc`。 统一入口在 `detail/alloc.h`：
 
 ```
 容器 → __detail::alloc_bytes_aligned(n, align) → ::operator new
@@ -57,10 +57,10 @@ C++ 程序共用。本文档记录真实状态、设计约束与关键语义的�
 ## 三、状态表
 
 标注说明：
-- **Verified** — 有 `tests/stdcpp` 用例覆盖并通过（C++17/20/26 三档）
-- **Compiles** — 能在 freestanding + 无异常模式下编过，缺深度用例
-- **Partial** — 接口子集，缺部分标准成员或有简化实现
-- **Absent** — 未提供
+- Verified — 有 `tests/stdcpp` 用例覆盖并通过（C++17/20/26 三档）
+- Compiles — 能在 freestanding + 无异常模式下编过，缺深度用例
+- Partial — 接口子集，缺部分标准成员或有简化实现
+- Absent — 未提供
 
 ### 语言支持
 
@@ -170,10 +170,10 @@ elems_after <= n:  末尾构造 n-elems_after 个新值，[idx, end) move 到新
 
 走精确路径，不做浮点估算：
 
-1. 把 `v` 拆成 `m × 2^e`，**只用乘/除以 2 的幂**（对二进制浮点精确），
+1. 把 `v` 拆成 `m × 2^e`，只用乘/除以 2 的幂（对二进制浮点精确），
    不依赖 `frexpl` 等 libm 符号；
 2. `v × 10^6 = m × 5^6 × 2^(e+6)`，用二进制大整数精确表示；
-3. 需要右移时按 **ties-to-even** 舍入（与 printf 默认舍入模式一致）；
+3. 需要右移时按 ties-to-even 舍入（与 printf 默认舍入模式一致）；
 4. 十进制输出后按小数点插在倒数第 6 位。
 
 测试拿 3000 组随机位模式 + 次正规数/`DBL_MAX`/`1e308` 与 `snprintf` 对拍。
@@ -183,11 +183,11 @@ elems_after <= n:  末尾构造 n-elems_after 个新值，[idx, end) move 到新
 每块自带槽位空闲链（`next_free[]` + `free_head`）与高水位 `hi`；全局再维护
 一条"有空闲槽的块"双向链。于是 `insert` 取链头空洞、`emplace_back` 用尾块、
 `erase` 把槽位压回块内链，都是 O(1)。块内元素清空时整块摘链释放，`erase`
-的返回值取**解链后**的后继块（先算 next 再 delete 会返回悬垂迭代器）。
+的返回值取解链后的后继块（先算 next 再 delete 会返回悬垂迭代器）。
 
 ### 4. 分配器传播（POCCA / POCMA / POCS）
 
-`allocator_traits` 会**探测分配器自己声明的策略**（旧实现写死成 `false_type`，
+`allocator_traits` 会探测分配器自己声明的策略（旧实现写死成 `false_type`，
 等于永远不传播）：
 
 | 场景 | 行为 |
@@ -214,8 +214,8 @@ elems_after <= n:  末尾构造 n-elems_after 个新值，[idx, end) move 到新
 
 另外两个编译器侧容易写错的地方（都有用例锁住）：
 
-- 交替**必须**发 `Split`，只发 `Jmp` 会把 `cat|dog` 编译成 `catdog`；
-- 最后一支**不能**发 `Split(分支, End)`，否则分支失败时跳到 End 等于"跳过整个
+- 交替必须发 `Split`，只发 `Jmp` 会把 `cat|dog` 编译成 `catdog`；
+- 最后一支不能发 `Split(分支, End)`，否则分支失败时跳到 End 等于"跳过整个
   分组"，`a(b|c)d` 就会错误地匹配 `ad`。
 
 ### 6. `<complex>` 不依赖 libm
@@ -240,7 +240,7 @@ make          # gnu++17
 make cxx20    # gnu++20
 ```
 
-该工程**不接入 CI**（不被 `tests/Makefile`、`ci.sh`、`.github/workflows/ci.yml`
+该工程不接入 CI（不被 `tests/Makefile`、`ci.sh`、`.github/workflows/ci.yml`
 引用），原因与覆盖范围见 `tests/stdcpp/README.md`。
 
 当前规模：gnu++17 115 例 / gnu++20 116 例 / gnu++26 124 例，全部通过。
@@ -261,6 +261,6 @@ make cxx20    # gnu++20
 ## 六、内核使用注意事项
 
 `kernel/include/mem/new.hpp` 为了让 `new` 带上调用点信息，定义了
-`#define new (...)` 宏。**在包含该头之后再包含 STL 头，placement new 会被
-宏改写。** 内核代码若要使用本库，请先包含 STL 头，或在包含前后
+`#define new (...)` 宏。在包含该头之后再包含 STL 头，placement new 会被
+宏改写。 内核代码若要使用本库，请先包含 STL 头，或在包含前后
 `#undef new`（`kernel/src/mem/new.cpp` 已有同类处理）。

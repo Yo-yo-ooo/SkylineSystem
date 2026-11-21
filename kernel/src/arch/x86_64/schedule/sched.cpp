@@ -23,6 +23,8 @@
 #include <arch/x86_64/pit/pit.h>
 #include <mem/pmm.h>
 #include <arch/x86_64/interrupt/gdt.h>
+
+#include <klib/kprintf.h>
 #include <pdef.h>
 #include <klib/stallwatch.h>
 #include <klib/kprintf.h>
@@ -211,7 +213,7 @@ void sched_idle() {
 
         Schedule::DrainProcZombieList(cpu);
 
-        file_cache_idle_handler(cpu->file_cache);
+        file_cache_idle_handler_hook(cpu->file_cache);
         sys_sysinfo_idle_refresh();
         /* Self-remedy: never rely solely on a remote wakeup IPI, which can be
            missed while a CPU halts with interrupts briefly closed or before its
@@ -229,6 +231,11 @@ void sched_idle() {
            卡死 —— 桌面明明还在跑, 却刷了一屏 STALL WATCHDOG。
            在 hlt 期间本核确实没有任何工作, 标记为"不忙"才是语义正确的。 */
         stall_set_kernel_busy(0);
+        /* 有睡眠线程时用 1ms 上限重新武装 LAPIC，而不是等一个完整量子：
+           Sleep(1~2ms) 的线程（桌面光标线程等）醒来延迟不再取决于
+           base_quantum（最长 15ms）。没有睡眠者就保持 Switch 武装的量子。 */
+        if (Schedule::TimerPending())
+            LAPIC::Oneshot(SCHED_VEC, cpu->lapic_ticks);
         asm volatile("sti; hlt; cli" ::: "memory");
     }
 }
@@ -697,6 +704,10 @@ namespace Schedule {
                 return;
             }
 
+            /* AP 没有 PIT tick：每次调度中断先推进本核定时器轮，
+               否则 Sleep() 在该核上永远不会被唤醒。 */
+            TimerTickWheels();
+
             /* ---- 抢占计数泄漏自愈 (保证"没有线程能永久占满一个核") ----
              * preempt_count 是**每核**计数器。若某条路径 ++ 之后没有配对
              * 的 -- (历史缺陷: 异常入口 ++ 后直接 Schedule::Exit 跳走),
@@ -1045,7 +1056,17 @@ namespace Schedule {
             if (likely(i < last)) PREFETCH_R(smp_cpu_list[i + 1]);
             cpu->timer_last_tick = PIT::TimeSinceBootMS();
             proc_t *proc = Schedule::NewProcess(false);
+            kinfoln("[sched.install] cpu=%u proc=%p", (unsigned)cpu->id, (void*)proc);
             thread_t *idle_t = Schedule::NewKernelThread(proc, cpu->id, 15, (void*)sched_idle);
+            /* NewKernelThread 走 kmalloc(sizeof(thread_t)); 分配失败时返回 NULL。
+               原来这里直接把它交给 RemoveFromQueue(), 后者无条件解引用 thread->on_rq
+               —— 在 0 地址(被 identity 映射)上读到的固件残留会当作 "on_rq == true",
+               进而在 rb_erase 里沿那个垃圾指针取 left 触发 #GP。 */
+            if (unlikely(!idle_t)) {
+                kinfoln("[sched.install] cpu=%u: NewKernelThread returned NULL, skip idle",
+                        (unsigned)cpu->id);
+                continue;
+            }
             uint64_t rflags = spin_lock_irqsave(&cpu->sched_lock);
             Internal::RemoveFromQueue(cpu, idle_t);
             spin_unlock_irqrestore(&cpu->sched_lock, rflags);

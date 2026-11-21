@@ -8,7 +8,7 @@
 #define SKYWIN_PROTO_PAGE_VA  0x400000UL  /* client fixed .prepad protocol page */
 ```
 
-这个 0x400000 **是编译期常量**，被三方直接使用：
+这个 0x400000 是编译期常量，被三方直接使用：
 
 - `lib/stdc/outfb/printf.c`（libsky 自己的 console 协议写入口）
 - `programs/notepad/main.cpp:130`
@@ -22,18 +22,18 @@ uint64_t r2 = sys_pmmapSHARE(self, 0, PAGE_SIZE, SHARE_FLAGS,
 ```
 
 注意参数顺序 `(dst_pid, dst_addr, length, flags, src_pid, src_addr)`：
-**客户端是 src，0x400000 是 src_addr**。也就是说 `sys_pmmapSHARE` 共享的是
-客户端**已经存在的**那一页 —— 这正是每个客户端链接脚本里 `.prepad` 页存在的
+客户端是 src，0x400000 是 src_addr。也就是说 `sys_pmmapSHARE` 共享的是
+客户端已经存在的那一页 —— 这正是每个客户端链接脚本里 `.prepad` 页存在的
 理由（`PureDOOM/Makefile` 注释：少了它，ELF 自己的只读头部会落在 0x400000，
 第一次 `OUT_SEQ` 就写只读页崩在 `addr=0x400048`）。
 
-结论：**客户端必须保留真实页在 0x400000**，因此不能做 PIE（PIE 会被内核
+结论：客户端必须保留真实页在 0x400000，因此不能做 PIE（PIE 会被内核
 搬到随机地址，0x400000 变成空地址，`pmmapSHARE` 直接失败）。
-唯一可行路线是 **ET_EXEC（固定 VA）+ DT_NEEDED**。
+唯一可行路线是 ET_EXEC（固定 VA）+ DT_NEEDED。
 
 ## 已经做通的部分
 
-1. **链接脚本**：`console_x86_64.ld` 用自定义 `PHDRS` 时，把
+1. 链接脚本：`console_x86_64.ld` 用自定义 `PHDRS` 时，把
    `.dynamic/.dynsym/.dynstr/.hash/.rela.*/.plt/.got` 全当孤儿段丢掉了，
    链出来是"有 PLT、有 JUMP_SLOT、却没有 `.dynamic`"的畸形 ELF。
    补齐（含 `phdr_dynamic PT_DYNAMIC`）后，链接产物正确：
@@ -46,13 +46,13 @@ uint64_t r2 = sys_pmmapSHARE(self, 0, PAGE_SIZE, SHARE_FLAGS,
    类型 EXEC   入口 0x401000   71,576 字节（静态版 884,680）
    ```
 
-2. **`_start` 来源**：`libsky.so` 有意不含 `lib/base/arch/x86_64/init.S`
+2. `_start` 来源：`libsky.so` 有意不含 `lib/base/arch/x86_64/init.S`
    （`_start` 属于可执行程序），动态链接时必须显式把它编进去，否则 ld 会
    警告"找不到项目符号 _start"并把入口兜底成 0x401000。
 
 ## 当前卡点：内核 ELF 加载器写只读页（已修）
 
-把上面这个 ET_EXEC 动态版放进镜像启动，内核在**加载 hw2 时**缺页：
+把上面这个 ET_EXEC 动态版放进镜像启动，内核在加载 hw2 时缺页：
 
 ```
 ELF LOADER PT_LOAD: vaddr=[0x400000~0x401000], filesz=0x1000, memsz=0x1000, flags=0x6
@@ -71,7 +71,7 @@ memcpy_fscpuf              kernel/src/klib/meme.cpp:73
      └ sys_load            exec.cpp:461
 ```
 
-### 根因：PT_LOAD 段可以**重叠**，而权限收紧是"每段拷完立刻做"
+### 根因：PT_LOAD 段可以重叠，而权限收紧是"每段拷完立刻做"
 
 在拷贝前插桩打印目标页 PTE，得到 hw2 的真实段表：
 
@@ -81,24 +81,24 @@ seg va=401000 filesz=3060 flags=5  page.flags=7   (RW)
 seg va=402000 filesz=3040 flags=4  page.flags=5   (RO)   ← 已被上一段收紧
 ```
 
-第 2 段跨 `0x401000~0x404060`（3 页），第 3 段起点 `0x402000` **落在第 2 段的
-页范围内**。原来的实现是"每段：映射 → 拷贝 → 立刻按 p_flags 收紧"，于是第 2 段
+第 2 段跨 `0x401000~0x404060`（3 页），第 3 段起点 `0x402000` 落在第 2 段的
+页范围内。原来的实现是"每段：映射 → 拷贝 → 立刻按 p_flags 收紧"，于是第 2 段
 收尾把 `0x402000` 设成只读，第 3 段再往同一页拷数据就缺页。
 
 ### 修法（已实施）
 
-把权限收紧从"每段一次"改成**第二趟**：所有段都拷贝完成之后，再遍历
+把权限收紧从"每段一次"改成第二趟：所有段都拷贝完成之后，再遍历
 PT_LOAD 统一收紧权限（规则不变：可执行段去 W，不可执行段加 NX）。
 这样无论段怎么重叠，拷贝阶段全是 RW，收紧只在最后发生。
 
 验证：把 hw2 换回静态后启动 —— `PROC->ID 3`、`[doom] init done 1`、
 `KERNEL FAULT 0`、`Segfault 0`、`OOM 0`，说明这个改动对现有静态程序无副作用。
 
-## 重要更正：PIE 客户端会**静默**死掉 (code=77)
+## 重要更正：PIE 客户端会静默死掉 (code=77)
 
-上一版这里写着"hw2 已成功动态链接并验证"。**这个结论是错的**，当时我没有看
-进程退出日志，只看了 `PROC->ID: 3` 和 `[doom] init done: 1` —— 而那时 **doom
-还是静态的**，hw2 其实已经死了。
+上一版这里写着"hw2 已成功动态链接并验证"。这个结论是错的，当时我没有看
+进程退出日志，只看了 `PROC->ID: 3` 和 `[doom] init done: 1` —— 而那时 doom
+还是静态的，hw2 其实已经死了。
 
 把 `notepad` / `hw2` / `doom` 三个客户端都转成动态之后，启动日志暴露了真相：
 
@@ -109,8 +109,8 @@ PT_LOAD 统一收紧权限（规则不变：可执行段去 W，不可执行段�
 [exit] pid=12 code=77    ← doom
 ```
 
-`0x464c457f` 就是 **`"\x7fELF"`** —— 说明 `%fs + TPOFF` 落到了**模块镜像的
-ELF 头**上，而不是 TLS 块。`code=77` 是 libsky 分配器
+`0x464c457f` 就是 `"\x7fELF"` —— 说明 `%fs + TPOFF` 落到了模块镜像的
+ELF 头上，而不是 TLS 块。`code=77` 是 libsky 分配器
 (`lib/stdc/allocator/allocator.c:272`) 的 TLS 护栏，不是段错误，所以之前的
 断言（`Segfault` / `KERNEL FAULT`）抓不到它。
 
@@ -133,7 +133,7 @@ total    = ALIGN_UP(tls_memsz, tls_align) + 8;   ← +8 在这里
 ```
 
 修正后布局自洽了（`only .so: total=948, fs_off=952`，desktop: `fs_off=1080`），
-**但客户端的 77 仍然出现**，说明还有第二处偏差。
+但客户端的 77 仍然出现，说明还有第二处偏差。
 
 ### 定位手段（一步到位）
 
@@ -171,7 +171,7 @@ code=77=0  Segfault=0  KERNEL FAULT=0  OOM=0  ACK timeout=0  STALL=0
 
 ## 顺带修掉的一个真实死锁（就是用户报的 TLB 刷屏）
 
-`SyncKillProcThreads()` 在**持有 `PROC_LIST_LOCK`** 的情况下遍历
+`SyncKillProcThreads()` 在持有 `PROC_LIST_LOCK` 的情况下遍历
 `proc->threads` 环形链表：
 
 ```c
@@ -182,7 +182,7 @@ do {
 } while (t != start && proc->threads);     /* ← 链表一旦不成环, 死循环 */
 ```
 
-链表一旦被破坏（某个 `next` 不指回 `start`），这个循环会**永远持锁**。
+链表一旦被破坏（某个 `next` 不指回 `start`），这个循环会永远持锁。
 现场表现：另一个 CPU 在 `Schedule::PROC_KILL` 里等同一个锁 32 秒以上，
 随后所有 TLB shootdown 因为目标核关中断等锁而全部 ACK 超时 ——
 日志被 `[KERR] TLB shootdown: ACK timeout` 刷屏（实测一次坏运行里
@@ -196,20 +196,20 @@ waiter  : FFFFFFFF8004E39E -> Schedule::PROC_KILL   task.cpp:585
 lock    : FFFFFFFF801B9F44 -> PROC_LIST_LOCK   (nm: pid2proc_tree+8)
 ```
 
-修法：给遍历加**有界保护**（4096 次上限），超限就放弃本轮回收并报一次错，
+修法：给遍历加有界保护（4096 次上限），超限就放弃本轮回收并报一次错，
 绝不在持锁状态下死等。修完 4/4 次启动 `ACK timeout=0`。
 
 
 
 上面那条"ET_EXEC + 自定义脚本"的路最后被放弃了，原因很实在：
 把 `.dynsym/.dynstr/.dynamic/.rela.*` 塞进自定义 `PHDRS` 脚本后，ld 会生成
-**相互重叠**的 PT_LOAD（`.rodata` 同时出现在 RX 段和 R 段里），而内核的
+相互重叠的 PT_LOAD（`.rodata` 同时出现在 RX 段和 R 段里），而内核的
 `dl_vaddr_to_off()` 按"第一个包含该 VA 的 PT_LOAD"反查文件偏移，于是
 `DT_STRTAB` 算到了错误段 → 读到垃圾 → `dyn_read_needed()` 找不到
 `DT_NEEDED` → `elf_dyn_apply()` 提前返回 → PLT 全是野地址。这个组合还会
 连带把静态构建的段表也搅乱，性价比太低。
 
-改成更干净的方案：**协议页由 WM 在用户态补上，内核一个字节都不提它**。
+改成更干净的方案：协议页由 WM 在用户态补上，内核一个字节都不提它。
 
 加载器并不认识"那个固定 VA 是窗口协议页"这件事——它是 WM 与客户端之间的
 用户态 ABI（VA 常量定义在 `lib/include/graphic/winstyle.h`）。把它写进
@@ -230,8 +230,8 @@ uint64_t r2 = sys_pmmapSHARE(self, 0, PAGE_SIZE, SHARE_FLAGS,
                              pid, SKYWIN_PROTO_PAGE_VA);
 ```
 
-`pmmapSHARE` 对"调用方指定 dst 区间"的要求只有两条：**无 VMA 重叠 +
-PTE 未映射** —— PIE 客户端的空洞正好满足。静态客户端（`.prepad` 已占住
+`pmmapSHARE` 对"调用方指定 dst 区间"的要求只有两条：无 VMA 重叠 +
+PTE 未映射 —— PIE 客户端的空洞正好满足。静态客户端（`.prepad` 已占住
 这一页）会让路径 A 失败，这是常态而非错误；内核在失败路径上会把 EAlloc
 的那一页 `VMM::Free` 掉，所以不泄漏。路径 A 成功时 WM 已经拿到可写别名，
 不必再走路径 B，少一次映射、也不留多余别名。
@@ -265,10 +265,10 @@ hw2.elf  42,736 字节（静态版 884,120）  Type: DYN  NEEDED: libsky.so
 2. `dl_vaddr_to_off()` 反查歧义 → dynlink 静默跳过。
 
 
-加载器修好后，换成动态 hw2 启动，`PROC->ID` 从 0 恢复到 **3**（说明加载成功），
+加载器修好后，换成动态 hw2 启动，`PROC->ID` 从 0 恢复到 3（说明加载成功），
 但：
 
-- **没有出现 hw2 的 `[dynlink]` 日志**（`DT_NEEDED` 只统计到 2 条：desktop 和 hw.elf）
+- 没有出现 hw2 的 `[dynlink]` 日志（`DT_NEEDED` 只统计到 2 条：desktop 和 hw.elf）
 - 随后内核栈溢出递归（`CR2=0xFFFF9000002FA000`，即内核栈顶之外），并伴随 6 次
   用户态 segfault
 
@@ -278,7 +278,7 @@ hw2.elf  42,736 字节（静态版 884,120）  Type: DYN  NEEDED: libsky.so
 后续要从 `elf_dyn_apply` 的早退路径入手：给它加日志，确认是
 `so_name` 为空（`dyn_read_needed` 失败）还是 `elf_dyn_prepare` 返回 0。
 怀疑点：hw2 的 `DT_STRTAB`/`DT_NEEDED` 指向被脚本合并进大段的地址，
-`dl_vaddr_to_off()` 用 PT_LOAD 反查时落在**重叠段**的边界上，取到错误偏移。
+`dl_vaddr_to_off()` 用 PT_LOAD 反查时落在重叠段的边界上，取到错误偏移。
 
 ## 已验证的绿色基线（实验回退后）
 
@@ -288,4 +288,4 @@ PROC->ID 3            Segfault 0        KERNEL FAULT 0
 ```
 
 镜像已恢复为静态 `hw2`（884,680 字节，无 NEEDED）。
-两趟权限收紧的改动**保留**在 `elf_load_impl` 里（对静态程序已验证无副作用）。
+两趟权限收紧的改动保留在 `elf_load_impl` 里（对静态程序已验证无副作用）。

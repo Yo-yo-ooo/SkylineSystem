@@ -1,6 +1,6 @@
 # tests/stdcpp — STL 独立测试工程
 
-针对 `lib/include/stdcpp` 的语义测试。**刻意不接入任何自动化门禁**：
+针对 `lib/include/stdcpp` 的语义测试。刻意不接入任何自动化门禁：
 
 - 不被 `tests/Makefile` 的 `all` 目标引用
 - 不被 `res/scripts/test/ci.sh` 调用
@@ -45,7 +45,7 @@ make clean
 
 ## 两条关键设计
 
-**1. 分配器可观测**
+1. 分配器可观测
 
 框架替换了全局 `::operator new/delete`（见 `framework/test_framework.cpp`），
 而 stdcpp 的所有容器统一经 `detail/alloc.h` → `::operator new` 分配，因此：
@@ -57,12 +57,12 @@ make clean
 这也是为什么头文件里不能直接调 `malloc`：绕开 `operator new` 就绕开了这层
 观测，同时内核侧根本没有 `malloc`。
 
-**2. 不用被测容器写测试**
+2. 不用被测容器写测试
 
 框架自身只用 POD 数组和 `printf`，不用 `std::vector`/`std::string` 存用例，
 避免「容器有 bug 导致测试结果不可信」。
 
-**3. 复杂度也用断言锁住**
+3. 复杂度也用断言锁住
 
 `vector` 批量插入、`hive` 空洞复用都用「元素操作次数 / 容量不变」来断言，
 而不是只看结果对不对——O(n·size) 的实现同样能算对结果，只是慢。

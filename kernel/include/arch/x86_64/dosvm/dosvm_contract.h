@@ -58,9 +58,10 @@ extern "C" {
 #define DOSVM_RC_NEED_FS      1
 #define DOSVM_RC_SUSPENDED    2
 
-/* ---- 动态 syscall 槽（dosvm.ko 用 KMOD_EXPORT_SYSCALL 注册）-------------
+/* ---- 动态 syscall 槽（kernel.arch.dosvm 用 KCOMPONENT_EXPORT_SYSCALL 注册）---
+ * Tier1/Tier2 合并后不再有 dosvm.ko；五个槽由同一个 resident DynModule 注册。
  * 注意：200u 已被 demo_syscall_v1/v2.ko 用作动态槽（虽非 BOOT，但 selftest
- * 会加载它们），为避免注册冲突改用 210/211。区间 [128,511] 合法。 */
+ * 会加载它们），为避免注册冲突改用 210..214。区间 [128,511] 合法。 */
 #define DOSVM_SYSCALL_READ  210u   /* (user_buf, cap) -> 4016 / -EAGAIN / -EINVAL */
 #define DOSVM_SYSCALL_ENTER 211u   /* (cpu_id, ...)   -> 0 / -errno；0 = 自动选 AP */
 #define DOSVM_SYSCALL_STAGE 212u   /* (user_img, len, user_args, args_len) -> 0/-errno
@@ -150,10 +151,10 @@ int  dosvm_core_is_offline(uint32_t cpu_id);
 /* LAPIC 层按 lapic_id 查询（供 IPI 底层统一过滤；0xF0 专用向量放行）。 */
 int  dosvm_lapic_offline(uint32_t lapic_id);
 
-/* ---- Tier1 内建组件实现、由 kernel_exports.cpp 加入 .kout 导出表 --------
+/* ---- resident DynModule 实现、由 kernel_exports.cpp 加入 .kout 导出表 ----
  * provider = "kernel"，contract = "kernel.dosvm.v1"，abi = 1。
- * dosvm.ko 用 KMOD_IMPORT_FN(..., "kernel", "<name>", "kernel.dosvm.v1")
- * 导入。这样 .ko 只做 syscall 门面，不接触 CR/GDT/页表/调度器。 */
+ * 外部 .ko 可用 KMOD_IMPORT_FN(..., "kernel", "<name>", "kernel.dosvm.v1")
+ * 导入这些 C 级函数；syscall 210..214 已由本模块自己注册，不再需要门面。 */
 #define DOSVM_KERNEL_CONTRACT "kernel.dosvm.v1"
 
 int      dosvm_enter(uint32_t cpu_id);              /* 发 IPI 触发一次往返 */

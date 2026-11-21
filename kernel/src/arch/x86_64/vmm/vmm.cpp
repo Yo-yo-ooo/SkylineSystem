@@ -165,6 +165,24 @@ static void RefcountTreeInit() {
 }
 
 namespace VMM {
+    /* 全局 kernel_pagemap 的 vma_lock 是跨线程/中断共享的。普通 spinlock_lock
+     * 不关中断、也不阻止调度器抢占；如果持锁线程被 timer 抢占、另一个线程
+     * 在同一 CPU 上又来抢这把锁，就会形成"持锁者被换出、等待者自旋"的长时间
+     * 停滞 (实测 sys_load 的 kernel stack VMM::Alloc 等 kernel_pagemap 锁)。
+     * 对 kernel_pagemap 的 critical section 关中断，禁止 IRQ 重入和抢占；
+     * 用户 pagemap 的临界区不受影响 (只在本线程/本地址空间内竞争)。 */
+    struct KpmIrqGuard {
+        bool active;
+        bool prev;
+        explicit KpmIrqGuard(pagemap_t *pm)
+            : active(pm == kernel_pagemap), prev(false) {
+            if (active) prev = Interrupt::SaveMask();
+        }
+        ~KpmIrqGuard() { if (active) Interrupt::Restore(prev); }
+        KpmIrqGuard(const KpmIrqGuard&) = delete;
+        KpmIrqGuard& operator=(const KpmIrqGuard&) = delete;
+    };
+
     namespace CPUFeatures { bool has_pcid = false; bool has_invpcid = false; }
     static spinlock_t pcid_alloc_lock = 0;
     static uint64_t pcid_bitmap[64] = {0};
@@ -739,6 +757,9 @@ namespace VMM {
         kernel_pagemap->pt_lock = 0; kernel_pagemap->vma_lock = 0;
         kernel_pagemap->pcid = AllocPCID();
         BitmapClearAll(kernel_pagemap->cpus_with_tlb);
+        kinfoln("VMM: kernel_pagemap=%p phys=0x%lx",
+                kernel_pagemap,
+                (unsigned long)((uint64_t)kernel_pagemap - hhdm_offset));
         rb_root_init(&kernel_pagemap->vma_tree, nullptr, nullptr, nullptr, nullptr, nullptr);
         _memset((void*)kernel_pagemap->toplvl, 0, PAGE_SIZE);
         VMM::VMA::SetStart(kernel_pagemap, HIGHER_HALF(0x100000000000), 0);
@@ -783,6 +804,45 @@ namespace VMM {
                 (unsigned long)(hhdm_top >> 20), (unsigned long)(hhdm_top >> 30));
         VMM::SwitchPageMap(kernel_pagemap);
 
+        /* 启动自检：HHDM 是 2MB 映射，对其中一个 4K 页调用 Map4K 必须把
+           2MB 页拆成 4K 表（新映射仍指向同一物理页）；失败说明 Map4K 又
+           把大页物理页当页表写了，直接停机会比带病运行安全。 */
+        {
+            const uint64_t probe_pa = 0x200000ULL + 0x1000ULL;
+            const uint64_t probe_va = (uint64_t)HIGHER_HALF((void *)probe_pa);
+            VMM::Map4K(kernel_pagemap, probe_va, probe_pa, MM_READ | MM_WRITE);
+            VMM::Internal::PageInfo pi =
+                VMM::Internal::GetPageInfo(kernel_pagemap, probe_va);
+            const bool ok = (pi.size == PAGE_SIZE) &&
+                            ((pi.phys & PTE_ADDR_MASK) == probe_pa);
+            kinfoln("VMM: huge-page split self-test: %s", ok ? "PASS" : "FAIL");
+            if (unlikely(!ok))
+                hcf();
+        }
+
+        /* 启动自检：1GB 页也必须先拆成 2MB 再拆 4K。用临时 pagemap 把
+           256 GiB 处的 1GB 虚拟区间映射到物理 0（合法 RAM），再对其中
+           两个 4K 页做 Map4K 并回读。 */
+        {
+            pagemap_t *pm = VMM::NewPM();
+            const uint64_t test_va = 0x0000004000000000ULL; /* 256 GiB, 用户半区 */
+            VMM::Map1G(pm, test_va, 0, MM_READ | MM_WRITE);
+            VMM::Map4K(pm, test_va + 0x1000, 0x1000, MM_READ | MM_WRITE);
+
+            VMM::Internal::PageInfo pi =
+                VMM::Internal::GetPageInfo(pm, test_va + 0x1000);
+            VMM::Internal::PageInfo pi2 =
+                VMM::Internal::GetPageInfo(pm, test_va + 0x2000);
+            const bool ok = (pi.size == PAGE_SIZE) &&
+                            ((pi.phys & PTE_ADDR_MASK) == 0x1000) &&
+                            (pi2.size == PAGE_SIZE) &&
+                            ((pi2.phys & PTE_ADDR_MASK) == 0x2000);
+            kinfoln("VMM: 1GB split self-test: %s", ok ? "PASS" : "FAIL");
+            if (unlikely(!ok))
+                hcf();
+            /* 临时 pagemap 的页表约 4 页，重启前一直保留（一次性开销）。 */
+        }
+
         /*  引用计数红黑树: 仅跟踪共享页, 无预分配大数组 */
         RefcountTreeInit();
         kpokln("VMM: refcount rb-tree initialized (shared-page tracking only)");
@@ -791,6 +851,63 @@ namespace VMM {
         static const void *volatile vma_split_anchor;
         vma_split_anchor = (const void *)&VMM::VMA::SplitRegion;
         (void)vma_split_anchor; /* 修复: 仅赋值未使用 */
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* 大页拆分：Map4K 落在 2MB/1GB 映射内时必须先拆页。原实现直接
+       pd[PDE] 当页表指针, 把大页的物理页内容当页表写 -> 数据损坏而
+       不是建立新映射。拆分后每个小页映射同一物理页、同一权限。      */
+    /* ------------------------------------------------------------------ */
+    static bool split_2m_entry(uint64_t *pd, uint64_t idx)
+    {
+        const uint64_t old = pd[idx];
+        if (!(old & VMM_PS_BIT))
+            return true;
+
+        const uint64_t base = old & 0x000FFFFFFFE00000ULL;  /* 2MB 基址 */
+        const uint64_t pat  = (old >> 12) & 1ULL;           /* 2MB: PAT 在 bit12 */
+        uint64_t flags = old & 0xFFFULL;                    /* P/RW/US/PWT/PCD/A/D/PS/G */
+        flags &= ~VMM_PS_BIT;                               /* 4K PTE: bit7 是 PAT */
+        flags &= ~(1ULL << 12);                             /* 4K PTE: bit12 是地址位 */
+        if (pat)
+            flags |= (1ULL << 7);                           /* 保持 PAT(内存类型) 语义 */
+        flags |= old & (1ULL << 63);                        /* NX */
+
+        void *pt_phys = PMM::Request();
+        if (!pt_phys)
+            return false;
+        uint64_t *pt = (uint64_t *)HIGHER_HALF(pt_phys);
+        for (uint64_t i = 0; i < 512; i++)
+            pt[i] = (base + i * PAGE_SIZE) | flags;
+
+        /* 先填满再发布：其它核走到这里看到的是完整的 4K 表。新旧映射
+           翻译结果相同，已缓存的 2MB TLB 项依然有效。 */
+        pd[idx] = ((uint64_t)pt_phys & PTE_ADDR_MASK) | flags;
+        return true;
+    }
+
+    static bool split_1g_entry(uint64_t *pdpt, uint64_t idx)
+    {
+        const uint64_t old = pdpt[idx];
+        if (!(old & VMM_PS_BIT))
+            return true;
+
+        const uint64_t base = old & 0x000FFFFFC0000000ULL;  /* 1GB 基址 */
+        const uint64_t pat  = (old >> 12) & 1ULL;           /* 1GB: PAT 在 bit12 */
+        uint64_t flags = (old & 0xFFFULL) | (old & (1ULL << 63));
+
+        void *pd_phys = PMM::Request();
+        if (!pd_phys)
+            return false;
+        uint64_t *pd = (uint64_t *)HIGHER_HALF(pd_phys);
+        for (uint64_t i = 0; i < 512; i++)
+            pd[i] = (base + i * PAGE_2MB) | flags |
+                    (pat ? (1ULL << 12) : 0);               /* 2MB PDE 需要 PS */
+
+        /* 指向新 PD 的表项不能带 PS, 也不能把 PAT(bit12) 混进地址位。 */
+        const uint64_t link_flags = (flags & ~VMM_PS_BIT) & ~(1ULL << 12);
+        pdpt[idx] = ((uint64_t)pd_phys & PTE_ADDR_MASK) | link_flags;
+        return true;
     }
 
     void Map4K(pagemap_t *pm, uint64_t vaddr, uint64_t paddr, uint64_t flags){
@@ -806,14 +923,26 @@ namespace VMM {
         if (unlikely(!PAGE_EXISTS(pdpt))) pdpt = VMM::Internal::NewLevel(pml4, PML4E(vaddr));
         pdpt = HIGHER_HALF(PTE_MASK(pdpt)); PREFETCH_RH(&pdpt[PDPTE(vaddr)]);
 
+        /* 1GB 页挡在中间：先拆成 2MB PDE，否则下面会把 1GB 物理页当页表写。 */
+        if (PAGE_EXISTS(pdpt[PDPTE(vaddr)]) && (pdpt[PDPTE(vaddr)] & VMM_PS_BIT)) {
+            if (!split_1g_entry(pdpt, PDPTE(vaddr)))
+                return;                    /* OOM: 保持原映射，不写坏物理页 */
+        }
+
         uint64_t *pd = (uint64_t*)pdpt[PDPTE(vaddr)];
         if (unlikely(!PAGE_EXISTS(pd))) pd = VMM::Internal::NewLevel(pdpt, PDPTE(vaddr));
         pd = HIGHER_HALF(PTE_MASK(pd)); PREFETCH_RH(&pd[PDE(vaddr)]);
 
+        /* 2MB 页挡在中间：拆成 4K PTE（同一物理页、同一权限）。 */
+        if (PAGE_EXISTS(pd[PDE(vaddr)]) && (pd[PDE(vaddr)] & VMM_PS_BIT)) {
+            if (!split_2m_entry(pd, PDE(vaddr)))
+                return;
+        }
+
         uint64_t *pt = (uint64_t*)pd[PDE(vaddr)];
         if (unlikely(!PAGE_EXISTS(pt))) pt = VMM::Internal::NewLevel(pd, PDE(vaddr));
         pt = HIGHER_HALF(PTE_MASK(pt));
-        pt[PTE(vaddr)] = (paddr & 0x000FFFFFFFFFF000ULL) | (flags & PTE_KEEP);
+        pt[PTE(vaddr)] = (paddr & PTE_ADDR_MASK) | (flags & PTE_KEEP);
     }
 
     void Map2M(pagemap_t *pm, uint64_t vaddr, uint64_t paddr, uint64_t flags){
@@ -1065,6 +1194,7 @@ namespace VMM {
 
     void *Alloc(pagemap_t *pm, uint64_t pc, bool user) {
         if (unlikely(!pc)) return nullptr;
+        KpmIrqGuard kpm_irq(pm);
         uint64_t flags = MM_READ | MM_WRITE | (user ? MM_USER : 0);
         spinlock_lock(&pm->vma_lock);
         uint64_t addr = VMM::VMA::InternalAlloc(pm, pc, flags, 0);
@@ -1106,6 +1236,7 @@ namespace VMM {
 
     void *EAlloc(pagemap_t *pm, uint64_t pc, uint64_t flags) {
         if (unlikely(!pc)) return nullptr;
+        KpmIrqGuard kpm_irq(pm);
         spinlock_lock(&pm->vma_lock);
         uint64_t addr = VMM::VMA::InternalAlloc(pm, pc, flags, 0);
         if (unlikely(!VMM::VMA::FindRegion(pm,addr)))
@@ -1142,6 +1273,7 @@ namespace VMM {
     void Free(pagemap_t *pm, void *ptr){
         if (unlikely(!pm || !ptr)) return;
         if (((uint64_t)ptr & 0xfff) != 0) return;
+        KpmIrqGuard kpm_irq(pm);
         spinlock_lock(&pm->vma_lock);
         vma_region_t *region = VMM::VMA::FindRegion(pm, (uint64_t)ptr);
         if (unlikely(!region || region->start != (uint64_t)ptr)) {

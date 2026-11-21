@@ -27,6 +27,7 @@ KCOMPONENT_BEGIN(time_pit, "kernel.time.pit", "1.0.0", KMOD_TIER_POLICY,
 KCOMPONENT_IMPORT_FN(time_pit, kprintf_, int, (const char *, ...), "kernel",
                      "kprintf_", "kernel.log.v1")
 KCOMPONENT_DEPENDS(time_pit, "kernel.arch.apic", apic)
+KCOMPONENT_DEPENDS(time_pit, "kernel.time.rtc", rtc)
 
 namespace {
 

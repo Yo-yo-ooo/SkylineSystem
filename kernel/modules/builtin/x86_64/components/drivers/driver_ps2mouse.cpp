@@ -27,6 +27,10 @@ KCOMPONENT_IMPORT_FN(driver_ps2mouse, kprintf_, int, (const char *, ...),
                      "kernel", "kprintf_", "kernel.log.v1")
 KCOMPONENT_DEPENDS(driver_ps2mouse, "kernel.arch.apic", apic)
 KCOMPONENT_DEPENDS(driver_ps2mouse, "kernel.dev.core", dev_core)
+/* mouse.cpp 把滚轮字节喂给键盘核心，并向 USB HID 注册鼠标回调；
+ * 两个实现都已迁入各自的 .ko。 */
+KCOMPONENT_DEPENDS(driver_ps2mouse, "kernel.input.ps2.kbd", kbd)
+KCOMPONENT_DEPENDS(driver_ps2mouse, "kernel.driver.xhci", xhci)
 
 static int32_t driver_ps2mouse_init(void)
 {

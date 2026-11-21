@@ -11,6 +11,10 @@
 #include <arch/x86_64/pit/pit.h>
 #include <arch/x86_64/cpu/smap.h>
 
+/* Tier0 klib 提供的公历秒换算（PIT/RTC 也使用）。 */
+extern uint64_t mktime(uint32_t year, uint32_t mon, uint32_t day,
+                       uint32_t hour, uint32_t min, uint32_t sec);
+
 static const int32_t CLOCK_REALTIME __attribute__((unused)) = 0;
 static const int32_t CLOCK_MONOTONIC = 1;
 static const int32_t CLOCK_PROCESS_CPUTIME_ID __attribute__((unused)) = 2;
@@ -22,32 +26,19 @@ static const int32_t CLOCK_BOOTTIME __attribute__((unused)) = 7;
 static const int32_t CLOCK_TAI __attribute__((unused)) = 11;
 static const int32_t CLOCK_BOOTTIME_ALARM __attribute__((unused)) = 9;
 
-uint64_t mktime (uint32_t year, uint32_t mon,
-    uint32_t day, uint32_t hour,
-    uint32_t min, uint32_t sec)
-{
-    if (0 >= (int) (mon -= 2)){    /**//* 1..12 -> 11,12,1..10 */
-         mon += 12;      /**//* Puts Feb last since it has leap day */
-         year -= 1;
-    }
- 
-    return (((
-             (uint64_t) (year/4 - year/100 + year/400 + 367*mon/12 + day) +
-             year*365 - 719499
-          )*24 + hour /**//* now have hours */
-       )*60 + min /**//* now have minutes */
-    )*60 + sec; /**//* finally seconds */
-}
-
 uint64_t sys_time(uint64_t tloc,GENERATE_IGN5()) {
     IGNV_5();
 
     RTC::read_rtc();
     int64_t x = mktime(RTC::Year,RTC::Month,RTC::Day,RTC::Hour,RTC::Minute,RTC::Second);
-    if(likely((time_t*)tloc == nullptr))
-        return x;
-    else { SmapGuard ug; *((time_t*)tloc) = x; }
-    return (uint64_t)((time_t)-1);
+    if (tloc != 0) {
+        /* 用户指针必须经 ua 校验/翻译：SmapGuard 只允许内核访问用户页，
+           并不校验地址是否落在用户空间，裸解引用等于任意内核地址写。 */
+        pagemap_t *pm = Schedule::this_thread()->pagemap;
+        if (!VMM::UserAccess::CopyToUser(pm, tloc, &x, sizeof(x)))
+            return (uint64_t)((time_t)-1);
+    }
+    return (uint64_t)x;
 }
 /* 毫秒级单调时钟: 直接返回内核的 PIT::MonotonicMS() (纯 TSC, 从启动起算)。
    为什么需要它: 用户态原本只能拿到**秒级** RTC (SYSCALL_TIME), 秒内的小数
@@ -88,53 +79,80 @@ struct timespec
 
 /* int gettimeofday(struct timeval *restrict tv,
                  struct timezone *_Nullable restrict tz); */
-static int64_t tv_s_off,tv_ms_off;
+static int64_t tv_s_off, tv_ms_off;
+
+/* 秒级 RTC + 毫秒级 uptime 拼出 struct timeval；时区无法提供，按 POSIX
+   允许忽略 tz（tz 为 NULL 是合法用法，不再拒绝）。 */
 uint64_t sys_gettimeofday(uint64_t tv,uint64_t tz, GENERATE_IGN4()) {
     IGNV_4();
-    uint64_t pv = VMM::Internal::GetPageInfo(Schedule::this_thread()->pagemap,tv).flags;
-    uint64_t pz = VMM::Internal::GetPageInfo(Schedule::this_thread()->pagemap,tz).flags;
-    if((tv == NULL) || (tz == NULL) || 
-        !(pv & MM_READ & MM_WRITE)|| !(pz & MM_READ & MM_WRITE))
-        return -EFAULT;
-    if(tv_s_off < 0 || (0 <= tv_ms_off && tv_ms_off <= 999999))
-        return -EINVAL;
-    RTC::read_rtc();
-    time_t seconds = mktime(RTC::Year,RTC::Month,RTC::Day,RTC::Hour,RTC::Minute,RTC::Second);
-    suseconds_t microseconds = PIT::TimeSinceBootMS() / 1000
-                    - (seconds - TIME_SINCE_RTC_INITED_SECOND); 
-    struct timeval time_value;
-    time_value.tv_sec = seconds - tv_s_off;
-    time_value.tv_usec = microseconds - tv_ms_off;
-    { SmapGuard ug; *((struct timeval*)tv) = time_value; }
+    (void)tz;
+    if (tv == 0) return (uint64_t)(int64_t)-EFAULT;
 
+    RTC::read_rtc();
+    int64_t seconds = (int64_t)mktime(RTC::Year,RTC::Month,RTC::Day,
+                                      RTC::Hour,RTC::Minute,RTC::Second);
+    int64_t usec = (int64_t)(PIT::TimeSinceBootMS() % 1000ull) * 1000ll - tv_ms_off;
+    int64_t sec  = seconds - tv_s_off;
+    while (usec < 0)          { usec += 1000000ll; sec -= 1; }
+    while (usec >= 1000000ll) { usec -= 1000000ll; sec += 1; }
+
+    struct timeval time_value;
+    time_value.tv_sec  = (time_t)sec;
+    time_value.tv_usec = (suseconds_t)usec;
+
+    pagemap_t *pm = Schedule::this_thread()->pagemap;
+    if (!VMM::UserAccess::CopyToUser(pm, tv, &time_value, sizeof(time_value)))
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
 }
 
 uint64_t sys_settimeofday(uint64_t tv,uint64_t tz, GENERATE_IGN4()) {
     IGNV_4();
-    { SmapGuard ug;   // read the caller's struct timeval
-      tv_s_off = ((struct timeval*)tv)->tv_sec;
-      tv_ms_off = ((struct timeval*)tv)->tv_usec;
-    }
+    (void)tz;
+    if (tv == 0) return (uint64_t)(int64_t)-EINVAL;
+
+    struct timeval want;
+    pagemap_t *pm = Schedule::this_thread()->pagemap;
+    if (!VMM::UserAccess::CopyFromUser(pm, &want, (const void *)tv, sizeof(want)))
+        return (uint64_t)(int64_t)-EFAULT;
+
+    /* 内核不改宿主机 RTC，只记录与当前时钟的偏移，gettimeofday 叠加回报。 */
+    RTC::read_rtc();
+    int64_t seconds = (int64_t)mktime(RTC::Year,RTC::Month,RTC::Day,
+                                      RTC::Hour,RTC::Minute,RTC::Second);
+    tv_s_off  = seconds - (int64_t)want.tv_sec;
+    tv_ms_off = (int64_t)(PIT::TimeSinceBootMS() % 1000ull) * 1000ll
+                - (int64_t)want.tv_usec;
     return 0;
 }
 
 uint64_t sys_clock_gettime(uint64_t clkid,uint64_t tp, GENERATE_IGN4()) {
     IGNV_4();
-    struct timespec *tp_ = (struct timespec *)tp;
-    SmapGuard ug;   // tp_ is a user timespec
+    if (tp == 0) return (uint64_t)(int64_t)-EFAULT;
+
+    struct timespec ts = {};
     switch (clkid)
     {
-    case CLOCK_MONOTONIC_COARSE:
-    case CLOCK_MONOTONIC_RAW:
-    case CLOCK_MONOTONIC:
-        tp_->tv_sec = HPET::GetTimeNS() / 1000000000;
-        tp_->tv_nsec = HPET::GetTimeNS() - tp_->tv_sec * 1000000000;
-        break;
-    default:
+    case CLOCK_REALTIME: {
+        RTC::read_rtc();
+        ts.tv_sec  = (time_t)mktime(RTC::Year,RTC::Month,RTC::Day,
+                                    RTC::Hour,RTC::Minute,RTC::Second);
+        ts.tv_nsec = (int64_t)(PIT::TimeSinceBootMS() % 1000ull) * 1000000ll;
         break;
     }
+    case CLOCK_MONOTONIC_COARSE:   /* 与 CLOCK_MONOTONIC_RAW 同值 */
+    case CLOCK_MONOTONIC: {
+        const uint64_t ns = HPET::GetTimeNS();
+        ts.tv_sec  = (time_t)(ns / 1000000000ull);
+        ts.tv_nsec = (int64_t)(ns % 1000000000ull);
+        break;
+    }
+    default:
+        return (uint64_t)(int64_t)-EINVAL;
+    }
 
+    pagemap_t *pm = Schedule::this_thread()->pagemap;
+    if (!VMM::UserAccess::CopyToUser(pm, tp, &ts, sizeof(ts)))
+        return (uint64_t)(int64_t)-EFAULT;
     return 0;
-
 }

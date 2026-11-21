@@ -190,7 +190,9 @@ namespace VMM {
          * @return true    拷贝成功
          * @return false   地址非法 / 未映射 / 越界
          */
-        bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len) {
+        /* 不加锁版本：调用方已持有页表锁（vma_lock→pt_lock），或处于异常
+           上下文（#PF 诊断路径，不能在此再抢锁）。 */
+        bool CopyFromUserNoLock(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len) {
             if (len == 0) return true;
             if (!pagemap || !k_dest || !u_src) return false;
 
@@ -223,6 +225,20 @@ namespace VMM {
                 offset += to_copy;
             }
             return true;
+        }
+
+        /* 进程/系统调用上下文：锁住页表后逐页翻译，避免与 Fork/Unmap/
+           HandlePF 的页表修改竞态（原实现无锁，存在 TOCTOU）。 */
+        bool CopyFromUser(pagemap_t* pagemap, void* k_dest, const void* u_src, uint64_t len) {
+            if (len == 0) return true;
+            if (!pagemap || !k_dest || !u_src) return false;
+
+            spinlock_lock(&pagemap->vma_lock);
+            spinlock_lock(&pagemap->pt_lock);
+            const bool ok = CopyFromUserNoLock(pagemap, k_dest, u_src, len);
+            spinlock_unlock(&pagemap->pt_lock);
+            spinlock_unlock(&pagemap->vma_lock);
+            return ok;
         }
 
     } // namespace UserAccess

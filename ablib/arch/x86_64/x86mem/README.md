@@ -37,7 +37,7 @@
 探测不到 (返回 0) 或还没跑到初始化时, 保持 `X86MEM_CACHE_LIMIT_DEFAULT` (3MB)。
 mem* 只拿它挑路径, 取错值只影响性能。
 
-**为什么不是直接等于 L3**: 12MB L3 的机器上实测 (见 `tests/memops` 的
+为什么不是直接等于 L3: 12MB L3 的机器上实测 (见 `tests/memops` 的
 "NT 开/关对照", 3 轮一致), streaming store 的 crossover 远低于 L3:
 
 | size | memcpy 关→开 | memset 关→开 |
@@ -53,14 +53,14 @@ crossover 落在 L3/16 ~ L3/8 之间, 直接拿 L3 当阈值会让 1M~12M 的 me
 
 ## 性能调参的硬性约束
 
-以下三项都是**实测敏感**的, 改之前先跑一次 `tests/memops` 基准作基线:
+以下三项都是实测敏感的, 改之前先跑一次 `tests/memops` 基准作基线:
 
-1. **主循环展开度**: 目标机器 (Alder Lake) 上 4× 最稳, 8× 反而掉约 15%
+1. 主循环展开度: 目标机器 (Alder Lake) 上 4× 最稳, 8× 反而掉约 15%
    (store buffer / 调度压力)。
-2. **memmove 的三条路径不能全内联**: 全部内联会让主入口膨胀到 ~1.3KB,
+2. memmove 的三条路径不能全内联: 全部内联会让主入口膨胀到 ~1.3KB,
    64B memmove 吞吐掉近一半 (I-cache 命中率)。`xm_copy_fwd_seq` 与
    `xm_copy_bwd` 必须保持 `noinline`。
-3. **快慢路径分界按"能否摊薄循环开销"定**: 快路径门槛是
+3. 快慢路径分界按"能否摊薄循环开销"定: 快路径门槛是
    `n >= 4*XM_VEC && gap >= XM_VEC`。只用 `n >= XM_VEC` 会让 64B~128B 档
    掉到 9.8 GB/s (改对后 14.6 GB/s)。
 

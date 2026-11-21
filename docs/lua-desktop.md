@@ -1,7 +1,7 @@
 # 桌面内嵌 Lua（desktop.lua）：脚本绘制壁纸 + 可编程窗口样式
 
 > 目标：桌面（`programs/desktop`）内嵌 Lua 5.4.7 解释器，启动时执行
-> `/mp/desktop.lua`。**壁纸完全由脚本直接画进 wallpaper framebuffer**（C++ 只提供
+> `/mp/desktop.lua`。壁纸完全由脚本直接画进 wallpaper framebuffer（C++ 只提供
 > framebuffer 原语，不解析渐变/颜色等主题参数）；窗口 chrome 通过受控
 > `sky.set_window_style` 配置。Lua 运行时不开放 io/os/package 等能力。
 
@@ -40,9 +40,9 @@ desktop main()
 
 ### 3.1 预置变量：`wallpaper`（壁纸 FrameBuffer）
 
-桌面在加载脚本**之前**就把壁纸 FrameBuffer 作为 Lua 变量建好：
+桌面在加载脚本之前就把壁纸 FrameBuffer 作为 Lua 变量建好：
 
-- 全局变量 **`wallpaper`**；
+- 全局变量 `wallpaper`；
 - 同一 table 也可通过 `sky.wallpaper` 访问（二者指向同一对象）。
 
 | 字段/方法 | 说明 |
@@ -63,7 +63,7 @@ desktop main()
 同时保留 `sky.wallpaper_size/info/fill/hline/vline/rect/pixel` 函数形式（与上述方法等价）。
 所有壁纸像素都由脚本绘制；C++ 不清屏以外的任何主题解析。越界坐标自动裁剪。
 
-**示例：直接用 `wallpaper` 变量画渐变**（默认 `desktop.lua` 即如此）：
+示例：直接用 `wallpaper` 变量画渐变（默认 `desktop.lua` 即如此）：
 
 ```lua
 local fb = wallpaper
@@ -107,7 +107,7 @@ end
 
 1. 修改 `programs/desktop/desktop.lua`（或镜像里的 `/mp/desktop.lua`）；
 2. `make cm` / `make -C programs` 会把 `desktop.lua` 重新 e2cp 进 `disk.img`；
-3. 重启 QEMU 后，桌面启动日志会输出 `source=file`、窗口样式与**壁纸回读样本**：
+3. 重启 QEMU 后，桌面启动日志会输出 `source=file`、窗口样式与壁纸回读样本：
    `[desktop] lua: wallpaper: script-painted fb=... WxH top=0x... mid=0x... bottom=0x...`
 4. 无头验证：
 
@@ -130,7 +130,7 @@ pwsh -File res/scripts/test/lua_desktop_smoke.ps1 `
 
 - `libc` 的 `printf_` 不支持 `%a` 十六进制浮点输出，因此 `string.format("%a")` 与
   `tostring` 的非整数 `%q` 序列化不完整（`%.14g`/`%f`/`%e` 正常）；`strtod` 的十六进制
-  浮点**输入**支持。
+  浮点输入支持。
 - 既有 `math.log()/exp()/pow()` 精度有限（历史实现；新增 `log2/log10` 是独立高精度核）。
 - Lua 的 io/os/package 库未被编译/注册；`/mp/desktop.lua` 通过桌面宿主的
   `luaL_loadfile` 读取，而不是 Lua io 库。

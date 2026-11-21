@@ -19,6 +19,6 @@ KCOMPONENT_BEGIN(syscall_random, "kernel.syscall.random", "1.0.0",
 
 KCOMPONENT_DEPENDS(syscall_random, "kernel.sched.core", sched)
 
-KCOMPONENT_EXPORT_SYSCALL(syscall_random, 20u, sys_getrandom)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_random, 20u, sys_getrandom)
 
 KCOMPONENT_END(syscall_random)

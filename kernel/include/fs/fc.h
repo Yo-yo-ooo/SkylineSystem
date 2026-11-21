@@ -177,6 +177,16 @@ uint64_t fc_next_file_uid(void);
 void    file_cache_check_load(file_cache_cpu_t *s, uint32_t load_factor);
 void    file_cache_idle_handler(file_cache_cpu_t *s);
 void    file_cache_tick(file_cache_cpu_t *s);
+/* 进程上下文调用：到点才做 LRU 频率衰减/ART 震荡表清理。IRQ 的 tick
+   只做无锁计数，不在中断里持 s->lock（否则会与 idle 上下文自死锁）。 */
+void    file_cache_maybe_decay(file_cache_cpu_t *s);
+/* Tier0 跳板：fc.cpp/fc_idle.cpp 在 kernel.fs.vfs.ko。 */
+void    file_cache_tick_hook(file_cache_cpu_t *s);
+int32_t file_cache_fsync_hook(file_cache_cpu_t *s, uint64_t file_id);
+void    file_cache_idle_handler_hook(file_cache_cpu_t *s);
+void    file_cache_cpu_init_hook(file_cache_cpu_t *s, uint32_t cpu_id,
+                                 int32_t (*writeback_cb)(uint64_t, const uint8_t *, uint32_t, void *, size_t));
+void    file_cache_set_limits_hook(file_cache_cpu_t *s, uint64_t soft_limit, uint64_t hard_limit);
 
 #pragma endregion
 

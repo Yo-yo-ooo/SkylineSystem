@@ -19,7 +19,8 @@ KCOMPONENT_BEGIN(syscall_dev, "kernel.syscall.dev", "1.0.0",
 KCOMPONENT_DEPENDS(syscall_dev, "kernel.sched.core", sched)
 KCOMPONENT_DEPENDS(syscall_dev, "kernel.dev.core", dev)
 
-KCOMPONENT_EXPORT_SYSCALL(syscall_dev, 21u, sys_dev_mmap)
-KCOMPONENT_EXPORT_SYSCALL(syscall_dev, 24u, sys_dbgsout)
+/* sys_dev_mmap 在 device.cpp，随 kernel.syscall.info 注册；本组件只保留
+ * dbgout.cpp 的调试输出实现。 */
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_dev, 24u, sys_dbgsout)
 
 KCOMPONENT_END(syscall_dev)

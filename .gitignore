@@ -8,6 +8,8 @@
 /lib/obj-so
 /tests/bin
 /iso_root
+client
+.qemu-lock/
 *.pcap
 *.iso
 *.hdd

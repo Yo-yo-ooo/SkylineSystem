@@ -34,6 +34,21 @@
 #include <mem/heap.h>
 #endif
 
+/* ================================================================== */
+/* kernel.dynlink.v1：统一 DynModule 注入服务（DLL 式 LoadLibrary）     */
+/* ================================================================== */
+/* 直接符号导出用于只需要一个入口的模块；ops 契约导出带 ops_size 强校验，
+ * 是模块侧 KMOD_IMPORT_DYNLINK()/KCOMPONENT_IMPORT_DYNLINK() 的入口。 */
+kmod_dynlink_ops_t g_kdll_ops = {
+    KMOD_DYNLINK_OPS_ABI,
+    (uint32_t)sizeof(kmod_dynlink_ops_t),
+    KdllInject,
+    KdllEject,
+    KdllResolve,
+    KdllInjectImage,
+    KdllInjectFile,
+};
+
 /* kmod_abi.h 目前只为 mem/log/sync/epoch/syscall 五个内核契约提供了宏；
  * libc/time 契约按任务约定使用字面量（如后续头文件补宏，这里直接替换即可）。 */
 #define KMOD_CONTRACT_KERNEL_LIBC_V1 "kernel.libc.v1"
@@ -115,21 +130,19 @@ KMOD_KEXPORT(memcmp, KMOD_CONTRACT_KERNEL_LIBC_V1, 1u, KMOD_SYM_FUNC);
 
 KMOD_KEXPORT(KmodNowMs, KMOD_CONTRACT_KERNEL_TIME_V1, 1u, KMOD_SYM_FUNC);
 
-/* ---- Tier1 dosvm：动态 syscall 门面 (dosvm.ko) 的内核侧符号 -----------
- * provider = "kernel"，contract = kernel.dosvm.v1，abi = 1。
- * 实现由 kernel/modules/builtin/x86_64/dosvm/ 提供（真正的 long->real->long
- * 往返）；本表只发布地址，dosvm.ko 通过 .in 导入后转调，绝不触碰 CR/GDT。
- * 契约头已用 extern "C" 声明这些函数，故 KMOD_KEXPORT 可直接取 &name。 */
-KMOD_KEXPORT(dosvm_enter, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
-KMOD_KEXPORT(dosvm_read, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
-KMOD_KEXPORT(dosvm_generation, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
-KMOD_KEXPORT(dosvm_last_cpu, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
-KMOD_KEXPORT(dosvm_trips, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
-/* .COM 装载与键盘注入：实模式里没有活键盘/文件回调，映像与按键都要在
- * trip 之前由用户态搬进低内存。 */
-KMOD_KEXPORT(dosvm_stage_com, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
-KMOD_KEXPORT(dosvm_push_keys, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
-KMOD_KEXPORT(dosvm_mem_rw, DOSVM_KERNEL_CONTRACT, 1u, KMOD_SYM_FUNC);
+/* ---- 统一 DynModule 注入服务（kernel.dynlink.v1）--------------------
+ * 模块可以用直接符号或 ops 契约导入；governance 在 bind 阶段要求
+ * KMOD_CAP_MODULE_LOAD（KdllEject 单独要求 MODULE_UNLOAD）。 */
+KMOD_KEXPORT(KdllInject, KMOD_CONTRACT_KERNEL_DYNLINK, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(KdllEject, KMOD_CONTRACT_KERNEL_DYNLINK, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(KdllResolve, KMOD_CONTRACT_KERNEL_DYNLINK, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(KdllInjectImage, KMOD_CONTRACT_KERNEL_DYNLINK, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT(KdllInjectFile, KMOD_CONTRACT_KERNEL_DYNLINK, 1u, KMOD_SYM_FUNC);
+KMOD_KEXPORT_CONTRACT(KMOD_CONTRACT_KERNEL_DYNLINK, g_kdll_ops,
+                      KMOD_DYNLINK_OPS_ABI);
+
+/* dosvm 现在是独立 kernel.arch.dosvm.ko（modules.saf）：它的 C API 与
+ * syscall 210..214 都在自己的镜像里，不再由 kernel .kout 发布。 */
 
 #endif /* !__KERNEL_TEST_HOST__ */
 
@@ -294,6 +307,21 @@ kmod_export_t g_host_kout[] = {
                       host_dosvm_push_keys, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
     KMOD_EXPORT_ENTRY("dosvm_mem_rw", DOSVM_KERNEL_CONTRACT,
                       host_dosvm_mem_rw, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    /* 统一 DynModule 注入服务（与内核 .kout 同源；宿主上直接函数地址）。 */
+    KMOD_EXPORT_ENTRY("KdllInject", KMOD_CONTRACT_KERNEL_DYNLINK, KdllInject,
+                      0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("KdllEject", KMOD_CONTRACT_KERNEL_DYNLINK, KdllEject,
+                      0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("KdllResolve", KMOD_CONTRACT_KERNEL_DYNLINK,
+                      KdllResolve, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("KdllInjectImage", KMOD_CONTRACT_KERNEL_DYNLINK,
+                      KdllInjectImage, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY("KdllInjectFile", KMOD_CONTRACT_KERNEL_DYNLINK,
+                      KdllInjectFile, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u),
+    KMOD_EXPORT_ENTRY(KMOD_CONTRACT_KERNEL_DYNLINK,
+                      KMOD_CONTRACT_KERNEL_DYNLINK, (void *)&g_kdll_ops,
+                      (uint32_t)sizeof(g_kdll_ops), KMOD_DYNLINK_OPS_ABI,
+                      KMOD_SYM_CONTRACT, 0u, 0u),
 };
 
 constexpr uint32_t kHostKoutCount =

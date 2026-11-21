@@ -73,9 +73,14 @@ const kmod_acpi_ops_t g_acpi_ops = {
 
 } /* namespace */
 
+extern "C" void acpi_set_find_table(void *(*)(const char *),
+                                    void *(*)(ACPI::SDTHeader *, const char *, int32_t));
+
 static int32_t arch_acpi_init(void)
 {
     (void)ACPI::Init((void *)RSDP_ADDR);
+    acpi_set_find_table((void *(*)(const char *))ACPI::FindTable,
+                        (void *(*)(ACPI::SDTHeader *, const char *, int32_t))ACPI::FindTable);
     MADT_Init();
     g_madt_tbl = ACPI::FindTable("APIC");
     g_mcfg_tbl = (void *)ACPI::mcfg;
@@ -99,4 +104,11 @@ static void arch_acpi_exit(void)
 
 KCOMPONENT_EXPORT_CONTRACT(arch_acpi, KMOD_CONTRACT_ACPI_V1, g_acpi_ops,
                            KMOD_ACPI_ABI_V1)
+/* ACPI::FindTable 已成为模块内定义；HPET 等组件按 mangled name 解析。 */
+KCOMPONENT_EXPORT_RAW(arch_acpi, acpi_find1, "_ZN4ACPI9FindTableEPKc",
+    (void *(*)(const char *))ACPI::FindTable, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(arch_acpi, acpi_find3,
+    "_ZN4ACPI9FindTableEPNS_9SDTHeaderEPKci",
+    (void *(*)(ACPI::SDTHeader *, const char *, int32_t))ACPI::FindTable,
+    0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 KCOMPONENT_END(arch_acpi)

@@ -26,17 +26,18 @@ KCOMPONENT_BEGIN(syscall_proc, "kernel.syscall.proc", "1.0.0",
 
 KCOMPONENT_DEPENDS(syscall_proc, "kernel.sched.core", sched)
 
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 6u, sys_thread_launch)
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 7u, sys_gettid)
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 8u, sys_getpid)
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 9u, sys_exit)
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 11u, sched_yield)
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 12u, sys_load)
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 13u, sys_launch)
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 19u, sys_kill)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 6u, sys_thread_launch)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 7u, sys_gettid)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 8u, sys_getpid)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 9u, sys_exit)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 11u, sched_yield)
+/* exec.cpp 已拆出内核 elf_load 核心，sys_load/sys_launch 随本 .ko 本地实现。 */
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 12u, sys_load)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 13u, sys_launch)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 19u, sys_kill)
 /* 子进程退出事件（固定槽 31）：desktop 每帧弹出 {pid, exit_code} 立即回收
    窗口，替代 500ms sys_kill(pid,0) 轮询；ABI 见
    kernel/include/arch/x86_64/schedule/syscall.h + 用户 syscalln.h。 */
-KCOMPONENT_EXPORT_SYSCALL(syscall_proc, 31u, sys_child_event)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_proc, 31u, sys_child_event)
 
 KCOMPONENT_END(syscall_proc)

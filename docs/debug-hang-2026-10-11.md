@@ -12,7 +12,7 @@
 [INFO] [lwip][ping] reply from 10.0.2.      <- 整机从此没有任何新输出
 ```
 
-日志在**一行中间**断掉 ⇒ 不是应用退出, 而是整机停摆 (或内核已经崩了)。
+日志在一行中间断掉 ⇒ 不是应用退出, 而是整机停摆 (或内核已经崩了)。
 
 ## 2. 复现方法 (WSL + QEMU, 无显示器)
 
@@ -25,12 +25,12 @@ wsl -e bash -c "cd /mnt/c/ZSY/SkylineSystem && python3 /tmp/_fuzz.py --iters 25 
 - `_dbg_start.sh <tag>`: 起一个带 `-serial file:` + monitor(unix socket) + `-gdb tcp::<port>` 的
   headless QEMU 实例 (私有 disk.img 副本, 可多实例并行)。
 - `_dbg_fuzz.py`: 连续跑 N 次, 每次自动判定 "OK / 卡死 / 内核崩溃",
-  **第一次出现异常就冻结虚拟机**并把 4 个 vCPU 的寄存器 + monitor 现场写进
+  第一次出现异常就冻结虚拟机并把 4 个 vCPU 的寄存器 + monitor 现场写进
   `/tmp/ss-<tag>/HANG.txt`。
 - `_dbg_status.sh` / `_dbg_watch.sh <tag>` / `_dbg_hang.sh <tag>` / `_dbg_agg.sh`: 看结果。
 
-复现率 (22 次带界面的 headless 启动): **桌面进程被内核杀掉 3 次, 另有约 10 次出现
-TLB shootdown ACK 超时**。属于"每次开机都可能中"的量级。
+复现率 (22 次带界面的 headless 启动): 桌面进程被内核杀掉 3 次, 另有约 10 次出现
+TLB shootdown ACK 超时。属于"每次开机都可能中"的量级。
 
 ## 3. 现场证据
 
@@ -79,15 +79,15 @@ CPU3  CPL=0  RIP=0xffffffff80042a20                          <- PIT::MonotonicMS
   408349:  je     4083a9 <flush_tls_scb_all+0xe9>
 ```
 
-`0x4083A9` 正好是 **`flush_tls_scb_all()` 返回地址** ⇒ 缺页发生在
+`0x4083A9` 正好是 `flush_tls_scb_all()` 返回地址 ⇒ 缺页发生在
 `lib/stdc/allocator/allocator.c` 的 `FLUSH_TLS_LIST` 宏里那句
 `while (*(void**)_fl_tail) _fl_tail = *(void**)_fl_tail;`:
 延迟释放链表已经被写坏 (某个块的 `next` 指向未映射页 / 野指针),
-于是**桌面进程在遍历自己的 deferred-free 链表时踩空页, 被内核按 SIGSEGV 杀掉**。
+于是桌面进程在遍历自己的 deferred-free 链表时踩空页, 被内核按 SIGSEGV 杀掉。
 
 CR2 (`0x00007FFFFFE82000`) 是页对齐的, 且 `RSP` 恰好等于 `CR2` ⇒ 这台机器上
 链表走链用光了用户栈 (或链指针直接指向栈区未映射页), 两种情况都指向
-**deferred-free 链表损坏**。
+deferred-free 链表损坏。
 
 ### 3.3 连锁反应 (为什么"整机"停摆)
 
@@ -98,7 +98,7 @@ CR2 (`0x00007FFFFFE82000`) 是页对齐的, 且 `RSP` 恰好等于 `CR2` ⇒ 这
    `TLB shootdown: ACK timeout (2 left), unacked mask 0x6` 刷了 500+ 行 ⇒
    CPU1/CPU2 长时间关中断, 不响应 IPI, 发起核每次白等 100ms。
 3. CPU2 掉进 `Schedule::Exit` 的 `hlt` 自旋; CPU0 卡在用户态 (栈已损坏);
-   整个系统只剩串口还在偶尔输出 ⇒ **表现成"日志停在一行中间"**。
+   整个系统只剩串口还在偶尔输出 ⇒ 表现成"日志停在一行中间"。
 
 ## 4. 本次改动
 
@@ -110,10 +110,10 @@ CR2 (`0x00007FFFFFE82000`) 是页对齐的, 且 `RSP` 恰好等于 `CR2` ⇒ 这
 override SS_BUILD_DIR := $(if $(SS_BUILD_DIR),$(SS_BUILD_DIR),$(CURDIR))
 ```
 
-原实现 `override SS_BUILD_DIR := $(shell pwd)` 是**递归变量**: 它被 export 给
+原实现 `override SS_BUILD_DIR := $(shell pwd)` 是递归变量: 它被 export 给
 `kernel/` 子 make 后会在子目录里重新展开 `pwd`, 于是
 `-I$(SS_BUILD_DIR)/kernel/include` 变成 `kernel/kernel/include`,
-**内核任何源码改动都编译不过** (`fatal error: 'klib/kprintf.h' file not found`)。
+内核任何源码改动都编译不过 (`fatal error: 'klib/kprintf.h' file not found`)。
 这解释了为什么 `kernel/bin-x86_64/kernel` 与 `kernel/kernel` 的 md5 不一致。
 
 ### 4.2 内核: 停滞看门狗 (`stallwatch`)
@@ -125,11 +125,11 @@ override SS_BUILD_DIR := $(if $(SS_BUILD_DIR),$(SS_BUILD_DIR),$(CURDIR))
 
 机制:
 
-- 每个 CPU 在**每次进入中断/异常**时记下 `RIP/RSP/RFLAGS/向量` 并 `seq++`
+- 每个 CPU 在每次进入中断/异常时记下 `RIP/RSP/RFLAGS/向量` 并 `seq++`
   (`idt.cpp: idt_exception_handler` 里一次 `stall_note_entry()`)。
 - `spinlock_lock/unlock` (`klib.cpp`) 记录"正在等哪把锁 + 加锁点"。
 - `Schedule::Switch()` 里每秒几次调用 `stall_watch_tick()`: 发现某个 CPU
-  **3 秒没有任何进出记录**, 就把它的最后现场打到串口 (含内核栈启发式回溯),
+  3 秒没有任何进出记录, 就把它的最后现场打到串口 (含内核栈启发式回溯),
   并限流 (4 秒一次, 最多 20 次), 不会刷爆日志。
 
 效果 (实测日志):
@@ -141,7 +141,7 @@ override SS_BUILD_DIR := $(if $(SS_BUILD_DIR),$(SS_BUILD_DIR),$(CURDIR))
 [KERR]   waiting on : lock=ffffffff801a27c0 (acquired at ffffffff80049e00)
 ```
 
-以后遇到"整机停住", 串口会直接告诉你**哪个核停了、停在哪、在等哪把锁**,
+以后遇到"整机停住", 串口会直接告诉你哪个核停了、停在哪、在等哪把锁,
 不用再靠猜。
 
 ### 4.3 内核: 崩溃现场不再自己崩掉
@@ -152,7 +152,7 @@ override SS_BUILD_DIR := $(if $(SS_BUILD_DIR),$(SS_BUILD_DIR),$(CURDIR))
 for (i = 0; i < 5 && stack; i++) { kerror("%p\n", stack->rip); stack = stack->rbp; }
 ```
 
-栈一旦被踩坏, **处理程序自己在打印现场时二次缺页**, 日志停在
+栈一旦被踩坏, 处理程序自己在打印现场时二次缺页, 日志停在
 `Stack trace:` 之后, 现场全丢 (实测 r3 就是这样)。现改为:
 只在 `0xFFFF8000_00000000 ~ 0xFFFFFFFF_00000000` 范围内按 8 字节扫栈,
 逐个候选值做区间校验, 绝不 dereference 未知指针。
@@ -162,10 +162,10 @@ for (i = 0; i < 5 && stack; i++) { kerror("%p\n", stack->rip); stack = stack->rb
 `lib/stdc/allocator/allocator.c`:
 
 - 新增 `scb_ptr_ok()` / `scb_list_tail()` / `scb_list_count()`:
-  **每一步都校验指针** (非 0、8 字节对齐、`>= 0x10000`、`<= 0x7FFF_FFFF_FFFF`)。
+  每一步都校验指针 (非 0、8 字节对齐、`>= 0x10000`、`<= 0x7FFF_FFFF_FFFF`)。
 - `FLUSH_TLS_LIST`、`try_gc` 的 `APPEND_LIST`、两处 else 分支的挂尾,
   以及 `try_gc` 的计数循环, 全部改用这两个 helper。
-- 链损坏时: **保留本批、跳过本轮 GC** (宁可暂时漏回收, 也绝不再踩野指针),
+- 链损坏时: 保留本批、跳过本轮 GC (宁可暂时漏回收, 也绝不再踩野指针),
   并累加两个可供 GDB 观察的全局量:
 
 ```c
@@ -173,12 +173,12 @@ volatile uint64_t g_alloc_scb_list_corrupt;
 volatile uint64_t g_alloc_scb_list_bad_ptr;
 ```
 
-注意: 这只是**把"必崩"变成"可诊断 + 不崩"**, 并没有消除链表被写坏的根因
+注意: 这只是把"必崩"变成"可诊断 + 不崩", 并没有消除链表被写坏的根因
 (见第 5 节)。
 
 ### 4.5 重新构建用户态程序 (重要)
 
-`programs/*/Makefile` **不把 `lib/bin/lib.a` 当作依赖**, 所以只改 `lib/` 后
+`programs/*/Makefile` 不把 `lib/bin/lib.a` 当作依赖, 所以只改 `lib/` 后
 `make -C programs` 不会重新链接, 镜像里还是旧 ELF。本次已强制重链:
 
 ```
@@ -189,7 +189,7 @@ programs/bin/desktop.elf   (11:53, 含加固后的 allocator)
 
 ## 5. 第二个根因 (与用户日志完全一致的"停在一行中间")
 
-加固分配器后重跑, 桌面再也不被打死了, 但**用户描述的那个现象原样复现了一次**
+加固分配器后重跑, 桌面再也不被打死了, 但用户描述的那个现象原样复现了一次
 (第 17 次长时间运行): 串口重复停在 `[INFO] [lwip][ping] reply from 10.0.2.`
 这样的半行上, 整机不再推进。
 
@@ -225,12 +225,12 @@ while (PIT::TimeSinceBootMS() < deadline) {          /* deadline = now + 5000 */
 }
 ```
 
-**为什么 5 秒 deadline 没生效**: `PIT::TimeSinceBootMS()` 的冻结保护
+为什么 5 秒 deadline 没生效: `PIT::TimeSinceBootMS()` 的冻结保护
 (`pit.cpp: TimeSinceBootMS()` 里靠 `g_last_pit_ms`/`g_last_move_tsc` 判断
-"PIT 读数是否停住") 只有在 **TSC 已校准** 时才会接管; 而这条路径的判据是
+"PIT 读数是否停住") 只有在 TSC 已校准 时才会接管; 而这条路径的判据是
 "PIT 读数是否变化", `pit_ms` 由 `TicksSinceBoot` (BSP 的 IRQ0 中断里递增)
 算出。一旦 PIT 节拍在这台核/这段时间里不再递增, 而冻结保护又没能接管,
-deadline 永不成立 ⇒ **轮询退化成永旋**, 该核再也回不来。
+deadline 永不成立 ⇒ 轮询退化成永旋, 该核再也回不来。
 
 于是:
 
@@ -240,7 +240,7 @@ deadline 永不成立 ⇒ **轮询退化成永旋**, 该核再也回不来。
 3. `lwip` 线程和桌面线程都在等磁盘 I/O / 被饿死 ⇒ 串口停在一行中间;
 4. 用户看到的就是"PID 11 之后什么都没有了"。
 
-**结论**: 这是**两条独立的 bug 叠加**:
+结论: 这是两条独立的 bug 叠加:
 - (A) 用户态 deferred-free 链表损坏打死桌面 (第 3 节, 已加固);
 - (B) AHCI 读完成路径的 deadline 依赖 `TimeSinceBootMS()`, 该时钟会冻结,
   一旦冻结, 磁盘轮询变永旋, 整机陪葬 (第 5 节, 未修)。
@@ -254,7 +254,7 @@ deadline 永不成立 ⇒ **轮询退化成永旋**, 该核再也回不来。
 - `StopCMD()/StartCMD()` 的 500ms 等待保持 `TimeSinceBootMS()` (引导早期
   TSC 未校准), 但这两处现在只会在 `RecoverPort()` 里被调用, 有恢复限流。
 
-## 6. 时钟实测: 墙钟比真实时间**慢**
+## 6. 时钟实测: 墙钟比真实时间慢
 
 排查过程中专门测了 guest 墙钟 (`_dbg_clocksoak.py`): lwIP 每 3 秒 (guest 时间)
 发一次 ping 并累加计数, 从 host 侧测同一个计数增量的真实间隔:
@@ -263,25 +263,25 @@ deadline 永不成立 ⇒ **轮询退化成永旋**, 该核再也回不来。
 host/guest_3s = 3.7 ~ 5.0     (1.00 = 准确)
 ```
 
-也就是 `PIT::TimeSinceBootMS()` **慢了约 1.3~1.7 倍**。这有两个后果:
+也就是 `PIT::TimeSinceBootMS()` 慢了约 1.3~1.7 倍。这有两个后果:
 
 1. 所有以它算的 deadline 都被拉长 (5 秒超时实际 ≈ 7~8 秒) —— 本报告第 5 节
    现象因此更糟;
-2. 反过来也说明: **任何依赖 IRQ0 节拍计数的时钟都不适合做 deadline**,
+2. 反过来也说明: 任何依赖 IRQ0 节拍计数的时钟都不适合做 deadline,
    `MonotonicMS()` (TSC 直读) 才是正确来源。
 
-顺带记录一个**失败的尝试**(已在代码注释里标注, 勿重蹈): 我曾让
+顺带记录一个失败的尝试(已在代码注释里标注, 勿重蹈): 我曾让
 `TimeSinceBootMS()` 直接复读 PIT channel 0 硬件计数器来算"节拍内分数",
 结果是墙钟跑快约 1.9x —— 说明 `TicksSinceBoot` 的实际节拍率与 `Divisor`
 推算值并不一致, 分数项等于重复计时。已回退。
 
 ## 7. 还没解决的 (下一步)
 
-1. **墙钟偏慢的根因** —— 为什么 `TicksSinceBoot` 的节拍率不等于
+1. 墙钟偏慢的根因 —— 为什么 `TicksSinceBoot` 的节拍率不等于
    `BaseFrequency/Divisor`? 怀疑 PIT 通道被别的代码 (或虚拟化) 改过,
    也可能 `freq` 的取值路径有偏差。这会影响 uptime 显示与所有
-   `TimeSinceBootMS` 语义, 但**不再影响本报告的挂死**。
-2. **deferred-free 链表为什么会被写坏** —— 这是 (A) 的根因。怀疑方向:
+   `TimeSinceBootMS` 语义, 但不再影响本报告的挂死。
+2. deferred-free 链表为什么会被写坏 —— 这是 (A) 的根因。怀疑方向:
    - `_skyline_free_internal()` 里 `push_deferred_scb()` 与 `try_gc()`
      对同一个全局表的并发 CAS 拼接 (代码注释自己就写了 "在途跨线程 free 的 UAF 窗口");
    - `qsbr_enter()` 的槽位是 `global_qsbr_slot_alloc % QSBR_SLOTS` 取模复用,
@@ -289,13 +289,13 @@ host/guest_3s = 3.7 ~ 5.0     (1.00 = 准确)
      却被判定为静默" ⇒ 提前 `munmap` ⇒ 另一线程还在遍历这块内存。
    加固后可以观察 `g_alloc_scb_list_corrupt` 是否会增长来确认
    (桌面每 2 秒检查一次, 非 0 就打印 `[INFO] App Serial Output: [alloc] ...`)。
-3. **TLB shootdown ACK 超时** 目前在超时后降级为 async, 但代价是发起核白等
+3. TLB shootdown ACK 超时 目前在超时后降级为 async, 但代价是发起核白等
    100ms; 高频时把桌面拖成幻灯片。建议查清"为什么目标核长时间不 ACK"。
 4. `flush_tls_scb_all` 的走链是 O(链长), 长期运行进程建议改成有界批处理。
 
 ## 8. 第二个机制: 自旋锁长持有 / 死等 (看门狗实测)
 
-给看门狗加上"持锁/等锁超过 1 秒就点名"的判据后, 长跑**第一次启动**就抓到:
+给看门狗加上"持锁/等锁超过 1 秒就点名"的判据后, 长跑第一次启动就抓到:
 
 ```
 ========== LOCK STALL WATCHDOG: CPU 0 has been waiting for lock
@@ -306,19 +306,19 @@ host/guest_3s = 3.7 ~ 5.0     (1.00 = 准确)
   holds      : site 0000000000000046 for 15.0e9 TSC ticks
 ```
 
-- 15e9 TSC ticks ≈ **5~6 秒**;
+- 15e9 TSC ticks ≈ 5~6 秒;
 - 等的那把锁地址落在 `FFFF9000_xxxx` (内核堆/动态分配区) —— 典型是
-  **某个 `cpu_t->sched_lock`** (AP 的 `cpu_t` 是 kmalloc 出来的), 也可能是
+  某个 `cpu_t->sched_lock` (AP 的 `cpu_t` 是 kmalloc 出来的), 也可能是
   inode/FD 树锁;
 - 期间整机输出停摆, 表现就是"日志停在一行中间"。
 
-也就是说: **长临界区/自旋锁死等是"整机停摆"的直接形态**。它未必是永久死锁
+也就是说: 长临界区/自旋锁死等是"整机停摆"的直接形态。它未必是永久死锁
 (几次抓到的现场都能继续跑), 但只要有一个核在锁上等 5 秒以上, 桌面/网络
 线程就一起停 5 秒, 从用户视角就是"卡住了"。
 
 > 看门狗早期版本有误报 (把启动早期的老快照和空闲 AP 当成停滞), 已修:
 > 现在只对"处在内核上下文 (`kernel_busy`) 且心跳不再推进"的核报警, 并且
-> 要求"等锁"判据能指出一个**同样新鲜**的持锁者。相关字段与判据见
+> 要求"等锁"判据能指出一个同样新鲜的持锁者。相关字段与判据见
 > `kernel/include/klib/stallwatch.h` 与 `kernel/src/klib/stallwatch.cpp`。
 
 ### 8.1 待办: 找出谁持锁 5 秒
@@ -326,12 +326,12 @@ host/guest_3s = 3.7 ~ 5.0     (1.00 = 准确)
 现场里的 `site` 值被早期版本的槽位串扰污染过, 需要再跑一次长 soak 拿到干净
 的 `site` 后再用 `_dbg_sym.py` 还原调用点。重点怀疑顺序:
 
-1. `AHCI::Port` 的 `slot_write`/`slot_read` (**磁盘 I/O 在锁内**, 上文第 5 节);
+1. `AHCI::Port` 的 `slot_write`/`slot_read` (磁盘 I/O 在锁内, 上文第 5 节);
 2. `VMM::DestroyPM` → `LazyTLB::ShootdownFence` (持 `pm->pt_lock` 等 IPI ACK);
 3. `FDManager` / `file_cache` 的全局锁 (ELF 加载期间持锁做 lwext4 I/O);
 4. 调度器 `sched_lock` 的跨核加锁 (`kill_thread_batch` 里按地址序加两把)。
 
-修法方向: **绝不在自旋锁里做 I/O 或等 IPI** —— 把 I/O 移出临界区,
+修法方向: 绝不在自旋锁里做 I/O 或等 IPI —— 把 I/O 移出临界区,
 或改成"取数据 → 放锁 → I/O → 重新加锁校验"的两段式。
 
 ## 9. 本次验证结果
@@ -357,12 +357,12 @@ f6  procs=3 doom=1 bad=0 tlb=2
 ```
 
 结论:
-- **(A) 桌面被自己的分配器打死** —— 已消除 (第 4.4 节);
-- **(B) AHCI 完成轮询被时钟拖死** —— 已修 (第 5.1 节: `MonotonicMS` + 端口恢复),
+- (A) 桌面被自己的分配器打死 —— 已消除 (第 4.4 节);
+- (B) AHCI 完成轮询被时钟拖死 —— 已修 (第 5.1 节: `MonotonicMS` + 端口恢复),
   之后 soak 里不再出现 AHCI 超时;
-- **(C) 自旋锁长持有/死等** —— 已能**稳定抓现场并点名** (第 8 节), 但根因
+- (C) 自旋锁长持有/死等 —— 已能稳定抓现场并点名 (第 8 节), 但根因
   (谁持锁 5 秒) 待定位; 这是目前"整机停摆"最主要的剩余形态;
-- **(D) 墙钟偏慢 1.3~1.7x** —— 独立问题, 已量化 (第 6 节), 不再影响本报告的挂死。
+- (D) 墙钟偏慢 1.3~1.7x —— 独立问题, 已量化 (第 6 节), 不再影响本报告的挂死。
 
 ## 10. "PROC 7 (桌面) 自己退了" —— 已定位到机制, 定位工具已就位
 
@@ -381,14 +381,14 @@ f6  procs=3 doom=1 bad=0 tlb=2
 ```
 
 - `user_rip=0x41C78C` 对应 `_start` 的收尾 (调用完 `main` 之后的
-  `allocator_thread_exit_cleanup` / `mov $9,%eax; syscall`) ⇒ **进程是
-  "正常返回"退出, 不是被杀也不是缺页崩溃**;
+  `allocator_thread_exit_cleanup` / `mov $9,%eax; syscall`) ⇒ 进程是
+  "正常返回"退出, 不是被杀也不是缺页崩溃;
 - `code=1` 来自 `main` 的返回值 ⇒ 只可能是桌面 `main()` 里那两处
   `return 1`:
   1. `wallBuf = malloc(scrW*scrH*4)` 失败 (1920×1080 时 ≈ 8 MB);
   2. `comp.Init(&fb)` 失败 —— 内部 `back_ = malloc(pitch*height*4)`
      (又一块 ≈ 8 MB)。
-- 也就是说: **桌面在启动阶段申请约 8 MB 的缓冲失败, 于是自己 return 1 退出。**
+- 也就是说: 桌面在启动阶段申请约 8 MB 的缓冲失败, 于是自己 return 1 退出。
 
 ### 10.2 本次新增的"退出证据链" (以后不用再猜)
 
@@ -401,11 +401,11 @@ f6  procs=3 doom=1 bad=0 tlb=2
 | `programs/desktop/main.cpp` | `[desktop] start: fb=...` / `[desktop] FATAL: ... -> exit(1)` / `[desktop] compositor up` | 直接说明是**哪一步**失败 (壁纸 malloc 还是 compositor 初始化) |
 | `syscall/exec.cpp` | `ELF entry: e_entry=.. bias=.. -> rip=..` | 进程"起不来/刚起来就退"时, 先看内核到底跳到哪 |
 
-> 注意: 用户态 `printf` **不走串口** —— 它写进共享控制台表面 (flanterm),
+> 注意: 用户态 `printf` 不走串口 —— 它写进共享控制台表面 (flanterm),
 > 只有 `sys_dbgsout`(系统调用 24) 才出现在串口日志里。之前那条
 > `[desktop] main reached` 探针就是用 `sys_dbgsout` 打的, 但实测里它没有
 > 出现在串口 (而同一次运行的 `Framebuffer mapped` 出现了), 说明探针这条路
-> 还有细节没查清 —— **不影响上面的结论**: `user_rip` 已经把退出点钉死在
+> 还有细节没查清 —— 不影响上面的结论: `user_rip` 已经把退出点钉死在
 > `_start` 收尾, 即 `main` 正常 `return 1`。
 
 ### 10.3 下一步 (定位到"哪一次 malloc 失败")
@@ -415,16 +415,16 @@ f6  procs=3 doom=1 bad=0 tlb=2
    `sys_mmap` 返回 0/-1 时的 PMM/VMA 状态 (`mem_free` 可用 `sys_sysinfo` 打印),
    以及 `VMM::Internal::InternalAlloc` 在地址空间碎片化时的行为;
 3. 桌面退出后的兜底: 目前"桌面一死整机就没有窗口管理", 建议在
-   `main` 的两处 `return 1` 之前**先重试/降级** (例如分配失败时先把
+   `main` 的两处 `return 1` 之前先重试/降级 (例如分配失败时先把
    分辨率降到可用尺寸, 或释放 wallpaper 再试 compositor), 而不是直接退出。
 
-## 11. **根因 (最终)**: 系统调用返回值被寄存器覆盖 —— "桌面自己退了"的真凶
+## 11. 根因 (最终): 系统调用返回值被寄存器覆盖 —— "桌面自己退了"的真凶
 
 ### 11.1 症状
 
 `PROC 7` 在启动约 1 秒后以 `code=1` 退出 (看不出是被杀还是崩溃), 内核日志显示
 FB 映射成功 (`Framebuffer mapped to VADDR: 0x...`), 但用户态拿到的是
-**全 0 的几何信息**, 于是 `main` 走到 `framebuffer info failed` 分支自杀。
+全 0 的几何信息, 于是 `main` 走到 `framebuffer info failed` 分支自杀。
 
 ### 11.2 定位过程 (关键证据)
 
@@ -445,12 +445,12 @@ mov [rsp + 14*8], rax     ; 把 %rax 当成"返回值"写回帧槽
 ```
 
 它假设 "`syscall_handler` 返回时 `%rax` 仍然是返回值"。但 `%rax` 是
-**caller-saved**: 只要 `syscall_handler` 在 `frame->rax = func(...)` 之后还执行
+caller-saved: 只要 `syscall_handler` 在 `frame->rax = func(...)` 之后还执行
 任何一步 (实际是 `stall_set_kernel_busy(0)` 这个函数调用), `%rax` 就被覆盖,
 帧槽里写进去的是那个残留值 —— 用户态看到 0 或 1。
 
-> 这正是它表现得如此误导的原因: **handler 返回值完全正确, 内核日志也正确,
-> 只有用户态拿到垃圾**; 中间那层寄存器传递没有任何日志可看。
+> 这正是它表现得如此误导的原因: handler 返回值完全正确, 内核日志也正确,
+> 只有用户态拿到垃圾; 中间那层寄存器传递没有任何日志可看。
 
 ### 11.4 修复
 
@@ -473,29 +473,29 @@ LOADED PID count: 3      (console / notepad / DOOM)
 [doom] init done         KERR: 仅个别 TLB ACK 超时
 ```
 
-- **连续 10 次启动 soak: 10/10 全部到达 `[doom] init done`** (TLB 超时 0–1);
+- 连续 10 次启动 soak: 10/10 全部到达 `[doom] init done` (TLB 超时 0–1);
 - 桌面进程不再退出 (`[exit] pid=7` 不再出现);
 - 清理掉临时诊断后再次确认: `compositor up=True`, `Exit PROC 7=False`。
 
 ### 11.6 排查途中踩的两个坑 (都已修进工具链)
 
-1. **构建脚本只重建 desktop/notepad** —— 改 `programs/helloworld` 后镜像里的
+1. 构建脚本只重建 desktop/notepad —— 改 `programs/helloworld` 后镜像里的
    `hw.elf` 仍是旧的, 探针"看起来没跑"。`_dbg_builduser.sh` 现在重建
    lib + helloworld + helloworld2 + desktop + notepad + PureDOOM, 并刷新
    `disk.img` 与 ISO。
-2. **启动脚本缓存了 `/tmp/ss-disk.img`** —— 内核从 ext4 镜像加载 `/mp/*.elf`,
-   缓存的旧镜像让最近所有启动都在跑**旧二进制**, 直接导致一整段定位走偏
+2. 启动脚本缓存了 `/tmp/ss-disk.img` —— 内核从 ext4 镜像加载 `/mp/*.elf`,
+   缓存的旧镜像让最近所有启动都在跑旧二进制, 直接导致一整段定位走偏
    (探针永远不打印)。`_dbg_screen.py` 现在每次启动前强制从仓库 `disk.img`
    重新同步 (除非显式 `--keep-disk`)。
 
-> 教训: 在这套系统里验证任何用户态改动, 必须先确认**镜像里的 ELF 是新的**
+> 教训: 在这套系统里验证任何用户态改动, 必须先确认镜像里的 ELF 是新的
 > (`md5sum` 内置副本 vs `programs/bin/*.elf`), 否则所有观察都不可信。
 
 | **v1 1–10** | **syscall 返回值修复后**: 每次 60 秒 | **10/10 全部到达 `[doom] init done`**, 桌面存活, TLB 超时 0–1 |
 | **fin2** | 清理临时诊断后的最终构建 | `compositor up=True`, `Exit PROC 7=False`, `LOADED PID=3`, **`KERR=0`** |
 
 结论:
-- **(0) 桌面自杀 = syscall 返回值被 `%rax` 覆盖** —— 已修 (第 11 节), 这是
+- (0) 桌面自杀 = syscall 返回值被 `%rax` 覆盖 —— 已修 (第 11 节), 这是
   "PID 11 之后什么都没有"的最终根因;
 - (A) 桌面分配器链表损坏 —— 已加固 (第 4.4 节);
 - (B) AHCI 完成轮询被时钟拖死 —— 已修 (第 5.1 节);

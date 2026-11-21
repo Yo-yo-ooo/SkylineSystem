@@ -23,11 +23,11 @@ gcc -O2 -o /tmp/ttftest.exe /tmp/ttftest.o /tmp/ttf_host.o
 Two phases:
 
 1. a short mixed ASCII/CJK string through all three loaders;
-2. **2000 distinct CJK glyphs** — far more than the window holds, so the
+2. 2000 distinct CJK glyphs — far more than the window holds, so the
    window must be recycled many times. This is the phase that would catch a
    bad eviction, a stale `loca` entry or a missed composite component.
 
-Passing means **0 differing bytes** in both phases.
+Passing means 0 differing bytes in both phases.
 
 ## Why `ttfprelude.h`
 

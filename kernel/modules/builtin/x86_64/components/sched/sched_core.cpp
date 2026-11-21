@@ -32,6 +32,7 @@ KCOMPONENT_BEGIN(sched_core, "kernel.sched.core", "1.0.0", KMOD_TIER_POLICY,
 KCOMPONENT_IMPORT_FN(sched_core, kprintf_, int, (const char *, ...), "kernel",
                      "kprintf_", "kernel.log.v1")
 KCOMPONENT_DEPENDS(sched_core, "kernel.arch.smp", smp)
+KCOMPONENT_DEPENDS(sched_core, "kernel.fs.fdcore", fs_fdcore)
 KCOMPONENT_DEPENDS(sched_core, "kernel.time.pit", pit)
 KCOMPONENT_DEPENDS(sched_core, "kernel.time.rtc", rtc)
 

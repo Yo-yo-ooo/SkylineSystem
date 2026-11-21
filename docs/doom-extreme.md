@@ -1,7 +1,7 @@
 # DOOM 极限压缩模式（DOOM_TINY）
 
-目标不是把 1993 年 DOOM 的完整 PC 数据塞进 2MB/384KB，而是把 **SkylineSystem
-上的 PureDOOM port** 按 RP2040/Pico 移植的思路做到可测量的最简：
+目标不是把 1993 年 DOOM 的完整 PC 数据塞进 2MB/384KB，而是把 SkylineSystem
+上的 PureDOOM port 按 RP2040/Pico 移植的思路做到可测量的最简：
 
 - 帧缓冲“撒谎”：多个 screen 指针指向同一块；
 - 去掉 RGBA 全屏副本，直接把 8-bit palette 索引转 ARGB 写 WM surface；
@@ -9,14 +9,14 @@
 - 用 WAD trim + ADPCM 工具减少数据体积；
 - 用最小稳定 zone 在 64MiB QEMU 目标机运行。
 
-> 诚实边界：原版 DOOM 的关卡几何/纹理/物理数据与 fixed_t 未做有损压缩；
+> 边界：原版 DOOM 的关卡几何/纹理/物理数据与 fixed_t 未做有损压缩；
 > 本移植仍从 ext4 上的 `/mp/doom.wad` 读取，而不是把 IWAD 编进固件。
 > 因此这是“在 Skyline 的 64MiB 目标机上把 DOOM 固定开销压到最低”，
 > 不是 RP2040 的 384KB 运行环境本身。
 
 ## 1. 实现（`programs/PureDOOM/`）
 
-`DOOM_TINY` 默认在 `programs/PureDOOM/Makefile` 为 **1**；普通模式：
+`DOOM_TINY` 默认在 `programs/PureDOOM/Makefile` 为 1；普通模式：
 
 ```sh
 make -C programs/PureDOOM DOOM_TINY=0
@@ -27,7 +27,7 @@ make -C programs/PureDOOM DOOM_TINY=0
 `PureDOOM.h::V_Init()`：
 
 - 普通：`I_AllocLow(320*200*4)` → `screens[0..3]` 4 块各 64KiB；
-- tiny：只分配 **1 块 64KiB**，`screens[0..3]` 全部别名到同一地址；
+- tiny：只分配 1 块 64KiB，`screens[0..3]` 全部别名到同一地址；
   `screens[4]`（ST 状态栏 10KiB）仍由 ST_Init 单独分配。
 
 代价与处理：
@@ -41,7 +41,7 @@ make -C programs/PureDOOM DOOM_TINY=0
 - `M_SizeDisplay` 拒绝并强制 `screenblocks=11` 全屏，避免 screens[1] 后屏
   别名污染；HUD 状态栏在 tiny 下隐藏（菜单/游戏画面仍可用）。
 
-固定节省：**4×64KiB → 1×64KiB = 192KiB**。
+固定节省：4×64KiB → 1×64KiB = 192KiB。
 
 ### 1.2 去 RGBA 全屏副本
 
@@ -59,7 +59,7 @@ tiny 路径：
   640x392 非精确 2x content）。
 
 固定节省：`screen_buffer` 64KiB + `final_screen_buffer` 256KiB + 第二次
-screens[0] 64KiB = **384KiB**。
+screens[0] 64KiB = 384KiB。
 
 ### 1.3 合计固定内存
 
@@ -83,7 +83,7 @@ tiny 下额外：
   的前提（否则 `W_GetNumForName("dspistol")` / `d_<song>` 会 I_Error）；
 - screenshot 禁用（无写文件路径）；
 - 16 位类型审计：`_Static_assert` 冻结 screen 尺寸/64KiB 可寻址假设；
-  **fixed_t/angle_t/坐标/WAD offset 未改**（改了会破坏物理/渲染），
+  fixed_t/angle_t/坐标/WAD offset 未改（改了会破坏物理/渲染），
   没有做危险的全局类型收缩。
 
 ## 2. WAD trim / ADPCM 工具
@@ -123,7 +123,7 @@ vs 16-bit PCM: 3.93:1
 vs DMX8      : 1.97:1
 ```
 
-默认部署**不启用 ADPCM**：DOOM 已无音频驱动且 tiny 已剥离音频，保留的
+默认部署不启用 ADPCM：DOOM 已无音频驱动且 tiny 已剥离音频，保留的
 WAD 不含音频；该工具/格式用于量化“如果保留音频，ADPCM 能省多少”，
 并可作为后续完整音频 WAD 的第一步。
 
@@ -131,7 +131,7 @@ WAD 不含音频；该工具/格式用于量化“如果保留音频，ADPCM 能
 
 - 关卡几何、纹理、sprite、patch、flat、colormap 等渲染/物理数据；
 - `fixed_t` 物理精度；
-- WAD 仍从 **ext4 文件流式读取**（不是 RP2040 的 XIP/flash 内存映射）。
+- WAD 仍从 ext4 文件流式读取（不是 RP2040 的 XIP/flash 内存映射）。
 
 原因：把 9–11MB WAD 编进 ELF 会把它整体搬进 RAM，反而更差；RP2040 的
 XIP 是硬件映射，Skyline 用户态没有等价的安全 file mmap。若未来加
@@ -149,12 +149,12 @@ XIP 是硬件映射，Skyline 用户态没有等价的安全 file mmap。若未�
 | > 192 MiB | 12 MiB（上游默认） |
 
 实测（旧内核、完整 WAD、非 tiny）：12MiB 可跑但 OOM 数千；9MiB R_Init
-卡死；8MiB 不稳定；**10MiB 是最小稳定档**。在 DOOM_TINY（固定 buffer
-省 575KiB）+ WAD trim 后，**8MiB 连续三次通过 64MiB 测试**（init done +
+卡死；8MiB 不稳定；10MiB 是最小稳定档。在 DOOM_TINY（固定 buffer
+省 575KiB）+ WAD trim 后，8MiB 连续三次通过 64MiB 测试（init done +
 心跳 + 0 panic/STALL，OOM≈26 行，init 后仍余 ~5MiB），故低内存档最终
 取 8MiB；普通/大内存仍 10–12MiB。
 
-Skyline 低内存启动策略：`<80MiB` 时自动启动 **Console + DOOM**，
+Skyline 低内存启动策略：`<80MiB` 时自动启动 Console + DOOM，
 Notepad/Settings 延迟（Ctrl+Alt+N/S 可再拉起），把 56MiB 优先给 DOOM。
 `Ctrl+Alt+D` 始终可 raise/restore/spawn DOOM。
 
@@ -163,7 +163,7 @@ QEMU 验证（`res/scripts/test/doom_compact_smoke.ps1`）：
 - 2G：`[doom] compact=1 screens_kb=64 final_rgba_kb=0 screen_copy_kb=0`，
   `zone_mb=12`，`init done`，心跳；截图见 `doom_compact.png`。
 - 64M：`-MemMB 64` → `[doom] zone_mb=10`，`mem_free_mb=24`（zone 前），
-  `mem_free_mb_post_init=0`，**init done + 心跳持续**，OOM≈145 行，
+  `mem_free_mb_post_init=0`，init done + 心跳持续，OOM≈145 行，
   0 panic / 0 STALL；截图 `doom_compact_64m.ppm`（由 gate 生成）。
 - WAD trim 后 `[doom] wad bytes=9071551 -> 9071551 (trim file=-1)`；
   没有 mirror（正常 VFS 流式读）。
@@ -172,12 +172,12 @@ QEMU 验证（`res/scripts/test/doom_compact_smoke.ps1`）：
 
 | RP2040/Pico 技术 | Skyline 对应实现 | 是否达成 |
 |---|---|---|
-| 帧缓冲别名 | screens[0..3] 单块别名 | ✅ 省 192KiB |
-| 音效 ADPCM-XQ | wadtrim `--adpcm` IMA-ADPCM 4:1 工具 | ✅ 量化工具（默认音频剥离） |
-| 32→16 位变量 | 审计 + screen 尺寸静态断言；不动 fixed_t | ⚠️ 仅审计/安全约束，不做全局有损收缩 |
-| 去文件 I/O/网络 | 无音频/网络；WAD 仍 VFS 流式 | ⚠️ 仅非核心模块 |
-| WAD 编进固件/XIP | 未做（无用户态 file mmap；编进 ELF 反而更耗 RAM） | ❌ 有明确工程理由 |
-| 384KB RAM 运行 | 64MiB QEMU 下 DOOM 可运行，固定开销 65KiB + 10MiB zone | ❌ 不是同一硬件极限 |
+| 帧缓冲别名 | screens[0..3] 单块别名 | 省 192KiB |
+| 音效 ADPCM-XQ | wadtrim `--adpcm` IMA-ADPCM 4:1 工具 | 量化工具（默认音频剥离） |
+| 32→16 位变量 | 审计 + screen 尺寸静态断言；不动 fixed_t | 仅审计/安全约束，不做全局有损收缩 |
+| 去文件 I/O/网络 | 无音频/网络；WAD 仍 VFS 流式 | 仅非核心模块 |
+| WAD 编进固件/XIP | 未做（无用户态 file mmap；编进 ELF 反而更耗 RAM） | no 有明确工程理由 |
+| 384KB RAM 运行 | 64MiB QEMU 下 DOOM 可运行，固定开销 65KiB + 10MiB zone | no 不是同一硬件极限 |
 
 ## 5. 复现
 

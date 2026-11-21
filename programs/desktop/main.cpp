@@ -737,12 +737,22 @@ static void wm_paint_chrome_live(uint32_t* rzSurf, int32_t rzPitch,
    加了扫描出锁 (CompScanGuard), 光标线程与主线程互斥。
    ========================================================================== */
 static volatile ps2_mouse_state_t* g_mouse_page;
+/* 主线程发布的"最新光标坐标"（x 高 32 位、y 低 32 位，单条 64 位原子存）。
+   光标线程**不直接读内核共享页**：实测同进程内、同一个 VA，主线程能读到
+   鼠标更新而 worker 线程长期读到全 0（跨核 TLB/PCID 的陈旧翻译，见
+   docs/gui.md）。改由主线程把采样值写到普通 .bss 全局，两个线程共享
+   这份内存是稳定的。 */
+static volatile int64_t g_mouse_pos;
 /* 光标线程的节拍基准: 由 main() 在 probe_tsc_per_ms() 之后发布, 光标线程
    只读。默认 3 GHz 是"主线程还没跑到"时的兜底, 不会用到 (线程在标定之后
    才启动)。 */
 static uint64_t g_cursor_tsc_per_ms = 3000000u;
 
 extern "C" void CursorThreadEntry() {
+    {
+        static const char m[] = "[desktop] cursor thread running\n";
+        syscall(SYS_DBGSOUT, (uint64_t)m, (uint64_t)(sizeof(m) - 1), 0, 0, 0, 0);
+    }
     int32_t lx = -100000, ly = -100000;
     Compositor& comp = Compositor::Get();
     /* 连续抢锁失败计数。
@@ -752,22 +762,28 @@ extern "C" void CursorThreadEntry() {
        连续失败到阈值就退化为阻塞版 CursorMoveTo: 它走 LockScan (有界自旋
        + sys_yield 让出), 既不会把核占死, 也保证光标一定被画出来。 */
     uint32_t miss_run = 0;
+    uint32_t dbg_samples = 0;
     for (;;) {
-        volatile ps2_mouse_state_t* mp = g_mouse_page;
-        if (mp) {
-            uint32_t s1 = 0, s2 = 0;
-            int32_t x = 0, y = 0;
-            do {
-                s1 = __atomic_load_n(&mp->seq, __ATOMIC_ACQUIRE);
-                if (s1 & 1) continue;
-                x = mp->x; y = mp->y;
-                s2 = __atomic_load_n(&mp->seq, __ATOMIC_ACQUIRE);
-            } while (s1 != s2);
+        {
+            const int64_t packed = __atomic_load_n(&g_mouse_pos, __ATOMIC_ACQUIRE);
+            uint32_t s2 = 0;
+            int32_t x = (int32_t)(packed >> 32);
+            int32_t y = (int32_t)(uint32_t)(packed & 0xFFFFFFFF);
+            (void)s2;
 
             if (x < 0) x = 0;
             if (y < 0) y = 0;
             if (x > 16000) x = 16000;
             if (y > 16000) y = 16000;
+            if ((x != lx || y != ly) && dbg_samples < 6u) {
+                char b[160];
+                int n = snprintf(b, sizeof(b),
+                                 "[cursor] pid=%d moved x=%d y=%d lx=%d ly=%d\n",
+                                 (int)sys_getpid(), (int)x, (int)y,
+                                 (int)lx, (int)ly);
+                if (n > 0) syscall(SYS_DBGSOUT, (uint64_t)b, (uint64_t)n, 0, 0, 0, 0);
+                dbg_samples++;
+            }
             if (x != lx || y != ly) {
                 /* 非阻塞: 主线程正在整屏合成时抢不到锁就丢掉这次采样,
                    2ms 后自然重试。**不能**在这里阻塞等锁 —— 自旋会把本核
@@ -1482,9 +1498,25 @@ int main(){
     /* 光标线程: 见 CursorThreadEntry 的说明。必须在 SetCursor 之后启动,
        否则第一帧可能先被线程画一次再被初始化覆盖。 */
     g_mouse_page = p;
-    if ((int64_t)sys_thread_launch((uint64_t)CursorThreadEntry, 0) < 0) {
-        /* 启动失败就退回主线程贴图 (老路径), 保证光标仍可用 */
-        g_mouse_page = nullptr;
+    {
+        char mm[128];
+        int mn = snprintf(mm, sizeof(mm),
+                          "[desktop] mouse_addr=0x%llx p=%p g_mouse_page=%p\n",
+                          (unsigned long long)mouse_addr, (void*)p,
+                          (void*)g_mouse_page);
+        if (mn > 0) syscall(SYS_DBGSOUT, (uint64_t)mm, (uint64_t)mn, 0, 0, 0, 0);
+    }
+    {
+        const long cursor_rc = (long)sys_thread_launch((uint64_t)CursorThreadEntry, 0);
+        char cm[96];
+        const int cn = snprintf(cm, sizeof(cm),
+                                "[desktop] cursor thread launch rc=%ld\n", cursor_rc);
+        if (cn > 0)
+            syscall(SYS_DBGSOUT, (uint64_t)cm, (uint64_t)cn, 0, 0, 0, 0);
+        if (cursor_rc < 0) {
+            /* 启动失败就退回主线程贴图 (老路径), 保证光标仍可用 */
+            g_mouse_page = nullptr;
+        }
     }
     /* 光标位置/可见性是"结构性"状态: 之后的第一次合成必须整屏 (局部行带可能
        根本不含光标所在行, 那样屏幕上就没有箭头)。 */
@@ -1509,6 +1541,11 @@ int main(){
         if (my < 0) my = 0;
         if (mx >= fb_width - 16) mx = fb_width - 16;
         if (my >= fb_height - 16) my = fb_height - 16;
+        /* 把采样值发布给光标线程（单条 64 位原子存，x 高 32 位 / y 低 32 位）。
+           不写回内核共享页 —— 那会和驱动更新竞争（见下）。 */
+        __atomic_store_n(&g_mouse_pos,
+                         ((int64_t)(uint32_t)mx << 32) | (uint32_t)my,
+                         __ATOMIC_RELEASE);
         /* 注意: 这里**不要**把夹紧后的坐标写回共享状态。
            曾经这么做过, 结果是一场竞态: 桌面每个循环都写回, 而驱动随时可能
            刚更新了位置 —— 写回会把新位置覆盖成旧值, 单次移动很容易被抹掉

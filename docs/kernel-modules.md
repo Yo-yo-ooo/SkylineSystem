@@ -1,18 +1,17 @@
-# 内核模块机制：私有契约型可加载组件链接与治理 (kmod)
+# 内核模块机制：私有契约型 DynModule 链接与治理 (kmod)
 
-> 一句话：**统一边界，放开实现；管住回滚，放开私有契约。**
->
-> 本文档描述 Tier 0 固定机制（加载器/拓扑/能力/事务/回滚/syscall 边界/座位），以及
-> `.ko` 与**内建组件**共用的线格式。整个内核组件的迁移清单与 Tier 划分见
+> Tier 0 的固定机制都在这份文档里：加载器、拓扑、能力、事务、回滚、syscall 边界、座位，
+> 以及 resident / relocatable DynModule 共用的线格式。Tier 1/Tier 2 已合并为
+> 单一 DynModule 类别，注入 API 与迁移细节见
+> [kernel-dynlink.md](kernel-dynlink.md)；全内核的组件清单见
 > [kernel-components.md](kernel-components.md)。
 
 ---
 
 ## 1. 总体定位
 
-这不是微内核，也不是"所有东西都可任意热替换"的全模块内核，而是一套：
-
-> 运行在内核态、面向宏内核增强的**私有契约型可加载模块链接与治理机制**。
+它既不是微内核，也不是「万物皆可热替换」的全模块内核，准确说是一套运行在内核态、
+给宏内核补上可加载能力的私有契约链接与治理机制。
 
 - 系统调用对外契约固定；
 - 内核内部组件实现可插拔；
@@ -22,19 +21,33 @@
 
 ## 2. 分层与 Tier
 
-| 层 | 内容 | 可否热替换 | 代码位置 |
+| 层 | 内容 | 镜像后端 / 可否热替换 | 代码位置 |
 |---|---|---|---|
-| **Tier 0 核心** | 启动、页表、中断、上下文切换、syscall 入口、模块加载器、回滚机制、能力注册表、组件句柄/生命周期 | ❌ 固定 | `kernel/src/arch/x86_64/kmod/`、arch 核心 |
-| **Tier 1 内建组件** | 静态链接进内核镜像、但走同一 ABI/图/治理的组件：syscall 实现家族、驱动、文件系统、协议栈、调度策略、分配器策略 | ⚠️ 机制支持 builtin→.ko takeover；真实 `kernel.*` 组件受 `.ko` 名称保留校验保护，当前不可被外部 `.ko` 同名替换（座位策略层可替换） | `kernel/src/arch/x86_64/kmod/builtin.cpp`、`kernel/modules/builtin/` |
-| **Tier 2 可加载 `.ko`** | 外部可加载实现/扩展/诊断 | ✅ 加载/热替换/卸载（受治理） | `kernel/modules/`、任意外部 `.ko` |
+| **Tier 0 核心** | 启动、页表、中断、上下文切换、syscall 入口、模块加载器、回滚机制、能力注册表、组件句柄/生命周期 | 固定，不可模块化 | `kernel/src/arch/x86_64/kmod/`、arch 核心 |
+| **DynModule（组件 .ko）** | 40 个原组件壳（平台/时间/SMP、syscall 家族、驱动、文件系统、协议栈、调度/分配策略、dosvm） | 独立 ET_REL .ko，从 **modules.saf** 加载；kernel.* 为 trusted | `kernel/modules/builtin/`、`bin-x86_64/components/**/*.ko` |
+| **resident 核心节点** | pmm/vmm/heap/syscall 入口 | 无代码镜像，仅模块表 READY 节点 | `kdll.cpp` |
+| **DynModule（relocatable）** | 外部实现/扩展/诊断；ET_REL `.ko` | 运行期布局/重定位；加载/热替换/卸载/注入（受治理） | `kernel/modules/loadable/`、任意外部 `.ko` |
 
-Tier 0 与 Tier 1 的边界是**机制 vs 策略**：
+Tier 0 与 DynModule 的边界是机制 vs 策略：
 
-- 调度器核心（队列/上下文切换/时钟）固定，调度**策略**可由座位替换；
-- VFS 契约固定，文件系统**实现**是组件；
-- syscall 入口/编号/语义固定，**实现**可注册；
-- PCI 枚举/中断分发固定，**驱动**是组件；
-- 分配页表/slab 机制固定，**分配策略/回收策略**可由座位替换。
+- 调度器核心（队列/上下文切换/时钟）固定，调度策略可由座位替换；
+- VFS 契约固定，文件系统实现是组件；
+- syscall 入口/编号/语义固定，实现可注册；
+- PCI 枚举/中断分发固定，驱动是组件；
+- 分配页表/slab 机制固定，分配策略/回收策略可由座位替换。
+
+### 2.1 统一注入面（kernel.dynlink.v1）
+
+组件 .ko 与 resident 核心节点都由 `KdllInject(name, flags)` 注入；已加载的模块
+幂等返回，`KMOD_INJ_PIN` 增加引用计数，`KdllEject` 释放。依赖 provider
+可以是 resident 核心节点或镜像池里的 .ko，治理层按 .in 自动拉起。
+`KdllResolve(provider, symbol)` 提供 dlsym 式解析，`KdllInjectFile(path)`
+支持运行期从 VFS 读 `.ko`。能力门禁：导入注入契约要求
+`KMOD_CAP_MODULE_LOAD`，直接导入 `KdllEject` 要求 `KMOD_CAP_MODULE_UNLOAD`。
+
+Tier0 核心机制（pmm/vmm/heap/syscall 入口）以 resident DynModule 登记为
+`kernel.mem.pmm`、`kernel.mem.vmm`、`kernel.mem.heap`、
+`kernel.arch.syscall`，因此模块可以显式注入它们（dosvm 的 init 即示例）。
 
 ## 3. 线格式（模块 ABI v1）
 
@@ -74,16 +87,25 @@ typedef struct kmod_manifest {
 编译（`-mcmodel=kernel` 会生成 32 位绝对地址，模块在 HHDM 高地址会溢出）。未知类型
 整体拒绝（`KMOD_ERR_RELOC`），绝不把未重定位的槽放进内核。
 
-### 3.4 内建组件（builtin）线格式
+### 3.4 组件 .ko 线格式（原 resident/builtin）
 
-同一套 `kmod_manifest_t/kmod_import_t/kmod_export_t`，由 `KCOMPONENT_BEGIN/END` 宏放入
-`.kbuiltin.in.<ID>` / `.kbuiltin.out.<ID>` / `.kbuiltin.desc` 段；链接后
-`builtin.cpp` 扫描描述符表，按拓扑图执行 bind/apply/init。内建组件是 Tier 0 构建产物，
-能力策略视为可信（不做 STRICT 白名单），但同样进入拓扑图、引用计数、epoch、热替换。
+同一份组件壳源码用 `-DKMOD_COMPONENT_AS_KO=1` 编译时，`KCOMPONENT_BEGIN/END`
+被映射为 `.kmod_manifest` / `.in` / `.out`，链接成独立 ET_REL .ko；不再生成
+`.kbuiltin.*` 静态段，内核镜像里也没有 .kbuiltin 组件表。组件 .ko 从
+modules.saf 入池，`kernel.*` 镜像标记 trusted（允许保留名/固定 syscall 槽/
+能力按清单授予），其余与普通 .ko 完全同构：拓扑、引用计数、epoch、热替换、
+`KdllInject` 相同。组件壳直接调用的未迁实现符号由 `kernel.component.v1`
+生成导出表解析；**已迁入其他 .ko 的实现符号**走跨 .ko 的 `.out` 表：
+
+- 导出方用 `KCOMPONENT_EXPORT_RAW` 按 mangled name 登记；
+- 导入方直接 `extern "C"`/原符号声明，加载器在 `.kout` 未命中时调用
+  governance resolver；
+- `.kmod_dep_names` 让 provider 先 prepare，resolver 可读 `g_prep[]`；
+- 同一事务拓扑保证 provider init 先于 consumer。
 
 ## 4. 私有契约（模块间自治）
 
-模块之间自行约定函数、槽位、布局、版本；内核只做**机械校验**（不解释语义）：
+模块之间自行约定函数、槽位、布局、版本；内核只做机械校验（不解释语义）：
 
 - 契约名命名空间：`<vendor>.<area>.<vN>`，如 `vendor.sched.v1`；`kernel.*`/`core.*` 保留；
 - 导出 `kind=KMOD_SYM_CONTRACT` 声明 ops 结构体地址 + `size` + `abi_version`；
@@ -93,9 +115,9 @@ typedef struct kmod_manifest {
 
 ## 4.1 Tier0 共享服务：klib 等公共工具共享给每个模块
 
-Tier0 的 klib 公共工具以**两种方式**共享给所有模块（内建组件与可加载 `.ko` 一致）：
+Tier0 的 klib 公共工具以两种方式共享给所有模块（内建组件与可加载 `.ko` 一致）：
 
-1. **直接符号共享（无需 `.in`）**：klib 中 C 链接函数以真实 ELF 符号名进入内核
+1. 直接符号共享（无需 `.in`）：klib 中 C 链接函数以真实 ELF 符号名进入内核
    `.kout` 导出表；模块直接声明/调用即可，加载器按未定义符号名解析到内核地址：
 
    ```c
@@ -107,7 +129,7 @@ Tier0 的 klib 公共工具以**两种方式**共享给所有模块（内建组�
    `hashmap_*`、`art_*`、`spinlock_lock/unlock`、`kcalloc/krealloc/kmalloc_aligned`
    （`kernel.mem.v1` 追加符号；既有 kmalloc/kfree 不变）。
 
-2. **契约 ops 共享（可批量、含 C++ 链接工具）**：模块用
+2. 契约 ops 共享（可批量、含 C++ 链接工具）：模块用
    `KMOD_IMPORT_KLIB/SYNC/ALGO` 导入版本化结构体，治理层做
    contract 相等 + abi 区间 + `expect_size == sizeof(ops)` 强校验：
 
@@ -130,9 +152,9 @@ Tier0 的 klib 公共工具以**两种方式**共享给所有模块（内建组�
    }
    ```
 
-**ABI 规则**：ops 结构只允许末尾追加字段；追加必须升 ABI 版本并保留旧版本导出
+ABI 规则：ops 结构只允许末尾追加字段；追加必须升 ABI 版本并保留旧版本导出
 （`kernel.klib.v2` ...），模块用 `abi_min/abi_max` + 精确 `expect_size` 锁定布局。
-**明确不共享**：转置序旧 API `_memcpy/_memset/_memmove/_memcmp`、静态缓冲
+明确不共享：转置序旧 API `_memcpy/_memset/_memmove/_memcmp`、静态缓冲
 `to_string/ConvertHexToString`（非线程安全）、header-only 模板（rbtree 等由模块自行
 编译头文件）、渲染器/随机后端内部实现。内建组件因同镜像静态链接可直接调用 klib；
 它们同样可以使用上述导入宏/契约（不强制迁移）。
@@ -145,9 +167,9 @@ Tier0 的 klib 公共工具以**两种方式**共享给所有模块（内建组�
 - 策略模式：`STRICT`（默认，仅内置可信清单 + 能力=清单∩声明）、`OPEN`（诊断，未知模块
   按声明授予）、`DISABLED`（拒绝一切加载）；
 - `KMOD_CAP_RESERVED_CORE` 与未定义高位：任何 `.ko` 声明即拒绝；
-- **诚实声明**：这是低隔离内核态，能力位是治理/审计边界，**不是内存隔离沙箱**。
-  模块代码与内核同地址空间；治理层通过"最小导出面 + 加载期机械校验 + 事务回滚 +
-  引用计数 + 看门狗"降低风险，但无法阻止恶意模块越界写内核内存（与 Linux 内核模块同级问题）。
+- 能力位只能当治理和审计边界，不是内存隔离沙箱。模块代码与内核同地址空间；
+  治理层靠"最小导出面 + 加载期机械校验 + 事务回滚 + 引用计数 + 看门狗"降低误用风险，
+  但拦不住恶意模块越界写内核内存（与 Linux 内核模块同一信任级）。
 
 ## 6. syscall 边界（固定入口，实现可注册）
 
@@ -155,8 +177,10 @@ Tier0 的 klib 公共工具以**两种方式**共享给所有模块（内建组�
 - 固定槽分三类：`FIXED`（不可替换实现，如文件 IO）、`FIXED|SWAPPABLE`（语义固定但实现允许
   受治理热替换，如诊断探针 30）、`FIXED|KMOD`（kmod 自省 29）；
 - 128..511 为动态命名空间槽：`CAP_SYSCALL_IMPL` 模块注册，未绑定返回 `-ENOSYS`，重复槽拒绝；
+- `kernel.arch.dosvm`（resident）注册 210..214（READ/ENTER/STAGE/KEYS/MEM）；
+  原 `dosvm.ko` 门面已合并进该 DynModule，用户态 ABI 不变；
 - 覆写固定槽实现需要 `CAP_SYSCALL_OVERRIDE` 且槽位带 `SWAPPABLE`；
-- Tier 0 dispatch 只看 `syscall_lists[slot]`：治理槽统一指向**哨兵**，由
+- Tier 0 dispatch 只看 `syscall_lists[slot]`：治理槽统一指向哨兵，由
   `KmodSyscallEntry(frame)` 查治理表、做 epoch 保护、返回 `-EAGAIN`（模块静默中）或
   `-ENOSYS`（无实现）。入口/编号/语义永不因模块而变。
 
@@ -175,7 +199,7 @@ typedef struct kmod_seat_random_ops {
 
 模块 `KEXPORT_SEAT(KMOD_SEAT_RANDOM, ops, 1)` 提供实现；内核调用点
 `KmodSeatCurrent(name)` 原子读取"模块实现优先，否则 Tier 0 默认"，热替换/卸载由治理事务
-保障 epoch 排空与失败回退。**已落地座位**：`kernel.seat.random.v1`（随机源）、
+保障 epoch 排空与失败回退。已落地座位：`kernel.seat.random.v1`（随机源）、
 `kernel.seat.sched.policy.v1`（调度策略：base/dynamic/eligibility quantum 覆盖）、
 `kernel.seat.alloc.policy.v1`（分配策略：large-alloc 阈值 / OOM 决策，仅冷路径）。
 
@@ -197,7 +221,7 @@ plan(镜像池闭包+拓扑序) -> prepare(每个镜像: 布局/拷贝/重定位
   -> 任一步失败: 逆序回滚(exit/fini -> 撤销导出注册 -> 解绑边 -> 释放镜像/节点)
 ```
 
-约束：init/exit/quiesce/drain 回调**不得在持治理锁时调用**（避免模块内再入公共 API 死锁）；
+约束：init/exit/quiesce/drain 回调不得在持治理锁时调用（避免模块内再入公共 API 死锁）；
 init 有看门狗预算（默认 500ms），超预算即失败回滚（`stats.budget_exceeded`）。
 
 ## 10. 热替换（quiesce / 状态迁移 / 原子切换 / 看门狗 / 失败回退）
@@ -211,18 +235,24 @@ init 有看门狗预算（默认 500ms），超预算即失败回滚（`stats.bu
 5. 任一步失败 -> 恢复旧导出表/槽位/座位/syscall 注册，`READY`，`stats.rollbacks++`；
 6. 消费者若缓存了函数指针必须用 `KmodEpochEnter(provider)/Exit` 包住使用区间，否则替换期间
    的旧指针可能指向已卸载镜像（治理层以 epoch + 看门狗兜底；这是协作式 quiesce，不是抢占式）。
+7. 座位提供者（`KMOD_MODF_SEAT_PROVIDER`）的**旧镜像不释放**：sched/heap 的座位调用
+   在内核最热路径上，没有 epoch 包裹（不能每次调用都进治理层），热替换/卸载时释放旧镜像
+   存在 UAF 窗口。代价是每次替换泄漏一份镜像（几十 KB）；座位仍回退到内核默认实现，
+   模块状态、引用计数与统计不变。
 
-内建组件被 `.ko` 热替换时，旧实现是内核静态数据：成功替换后模块节点转为 `.ko` 背书；
-失败/卸载回滚恢复内建实现（静态内存永不释放）。**注意当前限制**：`.ko` 名称校验禁止
-`kernel./core.` 保留前缀，而真实内建组件全部为 `kernel.*`，因此这套 builtin→.ko takeover
-目前只在宿主测试的非保留名合成组件上验证过（失败回滚路径）；现网可替换的是座位策略
-（random/sched/alloc）与固定 syscall 探针实现，尚未开放真实内建组件节点的同名替换。
+trusted 组件 .ko（manifest 名 kernel.*，从 modules.saf 加载）不允许外部同名
+热替换/卸载：`KmodGovUnload` 对 `KMOD_MODF_TRUSTED` 返回 POLICY，避免运行期
+把内核依赖的组件换掉。宿主测试仍用非保留名合成组件验证 builtin→.ko takeover 的
+失败回滚路径；现网可替换的是座位策略（random/sched/alloc）与固定 syscall 探针
+实现（vendor.* demo）。
 
 ## 11. 卸载与引用计数
 
 - 硬门禁：`refcount==0`（无消费者导入边）且 `manifest.flags & KMOD_MF_UNLOADABLE`；
-- 有消费者 -> `KMOD_ERR_BUSY`；未声明可卸载 -> `KMOD_ERR_POLICY`；Tier 0 内建核心永不卸载；
+- 有消费者 -> `KMOD_ERR_BUSY`；未声明可卸载 -> `KMOD_ERR_POLICY`；Tier 0 核心与
+  trusted 组件 .ko 永不卸载；
 - 卸载流程：quiesce + epoch 排空 -> 撤销座位/syscall 导出 -> exit/fini -> 解绑/释放；
+  座位提供者的镜像按 §10.7 保留（不释放）；
 - 正在执行的 syscall/座位调用通过 epoch 排空；看门狗超时 -> 放弃卸载并恢复 READY。
 
 ## 12. 观测面
@@ -243,10 +273,11 @@ init 有看门狗预算（默认 500ms），超预算即失败回滚（`stats.bu
 
 ```bash
 # 内核模块（.ko）
-make -C kernel modules          # -> kernel/bin-x86_64/modules/*.ko
-make -C kernel modules-check    # readelf 契约自检
-# ISO 构建会把 .ko 拷到 boot():/boot/modules/，res/limine.conf 逐项 module_path 声明
-# 内核启动: KmodInit -> KmodBootComponents(内建图) -> KmodBootIngest -> KmodBootLoad(BIOS/BOOT flag)
+make -C kernel modules          # -> 18 demo + 40 组件 .ko
+make -C kernel modules-saf      # -> kernel/bin-x86_64/modules.saf
+make -C kernel modules-check    # readelf 契约自检（56 个 .ko）
+# ISO 构建把 56 个 .ko 打成 boot():/boot/modules.saf，res/limine.conf 只声明这一项
+# 内核启动: KmodInit -> KmodBootIngest(解析 modules.saf) -> KmodBootLoad(BIOS/BOOT flag)
 ```
 
 `.ko` 作者最小示例：
@@ -273,15 +304,15 @@ KMOD_MANIFEST("vendor.demo.me", "1.0.0", KMOD_TIER_IMPL, KMOD_MF_BOOT|KMOD_MF_UN
 | 层 | 内容 |
 |---|---|
 | 宿主测试 `tests/kmod` | 加载器正/负向 + 2000 次随机 fuzz(ASAN)、拓扑 DAG/环/版本/命名、能力策略、syscall/座位、治理事务（见 `tests/kmod/`） |
-| 内核自检 | 启动期（**sti 之前单线程**）跑 `KMOD_SELFTEST` 共 12 个用例：引导拓扑/引用计数/依赖自动拉起/环拒绝/能力拒绝/init 失败回滚/随机座位热替换与失败回退/syscall 命名空间与覆写/卸载清理/调度策略座位/分配策略座位/**Tier0 共享服务（klib/sync 直接符号 + 契约 ops）**；串口输出 `KMOD_SELFTEST PASS 12/12` |
+| 内核自检 | 启动期（**sti 之前单线程**）跑 `KMOD_SELFTEST` 共 14 个用例：引导拓扑/引用计数/依赖自动拉起/环拒绝/能力拒绝/init 失败回滚/随机座位热替换与失败回退/syscall 命名空间与覆写/卸载清理/调度策略座位/分配策略座位/**Tier0 共享服务（klib/sync 直接符号 + 契约 ops）**/**统一 DynModule 注入（LoadLibrary/GetProcAddress/依赖自动注入/eject）**/**跨 .ko ELF 符号解析（demo_xmod 直接调用 demo_hello 的 hello_fn）**；串口输出 `KMOD_SELFTEST PASS 14/14` |
 | QEMU 无头门禁 | `res/scripts/test/kmod_smoke.ps1`：启动 ISO + serial 日志，断言 PASS 行与无异常 |
 | 构建门禁 | `make -C kernel modules-check` + 内核构建零错误 + 宿主 suite 全绿 |
 
-## 15. 已知限制（如实声明）
+## 15. 已知限制
 
-1. **无内存隔离**：模块与内核同地址空间；HHDM 直接映射为 RW 且未置 NX，模块镜像可执行。
+1. 无内存隔离：模块与内核同地址空间；HHDM 直接映射为 RW 且未置 NX，模块镜像可执行。
    治理层降低误用风险，不构成安全沙箱（与 Linux 模块同一信任级）。W^X 因 HHDM 别名暂不可强制。
-2. quiesce 是**协作式**的：模块必须按契约在消费导入槽时进入 epoch；恶意/错误模块可绕过。
+2. quiesce 是协作式的：模块必须按契约在消费导入槽时进入 epoch；恶意/错误模块可绕过。
 3. `.ko` 只支持 x86_64 ET_REL 与有限重定位集；其他架构需补对应 `arch/<arch>/kmod/` 重定位后端。
 4. `.ko` 不得调用未声明的外部符号；编译器生成的 `mem*` 引用由 `kernel.libc.v1` 兜底。
 5. 能力策略表内置在 Tier 0 代码中（可信清单），尚无签名/加密校验链；生产化需要镜像签名绑定。
@@ -291,3 +322,9 @@ KMOD_MANIFEST("vendor.demo.me", "1.0.0", KMOD_TIER_IMPL, KMOD_MF_BOOT|KMOD_MF_UN
    WATCHDOG）。kmod 的缓解是把自检移到 sti 前单线程执行；根治方向见 kernel-components.md §11。
 8. 异常处理路径若在已持 kprintf `ptf_lock` 时再次打印会自死锁（pre-existing）；本次通过
    IRQ 顺序 + 引导期 `cli` 规避，生产化建议 panic 输出走无锁串口旁路。
+9. 组件壳已经是独立 .ko（modules.saf）；AHCI/NVMe/xHCI/USB/PS2 键鼠的实现也已迁入
+   各自 .ko。剩余 driver/FS/net/sched/syscall 实现仍在 kernel 共享库，通过
+   kernel.component.v1 导出。全量迁移的难点是共享状态/全局注册表、以及
+   PMM/VMM/中断这类 bootstrap 环——这些必须留在 Tier 0。跨 .ko 符号表目前是
+   `.out` 显式导出 + provider 先序，不是完整 ELF dlsym。
+   `KdllInjectFile` 需要已挂载 VFS/当前进程上下文，未提供用户态 syscall 包装。

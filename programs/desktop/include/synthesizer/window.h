@@ -154,6 +154,7 @@ private:
     uint32_t         started_cnt_;
     uint32_t         done_compose_;
     uint64_t         worker_done_seq_[COMP_CPUS_SANITY];
+    volatile uint32_t worker_busy_[COMP_CPUS_SANITY];
     int32_t          cur_x_, cur_y_;
     uint8_t          cur_visible_;
     uint32_t         cur_shape_;      /* SKY_CURSOR_*                       */

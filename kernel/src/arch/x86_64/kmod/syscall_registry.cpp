@@ -28,6 +28,8 @@
 #else
 #include <errno.h>
 #include <arch/x86_64/schedule/syscall.h>
+#include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/cpu/smap.h>
 
 /* 内核最小 memcpy（klib/klib.h 提供，标准参数序）。这里只做本地声明，
@@ -46,11 +48,16 @@ extern uint64_t (*syscall_lists[KMOD_SYSCALL_MAX])(
 #define KMOD_SC_ENOSYS (-38)
 #define KMOD_SC_EAGAIN (-11)
 #define KMOD_SC_EINVAL (-22)
+#define KMOD_SC_EFAULT (-14)
 #else
 #define KMOD_SC_ENOSYS (-ENOSYS)
 #define KMOD_SC_EAGAIN (-EAGAIN)
 #define KMOD_SC_EINVAL (-EINVAL)
+#define KMOD_SC_EFAULT (-EFAULT)
 #endif
+
+/* 内部错误码：用户缓冲不可写（不在 kmod ABI 错误码表里，仅本文件使用）。 */
+static constexpr int32_t KMOD_ERR_USERFAULT = -100;
 
 namespace {
 
@@ -216,7 +223,10 @@ uint64_t sc_info_impl(uint64_t a0, uint64_t a1, uint64_t a2, uint64_t a3,
         reinterpret_cast<void *>(static_cast<uintptr_t>(a0)), a1, a2);
     if (rc < 0) {
         /* syscall 固定契约的错误码口径是 POSIX errno（用户态可见）；
-         * KMOD_ERR_INVAL(-1) 不能直接透传，必须映射成 -EINVAL(22)。 */
+         * KMOD_ERR_INVAL(-1) 不能直接透传，必须映射成 -EINVAL(22)。
+         * 用户缓冲不可写单独映射成 -EFAULT。 */
+        if (rc == KMOD_ERR_USERFAULT)
+            return sc_err(KMOD_SC_EFAULT);
         return sc_err(KMOD_SC_EINVAL);
     }
     return (uint64_t)(uint32_t)rc; /* 返回写入的记录数 */
@@ -266,14 +276,19 @@ void fill_record(kmod_sysinfo_record_t *rec, const kmod_module_t *m)
     rec->n_consumers = m->n_consumers;
 }
 
-/* 用户态缓冲写入：内核用 SMAP override + __memcpy，宿主用 libc memcpy */
-void user_copy(void *dst, const void *src, uint64_t n)
+/* 用户态缓冲写入：内核走 ua 的 CopyToUser（MM_USER + 范围校验 + CoW），
+   宿主测试退化为 memcpy。返回 false = 缓冲非法/不可写。 */
+bool user_copy(void *dst, const void *src, uint64_t n)
 {
 #ifdef __KERNEL_TEST_HOST__
     std::memcpy(dst, src, static_cast<size_t>(n));
+    return true;
 #else
-    SmapGuard guard;
-    __memcpy(dst, src, n);
+    proc_t *proc = Schedule::this_proc();
+    if (!proc || !proc->pagemap)
+        return false;
+    return VMM::UserAccess::CopyToUser(proc->pagemap,
+                                       (uint64_t)(uintptr_t)dst, src, n);
 #endif
 }
 
@@ -576,8 +591,10 @@ extern "C" int32_t KmodSyscallRegisterModule(kmod_module_t *m)
     uint32_t n_dyn = 0u;
     uint32_t n_ns = 0u;
     int32_t rc = KMOD_OK;
+    /* 原 static builtin + 内核 SAF 的 trusted 组件 .ko 都按"内核提供"处理：
+     * 允许固定槽 0..63，并跳过 .ko 覆写所需的 SWAPPABLE/能力检查。 */
     const bool builtin =
-        (m->internal_flags & KMOD_MODF_BUILTIN) != 0u;
+        (m->internal_flags & (KMOD_MODF_BUILTIN | KMOD_MODF_TRUSTED)) != 0u;
 
     uint64_t flags = kmod_lock_acquire(&g_sc_lock);
     for (uint32_t i = 0; i < m->n_exports; i++) {
@@ -744,21 +761,29 @@ extern "C" int32_t KmodSyscallCopyInfoToUser(void *ubuf, uint64_t usize,
     kmod_lock_release(&g_kmod_lock, lock_flags);
 
     uint64_t rec_bytes = usize - sizeof(kmod_sysinfo_t);
-    uint32_t max_rec = static_cast<uint32_t>(
-        rec_bytes / sizeof(kmod_sysinfo_record_t));
-    uint32_t n = total < max_rec ? total : max_rec;
+    uint64_t max_rec = rec_bytes / sizeof(kmod_sysinfo_record_t);
+    if (max_rec > KMOD_MAX_MODULES)
+        max_rec = KMOD_MAX_MODULES;
+    uint32_t n = static_cast<uint32_t>(total < max_rec ? total : max_rec);
     hdr.total = total;
     hdr.count = n;
 
-    user_copy(ubuf, &hdr, sizeof(hdr));
-    uint8_t *dst = reinterpret_cast<uint8_t *>(ubuf) + sizeof(kmod_sysinfo_t);
+    const uint64_t base = (uint64_t)(uintptr_t)ubuf;
+    if (base > ~0ull - usize)
+        return KMOD_ERR_INVAL;
+
+    if (!user_copy(ubuf, &hdr, sizeof(hdr)))
+        return KMOD_ERR_USERFAULT;
+
+    uint64_t dst = base + sizeof(kmod_sysinfo_t);
     for (uint32_t i = 0; i < n; i++) {
         kmod_sysinfo_record_t rec = {};
         lock_flags = kmod_lock_acquire(&g_kmod_lock);
         if (i < g_kmod_module_count)
             fill_record(&rec, &g_kmod_modules[i]);
         kmod_lock_release(&g_kmod_lock, lock_flags);
-        user_copy(dst, &rec, sizeof(rec));
+        if (!user_copy((void *)(uintptr_t)dst, &rec, sizeof(rec)))
+            return KMOD_ERR_USERFAULT;
         dst += sizeof(rec);
     }
     return static_cast<int32_t>(n);

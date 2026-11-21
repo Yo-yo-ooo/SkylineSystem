@@ -116,6 +116,12 @@ void smp_setup_kstack(cpu_t *cpu) {
     void *ists = (void*)VMM::Alloc(kernel_pagemap,8,false);
     TSS::SetIST(cpu->id, 1, (void*)((uint64_t)ists + 8 * PAGE_SIZE));
     TSS::SetRSP(cpu->id, 0, (void*)((uint64_t)rsps + 8 * PAGE_SIZE));
+    /* #DF(8)/NMI(2)/#MC(18) 走 IST1：即使当前内核栈已损坏（#DF 的典型
+       成因），异常仍能在独立栈上进入 C 处理器，而不是 triple fault。
+       必须在 SetIST 之后设置 IDT 的 ist 位。 */
+    idt_set_ist_cpu(cpu->id, 8, 1);   /* #DF */
+    idt_set_ist_cpu(cpu->id, 2, 1);   /* NMI */
+    idt_set_ist_cpu(cpu->id, 18, 1);  /* #MC */
 }
 
 void smp_setup_thread_queue(cpu_t *cpu) {
@@ -206,7 +212,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
     cpu->timer_last_tick = PIT::TimeSinceBootMS();
 
     cpu->file_cache = (file_cache_cpu_t*)kmalloc(sizeof(file_cache_cpu_t));
-    file_cache_cpu_init(cpu->file_cache, cpu->id, file_cache_writeback_callback);
+    file_cache_cpu_init_hook(cpu->file_cache, cpu->id, file_cache_writeback_callback);
     /* 每个 AP 的缓存也要设上限 (理由见 init.cpp 的同一处理) */
     {
         uint64_t free_bytes = PMM::FreePages() << 12;
@@ -216,7 +222,7 @@ void smp_cpu_init(struct limine_mp_info *mp_info) {
            缓存太小 → 读盘次数暴增 → 每次读都要临时 kbuf, 瞬时压力更大。 */
         if (per_cpu < (512u << 10))  per_cpu = (512u << 10);
         if (per_cpu > (4u << 20))    per_cpu = (4u << 20);
-        file_cache_set_limits(cpu->file_cache, per_cpu, per_cpu * 2);
+        file_cache_set_limits_hook(cpu->file_cache, per_cpu, per_cpu * 2);
     }
     spinlock_lock(&smp_lock);
     kpok("Initialized CPU (Logical:%d, APIC:%d).\n", logical_id, mp_info->lapic_id);

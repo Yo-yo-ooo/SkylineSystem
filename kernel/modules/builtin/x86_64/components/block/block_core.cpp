@@ -19,6 +19,8 @@
 #include <kmod/contracts/block.h>
 
 #include <drivers/dev/dev.h>
+#include <partition/mgr.h>
+#include <partition/mbrgpt.h>
 
 static int32_t block_core_init(void);
 static void block_core_exit(void);
@@ -206,4 +208,30 @@ static void block_core_exit(void)
 KCOMPONENT_EXPORT_CONTRACT(block_core, KMOD_CONTRACT_BLOCK_V1, g_block_ops,
                            KMOD_BLOCK_ABI_V1)
 
+namespace {
+uint8_t pm_read(VsDevType t, uint32_t i, uint8_t p, uint64_t l, uint32_t n, void *b) {
+    return PartitionManager::Read(t, i, p, l, n, b);
+}
+uint8_t pm_write(VsDevType t, uint32_t i, uint8_t p, uint64_t l, uint32_t n, void *b) {
+    return PartitionManager::Write(t, i, p, l, n, b);
+}
+uint64_t pm_max(VsDevType t, uint32_t i, uint8_t p) {
+    return PartitionManager::GetMaxSectorCount(t, i, p);
+}
+uint64_t pm_start(VsDevType t, uint32_t i, uint32_t p, uint64_t &out) {
+    return GetPartitionStart(t, i, p, out);
+}
+}
+KCOMPONENT_EXPORT_RAW(block_core, part_read,
+    "_ZN16PartitionManager4ReadE9VsDevTypejhmjPv",
+    &pm_read, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(block_core, part_write,
+    "_ZN16PartitionManager5WriteE9VsDevTypejhmjPv",
+    &pm_write, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(block_core, part_max,
+    "_ZN16PartitionManager17GetMaxSectorCountE9VsDevTypejh",
+    &pm_max, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(block_core, part_start,
+    "_Z17GetPartitionStart9VsDevTypejjRm",
+    &pm_start, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 KCOMPONENT_END(block_core)

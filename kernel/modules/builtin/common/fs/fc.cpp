@@ -778,6 +778,9 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
                      size_t io_len, size_t *out_len, file_cache_entry_t **out_entry) {
     if (unlikely(!s || !key || key_len == 0)) return NULL;
 
+    /* 进程上下文到点衰减（IRQ tick 只计数，不再持锁做重活）。 */
+    file_cache_maybe_decay(s);
+
     spinlock_lock(&s->lock);
     file_cache_entry_t *e = (file_cache_entry_t *)art_search(&s->index, key, key_len);
 
@@ -882,6 +885,8 @@ void *file_cache_get(file_cache_cpu_t *s, const uint8_t *key, uint32_t key_len,
 
 void file_cache_put(file_cache_cpu_t *s, file_cache_entry_t *e) {
     if (unlikely(!s || !e)) return;
+
+    file_cache_maybe_decay(s);
 
     spinlock_lock(&s->lock);
     bool need_free = false;

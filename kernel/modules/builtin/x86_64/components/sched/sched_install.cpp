@@ -43,6 +43,7 @@ KCOMPONENT_DEPENDS(sched_install, "kernel.dev.core", dev_core)
 /* 旧 init.cpp 顺序：rootfs 挂载 -> ... -> Schedule::Install；
  * 显式依赖避免并行分支把 Install 排到 rootfs 之前。 */
 KCOMPONENT_DEPENDS(sched_install, "kernel.fs.rootfs", fs_rootfs)
+KCOMPONENT_DEPENDS(sched_install, "kernel.time.hpet", time_hpet)
 
 namespace {
 

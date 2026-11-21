@@ -1,0 +1,4 @@
+# kernel.syscall.mem implementation
+builtin/x86_64/syscall/memory.cpp
+builtin/x86_64/syscall/cpu.cpp
+builtin/x86_64/syscall/pmmap.cpp

@@ -24,6 +24,7 @@ int32_t test_elf_loader_run(void) __attribute__((weak));
 int32_t test_gov_run(void) __attribute__((weak));
 int32_t test_syscall_run(void) __attribute__((weak));
 int32_t test_component_run(void) __attribute__((weak));
+int32_t test_inject_run(void) __attribute__((weak));
 }
 
 namespace {
@@ -41,6 +42,7 @@ const TestEntry kTests[] = {
     {"gov", test_gov_run, false},
     {"syscall", test_syscall_run, false},
     {"component", test_component_run, true},
+    {"inject", test_inject_run, true},
 };
 
 int run_all(int argc, char **argv)

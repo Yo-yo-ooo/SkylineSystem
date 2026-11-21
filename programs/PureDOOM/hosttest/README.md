@@ -2,7 +2,7 @@
 
 The shim is platform logic only; everything Skyline-specific is behind six
 hooks and three calls (`fsize`, `sys_*`, `syscall`). `harness.c` fakes those
-on a stock desktop so `skyline/doom_main.c` runs **unmodified** under any
+on a stock desktop so `skyline/doom_main.c` runs unmodified under any
 x86_64 C compiler — which makes the port testable without WSL/QEMU.
 
 ## What it fakes
@@ -66,7 +66,7 @@ Two host-specific notes:
 - `syscall.h` now also provides `SysInfo` / `sys_sysinfo()` (2 GiB profile in
   `harness.c`), because the shim's zone-size policy and the compact-build
   memory markers read `mem_total` / `mem_free`.
-- The compact build expects the **trimmed** IWAD produced by
+- The compact build expects the trimmed IWAD produced by
   `make -C programs/PureDOOM wadtrim` if you want to test the audio-stubbed
   path; the normal build needs the untouched IWAD (it pre-caches sfx lumps and
   looks up `D_*` music lumps).
@@ -76,7 +76,7 @@ Two host-specific notes:
 - end-to-end: WAD load through the file hooks, zone allocator through the
   malloc hooks, menu navigation through the keyboard-ring protocol, level
   load, software renderer + palette + HUD, 2x blit into the ARGB surface.
-- **caught a real bug**: the first clock used a one-shot TSC calibration,
+- caught a real bug: the first clock used a one-shot TSC calibration,
   and on a machine with a non-invariant TSC the game ran at ~228 tics/s
   (6.5x speed). The shim now re-anchors on every RTC second boundary and
   re-measures the TSC rate per second (see `sky_gettime`), giving a steady

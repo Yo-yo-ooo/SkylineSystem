@@ -79,7 +79,15 @@ extern "C" int32_t KmodInit(void)
         kmod_log("[kmod] init FAILED: syscall registry rc=%d\n", (int)rc);
         return rc;
     }
-    kmod_log("[kmod] core ready: abi=%u policy=%u tier0=fixed loader=ET_REL/x86_64\n",
+    /* 统一 DynModule 层：Tier1 内建组件 + Tier2 .ko 只有一个模块类别；
+     * 常驻核心服务以 resident DynModule 登记，供模块显式 inject。 */
+    rc = KdllInit();
+    if (rc != KMOD_OK) {
+        kmod_log("[kmod] init FAILED: kdll rc=%d\n", (int)rc);
+        return rc;
+    }
+    kmod_log("[kmod] core ready: abi=%u policy=%u tier0=fixed "
+             "modules=resident+ET_REL/x86_64\n",
              (unsigned)KMOD_ABI_VERSION, (unsigned)KmodCapMode());
     return KMOD_OK;
 }
@@ -111,6 +119,16 @@ extern "C" int32_t KmodBootIngest(void)
         const char *path = nullptr;
         if (!GetBootModuleInfo(i, &data, &size, &path))
             continue;
+        if (str_endswith(path, ".saf")) {
+            /* 单一 SAF 归档：里面是内核启动依赖的全部 .ko。 */
+            int32_t src = KmodSafIngest(data, size);
+            if (src != KMOD_OK) {
+                bad++;
+                kmod_log("[kmod] ingest SAF FAILED %s rc=%d\n",
+                         path ? path : "?", (int)src);
+            }
+            continue;
+        }
         if (!str_endswith(path, ".ko"))
             continue;
         int32_t rc = KmodPoolAdd(data, size, false);
@@ -306,5 +324,6 @@ extern "C" int32_t KmodDump(void)
              (unsigned long long)g_kmod_stats.selftest_pass,
              (unsigned long long)g_kmod_stats.selftest_fail);
     kmod_lock_release(&g_kmod_lock, flags);
+    (void)KdllDump();
     return KMOD_OK;
 }

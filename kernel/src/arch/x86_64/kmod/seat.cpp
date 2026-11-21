@@ -397,6 +397,10 @@ extern "C" int32_t KmodSeatAttachModule(kmod_module_t *m)
     kmod_lock_release(&g_seat_lock, flags);
 
     if (n_installed) {
+        /* 标记该模块曾提供座位：sched/heap 的座位调用没有 epoch 保护，
+           卸载/热替换时必须保留旧镜像，否则在途调用会踩已释放代码。 */
+        __atomic_fetch_or(&m->internal_flags, KMOD_MODF_SEAT_PROVIDER,
+                          __ATOMIC_RELAXED);
         __atomic_fetch_add(&g_kmod_stats.seat_swaps, (uint64_t)n_installed,
                            __ATOMIC_RELAXED);
         kmod_log("[kmod] seat attach: %s installed %u implementation(s)\n",

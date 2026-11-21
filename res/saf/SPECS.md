@@ -27,4 +27,4 @@ typedef struct {
     saf_offset_t addr; // offset of file data
 } __attribute__((packed)) saf_node_file_t;
 ```
-Here, `addr` contains the offset of the file contents from the start of the archive. Please note that the `len` field in the header does **not** include the length of the file, and only the length of the node itself.
+Here, `addr` contains the offset of the file contents from the start of the archive. Please note that the `len` field in the header does not include the length of the file, and only the length of the node itself.

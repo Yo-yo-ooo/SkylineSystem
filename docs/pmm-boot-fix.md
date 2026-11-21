@@ -2,7 +2,7 @@
 
 ## 症状
 
-`make cm` 全量重建后，内核启动到下面这里就再无任何输出，**没有任何异常打印**：
+`make cm` 全量重建后，内核启动到下面这里就再无任何输出，没有任何异常打印：
 
 ```
 [ OK ] PMM Initialised!
@@ -31,13 +31,13 @@ WSL 的 QEMU 8.2 和 Windows 的 QEMU 10.1 都一样；`-m 1G/2G/4G`、`-smp 2/4
 `CR3=0x7FF71000`、RSP=`0xFFFF80007FF81EE8`、PMM 位图区间
 `0x7DA7C000..0x7FA7C000`，三者都与被清零的 `0x74000` 无关。
 
-**关键判据**：该页"可读、写几个字节没事、整页清零才死"。这说明不是映射缺失
-（缺页会走 `[#PF]` 并打印），也不是死循环，而是**清零把仍在使用的映射本身
-卸掉了**：取下一条指令立刻缺页，而缺页处理程序所在的映射也一并消失 →
+关键判据：该页"可读、写几个字节没事、整页清零才死"。这说明不是映射缺失
+（缺页会走 `[#PF]` 并打印），也不是死循环，而是清零把仍在使用的映射本身
+卸掉了：取下一条指令立刻缺页，而缺页处理程序所在的映射也一并消失 →
 double/triple fault → QEMU 带 `--no-shutdown` 时直接停机，看起来就是"卡死
 且无输出"。
 
-换句话说：**PMM 把 bootloader 自己页表占用的物理页当成空闲页发了出去。**
+也就是说：PMM 把 bootloader 自己页表占用的物理页当成空闲页发了出去。
 
 ## 走过的弯路（记录以免重犯）
 
@@ -46,9 +46,9 @@ double/triple fault → QEMU 带 `--no-shutdown` 时直接停机，看起来就�
 3. 怀疑 PMM 元数据被覆盖：打印 `pmm_bitmap_start/size`，区间在
    `0x7DA7C000..0x7FA7C000`，与 `0x74000` 无交集 → 否掉。
 4. 怀疑 RSP 落在该页（启动栈被清零）：RSP 在 `0xFFFF80007FF81EE8` → 否掉。
-5. 尝试**精确遍历 CR3**、把页表页逐页标为已用 —— 直接 `#PF`：
+5. 尝试精确遍历 CR3、把页表页逐页标为已用 —— 直接 `#PF`：
    `CR2 == CR3 == 0x7FF71000`。原因是 bootloader 的页表页所在物理内存
-   **并没有被映射进当前地址空间**（CPU 用物理地址走页表，不需要映射），
+   并没有被映射进当前地址空间（CPU 用物理地址走页表，不需要映射），
    软件无法读取，此路不通。
 
 ## 修复
@@ -71,7 +71,7 @@ static void reserve_bootloader_memory() {
 }
 ```
 
-调用点在 `mark_allocated(0, 1);` 之后、`free_pages` 统计**之前** ——
+调用点在 `mark_allocated(0, 1);` 之后、`free_pages` 统计之前 ——
 顺序很关键，否则空闲页计数会把它们又算回去。
 
 这是保守做法：会浪费几 MB（本系统本来也没有 reclaim 回收器），但换来
@@ -120,7 +120,7 @@ syscall_entry
                  └ RB_REMOVE_COLOR  ← NULL + 0x70
 ```
 
-`0x70` 正是 `struct ext4_buf` 里树节点字段的偏移，即**对一个 NULL 父节点做旋转**。
+`0x70` 正是 `struct ext4_buf` 里树节点字段的偏移，即对一个 NULL 父节点做旋转。
 
 ### 判断
 
@@ -140,15 +140,15 @@ if (!buf->refctr) {              /* 未被引用 ⇒ 一定在 lru_root 里 */
 已排除"垃圾数据"这一路：`ext4_buf_alloc()` 用 `ext4_calloc(1, ...)` 分配 buf，
 节点字段是清零的，不是未初始化内存。
 
-**最可能的原因是多 CPU 并发**：`kernel/modules/builtin/x86_64/syscall/fops.cpp`
-里**完全没有锁**，而 4 个 CPU 上的多个进程会同时进入 ext4 的
+最可能的原因是多 CPU 并发：`kernel/modules/builtin/x86_64/syscall/fops.cpp`
+里完全没有锁，而 4 个 CPU 上的多个进程会同时进入 ext4 的
 `ext4_bcache_alloc` / `RB_INSERT` / `RB_REMOVE`。lwext4 本身是单线程设计，
 共享的 `ext4_bcache` 被并发改红黑树必然损坏。旁证：崩溃前紧邻一条
 `TLB shootdown: ACK timeout`，同样是并发路径上的症状。
 
 ### 下一步（按优先级）
 
-1. 在 syscall 层给 ext4 访问加**全局串行化**：`fops.cpp` 的
+1. 在 syscall 层给 ext4 访问加全局串行化：`fops.cpp` 的
    `sys_fopen/fread/fwrite/fclose/fseek/fstat/readdir` 外层取一把
    irqsave 自旋锁，或做一个可重入的 ext4 大锁。
 2. 加防御：给 `ext4_buf` 增加 `in_lru` 标志，`ext4_bcache_find_get` 里
@@ -157,18 +157,18 @@ if (!buf->refctr) {              /* 未被引用 ⇒ 一定在 lru_root 里 */
 
 ## 已修复：ext4 并发损坏（用 lwext4 自带的 os_locks）
 
-上面第 1 条的**正确做法比预想的干净得多**：lwext4 本来就留了挂载点锁接口
+上面第 1 条的正确做法比预想的干净得多：lwext4 本来就留了挂载点锁接口
 （`EXT4_MP_LOCK` / `EXT4_MP_UNLOCK` 宏，走 `mp->os_locks` 回调），
 `ext4_mount_setup_locks()` 就是安装它的函数。
 
-而本内核**从来没有调用过它** —— `mp->os_locks` 恒为 NULL，那些加锁宏全是
+而本内核从来没有调用过它 —— `mp->os_locks` 恒为 NULL，那些加锁宏全是
 空操作。这就是"4 个 CPU 并发改同一棵 bcache 红黑树"的直接原因。
 
 修复（`kernel/modules/builtin/common/fs/lwext4/src/ext4.cpp`）：
 
 - 在 `ext4_kernel_init()` 里 `ext4_mount()` 之后调用
   `ext4_mount_setup_locks(mpname, &g_ext4_locks)`；
-- 回调 `ext4_os_lock/unlock` 实现成**递归**锁：lwext4 的公开函数之间会
+- 回调 `ext4_os_lock/unlock` 实现成递归锁：lwext4 的公开函数之间会
   互相调用（`ext4_fopen2` → `ext4_generic_open2`），非递归自旋锁会自死锁。
   用 "owner = 当前 CPU + 1，配深度计数" 实现，只有最外层真正拿锁/放锁，
   `irqsave` 的 flags 也只在最外层保存（否则内层会把中断状态恢复错）。

@@ -9,7 +9,7 @@
 //     依赖 TTF 字体文件 —— 字体是可选资源，缺失时用户仍必须能看到 DOS 画面）；
 //   - 内置 CP437 风格 8x8 位图点阵字模（ASCII 0x20..0x7E 全可辨认 +
 //     上半区块/框线字符回退）与标准 VGA16 色调色板；
-//   - syscall(210, buf, 4016) 读取内核 dosvm.ko 导出的影屏快照，按
+//   - syscall(210, buf, 4016) 读取 kernel.arch.dosvm DynModule 导出的影屏快照，按
 //     generation 判脏：只有 generation / flags / cpu / trips / 读状态变化，
 //     或首次有效、或按键触发过 syscall 211，才重绘并递增 OUT_SEQ；
 //   - 100ms 节流轮询（SYSCALL_MONOTONIC_MS=27）+ sys_yield()，空闲不空转刷屏；

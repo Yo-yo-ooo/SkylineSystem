@@ -1,8 +1,10 @@
 # tests/kmod/ — kmod 子系统宿主测试门禁
 
-把 `kernel/src/arch/x86_64/kmod/` 的**真实源码**搬到 WSL/Linux 宿主编译运行，
-对私有契约型可加载内核模块（kmod）与内建组件（builtin component）机制层做
-正确性 + 负向 + fuzz + ASAN 门禁。同一份加载器/拓扑/能力/治理/组件代码在宿主
+把 `kernel/src/arch/x86_64/kmod/` 的真实源码搬到 WSL/Linux 宿主编译运行，
+对私有契约型 DynModule（组件 .ko / demo .ko / resident 核心节点）与统一注入层
+（kdll）做正确性 + 负向 + fuzz + ASAN 门禁。内核实际启动路径是
+modules.saf -> KmodSafIngest；宿主测试覆盖同一份 governance/elf_loader/builtin
+代码，SAF 解析器本身由 QEMU 门禁覆盖。同一份加载器/拓扑/能力/治理/组件代码在宿主
 上跑，内核构建零影响。
 
 ## 一键复现
@@ -49,12 +51,13 @@ KMOD-TEST RESULT PASS x/y [ (skipped: ...) ]
 | `elf_loader_test.cpp` | `KmodElfInspect/LoadImage/ValidateManifest/FreeImage`：正例、结构/清单负向、2000 次 fuzz |
 | `gov_test.cpp` | 治理事务层：CheckLoadable 矩阵、导出指纹、注册表门禁、prepare 失败零残留 |
 | `syscall_test.cpp` | 固定契约表/治理槽、动态命名空间注册、INFO 快照、座位注册表 |
-| `component_test.cpp` | 内建组件模型：条目解析正负向、`KmodModuleAllocBuiltin`、描述表 Init/BootLoad、BUILTIN unload 拒绝、热替换失败回退 |
-| `fixtures/` | 模块作者视角的 `fixture_a.o`（provider）/`fixture_b.o`（consumer）/`fixture_hostcomp_v2.o`（热替换回退） |
+| `component_test.cpp` | resident DynModule 模型：条目解析正负向、`KmodModuleAllocBuiltin`、描述表 Init/BootLoad、BUILTIN unload 拒绝、热替换失败回退 |
+| `inject_test.cpp` | 统一注入层：resident 注册/注入/幂等/PIN/eject、`KdllInjectImage`、依赖自动注入、`KdllResolve`、负向 |
+| `fixtures/` | 模块作者视角的 `fixture_a.o`（provider）/`fixture_b.o`（consumer）/`fixture_hostcomp_v2.o`（热替换回退）/`fixture_inj_{a,b}.o`（注入依赖） |
 
 宿主构建只编 `host_platform.cpp` + `kernel/src/arch/x86_64/kmod/` 下的
-`elf_loader/topology/capability/governance/syscall_registry/seat/kernel_exports/kmod_pool/builtin`；
-**不编** `platform_kernel.cpp`、`kmod_core.cpp`、`selftest.cpp`（依赖内核设施）。
+`elf_loader/topology/capability/governance/syscall_registry/seat/kernel_exports/kmod_pool/builtin/kdll`；
+不编 `platform_kernel.cpp`、`kmod_core.cpp`、`selftest.cpp`（依赖内核设施）。
 `kmod_core.cpp` 的全局注册表由 `host_platform.cpp` 提供 weak 兜底；
 `builtin.cpp` 依赖的链接脚本符号 `__kbuiltin_desc_start/__kbuiltin_desc_end`
 由宿主 `.hostbuiltin.desc` 段提供（默认 1 个空槽位，测试通过
@@ -62,7 +65,7 @@ KMOD-TEST RESULT PASS x/y [ (skipped: ...) ]
 
 ## 新增测试的约定
 
-- 每个 `tests/kmod/*_test.cpp` **不得有 main**，提供
+- 每个 `tests/kmod/*_test.cpp` 不得有 main，提供
   `extern "C" int32_t test_<name>_run(void)`，返回 0 = PASS；失败时先
   `printf("  FAIL ...")` 再返回 1（可用 `test_common.h` 的 `KCHECK*`）。
 - 在 `test_main.cpp` 的 `kTests[]` 登记 `{name, test_<name>_run, required}`；
@@ -72,10 +75,10 @@ KMOD-TEST RESULT PASS x/y [ (skipped: ...) ]
 
 ## fixtures 的两个硬约束
 
-- **`-mcmodel=large` + `-fno-pic -fno-pie`**：宿主 mmap 地址通常 >4GiB，小代码
+- `-mcmodel=large` + `-fno-pic -fno-pie`：宿主 mmap 地址通常 >4GiB，小代码
   模型会产生 `R_X86_64_32S/32` 重定位，加载器按设计拒绝。
 - 宿主 g++/as 默认会生成 SHF_ALLOC 的 `.note.gnu.property`（CET/IBT 属性）：
-  fixture **刻意保留**该段，加载器已显式跳过 `SHT_NOTE` alloc 段，正好用真实
+  fixture 刻意保留该段，加载器已显式跳过 `SHT_NOTE` alloc 段，正好用真实
   工具链输出覆盖该路径（内核模块用 clang 构建，默认无该段）。
 
 ## 随机种子（固定、可重放）
@@ -101,7 +104,8 @@ budget·段大小/`.in`·`.out` 大小非整除/导入槽越界/导出重名/契
 预校验 + `KmodBuiltinBootLoad` 拓扑化装载（kernel 导入回填、导出可调用、
 READY、幂等）；`KmodGovUnload` 对 BUILTIN 返回 `KMOD_ERR_POLICY` 且状态不变；
 `fixture_hostcomp_v2.o`（同名 .ko、init 故意失败）热替换失败后完整回退：
-内建组件恢复 1.0.0/READY/BUILTIN、旧导出仍可调用、新镜像无泄漏。
+resident/builtin 节点恢复 1.0.0/READY/BUILTIN、旧导出仍可调用、新镜像无泄漏
+（这条兼容路径仍保留，用于验证 takeover/回滚；现网组件全部是 trusted .ko）。
 
 ## CI 接入
 
@@ -109,5 +113,5 @@ READY、幂等）；`KmodGovUnload` 对 BUILTIN 返回 `KMOD_ERR_POLICY` 且状�
   日志 `ci_kmod.log` / `ci_kmod_asan.log`。
 - `.github/workflows/ci.yml` 的 `host-suites` job：两个 step（普通 + ASAN）。
 - `res/scripts/test/kmod_smoke.ps1`：QEMU 无头串口冒烟（Windows 手动门禁，
-  断言 KMOD_SELFTEST PASS / builtin ready 数量 / demo init / 无异常 / desktop）。
+  断言 KMOD_SELFTEST PASS / loaded kernel.* 数量 / demo init / 无异常 / desktop）。
 - `tests/Makefile`：`kmod` / `kmod-asan` 委托目标（细节在本目录 Makefile）。

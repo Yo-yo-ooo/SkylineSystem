@@ -30,6 +30,8 @@ KCOMPONENT_IMPORT_FN(time_hpet, kprintf_, int, (const char *, ...), "kernel",
                      "kprintf_", "kernel.log.v1")
 KCOMPONENT_DEPENDS(time_hpet, "kernel.arch.acpi", acpi)
 
+extern "C" void hpet_set_hooks(bool (*)(void), uint64_t (*)(void), void (*)(uint64_t));
+
 namespace {
 
 uint64_t hpet_time_ns(void)
@@ -54,6 +56,7 @@ const kmod_hpet_ops_t g_hpet_ops = {
 static int32_t time_hpet_init(void)
 {
     HPET::InitHPET();
+    hpet_set_hooks(&HPET::Available, &HPET::GetTimeNS, &HPET::SleepNS);
     kprintf_("[comp.time.hpet] init: available=%d\n",
              (int)(HPET::Available() ? 1 : 0));
     return KMOD_OK;
@@ -66,4 +69,8 @@ static void time_hpet_exit(void)
 
 KCOMPONENT_EXPORT_CONTRACT(time_hpet, KMOD_CONTRACT_HPET_V1, g_hpet_ops,
                            KMOD_HPET_ABI_V1)
+KCOMPONENT_EXPORT_RAW(time_hpet, hpet_time, "_ZN4HPET9GetTimeNSEv",
+    &HPET::GetTimeNS, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(time_hpet, hpet_sleep, "_ZN4HPET7SleepNSEm",
+    &HPET::SleepNS, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 KCOMPONENT_END(time_hpet)

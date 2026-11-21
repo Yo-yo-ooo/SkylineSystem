@@ -815,7 +815,23 @@ namespace Schedule {
             thread_argv = (uint64_t*)kmalloc(argc * sizeof(uint64_t));
             if (!thread_argv) goto cleanup;
         }
-        stack_top = thread->ctx.rsp;
+        /* 栈顶必须落在已映射页内。VMM::Alloc 返回的区间是 [base, base + N*PAGE),
+           上边界本身不在映射里；exec.cpp 把 thread_stack(= base + N*PAGE) 直接
+           写成 ctx.rsp, 而下面只往上减几十字节, 于是 rsp 停在页尾空洞 —— 用户态
+           第一条 push 就 #GP, 崩溃现场表现为 rsp 页内偏移恒定、该页不可读。
+           向下取整到页边界, 把 rsp 拉回最后一页内部。 */
+        /* 栈顶再向下让一整页。exec.cpp 的 thread_stack(= base + 8*PAGE) 已经是
+           页对齐的, 所以这里减去 PAGE_SIZE 之后 rsp 必然落在 [base + 7*PAGE,
+           base + 8*PAGE) 这页内部, 不会退化到上一页尾部; 而 base..base+7*PAGE
+           是 VMM::Alloc 保证映射的区间。实测崩溃现场 rsp = base + 0x8FC8, 正好
+           卡在最后一页的 0x38 字节尾巴上并报告 unreadable, 说明最后一页的映射
+           不可依赖 —— 直接放弃它, 换成确定可用的那 7 页。 */
+        stack_top = (thread->ctx.rsp & ~(uint64_t)(PAGE_SIZE - 1ULL)) - (uint64_t)PAGE_SIZE;
+        kinfoln("[ustack] pid=%d stack=%p thread_stack=%p rsp_in=%p aligned=%p pm=%p",
+                (thread->parent ? thread->parent->id : -1),
+                (void*)thread->stack, (void*)thread->thread_stack,
+                (void*)thread->ctx.rsp, (void*)stack_top,
+                (void*)thread->pagemap);
         if ((argc + envc) % 2 == 0) offset = 8;
         restore = VMM::SwitchPageMap(thread->pagemap);
         {
@@ -982,7 +998,7 @@ namespace Schedule {
         }
 
         thread->fx_area = (char*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE), false);
-        if (!thread->fx_area) { kerrorln("NewThread(%s): fx_area alloc failed", Path); kfree(buffer); kfree(thread); return nullptr; }
+        if (!thread->fx_area) { kerrorln("NewThread(%s): fx_area alloc failed (XsaveSize=%lu pages=%lu)", Path, (unsigned long)cpu->XsaveSize, (unsigned long)DIV_ROUND_UP(cpu->XsaveSize, PAGE_SIZE)); kfree(buffer); kfree(thread); return nullptr; }
         _memset(thread->fx_area, 0, cpu->XsaveSize);
         cpu->OverLoadableFuncs.StoreSIMDState(thread->fx_area, cpu->XsaveMaskLo, cpu->XsaveMaskHi);
         uint64_t kernel_stack = (uint64_t)VMM::Alloc(kernel_pagemap, 4, false);

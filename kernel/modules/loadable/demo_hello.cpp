@@ -20,8 +20,10 @@
 KMOD_IMPORT_FN(kprintf_, int, (const char *, ...), "kernel", "kprintf_",
                "kernel.log.v1");
 
-/* 导出函数：1000 + 入参。签名由提供者/消费者双方私下约定（本 demo 为 int32）。 */
-static int32_t hello_fn(int32_t x)
+/* 导出函数：1000 + 入参。签名由提供者/消费者双方私下约定（本 demo 为 int32）。
+ * extern "C" 让 ELF 符号名就是 hello_fn，跨模块 .out 符号解析可以直接命中；
+ * 旧的 KMOD_IMPORT 函数指针路径不受影响。 */
+extern "C" int32_t hello_fn(int32_t x)
 {
     return (int32_t)(1000 + x);
 }

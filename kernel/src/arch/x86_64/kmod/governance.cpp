@@ -430,6 +430,19 @@ int32_t bind_one_locked(kmod_module_t *m, uint32_t midx, uint32_t import_index,
             }
             return krc;
         }
+        /* DynLink 治理：注入/卸载服务是 capability 门禁，不只是普通符号。
+         * 持有 kernel.dynlink.v1 ops 或 KdllInject/InjectImage/InjectFile 的
+         * 模块必须被授予 MODULE_LOAD；直接导入 KdllEject 需要 MODULE_UNLOAD。 */
+        if (imp->contract &&
+            str_eq(imp->contract, KMOD_CONTRACT_KERNEL_DYNLINK)) {
+            uint64_t need = KMOD_CAP_MODULE_LOAD;
+            if (str_eq(imp->symbol, "KdllEject"))
+                need = KMOD_CAP_MODULE_UNLOAD;
+            else if (str_eq(imp->symbol, "KdllResolve"))
+                need = 0ull;
+            if (need != 0ull && (m->caps_granted & need) == 0ull)
+                return KMOD_ERR_CAP;
+        }
         b->resolved = addr;
         b->provider_export_index = kidx;
         if (imp->slot)
@@ -590,6 +603,107 @@ void note_reject(int32_t rc)
 }
 
 /* ------------------------------------------------------------------ */
+/* 跨模块符号：在已 READY 组件的 .out 导出表里按符号名解析。           */
+/* 这是 ELF 未定义符号解析的最低层：kernel .kout 未命中时才调用。     */
+/* 只扫描 READY 模块，避免把"正在 prepare、尚未 init"的代码地址给     */
+/* 消费者；同一事务内尚未 commit 的 provider 不会命中。               */
+/* ------------------------------------------------------------------ */
+
+static uint64_t g_kmod_xmod_hits = 0;
+
+static bool gov_resolve_module_symbol(void *ctx, const char *name,
+                                      uint64_t *addr)
+{
+    (void)ctx;
+    if (!name || !addr)
+        return false;
+    uint64_t lf = reg_lock();
+    for (uint32_t i = 0; i < g_kmod_module_count && i < MOD_MAX; i++) {
+        kmod_module_t *m = &g_kmod_modules[i];
+        if (state_get(m) != KMOD_STATE_READY)
+            continue;
+        for (uint32_t k = 0; k < m->n_exports; k++) {
+            const kmod_export_t *e = &m->exports[k];
+            if (!e->symbol || !e->addr)
+                continue;
+            if (str_eq(e->symbol, name)) {
+                *addr = (uint64_t)(uintptr_t)e->addr;
+                g_kmod_xmod_hits++;
+                reg_unlock(lf);
+                return true;
+            }
+        }
+    }
+    /* 同一事务里 provider 可能已经 prepare、但尚未 commit（state != READY）。
+     * 它的镜像基址/导出地址已经稳定，且拓扑会保证 init 先于 consumer；这里
+     * 也扫描 prepare 缓存，才能支持 provider 先序的跨 .ko 符号解析。 */
+    for (uint32_t i = 0; i < MOD_MAX; i++) {
+        if (!g_prep[i].used || g_prep[i].img.mem == nullptr)
+            continue;
+        const kmod_elf_image_t *img = &g_prep[i].img;
+        for (uint32_t k = 0; k < img->n_exports; k++) {
+            const kmod_export_t *e = &img->exports[k];
+            if (!e->symbol || !e->addr)
+                continue;
+            if (str_eq(e->symbol, name)) {
+                *addr = (uint64_t)(uintptr_t)e->addr;
+                g_kmod_xmod_hits++;
+                reg_unlock(lf);
+                return true;
+            }
+        }
+    }
+    reg_unlock(lf);
+    return false;
+}
+
+struct DepStageCtx {
+    uint32_t token;
+    uint32_t flags;
+    int32_t *staged_pool;
+    int32_t *staged_prep;
+    uint32_t *n_staged;
+    uint32_t depth;
+    int32_t rc;
+};
+
+static int32_t gov_stage_add(uint32_t token, uint32_t flags, int32_t pool_index,
+                             int32_t *staged_pool, int32_t *staged_prep,
+                             uint32_t *n_staged, uint32_t depth);
+
+static bool dep_stage_cb(void *vctx, const char *provider)
+{
+    DepStageCtx *ctx = (DepStageCtx *)vctx;
+    if (!provider || !provider[0] || str_eq(provider, "kernel"))
+        return true;
+    /* 已 READY 的 provider 直接复用。 */
+    {
+        uint64_t lf = reg_lock();
+        kmod_module_t *m = module_find_locked(provider);
+        bool ready = m && state_get(m) == KMOD_STATE_READY;
+        reg_unlock(lf);
+        if (ready)
+            return true;
+    }
+    int32_t pp = KmodPoolFind(provider, nullptr);
+    if (pp < 0) {
+        ctx->rc = KMOD_ERR_UNRESOLVED;
+        return false;
+    }
+    for (uint32_t i = 0; i < *ctx->n_staged; i++) {
+        if (ctx->staged_pool[i] == pp)
+            return true;
+    }
+    int32_t rc = gov_stage_add(ctx->token, ctx->flags, pp, ctx->staged_pool,
+                               ctx->staged_prep, ctx->n_staged, ctx->depth + 1u);
+    if (rc != KMOD_OK) {
+        ctx->rc = rc;
+        return false;
+    }
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
 /* prepare：加载并校验镜像池里的一个 .ko                              */
 /* ------------------------------------------------------------------ */
 
@@ -611,8 +725,9 @@ int32_t gov_prepare_image(int32_t pool_index, uint32_t token, uint32_t flags,
     mem_zero(&img, sizeof(img));
     char err[128];
     err[0] = '\0';
-    int32_t rc = KmodElfLoadImage(pi.data, pi.size, kexp, nkexp, &img, err,
-                                  sizeof(err));
+    int32_t rc = KmodElfLoadImageEx2(pi.data, pi.size, kexp, nkexp, &img, err,
+                                     sizeof(err), pi.trusted,
+                                     gov_resolve_module_symbol, nullptr);
     if (rc != KMOD_OK) {
         kmod_log("[kmod] prepare %s@%s: load rc=%d (%s) %s\n", pi.name, pi.version,
                  (int)rc, KmodElfErrorString(rc), err);
@@ -622,7 +737,19 @@ int32_t gov_prepare_image(int32_t pool_index, uint32_t token, uint32_t flags,
         KmodElfFreeImage(&img);
         return KMOD_ERR_IMAGE;
     }
-    rc = KmodCheckLoadable(img.manifest, flags);
+    /* EXTERNAL 导出只允许 trusted 内核 SAF 模块；普通 .ko 不得把导出地址
+     * 指到内核镜像（绕过"导出必须落在本镜像"的隔离假设）。 */
+    if (!pi.trusted) {
+        for (uint32_t i = 0; i < img.n_exports; i++) {
+            if (img.exports[i].flags & KMOD_EXF_EXTERNAL) {
+                KmodElfFreeImage(&img);
+                kmod_log("[kmod] prepare %s: EXTERNAL export not allowed "
+                         "for untrusted module\n", pi.name);
+                return KMOD_ERR_POLICY;
+            }
+        }
+    }
+    rc = KmodCheckLoadableEx(img.manifest, flags, pi.trusted);
     if (rc != KMOD_OK) {
         kmod_log("[kmod] prepare %s@%s: loadable rc=%d (%s)\n", pi.name,
                  pi.version, (int)rc, KmodElfErrorString(rc));
@@ -658,12 +785,54 @@ int32_t gov_stage_add(uint32_t token, uint32_t flags, int32_t pool_index,
                       int32_t *staged_pool, int32_t *staged_prep,
                       uint32_t *n_staged)
 {
+    return gov_stage_add(token, flags, pool_index, staged_pool, staged_prep,
+                         n_staged, 0u);
+}
+
+static int32_t g_stage_path[MOD_MAX];
+static uint32_t g_stage_path_n = 0;
+
+static int32_t gov_stage_add(uint32_t token, uint32_t flags, int32_t pool_index,
+                             int32_t *staged_pool, int32_t *staged_prep,
+                             uint32_t *n_staged, uint32_t depth)
+{
     for (uint32_t i = 0; i < *n_staged; i++) {
         if (staged_pool[i] == pool_index)
             return KMOD_OK;
     }
-    if (*n_staged >= MOD_MAX)
+    if (*n_staged >= MOD_MAX || depth >= MOD_MAX)
         return KMOD_ERR_DEPTH;
+    for (uint32_t i = 0; i < g_stage_path_n; i++) {
+        if (g_stage_path[i] == pool_index)
+            return KMOD_ERR_CYCLE;
+    }
+    if (g_stage_path_n >= MOD_MAX)
+        return KMOD_ERR_DEPTH;
+    g_stage_path[g_stage_path_n++] = pool_index;
+    struct StagePathPop {
+        ~StagePathPop() { if (g_stage_path_n) g_stage_path_n--; }
+    } path_pop;
+
+    /* provider 先序：先读 .kmod_dep_names（无重定位），把依赖的 provider
+     * prepare 到缓存里，再 prepare 本镜像。跨 .ko 符号解析需要这个顺序。 */
+    if (pool_index >= 0 && (uint32_t)pool_index < g_kmod_image_count) {
+        kmod_image_t di = g_kmod_images[pool_index];
+        if (di.data && di.size) {
+            DepStageCtx dc;
+            dc.token = token; dc.flags = flags;
+            dc.staged_pool = staged_pool; dc.staged_prep = staged_prep;
+            dc.n_staged = n_staged; dc.depth = depth; dc.rc = KMOD_OK;
+            char derr[96];
+            derr[0] = '\0';
+            int32_t drc = KmodElfForEachDep(di.data, di.size, dep_stage_cb, &dc,
+                                            derr, sizeof(derr));
+            if (dc.rc != KMOD_OK)
+                return dc.rc;
+            if (drc != KMOD_OK)
+                return drc;
+        }
+    }
+
     int32_t ps = -1;
     int32_t rc = gov_prepare_image(pool_index, token, flags, &ps);
     if (rc != KMOD_OK)
@@ -770,8 +939,9 @@ int32_t KmodModuleAllocFromImage(int32_t pool_index, uint32_t flags,
         KmodKernelExports(&kexp, &nkexp);
         char err[128];
         err[0] = '\0';
-        int32_t lrc = KmodElfLoadImage(pi.data, pi.size, kexp, nkexp, &img, err,
-                                       sizeof(err));
+        int32_t lrc = KmodElfLoadImageEx2(pi.data, pi.size, kexp, nkexp, &img,
+                                          err, sizeof(err), pi.trusted,
+                                          gov_resolve_module_symbol, nullptr);
         if (lrc != KMOD_OK) {
             kmod_log("[kmod] alloc %s@%s: load rc=%d (%s)\n", pi.name, pi.version,
                      (int)lrc, KmodElfErrorString(lrc));
@@ -783,14 +953,35 @@ int32_t KmodModuleAllocFromImage(int32_t pool_index, uint32_t flags,
         KmodElfFreeImage(&img);
         return KMOD_ERR_IMAGE;
     }
+    if (!pi.trusted) {
+        for (uint32_t i = 0; i < img.n_exports; i++) {
+            if (img.exports[i].flags & KMOD_EXF_EXTERNAL) {
+                KmodElfFreeImage(&img);
+                return KMOD_ERR_POLICY;
+            }
+        }
+    }
 
-    /* 2) 能力授权（策略 + 清单交集；保留/未定义位在这里也会被拒） */
+    /* 2) 能力授权（策略 + 清单交集；保留/未定义位在这里也会被拒）。
+     *    内核 SAF 的 trusted 镜像按清单直接授予（与 static builtin 一致）。 */
+    const bool trusted = pi.trusted;
     uint64_t granted = 0ull, denied = 0ull;
-    int32_t rc = KmodCapGrant(man->name, man->required_caps, man->optional_caps,
-                              &granted, &denied);
-    if (rc != KMOD_OK) {
-        KmodElfFreeImage(&img);
-        return rc;
+    int32_t rc = KMOD_OK;
+    if (trusted) {
+        uint64_t declared = man->required_caps | man->optional_caps;
+        if (KmodCapIsReserved(declared) ||
+            (declared & ~KMOD_CAP_ALL_KNOWN) != 0ull) {
+            KmodElfFreeImage(&img);
+            return KMOD_ERR_CAP;
+        }
+        granted = declared & KMOD_CAP_ALL_KNOWN;
+    } else {
+        rc = KmodCapGrant(man->name, man->required_caps, man->optional_caps,
+                          &granted, &denied);
+        if (rc != KMOD_OK) {
+            KmodElfFreeImage(&img);
+            return rc;
+        }
     }
 
     /* 3) 占用槽位并登记 */
@@ -811,6 +1002,8 @@ int32_t KmodModuleAllocFromImage(int32_t pool_index, uint32_t flags,
     str_copy(m->version, KMOD_VERSION_MAX, man->version);
     m->tier = man->tier;
     m->flags = man->flags;
+    if (trusted)
+        m->internal_flags |= KMOD_MODF_TRUSTED;
     m->caps_required = man->required_caps;
     m->caps_optional = man->optional_caps;
     m->caps_granted = granted;
@@ -841,6 +1034,76 @@ int32_t KmodModuleAllocFromImage(int32_t pool_index, uint32_t flags,
     return KMOD_OK;
 }
 
+/* 登记 resident DynModule：代码已在镜像内，不需要 ELF 布局/重定位。
+ * 与 KmodModuleAllocFromImage 的唯一区别是镜像后端；生命周期、导入绑定、
+ * 导出注册、能力与注入语义完全一致。 */
+int32_t KmodModuleAllocResident(const kmod_manifest_t *man,
+                                uint32_t internal_flags, int32_t *index_out)
+{
+    if (!man || !index_out)
+        return KMOD_ERR_INVAL;
+    *index_out = -1;
+    if (man->magic != KMOD_MANIFEST_MAGIC ||
+        man->abi_version != KMOD_ABI_VERSION)
+        return KMOD_ERR_FORMAT;
+    if (KmodBuiltinNameValidate(man->name) != KMOD_OK)
+        return KMOD_ERR_NAME;
+    if (man->required_caps & ~KMOD_CAP_ALL_KNOWN)
+        return KMOD_ERR_CAP;
+
+    uint64_t lf = reg_lock();
+    if (module_find_locked(man->name)) {
+        reg_unlock(lf);
+        return KMOD_ERR_EXISTS;
+    }
+    kmod_module_t *m = module_claim_locked();
+    if (!m) {
+        reg_unlock(lf);
+        return KMOD_ERR_NOMEM;
+    }
+    int32_t idx = module_index_of(m);
+    str_copy(m->name, KMOD_NAME_MAX, man->name);
+    str_copy(m->version, KMOD_VERSION_MAX, man->version);
+    m->tier = KMOD_TIER_DYN;
+    m->flags = man->flags;
+    m->internal_flags = internal_flags | KMOD_MODF_BUILTIN | KMOD_MODF_RESIDENT;
+    m->caps_required = man->required_caps;
+    m->caps_optional = man->optional_caps;
+    m->caps_granted = (man->required_caps | man->optional_caps) &
+                      KMOD_CAP_ALL_KNOWN;
+    m->caps_denied = 0u;
+    m->pool_index = -1;
+    m->generation = 0u;
+    m->load_seq = ++g_load_seq;
+    m->img.mem = nullptr;
+    m->img.size = 0u;
+    m->img.manifest = (kmod_manifest_t *)man;
+    m->img.exports = nullptr;
+    m->img.n_exports = 0u;
+    m->img.imports = nullptr;
+    m->img.n_imports = 0u;
+    m->img.init_array = nullptr;
+    m->img.n_init_array = 0u;
+    m->img.fini_array = nullptr;
+    m->img.n_fini_array = 0u;
+    m->exports = nullptr;
+    m->n_exports = 0u;
+    m->imports = nullptr;
+    m->n_imports = 0u;
+    m->refcount = 0u;
+    m->pin_count = 0u;
+    m->gen_exports_hash = KmodExportsHash(nullptr, 0u);
+    uint64_t seq = m->load_seq;
+    state_set(m, KMOD_STATE_READY);
+    reg_unlock(lf);
+
+    kmod_log("[kdll] resident module %s@%s -> slot #%d (seq=%llu caps=0x%llx)\n",
+             m->name, m->version, (int)idx, (unsigned long long)seq,
+             (unsigned long long)m->caps_granted);
+    *index_out = idx;
+    return KMOD_OK;
+}
+
 void KmodModuleRelease(kmod_module_t *m)
 {
     if (!m)
@@ -858,15 +1121,30 @@ void KmodModuleRelease(kmod_module_t *m)
 
 int32_t KmodCheckLoadable(const kmod_manifest_t *m, uint32_t flags)
 {
+    return KmodCheckLoadableEx(m, flags, false);
+}
+
+/* trusted=true：内核构建的 modules.saf 里的组件 .ko。它们使用 kernel.*
+ * 保留名、能力按清单直接授予、允许注册固定 syscall 槽；镜像仍由 loader
+ * 拥有（与 static builtin 不同，卸载/回滚时要 free）。 */
+int32_t KmodCheckLoadableEx(const kmod_manifest_t *m, uint32_t flags,
+                            bool trusted)
+{
     if (!m)
         return KMOD_ERR_INVAL;
-    if (m->magic != KMOD_MANIFEST_MAGIC)
+    if (m->magic != KMOD_MANIFEST_MAGIC) {
+        kmod_log("[kmod] check %s: magic 0x%x\n", m->name, (unsigned)m->magic);
         return KMOD_ERR_FORMAT;
-    if (m->abi_version != KMOD_ABI_VERSION)
+    }
+    if (m->abi_version != KMOD_ABI_VERSION) {
+        kmod_log("[kmod] check %s: abi %u\n", m->name, (unsigned)m->abi_version);
         return KMOD_ERR_VERSION;
-    if (m->tier != KMOD_TIER_POLICY && m->tier != KMOD_TIER_IMPL)
+    }
+    /* 合并后只有一个可模块化类别；旧 Tier 2 线值 2 作为兼容别名接受。 */
+    if (m->tier != KMOD_TIER_DYN && m->tier != KMOD_TIER_IMPL)
         return KMOD_ERR_TIER;
-    int32_t rc = KmodNameValidate(m->name);
+    int32_t rc = trusted ? KmodBuiltinNameValidate(m->name)
+                         : KmodNameValidate(m->name);
     if (rc != KMOD_OK)
         return rc;
     rc = KmodVersionParse(m->version, nullptr, nullptr, nullptr);
@@ -874,20 +1152,36 @@ int32_t KmodCheckLoadable(const kmod_manifest_t *m, uint32_t flags)
         return rc;
     const uint32_t known_flags = KMOD_MF_BOOT | KMOD_MF_HOTREPLACE |
                                  KMOD_MF_UNLOADABLE | KMOD_MF_DEBUG |
-                                 KMOD_MF_NO_AUTODEP | KMOD_MF_EXPERIMENTAL;
-    if (m->flags & ~known_flags)
+                                 KMOD_MF_NO_AUTODEP | KMOD_MF_EXPERIMENTAL |
+                                 KMOD_MF_RESIDENT | KMOD_MF_DEMAND;
+    if (m->flags & ~known_flags) {
+        kmod_log("[kmod] check %s: flags 0x%x unknown 0x%x\n", m->name,
+                 (unsigned)m->flags, (unsigned)(m->flags & ~known_flags));
         return KMOD_ERR_FORMAT;
+    }
+    /* RESIDENT 是 static builtin 镜像属性，任何 .ko 都不能自称已在内核镜像里。 */
+    if (m->flags & KMOD_MF_RESIDENT)
+        return KMOD_ERR_POLICY;
 
     uint32_t mode = KmodCapMode();
     if (mode == KMOD_POLICY_DISABLED)
         return KMOD_ERR_POLICY;
     if ((m->flags & KMOD_MF_EXPERIMENTAL) && mode == KMOD_POLICY_STRICT &&
-        !(flags & KMOD_LOAD_FORCE))
+        !(flags & KMOD_LOAD_FORCE) && !trusted)
         return KMOD_ERR_POLICY;
     /* 参与热替换的模块必须显式声明并申请 HOT_REPLACE 能力（Tier0 治理断言） */
     if ((m->flags & KMOD_MF_HOTREPLACE) &&
-        (m->required_caps & KMOD_CAP_HOT_REPLACE) == 0ull)
+        (m->required_caps & KMOD_CAP_HOT_REPLACE) == 0ull && !trusted)
         return KMOD_ERR_CAP;
+
+    uint64_t declared = m->required_caps | m->optional_caps;
+    if (KmodCapIsReserved(declared) ||
+        (declared & ~KMOD_CAP_ALL_KNOWN) != 0ull)
+        return KMOD_ERR_CAP;
+    if (trusted) {
+        /* 内核 SAF 是可信构建产物：能力按清单授予（与 static builtin 一致）。 */
+        return KMOD_OK;
+    }
 
     uint64_t granted = 0ull, denied = 0ull;
     return KmodCapGrant(m->name, m->required_caps, m->optional_caps, &granted,
@@ -1349,6 +1643,22 @@ int32_t KmodGovLoad(const char *name, const char *version, uint32_t flags)
                 continue; /* 复用已加载 provider（commit 时绑定并加 refcount） */
             int32_t pp = KmodPoolFind(provider, nullptr);
             if (pp < 0) {
+                /* 统一 DynModule 依赖注入：provider 可能是尚未初始化的
+                 * resident/builtin（不是镜像池里的 ET_REL）。此时按名字注入
+                 * builtin（含其闭包），再回到已加载检查。 */
+                if (KmodBuiltinFind(provider) != nullptr) {
+                    int32_t brc = KmodBuiltinLoad(provider);
+                    if (brc != KMOD_OK && brc != KMOD_ERR_EXISTS) {
+                        rc = brc;
+                        break;
+                    }
+                    lf = reg_lock();
+                    prov = module_find_locked(provider);
+                    loaded = prov && state_get(prov) == KMOD_STATE_READY;
+                    reg_unlock(lf);
+                    if (loaded)
+                        continue;
+                }
                 if (imp->flags & KMOD_IMP_OPTIONAL)
                     continue; /* 可选缺失：槽保持 NULL */
                 rc = (man->flags & KMOD_MF_NO_AUTODEP) ? KMOD_ERR_UNRESOLVED
@@ -1533,6 +1843,15 @@ int32_t KmodGovUnload(const char *name, uint32_t flags)
                    ? KMOD_ERR_BUSY
                    : KMOD_ERR_STATE;
     }
+    /* 内核 SAF 提供的 trusted 模块是内核构建产物，不允许卸载。 */
+    if (m->internal_flags & KMOD_MODF_TRUSTED) {
+        reg_unlock(lf);
+        g_kmod_stats.reject_policy++;
+        g_kmod_stats.unloads_fail++;
+        kmod_log("[kmod] unload %s: REJECTED (kernel SAF trusted module)\n",
+                 name);
+        return KMOD_ERR_POLICY;
+    }
     /* 内建组件（内核静态链接）不可卸载：热替换成功后 BUILTIN 已清除才走 .ko 规则 */
     if (m->internal_flags & KMOD_MODF_BUILTIN) {
         reg_unlock(lf);
@@ -1587,9 +1906,18 @@ int32_t KmodGovUnload(const char *name, uint32_t flags)
     unbind_all_locked(m);
     bool released = module_release_locked(m, &img, &iflags);
     reg_unlock(lf);
-    /* 能走到这里必然是 .ko 背书节点；BUILTIN 已在上面被 POLICY 拒绝 */
-    if (released && (iflags & KMOD_MODF_BUILTIN) == 0u)
-        KmodElfFreeImage(&img);
+    /* 能走到这里必然是 .ko 背书节点；BUILTIN 已在上面被 POLICY 拒绝。
+     * 座位提供者的 ops 指针可能仍被 sched/heap 的在途调用持有（这两处没有
+     * epoch 保护），释放镜像会造成 UAF：保留镜像（泄漏一次），换安全。 */
+    if (released && (iflags & KMOD_MODF_BUILTIN) == 0u) {
+        if (iflags & KMOD_MODF_SEAT_PROVIDER) {
+            kmod_log("[kmod] unload %s: seat provider image kept "
+                     "(no in-flight epoch guard)\n", name);
+            mem_zero(&img, sizeof(img));
+        } else {
+            KmodElfFreeImage(&img);
+        }
+    }
 
     g_kmod_stats.unloads_ok++;
     kmod_log("[kmod] unloaded %s (gen=%u consumers=%u) slot released\n", name,
@@ -1812,8 +2140,10 @@ int32_t KmodGovHotReplace(const char *name, const char *new_version,
         KmodKernelExports(&kexp, &nkexp);
         char err[128];
         err[0] = '\0';
-        int32_t rc = KmodElfLoadImage(pi.data, pi.size, kexp, nkexp, &c.new_img,
-                                      err, sizeof(err));
+        int32_t rc = KmodElfLoadImageEx2(pi.data, pi.size, kexp, nkexp,
+                                         &c.new_img, err, sizeof(err),
+                                         pi.trusted,
+                                         gov_resolve_module_symbol, nullptr);
         if (rc != KMOD_OK) {
             g_kmod_stats.hotswaps_fail++;
             note_reject(rc);
@@ -1980,7 +2310,14 @@ int32_t KmodGovHotReplace(const char *name, const char *new_version,
 
         call_exit_image(&c.old_img); /* 旧版本 exit_hook -> fini_array 逆序 */
         if (!c.old_builtin) {
-            KmodElfFreeImage(&c.old_img); /* 旧 .ko 镜像由 governance 释放 */
+            /* 座位提供者的旧 ops 可能仍被 sched/heap 在途调用；不释放旧镜像。 */
+            if (c.old_internal_flags & KMOD_MODF_SEAT_PROVIDER) {
+                kmod_log("[kmod] hot replace %s: old seat provider image kept "
+                         "(no in-flight epoch guard)\n", name);
+                mem_zero(&c.old_img, sizeof(c.old_img));
+            } else {
+                KmodElfFreeImage(&c.old_img); /* 旧 .ko 镜像由 governance 释放 */
+            }
         } else {
             /* 旧节点是内核静态链接组件：exit 已调用，static manifest/段不释放 */
             mem_zero(&c.old_img, sizeof(c.old_img));

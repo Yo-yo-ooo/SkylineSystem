@@ -22,8 +22,12 @@ KCOMPONENT_BEGIN(syscall_info, "kernel.syscall.info", "1.0.0",
 KCOMPONENT_DEPENDS(syscall_info, "kernel.sched.core", sched)
 KCOMPONENT_DEPENDS(syscall_info, "kernel.dev.core", dev)
 
-KCOMPONENT_EXPORT_SYSCALL(syscall_info, 16u, sys_sysinfo)
-KCOMPONENT_EXPORT_SYSCALL(syscall_info, 25u, sys_dev_getinfo)
-KCOMPONENT_EXPORT_SYSCALL(syscall_info, 26u, sys_dev_ioctl)
+/* sysinfo 的 init/idle_refresh 仍被 Tier0 调用，实现留在内核；其余设备
+ * 信息函数随 device.cpp 迁入本 .ko。槽 21 的 sys_dev_mmap 也由 device.cpp
+ * 定义，因此归到本组件注册。 */
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_info, 16u, sys_sysinfo)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_info, 25u, sys_dev_getinfo)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_info, 26u, sys_dev_ioctl)
+KCOMPONENT_EXPORT_SYSCALL_LOCAL(syscall_info, 21u, sys_dev_mmap)
 
 KCOMPONENT_END(syscall_info)

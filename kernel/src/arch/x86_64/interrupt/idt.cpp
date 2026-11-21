@@ -234,6 +234,47 @@ extern "C" void idt_exception_handler(context_t *ctx) {
         kerrorln("RFLAGS: 0x%p",ctx->rflags);
         kerrorln("ERROR_CODE: 0x%p",ctx->error_code);
         kerrorln("CS: 0x%x SS: 0x%x", ctx->cs, ctx->ss);
+        /* 诊断: 用户栈样本。非规范 RIP + 其余通用寄存器全 0 意味着某次 ret
+           弹出了被覆盖的返回地址 (或者 call 了一个被覆写的函数指针), 而
+           trap frame 只留下最后一跳的现场。把 rsp 起 10 个 qword 打出来,
+           返回链就能指出是哪一层栈帧被写坏。
+           走 VMM::UserAccess::CopyFromUser 而不是物理直读: 它按 pagemap
+           逐页校验, 跨到未映射页时干净失败, 不会在崩溃路径上再吃一次 #PF。 */
+        if (proc_t* p = Schedule::this_proc()) {
+            if (p->pagemap) {
+                uint64_t words[10] = {0};
+                if (VMM::UserAccess::CopyFromUserNoLock(p->pagemap, words,
+                                                 (const void*)ctx->rsp,
+                                                 sizeof(words))) {
+                    kerrorln("USER STACK DUMP @ rsp 0x%p:", ctx->rsp);
+                    for (int i = 0; i < 10; i++)
+                        kerrorln("  [rsp+%02X] = 0x%p", i * 8, words[i]);
+                } else {
+                    kerrorln("USER STACK DUMP: unreadable at 0x%p", ctx->rsp);
+                    /* 栈页根本没映射说明 rsp 本身已经是坏值(而不是被 munmap),
+                       否则进程连一次 push 都做不了。往上扫 64 页找第一个已映射
+                       页并打它的头两个 qword: "哪一页有内容"能反推栈的真实边界,
+                       而页内内容能看出这块内存原本属于谁(映像/共享页/别的栈)。 */
+                    for (int k = 1; k <= 64; k++) {
+                        uint64_t probe = (ctx->rsp & ~(uint64_t)0xFFF) +
+                                         (uint64_t)k * (uint64_t)PAGE_SIZE;
+                        if (VMM::GetPhysics(p->pagemap, probe)) {
+                            uint64_t hi[2] = {0};
+                            if (VMM::UserAccess::CopyFromUserNoLock(p->pagemap, hi,
+                                                             (const void*)probe,
+                                                             sizeof(hi))) {
+                                kerrorln("  first mapped page above rsp: 0x%p [0]=0x%p [8]=0x%p",
+                                         probe, hi[0], hi[1]);
+                            } else {
+                                kerrorln("  first mapped page above rsp: 0x%p (content unreadable)",
+                                         probe);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         Schedule::Exit(-1);
     }
     asm volatile("cli");

@@ -228,6 +228,10 @@ namespace Schedule{
         void TimerAdd(cpu_t* cpu, thread_t* t, uint64_t expires);
         void TimerCascade(cpu_t* cpu, thread_t** tv, int idx);
     }
+    /* 从 SCHED_VEC（Switch 入口）推进本核定时器轮；AP 没有 PIT tick，
+       不这样做的话 AP 上 Sleep() 的线程永远不会被唤醒。 */
+    void TimerTickWheels();
+    bool TimerPending();
         /* 反馈统计导出. out 布局 (计数; [10]/[11] 为 Q10 定点):
      *  [0]samples [1]outliers [2]tag_invalid [3]short_windows
      *  [4]stalled [5]dead_zone [6]sat_hi [7]sat_lo [8]base_resets

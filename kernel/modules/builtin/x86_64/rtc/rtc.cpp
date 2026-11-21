@@ -145,8 +145,6 @@ namespace RTC
 
 
 
-    int32_t Second, Minute, Hour, Day, Month, Year;
-    unsigned long LastUpdateTime = 0;
 
     uint32_t ToUnixTime(){
         uint32_t y = Year;

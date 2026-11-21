@@ -6,8 +6,11 @@
 #include <klib/kio.h>
 #include <errno.h>
 #include <arch/x86_64/schedule/sched.h>
+#include <arch/x86_64/vmm/vmm.h>
 #include <arch/x86_64/schedule/syscalln.h>
 #include <klib/stallwatch.h>
+
+extern volatile bool IsPM5LVL;
 
 static uint64_t 
 SYSCALL_NULL(uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,syscall_frame_t*){return NULL;}
@@ -42,6 +45,25 @@ extern "C" void syscall_handler(syscall_frame_t *frame) {
         stall_set_kernel_busy(0);
         frame->rax = -ENOSYS; 
         return;
+    }
+
+    /* 用户 RCX 会由 sysret 直接装入 RIP：非规范或内核区的返回地址会在 CPL0
+       触发 #GP，最终 hcf。合法程序不会构造这种值，按用户态 #GP 处理：
+       直接终止当前进程（等价于 SIGSEGV），而不是把整机拖去停机。 */
+    {
+        const uint64_t user_end = IsPM5LVL ? USER_SPACE_END_5LVL
+                                           : USER_SPACE_END_4LVL;
+        if (__builtin_expect(frame->rip > user_end, 0)) {
+            static uint32_t bad_rip_logs;
+            if (bad_rip_logs < 8u) {
+                bad_rip_logs++;
+                kinfoln("[syscall] kill: bad user RIP 0x%llx",
+                        (unsigned long long)frame->rip);
+            }
+            stall_set_kernel_busy(0);
+            Schedule::Exit(-1);
+            return;
+        }
     }
 
     auto func = syscall_lists[frame->rax];

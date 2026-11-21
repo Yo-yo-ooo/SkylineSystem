@@ -1,0 +1,2 @@
+# syscall_random implementation -> syscall_random.ko
+builtin/x86_64/syscall/random.cpp

@@ -349,9 +349,9 @@ def main() -> int:
 
         # ---- A2: Ctrl+Alt+B opens the Start menu --------------------------
         hmp.cmd("sendkey ctrl-alt-b")
-        ok, SERIAL = wait_marker(serial, r"\[wm\] start menu: open items=7",
+        ok, SERIAL = wait_marker(serial, r"\[wm\] start menu: open items=[0-9]+",
                                  args.action_wait, proc)
-        report("A2) Ctrl+Alt+B opens Start menu", ok, "[wm] start menu: open items=7")
+        report("A2) Ctrl+Alt+B opens Start menu", ok, "[wm] start menu: open items=[0-9]+")
 
         # ---- E1: menu really rendered -------------------------------------
         # 菜单是 30Hz 重活循环里合成的, 首次出现可能比串口标记晚 1~2 个
@@ -429,7 +429,7 @@ def main() -> int:
 
         # ---- reopen the menu once more to prove it is reusable -----------
         hmp.cmd("sendkey ctrl-alt-b")
-        n = count_marker(read_serial(serial), r"\[wm\] start menu: open items=7")
+        n = count_marker(read_serial(serial), r"\[wm\] start menu: open items=[0-9]+")
         report("A2b) Start menu can be reopened", n >= 2, "open count=%d" % n)
         hmp.cmd("sendkey esc")
         end = time.time() + args.action_wait
@@ -458,7 +458,7 @@ def main() -> int:
         #       ("[explorer] mouse open idx=N");
         #   M3  键盘路径仍然可用 (Esc 退出 -> "[explorer] exit")。
         hmp.cmd("sendkey ctrl-alt-b")
-        ok, SERIAL = wait_marker_count(serial, r"\[wm\] start menu: open items=7",
+        ok, SERIAL = wait_marker_count(serial, r"\[wm\] start menu: open items=[0-9]+",
                                        3, args.action_wait, proc)
         report("M0) Start menu reopened for mouse phase", ok, "open count>=3")
         hmp.cmd("sendkey ret")

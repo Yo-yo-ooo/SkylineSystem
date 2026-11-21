@@ -44,12 +44,23 @@ extern "C" {
 #define KMOD_ABI_FINGERPRINT    0x00010001u
 
 /* ------------------------------------------------------------------ */
-/* Tier：Tier 0 固定不可模块化，Tier 1+ 可模块化                       */
+/* 模块类别：Tier 0 固定核心 + 单一 DynModule 类别                     */
 /* ------------------------------------------------------------------ */
+/* 历史 ABI 里的 Tier 1（内建策略）与 Tier 2（外部 .ko）已合并为同一
+ * "动态链接模块"(DynModule) 类别：
+ *   - 不再用 tier 区分"静态内建 / 运行时加载"；
+ *   - 一个模块是 resident image（编进内核镜像）还是 relocatable image
+ *     （外部 ET_REL .ko）只由 internal source 决定，生命周期/能力/导入导出/
+ *     注入语义完全一致；
+ *   - 线的 tier 字段保留为 1（同一类别），旧常量仍指向 1，保证既有 .ko
+ *     二进制与宿主 fixture 继续被接受。 */
 #define KMOD_TIER_CORE          0u   /* Tier 0: 引导/页表/中断/上下文/syscall 入口/
-                                        模块加载器/回滚机制/能力注册表。.ko 不得声明 */
-#define KMOD_TIER_POLICY        1u   /* Tier 1: 调度策略/分配器/文件系统/驱动/协议栈 */
-#define KMOD_TIER_IMPL          2u   /* Tier 2: 具体实现、扩展、诊断 */
+                                        模块加载器/回滚机制/能力注册表。模块不得声明 */
+#define KMOD_TIER_DYN           1u   /* 唯一的可模块化类别：DynModule */
+#define KMOD_TIER_POLICY        KMOD_TIER_DYN  /* 兼容别名（旧 Tier 1） */
+/* 旧 Tier 2 的线值 2 保留为**兼容别名**：加载器把它与 KMOD_TIER_DYN 视为
+ * 同一类别（不再有静态/动态之分）。新模块应写 KMOD_TIER_DYN。 */
+#define KMOD_TIER_IMPL          2u
 
 /* ------------------------------------------------------------------ */
 /* 模块清单 flags                                                      */
@@ -60,6 +71,9 @@ extern "C" {
 #define KMOD_MF_DEBUG           (1u << 3)  /* 诊断模块（严格策略下额外审计） */
 #define KMOD_MF_NO_AUTODEP      (1u << 4)  /* 不自动拉取依赖：缺依赖即失败 */
 #define KMOD_MF_EXPERIMENTAL    (1u << 5)  /* 实验性模块，严格策略下默认拒绝 */
+#define KMOD_MF_RESIDENT        (1u << 6)  /* resident image：代码已在内核镜像内，
+                                              不需要重定位；仍走统一注入/绑定/生命周期 */
+#define KMOD_MF_DEMAND          (1u << 7)  /* 不在启动图自动加载，等首次注入（DLL 式按需） */
 
 /* ------------------------------------------------------------------ */
 /* 能力位（capability）：治理层审计/授权用，不是内核态安全沙箱边界      */
@@ -102,6 +116,10 @@ extern "C" {
 /* 导出 flags */
 #define KMOD_EXF_HOTREPLACEABLE (1u << 0)   /* 该导出允许热替换重绑定 */
 #define KMOD_EXF_OPTIONAL       (1u << 1)   /* 无消费者时不阻止卸载 */
+/* 导出地址不在本模块镜像内（指向已在内核镜像中的实现）。
+ * 仅 kernel-provided 的 resident 组件 .ko（从内核 SAF 加载、manifest 名
+ * kernel.*）可以使用；普通外部 .ko 的导出仍必须落在自身镜像内。 */
+#define KMOD_EXF_EXTERNAL       (1u << 2)
 
 /* ------------------------------------------------------------------ */
 /* 导入 flags                                                          */
@@ -117,6 +135,9 @@ extern "C" {
 #define KMOD_SEC_IN             ".in"
 #define KMOD_SEC_OUT            ".out"
 #define KMOD_SEC_MANIFEST       ".kmod_manifest"
+/* 纯 NUL 分隔的 provider 名字列表：不依赖重定位，供加载器在 prepare 之前
+ * 做"provider 先序"依赖规划（跨 .ko 符号解析需要 provider 已 prepare）。 */
+#define KMOD_SEC_DEP_NAMES      ".kmod_dep_names"
 /* 内核自身导出表段（Tier 0 内核镜像内，非 .ko） */
 #define KMOD_SEC_KERNEL_OUT     ".kout"
 
@@ -131,6 +152,10 @@ extern "C" {
 #define KMOD_CONTRACT_KERNEL_SYSCALL "kernel.syscall.v1"
 #define KMOD_CONTRACT_KERNEL_KLIB   "kernel.klib.v1"   /* klib 工具面 ops (C++ 链接工具) */
 #define KMOD_CONTRACT_KERNEL_ALGO   "kernel.algo.v1"   /* klib 容器面 ops (hashmap/art/queue/fifo/list) */
+#define KMOD_CONTRACT_KERNEL_DYNLINK "kernel.dynlink.v1" /* 统一 DynModule 注入/解析服务 */
+/* 内核共享实现符号：组件 .ko 直接调用的 driver/FS/net/sched 实现函数。
+ * 由构建期从组件 .ko 的未定义符号生成，见 component_exports.cpp。 */
+#define KMOD_CONTRACT_KERNEL_COMPONENT "kernel.component.v1"
 /* 私有契约命名空间格式（仅做字符串规则校验，不做语义解释）：
  *   <vendor>.<area>.<vN>  例如 vendor.sched.v1 / acme.fs.v2
  * 保留前缀：kernel. / core. 只允许 Tier0 内核镜像自身声明。 */
@@ -195,7 +220,7 @@ extern "C" {
 #define KMOD_MAX_MODULES         64u
 #define KMOD_MAX_IMAGES          64u
 #define KMOD_MAX_IMPORTS         64u
-#define KMOD_MAX_EXPORTS         128u
+#define KMOD_MAX_EXPORTS         512u
 #define KMOD_MAX_MODULE_DEPS     32u
 #define KMOD_MAX_MODULE_CONSUMERS 64u
 #define KMOD_MAX_ELF_SIZE        (8u << 20)
@@ -260,6 +285,35 @@ typedef struct kmod_import {
     uint32_t expect_size;     /* 期望 ops 结构尺寸（0 = 不校验） */
     uint32_t flags;           /* KMOD_IMP_* */
 } kmod_import_t;
+
+/* ------------------------------------------------------------------ */
+/* DynModule 注入（DLL 式动态链接）                                    */
+/* ------------------------------------------------------------------ */
+/* 注入 flags */
+#define KMOD_INJ_PIN          (1u << 0)  /* 持有一个注入引用，直到 KdllEject */
+#define KMOD_INJ_SILENT       (1u << 1)  /* 不打印常规注入日志 */
+#define KMOD_INJ_FILE         (1u << 2)  /* name 当作文件路径读取 ET_REL 镜像 */
+
+/* 统一注入服务的 ops 契约（kernel.dynlink.v1）。与直接符号导出相比，ops
+ * 契约带精确 ops_size 校验：结构布局漂移会在绑定阶段暴露，而不是运行时踩坏
+ * 内存。模块通过 KMOD_IMPORT_DYNLINK() 取得本结构。 */
+#define KMOD_DYNLINK_OPS_ABI  1u
+
+typedef struct kmod_dynlink_ops {
+    uint32_t abi_version;         /* KMOD_DYNLINK_OPS_ABI */
+    uint32_t ops_size;            /* sizeof(kmod_dynlink_ops_t) */
+    /* 确保 name 已动态链接（resident/builtin/镜像池/文件），可带 PIN。
+     * 已 READY 时幂等；依赖按 provider 自动注入。 */
+    int32_t (*inject)(const char *name, uint32_t flags);
+    /* 释放一次 PIN；归零且模块声明 UNLOADABLE 时真正卸载。 */
+    int32_t (*eject)(const char *name);
+    /* 在已 READY 的 provider 导出表里解析符号（等价 dlsym）。 */
+    void *(*resolve)(const char *provider, const char *symbol);
+    /* 从内存中的 ET_REL 镜像注入（data 被复制，调用后调用方仍拥有 data）。 */
+    int32_t (*inject_image)(const void *data, uint64_t size, uint32_t flags);
+    /* 从文件系统读取 ET_REL 镜像并注入（真正的 DLL 式按路径加载）。 */
+    int32_t (*inject_file)(const char *path, uint32_t flags);
+} kmod_dynlink_ops_t;
 
 /* 编译期尺寸自检：模块与内核用同一个头，布局不一致必须编不过 */
 #define KMOD_ABI_CAT_(a, b) a##b

@@ -1,9 +1,9 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 //SPDX-License-Identifier: GPL-2.0-only
 /* ============================================================================
- * builtin.cpp —— 内建组件管理器（Tier 0 固定机制；整个内核组件化的入口）
+ * builtin.cpp —— resident DynModule 管理器（统一模块层的 resident 后端）
  * ----------------------------------------------------------------------------
- * 内核镜像里用 KCOMPONENT_BEGIN/END 宏声明的组件，其 manifest/.in/.out 在
+ * 内核镜像里用 KCOMPONENT_BEGIN/END 宏声明的 resident DynModule，其 manifest/.in/.out 在
  * 链接期落入 .kbuiltin.* 段；本文件在启动时：
  *   1. 扫描 .kbuiltin.desc 收集所有内建组件描述符（严格校验边界哨兵/清单）；
  *   2. 把每个组件的导入 provider 抽成模块级依赖边；

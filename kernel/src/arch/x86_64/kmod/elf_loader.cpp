@@ -51,7 +51,8 @@ constexpr uint32_t R_X86_64_PLT32  = 4;
 constexpr uint32_t R_X86_64_32     = 10;
 constexpr uint32_t R_X86_64_32S    = 11;
 
-constexpr uint64_t LOADER_MAX_ALIGN = 16;     /* 段对齐上限（ABI 约束??*/
+/* 段对齐上限：kbd 的共享事件页要求 4K 对齐；镜像按 max_align 分配。 */
+constexpr uint64_t LOADER_MAX_ALIGN = 4096;
 
 /* 头部/表项布局（与 x86_64 SysV ELF64 一致；packed 避免对齐假设??*/
 struct Ehdr {
@@ -244,6 +245,8 @@ struct ParseCtx {
     uint64_t max_align;
     const kmod_kernel_export_t *kexp;
     uint32_t nkexp;
+    kmod_symbol_resolver_fn resolver;
+    void *resolver_ctx;
 };
 
 Shdr shdr_at(const ParseCtx *c, uint32_t idx)
@@ -465,14 +468,16 @@ int32_t validate_manifest(const kmod_manifest_t *m, bool allow_reserved_name, Er
         err_set(err, "manifest abi", m->abi_version, true);
         return KMOD_ERR_VERSION;
     }
-    if (m->tier != KMOD_TIER_POLICY && m->tier != KMOD_TIER_IMPL) {
+    /* Tier1/Tier2 已合并为单一 DynModule 类别；旧线值 2 作为兼容别名接受。 */
+    if (m->tier != KMOD_TIER_DYN && m->tier != KMOD_TIER_IMPL) {
         err_set(err, "manifest tier (tier0 reserved)", m->tier, true);
         return KMOD_ERR_TIER;
     }
     /* 未知 flags 位拒绝（前向兼容??ABI 版本升级??*/
     const uint32_t known_flags = KMOD_MF_BOOT | KMOD_MF_HOTREPLACE |
                                  KMOD_MF_UNLOADABLE | KMOD_MF_DEBUG |
-                                 KMOD_MF_NO_AUTODEP | KMOD_MF_EXPERIMENTAL;
+                                 KMOD_MF_NO_AUTODEP | KMOD_MF_EXPERIMENTAL |
+                                 KMOD_MF_RESIDENT | KMOD_MF_DEMAND;
     if (m->flags & ~known_flags) {
         err_set(err, "manifest flags", m->flags, true);
         return KMOD_ERR_FORMAT;
@@ -518,7 +523,8 @@ bool str_starts_with(const char *s, const char *prefix)
     return true;
 }
 
-int32_t contract_allowed(const char *contract, uint32_t kind, Err *err)
+int32_t contract_allowed(const char *contract, uint32_t kind, Err *err,
+                         bool allow_reserved)
 {
     if (!contract || contract[0] == '\0') {
         /* 空的私有契约：只允许 FUNC/DATA；SEAT/SYSCALL 必须有机制契约名 */
@@ -544,8 +550,10 @@ int32_t contract_allowed(const char *contract, uint32_t kind, Err *err)
         }
         return KMOD_OK;
     }
-    /* 私有业务契约：不得占??kernel./core. 保留前缀 */
-    if (str_starts_with(contract, "kernel.") || str_starts_with(contract, "core.")) {
+    /* 私有业务契约：普通 .ko 不得占用 kernel./core. 保留前缀；
+     * trusted 内核 SAF 组件允许（它们就是 kernel.* 机制契约的提供者）。 */
+    if ((str_starts_with(contract, "kernel.") ||
+         str_starts_with(contract, "core.")) && !allow_reserved) {
         err_set(err, "module contract uses reserved kernel./core. prefix", 0, false);
         return KMOD_ERR_CONTRACT;
     }
@@ -555,7 +563,8 @@ int32_t contract_allowed(const char *contract, uint32_t kind, Err *err)
     return rc;
 }
 
-int32_t validate_exports(const kmod_elf_image_t *img, Err *err)
+int32_t validate_exports(const kmod_elf_image_t *img, Err *err,
+                        bool allow_reserved)
 {
     kmod_export_t *ex = img->exports;
     for (uint32_t i = 0; i < img->n_exports; i++) {
@@ -579,11 +588,12 @@ int32_t validate_exports(const kmod_elf_image_t *img, Err *err)
             err_set(err, "export kind", e->kind, true);
             return KMOD_ERR_FORMAT;
         }
-        if (e->flags & ~(KMOD_EXF_HOTREPLACEABLE | KMOD_EXF_OPTIONAL)) {
+        if (e->flags & ~(KMOD_EXF_HOTREPLACEABLE | KMOD_EXF_OPTIONAL |
+                         KMOD_EXF_EXTERNAL)) {
             err_set(err, "export flags", e->flags, true);
             return KMOD_ERR_FORMAT;
         }
-        int32_t rc = contract_allowed(contract, e->kind, err);
+        int32_t rc = contract_allowed(contract, e->kind, err, allow_reserved);
         if (rc != KMOD_OK)
             return rc;
         if (e->kind == KMOD_SYM_SEAT) {
@@ -612,7 +622,8 @@ int32_t validate_exports(const kmod_elf_image_t *img, Err *err)
                 return KMOD_ERR_INVAL;
             }
         }
-        if (e->kind != KMOD_SYM_NAMESPACE) {
+        if (e->kind != KMOD_SYM_NAMESPACE &&
+            (e->flags & KMOD_EXF_EXTERNAL) == 0u) {
             uint64_t base = (uint64_t)(uintptr_t)img->mem;
             uint64_t addr = (uint64_t)(uintptr_t)e->addr;
             if (addr < base || addr >= base + img->size) {
@@ -638,7 +649,8 @@ int32_t validate_exports(const kmod_elf_image_t *img, Err *err)
     return KMOD_OK;
 }
 
-int32_t validate_imports(const kmod_elf_image_t *img, Err *err)
+int32_t validate_imports(const kmod_elf_image_t *img, Err *err,
+                        bool allow_reserved)
 {
     kmod_import_t *im = img->imports;
     for (uint32_t i = 0; i < img->n_imports; i++) {
@@ -720,7 +732,8 @@ int32_t validate_imports(const kmod_elf_image_t *img, Err *err)
                     return rc;
                 }
             } else {
-                rc = contract_allowed(contract, KMOD_SYM_FUNC, err);
+                rc = contract_allowed(contract, KMOD_SYM_FUNC, err,
+                                       allow_reserved);
                 if (rc != KMOD_OK)
                     return rc;
             }
@@ -755,9 +768,10 @@ extern "C" int32_t KmodElfValidateBuiltinManifest(const kmod_manifest_t *m,
     return validate_manifest(m, true, &e);
 }
 
-extern "C" int32_t KmodElfInspect(const uint8_t *data, uint64_t size,
-                                  kmod_manifest_t *out_manifest,
-                                  char *errbuf, uint64_t errcap)
+extern "C" int32_t KmodElfInspectEx(const uint8_t *data, uint64_t size,
+                                    kmod_manifest_t *out_manifest,
+                                    char *errbuf, uint64_t errcap,
+                                    bool allow_reserved_name)
 {
     Err e{errbuf, errcap};
     err_clear(&e);
@@ -791,7 +805,7 @@ extern "C" int32_t KmodElfInspect(const uint8_t *data, uint64_t size,
                 err_set(&e, "inspect: manifest read", 0, false);
                 rc = KMOD_ERR_FORMAT;
             } else {
-                rc = validate_manifest(out_manifest, false, &e);
+                rc = validate_manifest(out_manifest, allow_reserved_name, &e);
             }
         }
     }
@@ -799,13 +813,22 @@ extern "C" int32_t KmodElfInspect(const uint8_t *data, uint64_t size,
     return rc;
 }
 
+extern "C" int32_t KmodElfInspect(const uint8_t *data, uint64_t size,
+                                  kmod_manifest_t *out_manifest,
+                                  char *errbuf, uint64_t errcap)
+{
+    return KmodElfInspectEx(data, size, out_manifest, errbuf, errcap, false);
+}
+
 extern "C" void KmodElfFreeImage(kmod_elf_image_t *img)
 {
     if (!img)
         return;
     if (img->mem) {
-        kmod_free(img->mem, img->size);
+        uint8_t *base = img->alloc_base ? img->alloc_base : img->mem;
+        kmod_free(base, img->size);
         img->mem = nullptr;
+        img->alloc_base = nullptr;
     }
     img->size = 0;
     img->manifest = nullptr;
@@ -819,6 +842,18 @@ extern "C" void KmodElfFreeImage(kmod_elf_image_t *img)
     img->n_fini_array = 0;
     img->reloc_count = 0;
     img->section_count = 0;
+}
+
+/* 段是否真正参与镜像布局。布局阶段会跳过 SHT_NOTE（note.gnu.property /
+ * build-id 等工具链元数据），这些段的 sec_off[] 恒为 0；如果允许它们作为
+ * 重定位目标/符号段，边界检查会退化成攻击者可控的 sh_size，写指针落到
+ * 镜像基址 + r.offset，超出镜像即内核越界写。 */
+static bool section_laid_out(const ParseCtx *c, uint32_t idx)
+{
+    for (uint32_t i = 0; i < c->n_order; i++)
+        if (c->order[i] == idx)
+            return true;
+    return false;
 }
 
 /* 应用一个重定位??*/
@@ -837,6 +872,10 @@ static int32_t apply_rela_section(const ParseCtx *ctx, uint8_t *mem,
     if (!sec_is_alloc(target)) {
         /* 调试/非分配段的重定位直接忽略（不进入镜像??*/
         return KMOD_OK;
+    }
+    if (!section_laid_out(ctx, rela_sh.info)) {
+        err_set(err, "reloc target not laid out", rela_sh.info, true);
+        return KMOD_ERR_RELOC;
     }
     if (target.type == SHT_NOBITS) {
         /* 重定位写目标??NOBITS 意味着模块布局错误??bss 不能有重定位??*/
@@ -930,6 +969,13 @@ static int32_t apply_rela_section(const ParseCtx *ctx, uint8_t *mem,
                     break;
                 }
             }
+            if (!resolved && ctx->resolver) {
+                uint64_t xaddr = 0;
+                if (ctx->resolver(ctx->resolver_ctx, sname, &xaddr)) {
+                    S = xaddr;
+                    resolved = true;
+                }
+            }
             if (!resolved) {
                 uint8_t bind = (uint8_t)(sym.info >> 4);
                 if (bind == STB_WEAK) {
@@ -956,6 +1002,10 @@ static int32_t apply_rela_section(const ParseCtx *ctx, uint8_t *mem,
             Shdr ss = shdr_at(ctx, sym.shndx);
             if (!sec_is_alloc(ss)) {
                 err_set(err, "symbol in non-alloc section", sym.shndx, true);
+                return KMOD_ERR_RELOC;
+            }
+            if (!section_laid_out(ctx, sym.shndx)) {
+                err_set(err, "symbol in non-laid-out section", sym.shndx, true);
                 return KMOD_ERR_RELOC;
             }
             if (sym.value > ss.size) {
@@ -1022,10 +1072,53 @@ static int32_t apply_rela_section(const ParseCtx *ctx, uint8_t *mem,
     return KMOD_OK;
 }
 
-extern "C" int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
-                                    const kmod_kernel_export_t *kexp, uint32_t nkexp,
-                                    kmod_elf_image_t *out,
-                                    char *errbuf, uint64_t errcap)
+extern "C" int32_t KmodElfForEachDep(const uint8_t *data, uint64_t size,
+                                     kmod_dep_name_fn cb, void *ctx,
+                                     char *errbuf, uint64_t errcap)
+{
+    if (!data || !cb)
+        return KMOD_ERR_INVAL;
+    Err e{errbuf, errcap};
+    err_clear(&e);
+    ParseCtx c;
+    for (uint64_t i = 0; i < sizeof(c); i++)
+        ((uint8_t *)&c)[i] = 0;
+    c.file = data;
+    c.fsize = size;
+    int32_t rc = parse_header(&c, data, size, &e);
+    if (rc != KMOD_OK)
+        return rc;
+    uint32_t idx = 0;
+    int32_t f = find_section(&c, KMOD_SEC_DEP_NAMES, &idx);
+    if (f < 0)
+        return KMOD_OK;   /* 旧 .ko 没有依赖名段 */
+    Shdr s = shdr_at(&c, idx);
+    if (s.type != SHT_PROGBITS || !range_ok(s.offset, s.size, size))
+        return KMOD_ERR_FORMAT;
+    const char *p = (const char *)(data + s.offset);
+    uint64_t pos = 0;
+    while (pos < s.size) {
+        const char *name = p + pos;
+        uint64_t remain = s.size - pos;
+        uint64_t n = 0;
+        while (n < remain && name[n] != '\0')
+            n++;
+        if (n == remain)
+            return KMOD_ERR_FORMAT;
+        if (n > 0 && !cb(ctx, name))
+            break;
+        pos += n + 1u;
+    }
+    return KMOD_OK;
+}
+
+extern "C" int32_t KmodElfLoadImageEx2(const uint8_t *data, uint64_t size,
+                                       const kmod_kernel_export_t *kexp,
+                                       uint32_t nkexp, kmod_elf_image_t *out,
+                                       char *errbuf, uint64_t errcap,
+                                       bool allow_reserved_name,
+                                       kmod_symbol_resolver_fn resolver,
+                                       void *resolver_ctx)
 {
     Err e{errbuf, errcap};
     err_clear(&e);
@@ -1047,6 +1140,8 @@ extern "C" int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
     }
     ctx->kexp = kexp;
     ctx->nkexp = nkexp;
+    ctx->resolver = resolver;
+    ctx->resolver_ctx = resolver_ctx;
 
     uint32_t manifest_idx = 0, out_idx = 0, in_idx = 0;
     int32_t f_man = find_section(ctx, KMOD_SEC_MANIFEST, &manifest_idx);
@@ -1064,12 +1159,25 @@ extern "C" int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
     }
 
     /* 分配并清零镜??*/
-    uint8_t *mem = (uint8_t *)kmod_alloc(ctx->image_size);
-    if (!mem) {
+    /* 多分配 max_align，手动把镜像基址对齐到最严格的 sh_addralign；
+     * 释放时用 alloc_base（mem 可能不是分配起点）。 */
+    uint64_t alloc_size = ctx->image_size;
+    if (ctx->max_align > 1) {
+        if (!u64_add(alloc_size, ctx->max_align - 1, &alloc_size)) {
+            err_set(&e, "load: image alloc overflow", 0, false);
+            kmod_free(ctx, sizeof(ParseCtx));
+            return KMOD_ERR_FORMAT;
+        }
+    }
+    uint8_t *raw = (uint8_t *)kmod_alloc(alloc_size);
+    if (!raw) {
         err_set(&e, "load: image alloc failed", ctx->image_size, true);
         kmod_free(ctx, sizeof(ParseCtx));
         return KMOD_ERR_NOMEM;
     }
+    uint8_t *mem = raw;
+    if (ctx->max_align > 1)
+        mem = (uint8_t *)align_up_u64((uint64_t)raw, ctx->max_align);
     for (uint64_t i = 0; i < ctx->image_size; i++)
         mem[i] = 0;
 
@@ -1121,7 +1229,7 @@ extern "C" int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
             goto fail_image;
         }
         out->manifest = (kmod_manifest_t *)(mem + ctx->sec_off[manifest_idx]);
-        rc = validate_manifest(out->manifest, false, &e);
+        rc = validate_manifest(out->manifest, allow_reserved_name, &e);
         if (rc != KMOD_OK)
             goto fail_image;
 
@@ -1162,10 +1270,10 @@ extern "C" int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
         tmp.n_exports = out->n_exports;
         tmp.imports = out->imports;
         tmp.n_imports = out->n_imports;
-        rc = validate_exports(&tmp, &e);
+        rc = validate_exports(&tmp, &e, allow_reserved_name);
         if (rc != KMOD_OK)
             goto fail_image;
-        rc = validate_imports(&tmp, &e);
+        rc = validate_imports(&tmp, &e, allow_reserved_name);
         if (rc != KMOD_OK)
             goto fail_image;
     }
@@ -1210,6 +1318,7 @@ extern "C" int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
     }
 
     out->mem = mem;
+    out->alloc_base = raw;
     out->size = ctx->image_size;
     out->section_count = ctx->n_order;
     kmod_free(ctx, sizeof(ParseCtx));
@@ -1218,9 +1327,28 @@ extern "C" int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
 fail_image:
     for (uint64_t i = 0; i < ctx->image_size; i++)
         mem[i] = 0;
-    kmod_free(mem, ctx->image_size);
+    kmod_free(raw, alloc_size);
     kmod_free(ctx, sizeof(ParseCtx));
     return rc;
+}
+
+extern "C" int32_t KmodElfLoadImageEx(const uint8_t *data, uint64_t size,
+                                      const kmod_kernel_export_t *kexp,
+                                      uint32_t nkexp, kmod_elf_image_t *out,
+                                      char *errbuf, uint64_t errcap,
+                                      bool allow_reserved_name)
+{
+    return KmodElfLoadImageEx2(data, size, kexp, nkexp, out, errbuf, errcap,
+                               allow_reserved_name, nullptr, nullptr);
+}
+
+extern "C" int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
+                                    const kmod_kernel_export_t *kexp,
+                                    uint32_t nkexp, kmod_elf_image_t *out,
+                                    char *errbuf, uint64_t errcap)
+{
+    return KmodElfLoadImageEx(data, size, kexp, nkexp, out, errbuf, errcap,
+                              false);
 }
 
 extern "C" const char *KmodElfErrorString(int32_t rc)

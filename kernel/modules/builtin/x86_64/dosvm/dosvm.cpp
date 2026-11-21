@@ -13,8 +13,8 @@
  *
  * 分层：
  *   Tier0  smp.cpp / lapic.cpp / vmm.cpp / sched.cpp：offline 掩码 + IPI 过滤
- *   Tier1  本文件：trampoline 装载、0xF0 IPI handler、状态机、影屏、5 个导出
- *   Tier2  modules/loadable/dosvm.cpp (dosvm.ko)：syscall 210/211 门面
+ *   本文件  DynModule（resident）：trampoline 装载、0xF0 IPI handler、状态机、
+ *          影屏、C 导出、syscall 210..214（原 dosvm.ko 门面已合并）
  *   L3     programs/dos/main.cpp：80x25 文本屏窗口客户端
  *
  * 关键设计（与用户讨论的 VM86 方案对比）：
@@ -32,6 +32,7 @@
  *     固有风险，串口日志是唯一证据，故 init/enter 都打印可检索的标记。
  * ==========================================================================*/
 #include <kmod/kmod_component.h>
+#include <kmod/kdll.h>
 
 #include <arch/x86_64/dosvm/dosvm_contract.h>
 #include <arch/x86_64/dosvm/dosvm_trampoline.h>
@@ -49,17 +50,23 @@
 static int32_t dosvm_init(void);
 static void    dosvm_exit(void);
 
-KCOMPONENT_BEGIN(dosvm, "kernel.arch.dosvm", "1.0.0", KMOD_TIER_POLICY,
+KCOMPONENT_BEGIN(dosvm, "kernel.arch.dosvm", "1.0.0", KMOD_TIER_DYN,
                  KMOD_MF_BOOT,
                  (uint64_t)(KMOD_CAP_IRQ | KMOD_CAP_MMIO | KMOD_CAP_LOG |
-                            KMOD_CAP_EXPERIMENTAL),
-                 0, "single-core reversible IA-32e exit (long->real->long) + 16-bit DOS payload",
+                            KMOD_CAP_EXPERIMENTAL | KMOD_CAP_SYSCALL_IMPL |
+                            KMOD_CAP_MODULE_LOAD | KMOD_CAP_MODULE_UNLOAD),
+                 0, "single-core reversible IA-32e exit + 16-bit DOS; merged impl+syscall facade",
                  dosvm_init, dosvm_exit, 0, 0, 5000u, 1000u)
 
 KCOMPONENT_IMPORT_FN(dosvm, kprintf_, int, (const char *, ...), "kernel",
                      "kprintf_", "kernel.log.v1")
+/* 统一 DynModule 注入服务：dosvm 在 init 里显式注入 Tier0 pmm 与 acpi
+ * resident 模块，证明"模块像 DLL 一样链接其他模块"的路径。 */
+KCOMPONENT_IMPORT_DYNLINK(dosvm, kdll_ops)
 /* 必须晚于 SMP 上线：init 要给每个 AP 安装 0xF0 handler 并读 smp_cpu_list。*/
 KCOMPONENT_DEPENDS(dosvm, "kernel.arch.smp", smp)
+/* 平台表的提供者；注入时按名字解析（也是 DynModule 依赖边）。 */
+KCOMPONENT_DEPENDS(dosvm, "kernel.arch.acpi", acpi)
 
 /* 低内存 state 区布局，必须与 programs/dos/trampoline.nasm 头注逐字节一致。*/
 static constexpr uintptr_t ST_BASE     = 0x0007E000ull;
@@ -388,8 +395,50 @@ int32_t dosvm_component_init() {
 
 }  /* namespace */
 
-static int32_t dosvm_init(void) { return dosvm_component_init(); }
-static void    dosvm_exit(void) {
+/* ==========================================================================
+ * 统一 DynModule：dosvm 不再拆成 Tier1 实现 + Tier2 .ko 门面。
+ * 本组件同时承担：
+ *   - 真正的 long->real->long 实现；
+ *   - syscall 210..214 的注册（KCOMPONENT_EXPORT_SYSCALL）；
+ *   - DLL 式注入 pmm/acpi 的示范（KCOMPONENT_IMPORT_DYNLINK）。
+ * ========================================================================== */
+static int32_t g_inject_pmm_rc = KMOD_OK;
+static int32_t g_inject_acpi_rc = KMOD_OK;
+
+static int32_t dosvm_init(void) {
+    int32_t rc = dosvm_component_init();
+    if (rc != KMOD_OK)
+        return rc;
+
+    /* 像 LoadLibrary 一样把 Tier0 pmm 与平台 acpi 模块拉进本模块的链接面。
+     * 两者此刻都已 resident/builtin-READY，所以注入是幂等 + 加 PIN；如果
+     * 尚未加载，KdllInject 会走同一个动态链接事务。 */
+    if (kdll_ops) {
+        g_inject_pmm_rc = kdll_ops->inject(KDLL_CORE_PMM,
+                                           KMOD_INJ_PIN | KMOD_INJ_SILENT);
+        g_inject_acpi_rc = kdll_ops->inject("kernel.arch.acpi",
+                                            KMOD_INJ_PIN | KMOD_INJ_SILENT);
+        kprintf_("[dosvm] dynlink: inject %s rc=%d, %s rc=%d (pins=%u/%u)\n",
+                 KDLL_CORE_PMM, (int)g_inject_pmm_rc, "kernel.arch.acpi",
+                 (int)g_inject_acpi_rc,
+                 (unsigned)KdllPinCount(KDLL_CORE_PMM),
+                 (unsigned)KdllPinCount("kernel.arch.acpi"));
+        if (g_inject_pmm_rc != KMOD_OK || g_inject_acpi_rc != KMOD_OK) {
+            /* 注入失败不回滚整个 dosvm：AP/实模式窗口仍然可用，但把失败
+             * 明确暴露在启动日志里，避免"看似 ready、实际缺依赖"。 */
+            kprintf_("[dosvm] WARN: dynlink injection incomplete\n");
+        }
+    } else {
+        kprintf_("[dosvm] WARN: kernel.dynlink.v1 unavailable\n");
+    }
+    return KMOD_OK;
+}
+
+static void dosvm_exit(void) {
+    if (kdll_ops) {
+        (void)kdll_ops->eject("kernel.arch.acpi");
+        (void)kdll_ops->eject(KDLL_CORE_PMM);
+    }
     __atomic_store_n(&g_ready, 0u, __ATOMIC_RELEASE);
     kprintf_("[dosvm] exit: APs remain online, trampoline left mapped\n");
 }
@@ -756,5 +805,57 @@ extern "C" uint64_t dosvm_last_cpu(void) {
 extern "C" uint64_t dosvm_trips(void) {
     return __atomic_load_n(&g_trips, __ATOMIC_ACQUIRE);
 }
+
+/* ==========================================================================
+ * syscall 210..214：原 Tier2 dosvm.ko 的薄门面，合并进本 DynModule。
+ * 注册槽仍在动态命名空间 [128,511]；固定 dispatch ABI 不变，用户态无感。
+ * ========================================================================== */
+static uint64_t dosvm_read_syscall(uint64_t a0, uint64_t a1, uint64_t a2,
+                                   uint64_t a3, uint64_t a4, uint64_t a5,
+                                   void *frame) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)frame;
+    return static_cast<uint64_t>(dosvm_read(reinterpret_cast<void *>(a0), a1));
+}
+
+static uint64_t dosvm_enter_syscall(uint64_t a0, uint64_t a1, uint64_t a2,
+                                    uint64_t a3, uint64_t a4, uint64_t a5,
+                                    void *frame) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)frame;
+    return static_cast<uint64_t>(
+        static_cast<int64_t>(dosvm_enter(static_cast<uint32_t>(a0))));
+}
+
+static uint64_t dosvm_stage_syscall(uint64_t a0, uint64_t a1, uint64_t a2,
+                                    uint64_t a3, uint64_t a4, uint64_t a5,
+                                    void *frame) {
+    (void)a4; (void)a5; (void)frame;
+    return static_cast<uint64_t>(static_cast<int64_t>(
+        dosvm_stage_com(reinterpret_cast<void *>(a0), a1,
+                        reinterpret_cast<void *>(a2), a3)));
+}
+
+static uint64_t dosvm_keys_syscall(uint64_t a0, uint64_t a1, uint64_t a2,
+                                   uint64_t a3, uint64_t a4, uint64_t a5,
+                                   void *frame) {
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)frame;
+    return static_cast<uint64_t>(static_cast<int64_t>(
+        dosvm_push_keys(reinterpret_cast<void *>(a0), a1)));
+}
+
+static uint64_t dosvm_mem_syscall(uint64_t a0, uint64_t a1, uint64_t a2,
+                                  uint64_t a3, uint64_t a4, uint64_t a5,
+                                  void *frame) {
+    (void)a4; (void)a5; (void)frame;
+    return static_cast<uint64_t>(static_cast<int64_t>(
+        dosvm_mem_rw(a0, reinterpret_cast<void *>(a1), a2,
+                     static_cast<uint32_t>(a3))));
+}
+
+KCOMPONENT_EXPORT_SYSCALL(dosvm, DOSVM_SYSCALL_READ, dosvm_read_syscall);
+KCOMPONENT_EXPORT_SYSCALL(dosvm, DOSVM_SYSCALL_ENTER, dosvm_enter_syscall);
+KCOMPONENT_EXPORT_SYSCALL(dosvm, DOSVM_SYSCALL_STAGE, dosvm_stage_syscall);
+KCOMPONENT_EXPORT_SYSCALL(dosvm, DOSVM_SYSCALL_KEYS, dosvm_keys_syscall);
+KCOMPONENT_EXPORT_SYSCALL(dosvm, DOSVM_SYSCALL_MEM, dosvm_mem_syscall);
+KCOMPONENT_EXPORT_NAMESPACE(dosvm, "vendor.dosvm.syscall", dosvm_ns);
 
 KCOMPONENT_END(dosvm)

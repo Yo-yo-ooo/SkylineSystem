@@ -1,6 +1,6 @@
 # fc block-level cache design (audit design debt #5)
 
-> Status: **implementation complete**. Steps 1-4 landed; Step 5 decided as
+> Status: implementation complete. Steps 1-4 landed; Step 5 decided as
 > keeping the path whole-file API as the small-file fast path (dual-track coexistence, block-level primary).
 
 ## Implementation log
@@ -38,13 +38,13 @@ key_len = 16
 
 ## 3. Read/write paths
 
-- **Read**: `sys_read` first computes the block list covered by [offset, offset+count) →
+- Read: `sys_read` first computes the block list covered by [offset, offset+count) →
   per-block get → memory-copy hits, per-block disk read + promote misses
   (small reads ≤ 2KB still go direct-read to avoid cache thrash, threshold reuses FC_TINY_FILE_THRESHOLD)
-- **Write**: write-through keeps current semantics (re-verified,
+- Write: write-through keeps current semantics (re-verified,
   fops.cpp:110-144 flow unchanged), only the hit-decision key changes from path to
   (file_id, block)
-- **fsync/writeback**: the file_id write-through is unchanged; the entry-level
+- fsync/writeback: the file_id write-through is unchanged; the entry-level
   dirty bit drops from whole-file granularity to block granularity
 
 ## 4. Consistency
@@ -82,7 +82,7 @@ CopyToUser(buf, bdata + from, chunk);        /* assumes bdata starts at the bloc
 
 That only works if the promoted buffer really starts at the block boundary. The
 original promote loop sliced a hardware read into per-block chunks and promoted
-**every** chunk, including the first one when the read started mid-block — so a
+every chunk, including the first one when the read started mid-block — so a
 54-byte read at within-block offset 2644 was cached as "block N", and any later
 read in block N whose offset satisfied `from < 54` got those 54 bytes back at
 the wrong address. Silent data corruption, not a crash.
@@ -95,13 +95,13 @@ them and consecutive loads poisoned each other — outlines came back garbage,
 
 Fixes:
 
-- **promote**: only chunks with `(cur_offset + off) % BLOCK_SZ == 0` are cached
+- promote: only chunks with `(cur_offset + off) % BLOCK_SZ == 0` are cached
   (read path and write path — the write path had the same loop).
-- **file_id**: the block key used `(uint64_t)FD->filedesc`, which is a pointer
+- file_id: the block key used `(uint64_t)FD->filedesc`, which is a pointer
   that `kmalloc` hands straight back to the next `open()` after a close. Two
   different files could therefore share block keys. `fd_t` now carries a
   monotonic `file_uid` (assigned in `sys_fopen`, preserved by `fd_manager_dup`)
   and every cache call uses that instead.
-- **user side**: the TTF loader reads glyph slices from the block start and
+- user side: the TTF loader reads glyph slices from the block start and
   copies the slice out, so it is correct even against an unpatched cache — and
   aligned reads are also the shape the cache promotes best.

@@ -51,5 +51,5 @@ PACK(typedef struct {
     uint64_t next;                         // 下一个 MCB 指针 (8字节)
     uint32_t rem_scb_count;                // 剩余 SCB 计数 (4字节，保持给原子减法 __a_subu32 使用)
     uint8_t  is_full;                      // 满了的状态位 (1字节)
-    uint8_t  padding[3];                   // 显式精准填充 3 字节，与上面的 4+1 凑成 8 字节完美收尾！
+    uint8_t  padding[3];                   // 显式补齐 3 字节，与上面的 4+1 凑成 8 字节对齐
 }) MainControlBlock_t;

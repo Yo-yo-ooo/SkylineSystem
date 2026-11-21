@@ -25,6 +25,7 @@
 #include <kmod/kmod.h>
 #include <kmod/kmod_platform.h>
 #include <kmod/kmod_component.h>
+#include <kmod/kdll.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,6 +52,7 @@ typedef struct kmod_image {
     int32_t parse_ret;        /* KMOD_OK 表示清单可解析 */
     bool inspected;
     bool owned;               /* data 是否需要 kmod_free */
+    bool trusted;             /* 内核 SAF 提供（允许 kernel.* 名/固定 syscall 槽） */
 } kmod_image_t;
 
 extern kmod_image_t g_kmod_images[KMOD_MAX_IMAGES];
@@ -58,7 +60,8 @@ extern uint32_t g_kmod_image_count;
 
 /* 模块运行时节点（拓扑图顶点；在 governance.cpp 中维护） */
 typedef struct kmod_elf_image {
-    uint8_t *mem;                    /* 已重定位镜像基址（16 对齐） */
+    uint8_t *mem;                    /* 已重定位镜像基址（按 max_align 对齐） */
+    uint8_t *alloc_base;             /* kmod_alloc 返回的原始基址（释放用） */
     uint64_t size;                   /* 镜像总字节数 */
     kmod_manifest_t *manifest;       /* 指向镜像内的清单副本 */
     kmod_export_t *exports;          /* .out 数组（镜像内） */
@@ -108,7 +111,8 @@ typedef struct kmod_module {
     uint32_t n_deps;
     uint16_t consumers[KMOD_MAX_MODULE_CONSUMERS];/* 依赖本模块的模块下标 */
     uint32_t n_consumers;
-    uint32_t refcount;               /* 外部持有者（消费者导入边，含 dep_edge） */
+    uint32_t refcount;               /* 外部持有者（消费者导入边 + 显式注入 PIN） */
+    uint32_t pin_count;              /* KMOD_INJ_PIN 注入次数（KdllEject 释放） */
     volatile uint32_t epoch_active;  /* in-flight 调用 */
     uint64_t epoch_max_seen;         /* 观测峰值 */
     uint64_t gen_exports_hash;       /* 导出表指纹（热替换审计） */
@@ -117,8 +121,15 @@ typedef struct kmod_module {
 /* 模块内部 flags：区分内建组件（内核镜像静态链接）与可加载 .ko。
  * 内建组件的 manifest/.in/.out 位于内核只读/静态数据，治理层不得 free 其
  * 镜像或导出数组；热替换成功后节点转为 .ko 背书（清 BUILTIN），回滚恢复。 */
-#define KMOD_MODF_BUILTIN   (1u << 0)
+#define KMOD_MODF_BUILTIN   (1u << 0)   /* resident image（原内建组件） */
 #define KMOD_MODF_DEFERRED  (1u << 1)   /* 允许在 boot 图之后单独加载 */
+#define KMOD_MODF_RESIDENT  (1u << 2)   /* 常驻服务节点（无代码镜像，不参与卸载） */
+#define KMOD_MODF_CORE      (1u << 3)   /* Tier0 核心服务，命名空间 kernel.* */
+#define KMOD_MODF_INJECTED  (1u << 4)   /* 至少被 KdllInject 注入过一次（审计） */
+#define KMOD_MODF_TRUSTED   (1u << 5)   /* 内核 SAF 提供的 .ko（允许 kernel.* 名、
+                                           固定 syscall 槽；镜像仍由加载器拥有） */
+#define KMOD_MODF_SEAT_PROVIDER (1u << 6) /* 曾成功安装座位实现；卸载/热替换时
+                                             保留旧镜像（sched/heap 无 epoch） */
 
 extern kmod_module_t g_kmod_modules[KMOD_MAX_MODULES];
 extern uint32_t g_kmod_module_count;
@@ -165,6 +176,15 @@ void KmodKernelServiceExports(const kmod_export_t **out, uint32_t *count);
     kmod_export_t __kmod_kexport_as_##export_name_##_##sym_ = { \
         #export_name_, contract_, (void *)&sym_, 0u, (uint32_t)(abi_), kind_, 0u, 0u, 0u }
 
+/* 导出符号名用字符串字面量（C++ mangled name 无法被 #x 生成：
+ *   KMOD_KEXPORT_STR("_ZN4ACPI4InitEv", kcsym_0, ...)）
+ * 用于自动生成的 kernel.component.v1 导出表。 */
+#define KMOD_KEXPORT_STR(export_name_, sym_, contract_, abi_, kind_) \
+    __attribute__((used, section(KMOD_SEC_KERNEL_OUT), aligned(8))) \
+    kmod_export_t __kmod_kexport_str_##sym_ = { \
+        export_name_, contract_, (void *)&sym_, 0u, (uint32_t)(abi_), kind_, \
+        0u, 0u, 0u }
+
 /* 导出数据对象（size 参与 expect_size 校验） */
 #define KMOD_KEXPORT_DATA(export_name_, sym_, contract_, abi_, size_) \
     __attribute__((used, section(KMOD_SEC_KERNEL_OUT), aligned(8))) \
@@ -177,9 +197,34 @@ void KmodKernelServiceExports(const kmod_export_t **out, uint32_t *count);
 /* ================================================================== */
 int32_t KmodElfInspect(const uint8_t *data, uint64_t size,
                        kmod_manifest_t *out_manifest, char *err, uint64_t errcap);
+/* trusted 内核 SAF 的 kernel.* 组件需要允许保留名；普通 .ko 用上面的 false 版。 */
+int32_t KmodElfInspectEx(const uint8_t *data, uint64_t size,
+                         kmod_manifest_t *out_manifest, char *err,
+                         uint64_t errcap, bool allow_reserved_name);
+/* 读取 .kmod_dep_names（NUL 分隔 provider 名）；不重定位、不加载镜像。
+ * 供 governance 在 prepare 之前做 provider 先序规划。 */
+typedef bool (*kmod_dep_name_fn)(void *ctx, const char *provider);
+int32_t KmodElfForEachDep(const uint8_t *data, uint64_t size,
+                          kmod_dep_name_fn cb, void *ctx,
+                          char *err, uint64_t errcap);
 int32_t KmodElfLoadImage(const uint8_t *data, uint64_t size,
                          const kmod_kernel_export_t *kexp, uint32_t n_kexp,
                          kmod_elf_image_t *out, char *err, uint64_t errcap);
+/* trusted 内核 SAF 的 kernel.* 组件需要允许保留名；普通 .ko 用上面的 false 版。 */
+int32_t KmodElfLoadImageEx(const uint8_t *data, uint64_t size,
+                           const kmod_kernel_export_t *kexp, uint32_t n_kexp,
+                           kmod_elf_image_t *out, char *err, uint64_t errcap,
+                           bool allow_reserved_name);
+/* 跨模块符号解析：kexp 未命中时回调；返回 true 并写 *addr 即视为已解析。
+ * 只在内核导出的固定 ABI 之外增加"已加载组件 .out 导出"这一层，仍由
+ * 模块自己声明 import/导出，内核不做语义转换。 */
+typedef bool (*kmod_symbol_resolver_fn)(void *ctx, const char *name,
+                                        uint64_t *addr);
+int32_t KmodElfLoadImageEx2(const uint8_t *data, uint64_t size,
+                            const kmod_kernel_export_t *kexp, uint32_t n_kexp,
+                            kmod_elf_image_t *out, char *err, uint64_t errcap,
+                            bool allow_reserved_name,
+                            kmod_symbol_resolver_fn resolver, void *resolver_ctx);
 void KmodElfFreeImage(kmod_elf_image_t *img);
 int32_t KmodElfValidateManifest(const kmod_manifest_t *m, char *err, uint64_t errcap);
 /* 内建组件清单校验（允许 kernel./core. 保留前缀；其余与 .ko 同规则） */
@@ -344,6 +389,13 @@ int32_t KmodGovInit(void);
 /* 镜像池操作（core 提供存储，gov 提供查找/选择语义） */
 int32_t KmodPoolFind(const char *name, const char *version);   /* 返回下标/-ERR */
 int32_t KmodPoolAdd(const uint8_t *data, uint64_t size, bool owned); /* 返回下标/-ERR */
+/* trusted=true：镜像来自内核构建的 SAF，允许 kernel./core. 保留名，
+ * 能力按清单直接授予，并允许固定 syscall 槽（见 governance/syscall_registry）。 */
+int32_t KmodPoolAddEx(const uint8_t *data, uint64_t size, bool owned,
+                      bool trusted);
+/* 放弃一个池条目（运行期注入失败时回滚）：释放 owned blob 并标记为无效，
+ * 不压缩数组，避免其它持有下标的调用方看到漂移。 */
+void KmodPoolRelease(int32_t index);
 
 /* 事务化加载：自动拉起依赖（拓扑先序）；任一环节失败 → 本次事务新加载的模块
  * 全部回滚（逆序），已有模块不受影响。version=NULL/"" 表示池内最高版本。
@@ -359,9 +411,19 @@ int32_t KmodGovHotReplace(const char *name, const char *new_version, uint32_t fl
 kmod_module_t *KmodModuleFind(const char *name);
 int32_t KmodModuleIndexOf(const char *name);
 int32_t KmodModuleAllocFromImage(int32_t pool_index, uint32_t flags, int32_t *index_out);
+/* 登记一个 resident DynModule（代码已在内核镜像内；不做重定位）。
+ * 用于 Tier0 常驻服务与 KdllRegisterResident；节点直接进入 READY。 */
+int32_t KmodModuleAllocResident(const kmod_manifest_t *man, uint32_t internal_flags,
+                                int32_t *index_out);
 void KmodModuleRelease(kmod_module_t *m);
-/* 校验清单是否允许加载（Tier/命名/能力/策略），返回 KMOD_OK 或负错误码 */
+/* 校验清单是否允许加载（Tier/命名/能力/策略），返回 KMOD_OK 或负错误码。
+ * trusted=true：内核 SAF 模块，允许 kernel./core. 保留名并跳过 STRICT 白名单。 */
 int32_t KmodCheckLoadable(const kmod_manifest_t *m, uint32_t flags);
+int32_t KmodCheckLoadableEx(const kmod_manifest_t *m, uint32_t flags,
+                            bool trusted);
+/* SAF（内核模块归档）解析：把 root folder 下所有 .ko 文件加入镜像池。
+ * data 是 Limine 加载的整份 SAF；调用方保留所有权。 */
+int32_t KmodSafIngest(const uint8_t *data, uint64_t size);
 /* 提交阶段的图/绑定/导出/生命周期原语（governance 内部使用，selftest 不直接调） */
 int32_t KmodBindImports(kmod_module_t *m);
 void KmodUnbindAll(kmod_module_t *m);

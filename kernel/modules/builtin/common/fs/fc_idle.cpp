@@ -117,6 +117,9 @@ static int fc_free_file_stat_cb(void *data, const uint8_t *key, uint32_t key_len
 void file_cache_idle_handler(file_cache_cpu_t *s) {
     if (unlikely(!s)) return;
 
+    /* idle 上下文也推进衰减：机器长时间没有文件 I/O 时不会永远不老化。 */
+    file_cache_maybe_decay(s);
+
     // phase 0: 离群统计与拥塞控制
     spinlock_lock(&s->lock);
     fc_stats_ctx_t stats_ctx = {0, 0, 0};
@@ -382,17 +385,37 @@ static int fc_osc_decay_cb(void *data, const uint8_t *key, uint32_t key_len, voi
     return 0;
 }
 
+/* IRQ 上下文（PIT tick）：只做无锁计数与均值更新。
+   绝不能在中断里拿 s->lock —— PIT IRQ 可能打断 idle 上下文里已经持有
+   该锁的 file_cache_idle_handler，同核自旋等自己 = 必然 STALL。
+   代价高的 LRU/ART 衰减移到进程上下文的 file_cache_maybe_decay()。 */
 void file_cache_tick(file_cache_cpu_t *s) {
     if (unlikely(!s)) return;
+    __atomic_add_fetch(&s->clock, 1, __ATOMIC_RELAXED);
+    fc_update_averages_internal(s);
+}
+
+/* 进程上下文（get/put/idle）：到点才做衰减，避免中断里做重活。 */
+void file_cache_maybe_decay(file_cache_cpu_t *s) {
+    if (unlikely(!s)) return;
+
+    /* 快路径：无锁读计数，未到期直接返回（get/put 的热路径只多两次读）。 */
+    uint64_t entries = __atomic_load_n(&s->total_entries, __ATOMIC_RELAXED);
+    uint64_t period = (entries > 10000u) ? 500u : 1000u;
+    if (__atomic_load_n(&s->clock, __ATOMIC_RELAXED) -
+        __atomic_load_n(&s->last_decay_tick, __ATOMIC_RELAXED) < period)
+        return;
 
     spinlock_lock(&s->lock);
-    s->clock++;
-    fc_update_averages_internal(s);
+    entries = __atomic_load_n(&s->total_entries, __ATOMIC_RELAXED);
+    period = (entries > 10000u) ? 500u : 1000u;
+    if (s->clock - s->last_decay_tick < period) {
+        spinlock_unlock(&s->lock);
+        return;
+    }
+    s->last_decay_tick = s->clock;
 
-    uint32_t dyn_decay_ticks = (s->total_entries > 10000) ? 500 : 1000;
-
-    if (unlikely(s->clock - s->last_decay_tick >= dyn_decay_ticks)) {
-        s->last_decay_tick = s->clock;
+    {
         uint32_t batch = 0;
         uint32_t dyn_cache_decay_batch = __atomic_load_n(&s->total_entries, __ATOMIC_RELAXED) / 8;
         if (dyn_cache_decay_batch < 32) dyn_cache_decay_batch = 32;

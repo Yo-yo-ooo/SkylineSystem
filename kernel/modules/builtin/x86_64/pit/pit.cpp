@@ -24,17 +24,12 @@ namespace PIT
     int32_t roughCount = (BaseFrequency/200) / 2;
     uint64_t TicksSinceBoot = 0;
     uint64_t MicroSecondOffset = 0;
-
     uint16_t Divisor = 65535;
-
-    uint16_t NonMusicDiv = 5000;//65535;//2000; // 596.591 Hz
-
+    uint16_t NonMusicDiv = 5000;
     bool Inited = false;
-
     uint64_t freq = GetFrequency();
     int32_t FreqAdder = 1;
     void (*TickHandle)();
-
     
     int32_t tempus = 0;
     void Tick__(){
@@ -151,7 +146,7 @@ namespace PIT
         ((void(*)(void))(uintptr_t)fn)();
         cpu_t *cpu = this_cpu();
         if (cpu && cpu->file_cache) {
-            file_cache_tick(cpu->file_cache);
+            file_cache_tick_hook(cpu->file_cache);
         }
     }
     

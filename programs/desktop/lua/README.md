@@ -2,7 +2,7 @@
 
 本目录是 [Lua](https://www.lua.org/) 5.4.7 上游源码的 vendored 副本，供
 `programs/desktop`（freestanding 用户态程序，动态链接 `libsky.so`）内嵌使用。
-**除本 README/LICENSE/SHA256SUMS 外，目录内所有文件均逐字节来自上游 tarball，未做任何修改。**
+除本 README/LICENSE/SHA256SUMS 外，目录内所有文件均逐字节来自上游 tarball，未做任何修改。
 
 ## 来源与许可证
 
@@ -15,19 +15,19 @@
 | 许可证 | MIT，Copyright (C) 1994–2024 Lua.org, PUC-Rio |
 | 许可证全文 | 同目录 [`LICENSE`](LICENSE) |
 
-说明：官方 `lua-5.4.7.tar.gz` 根目录**没有**独立 LICENSE 文件，许可证文本位于
+说明：官方 `lua-5.4.7.tar.gz` 根目录没有独立 LICENSE 文件，许可证文本位于
 tarball 内 `doc/readme.html` 的 "License" 一节（与 https://www.lua.org/license.html
 一致）。同目录 `LICENSE` 即从该节提取的标准 MIT 文本（仅把 `©`/`–` 转为 ASCII），
 未增删条款。
 
 ## 目录内容
 
-- `*.c`：**28 个编译单元**（由 `programs/desktop/Makefile` 的 `find . -name '*.c'`
+- `*.c`：28 个编译单元（由 `programs/desktop/Makefile` 的 `find . -name '*.c'`
   自动收集编译，无需改动构建规则）：
   `lapi.c lauxlib.c lbaselib.c lcode.c lcorolib.c lctype.c ldblib.c ldebug.c ldo.c
   ldump.c lfunc.c lgc.c llex.c lmathlib.c lmem.c lobject.c lopcodes.c lparser.c
   lstate.c lstring.c lstrlib.c ltable.c ltablib.c ltm.c lundump.c lutf8lib.c lvm.c lzio.c`
-- `*.h`：上游 `src/` 下**全部 27 个头文件**（`lua.h`/`luaconf.h`/`lauxlib.h`/`lualib.h`/
+- `*.h`：上游 `src/` 下全部 27 个头文件（`lua.h`/`luaconf.h`/`lauxlib.h`/`lualib.h`/
   `llimits.h`/`lobject.h`/`lstate.h`/… 原样保留，含仅被上游其他模块使用的头）。
 - `LICENSE`：上述 MIT 文本。
 - `SHA256SUMS`：本目录 28 个 `.c` + 27 个 `.h` 的 SHA-256 清单（审计用）。
@@ -36,7 +36,7 @@ tarball 内 `doc/readme.html` 的 "License" 一节（与 https://www.lua.org/lic
 
 ### 未 vendor 的上游文件及原因
 
-明确**不拷贝、不编译**：
+明确不拷贝、不编译：
 
 | 文件 | 原因 |
 | --- | --- |
@@ -46,7 +46,7 @@ tarball 内 `doc/readme.html` 的 "License" 一节（与 https://www.lua.org/lic
 | `liolib.c` / `loslib.c` / `loadlib.c` | `io` / `os` / `package`(dlopen) 库；桌面不向脚本开放文件/环境/动态加载能力。 |
 | `src/Makefile`、`lua.pc`、`doc/` | 构建系统/文档，由本仓库统一管理构建。 |
 
-**宿主接入注意**：因为不含 `linit.c`，`luaL_openlibs()` 在本仓库中不存在。
+宿主接入注意：因为不含 `linit.c`，`luaL_openlibs()` 在本仓库中不存在。
 宿主必须自行注册所需库，例如：
 
 ```c
@@ -64,7 +64,7 @@ luaL_requiref(L, libs[i].name, libs[i].fn, 1);
 
 ### C++ 宿主注意：上游 Lua 头文件是纯 C 头
 
-Lua 5.4.7 的 `lua.h`/`lauxlib.h`/`lualib.h`/`luaconf.h` **没有 `extern "C"` guard**
+Lua 5.4.7 的 `lua.h`/`lauxlib.h`/`lualib.h`/`luaconf.h` 没有 `extern "C"` guard
 （上游 tarball 即如此，也不提供 `lua.hpp`），属于上游设计而非本 vendored 目录的改动。
 C++ 编译单元包含这些头文件时必须自行包 C linkage；并且本 freestanding 构建的 C++
 不定义 `__STDC_VERSION__`，而 `luaconf.h` 以 `LLONG_MAX` 是否存在判断能否使用
@@ -87,12 +87,12 @@ extern "C" {
 
 ## 与上游的差异（patch 列表）
 
-**零 patch（zero patch）。** 所有 `.c`/`.h` 与 `lua-5.4.7.tar.gz` 内 `src/` 逐字节一致
+零 patch（zero patch）。 所有 `.c`/`.h` 与 `lua-5.4.7.tar.gz` 内 `src/` 逐字节一致
 （已用 `cmp` 全量核对，并固化在 `SHA256SUMS` 中）。
 
 freestanding 适配不在 Lua 源码内完成，而是由 `lib/stdc`（libc 任务）提供 Lua 需要的
 标准 C 头与实现（`setjmp.h`/`signal.h`/`locale.h`/`time.h`、`stdio.h`/`string.h`/
-`math.h` 的若干声明与函数）。Lua 内部**不重复定义任何 libc 函数**。
+`math.h` 的若干声明与函数）。Lua 内部不重复定义任何 libc 函数。
 
 编译配置（均使用上游 `luaconf.h` 默认值，不额外传 `-D`）：
 
@@ -112,7 +112,7 @@ freestanding 适配不在 Lua 源码内完成，而是由 `lib/stdc`（libc 任�
 - `programs/desktop/Makefile` 的 `CFLAGS` 增加 `-I./lua`（`CXXFLAGS := $(CFLAGS) ...`
   自动继承），使 `lua_glue.cpp` 等宿主的 `#include <lua.h>` 可见；Lua `.c` 文件通过
   `find . -name '*.c'` 自动进入 `CFILES`，PIE 构建由 `../dynprog.mk` 的
-  `$(PYOBJDIR)/%.c.o` 规则自动覆盖，**无需新增任何独立目标/库**。
+  `$(PYOBJDIR)/%.c.o` 规则自动覆盖，无需新增任何独立目标/库。
 - Lua 与 desktop 其余源码使用完全相同的编译选项
   （`-nostdlib -nostdinc -ffreestanding -fno-exceptions -mno-red-zone -ffunction-sections
   -fdata-sections -O2 -g3 -Wall -Wextra -fPIE` 等），对象产出在
@@ -135,8 +135,8 @@ for f in lua/*.c; do
 done
 ```
 
-结果（gcc 14.2.0, GNU ld 2.45, 2026-11-07，**无任何临时 stub**，直接使用仓库内
-`lib/include/stdc` 头文件）：**28/28 对象编译成功，0 error，0 warning。** 另外用
+结果（gcc 14.2.0, GNU ld 2.45, 2026-11-07，无任何临时 stub，直接使用仓库内
+`lib/include/stdc` 头文件）：28/28 对象编译成功，0 error，0 warning。 另外用
 desktop 的 `CXXFLAGS` 单独编译宿主 `programs/desktop/lua_glue.cpp` 也是 0 error，且其
 引用的全部 `lua*`/`luaL*` 符号都能被本目录 28 个对象解析（无缺失）。
 
@@ -144,7 +144,7 @@ desktop 的 `CXXFLAGS` 单独编译宿主 `programs/desktop/lua_glue.cpp` 也是
 （`luaC_*`/`luaD_*`/`luaH_*`/…，同目录内互相解析），58 个是外部符号：55 个 C 标准库
 符号（见下表）+ `_ctype`/`_errno`/`snprintf_` 三个本仓库 `libsky.so` 自有符号。
 
-同一批次还做了**独立集成验证**（全部编译产物只写 `/tmp`，不触碰 `programs/object`）：
+同一批次还做了独立集成验证（全部编译产物只写 `/tmp`，不触碰 `programs/object`）：
 把上述 28 个 Lua 对象 + desktop 全部 C++/`init.S` 重新编译后，用
 `ld -entry=_start -pie -m elf_x86_64 -z noexecstack --no-dynamic-linker … --no-as-needed
 -L../../lib/bin -l:libsky.so` 成功链接出 `DYN`(PIE) 的 desktop 可执行文件（`NEEDED
@@ -189,7 +189,7 @@ cd lua-5.4.7/src && sha256sum -c /path/to/SkylineSystem/programs/desktop/lua/SHA
 
 升级 Lua 版本时的流程：下载新 tarball → 校验 SHA-256 → 按上述文件清单 `cp` 覆盖 →
 更新本 README（版本/哈希/日期）→ 重新生成 `SHA256SUMS` → 用 desktop flags 重跑全文编译
-验证。**不要手工编辑 vendored 文件；如确需 patch，只允许最小改动并在本文件"patch 列表"记录。**
+验证。不要手工编辑 vendored 文件；如确需 patch，只允许最小改动并在本文件"patch 列表"记录。
 
 ## 已知限制（来自 `lib/stdc` 实现，不影响编译/链接）
 

@@ -6,9 +6,10 @@
  * 该头由内核内部代码、系统调用实现与宿主测试使用；.ko 模块作者用
  * kmod_module.h（只依赖 kmod_abi.h）。两者唯一的共享契约是 kmod_abi.h。
  *
- * 分层（对应 docs/kernel-modules.md "Tier 0 固定"）：
- *   Tier0/Tier1 机制:  本头 + elf_loader + governance + capability + topology
- *   Tier1+ 可模块化:   .ko 提供的 policy/impl/seat/syscall
+ * 分层（对应 docs/kernel-modules.md 与 docs/kernel-dynlink.md）：
+ *   Tier0 机制:     本头 + elf_loader + governance + capability + topology
+ *   DynModule:      resident（原内建）与 relocatable（.ko）统一提供的
+ *                   policy/impl/seat/syscall；由 KdllInject 按名/按路径注入
  * ==========================================================================*/
 #ifndef _KMOD_H_
 #define _KMOD_H_
@@ -91,8 +92,9 @@ typedef struct kmod_stats {
 /* 生命周期 / 加载 / 卸载 / 热替换                                     */
 /* ------------------------------------------------------------------ */
 int32_t KmodInit(void);            /* Tier0: 注册表/导出表/座位/syscall 契约表初始化 */
-/* Tier0 内建组件图初始化：扫描 .kbuiltin.desc、按拓扑图 bind/apply/init。
- * 这是"整个内核组件化"的启动序列入口（取代硬编码 init 长链）。 */
+/* resident DynModule 图初始化：扫描 .kbuiltin.desc、按拓扑图 bind/apply/init。
+ * 这是"整个内核组件化"的启动序列入口（取代硬编码 init 长链）；resident 与
+ * relocatable 共用该图，relocatable 由 KdllInject/KmodBootLoad 进入。 */
 int32_t KmodBootComponents(void);
 uint32_t KmodComponentCount(void);
 int32_t KmodBootIngest(void);      /* 把引导期拿到的 .ko 镜像装入镜像池（不加载） */

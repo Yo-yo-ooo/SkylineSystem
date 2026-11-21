@@ -68,6 +68,12 @@ static spinlock_t simd_lock = 0;
 
 void simd_cpu_init(cpu_t *cpu)
 {
+    /* 兜底: 若 XSAVE 不可用(或加速器把 CPUID(0xD).EBX 报成 0), XsaveSize 会
+       一直是 0, 于是 DIV_ROUND_UP(XsaveSize, PAGE_SIZE) = 0 页, VMM::Alloc 必
+       失败 -> NewThread / NewKernelThread 全部返回 NULL(fx_area alloc failed)。
+       先给 FXSAVE 区大小 512 字节, 保证至少分到一页; XSAVE 可用时下面用真实
+       EBX 覆盖。 */
+    if (!cpu->XsaveSize) cpu->XsaveSize = 512;
     uint8_t i = 0;
     cr0_write(cr0_read() & ~((uint64_t)CR0_EMULATION));
     cr0_write(cr0_read() | CR0_MONITOR_CO_PROCESSOR | CR0_NUMERIC_ERROR_ENABLE);
@@ -81,14 +87,20 @@ void simd_cpu_init(cpu_t *cpu)
         uint32_t eax, ebx, ecx, edx;
         asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(0xD), "c"(0));
         
-        cpu->XsaveSize = ebx;
+        /* CPUID(0xD,0).EBX = XSAVE 区字节数。部分加速器(WHPX)对该叶返回 0,
+           于是 DIV_ROUND_UP(XsaveSize, PAGE_SIZE) = 0 页, VMM::Alloc 必失败,
+           连带 NewThread / NewKernelThread 全部返回 NULL(表现为 fx_area alloc
+           failed)。兜底到 FXSAVE 的 512 字节, 保证至少分到一页。 */
+        const uint32_t xsave_bytes = ebx ? ebx : 512u;
+        cpu->XsaveSize = xsave_bytes;
         spinlock_lock(&simd_lock);
-        if(ebx > MaxXsaveSize) MaxXsaveSize = ebx;
+        if(xsave_bytes > MaxXsaveSize) MaxXsaveSize = xsave_bytes;
         spinlock_unlock(&simd_lock);
         
         // 分配 XSAVE 区域，VMM::Alloc 通常返回页对齐，满足 64-byte 对齐要求
-        cpu->KernelXsaveSpace = (int8_t*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(ebx, PAGE_SIZE), false);
-        _memset(cpu->KernelXsaveSpace, 0, ebx);
+        cpu->KernelXsaveSpace = (int8_t*)VMM::Alloc(kernel_pagemap, DIV_ROUND_UP(xsave_bytes, PAGE_SIZE), false);
+        if (!cpu->KernelXsaveSpace) return;
+        _memset(cpu->KernelXsaveSpace, 0, xsave_bytes);
         
         // 将当前 CPU 的干净状态保存下来，作为后续内核态使用的初始状态
         asm volatile("xsave %0" : : "m"(*cpu->KernelXsaveSpace), "a"(cpu->XsaveMaskLo), "d"(cpu->XsaveMaskHi) : "memory");
@@ -113,7 +125,7 @@ void simd_cpu_init(cpu_t *cpu)
         asm volatile("vzeroupper" ::: "memory");
     }
 
-    // --- 打印与函数指针绑定逻辑 (保持原样，非常完美) ---
+    // --- 打印支持的扩展，并绑定函数指针 ---
     kpok("cpu simd:");
     if (cpuid_is_xsave_avail()){ kprintf("xsave ");i++; cpu->SupportXSAVE = true; }
     if (cpuid_is_avx_avail()){

@@ -68,6 +68,7 @@ struct builtin_trust {
 const builtin_trust kBuiltinTrust[] = {
     { "vendor.demo.hello", KMOD_CAP_LOG | KMOD_CAP_MEM_ALLOC },
     { "vendor.demo.greeter", KMOD_CAP_LOG | KMOD_CAP_MEM_ALLOC },
+    { "vendor.demo.xmod", KMOD_CAP_LOG },
     { "vendor.demo.prng", KMOD_CAP_SEAT_PROVIDER | KMOD_CAP_HOT_REPLACE |
                               KMOD_CAP_LOG | KMOD_CAP_MEM_ALLOC },
     { "vendor.demo.seat", KMOD_CAP_SEAT_PROVIDER | KMOD_CAP_HOT_REPLACE |
@@ -90,10 +91,11 @@ const builtin_trust kBuiltinTrust[] = {
                                KMOD_CAP_ALLOC_POLICY },
     /* B7：Tier0 共享服务（klib/sync）消费者 demo */
     { "vendor.demo.klib", KMOD_CAP_LOG | KMOD_CAP_MEM_ALLOC },
-    /* Tier2 dosvm.ko：动态 syscall 210/211 薄门面（KMOD_MF_BOOT 开机加载）。
-     * 三位都在 CAP_DEFINED_MASK (bit0..18) 内，不含 KMOD_CAP_RESERVED_CORE。 */
-    { "vendor.dosvm", KMOD_CAP_SYSCALL_IMPL | KMOD_CAP_LOG |
-                          KMOD_CAP_EXPERIMENTAL },
+    /* 统一 DynModule 注入示范：inject 持有 LoadLibrary/GetProcAddress 面，
+     * late 只有按需 provider，两个都非 BOOT。 */
+    { "vendor.demo.inject", KMOD_CAP_LOG | KMOD_CAP_MODULE_LOAD |
+                                KMOD_CAP_MODULE_UNLOAD },
+    { "vendor.demo.late", KMOD_CAP_LOG },
 };
 
 /* 信任表存储：entry.name 指向 names[i]（稳定地址；TrustAdd 原地更新 caps）。 */

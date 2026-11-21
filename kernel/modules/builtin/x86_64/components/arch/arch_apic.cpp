@@ -19,8 +19,8 @@
  *   abi/ops_size + available() + lapic_id() + eoi()
  * ==========================================================================*/
 #include <kmod/kmod_component.h>
-
 #include <arch/x86_64/lapic/lapic.h>
+
 #include <arch/x86_64/ioapic/ioapic.h>
 #include <klib/kio.h>   /* outb */
 
@@ -29,6 +29,12 @@
 
 #define KMOD_CONTRACT_APIC_V1 "kernel.apic.v1"
 #define KMOD_APIC_ABI_V1      1u
+
+extern "C" void lapic_set_hooks(void (*)(void), void (*)(void),
+                                void (*)(uint32_t, uint64_t),
+                                void (*)(uint32_t, uint32_t),
+                                void (*)(uint32_t, uint32_t),
+                                void (*)(void), uint64_t (*)(void));
 
 static int32_t arch_apic_init(void);
 static void arch_apic_exit(void);
@@ -42,6 +48,7 @@ KCOMPONENT_BEGIN(arch_apic, "kernel.arch.apic", "1.0.0", KMOD_TIER_POLICY,
 KCOMPONENT_IMPORT_FN(arch_apic, kprintf_, int, (const char *, ...), "kernel",
                      "kprintf_", "kernel.log.v1")
 KCOMPONENT_DEPENDS(arch_apic, "kernel.arch.acpi", acpi)
+KCOMPONENT_DEPENDS(arch_apic, "kernel.time.hpet", time_hpet)
 
 namespace {
 
@@ -91,6 +98,9 @@ static int32_t arch_apic_init(void)
     outb(0x23, 0x01);
 
     LAPIC::Init();
+    lapic_set_hooks(&LAPIC::EOI, &LAPIC::StopTimer, &LAPIC::Oneshot,
+                    &LAPIC::IPI, &LAPIC::IPIOthers,
+                    &LAPIC::Init, &LAPIC::InitTimer);
     IOAPIC::Init();
     /* 3) 注意：legacy PIT (IRQ0/GSI0) 的 IOAPIC 路由/解除屏蔽不在这里做。
      *    旧 init.cpp 中 RemapIRQ 位于 smp_init() 之后、PIT 初始化之后；
@@ -113,4 +123,16 @@ static void arch_apic_exit(void)
 
 KCOMPONENT_EXPORT_CONTRACT(arch_apic, KMOD_CONTRACT_APIC_V1, g_apic_ops,
                            KMOD_APIC_ABI_V1)
+#define LAPIC_RAW(tag, name, expr) \
+    KCOMPONENT_EXPORT_RAW(arch_apic, tag, name, expr, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u)
+LAPIC_RAW(lapic_eoi, "_ZN5LAPIC3EOIEv", &LAPIC::EOI);
+LAPIC_RAW(lapic_ipi, "_ZN5LAPIC3IPIEjj", &LAPIC::IPI);
+LAPIC_RAW(lapic_oneshot, "_ZN5LAPIC7OneshotEjm", &LAPIC::Oneshot);
+LAPIC_RAW(lapic_stop, "_ZN5LAPIC9StopTimerEv", &LAPIC::StopTimer);
+LAPIC_RAW(lapic_read, "_ZN5LAPIC4ReadEj", &LAPIC::Read);
+LAPIC_RAW(lapic_write, "_ZN5LAPIC5WriteEjm", &LAPIC::Write);
+KCOMPONENT_EXPORT_RAW(arch_apic, ioapic_init, "_ZN6IOAPIC4InitEv",
+    &IOAPIC::Init, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
+KCOMPONENT_EXPORT_RAW(arch_apic, ioapic_remap, "_ZN6IOAPIC8RemapIRQEjhhb",
+    &IOAPIC::RemapIRQ, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 KCOMPONENT_END(arch_apic)

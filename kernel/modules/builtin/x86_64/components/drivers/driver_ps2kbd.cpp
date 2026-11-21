@@ -15,6 +15,9 @@
 
 #include <drivers/keyboard/x86/keyboard.h>
 
+/* mouse.cpp 的滚轮字节入口（实现已随本组件迁入 .ko）。 */
+extern void keyboard_feed_byte(uint8_t code);
+
 static int32_t driver_ps2kbd_init(void);
 static void driver_ps2kbd_exit(void);
 
@@ -28,6 +31,9 @@ KCOMPONENT_IMPORT_FN(driver_ps2kbd, kprintf_, int, (const char *, ...),
                      "kernel", "kprintf_", "kernel.log.v1")
 KCOMPONENT_DEPENDS(driver_ps2kbd, "kernel.arch.apic", apic)
 KCOMPONENT_DEPENDS(driver_ps2kbd, "kernel.dev.core", dev_core)
+/* Kbd::Init -> USB::HID::RegisterKeyboard 已迁入 kernel.driver.xhci.ko；
+ * provider 必须先 READY，跨 .ko 符号解析才有地址。 */
+KCOMPONENT_DEPENDS(driver_ps2kbd, "kernel.driver.xhci", xhci)
 
 static int32_t driver_ps2kbd_init(void)
 {
@@ -42,5 +48,9 @@ static void driver_ps2kbd_exit(void)
 {
     kprintf_("[comp.ps2.kbd] exit: PS/2 controller left as-is (no hot-remove)\n");
 }
+
+/* 供 kernel.input.ps2.mouse 的 .ko 解析的键盘字节入口。 */
+KCOMPONENT_EXPORT_RAW(driver_ps2kbd, feed_byte, "_Z18keyboard_feed_byteh",
+    &keyboard_feed_byte, 0u, 1u, KMOD_SYM_FUNC, 0u, 0u);
 
 KCOMPONENT_END(driver_ps2kbd)
