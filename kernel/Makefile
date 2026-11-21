@@ -313,6 +313,27 @@ endif
 override HEADER_DEPS := $(addprefix obj-$(KARCH)/,$(CFILES:.c=.c.d) $(ASFILES:.S=.S.d))
 override HEADER_DEPS += $(addprefix obj-$(KARCH)/modules/,$(MOD_CFILES:.c=.c.d) $(MOD_ASFILES:.S=.S.d))
 
+# ==================== .kout 导出表：构建期生成，不写死源码 ====================
+# 组件 .ko 的未定义符号 = 内核必须通过 kernel.component.v1 导出的符号集合。
+# 以前这份表是仓库里提交的 component_exports.cpp（197 行手写 extern +
+# KMOD_KEXPORT_STR，靠 Python 脚本重新生成后提交）；现在改为构建时生成：
+#   1. nm 扫描 bin-$(KARCH)/components/**/*.ko 的未定义符号（已由其它 .ko
+#      提供的跨模块符号会跳过）；
+#   2. 生成 obj-$(KARCH)/generated/component_exports.S，每条 .kout 记录写
+#      ".quad <symbol>" —— 地址是**链接期重定位**，符号名来自编译产物，
+#      源码树里不再有符号清单；
+#   3. 汇编成 .o 并链接进内核（导出项格式与 KMOD_KEXPORT_STR 完全一致）。
+# 注意：顶层 `make kernel` 会先构建组件 .ko 再调这里；单独 `make -C kernel`
+# 时如果组件还没建，导出表为空（内核能链接，但组件会在启动时 UNRESOLVED）。
+# 该自动导出目前只接 x86_64（组件 .ko 本身也只在该架构构建）。
+ifeq ($(KARCH),x86_64)
+KO_KOUT_DIR := obj-$(KARCH)/generated
+KO_KOUT_SRC := $(KO_KOUT_DIR)/component_exports.S
+KO_KOUT_OBJ := $(KO_KOUT_SRC).o
+KO_KOUT_SCRIPT := $(if $(SS_BUILD_DIR),$(SS_BUILD_DIR),$(abspath $(CURDIR)/..))/res/scripts/gen_component_exports.py
+override OBJ += $(KO_KOUT_OBJ)
+endif
+
 # Default target.
 .PHONY: all
 all: bin-$(KARCH)/$(OUTPUT)
@@ -391,6 +412,22 @@ obj-$(KARCH)/modules/%.asm.o: modules/%.asm Makefile
 	@echo [MOD-NASM] $<
 	@mkdir -p "$$(dirname $@)"
 	@nasm $(KNASMFLAGS) $< -o $@
+endif
+
+# --- 构建期生成的 .kout 导出表（见 OBJ 上方的说明） ---
+# 生成规则每次都跑（脚本内容不变时不重写文件），确保组件 .ko 增删后导出表
+# 立即跟上；只有内容变化才会触发下面的重新汇编/重链接。
+ifeq ($(KARCH),x86_64)
+.PHONY: kout-force
+kout-force:
+$(KO_KOUT_SRC): kout-force
+	@mkdir -p "$$(dirname $@)"
+	python3 "$(KO_KOUT_SCRIPT)" --ko-root bin-$(KARCH)/components --out $@
+
+$(KO_KOUT_OBJ): $(KO_KOUT_SRC) Makefile
+	@echo [KOUT] $<
+	@mkdir -p "$$(dirname $@)"
+	@$(KCC) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 endif
 
 ifeq ($(KARCH),x86_64)

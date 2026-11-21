@@ -194,9 +194,10 @@ SkylineSystem/
 > 全模块化约定：`kernel/src` 只放 Tier 0；新增组件实现放到
 > `kernel/modules/{common,<arch>}/`，并在 `components/` 下增加一个
 > `KCOMPONENT_BEGIN/END` 壳（它会自动编译成独立 .ko，并进 modules.saf）。
-> 若组件壳调用了新的 kernel 实现符号，重新运行
-> `python3 res/scripts/gen_component_exports.py` 更新 `kernel.component.v1`
-> 导出表。头文件暂集中 `kernel/include`。
+> `kernel.component.v1` 导出表在构建期自动生成（`kernel/Makefile` 在链接前
+> 用 `nm` 扫描组件 `.ko`，从 `kernel/obj-<arch>/generated/` 汇编进内核），
+> 新增/删除实现符号后直接 `make` 即可，不再需要手写或提交导出清单。
+> 头文件暂集中 `kernel/include`。
 
 ---
 

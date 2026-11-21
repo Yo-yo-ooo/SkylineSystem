@@ -27,8 +27,7 @@ kernel/modules/mcr/driver_ahci.sources
 
 ~~~text
 make -C kernel components        # 先有组件 .ko（含实现）
-python3 res/scripts/gen_component_exports.py
-make -C kernel                   # 再用生成表链接内核
+make -C kernel                   # 链接前 nm 扫描 .ko，生成 .kout 表并链接
 make -C kernel modules modules-saf
 ~~~
 

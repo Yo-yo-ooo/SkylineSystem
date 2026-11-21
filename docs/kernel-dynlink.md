@@ -2,8 +2,8 @@
 
 > 本文是实现记录，不是规划。对应代码：
 > **kernel/include/kmod/kdll.h**、**kernel/include/kmod/kmod_abi.h**、
-> **kernel/src/arch/x86_64/kmod/kdll.cpp**、**saf.cpp**、**component_exports.cpp**、
-> **kernel/Makefile**、**res/scripts/make_modules_saf.py**。
+> **kernel/src/arch/x86_64/kmod/kdll.cpp**、**saf.cpp**、**kernel/Makefile**
+> （构建期生成 `.kout` 导出表）、**res/scripts/make_modules_saf.py**。
 >
 > 结论：**Tier 1（内建组件）与 Tier 2（外部 .ko）已合并为一个 DynModule
 > 类别；内核镜像里不再有 .kbuiltin 组件**。40 个原组件壳各自编译成独立
@@ -27,8 +27,9 @@
 
 - 组件壳用 **-DKMOD_COMPONENT_AS_KO=1** 把 KCOMPONENT_* 映射到
   .kmod_manifest/.in/.out，各自链接成独立 .ko；
-- 内核保留共享实现库（driver/FS/net/sched 实现代码），并生成
-  **kernel.component.v1** 导出表（component_exports.cpp）供组件 .ko 解析；
+- 内核保留共享实现库（driver/FS/net/sched 实现代码），并在链接前生成
+  **kernel.component.v1** 导出表（`obj-<arch>/generated/component_exports.S`）
+  供组件 .ko 解析；
 - 所有 .ko（40 组件 + 18 demo）打进一个 **modules.saf**；
 - limine.conf 只有一行 module_path: boot():/boot/modules.saf；
 - KmodSafIngest 解析 SAF 入池，KmodBootLoad 按 manifest 依赖加载。
@@ -247,13 +248,13 @@ python res/scripts/test/dosvm_trip_gate.py --wait 75
    "模块内建"：组件 manifest/lifecycle/import/export 全部在独立 .ko，
    不再有 .kbuiltin 静态组件表。把这些实现也拆成独立 .ko 需要跨模块
    符号表、共享状态迁移和 bootstrap 顺序重做，属于下一阶段；当前
-   component_exports.cpp 把实现函数作为 kernel.component.v1 导出。
+   构建期生成的 `.kout` 表把实现函数作为 kernel.component.v1 导出。
 2. resident 核心服务节点没有导出表（它们是机制，不是可替换实现）。
 3. KdllInjectFile 已实现，但没有用户态 syscall 包装（避免任意进程加载
    内核模块的权限模型问题）。
 4. 在模块 init 回调里注入"尚未加载"的模块属于嵌套加载事务；当前 demo/
    dosvm 只注入已 READY 的 resident/builtin，依赖自动拉起由 governance
    的拓扑事务完成。
-5. 组件 .ko 中仍可能引用 kernel 内部数据/函数；新增实现符号时需要重新
-   运行 res/scripts/gen_component_exports.py 生成导出表，否则加载会报
-   unresolved symbol。
+5. 组件 .ko 中仍可能引用 kernel 内部数据/函数；新增实现符号后重新构建
+   即可（`kernel/Makefile` 在链接前用 `nm` 扫描 .ko 并生成
+   `obj-<arch>/generated/component_exports.S`），不需要手工维护导出清单。

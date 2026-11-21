@@ -355,7 +355,7 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
 
 - 新增 `kernel/modules/mcr/*.sources` 机制：清单里的实现文件从内核 OBJ 排除，
   以 `KMOD_CXXFLAGS` 编译并链接进对应组件 .ko；根构建顺序固定为
-  components → `gen_component_exports.py` → kernel → modules/SAF。
+  components → kernel（链接前自动生成 .kout 导出表）→ modules/SAF。
 - 跨 .ko 符号表：`KmodElfLoadImageEx2` 增加 resolver；`.out` 显式导出 +
   `.kmod_dep_names` 无重定位 provider 列表；`gov_stage_add` provider 先序
   prepare，可扫描 `g_prep[]` 的导出地址；staging 路径栈拒绝环。
@@ -382,8 +382,8 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
   .kmod_manifest/.in/.out，各自编译成独立 ET_REL .ko；内核镜像里
   __kbuiltin_desc_start == __kbuiltin_desc_end（零静态组件）。
 - 共享实现库：driver/FS/net/sched 实现仍编入 kernel，新增 132 项
-  kernel.component.v1 导出（component_exports.cpp，由
-  res/scripts/gen_component_exports.py 从组件 .ko 未定义符号生成）；
+  kernel.component.v1 导出（构建期由 res/scripts/gen_component_exports.py
+  从组件 .ko 未定义符号生成 .kout 表）；
   内核总导出 195 项。
 - SAF：新增 res/scripts/make_modules_saf.py，把 38 组件 + 17 demo 共 55 个
   .ko 打进 kernel/bin-x86_64/modules.saf；res/limine.conf 只剩

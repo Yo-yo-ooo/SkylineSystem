@@ -1,63 +1,196 @@
 #!/usr/bin/env python3
+"""Generate the kernel .kout export table for component .ko symbols.
+
+The kernel used to carry a checked-in ``component_exports.cpp`` with one
+``extern char kcsym_N[] __asm__("symbol")`` + ``KMOD_KEXPORT_STR`` line per
+symbol.  That made the export list a hand-maintained source file: every new
+component symbol required editing generated source and watching for drift.
+
+This generator instead runs during the kernel build:
+
+  1. it reads the *compiled* component ``.ko`` files and collects the
+     undefined symbols (the symbols components need from the kernel image);
+  2. it emits a small assembly file whose ``.kout`` entries reference the
+     kernel symbols **by name** (``.quad symbol``), so the final link resolves
+     name and address - nothing is hardcoded as an address or C++ declaration;
+  3. the kernel Makefile assembles that file and links it into the image.
+
+The resulting table is byte-identical in format to what ``KMOD_KEXPORT_STR``
+produces: ``kmod_export_t { symbol, contract, addr, size, abi, kind, ... }``
+with contract ``kernel.component.v1`` and kind ``KMOD_SYM_FUNC``.
+"""
+
+import argparse
 import os
+import re
 import subprocess
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-KO_ROOT = os.path.join(ROOT, "kernel", "bin-x86_64", "components")
-OUT = os.path.join(ROOT, "kernel", "src", "arch", "x86_64", "kmod", "component_exports.cpp")
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DEFAULT_KO_ROOT = "kernel/bin-x86_64/components"
+DEFAULT_OUT = "kernel/obj-x86_64/generated/component_exports.S"
+ABI_H = os.path.join(REPO, "kernel", "include", "kmod", "kmod_abi.h")
 
-def collect():
+# 符号名直接出现在汇编里; 只接受 GAS 能识别为标识符的字符集。
+SYMBOL_RE = re.compile(r"^[A-Za-z_.$@][A-Za-z0-9_.$@]*$")
+
+
+def read_define(path, name, default):
+    """从 kmod_abi.h 读取字符串/整数宏，避免脚本和头文件各写一份常量。"""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return default
+    m = re.search(r"#define\s+%s\s+(\"[^\"]*\"|[-0-9A-Za-z_]+)" % re.escape(name),
+                  text)
+    if not m:
+        return default
+    val = m.group(1)
+    if val.startswith('"'):
+        return val[1:-1]
+    return int(val.rstrip("uUlL"), 0)
+
+
+def nm_undefined(path):
+    out = subprocess.run(["nm", "-u", path], capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError("nm -u failed on %s: %s" % (path, out.stderr.strip()))
+    syms = set()
+    for line in out.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[-2] == "U":
+            syms.add(parts[-1])
+    return syms
+
+
+def nm_defined_global(path):
+    out = subprocess.run(["nm", "--defined-only", "-g", path],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        raise RuntimeError("nm --defined-only failed on %s: %s"
+                           % (path, out.stderr.strip()))
+    syms = set()
+    for line in out.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 3:
+            syms.add(parts[-1])
+    return syms
+
+
+def collect(ko_root):
+    if not os.path.isdir(ko_root):
+        return []
     undefined = set()
     module_defined = set()
-    for base, _dirs, files in os.walk(KO_ROOT):
-        for name in files:
+    kos = 0
+    for base, _dirs, files in os.walk(ko_root):
+        for name in sorted(files):
             if not name.endswith(".ko"):
                 continue
             path = os.path.join(base, name)
-            out = subprocess.run(["nm", "-u", path], capture_output=True, text=True).stdout
-            for line in out.splitlines():
-                parts = line.split()
-                if len(parts) >= 2 and parts[-2] == "U":
-                    sym = parts[-1]
-                    if sym:
-                        undefined.add(sym)
-            # 已迁入 .ko 的实现符号：不能再生成 kernel extern，否则内核链接
-            # 会找一个已经不存在的定义。它们由跨 .ko 的 .out 符号解析提供。
-            defined = subprocess.run(["nm", "--defined-only", "-g", path],
-                                     capture_output=True, text=True).stdout
-            for line in defined.splitlines():
-                parts = line.split()
-                if len(parts) >= 3:
-                    module_defined.add(parts[-1])
+            kos += 1
+            undefined |= nm_undefined(path)
+            module_defined |= nm_defined_global(path)
     skipped = sorted(undefined & module_defined)
     if skipped:
-        print("cross-module provided (skipped from kernel exports): %d" % len(skipped))
+        print("cross-module provided (skipped from kernel exports): %d"
+              % len(skipped))
         for s in skipped:
             print("  " + s)
-    return sorted(undefined - module_defined)
+    syms = sorted(undefined - module_defined)
+    print("scanned %d component .ko, %d kernel symbols to export"
+          % (kos, len(syms)))
+    return syms
+
+
+def asm_bytes(label, text):
+    data = text.encode("utf-8") + b"\0"
+    out = ["%s:" % label]
+    row = []
+    for b in data:
+        row.append("0x%02x" % b)
+        if len(row) == 16:
+            out.append("    .byte " + ",".join(row))
+            row = []
+    if row:
+        out.append("    .byte " + ",".join(row))
+    return out
+
+
+def emit(syms, path, contract, kind, abi):
+    lines = [
+        "/* GENERATED by res/scripts/gen_component_exports.py -- do not edit. */",
+        "/* %d kernel symbols referenced by component .ko files. */" % len(syms),
+        "/* Addresses are link-time relocations against kernel symbols, */",
+        "/* not literal values baked into source. */",
+        "",
+        "    .section .rodata",
+        "    .balign 8",
+    ]
+    lines += asm_bytes(".Lkout_contract", contract)
+    for i, sym in enumerate(syms):
+        lines += asm_bytes(".Lkout_name_%d" % i, sym)
+    lines += [
+        "",
+        "    .section .kout,\"aw\",@progbits",
+        "    .balign 8",
+    ]
+    for i, sym in enumerate(syms):
+        lines += [
+            ".Lkout_ent_%d:" % i,
+            "    .quad .Lkout_name_%d" % i,
+            "    .quad .Lkout_contract",
+            "    .quad %s" % sym,
+            "    .long 0",              # size
+            "    .long %d" % abi,       # abi_version
+            "    .long %d" % kind,      # kind (KMOD_SYM_FUNC)
+            "    .long 0",              # flags
+            "    .long 0",              # aux
+            "    .long 0",              # reserved
+        ]
+    lines += [
+        "",
+        "    .section .note.GNU-stack,\"\",@progbits",
+        "",
+    ]
+    text = "\n".join(lines)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            if fh.read() == text:
+                print("up to date:", path)
+                return False
+    except OSError:
+        pass
+    out_dir = os.path.dirname(path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    print("wrote", path, len(syms), "entries")
+    return True
+
 
 def main():
-    if not os.path.isdir(KO_ROOT):
-        print("missing", KO_ROOT, file=sys.stderr)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ko-root", default=DEFAULT_KO_ROOT,
+                    help="directory tree with built component .ko files")
+    ap.add_argument("--out", default=DEFAULT_OUT,
+                    help="assembly file to generate")
+    args = ap.parse_args()
+
+    syms = collect(args.ko_root)
+    bad = [s for s in syms if not SYMBOL_RE.match(s)]
+    if bad:
+        print("error: symbols not representable in assembly:", bad[:5],
+              file=sys.stderr)
         return 2
-    syms = collect()
-    lines = []
-    lines.append("//SPDX-FileCopyrightText: 2026 Yo-yo-ooo")
-    lines.append("//SPDX-License-Identifier: GPL-2.0-only")
-    lines.append("/* GENERATED by res/scripts/gen_component_exports.py */")
-    lines.append("#include <kmod/kmod_internal.h>")
-    lines.append("")
-    lines.append("/* %d generated kernel.component.v1 exports. */" % len(syms))
-    for i, sym in enumerate(syms):
-        lines.append('extern "C" char kcsym_%d[] __asm__("%s");' % (i, sym))
-    lines.append("")
-    for i, sym in enumerate(syms):
-        lines.append('KMOD_KEXPORT_STR("%s", kcsym_%d, KMOD_CONTRACT_KERNEL_COMPONENT, 1u, KMOD_SYM_FUNC);' % (sym, i))
-    with open(OUT, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("\n".join(lines))
-    print("wrote", OUT, len(syms))
+    contract = read_define(ABI_H, "KMOD_CONTRACT_KERNEL_COMPONENT",
+                           "kernel.component.v1")
+    kind = read_define(ABI_H, "KMOD_SYM_FUNC", 1)
+    emit(syms, args.out, contract, kind, 1)
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

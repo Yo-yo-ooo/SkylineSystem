@@ -66,11 +66,11 @@ jobs:
     # could pass CI. This job does a full clean build and boots the result.
     #
     # Order matters: the top-level `kernel` target builds component .ko first,
-    # regenerates kernel.component.v1 from their undefined symbols, then links
-    # Tier 0 and packs modules.saf. Building with `make -C kernel` alone skips
-    # the export regeneration: the kernel links, but 4 modules fail to resolve
-    # at boot (rootfs/net.lwip/sched.install/user.init) - verified by a
-    # clean-tree run on 2026-11-21.
+    # then the kernel Makefile runs nm over those .ko files and generates the
+    # kernel.component.v1 .kout table at link time, then links Tier 0 and packs
+    # modules.saf. Building with `make -C kernel` alone skips the component
+    # build: the kernel links, but the export table is empty and modules fail
+    # to resolve at boot.
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

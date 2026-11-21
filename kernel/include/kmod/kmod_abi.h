@@ -154,7 +154,8 @@ extern "C" {
 #define KMOD_CONTRACT_KERNEL_ALGO   "kernel.algo.v1"   /* klib 容器面 ops (hashmap/art/queue/fifo/list) */
 #define KMOD_CONTRACT_KERNEL_DYNLINK "kernel.dynlink.v1" /* 统一 DynModule 注入/解析服务 */
 /* 内核共享实现符号：组件 .ko 直接调用的 driver/FS/net/sched 实现函数。
- * 由构建期从组件 .ko 的未定义符号生成，见 component_exports.cpp。 */
+ * 构建期从组件 .ko 的未定义符号生成汇编（kernel/Makefile 的 KO_KOUT_*），
+ * 链接进 .kout；仓库里不再保存手写/提交的导出清单。 */
 #define KMOD_CONTRACT_KERNEL_COMPONENT "kernel.component.v1"
 /* 私有契约命名空间格式（仅做字符串规则校验，不做语义解释）：
  *   <vendor>.<area>.<vN>  例如 vendor.sched.v1 / acme.fs.v2

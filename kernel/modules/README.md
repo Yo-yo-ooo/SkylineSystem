@@ -79,7 +79,9 @@ Tier0 的 klib 公共工具对所有模块开放，两种用法：
    C++ 链接或不透明句柄工具。
 
 所有组件 .ko/demo .ko 共享同一套导出面；组件壳直接调用的 driver/FS/net/sched
-实现函数通过 `kernel.component.v1`（component_exports.cpp）导出。
+实现函数通过构建期生成的 `kernel.component.v1`（`.kout` 表）导出：
+`kernel/Makefile` 在链接前用 `nm` 扫描组件 .ko，生成
+`obj-<arch>/generated/component_exports.S`。
 需要 LoadLibrary/GetProcAddress 时用 `KMOD_IMPORT_DYNLINK` 导入注入服务。
 完整契约表与 ABI 规则见 [docs/kernel-modules.md §4.1](../../docs/kernel-modules.md)，
 示例见 `modules/loadable/demo_klib_v1.cpp`。
@@ -87,7 +89,7 @@ Tier0 的 klib 公共工具对所有模块开放，两种用法：
 ## 构建
 
 ```bash
-make -C kernel                 # kernel 镜像（Tier0 + 共享实现库）
+make -C kernel                 # kernel 镜像（Tier0 + 共享实现库 + 生成的 .kout 表）
 make -C kernel modules         # 18 demo + 40 组件 .ko
 make -C kernel modules-saf     # 58 .ko -> bin-x86_64/modules.saf
 make -C kernel modules-check   # 58 .ko 段/重定位白名单自检
@@ -95,8 +97,8 @@ make -C kernel modules-check   # 58 .ko 段/重定位白名单自检
 
 组件壳用 `-DKMOD_COMPONENT_AS_KO=1` 编译成独立 .ko（`KCOMPONENT_*` 映射到
 `.kmod_manifest`/`.in`/`.out`），不再生成 `.kbuiltin.*` 静态段。新增组件壳
-调用了新的 kernel 实现符号时，重新运行
-`python3 res/scripts/gen_component_exports.py`。
+调用新的 kernel 实现符号时无需改任何导出清单：先有组件 .ko，再构建 kernel
+（顶层 `make kernel` 的顺序），`.kout` 表会在链接前自动重新生成。
 
 ## 迁移约束
 

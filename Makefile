@@ -179,12 +179,11 @@ kernel: kernel-deps
 	@echo "Start Building Kernel!"
 	@# 1) 先构建组件 .ko（实现代码按 modules/mcr 迁入 .ko）。
 	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)" components
-	@# 2) 从组件 .ko 的未定义符号重新生成 kernel.component.v1 导出表。
-	@#    必须在 kernel 链接之前，否则新迁入的实现符号没有 .kout 条目。
-	python3 res/scripts/gen_component_exports.py
-	@# 3) kernel 镜像（Tier0 + 共享实现库 + 生成的导出表）。
+	@# 2) kernel 镜像（Tier0 + 共享实现库）。kernel/Makefile 在链接前用
+	@#    nm 扫描组件 .ko，生成 obj-<arch>/generated/component_exports.S，
+	@#    把组件需要的符号作为 .kout 表链接进内核 —— 不再有写死的导出清单。
 	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)"
-	@# 4) demo .ko + 单一 modules.saf。
+	@# 3) demo .ko + 单一 modules.saf。
 	@echo "Building Kernel Modules (.ko)!"
 	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)" modules
 	@# Limine 只加载一个内核模块归档：modules.saf 内含全部 .ko。

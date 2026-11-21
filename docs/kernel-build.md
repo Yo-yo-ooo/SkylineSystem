@@ -15,9 +15,11 @@
 
 1. **kernel 共享实现库**：`kernel/src` 的 Tier 0 + 尚未迁出的
    `kernel/modules/**` 实现代码，用内核编译参数编进镜像。内核导出
-   260 个符号，其中 **197 个** `kernel.component.v1` 由
-   `gen_component_exports.py` 从组件 `.ko` 的未定义符号生成；已被其他
-   `.ko` 定义的符号会跳过，交给跨 .ko 解析。
+   260 个符号，其中 **197 个** `kernel.component.v1` 由构建期生成的
+   `.kout` 表提供：`kernel/Makefile` 在链接前用 `nm` 扫描组件 `.ko`
+   的未定义符号，生成 `obj-<arch>/generated/component_exports.S`（每条记录
+   `.quad <symbol>`，地址由最终链接重定位），不再提交符号清单源码；已被
+   其他 `.ko` 定义的符号会跳过，交给跨 .ko 解析。
 2. **组件 .ko**：`kernel/modules/x86_64/components/**` 用
    `-DKMOD_COMPONENT_AS_KO=1` + `-fno-pic -mcmodel=large` 编成 40 个独立 ET_REL
    `.ko`；`KCOMPONENT_*` 映射到 `.kmod_manifest`/`.in`/`.out`。实现文件
@@ -27,7 +29,7 @@
    fatfs 完整实现、lwIP 协议栈、file-cache core、ACPI 解析/MADT、RTC、
    fd_manager core、HPET、LAPIC/IOAPIC、sched_bench 已迁）。
 3. **demo .ko + SAF**：`kernel/modules/loadable/*.cpp` 编成 18 个 demo/扩展
-   `.ko`；`make modules-saf` 用 `res/scripts/make_modules_saf.py` 把 56 个
+   `.ko`；`make modules-saf` 用 `res/scripts/make_modules_saf.py` 把 58 个
    `.ko` 打进一个 `bin-x86_64/modules.saf`。Limine 只加载这个 SAF；启动时
    `KmodSafIngest` 解析入池，`KmodBootLoad` 按依赖拓扑加载 43 个 BOOT 模块。
 
@@ -35,7 +37,7 @@
 > 和 trusted 标记在加载时校验；kernel 实现符号通过 .kout 表在重定位时回填，
 > 已迁入其他 .ko 的符号由 `.out` 表 + `.kmod_dep_names` provider 先序解析。
 >
-> 构建顺序固定为：组件 .ko → `gen_component_exports.py` → 内核 → demo/SAF。
+> 构建顺序固定为：组件 .ko → 内核（链接前生成 .kout 导出表）→ demo/SAF。
 > 修改 kmod 结构体头后必须 clean build，否则部分目标文件仍是旧布局。
 
 ## 1. 构建入口与命令
@@ -167,8 +169,8 @@ KCOMPONENT_END(fs_vfs)
 | 无 `.kbuiltin.*` 段 | — | 内核镜像里不再有静态组件表 |
 
 - 所有条目带 `__attribute__((used, aligned(8)))`，避免 `--gc-sections` 回收；
-- 组件 .ko 使用 `-mcmodel=large`，直接引用的 kernel 实现符号由
-  `component_exports.cpp` 的 `kernel.component.v1` 表解析；
+- 组件 .ko 使用 `-mcmodel=large`，直接引用的 kernel 实现符号由构建期生成的
+  `.kout` 表（`kernel.component.v1`）解析；
 - 组件 .ko 的 syscall 导出指向 kernel 镜像内的实现函数，使用
   `KMOD_EXF_EXTERNAL` 标记，loader 跳过"导出地址必须在本镜像内"的检查。
 
@@ -197,9 +199,11 @@ ld.lld <obj...> [x86mem/memops.o] -nostdlib -static -z max-page-size=0x1000 \
 
 - `.kout` 当前 260 项：mem/log/epoch/libc/time/klib/sync/algo/dynlink
   + 197 项 kernel.component.v1；
-- 197 项由 `res/scripts/gen_component_exports.py` 从 40 个组件 .ko 的未定义
-  符号生成到 `kernel/src/arch/x86_64/kmod/component_exports.cpp`；已被其他
-  `.ko` 定义的符号会被跳过（例如 HID 键盘回调、`keyboard_feed_byte`），
+- 197 项由 `res/scripts/gen_component_exports.py` 在**构建期**从 40 个组件
+  .ko 的未定义符号生成：`kernel/Makefile` 在链接前把它写成
+  `obj-<arch>/generated/component_exports.S`，每条记录 `.quad <symbol>`，
+  地址由最终链接重定位；仓库里不再保存符号清单源码。已被其他 `.ko`
+  定义的符号会被跳过（例如 HID 键盘回调、`keyboard_feed_byte`），
   交给跨 .ko `.out` 解析；
 - 链接后建议执行 `kaslr-check`：`readelf -r` 中不允许残留 `R_X86_64_32/32S`。
 
@@ -339,10 +343,10 @@ Limine 读取 res/limine.conf 的单个 module_path:
    - 生命周期回调（init 返回 `KMOD_OK` 才 READY；exit/quiesce/drain 可空）
 3. 构建：无需改 Makefile；`make -C kernel modules modules-saf` 会自动把新
    组件壳编成 `.ko` 并打进 modules.saf。
-4. 新实现符号：如果组件壳调用了新的 kernel 实现函数/数据，运行
-   `python3 res/scripts/gen_component_exports.py` 更新
-   `kernel/src/arch/x86_64/kmod/component_exports.cpp`，否则加载会报
-   unresolved symbol。
+4. 新实现符号：无需手工改导出清单；组件壳引用新的 kernel 实现函数/数据后
+   直接重新构建，`kernel/Makefile` 会在链接前重新用 `nm` 扫描 .ko 并生成
+   `obj-<arch>/generated/component_exports.S`。若单独 `make -C kernel`，
+   请先确保组件 .ko 已构建（顶层 `make kernel` 会保证顺序）。
 5. 验证：串口出现 `[kmod] loaded kernel.xxx` 与拓扑顺序，再跑
    `kmod_smoke.ps1`；文档在 [kernel-components.md](kernel-components.md) 补一行。
 
@@ -394,7 +398,7 @@ pwsh -File res/scripts/test/kmod_smoke.ps1 `
 | `Please run the ./get-deps script first` | 首次构建未拉取依赖：`make kernel-deps` 或直接 `make cm` |
 | 直接 `cd kernel && make` 报找不到 `kernel/include/...` | 缺 `SS_BUILD_DIR`：用 `make SS_BUILD_DIR="$(cd .. && pwd)"` |
 | 改了头文件但行为没变 | C++ header deps 未跟踪：`make -C kernel clean` 后重建 |
-| `.ko` 加载失败 `UNRESOLVED` | 组件壳引用了新的 kernel 实现符号：运行 `python3 res/scripts/gen_component_exports.py` 后重建；demo 则改用 `.in` 导入 |
+| `.ko` 加载失败 `UNRESOLVED` | 组件壳引用了新的 kernel 实现符号但导出表没更新：确认先构建组件 .ko 再构建 kernel（顶层 `make kernel` 会处理；单独 `make -C kernel` 需先有 .ko），生成物在 `kernel/obj-<arch>/generated/component_exports.S`；demo 则改用 `.in` 导入 |
 | `.ko` 加载失败 `reloc`/`modules-check FAIL` | 编译 flags 混用（误用内核 PIE flags）或新增重定位类型；使用 `KMOD_CXXFLAGS` |
 | 新组件没出现 | 源码不在 `modules/<arch>/components/`；或没执行 `make modules-saf` |
 | 启动 `prepare ... bad name` | 组件 .ko 未被 SAF 标记 trusted（manifest 名不是 kernel.*），或普通 .ko 冒用保留名 |
@@ -416,8 +420,8 @@ pwsh -File res/scripts/test/kmod_smoke.ps1 `
 | `kernel/include/kmod/kmod_services.h` | Tier0 共享服务 ops 契约（klib/sync/algo） |
 | `kernel/src/arch/x86_64/kmod/builtin.cpp` | 描述符扫描/校验/拓扑加载/回滚 |
 | `kernel/src/arch/x86_64/kmod/saf.cpp` | SAF 解析 + trusted 入库 |
-| `kernel/src/arch/x86_64/kmod/component_exports.cpp` | 生成的 `kernel.component.v1` 导出表（197 项） |
-| `res/scripts/gen_component_exports.py` | 从组件 .ko 未定义符号重新生成导出表 |
+| `kernel/Makefile` 生成的 `obj-<arch>/generated/component_exports.S` | 构建期 `.kout` 导出表（197 项；`.quad <symbol>` 由链接器解析地址） |
+| `res/scripts/gen_component_exports.py` | 构建期从组件 .ko 未定义符号生成上述汇编 |
 | `res/scripts/make_modules_saf.py` | 58 个 .ko -> modules.saf |
 | `kernel/src/arch/x86_64/kmod/kmod_core.cpp` | `KmodInit`/`KmodBootIngest`/`KmodBootLoad` 入口 |
 | `kernel/src/arch/x86_64/kmod/elf_loader.cpp` | ET_REL 加载器（`.ko`） |
