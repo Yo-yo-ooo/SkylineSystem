@@ -1,2 +1,2 @@
 # kernel.pci.core implementation -> pci_core.ko
-builtin/x86_64/dev/pci/pcidesc.cpp
+x86_64/dev/pci/pcidesc.cpp

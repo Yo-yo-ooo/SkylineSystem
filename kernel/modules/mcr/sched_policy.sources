@@ -1,2 +1,2 @@
 # kernel.sched.policy.eevdf implementation extras
-builtin/x86_64/schedule/sched_bench.cpp
+x86_64/schedule/sched_bench.cpp

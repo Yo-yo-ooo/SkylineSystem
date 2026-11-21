@@ -25,7 +25,7 @@ LDLIBS   := -pthread
 
 HEAP_SRC := ../kernel/src/mem/heap.cpp ../kernel/src/mem/slab.cpp ../kernel/src/mem/slub.cpp
 ART_SRC  := ../kernel/src/klib/algorithm/art.c
-FC_SRC   := ../kernel/modules/builtin/common/fs/fc.cpp ../kernel/modules/builtin/common/fs/fc_idle.cpp
+FC_SRC   := ../kernel/modules/common/fs/fc.cpp ../kernel/modules/common/fs/fc_idle.cpp
 
 # 游离工具纳入目标 (art_mini = ART 前缀冲突隔离, art_replay = 复现工具)
 art-mini: bin/art_mini

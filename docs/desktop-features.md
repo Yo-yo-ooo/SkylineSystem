@@ -148,7 +148,7 @@ Close 的 Save 失败也不会退出；Discard 直接 `sys_exit(0)`，WM 自动�
    而 ext4 挂载点锁是 `spin_lock_irqsave` 的 CPU 递归锁；中断开启后线程可能
    被抢占/迁移，owner 判定失效，导致 ext4 bcache 并发访问、`ext4_buf_free`
    invalid free 或 CPU 卡死。修复：轮询期间不再 `sti`
-   （`kernel/modules/builtin/common/drivers/ahci/ahci.cpp`）。
+   （`kernel/modules/common/drivers/ahci/ahci.cpp`）。
 2. ext4 挂载锁改为线程 owner + 可让出等待：`ext4.cpp` 的递归 owner 从
    “CPU id” 改为 “当前线程指针”，等待者在开着中断的状态下 `Schedule::Yield()`
    而不是关中断自旋；这样即使持锁线程等磁盘 I/O，其他 CPU 的 TLB shootdown /
@@ -287,7 +287,7 @@ entries=28, compressed=5,460,395 B, raw=8,908,221 B
 
 - 固定 syscall 槽 22 从 `reserved` 改为 `mkdir`：
   `sys_mkdir(path, mode) -> 0 / -errno`；
-- `kernel/modules/builtin/x86_64/syscall/fops.cpp::sys_mkdir`：
+- `kernel/modules/x86_64/syscall/fops.cpp::sys_mkdir`：
   校验用户 path、`strncpy_from_user`、`GetMount`，仅 ext4 支持，
   调用 `ext4_dir_mk()`（对已存在目录幂等），其它 FS 返回 `-ENOSYS`；
 - `kernel.syscall.file` 组件导出槽 22；kmod 固定契约表 22 改为 `mkdir`；
@@ -411,7 +411,7 @@ DOOM、Console、About...。启动时不自动拉起 Explorer（与 DOOM 相同�
 
 ### 11.3 固定 syscall 23 `readdir`
 
-- `kernel/modules/builtin/x86_64/syscall/fops.cpp::sys_readdir`：`GetMount()`
+- `kernel/modules/x86_64/syscall/fops.cpp::sys_readdir`：`GetMount()`
   解析挂载点，仅 ext4（其它返回 `-ENOSYS`），用 in-tree lwext4 的
   `ext4_dir_open` / `ext4_dir_entry_next` / `ext4_dir_close` 迭代，不额外持
   挂载点锁。

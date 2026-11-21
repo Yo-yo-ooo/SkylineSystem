@@ -1,3 +1,0 @@
-# kernel.fs.fccore implementation
-builtin/common/fs/fc.cpp
-builtin/common/fs/fc_idle.cpp

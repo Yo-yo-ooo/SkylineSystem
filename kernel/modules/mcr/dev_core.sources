@@ -1,0 +1,4 @@
+# kernel.dev.core implementation -> dev_core.ko
+common/drivers/dev/dev.cpp
+common/drivers/dev/devl.cpp
+common/fs/mount.cpp

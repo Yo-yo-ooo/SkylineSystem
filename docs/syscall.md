@@ -75,7 +75,7 @@ Underneath: the VMA layer (`vma.cpp`), huge pages and CoW. See [memory.md](memor
 |---|---|---|
 | 23 | `READDIR` | `(const char* path, char* buf, uint64_t cap, uint64_t flags)` → bytes written, or a negative errno |
 
-`sys_readdir` lives in `kernel/modules/builtin/x86_64/syscall/fops.cpp` and is registered by the
+`sys_readdir` lives in `kernel/modules/x86_64/syscall/fops.cpp` and is registered by the
 builtin component `kernel.syscall.file` on fixed slot 23, the slot that used to be a reserved hole.
 It resolves the mount with `GetMount()`, accepts ext4 only (anything else returns `-ENOSYS`), and
 iterates with `ext4_dir_open()` / `ext4_dir_entry_next()` / `ext4_dir_close()` from the in-tree

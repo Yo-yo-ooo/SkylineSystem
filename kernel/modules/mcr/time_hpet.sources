@@ -1,2 +1,2 @@
 # kernel.time.hpet implementation -> time_hpet.ko
-builtin/x86_64/drivers/hpet/hpet.cpp
+x86_64/drivers/hpet/hpet.cpp

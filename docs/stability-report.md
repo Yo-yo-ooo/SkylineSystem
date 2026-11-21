@@ -104,7 +104,7 @@ and are not claimed.
 
 ## 2. File cache (fc.cpp + art.c): three memory-safety defects, all fixed
 
-`kernel/modules/builtin/common/fs/fc.cpp` and `kernel/src/klib/algorithm/art.c` are compiled for
+`kernel/modules/common/fs/fc.cpp` and `kernel/src/klib/algorithm/art.c` are compiled for
 real (only the shim layer is replaced), along with `heap.cpp`:
 four per-CPU cache instances, 200 logical file keys, 400k random operations weighted across
 promote/get/put/invalidate/idle_handler, with canary content checks, per-operation ART consistency

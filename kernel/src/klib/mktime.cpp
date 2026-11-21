@@ -1,7 +1,7 @@
 //SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
 /* 公历 UTC 秒计算：PIT/RTC 初始化与 syscall.time 共用。
- * 原实现位于 modules/builtin/x86_64/syscall/time.cpp；该文件迁入 .ko 后，
+ * 原实现位于 modules/x86_64/syscall/time.cpp；该文件迁入 .ko 后，
  * 内核侧 PIT 不能依赖模块符号，故收进 Tier0 klib。 */
 #include <stdint.h>
 

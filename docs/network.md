@@ -4,9 +4,9 @@
 
 | Component | Location | What it is |
 |---|---|---|
-| e1000 driver | `kernel/modules/builtin/common/drivers/net/e1000.cpp` + `kernel/include/drivers/net/e1000.h` | 82574L/82540EM compatible subset: probe, reset, EEPROM MAC, 256-entry RX and TX rings, IRQ plus polling |
-| lwIP glue | `kernel/modules/builtin/common/drivers/net/e1000_lwip.cpp` | zero-copy experimental switch, copy-based production path, DHCP, ping profiling, multi-core TX flood |
-| lwIP itself | `kernel/modules/builtin/common/net/**` (vendored) | `NO_SYS=1`, polling mode |
+| e1000 driver | `kernel/modules/common/drivers/net/e1000.cpp` + `kernel/include/drivers/net/e1000.h` | 82574L/82540EM compatible subset: probe, reset, EEPROM MAC, 256-entry RX and TX rings, IRQ plus polling |
+| lwIP glue | `kernel/modules/common/drivers/net/e1000_lwip.cpp` | zero-copy experimental switch, copy-based production path, DHCP, ping profiling, multi-core TX flood |
+| lwIP itself | `kernel/modules/common/net/**` (vendored) | `NO_SYS=1`, polling mode |
 | Port config | `kernel/include/lwip/lwipopts.h` + `cc.h` | see the porting fixes below |
 | Boot wiring | `init.cpp` `NetStackInit` (runs after the scheduler is installed) | e1000 probes during PCI enumeration |
 

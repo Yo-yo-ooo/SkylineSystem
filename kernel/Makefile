@@ -25,13 +25,13 @@ ifeq ($(filter $(KARCH),aarch64 loongarch64 riscv64 x86_64),)
 endif
 
 # ==================== 组件实现文件 -> .ko 迁移清单 ====================
-# modules/compose/<component>.sources 里的路径（相对 modules/）会：
+# modules/mcr/<component>.sources（MCR = module compile rules）里的路径
+# （相对 modules/）会：
 #   1. 从内核 OBJ 的 find_module_sources 结果中排除；
 #   2. 用 KMOD_CXXFLAGS 编译成额外模块对象，链接进对应组件 .ko。
-# 先迁移 driver_ahci，后续按同一格式逐组件扩展。
-KMOD_COMPOSE_DIR := modules/compose
-KMOD_COMPOSE_FILES := $(wildcard $(KMOD_COMPOSE_DIR)/*.sources)
-KMOD_MOVED_SRCS := $(foreach f,$(KMOD_COMPOSE_FILES),$(addprefix modules/,$(shell sed -e 's/#.*//' -e '/^[[:space:]]*$$/d' $(f))))
+KMOD_MCR_DIR := modules/mcr
+KMOD_MCR_FILES := $(wildcard $(KMOD_MCR_DIR)/*.sources)
+KMOD_MOVED_SRCS := $(foreach f,$(KMOD_MCR_FILES),$(addprefix modules/,$(shell sed -e 's/#.*//' -e '/^[[:space:]]*$$/d' $(f))))
 
 # User controllable C++ compiler command.
  $(call USER_VARIABLE,KCXX,clang++)
@@ -271,9 +271,9 @@ override KLDFLAGS += \
 # 目录分层（全模块化重构后）：
 #   src/                    Tier0 固定核心（boot/GDT/IDT/中断/页表/调度核心/
 #                           syscall 入口/kmod 机制/klib/mem/print/elf/flanterm）
-#   modules/builtin/common/ DynModule 共享实现库（驱动/文件系统/网络/分区/
+#   modules/common/         DynModule 共享实现库（驱动/文件系统/网络/分区/
 #                           ACPI/SMBIOS；编入 kernel，导出 kernel.component.v1）
-#   modules/builtin/<arch>/ 架构实现 + components/（组件壳 -> 独立 .ko）
+#   modules/<arch>/         架构实现 + components/（组件壳 -> 独立 .ko）
 #   modules/loadable/       demo/扩展 .ko（独立 modules 目标编译）
 # 组件壳不再编进 kernel；38 组件 .ko + 17 demo .ko 由 modules-saf 打进
 # bin-$(KARCH)/modules.saf，Limine 只加载这一个文件（见 docs/kernel-dynlink.md）。
@@ -289,8 +289,8 @@ endef
 # （驱动/FS/网络/平台/syscall 家族）仍作为内核共享实现库编进镜像，供 .ko
 # 通过 kernel.component.v1 的生成导出表解析。
 define find_module_sources
- $(patsubst modules/%,%,$(filter-out $(KMOD_MOVED_SRCS),$(shell find modules/builtin/common -type f -name "*.$(1)" -not -path "*/components/*" 2>/dev/null | LC_ALL=C sort))) \
- $(patsubst modules/%,%,$(filter-out $(KMOD_MOVED_SRCS),$(shell find modules/builtin/$(KARCH) -type f -name "*.$(1)" -not -path "*/components/*" -not -path "*/dosvm/*" 2>/dev/null | LC_ALL=C sort)))
+ $(patsubst modules/%,%,$(filter-out $(KMOD_MOVED_SRCS),$(shell find modules/common -type f -name "*.$(1)" -not -path "*/components/*" 2>/dev/null | LC_ALL=C sort))) \
+ $(patsubst modules/%,%,$(filter-out $(KMOD_MOVED_SRCS),$(shell find modules/$(KARCH) -type f -name "*.$(1)" -not -path "*/components/*" -not -path "*/dosvm/*" 2>/dev/null | LC_ALL=C sort)))
 endef
 
 CFILES := $(call find_sources,c)
@@ -302,7 +302,7 @@ MOD_CPPFILES := $(call find_module_sources,cpp)
 
 ifeq ($(KARCH),x86_64)
 override NASMFILES := $(shell cd src && find -L * -type f -name '*.asm' | LC_ALL=C sort)
-override MOD_NASMFILES := $(patsubst modules/%,%,$(shell find modules/builtin -type f -name '*.asm' 2>/dev/null | LC_ALL=C sort))
+override MOD_NASMFILES := $(patsubst modules/%,%,$(shell find modules/common modules/$(KARCH) -type f -name '*.asm' 2>/dev/null | LC_ALL=C sort))
 endif
 override OBJ := $(addprefix obj-$(KARCH)/,$(CFILES:.c=.c.o) $(ASFILES:.S=.S.o) $(CPPFILES:.cpp=.cpp.o))
 override OBJ += $(addprefix obj-$(KARCH)/modules/,$(MOD_CFILES:.c=.c.o) $(MOD_ASFILES:.S=.S.o) $(MOD_CPPFILES:.cpp=.cpp.o))
@@ -369,8 +369,8 @@ obj-$(KARCH)/%.cpp.o: src/%.cpp Makefile
 	@mkdir -p "$$(dirname $@)"
 	@$(KCXX) $(KCFLAGS) $(KCPPFLAGS) -c $< -o $@
 
-# 共享实现库（modules/builtin/**，排除组件壳）编译规则：源文件来自 modules 树，
-# 对象落在 obj-$(KARCH)/modules/builtin/<rel>，与 Tier0 src 对象分离。
+# 共享实现库（modules/common/** 与 modules/<arch>/**，排除组件壳）编译规则：
+# 源文件来自 modules 树，对象落在 obj-$(KARCH)/modules/<rel>，与 Tier0 src 对象分离。
 obj-$(KARCH)/modules/%.c.o: modules/%.c Makefile
 	@echo [MOD-C] $<
 	@mkdir -p "$$(dirname $@)"
@@ -403,7 +403,7 @@ endif
 
 # ==================== kmod 可加载模块 (.ko) 构建 ====================
 # 独立 PHONY 目标：把 modules/loadable/*.cpp 编译成 bin-$(KARCH)/modules/*.ko，
-# 不进入 OBJ / 内核链接（默认 all 目标不含 .ko，Tier1 内建组件另走 modules/builtin）。
+# 不进入 OBJ / 内核链接（默认 all 目标不含 .ko，Tier1 内建组件另走 modules/<arch>）。
 #
 # 加载器约束（见 kernel/include/kmod/kmod_abi.h 与 src/arch/x86_64/kmod/elf_loader.cpp）：
 #   - ET_REL，-fno-pic/-fno-pie -mcmodel=large（alloc 段只允许绝对 64 位重定位）；
@@ -420,23 +420,23 @@ KMOD_MODULE_KOS := $(patsubst modules/loadable/%.cpp,bin-$(KARCH)/modules/%.ko,$
 #   - 用 -DKMOD_COMPONENT_AS_KO=1 把 KCOMPONENT_BEGIN/END 映射成 .kmod_manifest/.in/.out；
 #   - 组件实现函数仍在内核镜像内，.ko 通过 kernel.component.v1 生成导出表解析；
 #   - 所有组件 .ko 与 demo .ko 一起打进一个 modules.saf，由 Limine 单文件加载。
-KMOD_COMPONENT_SRCS := $(shell find modules/builtin/$(KARCH)/components -type f -name "*.cpp" 2>/dev/null | LC_ALL=C sort) \
-                       $(wildcard modules/builtin/$(KARCH)/dosvm/*.cpp)
+KMOD_COMPONENT_SRCS := $(shell find modules/$(KARCH)/components -type f -name "*.cpp" 2>/dev/null | LC_ALL=C sort) \
+                       $(wildcard modules/$(KARCH)/dosvm/*.cpp)
 KMOD_COMPONENT_OBJS := $(patsubst modules/%.cpp,obj-$(KARCH)/component-ko/%.cxx.o,$(KMOD_COMPONENT_SRCS))
 KMOD_COMPONENT_KOS := $(patsubst modules/%.cpp,bin-$(KARCH)/components/%.ko,$(KMOD_COMPONENT_SRCS))
-# 已迁移到 .ko 的实现对象（由 modules/compose/*.sources 声明）
+# 已迁移到 .ko 的实现对象（由 modules/mcr/*.sources 声明）
 KMOD_MOVED_C_SRCS := $(filter %.c,$(KMOD_MOVED_SRCS))
 KMOD_MOVED_CXX_SRCS := $(filter %.cpp,$(KMOD_MOVED_SRCS))
-KMOD_COMPOSE_OBJS := \
+KMOD_MCR_OBJS := \
     $(patsubst modules/%.cpp,obj-$(KARCH)/component-ko/extra/%.cxx.o,$(KMOD_MOVED_CXX_SRCS)) \
     $(patsubst modules/%.c,obj-$(KARCH)/component-ko/extra/%.c.o,$(KMOD_MOVED_C_SRCS))
-define compose_srcs
-$(shell sed -e 's/#.*//' -e '/^[[:space:]]*$$/d' $(KMOD_COMPOSE_DIR)/$(1).sources 2>/dev/null)
+define mcr_srcs
+$(shell sed -e 's/#.*//' -e '/^[[:space:]]*$$/d' $(KMOD_MCR_DIR)/$(1).sources 2>/dev/null)
 endef
 # 某个组件 .ko 额外链接的实现对象
-define compose_objs
-$(patsubst modules/%.cpp,obj-$(KARCH)/component-ko/extra/%.cxx.o,$(filter %.cpp,$(addprefix modules/,$(call compose_srcs,$(1))))) \
-$(patsubst modules/%.c,obj-$(KARCH)/component-ko/extra/%.c.o,$(filter %.c,$(addprefix modules/,$(call compose_srcs,$(1)))))
+define mcr_objs
+$(patsubst modules/%.cpp,obj-$(KARCH)/component-ko/extra/%.cxx.o,$(filter %.cpp,$(addprefix modules/,$(call mcr_srcs,$(1))))) \
+$(patsubst modules/%.c,obj-$(KARCH)/component-ko/extra/%.c.o,$(filter %.c,$(addprefix modules/,$(call mcr_srcs,$(1)))))
 endef
 # .ko 对象必须依赖契约头：只改 kmod_abi.h（tier/flags/结构）时若 .ko 不重编，
 # 会把旧线格式静默带进镜像。这里把全部模块 ABI 头纳入依赖。
@@ -462,11 +462,11 @@ KMOD_CFLAGS := $(filter-out -std=gnu++17,$(KMOD_CXXFLAGS)) -std=gnu17 \
 KMOD_LDFLAGS := -m elf_x86_64 -r
 
 .PHONY: modules components
-modules: $(KMOD_MODULE_KOS) $(KMOD_COMPONENT_KOS) $(KMOD_COMPOSE_OBJS)
-components: $(KMOD_COMPONENT_KOS) $(KMOD_COMPOSE_OBJS)
+modules: $(KMOD_MODULE_KOS) $(KMOD_COMPONENT_KOS) $(KMOD_MCR_OBJS)
+components: $(KMOD_COMPONENT_KOS) $(KMOD_MCR_OBJS)
 
 # 中间 .cxx.o 保留，避免每次 make modules 都全量重编（.ko 依赖它做增量）。
-.SECONDARY: $(KMOD_MODULE_OBJS) $(KMOD_COMPONENT_OBJS) $(KMOD_COMPOSE_OBJS)
+.SECONDARY: $(KMOD_MODULE_OBJS) $(KMOD_COMPONENT_OBJS) $(KMOD_MCR_OBJS)
 
 obj-$(KARCH)/loadable/%.cxx.o: modules/loadable/%.cpp $(KMOD_HEADERS)
 	@echo KMOD-CXX $<
@@ -496,10 +496,10 @@ obj-$(KARCH)/component-ko/extra/%.c.o: modules/%.c $(KMOD_HEADERS)
 	@$(KCC) $(KMOD_CFLAGS) -DKMOD_COMPONENT_AS_KO=1 -c $< -o $@
 
 .SECONDEXPANSION:
-bin-$(KARCH)/components/%.ko: obj-$(KARCH)/component-ko/%.cxx.o $(KMOD_COMPOSE_FILES) $$(call compose_objs,$$(notdir $$(basename $$@)))
+bin-$(KARCH)/components/%.ko: obj-$(KARCH)/component-ko/%.cxx.o $(KMOD_MCR_FILES) $$(call mcr_objs,$$(notdir $$(basename $$@)))
 	@echo KMOD-COMP-LD $@
 	@mkdir -p "$$(dirname $@)"
-	@extra="$(call compose_objs,$(notdir $(basename $@)))"; \
+	@extra="$(call mcr_objs,$(notdir $(basename $@)))"; \
 	$(KLD) $(KMOD_LDFLAGS) -o $@ $< $$extra
 
 # 单一内核模块归档：所有 .ko 打成一个 .saf，Limine 只声明它。

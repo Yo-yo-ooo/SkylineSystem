@@ -1,6 +1,6 @@
 # SMP: multi-core boot and per-CPU state
 
-Source: `kernel/modules/builtin/x86_64/smp/smp.cpp` (about 9 KB).
+Source: `kernel/modules/x86_64/smp/smp.cpp` (about 9 KB).
 
 ## 1. Boot
 

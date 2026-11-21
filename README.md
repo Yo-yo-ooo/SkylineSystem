@@ -60,7 +60,7 @@
 分工：边界统一（syscall / 加载器 / 治理），实现放开（组件私有契约），回滚可控
 （事务化加载与热替换），注入统一（`kernel.dynlink.v1`），分发统一（一个 SAF）。
 
-- **40 个组件**：源码位于 `kernel/modules/builtin/`，用
+- **40 个组件**：源码位于 `kernel/modules/`，用
   `-DKMOD_COMPONENT_AS_KO=1` 编译成 `kernel/bin-x86_64/components/**/*.ko`；
 - **18 个 demo/扩展**：源码位于 `kernel/modules/loadable/`；
 - 58 个 `.ko` 由 `res/scripts/make_modules_saf.py` 打进
@@ -171,9 +171,11 @@ SkylineSystem/
 │   │   ├── elf/ flanterm/ print/
 │   │   └── main.cpp
 │   ├── modules/                # 全部组件源码（全模块化重构后）
-│   │   ├── builtin/common/     #   acpi / drivers / fs / net / partition / smbios 实现
-│   │   ├── builtin/x86_64/     #   components/（40 个组件壳，按 13 类分子目录 -> .ko）、
+│   │   ├── common/             #   acpi / drivers / fs / net / partition / smbios 实现
+│   │   ├── x86_64/             #   components/（40 个组件壳，按 13 类分子目录 -> .ko）、
 │   │   │                       #   dev / drivers / lapic / ioapic / pit / rtc / smp / syscall
+│   │   ├── aarch64/            #   其它架构的组件实现占位（构建参数存在，尚未启用）
+│   │   ├── mcr/                #   MCR（module compile rules）：*.sources 实现->.ko 清单
 │   │   └── loadable/           #   18 个可加载 .ko 演示/扩展源码
 │   ├── include/kmod/           #   ABI / manifest / 组件宏 / 契约 / 共享服务 / kdll 注入面
 │   ├── bin-x86_64/             #   kernel + components/**/*.ko + modules/*.ko + modules.saf
@@ -190,7 +192,7 @@ SkylineSystem/
 ```
 
 > 全模块化约定：`kernel/src` 只放 Tier 0；新增组件实现放到
-> `kernel/modules/builtin/{common,<arch>}/`，并在 `components/` 下增加一个
+> `kernel/modules/{common,<arch>}/`，并在 `components/` 下增加一个
 > `KCOMPONENT_BEGIN/END` 壳（它会自动编译成独立 .ko，并进 modules.saf）。
 > 若组件壳调用了新的 kernel 实现符号，重新运行
 > `python3 res/scripts/gen_component_exports.py` 更新 `kernel.component.v1`

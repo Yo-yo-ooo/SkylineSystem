@@ -1,7 +1,0 @@
-# kernel.driver.xhci implementation sources -> linked into driver_xhci.ko
-builtin/common/drivers/usb/xhci.cpp
-builtin/common/drivers/usb/usb_device.cpp
-builtin/common/drivers/usb/msc.cpp
-builtin/common/drivers/usb/uac.cpp
-builtin/common/drivers/usb/uvc.cpp
-builtin/common/drivers/usb/hid.cpp

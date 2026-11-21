@@ -1,7 +1,7 @@
 # Filesystem stack
 
-Source: `kernel/modules/builtin/common/fs/` (`fc.cpp` file cache, `fd.cpp` descriptors, `saf/`,
-`fatfs/`, `lwext4/`), `kernel/modules/builtin/common/drivers/` (block devices).
+Source: `kernel/modules/common/fs/` (`fc.cpp` file cache, `fd.cpp` descriptors, `saf/`,
+`fatfs/`, `lwext4/`), `kernel/modules/common/drivers/` (block devices).
 
 ## 1. Stack
 
@@ -92,7 +92,7 @@ filesystems never care which bus is underneath.
 
 ## 5. Partitions
 
-`kernel/modules/builtin/common/partition/`: `mbrgpt.cpp` (MBR/GPT identification), `identfstype.cpp`
+`kernel/modules/common/partition/`: `mbrgpt.cpp` (MBR/GPT identification), `identfstype.cpp`
 (probes the filesystem type on each partition), `mgr.cpp` (the partition manager).
 
 ## 6. Current state

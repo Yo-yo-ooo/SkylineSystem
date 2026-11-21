@@ -9,9 +9,9 @@
 组件实现文件用清单声明，路径相对 `kernel/modules/`：
 
 ~~~text
-kernel/modules/compose/driver_ahci.sources
-    builtin/common/drivers/ahci/ahci.cpp
-    builtin/common/drivers/Disk_Interfaces/sata/sataDiskInterface.cpp
+kernel/modules/mcr/driver_ahci.sources
+    common/drivers/ahci/ahci.cpp
+    common/drivers/Disk_Interfaces/sata/sataDiskInterface.cpp
 ~~~
 
 `kernel/Makefile` 在解析时读取所有 `*.sources`：

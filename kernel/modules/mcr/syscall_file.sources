@@ -1,2 +1,2 @@
 # kernel.syscall.file implementation sources -> linked into syscall_file.ko
-builtin/x86_64/syscall/fops.cpp
+x86_64/syscall/fops.cpp

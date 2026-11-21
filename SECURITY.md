@@ -26,14 +26,14 @@ pointers directly under `SmapGuard`, which gave any process an arbitrary
 kernel-address read/write. Fixed this round:
 
 - `SYSCALL_TIME` / `gettimeofday` / `settimeofday` / `clock_gettime`
-  (`kernel/modules/builtin/x86_64/syscall/time.cpp`): all copies go through
+  (`kernel/modules/x86_64/syscall/time.cpp`): all copies go through
   `VMM::UserAccess::CopyToUser/CopyFromUser`; the dead
   `pv & MM_READ & MM_WRITE` check and the zero-usecond `gettimeofday` were
   replaced with real timeval/timespec construction.
 - `SYSCALL_KMOD_INFO` (29) (`kernel/src/arch/x86_64/kmod/syscall_registry.cpp`):
   the module-table snapshot now uses `CopyToUser`; an unwritable buffer returns
   `-EFAULT` instead of writing to the raw pointer.
-- `SYSCALL_GETRANDOM` (`kernel/modules/builtin/x86_64/syscall/random.cpp`):
+- `SYSCALL_GETRANDOM` (`kernel/modules/x86_64/syscall/random.cpp`):
   fills a 256-byte kernel buffer per chunk and copies it out; calls above
   16 MiB return `-EINVAL`.
 
@@ -113,7 +113,7 @@ pulls NVD `cpeMatch`, compares it with the versions pinned here and opens an iss
 | Component | vendored location | pinned version | last checked | TODO |
 |---|---|---|---|---|
 | lwIP | kernel/src/net | bundled, upstream tag not recorded | round 15 | record the upstream tag |
-| lwext4 | kernel/modules/builtin/common/fs/lwext4 | bundled | round 15 | record the upstream tag |
-| FatFs | kernel/modules/builtin/common/fs/fatfs | bundled | round 15 | record the upstream tag |
+| lwext4 | kernel/modules/common/fs/lwext4 | bundled | round 15 | record the upstream tag |
+| FatFs | kernel/modules/common/fs/fatfs | bundled | round 15 | record the upstream tag |
 | mpaland/printf | lib/stdc/outfb/printf.c | upstream MIT version | round 15 | follow upstream fixes |
 | x86mem | ablib/arch/x86_64/x86mem | written in this repo (MIT) | — | none |

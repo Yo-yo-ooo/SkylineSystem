@@ -55,8 +55,8 @@ x86_64 long mode            long mode (IA-32e, LMA=1)
 
 | 层 | 文件 | 职责 |
 |---|---|---|
-| **Tier0** | `kernel/modules/builtin/x86_64/smp/smp.cpp`<br>`lapic/lapic.cpp`<br>`kernel/src/arch/x86_64/vmm/vmm.cpp`<br>`schedule/{sched,task}.cpp`<br>`syscall/{task,exec}.cpp` | `g_cpu_offline_mask` + `dosvm_core_offline/online/is_offline/lapic_offline`；`LAPIC::IPI` 底层统一过滤（**仅 0xF0 放行**）；`IPIAll/IPIOthers` 改逐核发送；TLB shootdown 的 `SendTarget` 在 ACK 计数**之前**跳过 offline 核；调度/唤醒/选核全部跳过 |
-| **DynModule** | `kernel/modules/builtin/x86_64/dosvm/dosvm.cpp`<br>`programs/dos/trampoline.nasm`<br>`kernel/include/arch/x86_64/dosvm/dosvm_trampoline.h`（生成物）<br>`res/scripts/gen_dosvm_trampoline.py`<br>`kernel/src/mem/pmm.cpp` | 单一的 **kernel.arch.dosvm.ko**（原 Tier1 实现 + 原 Tier2 门面合并，从 modules.saf 加载）：装载 blob、0xF0 IPI handler、状态机、影屏、8 个 C 导出函数，并用 `KCOMPONENT_EXPORT_SYSCALL` 直接注册 **210/211/212/213/214**；init 里 `KdllInject` 注入 `kernel.mem.pmm`/`kernel.arch.acpi` |
+| **Tier0** | `kernel/modules/x86_64/smp/smp.cpp`<br>`lapic/lapic.cpp`<br>`kernel/src/arch/x86_64/vmm/vmm.cpp`<br>`schedule/{sched,task}.cpp`<br>`syscall/{task,exec}.cpp` | `g_cpu_offline_mask` + `dosvm_core_offline/online/is_offline/lapic_offline`；`LAPIC::IPI` 底层统一过滤（**仅 0xF0 放行**）；`IPIAll/IPIOthers` 改逐核发送；TLB shootdown 的 `SendTarget` 在 ACK 计数**之前**跳过 offline 核；调度/唤醒/选核全部跳过 |
+| **DynModule** | `kernel/modules/x86_64/dosvm/dosvm.cpp`<br>`programs/dos/trampoline.nasm`<br>`kernel/include/arch/x86_64/dosvm/dosvm_trampoline.h`（生成物）<br>`res/scripts/gen_dosvm_trampoline.py`<br>`kernel/src/mem/pmm.cpp` | 单一的 **kernel.arch.dosvm.ko**（原 Tier1 实现 + 原 Tier2 门面合并，从 modules.saf 加载）：装载 blob、0xF0 IPI handler、状态机、影屏、8 个 C 导出函数，并用 `KCOMPONENT_EXPORT_SYSCALL` 直接注册 **210/211/212/213/214**；init 里 `KdllInject` 注入 `kernel.mem.pmm`/`kernel.arch.acpi` |
 | **L3** | `programs/dos/main.cpp` + `Makefile`<br>`programs/Makefile` / `build_os_pkg.py`<br>`programs/desktop/main.cpp` | 80×25 CP437 8×8 位图字体 + VGA16 色窗口客户端；开始菜单 + `Ctrl+Alt+T` |
 
 共享契约：`kernel/include/arch/x86_64/dosvm/dosvm_contract.h`。

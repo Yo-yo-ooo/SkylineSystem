@@ -18,7 +18,7 @@
  *
  * 分层：
  *   Tier0  g_cpu_offline_mask + 全路径 IPI/Steal/Preempt 过滤（lapic/smp/vmm）
- *   Tier1  kernel/modules/builtin/x86_64/dosvm/  真正的 long->real->long
+ *   Tier1  kernel/modules/x86_64/dosvm/  真正的 long->real->long
  *   Tier2  kernel/modules/loadable/dosvm.cpp      动态 syscall 门面
  *   L3     programs/dos/main.cpp                  80x25 文本屏窗口客户端
  * ==========================================================================*/

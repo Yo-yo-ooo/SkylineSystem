@@ -43,8 +43,8 @@ shared library, while the shells are compiled into independent `.ko` files. All 
 | `kernel/src/klib/` | Tier 0 kernel library: kprintf, serial, stallwatch, string, ART, hashmap, rbtree, queue |
 | `kernel/src/elf/` | Tier 0 user ELF dynamic linker (`elf_dyn.cpp`) |
 | `kernel/src/flanterm/ print/` | Tier 0 console and print backends |
-| `kernel/modules/builtin/common/` | shared implementation for all arches: `acpi/`, `drivers/`, `fs/` (VFS/SAF/FAT/ext4), `net/` (lwIP), `partition/`, `smbios/`; exported to component `.ko` via `kernel.component.v1` |
-| `kernel/modules/builtin/<arch>/` | arch implementation plus `components/` (KCOMPONENT shells by category -> independent `.ko`), `dev/` (PCI), `drivers/` (HPET), `lapic/ ioapic/ pit/ rtc/ smp/`, `syscall/` |
+| `kernel/modules/common/` | shared implementation for all arches: `acpi/`, `drivers/`, `fs/` (VFS/SAF/FAT/ext4), `net/` (lwIP), `partition/`, `smbios/`; exported to component `.ko` via `kernel.component.v1` |
+| `kernel/modules/<arch>/` | arch implementation plus `components/` (KCOMPONENT shells by category -> independent `.ko`), `dev/` (PCI), `drivers/` (HPET), `lapic/ ioapic/ pit/ rtc/ smp/`, `syscall/` |
 | `kernel/modules/loadable/` | 18 relocatable `.ko` demos/extensions, packed into modules.saf |
 | `kernel/include/` | Shared headers: Tier 0 contracts, the kmod ABI, component interfaces |
 | `programs/` | Userspace: `desktop/` (WM and compositor), `helloworld*/` |

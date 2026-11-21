@@ -1,3 +1,0 @@
-# kernel.arch.acpi implementation -> arch_acpi.ko
-builtin/common/acpi/acpi.cpp
-builtin/common/acpi/madt.cpp

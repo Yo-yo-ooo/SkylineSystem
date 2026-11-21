@@ -1,2 +1,2 @@
 # kernel.fs.vfs implementation -> fs_vfs.ko
-builtin/common/fs/fd_ops.cpp
+common/fs/fd_ops.cpp

@@ -1,0 +1,24 @@
+# kernel.fs.ext4 (lwext4) implementation sources -> linked into fs_ext4.ko
+common/fs/lwext4/blockdev/blockdev.cpp
+common/fs/lwext4/ext4_user_alloc.cpp
+common/fs/lwext4/src/ext4_balloc.cpp
+common/fs/lwext4/src/ext4_bcache.cpp
+common/fs/lwext4/src/ext4_bitmap.cpp
+common/fs/lwext4/src/ext4_blockdev.cpp
+common/fs/lwext4/src/ext4_block_group.cpp
+common/fs/lwext4/src/ext4.cpp
+common/fs/lwext4/src/ext4_crc32.cpp
+common/fs/lwext4/src/ext4_debug.cpp
+common/fs/lwext4/src/ext4_dir.cpp
+common/fs/lwext4/src/ext4_dir_idx.cpp
+common/fs/lwext4/src/ext4_extent.cpp
+common/fs/lwext4/src/ext4_fs.cpp
+common/fs/lwext4/src/ext4_hash.cpp
+common/fs/lwext4/src/ext4_ialloc.cpp
+common/fs/lwext4/src/ext4_inode.cpp
+common/fs/lwext4/src/ext4_journal.cpp
+common/fs/lwext4/src/ext4_mbr.cpp
+common/fs/lwext4/src/ext4_mkfs.cpp
+common/fs/lwext4/src/ext4_super.cpp
+common/fs/lwext4/src/ext4_trans.cpp
+common/fs/lwext4/src/ext4_xattr.cpp

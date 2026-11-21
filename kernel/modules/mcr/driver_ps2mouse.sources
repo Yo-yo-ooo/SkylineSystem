@@ -1,2 +1,2 @@
 # kernel.input.ps2.mouse implementation sources -> linked into driver_ps2mouse.ko
-builtin/common/drivers/mouse/x86/mouse.cpp
+common/drivers/mouse/x86/mouse.cpp

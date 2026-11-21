@@ -1,7 +1,7 @@
 # GUI stack and the compositor
 
 Source: `programs/desktop/` (`main.cpp`, `loader.cpp`, `synthesizer/window.cpp`), `lib/graphic/`,
-`kernel/modules/builtin/common/drivers/framebuffer/`.
+`kernel/modules/common/drivers/framebuffer/`.
 
 The whole desktop runs in userspace. The kernel hands over a framebuffer, shared memory and sysinfo,
 nothing more. What follows is what the code does, defects included.

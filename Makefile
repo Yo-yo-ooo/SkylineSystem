@@ -177,7 +177,7 @@ kernel-deps:
 .PHONY: kernel
 kernel: kernel-deps
 	@echo "Start Building Kernel!"
-	@# 1) 先构建组件 .ko（实现代码按 modules/compose 迁入 .ko）。
+	@# 1) 先构建组件 .ko（实现代码按 modules/mcr 迁入 .ko）。
 	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)" components
 	@# 2) 从组件 .ko 的未定义符号重新生成 kernel.component.v1 导出表。
 	@#    必须在 kernel 链接之前，否则新迁入的实现符号没有 .kout 条目。

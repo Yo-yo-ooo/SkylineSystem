@@ -1,0 +1,3 @@
+# kernel.arch.apic implementation
+x86_64/lapic/lapic.cpp
+x86_64/ioapic/ioapic.cpp

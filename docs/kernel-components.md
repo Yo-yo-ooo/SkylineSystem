@@ -14,12 +14,12 @@
   模块加载器、回滚、能力注册表、组件句柄/生命周期）。
 - **Tier 0 核心 + 正在收缩的共享实现库**：不可模块化的机制（引导、页表、中断、
   上下文切换、syscall 入口、模块加载器、回滚、能力注册表）保留；driver/FS/net/sched
-  的实现代码按 `kernel/modules/compose/*.sources` 逐组件迁入各自 `.ko`。
+  的实现代码按 `kernel/modules/mcr/*.sources` 逐组件迁入各自 `.ko`。
   尚未迁移的实现函数通过自动生成的 `kernel.component.v1` 导出表暴露给组件 `.ko`；
   已迁移组件之间走跨 `.ko` 的 `.out` 符号表 + `.kmod_dep_names` provider 先序。
 - **DynModule（组件 .ko）**：40 个组件壳用 `-DKMOD_COMPONENT_AS_KO=1` 把
   `KCOMPONENT_*` 映射到 `.kmod_manifest`/`.in`/`.out`，各自编译成独立 ET_REL
-  `.ko`；实现文件由 `modules/compose/<component>.sources` 追加进同一个 `.ko`。
+  `.ko`；实现文件由 `modules/mcr/<component>.sources` 追加进同一个 `.ko`。
   它们与 demo `.ko` 一起打进 **modules.saf**，由 Limine 单文件加载。
   内核镜像里 **不再有 .kbuiltin 静态组件表**。已迁入实现的组件：AHCI、NVMe、
   xHCI/USB、PS/2 键盘/鼠标（见 [module-implementation-migration.md](module-implementation-migration.md)）。
@@ -49,7 +49,7 @@
 ## 3. 组件 .ko 线格式与启动（modules.saf）
 
 ```c
-/* kernel/modules/builtin/x86_64/components/xxx.cpp —— 一个 TU 一个组件 */
+/* kernel/modules/x86_64/components/xxx.cpp —— 一个 TU 一个组件 */
 #include <kmod/kmod_component.h>
 KCOMPONENT_BEGIN(acpi, "kernel.arch.acpi", "1.0.0", KMOD_TIER_POLICY,
                  KMOD_MF_BOOT, KMOD_CAP_MMIO, 0, "ACPI/MADT 表解析",
@@ -298,9 +298,9 @@ pwsh -File res/scripts/test/kmod_smoke.ps1          # QEMU 无头串口门禁：
 | 迁移项 | 结果 |
 |---|---|
 | Tier0 保留在 `kernel/src` | 73 个源文件：`arch/<arch>/`（start/init、interrupt、vmm、cpu、simd、schedule 核心+syscall 入口、kmod 加载/治理/共享服务）、`mem/`、`klib/`、`elf/`、`flanterm/`、`print/`、`main.cpp` |
-| 组件/实现分界 | 197 个源文件 → `kernel/modules/builtin/`：实现（common/ + x86_64/ 非 components 目录）编入 kernel 共享实现库；40 个组件壳（components/ + dosvm/）编译成独立 .ko，通过 kernel.component.v1 调用实现 |
+| 组件/实现分界 | 197 个源文件 → `kernel/modules/`：实现（common/ + x86_64/ 非 components 目录）编入 kernel 共享实现库；40 个组件壳（components/ + dosvm/）编译成独立 .ko，通过 kernel.component.v1 调用实现 |
 | relocatable DynModule | 18 个 demo/扩展 `.cpp` → `kernel/modules/loadable/`；与 40 组件 .ko 一起由 `modules-saf` 打进 `modules.saf` |
-| 构建系统 | `kernel/Makefile` 新增 `find_module_sources`：`modules/builtin/common` + `modules/builtin/$(KARCH)` 递归发现 `.c/.cpp/.S/.asm`，对象落 `obj-$(KARCH)/modules/<rel>`；`modules/loadable/*.cpp` 走独立 `.ko` 规则 |
+| 构建系统 | `kernel/Makefile` 新增 `find_module_sources`：`modules/common` + `modules/$(KARCH)` 递归发现 `.c/.cpp/.S/.asm`，对象落 `obj-$(KARCH)/modules/<rel>`；`modules/loadable/*.cpp` 走独立 `.ko` 规则 |
 | 测试/文档路径 | `tests/Makefile` FC_SRC、`tests/kmod/Makefile` 核心源清单、`res/scripts/test/analyze.sh`、`docs/*.md` 路径全部更新；新增 `kernel/modules/README.md` 目录说明 |
 | 一致性校验 | 迁移前后源文件总数守恒（268 = 71 + 197；Tier0 后新增 1 个共享服务文件）；clean build + 宿主 7/7(+ASAN) + `modules-check` 58/58 + QEMU `KMOD_SMOKE PASS`（saf 58、43/43 boot load、`KMOD_SELFTEST PASS 14/14`、0 STALL） |
 
@@ -324,7 +324,7 @@ pwsh -File res/scripts/test/kmod_smoke.ps1          # QEMU 无头串口门禁：
 ### 13.2 根因（两层，缺一不可）
 
 1. 调用方丢掉了"读了几个字节"这个事实。
-   `sys_load()`（`kernel/modules/builtin/x86_64/syscall/exec.cpp`）、
+   `sys_load()`（`kernel/modules/x86_64/syscall/exec.cpp`）、
    `Schedule::NewThread()`（`kernel/src/arch/x86_64/schedule/task.cpp`）和
    `dyn_read_needed()`（`kernel/src/elf/elf_dyn.cpp`）都是
    `MP->FSOPS->read(fd, buf, fsize, 0);` —— 既不检查返回码，也不检查

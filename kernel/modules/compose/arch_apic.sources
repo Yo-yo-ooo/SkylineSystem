@@ -1,3 +1,0 @@
-# kernel.arch.apic implementation
-builtin/x86_64/lapic/lapic.cpp
-builtin/x86_64/ioapic/ioapic.cpp

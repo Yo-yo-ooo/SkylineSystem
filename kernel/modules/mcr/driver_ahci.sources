@@ -1,4 +1,4 @@
 # kernel.driver.ahci implementation sources -> linked into driver_ahci.ko
 # Paths are relative to kernel/modules/.
-builtin/common/drivers/ahci/ahci.cpp
-builtin/common/drivers/Disk_Interfaces/sata/sataDiskInterface.cpp
+common/drivers/ahci/ahci.cpp
+common/drivers/Disk_Interfaces/sata/sataDiskInterface.cpp

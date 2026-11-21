@@ -1,3 +1,0 @@
-# kernel.syscall.info implementation
-builtin/x86_64/syscall/device.cpp
-builtin/x86_64/syscall/sys_info.cpp

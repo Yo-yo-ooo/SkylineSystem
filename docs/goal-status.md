@@ -353,7 +353,7 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
 
 ### 第 7 轮：实现文件迁入 .ko（大迁移开始）
 
-- 新增 `kernel/modules/compose/*.sources` 机制：清单里的实现文件从内核 OBJ 排除，
+- 新增 `kernel/modules/mcr/*.sources` 机制：清单里的实现文件从内核 OBJ 排除，
   以 `KMOD_CXXFLAGS` 编译并链接进对应组件 .ko；根构建顺序固定为
   components → `gen_component_exports.py` → kernel → modules/SAF。
 - 跨 .ko 符号表：`KmodElfLoadImageEx2` 增加 resolver；`.out` 显式导出 +
@@ -405,7 +405,7 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
 
 ### 第 8 轮：e1000/lwIP 胶水、ext4(lwext4)、syscall.file 迁入 .ko
 
-- 新增 compose 清单：
+- 新增 MCR 清单：
   - `driver_e1000.sources`：`e1000.cpp` + `e1000_lwip.cpp`；
   - `fs_ext4.sources`：lwext4 的 23 个实现文件；
   - `syscall_file.sources`：`fops.cpp`（槽位 0-5/22/23）。
@@ -428,7 +428,7 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
 
 ### 第 9 轮：时间/内存/随机/设备/信息 syscall 家族迁入 .ko
 
-- 新增 compose：`syscall_time`（time.cpp）、`syscall_mem`（memory.cpp）、
+- 新增 MCR：`syscall_time`（time.cpp）、`syscall_mem`（memory.cpp）、
   `syscall_random`（random.cpp）、`syscall_dev`（dbgout.cpp）、
   `syscall_info`（device.cpp）。
 - `mktime` 从 time.cpp 收进 Tier0 `kernel/src/klib/mktime.cpp`，PIT 与
@@ -731,7 +731,7 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
 ### 第 30 轮：剩余实现文件边界复核
 
 - 复核 `src/arch/x86_64/schedule/sched_bench.cpp`：不在 `modules/` 下，
-  compose 机制不覆盖 `kernel/src`，无法按现有迁移路径入 .ko；本轮未强移。
+  MCR 机制不覆盖 `kernel/src`，无法按现有迁移路径入 .ko；本轮未强移。
 - IOAPIC/LAPIC 已迁入 `arch_apic.ko`；剩余 PIT/SMP 直接参与 sched/vmm/
   IDT 时序，属于 Tier0 bootstrap，需要先重做共享时钟/CPU 状态布局。
 - 回退未完成改动后 smoke 仍 43/43、14/14、desktop PASS；规模保持
@@ -742,7 +742,7 @@ Verification after each change set: BUILD_EXIT=0 + GOLDEN PASS + QEMU ping 3 + 0
 ### 第 31 轮：sched_bench 实现并入 sched.policy.eevdf.ko
 
 - `src/arch/x86_64/schedule/sched_bench.cpp` 移到
-  `modules/builtin/x86_64/schedule/`，由 `sched_policy.sources` 链接进
+  `modules/x86_64/schedule/`，由 `sched_policy.sources` 链接进
   `kernel.sched.policy.eevdf.ko`。
 - 内核无调用者，仅头文件包含；模块化后行为不变，sched_policy KO 增至 62 KB。
 - 验证：kmod_smoke PASS（14/14、43/43、desktop、0 STALL/#PF）；

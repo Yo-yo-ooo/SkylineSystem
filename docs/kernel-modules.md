@@ -24,7 +24,7 @@
 | 层 | 内容 | 镜像后端 / 可否热替换 | 代码位置 |
 |---|---|---|---|
 | **Tier 0 核心** | 启动、页表、中断、上下文切换、syscall 入口、模块加载器、回滚机制、能力注册表、组件句柄/生命周期 | 固定，不可模块化 | `kernel/src/arch/x86_64/kmod/`、arch 核心 |
-| **DynModule（组件 .ko）** | 40 个原组件壳（平台/时间/SMP、syscall 家族、驱动、文件系统、协议栈、调度/分配策略、dosvm） | 独立 ET_REL .ko，从 **modules.saf** 加载；kernel.* 为 trusted | `kernel/modules/builtin/`、`bin-x86_64/components/**/*.ko` |
+| **DynModule（组件 .ko）** | 40 个原组件壳（平台/时间/SMP、syscall 家族、驱动、文件系统、协议栈、调度/分配策略、dosvm） | 独立 ET_REL .ko，从 **modules.saf** 加载；kernel.* 为 trusted | `kernel/modules/`、`bin-x86_64/components/**/*.ko` |
 | **resident 核心节点** | pmm/vmm/heap/syscall 入口 | 无代码镜像，仅模块表 READY 节点 | `kdll.cpp` |
 | **DynModule（relocatable）** | 外部实现/扩展/诊断；ET_REL `.ko` | 运行期布局/重定位；加载/热替换/卸载/注入（受治理） | `kernel/modules/loadable/`、任意外部 `.ko` |
 

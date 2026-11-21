@@ -315,7 +315,7 @@ SerenityOS 已经证明 GUI 不是护城河，生态才是。你的 SDF 圆角 /
 
 * `git ls-files` + `Get-Content | Measure-Object -Line` 统计行数。
 
-* 第三方目录排除：`ablib/freestndchdrs`、`programs/PureDOOM`、`kernel/modules/builtin/common/fs/lwext4`、`.../fatfs`、`.../net`、`kernel/src/flanterm`、`programs/desktop/lua`、`kernel/include/lwip`、`kernel/include/netif`。
+* 第三方目录排除：`ablib/freestndchdrs`、`programs/PureDOOM`、`kernel/modules/common/fs/lwext4`、`.../fatfs`、`.../net`、`kernel/src/flanterm`、`programs/desktop/lua`、`kernel/include/lwip`、`kernel/include/netif`。
 
 * 启动 / 自检 / 性能：`serial.log`、`boot_stability_1..5.log`、`comp_perf_single/par3/par4.log`。
 

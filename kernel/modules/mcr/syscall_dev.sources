@@ -1,2 +1,2 @@
 # kernel.syscall.dev implementation -> syscall_dev.ko
-builtin/x86_64/syscall/dbgout.cpp
+x86_64/syscall/dbgout.cpp

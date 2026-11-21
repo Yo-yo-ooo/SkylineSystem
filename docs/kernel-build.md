@@ -14,14 +14,14 @@
 构建分成三条互相独立、最终被同一 ISO/SAF 打包的流水线：
 
 1. **kernel 共享实现库**：`kernel/src` 的 Tier 0 + 尚未迁出的
-   `kernel/modules/builtin/**` 实现代码，用内核编译参数编进镜像。内核导出
+   `kernel/modules/**` 实现代码，用内核编译参数编进镜像。内核导出
    260 个符号，其中 **197 个** `kernel.component.v1` 由
    `gen_component_exports.py` 从组件 `.ko` 的未定义符号生成；已被其他
    `.ko` 定义的符号会跳过，交给跨 .ko 解析。
-2. **组件 .ko**：`kernel/modules/builtin/x86_64/components/**` 用
+2. **组件 .ko**：`kernel/modules/x86_64/components/**` 用
    `-DKMOD_COMPONENT_AS_KO=1` + `-fno-pic -mcmodel=large` 编成 40 个独立 ET_REL
    `.ko`；`KCOMPONENT_*` 映射到 `.kmod_manifest`/`.in`/`.out`。实现文件
-   由 `modules/compose/<component>.sources` 追加链接进同一个 `.ko`（AHCI、NVMe、
+   由 `modules/mcr/<component>.sources` 追加链接进同一个 `.ko`（AHCI、NVMe、
    xHCI/USB、PS/2 键鼠、e1000+lwIP 胶水、ext4(lwext4)、
    syscall.{file,proc,time,mem,random,dev,info}、display.fb、dev.core、block.core、
    fatfs 完整实现、lwIP 协议栈、file-cache core、ACPI 解析/MADT、RTC、
@@ -104,23 +104,23 @@ endef
 
 # 共享实现库：排除 components/ 与 dosvm/（它们走独立 .ko）
 define find_module_sources
-  ... find modules/builtin/common -type f -name "*.<ext>" -not -path "*/components/*" ...
-  ... find modules/builtin/$(KARCH) -type f -name "*.<ext>" \
+  ... find modules/common -type f -name "*.<ext>" -not -path "*/components/*" ...
+  ... find modules/$(KARCH) -type f -name "*.<ext>" \
         -not -path "*/components/*" -not -path "*/dosvm/*" ...
 endef
 
 # 组件壳 .ko 源（40 个）
-KMOD_COMPONENT_SRCS := $(shell find modules/builtin/$(KARCH)/components -name "*.cpp") \
-                       $(wildcard modules/builtin/$(KARCH)/dosvm/*.cpp)
+KMOD_COMPONENT_SRCS := $(shell find modules/$(KARCH)/components -name "*.cpp") \
+                       $(wildcard modules/$(KARCH)/dosvm/*.cpp)
 ```
 
 扩展名覆盖 `.c`、`.cpp`、`.S`、`.asm`。对象路径约定：
 
 - `kernel/src/.../foo.cpp` → `obj-$(KARCH)/.../foo.cpp.o`
-- `kernel/modules/builtin/common/fs/fc.cpp` → `obj-$(KARCH)/modules/builtin/common/fs/fc.cpp.o`
-- `kernel/modules/builtin/x86_64/components/fs/fs_vfs.cpp` →
-  `obj-$(KARCH)/component-ko/builtin/x86_64/components/fs/fs_vfs.cxx.o` →
-  `bin-$(KARCH)/components/builtin/x86_64/components/fs/fs_vfs.ko`
+- `kernel/modules/common/fs/fc.cpp` → `obj-$(KARCH)/modules/common/fs/fc.cpp.o`
+- `kernel/modules/x86_64/components/fs/fs_vfs.cpp` →
+  `obj-$(KARCH)/component-ko/x86_64/components/fs/fs_vfs.cxx.o` →
+  `bin-$(KARCH)/components/x86_64/components/fs/fs_vfs.ko`
 
 对应的编译规则分别打印 `C++`/`[MOD-C++]` 等前缀。新增文件不需要改 Makefile，
 只要放在上述目录内。
@@ -141,7 +141,7 @@ KMOD_COMPONENT_SRCS := $(shell find modules/builtin/$(KARCH)/components -name "*
 ### 2.3 组件宏在编译期生成的段（AS_KO 模式）
 
 一个组件是一个 TU，通常位于
-`kernel/modules/builtin/x86_64/components/<类别>/<组件>.cpp`，形如：
+`kernel/modules/x86_64/components/<类别>/<组件>.cpp`，形如：
 
 ```cpp
 #include <kmod/kmod_component.h>
@@ -268,7 +268,7 @@ KMOD_LDFLAGS := -m elf_x86_64 -r
 ```bash
 make -C kernel modules-check
 # == kmod reloc check (allowed: R_X86_64_64/PC32/PLT32/32/32S) ==
-[OK]   bin-x86_64/components/builtin/x86_64/components/arch/arch_acpi.ko
+[OK]   bin-x86_64/components/x86_64/components/arch/arch_acpi.ko
 [OK]   bin-x86_64/modules/demo_hello.ko
 ...（56 个）
 kmod reloc check OK
@@ -313,7 +313,7 @@ Limine 读取 res/limine.conf 的单个 module_path:
 
 | 维度 | 组件 .ko（原 Tier 1） | demo/扩展 .ko（原 Tier 2） |
 |---|---|---|
-| 源码 | `modules/builtin/<arch>/components/**` + `dosvm/` | `modules/loadable/*.cpp` |
+| 源码 | `modules/<arch>/components/**` + `dosvm/` | `modules/loadable/*.cpp` |
 | 编译 | `KMOD_CXXFLAGS + -DKMOD_COMPONENT_AS_KO=1` | `KMOD_CXXFLAGS` |
 | 链接 | `ld.lld -r`（ET_REL） | `ld.lld -r`（ET_REL） |
 | 段 | `.kmod_manifest/.in/.out`（KCOMPONENT_* 映射） | 同样三段 |
@@ -329,8 +329,8 @@ Limine 读取 res/limine.conf 的单个 module_path:
 ### 5.1 新增一个内建组件
 
 1. 实现：把驱动/FS/服务实现放到
-   `kernel/modules/builtin/common/<area>/` 或 `kernel/modules/builtin/<arch>/<area>/`。
-2. 组件壳：在 `kernel/modules/builtin/<arch>/components/<category>/`
+   `kernel/modules/common/<area>/` 或 `kernel/modules/<arch>/<area>/`。
+2. 组件壳：在 `kernel/modules/<arch>/components/<category>/`
    新增一个 TU，写 `KCOMPONENT_BEGIN/END`：
    - 唯一 ID token 与组件名（如 `kernel.fs.myfs`）
    - 类别/flags/所需能力/描述
@@ -396,7 +396,7 @@ pwsh -File res/scripts/test/kmod_smoke.ps1 `
 | 改了头文件但行为没变 | C++ header deps 未跟踪：`make -C kernel clean` 后重建 |
 | `.ko` 加载失败 `UNRESOLVED` | 组件壳引用了新的 kernel 实现符号：运行 `python3 res/scripts/gen_component_exports.py` 后重建；demo 则改用 `.in` 导入 |
 | `.ko` 加载失败 `reloc`/`modules-check FAIL` | 编译 flags 混用（误用内核 PIE flags）或新增重定位类型；使用 `KMOD_CXXFLAGS` |
-| 新组件没出现 | 源码不在 `modules/builtin/<arch>/components/`；或没执行 `make modules-saf` |
+| 新组件没出现 | 源码不在 `modules/<arch>/components/`；或没执行 `make modules-saf` |
 | 启动 `prepare ... bad name` | 组件 .ko 未被 SAF 标记 trusted（manifest 名不是 kernel.*），或普通 .ko 冒用保留名 |
 | 启动 `EXTERNAL export not allowed` | 普通 .ko 的导出指向 kernel 镜像；只有 trusted 组件可使用 `KMOD_EXF_EXTERNAL` |
 | 组件 init 失败导致启动失败 | 查看 `[kmod] load ... transaction failed ... rollback`，确认依赖/能力/契约条件 |
@@ -422,7 +422,7 @@ pwsh -File res/scripts/test/kmod_smoke.ps1 `
 | `kernel/src/arch/x86_64/kmod/kmod_core.cpp` | `KmodInit`/`KmodBootIngest`/`KmodBootLoad` 入口 |
 | `kernel/src/arch/x86_64/kmod/elf_loader.cpp` | ET_REL 加载器（`.ko`） |
 | `kernel/src/arch/x86_64/kmod/governance.cpp` | 加载事务/依赖图/热替换/卸载 |
-| `kernel/modules/builtin/x86_64/components/` | 40 个组件壳（13 类子目录） |
+| `kernel/modules/x86_64/components/` | 40 个组件壳（13 类子目录） |
 | `kernel/modules/loadable/` | 18 个 `.ko` 演示/扩展源码 |
 | `res/limine.conf` | 单一 `module_path: boot():/boot/modules.saf` |
 | `res/scripts/test/kmod_smoke.ps1` | QEMU 串口门禁 |

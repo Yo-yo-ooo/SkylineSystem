@@ -51,7 +51,7 @@ Tier0 内核镜像
 
 Limine 单一模块: modules.saf
   ├─ 40 个 kernel.* 组件 .ko（trusted）
-  │    manifest/.in/.out；实现文件按 modules/compose 链接进来
+  │    manifest/.in/.out；实现文件按 modules/mcr 链接进来
   │    已迁组件之间走 .out 跨 .ko 符号表 + .kmod_dep_names provider 先序
   └─ 18 个 vendor.demo.* .ko（普通 .ko，STRICT 能力策略）
 ~~~
@@ -146,7 +146,7 @@ dosvm 的 init 会显式注入 pmm/acpi，串口证据：
 ### 3.2 dosvm 现在也是独立 .ko
 
 原 Tier1 实现 + 原 Tier2 门面已合并到
-kernel/modules/builtin/x86_64/dosvm/dosvm.cpp，并作为
+kernel/modules/x86_64/dosvm/dosvm.cpp，并作为
 **kernel.arch.dosvm.ko** 从 SAF 加载：
 
 - 模式切换/影屏/低内存实现都在这个 .ko 内；

@@ -1,0 +1,9 @@
+# kernel.fs.fatfs implementation -> fs_fatfs.ko
+common/fs/fatfs/identfat.cpp
+common/partition/identfstype.cpp
+common/fs/fatfs/diskio.cpp
+common/fs/fatfs/ff.cpp
+common/fs/fatfs/ffsystem.cpp
+common/fs/fatfs/ffunicode.cpp
+common/fs/fatfs/vfsi.cpp
+common/fs/fatfs/vol.cpp

@@ -1,3 +1,0 @@
-# kernel.block.core implementation -> block_core.ko
-builtin/common/partition/mbrgpt.cpp
-builtin/common/partition/mgr.cpp

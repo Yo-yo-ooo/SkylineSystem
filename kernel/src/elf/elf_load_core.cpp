@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* elf_load_core.cpp —— 用户 ELF 装载核心（Tier0）
  *
- * 原实现位于 modules/builtin/x86_64/syscall/exec.cpp。Schedule::NewThread
+ * 原实现位于 modules/x86_64/syscall/exec.cpp。Schedule::NewThread
  * 直接调用 elf_load()，且 sched.cpp 使用 NOT_RUNQ_P，所以这两项不能随
  * sys_load 进入 .ko；本文件把它们留在内核，sys_load 通过 elf_load_bounded
  * 走同一份边界校验实现。

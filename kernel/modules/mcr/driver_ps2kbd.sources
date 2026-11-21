@@ -1,0 +1,3 @@
+# kernel.input.ps2.kbd implementation sources -> linked into driver_ps2kbd.ko
+common/drivers/keyboard/x86/keyboard.cpp
+common/drivers/input/kbd.cpp
