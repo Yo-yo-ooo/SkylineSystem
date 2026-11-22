@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # SkylineSystem documentation
 
 The root [README.md](../README.md) covers what the system is, how to build it and how to run it. This

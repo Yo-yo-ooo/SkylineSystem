@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>

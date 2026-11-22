@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Swedish Institute of Computer Science
+// SPDX-License-Identifier: BSD-3-Clause
+
 /**
  * @file
  * This is the IPv4 layer implementation for incoming and outgoing IP traffic.

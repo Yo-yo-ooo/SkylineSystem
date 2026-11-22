@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/alloc/mt_repro.cpp — MT 挂起最小复现
 // 假设: pthread_create 内部经替换后 malloc 走分配器路径时挂起。
 #include <cstdio>

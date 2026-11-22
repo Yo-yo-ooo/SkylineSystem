@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 """Generate the kernel .kout export table for component .ko symbols.
 
 The kernel used to carry a checked-in ``component_exports.cpp`` with one

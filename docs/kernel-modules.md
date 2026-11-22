@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 内核模块机制：私有契约型 DynModule 链接与治理 (kmod)
 
 > Tier 0 的固定机制都在这份文档里：加载器、拓扑、能力、事务、回滚、syscall 边界、座位，

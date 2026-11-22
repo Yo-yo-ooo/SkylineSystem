@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: ChaN
+// SPDX-License-Identifier: LicenseRef-FatFs
+
 #pragma once
 
 #ifndef _IDENTFAT_H

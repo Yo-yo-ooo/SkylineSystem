@@ -1,3 +1,6 @@
+@REM SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+@REM SPDX-License-Identifier: MIT
+
 qemu-system-aarch64 ^
 -M virt ^
 -cpu cortex-a72 ^

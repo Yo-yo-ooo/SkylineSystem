@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Swedish Institute of Computer Science
+// SPDX-License-Identifier: BSD-3-Clause
+
 /**
  * @file
  * This file (together with sockets.h) aims to provide structs and functions from

@@ -1,0 +1,107 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
+version = 1
+
+# Every source, build, script and documentation file carries its SPDX header
+# inline (author + license, no filename).  The annotations below cover files
+# that cannot carry an inline comment: license texts, binary/data assets and
+# upstream README/license files that are kept verbatim.
+
+[[annotations]]
+path = ["LICENSE"]
+SPDX-FileCopyrightText = "2026 Yo-yo-ooo"
+SPDX-License-Identifier = "GPL-2.0-only OR MIT OR GPL-3.0-or-later WITH GCC-exception-3.1"
+
+# --- GCC freestanding headers (vendored, verbatim) ---------------------------
+[[annotations]]
+path = [
+    "ablib/freestndchdrs/COPYING",
+    "ablib/freestndchdrs/COPYING3",
+    "ablib/freestndchdrs/COPYING.RUNTIME",
+    "ablib/freestndchdrs/README",
+]
+SPDX-FileCopyrightText = "Free Software Foundation, Inc."
+SPDX-License-Identifier = "GPL-3.0-or-later WITH GCC-exception-3.1"
+
+# --- LLVM compiler-rt runtime (vendored) -------------------------------------
+[[annotations]]
+path = [
+    "kernel/cc-runtime/README",
+    "kernel/cc-runtime/CREDITS.TXT",
+    "kernel/cc-runtime/LICENSE.TXT",
+]
+SPDX-FileCopyrightText = "LLVM Project"
+SPDX-License-Identifier = "Apache-2.0 WITH LLVM-exception"
+
+# --- lwIP (vendored) ---------------------------------------------------------
+[[annotations]]
+path = ["kernel/modules/common/net/FILES.txt"]
+SPDX-FileCopyrightText = "Swedish Institute of Computer Science"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = [
+    "kernel/modules/common/net/netif/FILES",
+    "kernel/modules/common/net/netif/ppp/PPPD_FOLLOWUP",
+    "kernel/modules/common/net/netif/ppp/polarssl/README",
+]
+SPDX-FileCopyrightText = "Swedish Institute of Computer Science"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# --- lwext4 (vendored) -------------------------------------------------------
+[[annotations]]
+path = [
+    "kernel/include/fs/lwext4/README.txt",
+    "kernel/modules/common/fs/lwext4/README.txt",
+]
+SPDX-FileCopyrightText = "Grzegorz Kostka"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# --- FatFs (vendored) --------------------------------------------------------
+[[annotations]]
+path = [
+    "kernel/include/fs/fatfs/00history.txt",
+    "kernel/include/fs/fatfs/00readme.txt",
+    "kernel/modules/common/fs/fatfs/00history.txt",
+    "kernel/modules/common/fs/fatfs/00readme.txt",
+]
+SPDX-FileCopyrightText = "ChaN"
+SPDX-License-Identifier = "LicenseRef-FatFs"
+
+# --- flanterm / Lua license texts (vendored) ---------------------------------
+[[annotations]]
+path = ["kernel/include/flanterm/LICENSE"]
+SPDX-FileCopyrightText = "mintsuki and flanterm contributors"
+SPDX-License-Identifier = "BSD-2-Clause"
+
+[[annotations]]
+path = ["programs/desktop/lua/LICENSE", "programs/desktop/lua/SHA256SUMS"]
+SPDX-FileCopyrightText = "Lua.org, PUC-Rio"
+SPDX-License-Identifier = "MIT"
+
+# --- DOOM / PureDOOM data (vendored) -----------------------------------------
+[[annotations]]
+path = ["programs/PureDOOM/LICENSE"]
+SPDX-FileCopyrightText = "Free Software Foundation, Inc."
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = [
+    "programs/PureDOOM/src/DOOM/DOOMLIC.TXT",
+    "programs/PureDOOM/doom.wad",
+    "programs/PureDOOM/doom_trim.wad",
+]
+SPDX-FileCopyrightText = "id Software, Inc."
+SPDX-License-Identifier = "LicenseRef-DOOM-Source-Code-License"
+
+# --- project data/config files ----------------------------------------------
+[[annotations]]
+path = [
+    "res/limine.conf",
+    "res/scripts/test/golden.txt",
+    "lib/include/stdcpp/README",
+    "_qemu_doom_ingame.png",
+]
+SPDX-FileCopyrightText = "2026 Yo-yo-ooo"
+SPDX-License-Identifier = "MIT"

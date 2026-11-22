@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 /* Host-side stand-in for Skyline's <syscall.h>.
    Redirects the shim's syscalls to plain host implementations and provides
    fsize() (a Skyline libc extension the shim relies on). */

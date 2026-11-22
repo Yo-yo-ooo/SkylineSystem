@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: GPL-2.0-only
+
 # Nuke built-in rules and variables.
 MAKEFLAGS += -rR
 .SUFFIXES:

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Swedish Institute of Computer Science
+// SPDX-License-Identifier: BSD-3-Clause
+
 #ifndef __LWIPOPTS_H__
 #define __LWIPOPTS_H__
 

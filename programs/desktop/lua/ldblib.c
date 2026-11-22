@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Lua.org, PUC-Rio
+// SPDX-License-Identifier: MIT
+
 /*
 ** $Id: ldblib.c $
 ** Interface from Lua to its debug API

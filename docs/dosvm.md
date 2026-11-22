@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # DOS VM：单核可逆退出 IA-32e 并在桌面运行 16 位程序
 
 > 状态：已实现并在 QEMU 实机验证通过（`dosvm_trip_gate.py` 多次 PASS）。

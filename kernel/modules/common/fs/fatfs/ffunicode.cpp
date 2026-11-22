@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: ChaN
+// SPDX-License-Identifier: LicenseRef-FatFs
+
 /*------------------------------------------------------------------------*/
 /* Unicode Handling Functions for FatFs R0.13 and Later                   */
 /*------------------------------------------------------------------------*/

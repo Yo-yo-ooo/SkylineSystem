@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # tests/ — 内核组件的宿主测试
 
 把内核真实源码拉到 WSL/Linux 宿主上跑混沌、压力和回归。shim 只替换硬件相关依赖（清单见文末），

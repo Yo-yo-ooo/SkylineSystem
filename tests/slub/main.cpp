@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/slub/main.cpp — SLUB/SLAB 内核堆 完整验证套件（宿主）
 // 编译真实 kernel/src/mem/heap.cpp, 仅换 shim。
 // 度量规范: 1 op = kmalloc+kfree 对(除非注明); 计时用批量法(两次 clock 夹 N ops);

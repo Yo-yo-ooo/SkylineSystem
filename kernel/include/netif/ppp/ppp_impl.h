@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Swedish Institute of Computer Science
+// SPDX-License-Identifier: BSD-3-Clause
+
 /*****************************************************************************
 * ppp.h - Network Point to Point Protocol header file.
 *

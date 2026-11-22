@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/common/errno.h — 宿主 shim:
 // 1) include_next 拿 kernel/include/errno.h 的 E* 错误常量 (与 Linux 一致);
 // 2) 补上 freestanding 版缺失的 errno 宏 (glibc 语义)。

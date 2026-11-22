@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # tests/stdc/Makefile — 用户态 libc (lib/stdc) 宿主正确性测试
 #
 # 用法 (由 tests/Makefile 的 stdc 目标转发):

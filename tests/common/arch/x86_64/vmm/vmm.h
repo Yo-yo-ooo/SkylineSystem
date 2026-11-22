@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/common/arch/x86_64/vmm/vmm.h — 宿主测试 shim
 // 覆盖 kernel/include/arch/x86_64/vmm/vmm.h（内核堆只需要页分配原语）
 #pragma once

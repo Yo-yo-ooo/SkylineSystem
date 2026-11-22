@@ -1,2 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: GPL-2.0-only
+
 # kernel.sched.policy.eevdf implementation extras
 x86_64/schedule/sched_bench.cpp

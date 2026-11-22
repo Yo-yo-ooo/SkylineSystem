@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Security status and how to report a bug
 
 SkylineSystem is a single-user hobby kernel. What exists is architecture-level hardening, not a

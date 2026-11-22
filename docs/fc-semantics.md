@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # File-cache semantics: what is actually implemented
 
 The goal list asks for "full semantics" on the file cache: writeback, dirty pages, fsync, OOM

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # PureDOOM port
 
 PureDOOM (github.com/Daivuk/PureDOOM) ships the whole engine — renderer, game logic, WAD loader —

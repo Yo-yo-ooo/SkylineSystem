@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Simple Archive Format
 SAF is an archive format designed to be easy and fast to parse. It can be used as a ramdisk format for hobby OSes, being a simpler alternative to other formats like `tar` and `cpio`. \
 Its features include:

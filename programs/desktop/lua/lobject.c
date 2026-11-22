@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Lua.org, PUC-Rio
+// SPDX-License-Identifier: MIT
+
 /*
 ** $Id: lobject.c $
 ** Some generic functions over Lua objects

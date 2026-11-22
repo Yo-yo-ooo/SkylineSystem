@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: GPL-2.0-only
+
 # kernel.driver.xhci implementation sources -> linked into driver_xhci.ko
 common/drivers/usb/xhci.cpp
 common/drivers/usb/usb_device.cpp

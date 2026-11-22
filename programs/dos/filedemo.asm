@@ -1,3 +1,6 @@
+; SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+; SPDX-License-Identifier: MIT
+
 ; filedemo.asm - 16-bit .COM that exercises the host file bridge end to end.
 ;
 ; Every INT 21h file call (3Dh open / 3Fh read / 3Eh close) is parked by the

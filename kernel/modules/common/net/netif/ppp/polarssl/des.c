@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Swedish Institute of Computer Science
+// SPDX-License-Identifier: BSD-3-Clause
+
 /*
  *  FIPS-46-3 compliant Triple-DES implementation
  *

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # ==============================================
 # SkylineSystem 库 Makefile
 # 输出规范：obj/ 放中间文件，bin/ 放最终库

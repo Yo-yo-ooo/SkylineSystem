@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/art_mini.cpp — libart 前缀冲突隔离测试
 #include <cstdio>
 #include <cstring>

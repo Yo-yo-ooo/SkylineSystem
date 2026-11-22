@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # hosttest — run the shim on any desktop (no OS build needed)
 
 The shim is platform logic only; everything Skyline-specific is behind six

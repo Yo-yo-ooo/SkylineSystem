@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 卡死问题调试报告 (2026-10-11, WSL + QEMU)
 
 ## 1. 现象

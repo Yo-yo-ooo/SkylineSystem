@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 #include <stdlib.h>
 
 /* 注意 (动态链接): 这里原来是 `static __thread ... = 1` —— 带**非零初值**的

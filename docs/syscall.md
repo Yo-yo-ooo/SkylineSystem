@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # System call ABI (not POSIX)
 
 Source: `kernel/include/arch/x86_64/schedule/syscalln.h`,

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/art_replay.cpp — 重放 fc 混沌中 cache0 索引树的真实变更序列,
 // 每步校验"遍历可见 ⇔ 搜索可达"一致性, 找到第一个破坏点。
 #include <cstdio>

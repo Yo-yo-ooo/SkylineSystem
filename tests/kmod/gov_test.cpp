@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/gov_test.cpp —— kmod 事务治理层宿主测试（governance.cpp）
 // ----------------------------------------------------------------------------
 // 唯一 main 在 test_main.cpp；本文件只提供 extern "C" int32_t test_gov_run()。

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 /* Host harness: run the real Skyline DOOM shim on Windows.
    Everything Skyline-specific is faked here — the fixed 0x400000 protocol
    page, the shared window surface, the keyboard ring and the syscalls — so

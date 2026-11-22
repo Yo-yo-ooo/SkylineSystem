@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 内核组件构建说明（Build Guide）
 
 > 面向两类读者：想把内核/组件改动构建出来并验证的人，以及想新增一个内建组件或

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/elf_loader_test.cpp — kmod ELF16/ELF64 ET_REL 加载器宿主测试
 // ----------------------------------------------------------------------------
 // 覆盖 KmodElfInspect / KmodElfValidateManifest / KmodElfLoadImage /

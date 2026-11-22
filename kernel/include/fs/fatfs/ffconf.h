@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: ChaN
+// SPDX-License-Identifier: LicenseRef-FatFs
+
 /*---------------------------------------------------------------------------/
 /  Configurations of FatFs Module
 /---------------------------------------------------------------------------*/

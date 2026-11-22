@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 #include <immintrin.h> 
 void floats_add(float *dest, float *a, float *b, unsigned size) { 
     for (; size >= 8; size -= 8, dest += 8, a += 8, b += 8) { 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/fc/mt_main.cpp — 文件缓存多线程并发测试
 // 4 宿主线程 = 4 虚拟 CPU, 各持一个 file_cache_cpu_t 实例;
 // dirty promote 广播到其他线程的实例 → 真实跨实例并发 + 自旋锁竞争。

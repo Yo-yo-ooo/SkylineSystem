@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/fixtures/fixture_hostcomp_v2.cpp — 内建组件热替换回退用例 fixture
 // ----------------------------------------------------------------------------
 // 这是一个"同名 .ko"：manifest 名 vendor.host.comp / 版本 2.0.0。

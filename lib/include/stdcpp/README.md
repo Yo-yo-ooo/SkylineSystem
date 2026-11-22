@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # stdcpp — SkylineSystem 的 freestanding C++ 标准库
 
 `lib/include/stdcpp/` 是一套头文件实现的 C++ 标准库子集，供内核与用户态

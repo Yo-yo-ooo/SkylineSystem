@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/host_platform.cpp — kmod_platform.h 的宿主实现
 // ----------------------------------------------------------------------------
 // 内核实现见 kernel/src/arch/x86_64/kmod/platform_kernel.cpp（不参与宿主构建）。

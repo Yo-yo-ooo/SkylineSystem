@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # gdef.mk — 全局构建配置
 # 由各子 Makefile include; 提供: 目标架构 (BUILD_ARCH)、镜像名、
 # 宿主 CPU 扩展检测 (SSE4.2/AVX/AVX2/AVX512) 与 x86mem 库的

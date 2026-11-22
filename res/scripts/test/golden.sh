@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # res/scripts/test/golden.sh — 金样门禁: 跑全量 CI 后与 golden.txt 逐行比对
 # 用法: bash res/scripts/test/golden.sh   (退出码 0 = 与金样一致)
 # 迁移 (用户清理): 原 tests/golden.sh → res/scripts/test/, ci.sh 同目录

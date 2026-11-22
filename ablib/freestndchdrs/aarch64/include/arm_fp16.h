@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Free Software Foundation, Inc.
+// SPDX-License-Identifier: GPL-3.0-or-later WITH GCC-exception-3.1
+
 /* ARM FP16 scalar intrinsics include file.
 
    Copyright (C) 2016-2024 Free Software Foundation, Inc.

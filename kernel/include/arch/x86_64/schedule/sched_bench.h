@@ -1,3 +1,4 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: GPL-2.0-only
 /* sched_bench.h — REEVDF 反馈环真实内核基准 (时间域画像) */
 #pragma once

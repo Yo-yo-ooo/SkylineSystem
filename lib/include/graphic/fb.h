@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 #pragma once
 #ifndef _GRAPHIC_FB_H_
 #define _GRAPHIC_FB_H_

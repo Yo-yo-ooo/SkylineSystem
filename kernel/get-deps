@@ -1,4 +1,7 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: GPL-2.0-only
+
 # SkylineSystem dependency check.
 #
 # Third-party sources (lwIP, lwext4, FatFs, flanterm, stb_truetype, libart,

@@ -1,4 +1,7 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # Headless QEMU boot smoke gate (Linux/macOS/WSL, POSIX sh, no PowerShell).
 #
 # Boots SkylineSystem-x86_64.iso with serial output to a file, waits for the

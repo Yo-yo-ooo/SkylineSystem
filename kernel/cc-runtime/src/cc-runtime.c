@@ -7,6 +7,7 @@
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
+// SPDX-FileCopyrightText: LLVM Project
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 // 2024/01/21 - Modified by mintsuki for use inside cc-runtime

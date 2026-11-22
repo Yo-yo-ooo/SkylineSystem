@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 #include <base/arch/x86_64/syscall.h>
 #include <graphic/fb.h>
 #include <base/arch/x86_64/syscalln.h>

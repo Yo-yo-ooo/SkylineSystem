@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Lua.org, PUC-Rio
+// SPDX-License-Identifier: MIT
+
 /*
 ** $Id: ldebug.h $
 ** Auxiliary functions from Debug Interface module

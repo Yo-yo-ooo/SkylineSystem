@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Stability report audit: what holds up, what doesn't, and what was retested
 
 This file goes through `docs/stability-report.md` item by item. Three rules apply throughout:

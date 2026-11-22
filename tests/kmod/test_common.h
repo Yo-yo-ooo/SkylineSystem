@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/test_common.h — kmod 宿主测试的公共小工具
 // 仅测试侧使用：断言宏、固定种子 RNG、fixture 读取、最小 ELF64 解析/改字节工具。
 #pragma once

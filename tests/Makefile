@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # tests/Makefile — Kernel Core ALGO / ABLIB TEST
 # CXX 选择: 优先 g++, 但**必须验证它能编译 <mutex>**。
 # 实测 (本机): g++ 指向 gcc-15, 其 libstdc++ 与当前 glibc 组合下 std::mutex

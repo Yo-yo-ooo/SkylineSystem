@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 实现文件迁入 .ko：大迁移台账
 
 > 目标：把原本链接进内核镜像的 driver / FS / net / sched / syscall 实现代码，

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Filesystem stack
 
 Source: `kernel/modules/common/fs/` (`fc.cpp` file cache, `fd.cpp` descriptors, `saf/`,

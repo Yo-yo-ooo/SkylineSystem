@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/common/kernel_shim.h — 内核原语 → 宿主映射（声明）
 #pragma once
 #include <stdint.h>

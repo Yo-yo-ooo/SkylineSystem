@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Lua.org, PUC-Rio
+// SPDX-License-Identifier: MIT
+
 /*
 ** $Id: lauxlib.h $
 ** Auxiliary functions for building Lua libraries

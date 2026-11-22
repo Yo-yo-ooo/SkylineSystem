@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # ==============================================================================
 # programs/settings/Makefile —— Settings（主题/桌面设置 GUI，动态 WM client）
 # ------------------------------------------------------------------------------

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 OBJDIR := ../object
 BINDIR := ../bin
 PROJ_NAME := HW2

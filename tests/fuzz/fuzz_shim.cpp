@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/fuzz/fuzz_shim.cpp — kprintf.cpp 宿主桩 (序列输出吞掉即可)
 #include <cstdint>
 #include <cstdio>

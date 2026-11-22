@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # tests/kmod/ — kmod 子系统宿主测试门禁
 
 把 `kernel/src/arch/x86_64/kmod/` 的真实源码搬到 WSL/Linux 宿主编译运行，

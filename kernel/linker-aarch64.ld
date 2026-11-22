@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Yo-yo-ooo */
+/* SPDX-License-Identifier: GPL-2.0-only */
+
 /* Tell the linker that we want an aarch64 ELF64 output file */
 OUTPUT_FORMAT(elf64-littleaarch64)
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: ChaN
+// SPDX-License-Identifier: LicenseRef-FatFs
+
 /*------------------------------------------------------------------------*/
 /* A Sample Code of User Provided OS Dependent Functions for FatFs        */
 /*------------------------------------------------------------------------*/

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: GPL-2.0-only
+
 #pragma once
 #ifndef KERNEL_MUTEX_H
 #define KERNEL_MUTEX_H

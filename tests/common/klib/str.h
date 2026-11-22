@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 #ifndef _KLIB_STR_H_
 #define _KLIB_STR_H_
 // tests/common/klib/str.h — shim: 内核标准字符串函数(strcmp/strchr/atoi...)与

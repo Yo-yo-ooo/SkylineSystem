@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // -*- C++ -*-
 //=============================================================
 // tree.hpp -- red-black tree for map/set, C++98~C++26.

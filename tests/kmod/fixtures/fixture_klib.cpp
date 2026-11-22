@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/fixtures/fixture_klib.cpp — 宿主测试 fixture：Tier0 klib 直接符号共享
 // ----------------------------------------------------------------------------
 // 验证：.ko 代码直接调用 klib 的 C 链接函数（strlen/strcmp/snprintf_）时，

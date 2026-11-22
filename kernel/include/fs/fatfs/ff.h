@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: ChaN
+// SPDX-License-Identifier: LicenseRef-FatFs
+
 /*----------------------------------------------------------------------------/
 /  FatFs - Generic FAT Filesystem module  R0.15b                              /
 /-----------------------------------------------------------------------------/

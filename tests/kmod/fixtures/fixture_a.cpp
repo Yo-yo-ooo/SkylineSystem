@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/fixtures/fixture_a.cpp — 宿主 ELF 加载器测试 fixture（provider 模块）
 // ----------------------------------------------------------------------------
 // 用模块作者头 <kmod/kmod_module.h> 写成的最小 .ko：

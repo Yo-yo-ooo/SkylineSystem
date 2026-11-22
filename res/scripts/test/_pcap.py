@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 import struct, sys, os
 # 路径参数化 (原硬编码 /mnt/c/ZSY/SkylineSystem/net.pcap)
 path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(

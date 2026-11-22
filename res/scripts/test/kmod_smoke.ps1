@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # res/scripts/test/kmod_smoke.ps1 - QEMU headless serial smoke gate for kmod /
 # componentised kernel.
 # ============================================================================

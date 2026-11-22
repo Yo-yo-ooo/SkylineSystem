@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 /* Copyright (C) 2011-2024 Free Software Foundation, Inc.
 
    This file is part of GCC.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Lua.org, PUC-Rio
+// SPDX-License-Identifier: MIT
+
 /*
 ** $Id: lstring.h $
 ** String table (keep all strings handled by Lua)

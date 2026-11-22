@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 #include <immintrin.h>
 // 强制要求编译器生成一条真正的 512 位指令
 void test() {

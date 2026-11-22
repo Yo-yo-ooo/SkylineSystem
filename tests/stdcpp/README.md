@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # tests/stdcpp — STL 独立测试工程
 
 针对 `lib/include/stdcpp` 的语义测试。刻意不接入任何自动化门禁：

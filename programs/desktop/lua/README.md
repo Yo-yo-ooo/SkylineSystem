@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Lua.org, PUC-Rio -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Lua 5.4.7（SkylineSystem desktop 内嵌版 / vendored）
 
 本目录是 [Lua](https://www.lua.org/) 5.4.7 上游源码的 vendored 副本，供

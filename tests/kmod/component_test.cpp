@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/component_test.cpp — 内建组件 (builtin component) 模型宿主测试
 // ----------------------------------------------------------------------------
 // 覆盖 builtin.cpp / kmod_component.h：

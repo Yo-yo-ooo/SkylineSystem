@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 输入链路修复：鼠标 9 位符号位 + PS/2 键盘丢键
 
 ## 1. 鼠标：忽略了第 9 位符号位（真实 bug）

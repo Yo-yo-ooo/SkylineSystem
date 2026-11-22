@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/inject_test.cpp — 统一 DynModule 注入层 (kdll) 宿主测试
 // ----------------------------------------------------------------------------
 // 覆盖：

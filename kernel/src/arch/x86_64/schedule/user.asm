@@ -1,5 +1,5 @@
+; SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 ; SPDX-License-Identifier: GPL-2.0-only
-; File: user.asm
 ; Copyright (C) 2026 Yo-yo-ooo
 ;
 ; This file is part of SkylineSystem.

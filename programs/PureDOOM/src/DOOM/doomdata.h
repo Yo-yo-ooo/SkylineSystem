@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: id Software, Inc.
+// SPDX-License-Identifier: LicenseRef-DOOM-Source-Code-License
+
 // Emacs style mode select   -*- C++ -*- 
 //-----------------------------------------------------------------------------
 //

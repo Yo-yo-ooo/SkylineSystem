@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 CC_x86mem = gcc
 AR_x86mem = ar
 include ../../../../gdef.mk

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Free Software Foundation, Inc.
+// SPDX-License-Identifier: GPL-3.0-or-later WITH GCC-exception-3.1
+
 /* AArch64 SVE intrinsics include file.
    Copyright (C) 2018-2024 Free Software Foundation, Inc.
 

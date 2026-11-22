@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Swedish Institute of Computer Science
+# SPDX-License-Identifier: BSD-3-Clause
+
 #
 # Copyright (c) 2001, 2002 Swedish Institute of Computer Science.
 # All rights reserved.

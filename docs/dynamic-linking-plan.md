@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 动态链接 (共享 lib) 实施方案
 
 > 目标: 用户态程序不再把 libc 静态链进每个 ELF, 而是加载一份共享

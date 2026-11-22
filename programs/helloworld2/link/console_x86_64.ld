@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Yo-yo-ooo */
+/* SPDX-License-Identifier: MIT */
+
 OUTPUT_FORMAT("elf64-x86-64")
 ENTRY(_start)
 

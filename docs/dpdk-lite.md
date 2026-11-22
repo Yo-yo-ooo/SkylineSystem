@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # DPDK-lite data plane (e1000e 82574L + lwIP)
 
 The idea is to push lwIP's data plane toward the way DPDK does it: polling, per-core data structures, batching,

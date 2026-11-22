@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: GPL-2.0-only -->
+
 # kernel/modules — 内核组件模块树
 
 > 本目录是全模块化重构后的内核组件归属地：`kernel/src` 只保留 Tier0 固定核心，

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: GPL-2.0-only
+
 #ifndef _KLIB_STR_H_
 #define _KLIB_STR_H_
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/slub/poison_main.cpp — 负向用例: 红区越界写必须被检测 (SLAB_DEBUG_POISON 构建)
 // 覆盖: 多尺寸 (64/128/512/1024) × 后越界 (p+usable) + 前越界 (p-8 破坏头部红区)
 // 每个用例 fork 子进程; 子进程内 Free 必须 slab_fatal → SIGABRT。

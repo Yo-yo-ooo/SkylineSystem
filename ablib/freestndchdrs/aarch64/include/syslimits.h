@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Free Software Foundation, Inc.
+// SPDX-License-Identifier: GPL-3.0-or-later WITH GCC-exception-3.1
+
 /* syslimits.h stands for the system's own limits.h file.
    If we can use it ok unmodified, then we install this text.
    If fixincludes fixes it, then the fixed version is installed

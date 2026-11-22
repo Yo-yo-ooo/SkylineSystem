@@ -1,5 +1,5 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 // SPDX-License-Identifier: MIT
-// File: allocator.c
 // Copyright (C) 2026 Yo-yo-ooo
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy

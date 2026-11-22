@@ -1,3 +1,6 @@
+; SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+; SPDX-License-Identifier: GPL-2.0-only
+
 [global gdt_reload_seg]
 gdt_reload_seg:
     push 0x08

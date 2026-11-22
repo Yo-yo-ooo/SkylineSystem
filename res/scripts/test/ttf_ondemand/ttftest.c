@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 /* Host check: both on-demand TTF loaders must render byte-identical glyphs to
    the whole-file loader — including after the glyph window has been recycled
    many times over (phase 2 uses far more distinct CJK glyphs than fit).

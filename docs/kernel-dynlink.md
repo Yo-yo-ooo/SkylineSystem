@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 统一 DynModule 动态链接层 (kdll) + modules.saf
 
 > 本文是实现记录，不是规划。对应代码：

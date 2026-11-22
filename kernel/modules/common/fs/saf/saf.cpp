@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: GPL-2.0-only
+
 #include <fs/saf/saf.h>
 #include <mem/pmm.h>
 #include <klib/klib.h>

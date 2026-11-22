@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # programs/
 
 用户态程序。内核只负责加载 ELF 和提供 syscall，界面、窗口管理和终端都在这里。

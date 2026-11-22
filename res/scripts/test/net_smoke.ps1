@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # res/scripts/test/net_smoke.ps1 — 网络栈 QEMU 冒烟门禁 (回归门)
 # 前置: 内核已构建 (wsl bash _tmp_build.sh)
 # 用法: pwsh -File res/scripts/test/net_smoke.ps1 [-Root <路径>] [-Qemu <路径>] [-WaitSeconds 60]

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/fixtures/fixture_b.cpp — 宿主 ELF 加载器测试 fixture（consumer 模块）
 // ----------------------------------------------------------------------------
 //   - manifest: vendor.test.b / 1.0.0 / Tier IMPL / 不需要能力

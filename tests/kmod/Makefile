@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # tests/kmod/Makefile — kmod 宿主测试门禁（由 tests/Makefile 的 `kmod` 目标委托）
 # ============================================================================
 # 产物:

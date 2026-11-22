@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Memory subsystem
 
 Source: `kernel/src/arch/x86_64/vmm/` (`vmm.cpp`, `vma.cpp`, `ua.cpp`), `kernel/src/mem/` (`pmm.cpp`,

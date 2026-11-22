@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 """Compositor perf probe: boot, trigger full repaints, parse `[perf]` lines.
 
 Sends Ctrl+Alt+B (start-menu toggle) several times, which forces full-frame

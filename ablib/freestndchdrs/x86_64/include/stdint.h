@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Free Software Foundation, Inc.
+// SPDX-License-Identifier: GPL-3.0-or-later WITH GCC-exception-3.1
+
 #ifndef _GCC_WRAP_STDINT_H
 #if __STDC_HOSTED__
 # if defined __cplusplus && __cplusplus >= 201103L

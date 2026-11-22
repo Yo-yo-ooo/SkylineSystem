@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Swedish Institute of Computer Science
+// SPDX-License-Identifier: BSD-3-Clause
+
 /*
  * fsm.c - {Link, IP} Control Protocol Finite State Machine.
  *

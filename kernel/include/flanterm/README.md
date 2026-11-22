@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: mintsuki and flanterm contributors -->
+<!-- SPDX-License-Identifier: BSD-2-Clause -->
+
 # Flanterm
 
 Flanterm is a fast and reasonably complete terminal emulator with support for

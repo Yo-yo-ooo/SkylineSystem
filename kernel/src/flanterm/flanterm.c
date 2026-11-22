@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: mintsuki and flanterm contributors
+// SPDX-License-Identifier: BSD-2-Clause
+
 /* Copyright (C) 2022-2025 mintsuki and contributors.
  *
  * Redistribution and use in source and binary forms, with or without

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/sched/main.cpp — 调度器混沌 + 压力仿真
 // 方法学(诚实声明): 本文件是 sched.cpp 账本公式的逐行复刻模型,
 // 常量与公式均对照 kernel/src/arch/x86_64/schedule/sched.cpp 行号;

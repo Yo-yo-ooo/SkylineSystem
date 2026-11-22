@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 import socket, sys, time
 
 # Minimal QEMU monitor (telnet) client: wait for the prompt, run commands.

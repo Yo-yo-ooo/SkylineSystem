@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Grzegorz Kostka
+// SPDX-License-Identifier: BSD-3-Clause
+
 /*
  * Copyright (c) 2015 Grzegorz Kostka (kostka.grzegorz@gmail.com)
  * Copyright (c) 2015 Kaho Ng (ngkaho1234@gmail.com)

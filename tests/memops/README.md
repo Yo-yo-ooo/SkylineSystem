@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # tests/memops — ablib::x86mem 宿主测试与基准
 
 针对 `ablib/arch/x86_64/x86mem/` 下 `memcpy / memmove / memset / memcmp`

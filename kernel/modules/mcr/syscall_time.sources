@@ -1,2 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: GPL-2.0-only
+
 # syscall_time implementation -> syscall_time.ko
 x86_64/syscall/time.cpp

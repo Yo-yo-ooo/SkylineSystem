@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/fixtures/fixture_inj_a.cpp — DynModule 注入测试 provider
 // ----------------------------------------------------------------------------
 // 无任何未定义外部符号，可直接被 KmodElfLoadImage 加载；导出 inj_a_magic。

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/fc/regression.cpp — 三个已修缺陷的最小确定性回归测试
 // 1) test_art_true_prefix_key: ART 真前缀键越界读
 // 2) test_promote_inline_capacity_reuse: promote 内联容量复用溢出

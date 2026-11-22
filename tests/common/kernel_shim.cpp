@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/common/kernel_shim.cpp — 内核原语 → 宿主实现
 #include "kernel_shim.h"
 #include "arch/x86_64/vmm/vmm.h"

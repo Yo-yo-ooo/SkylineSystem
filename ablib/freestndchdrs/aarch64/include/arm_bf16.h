@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Free Software Foundation, Inc.
+// SPDX-License-Identifier: GPL-3.0-or-later WITH GCC-exception-3.1
+
 /* Arm BF16 instrinsics include file.
 
    Copyright (C) 2019-2024 Free Software Foundation, Inc.

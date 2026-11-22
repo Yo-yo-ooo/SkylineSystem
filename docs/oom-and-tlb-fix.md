@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # PMM OOM 与 TLB shootdown 超时 —— 同一个根因
 
 ## 症状

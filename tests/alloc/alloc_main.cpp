@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/alloc/alloc_main.cpp — 用户态分配器宿主混沌 + 多线程测试
 // 桩: sys_mmap → 宿主 mmap, sys_munmap → munmap, sys_exit → exit。
 // 覆盖: 大小类全谱分配/释放、随机混沌、多线程并发 malloc/free、

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # SMP: multi-core boot and per-CPU state
 
 Source: `kernel/modules/x86_64/smp/smp.cpp` (about 9 KB).

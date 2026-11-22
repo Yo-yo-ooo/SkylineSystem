@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: GPL-2.0-only
+
 # kernel.syscall.info implementation
 x86_64/syscall/device.cpp
 x86_64/syscall/sys_info.cpp

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 内存占用优化（目标：64 MiB 可运行）
 
 ## 已修复 3（最大项）：字体每次 malloc 30 MiB

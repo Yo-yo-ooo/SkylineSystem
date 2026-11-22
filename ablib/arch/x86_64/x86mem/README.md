@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # x86mem（许可记录）
 
 本目录为上游 x86mem (https://github.com/.../x86mem) 的移植副本:

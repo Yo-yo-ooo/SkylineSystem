@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # doom-qemu.sh — build SkylineSystem with the DOOM port inside WSL, then
 # launch the Windows-side QEMU on the result. Run from the repo root:
 #

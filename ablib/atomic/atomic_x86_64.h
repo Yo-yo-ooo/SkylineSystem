@@ -1,6 +1,6 @@
 /*
+* SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 * SPDX-License-Identifier: MIT
-* File: atomic_x86_64.h
 * Copyright (C) 2026 Yo-yoo-ooo
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy

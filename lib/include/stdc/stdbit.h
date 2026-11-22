@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 /* stdbit_impl.h — Portable C23 stdbit.h subset implementation
  *
  * Implements:

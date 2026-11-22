@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/fc/main.cpp — 文件缓存(fc.cpp) 混沌 + 压力测试（宿主）
 // 编译真实 kernel/src/fs/fc.cpp + kernel/src/klib/algorithm/art.c
 // 注意: kprintf.h 会把 sprintf/snprintf 映射到内核版, libc 头必须先包含。

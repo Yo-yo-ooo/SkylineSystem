@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 #Requires -Version 5.1
 # ============================================================================
 # res/scripts/test/doom_compact_smoke.ps1

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # SAF specification
 Every file and folder in an SAF archive is represented by a *node*. Each node has a *header*, followed by other data depending on the type of the node, i.e. *file* or *folder*. Every archive is guaranteed to start with a node of type *folder* and an empty name, with all other nodes being children of this root node directly or indirectly. The node header structure is as follows:
 ```C

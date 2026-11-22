@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/capability_test.cpp — kmod 能力策略宿主测试
 // ----------------------------------------------------------------------------
 // 覆盖 KMOD_POLICY_STRICT / OPEN / DISABLED 三种策略、可信清单交集、

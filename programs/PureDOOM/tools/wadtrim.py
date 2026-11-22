@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 """wadtrim.py -- host-side WAD trimmer for SkylineSystem's DOOM_TINY build.
 
 The Skyline DOOM port has no audio driver (DOOM_FLAG_HIDE_SOUND/MUSIC and no

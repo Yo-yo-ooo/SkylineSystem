@@ -1,6 +1,6 @@
 /*
+* SPDX-FileCopyrightText: 2026 Yo-yo-ooo
 * SPDX-License-Identifier: MIT
-* File: atomic_aarch64.h
 * Copyright (C) 2026 Yo-yo-ooo
 */
 #ifndef ATOMIC_AARCH64_H

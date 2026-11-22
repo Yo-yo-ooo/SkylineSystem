@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: GPL-2.0-only
+
 #pragma once
 #ifndef _RB_TREE_H_
 #define _RB_TREE_H_

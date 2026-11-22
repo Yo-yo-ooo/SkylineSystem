@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: GPL-2.0-only
+
 # kernel.net.lwip implementation -> net_lwip.ko
 common/net/api/api_lib.c
 common/net/api/api_msg.c

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: id Software, Inc.
+// SPDX-License-Identifier: LicenseRef-DOOM-Source-Code-License
+
 #if defined(WIN32)
 #define _CRT_SECURE_NO_WARNINGS
 #define _WINSOCK_DEPRECATED_NO_WARNINGS

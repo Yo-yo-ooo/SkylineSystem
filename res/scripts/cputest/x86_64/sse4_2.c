@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 #include <nmmintrin.h> 
 __m128i bitmask; 
 char data[16]; 

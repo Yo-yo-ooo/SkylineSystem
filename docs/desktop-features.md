@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 桌面安装程序、Settings 与 Notepad 文件对话框
 
 本文记录桌面可用性增强：Installer 安装程序、桌面 Settings / Lua 配置加载界面、

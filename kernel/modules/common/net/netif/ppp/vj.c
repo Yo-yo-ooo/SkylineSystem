@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Swedish Institute of Computer Science
+// SPDX-License-Identifier: BSD-3-Clause
+
 /*
  * Routines to compress and uncompess tcp packets (for transmission
  * over low speed serial lines.

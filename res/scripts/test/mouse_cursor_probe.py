@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 """Mouse cursor probe: boot, inject a relative move, compare frames.
 
 Boots the ISO headless with the QEMU HMP monitor on TCP, waits for the desktop,

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # 对照实验: 用 git HEAD(旧版) 的 x86mem 源码跑同一套 memops 测试,
 # 用于确认新实现修掉的缺陷在旧版上确实可复现。
 # 用法: bash tests/memops/run_old.sh

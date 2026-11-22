@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/fuzz/kprintf_fuzz.cpp — 债务 #6: 内核 vsnprintf 宿主模糊测试
 // 随机格式串, 固定 4 个 uint64 变参 (经标准 va_list 传递), ASAN 下
 // 探测解析引擎的越界/UB; NULL %s 守卫与极端宽度/精度专项。

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/fixtures/fixture_inj_b.cpp — DynModule 注入测试 consumer
 // ----------------------------------------------------------------------------
 // 依赖 vendor.test.inj.a 的导出数据；被 KdllInject 注入时治理层必须按 .in

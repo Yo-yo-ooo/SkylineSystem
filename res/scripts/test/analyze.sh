@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # res/scripts/test/analyze.sh — 静态分析: clang --analyze 核心文件
 # 迁移 (用户清理): 原根目录 _tmp_analyze.sh → 此处, 硬编码路径改为相对解析
 cd "$(dirname "$0")/../../.."

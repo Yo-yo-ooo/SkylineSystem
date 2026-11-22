@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Swedish Institute of Computer Science
+# SPDX-License-Identifier: BSD-3-Clause
+
 # This file is indended to be included in end-user CMakeLists.txt
 # include(/path/to/Filelists.cmake)
 # It assumes the variable LWIP_DIR is defined pointing to the

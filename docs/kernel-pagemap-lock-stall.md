@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # kernel_pagemap vma_lock stall
 
 > 现象：桌面进程已加载、控制台 PID 已拉起，随后 CPU 0 停在系统调用里，

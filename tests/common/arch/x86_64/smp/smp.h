@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/common/arch/x86_64/smp/smp.h — 宿主测试 shim
 // 覆盖 kernel/include/arch/x86_64/smp/smp.h（内核堆只用到 cpu_t.id / cpu_t.cslab / this_cpu）
 // 多线程模式: 每个宿主线程一个线程局部 cpu_t (test_cpu_set_id 设 id),

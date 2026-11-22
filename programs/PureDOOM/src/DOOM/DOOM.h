@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: id Software, Inc.
+// SPDX-License-Identifier: LicenseRef-DOOM-Source-Code-License
+
 //-----------------------------------------------------------------------------
 //
 // Copyright (C) 1993-1996 by id Software, Inc.

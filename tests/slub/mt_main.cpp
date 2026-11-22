@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/slub/mt_main.cpp — SLUB/SLAB 多线程 per-CPU 并发测试
 // 每个宿主线程 = 一个虚拟 CPU (test_cpu_set_id); 覆盖:
 //   A. 无竞争: 各线程独立混沌 (per-CPU active slab / cslab magazine 分离)

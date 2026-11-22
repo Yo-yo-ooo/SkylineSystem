@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/host_platform.h — 宿主平台层的测试侧辅助接口
 // （kmod_platform.h 的实现在 host_platform.cpp；本头只暴露测试用的记账钩子）
 #pragma once

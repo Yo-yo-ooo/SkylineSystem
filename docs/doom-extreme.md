@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # DOOM 极限压缩模式（DOOM_TINY）
 
 目标不是把 1993 年 DOOM 的完整 PC 数据塞进 2MB/384KB，而是把 SkylineSystem

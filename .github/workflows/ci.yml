@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # P4-87: 回归门禁 —— 宿主测试套件 + 金样比对 (Linux runner)
 # net_smoke (QEMU 网络冒烟) 依赖 Windows PowerShell + 桌面 QEMU,
 # 保留为手动门禁 (见 tests/net_smoke.ps1, 已参数化 -Root/-Qemu)。
@@ -10,6 +13,14 @@ on:
   pull_request:
 
 jobs:
+  spdx:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SPDX / REUSE coverage gate
+        run: python3 res/scripts/check_spdx.py
+
   host-suites:
     runs-on: ubuntu-24.04
     steps:
@@ -22,7 +33,7 @@ jobs:
         working-directory: tests
         run: make -B slub slub-poison fc fc-reg sched slub-mt fc-mt
 
-      - name: kprintf fuzz (ASAN+UBSAN, 债务 #6)
+      - name: "kprintf fuzz (ASAN+UBSAN, 债务 #6)"
         working-directory: tests
         run: make -B fuzz && ./bin/kprintf_fuzz
 
@@ -30,7 +41,7 @@ jobs:
         working-directory: tests
         run: make -B alloc && ./bin/alloc_test
 
-      - name: userspace libc host suite (task-11: setjmp/string/math/locale/time/stdio)
+      - name: "userspace libc host suite (task-11: setjmp/string/math/locale/time/stdio)"
         working-directory: tests
         run: make -B stdc && ./bin/stdc_test
 

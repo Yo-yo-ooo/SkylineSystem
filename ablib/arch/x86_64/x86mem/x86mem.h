@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // Minimum requirement:
 //  x86_64 CPU with SSE4.2, but AVX2 or later is *highly* recommended
 //

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 内核组件化重构（kernel components）
 
 > 目标：整个内核的组件都进入同一套私有契约型链接与治理机制，而不只是做一个

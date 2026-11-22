@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 桌面内嵌 Lua（desktop.lua）：脚本绘制壁纸 + 可编程窗口样式
 
 > 目标：桌面（`programs/desktop`）内嵌 Lua 5.4.7 解释器，启动时执行

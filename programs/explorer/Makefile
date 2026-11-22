@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: MIT
+
 # ==============================================================================
 # programs/explorer/Makefile —— Explorer（文件浏览器，动态 WM client）
 # ------------------------------------------------------------------------------

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Goal status and verification ledger
 
 > Three parts: (A) the e1000 driver, (B) finishing the lwIP port, (C) the DPDK-style rework. On top of

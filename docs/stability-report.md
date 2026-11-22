@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Kernel components: stability and performance measurements
 
 How the numbers in this file were produced: the kernel's real sources (`kernel/src/mem/heap.cpp` and

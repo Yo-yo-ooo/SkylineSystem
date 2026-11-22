@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/fuzz/repro_min.cpp — 崩溃格式最小复现
 #include <cstdio>
 #include <cstdint>

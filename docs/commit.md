@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # Commit message conventions
 
 Same numbering as the tags in [release.md](release.md): `v<year>.<month>.<n>`.

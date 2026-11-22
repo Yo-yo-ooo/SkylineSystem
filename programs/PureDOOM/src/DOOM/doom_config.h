@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: id Software, Inc.
+// SPDX-License-Identifier: LicenseRef-DOOM-Source-Code-License
+
 #ifndef __DOOM_CONFIG_H__
 #define __DOOM_CONFIG_H__
 

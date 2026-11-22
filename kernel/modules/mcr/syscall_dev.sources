@@ -1,2 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+# SPDX-License-Identifier: GPL-2.0-only
+
 # kernel.syscall.dev implementation -> syscall_dev.ko
 x86_64/syscall/dbgout.cpp

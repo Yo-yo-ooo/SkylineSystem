@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # xHCI enumeration depth (audit C12)
 
 Audit item C12: xHCI enumeration depth — hubs, HID descriptors, EP0 max packet size — was a real

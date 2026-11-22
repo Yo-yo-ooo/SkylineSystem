@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/topology_test.cpp — kmod 拓扑/版本/命名纯函数宿主测试
 // ----------------------------------------------------------------------------
 // 覆盖 KmodTopoSort（随机 DAG 先序性质、环检测路径、自环、重名、外部依赖）、

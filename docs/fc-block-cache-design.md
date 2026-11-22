@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # fc block-level cache design (audit design debt #5)
 
 > Status: implementation complete. Steps 1-4 landed; Step 5 decided as

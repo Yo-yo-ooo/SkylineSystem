@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Yo-yo-ooo
+// SPDX-License-Identifier: MIT
+
 // tests/kmod/test_main.cpp — kmod 宿主测试的唯一 main
 // ----------------------------------------------------------------------------
 // 约定（所有测试文件遵守）：

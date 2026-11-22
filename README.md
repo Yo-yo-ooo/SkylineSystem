@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 ```text
   /$$$$$$  /$$                 /$$ /$$                      /$$$$$$                        /$$
  /$$__  $$| $$                | $$|__/                     /$$__  $$                      | $$
@@ -539,6 +542,16 @@ python res/scripts/test/start_explorer_smoke.py --root C:\ZSY\SkylineSystem  # M
 要求差异是两个 16×16 块（旧/新光标位置）；`comp_perf_probe.py` 连续开关开始菜单，
 从串口 `[perf] ... comp=N avg_us=U` 统计合成耗时（并行 3 条带约 10ms，单线程基线约 26ms）。
 
+SPDX / REUSE 覆盖率门禁（不需要 QEMU，CI 独立 job 也会跑）：
+
+```bash
+python3 res/scripts/check_spdx.py          # 100% 覆盖才 PASS；--list 可看逐文件状态
+```
+
+每个源码/构建/文档文件必须带 `SPDX-FileCopyrightText`（只写作者，不写文件名）与
+`SPDX-License-Identifier`；二进制/数据文件由根 `REUSE.toml` 标注覆盖，许可文本在
+`LICENSES/`（标识符与文本一一对应）。
+
 Windows PowerShell 版（按键注入、截图等更重的门禁仍用它）：
 
 ```powershell
@@ -658,14 +671,16 @@ readelf -r kernel/bin-x86_64/kernel | grep 32S   # 应为空
 * 内核与用户态运行在独立地址空间，仅通过 syscall 通信；按 FSF 指引，MIT 用户态代码
   不构成 GPL 内核的衍生作品，无 copyleft 传染。
 
-SPDX 头正在逐步补齐（当前覆盖率约 51%，尚未完全满足 REUSE）；详见 `LICENSES/`、
-根 [LICENSE](LICENSE) 与逐文件 SPDX 标签。
+SPDX 头已 **100% 覆盖**（REUSE Specification 3.3）：每个源码/构建脚本/文档文件都带
+`SPDX-FileCopyrightText`（只写作者，不写文件名）+ `SPDX-License-Identifier`；
+无法内联注释的二进制/数据/第三方许可文本由根 [REUSE.toml](REUSE.toml) 标注，
+全部许可文本在 `LICENSES/`。本地/CI 门禁：`python3 res/scripts/check_spdx.py`。
 
 > [!NOTE]
 > 内核内 vendored 的第三方代码包括 lwIP、FatFs、lwext4、flanterm、SAF、
 > 改编版 libart / tidwall hashmap、mpaland/printf、x86mem memops 与
 > stb_truetype 衍生光栅器；其许可（BSD-3 / BSD-2 / FatFs-license / MIT 等）
-> 已在源文件中保留。
+> 已在源文件中保留，并在 SPDX 头/REUSE.toml 中标注对应标识符。
 
 ---
 

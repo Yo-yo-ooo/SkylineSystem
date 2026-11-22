@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Yo-yo-ooo -->
+<!-- SPDX-License-Identifier: MIT -->
+
 # 客户端动态链接：当前卡点与下一步
 
 ## 为什么客户端不能用 `-pie`
