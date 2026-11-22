@@ -9,7 +9,7 @@ FONT_FILE = ../res/font/SourceHanSerifTC_Medium.ttf
 
 .PHONY: all clean
 
-all: 
+all: ../res/saf/saf-make
 	@echo "Building all programs in $(BUILD_ARCH) architecture"
 	@mkdir -p $(PROGRAM_BUILD_DIR)
 	$(MAKE) -C desktop
@@ -131,3 +131,9 @@ clean:
 	$(MAKE) -C PureDOOM clean
 	
 	rm -rf $(PROGRAM_BUILD_DIR)
+
+# saf-make 是构建产物（res/saf/.gitignore）；干净 checkout 里先构建它，
+# 否则 "Copying programs to disk image" 会报 saf-make: not found。
+# 注意：这条规则必须放在 all 之后，否则它会被 make 当成默认目标。
+../res/saf/saf-make:
+	$(MAKE) -C ../res/saf

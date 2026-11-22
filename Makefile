@@ -171,7 +171,10 @@ kernel/src/limine.h:
 		cp -f ./limine-protocol/include/limine.h ./kernel/src; \
 	fi
 
-kernel-deps:
+# 依赖校验前先确保 vendored limine.h 已生成（干净 checkout 里它被
+# kernel/.gitignore 忽略，由下面的规则从 limine-protocol 复制；否则
+# kernel-deps 会以 "missing vendored dependency" 直接失败）。
+kernel-deps: kernel/src/limine.h
 	dos2unix ./kernel/get-deps
 	chmod +x ./kernel/get-deps
 	./kernel/get-deps
@@ -180,6 +183,14 @@ kernel-deps:
 .PHONY: kernel
 kernel: kernel-deps
 	@echo "Start Building Kernel!"
+ifeq ($(KARCH),x86_64)
+ifeq ($(NOT_COMPILE_X86MEM),0)
+	@# 0) 内核链接输入 ablib/.../x86mem/memops.o 是构建产物（.gitignore），
+	@#    干净 checkout 里先在这里生成，否则 kernel/Makefile 链接会报
+	@#    "cannot open .../memops.o"。
+	$(MAKE) -C ablib/arch/x86_64/x86mem
+endif
+endif
 	@# 1) 先构建组件 .ko（实现代码按 modules/mcr 迁入 .ko）。
 	cd kernel && $(MAKE) SS_BUILD_DIR="$(SS_BUILD_DIR)" components
 	@# 2) kernel 镜像（Tier0 + 共享实现库）。kernel/Makefile 在链接前用
