@@ -39,6 +39,9 @@ endif
 COMPILER_SUPPORT_SSE_4_2 := $(shell gcc -msse4.2 -o /dev/null $(SS_BUILD_DIR)/res/scripts/cputest/x86_64/sse4_2.c > /dev/null 2>&1 && echo "yes" || echo "no";)
 COMPILER_SUPPORT_AVX := $(shell gcc -mavx -o /dev/null $(SS_BUILD_DIR)/res/scripts/cputest/x86_64/avx.c > /dev/null 2>&1 && echo "yes" || echo "no";)
 COMPILER_SUPPORT_AVX2 := $(shell gcc -mavx2 -o /dev/null $(SS_BUILD_DIR)/res/scripts/cputest/x86_64/avx2.c > /dev/null 2>&1 && echo "yes" || echo "no";)
+# x86mem 的 AVX-512 tier 依赖 GCC 14+ 的 evex512 target 属性；GCC 13 即使能接受
+# -mavx512f 也会在编译 vendored intrinsics 头时失败。探测文件显式带
+# `#pragma GCC target("avx512f,evex512")`，失败则回退 avx2/base。
 COMPILER_SUPPORT_AVX512 := $(shell gcc -mavx512f -o /dev/null $(SS_BUILD_DIR)/res/scripts/cputest/x86_64/avx512f.c > /dev/null 2>&1 && echo "yes" || echo "no";)
 
 # 1:TRUE
